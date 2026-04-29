@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "task_id": "SVC-RUNTIME-CONTROL-CLOSEOUT-SIDECAR-REVIEW",
+  "archived_at": "2026-04-28T15:42:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-RUNTIME-CONTROL-CLOSEOUT-SIDECAR-REVIEW",
+    "title": "Prepare SVC-RUNTIME-CONTROL-CLOSEOUT review packet and evidence summary",
+    "summary_zh": "平行支援 SVC-RUNTIME-CONTROL-CLOSEOUT，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 4: Service Layer Completion",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/SVC-RUNTIME-CONTROL-CLOSEOUT/SVC-RUNTIME-CONTROL-CLOSEOUT-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved support-only sidecar review packet and closed it. Claude review approved the packet as accurate; parent owner may decide whether to absorb it into the main closeout record. No canonical truth, runtime, registry, governance, BFF, or core implementation changes were made by this closeout.",
+    "last_update": "2026-04-28T15:42:35Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-RUNTIME-CONTROL-CLOSEOUT",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar review packet 內容與 ai-status.json + ai-task-archive/tasks/SVC-RUNTIME-CONTROL-CLOSEOUT.json 一致；parent closeout 已 archived done，SVC-RUNTIME-CONTROL 仍 review_approved，三項 hardening caveats 由 SVC-RUNTIME-HARDENING 承接。",
+      "所有引用 artifact（兩份 docs/reviews/ 檔、SIDECAR-ACCEPTANCE 包）皆存在；focused pytest 41 passed 與 docker compose config --quiet 已記錄為 bounded verification，未越權碰 canonical truth。",
+      "非阻擋備註：packet 標頭與第 6/7 節仍寫 reviewer=Gemini，是 reassignment 之前生成的；這是 support packet 不需重發，parent owner 若要納入主線可更新為 Claude。"
+    ],
+    "review_file": "support/sidecars/SVC-RUNTIME-CONTROL-CLOSEOUT/SVC-RUNTIME-CONTROL-CLOSEOUT-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T15:42:35Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 62,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 15,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-RUNTIME-CONTROL-CLOSEOUT-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Review packet and evidence summary ready at support/sidecars/SVC-RUNTIME-CONTROL-CLOSEOUT/SVC-RUNTIME-CONTROL-CLOSEOUT-SIDECAR-REVIEW.md. Support-only artifact; parent closeout is already archived done, SVC-RUNTIME-CONTROL remains review_approved pending Claude finalization, and production-hardening caveats stay routed to SVC-RUNTIME-HARDENING. Verification: 41 focused tests passed and docker compose config --quiet exited 0.",
+      "status": "done",
+      "created_at": "2026-04-28T14:51:13Z",
+      "resolved_at": "2026-04-28T15:35:02Z"
+    },
+    {
+      "task_id": "SVC-RUNTIME-CONTROL-CLOSEOUT-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-28T15:35:02Z",
+      "resolved_at": "2026-04-28T15:37:07Z"
+    },
+    {
+      "task_id": "SVC-RUNTIME-CONTROL-CLOSEOUT-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar review packet approved as accurate support summary; facts match live status and parent archive, evidence bounded and non-canonical, hardening caveats correctly routed to SVC-RUNTIME-HARDENING.",
+      "status": "done",
+      "created_at": "2026-04-28T15:37:07Z",
+      "resolved_at": "2026-04-28T15:42:35Z"
+    }
+  ],
+  "blockers": []
+}

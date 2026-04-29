@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "SVC-HEALTH-OBSERVABILITY-UNIFICATION",
+  "archived_at": "2026-04-29T05:18:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-HEALTH-OBSERVABILITY-UNIFICATION",
+    "title": "Unify service health readiness and observability surfaces",
+    "summary_zh": "把 service health/observability 從 baseline 混用 /health、/__health__ 提升到一致的 /healthz、/livez、/readyz 與基本 metrics/status contract，同時保留舊路由相容。",
+    "phase": "Production Readiness / Observability",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-COMPOSE",
+      "SVC-CONSULTATION-SERVICE-ACTIVATION",
+      "SVC-SOURCE-INGEST-SERVICE",
+      "SVC-SEARCH-SERVICE",
+      "SVC-TRAINING-SESSION-SERVICE",
+      "SVC-RESEARCH-ORCHESTRATOR-SERVICE",
+      "SVC-RESEARCH-WORKER-GATEWAY",
+      "SVC-POLICY-LEARNING-BOUNDARY",
+      "SVC-RECONCILIATION-DRIFT-SERVICE"
+    ],
+    "artifacts": [
+      "docker-compose.yml",
+      "services/",
+      "scripts/smoke_honest_stack.py",
+      "Pantheon_API_Service_Contract_設計版.md"
+    ],
+    "acceptance": [
+      "every default and newly materialized service exposes healthz livez and readyz with consistent JSON shape",
+      "legacy health and __health__ routes remain compatibility aliases or documented exceptions",
+      "compose healthchecks and smoke tests use the standardized readiness path",
+      "baseline observability includes dependency status and minimal metrics or status endpoint where applicable",
+      "tests verify healthy degraded and dependency failure states"
+    ],
+    "next": "Owner finalized approved health/readiness observability unification and closed the task after Codex review approval.",
+    "last_update": "2026-04-29T05:18:04Z",
+    "task_class": "observability_hardening",
+    "auto_created_by": "codex-blueprint-diff-materialization",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：health helper 統一 /healthz、/livez、/readyz、/metrics JSON shape，包含 service_up metrics，dependency degraded/error/unavailable/failed 會讓 /readyz 回 503。",
+      "compose 與 honest smoke 已改用 /readyz；舊 /health 或 /__health__ 路由在 reviewed services 保留相容，外部 MinIO probe 維持 provider-specific /healthz。",
+      "驗證完成：focused health/compose tests 15 passed、py_compile 使用暫存 pycache 通過、docker-compose YAML parse 與 docker compose config 通過、task-scoped git diff --check 通過。"
+    ],
+    "review_file": "docs/reviews/2026-04-29-svc-health-observability-unification-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T05:18:04Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "e1f3c3109ab3e2d90e4c04c6343fdd1aca652a61",
+      "commit_subject": "SVC-HEALTH-OBSERVABILITY-UNIFICATION finalize approved observability work",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-HEALTH-OBSERVABILITY-UNIFICATION",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 143,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 30,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-HEALTH-OBSERVABILITY-UNIFICATION",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Health observability unification ready for review: standard health payload now includes service_up metrics; compose external probe typos corrected; honest smoke now defines and waits for research-worker-gateway /readyz. Verified focused health tests, compose activation tests, service-family contract, py_compile, yaml parse, and docker compose config.",
+      "status": "done",
+      "created_at": "2026-04-29T04:53:53Z",
+      "resolved_at": "2026-04-29T04:58:02Z"
+    },
+    {
+      "task_id": "SVC-HEALTH-OBSERVABILITY-UNIFICATION",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Codex review approved: standardized health/readiness observability surfaces are wired through helper routes, compose/smoke readiness checks use /readyz, legacy aliases remain compatible, and focused verification passed. Owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-29T04:58:02Z",
+      "resolved_at": "2026-04-29T05:18:04Z"
+    }
+  ],
+  "blockers": []
+}

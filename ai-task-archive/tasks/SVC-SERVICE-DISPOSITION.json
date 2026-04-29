@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "SVC-SERVICE-DISPOSITION",
+  "archived_at": "2026-04-28T13:41:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-SERVICE-DISPOSITION",
+    "title": "Decide consultation/source-ingest/search service disposition for single-VM baseline",
+    "summary_zh": "釐清 consultation、source-ingest、search 在 single-VM baseline 的處置：要納入 root compose 成為 deployable service，或明確標成 code exists, deployable service deferred，並回寫 SVC-SURFACES / SVC-COMPOSE 的依賴。",
+    "phase": "Phase 4: Service Layer Completion",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-BASELINE",
+      "SVC-EVIDENCE",
+      "SD-CONSULT-003",
+      "SD-SRC-EVIDENCE-003"
+    ],
+    "artifacts": [
+      "docker-compose.yml",
+      "services/consultation/",
+      "services/source_ingestion/",
+      "services/search/",
+      "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/starter-draft.md",
+      "ai-status.json"
+    ],
+    "acceptance": [
+      "consultation source-ingest and search implementation state is checked against code and compose",
+      "each service is classified as included in single-VM baseline or deployable service deferred",
+      "SVC-SURFACES and SVC-COMPOSE dependencies are updated to reflect the disposition"
+    ],
+    "next": "Owner finalized approved service disposition after verifying compose excludes consultation/source-ingestion/search, focused tests pass, and Claude review is recorded.",
+    "last_update": "2026-04-28T13:41:44Z",
+    "task_class": "service_disposition",
+    "auto_created_by": "codex-blueprint-diff-materialization",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：consultation 已具備 FastAPI/Dockerfile，但 BFF 目前以 ConsultationStore 本地 data-dir 介面消費，故 deployable service activation 確實 deferred；source_ingestion 與 search 為 library-level、無 HTTP entrypoint/Dockerfile/health/compose 條目，deployable service 亦 deferred。SVC-SURFACES 與 SVC-COMPOSE 的 depends_on 與 acceptance criteria 已正確繼承 disposition 邊界。",
+      "後續追蹤：SVC-SURFACES 在 PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK=false 路徑必須維持 degraded/unavailable 或 fenced test-only seed；SVC-COMPOSE default profile 不得加入這三個 service，需引用 gap record；任何 source_ingestion/search 服務化 follow-up 需先定義 HTTP/job-trigger contract、Dockerfile、health、port、storage/env 與 smoke 才可納入 compose；consultation 服務化任務需額外決定 BFF 介接邊界（HTTP client 優先；顯式 shared-store 須個別 review）。"
+    ],
+    "review_file": "docs/reviews/2026-04-28-svc-service-disposition-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T13:41:44Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "87c29b826323c884953ec7d34ef4aa1a6356753d",
+      "commit_subject": "SVC-SERVICE-DISPOSITION finalize service disposition",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-SERVICE-DISPOSITION",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 36,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 10,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-SERVICE-DISPOSITION",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Disposition ready for review. Recorded in starter-draft and phase2-phase6 gap inventory: consultation has FastAPI/Dockerfile code but deployable service activation is deferred because root compose does not run it and BFF is not yet a network client; source_ingestion and search remain library-level with no HTTP entrypoint/Dockerfile/health/compose contract, so deployable services are deferred. SVC-SURFACES inherits a negative boundary: do not add hidden normal-path dependencies on consultation/source-ingestion/search; expose degraded/unavailable or fenced test-only seed paths until explicit service wrappers exist. SVC-COMPOSE should leave all three out of the default profile and cite the gap record. Verification: python3 -m pytest services/source_ingestion/tests services/search/tests (13 passed); python3 services/consultation/run_smoke.py (2 passed); docker compose config --quiet (passed); git diff --check on edited docs (passed).",
+      "status": "done",
+      "created_at": "2026-04-28T13:31:19Z",
+      "resolved_at": "2026-04-28T13:35:42Z"
+    },
+    {
+      "task_id": "SVC-SERVICE-DISPOSITION",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved and returned to the owner for finalization",
+      "status": "done",
+      "created_at": "2026-04-28T13:35:42Z",
+      "resolved_at": "2026-04-28T13:41:44Z"
+    }
+  ],
+  "blockers": []
+}

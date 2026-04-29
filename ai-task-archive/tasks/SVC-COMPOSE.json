@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "SVC-COMPOSE",
+  "archived_at": "2026-04-28T17:31:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-COMPOSE",
+    "title": "Assemble the single-VM compose stack and smoke path",
+    "summary_zh": "組裝 single-VM compose stack、storage mounts、dependency graph 與 smoke commands，形成可啟動的 test stack。",
+    "phase": "Phase 4: Service Layer Completion",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "depends_on": [
+      "SVC-RUNTIME-CONTROL",
+      "SVC-RUNTIME-CONTROL-CLOSEOUT",
+      "SVC-GOVERNANCE-API",
+      "SVC-EVIDENCE",
+      "SVC-SURFACES",
+      "SVC-SERVICE-DISPOSITION"
+    ],
+    "artifacts": [
+      "docker-compose.yml",
+      "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/phase2-phase6-gap-inventory.md"
+    ],
+    "acceptance": [
+      "single-VM compose stack boots with the planned service profile",
+      "smoke commands and dependency wiring are documented and repeatable",
+      "verification runs the default stack plus smoke profile, not only docker compose config",
+      "consultation/source-ingest/search baseline disposition is reflected in compose or explicitly deferred in the gap record"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase4-2026-04-15-service-layer-completion",
+      "phase": "phase4",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion",
+      "session_file": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-28T09:09:29Z",
+      "session_id": "phase4-2026-04-15-service-layer-completion",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized approved single-VM compose stack after Codex review reproduced config, build/up, smoke profile, pytest, and teardown evidence.",
+    "last_update": "2026-04-28T17:31:00Z",
+    "review_notes_zh": [
+      "SVC-COMPOSE review passed: default single-VM compose stack and smoke profile were reproduced with isolated COMPOSE_PROJECT_NAME; no blocking findings."
+    ],
+    "review_file": "docs/reviews/2026-04-28-svc-compose-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T17:31:00Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "5a4ece78ed41b8e7b995d43676a03924c9106d3c",
+      "commit_subject": "SVC-COMPOSE assemble single-VM smoke stack",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-COMPOSE",
+        "Reviewer": "Codex",
+        "Verification reproduced by reviewer": "docker compose config --quiet; py_compile smoke_honest_stack; governance service-family pytest; docker compose up/build; smoke profile; down --volumes."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 67,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 20,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-COMPOSE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Single-VM compose stack assembled and smoke-verified. Evidence: docker compose config --quiet; python3 -m py_compile scripts/smoke_honest_stack.py; pytest services/control-plane/governance/test_service_family_contract.py; docker compose up -d --build; docker compose --profile smoke run --rm smoke-stack passed; docker compose down --volumes --remove-orphans completed. Please review docker-compose.yml, scripts/smoke_honest_stack.py, services/runtime-manager/requirements.txt, and gap inventory closure note.",
+      "status": "done",
+      "created_at": "2026-04-28T17:08:20Z",
+      "resolved_at": "2026-04-28T17:25:34Z"
+    },
+    {
+      "task_id": "SVC-COMPOSE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Codex review approved. Evidence reproduced with isolated compose project: config, py_compile, pytest, up/build, smoke profile, and down --volumes all passed.",
+      "status": "done",
+      "created_at": "2026-04-28T17:25:34Z",
+      "resolved_at": "2026-04-28T17:31:00Z"
+    }
+  ],
+  "blockers": []
+}

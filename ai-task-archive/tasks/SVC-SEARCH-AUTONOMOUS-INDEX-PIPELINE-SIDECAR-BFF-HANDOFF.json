@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-29T06:47:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Service Hardening / Durable Search Pipeline",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE",
+      "SVC-SEARCH-SERVICE",
+      "SVC-COMPOSE"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE/SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar BFF/frontend handoff packet and closed it. Packet remains support-only material for parent owner absorption decisions.",
+    "last_update": "2026-04-29T06:47:56Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar BFF/frontend handoff packet 審查通過：內容僅限 support artifact，未修改 canonical truth 或 runtime/registry/governance 實作；BFF no-documents service path、frontend BFF-only boundary、compose evidence mount、governed citation/ACL isolation 與 verification evidence 均與 parent task closure 及焦點 code/test/compose 抽查一致。"
+    ],
+    "review_file": "support/sidecars/SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE/SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T06:47:56Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "f8c176f8880529163d8006e1290b69796b8c7c2b",
+      "commit_subject": "SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE-SIDECAR-BFF-HANDOFF finalize BFF handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 154,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 34,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T06:30:42Z",
+      "resolved_at": "2026-04-29T06:36:04Z"
+    },
+    {
+      "task_id": "SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only BFF/frontend handoff packet is ready at support/sidecars/SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE/SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE-SIDECAR-BFF-HANDOFF.md. It documents the finalized durable search pipeline, BFF no-documents service path, frontend BFF-only boundary, operator journey, and verification evidence.",
+      "status": "done",
+      "created_at": "2026-04-29T06:40:20Z",
+      "resolved_at": "2026-04-29T06:43:29Z"
+    },
+    {
+      "task_id": "SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: support-only BFF/frontend handoff packet is accurate and ready for owner finalization; no sidecar follow-up required.",
+      "status": "done",
+      "created_at": "2026-04-29T06:43:29Z",
+      "resolved_at": "2026-04-29T06:47:56Z"
+    }
+  ],
+  "blockers": []
+}

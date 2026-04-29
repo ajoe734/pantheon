@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "SD-CONSULT-002",
+  "archived_at": "2026-04-28T10:22:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SD-CONSULT-002",
+    "title": "Durable consultation persistence and actor fidelity",
+    "summary_zh": "把 consultation lifecycle 改成可 replay 的 durable service-owned persistence，並補真實 initiating actor audit fidelity。",
+    "phase": "SD Residual / Consultation",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SD-CONSULT-001",
+      "SD-FND-003"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-28-foundation-source-consultation-execution-task-packet.md",
+      "docs/reviews/2026-04-27-sd-consult-001-claude2-review.md"
+    ],
+    "acceptance": [
+      "restart preserves full consultation lifecycle",
+      "actor and service identity are audit-distinct",
+      "handoff evidence and audit refs stable after replay"
+    ],
+    "next": "Owner finalized approved SD-CONSULT-002. Durable consultation persistence, actor/service audit fidelity, and replay-stable handoff evidence passed Codex review; task closed as completed.",
+    "last_update": "2026-04-28T10:22:54Z",
+    "task_class": "sd_materialization",
+    "source_packet": "docs/reviews/2026-04-28-foundation-source-consultation-execution-task-packet.md",
+    "auto_dispatch_boundary": "respect_dependencies_and_human_gates",
+    "review_notes_zh": [
+      "無 blocking findings；append/replay lifecycle、actor/service actor audit fidelity、handoff/audit refs replay stability與交接驗證均通過。"
+    ],
+    "review_file": "docs/reviews/2026-04-28-sd-consult-002-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T10:22:54Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "f24534e1db263e750eeab0041ddfdab888447376",
+      "commit_subject": "SD-CONSULT-002 persist consultation lifecycle",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SD-CONSULT-002",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 18,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 6,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SD-CONSULT-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented durable append/replay consultation lifecycle persistence, stable replay for handoff/audit refs, foundation outbox events, and initiating actor plus service actor audit fidelity. Verification: python3 -m unittest services.consultation.smoke_test; python3 services/consultation/run_smoke.py; python3 services/consultation/run_smoke_logic.py; legacy snapshot migration replay check.",
+      "status": "done",
+      "created_at": "2026-04-28T10:11:04Z",
+      "resolved_at": "2026-04-28T10:19:05Z"
+    },
+    {
+      "task_id": "SD-CONSULT-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved by Codex review; no blocking findings. See docs/reviews/2026-04-28-sd-consult-002-codex-review.md. Owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-28T10:19:05Z",
+      "resolved_at": "2026-04-28T10:22:54Z"
+    }
+  ],
+  "blockers": []
+}

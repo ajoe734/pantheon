@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "task_id": "SD-FND-005",
+  "archived_at": "2026-04-28T09:56:03Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SD-FND-005",
+    "title": "Crash recovery hardening for foundation-backed commands",
+    "summary_zh": "補 runtime-manager kill-switch 與 foundation-backed command 的 crash-window recovery/idempotency/audit 硬化與回歸測試。",
+    "phase": "SD Residual / Foundations",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SD-FND-002",
+      "SD-FND-003"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-28-foundation-source-consultation-execution-task-packet.md",
+      "docs/reviews/2026-04-27-sd-fnd-002-review.md"
+    ],
+    "acceptance": [
+      "crash replay does not duplicate side effect",
+      "partial durable state recovers or quarantines with audit",
+      "shared foundation replay primitives are used"
+    ],
+    "next": "Owner finalized approved task after Codex review. Delivery commit 462394a hardens foundation-backed kill-switch crash recovery; verification: pytest services/control-plane/bff/test_governance_command_submission.py services/runtime-manager/test_runtime_manager.py services/foundation/tests -q => 64 passed.",
+    "last_update": "2026-04-28T09:56:03Z",
+    "task_class": "sd_materialization",
+    "source_packet": "docs/reviews/2026-04-28-foundation-source-consultation-execution-task-packet.md",
+    "auto_dispatch_boundary": "respect_dependencies_and_human_gates",
+    "review_notes_zh": [
+      "已重跑指定驗證套件並核對 optional-binding REPLACE crash replay 修復；runtime-manager 透過 shared foundation command recovery/idempotency primitives 恢復 executing ledger，避免 PAUSE/REPLACE replay 重複 side effect，corrupt partial state 會留下 quarantine audit。"
+    ],
+    "review_file": "docs/reviews/2026-04-28-sd-fnd-005-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T09:56:03Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "462394aafdaffbf469e3232303b6a63a89e93f5c",
+      "commit_subject": "SD-FND-005 harden foundation command recovery",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SD-FND-005",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 31,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 4,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SD-FND-005",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented crash recovery hardening for runtime-manager kill-switch: durable reserved/executing/succeeded idempotency ledger, shared foundation command recovery/quarantine helpers, replay resume without duplicate binding side effect, and corrupt partial-state audit quarantine. Verification: pytest services/control-plane/bff/test_governance_command_submission.py services/runtime-manager/test_runtime_manager.py services/foundation/tests -q => 62 passed.",
+      "status": "done",
+      "created_at": "2026-04-28T09:26:18Z",
+      "resolved_at": "2026-04-28T09:30:05Z"
+    },
+    {
+      "task_id": "SD-FND-005",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Changes requested: REPLACE kill-switch replay can duplicate fallback replacement binding after crash between replacement create and old-binding retire. See docs/reviews/2026-04-28-sd-fnd-005-codex-review.md.",
+      "status": "done",
+      "created_at": "2026-04-28T09:30:05Z",
+      "resolved_at": "2026-04-28T09:30:05Z"
+    },
+    {
+      "task_id": "SD-FND-005",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Fixed REPLACE kill-switch replay idempotency by reusing an existing ks-replace replacement binding before retiring the old binding; added regression for crash after replacement create before old-binding retire. Verification: pytest services/control-plane/bff/test_governance_command_submission.py services/runtime-manager/test_runtime_manager.py services/foundation/tests -q => 63 passed.",
+      "status": "done",
+      "created_at": "2026-04-28T09:34:48Z",
+      "resolved_at": "2026-04-28T09:41:00Z"
+    },
+    {
+      "task_id": "SD-FND-005",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Changes requested by Codex: optional-binding REPLACE crash replay still fails. Replay rebuilds durable command as SimpleNamespace without binding_id and raises AttributeError instead of recovering/quarantining; see docs/reviews/2026-04-28-sd-fnd-005-codex-review.md. Existing target suite still passes: 63 passed.",
+      "status": "done",
+      "created_at": "2026-04-28T09:41:00Z",
+      "resolved_at": "2026-04-28T09:41:00Z"
+    },
+    {
+      "task_id": "SD-FND-005",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Fixed optional-binding REPLACE crash replay: durable command replay restores omitted optional fields and recovers old binding from ks-replace replacement.rollback_parent before active-binding fallback. Regression added; verification: pytest services/control-plane/bff/test_governance_command_submission.py services/runtime-manager/test_runtime_manager.py services/foundation/tests -q => 64 passed.",
+      "status": "done",
+      "created_at": "2026-04-28T09:46:42Z",
+      "resolved_at": "2026-04-28T09:52:32Z"
+    },
+    {
+      "task_id": "SD-FND-005",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Codex review approved. Evidence: docs/reviews/2026-04-28-sd-fnd-005-codex-review.md; verification: pytest services/control-plane/bff/test_governance_command_submission.py services/runtime-manager/test_runtime_manager.py services/foundation/tests -q => 64 passed.",
+      "status": "done",
+      "created_at": "2026-04-28T09:52:32Z",
+      "resolved_at": "2026-04-28T09:56:03Z"
+    }
+  ],
+  "blockers": []
+}

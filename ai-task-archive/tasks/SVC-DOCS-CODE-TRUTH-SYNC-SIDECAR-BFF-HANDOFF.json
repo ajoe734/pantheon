@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "SVC-DOCS-CODE-TRUTH-SYNC-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-29T04:39:31Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-DOCS-CODE-TRUTH-SYNC-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-DOCS-CODE-TRUTH-SYNC BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-DOCS-CODE-TRUTH-SYNC，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Planning Truth / Code Alignment",
+    "owner": "Claude2",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "SVC-CONSULTATION-SERVICE-ACTIVATION",
+      "SVC-SOURCE-INGEST-SERVICE",
+      "SVC-SEARCH-SERVICE",
+      "SVC-COMPOSE"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-DOCS-CODE-TRUTH-SYNC/SVC-DOCS-CODE-TRUTH-SYNC-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner Claude2 finalized the approved sidecar BFF/frontend handoff packet at support/sidecars/SVC-DOCS-CODE-TRUTH-SYNC/SVC-DOCS-CODE-TRUTH-SYNC-SIDECAR-BFF-HANDOFF.md. Support-only artifact; no canonical truth, BFF, frontend, or compose changes. Available to parent owner as input for the doc-truth-sync edits.",
+    "last_update": "2026-04-29T04:39:31Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-DOCS-CODE-TRUTH-SYNC",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Codex2 review approved：handoff packet 是 support-only artifact，範圍符合 sidecar 限制，未要求修改 L1 canonical truth、BFF/frontend code 或 runtime 實作。",
+      "抽查 docker-compose.yml、consultation/source_ingestion/search FastAPI entrypoints、BFF read_store service-client wiring 後，packet 對 consultation-svc、source-ingest、search-svc、BFF consultation/search read path、source-ingest 非 BFF read dependency、/readyz alias gap 與 BFF HA defer 的描述與目前 code truth 一致。",
+      "可作為 SVC-DOCS-CODE-TRUTH-SYNC parent owner 的支援輸入；parent edits 仍需保持 doc-only，避免新增 Lovable/frontend task 或重開 BFF HA/health alias 實作範圍。"
+    ],
+    "review_file": "support/sidecars/SVC-DOCS-CODE-TRUTH-SYNC/SVC-DOCS-CODE-TRUTH-SYNC-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T04:39:31Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "c1c29d3cc9ba851af852a1128c2ba85994ef7e9b",
+      "commit_subject": "SVC-DOCS-CODE-TRUTH-SYNC-SIDECAR-BFF-HANDOFF add BFF handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "SVC-DOCS-CODE-TRUTH-SYNC-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex2",
+        "Co-Authored-By": "Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 137,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 28,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-DOCS-CODE-TRUTH-SYNC-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Sidecar BFF/frontend handoff packet ready at support/sidecars/SVC-DOCS-CODE-TRUTH-SYNC/SVC-DOCS-CODE-TRUTH-SYNC-SIDECAR-BFF-HANDOFF.md. Support-only artifact; no canonical, BFF, or frontend code touched. Please review and either approve as input for the parent doc-truth-sync edits, or reopen with concrete required changes.",
+      "status": "done",
+      "created_at": "2026-04-29T03:35:35Z",
+      "resolved_at": "2026-04-29T04:23:35Z"
+    },
+    {
+      "task_id": "SVC-DOCS-CODE-TRUTH-SYNC-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Codex2 approved sidecar BFF/frontend handoff packet. Owner Claude2 should finalize to done; parent owner may use it as support input for doc-truth-sync edits.",
+      "status": "done",
+      "created_at": "2026-04-29T04:23:35Z",
+      "resolved_at": "2026-04-29T04:39:31Z"
+    }
+  ],
+  "blockers": []
+}

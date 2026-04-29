@@ -1,8 +1,8 @@
 {
   "project": "pantheon",
   "sprint": "2026-04-17-full-blueprint-completion",
-  "objective": "把系統藍圖完整實現：關閉所有 Lovable UI loop、補充空服務實作、激活 Qlib/TRL OSS 框架、解決 BFF gap、清理規劃文件",
-  "updated_at": "2026-04-28T07:45:52Z",
+  "objective": "把目前 service-layer 藍圖落成可部署 single-VM stack：完成 runtime-control closeout、governance API family、BFF service-backed surfaces、compose smoke，並明確處置 consultation/source-ingest/search 的部署邊界",
+  "updated_at": "2026-04-29T13:30:40Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -97,7 +97,7 @@
       "current_task_ids": [],
       "branch": "feat/claude-execution-control",
       "next": "",
-      "last_update": "2026-04-24T07:25:45Z"
+      "last_update": "2026-04-29T12:41:11Z"
     },
     {
       "name": "Gemini",
@@ -111,7 +111,7 @@
       "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
       "next": "",
-      "last_update": "2026-04-24T07:19:09Z"
+      "last_update": "2026-04-29T11:36:28Z"
     },
     {
       "name": "Codex",
@@ -125,7 +125,7 @@
       "current_task_ids": [],
       "branch": "feat/codex-collab-system",
       "next": "",
-      "last_update": "2026-04-28T07:44:32Z"
+      "last_update": "2026-04-29T12:33:28Z"
     },
     {
       "name": "Codex2",
@@ -139,7 +139,7 @@
       "current_task_ids": [],
       "branch": "feat/codex-collab-system",
       "next": "",
-      "last_update": "2026-04-24T11:46:49Z"
+      "last_update": "2026-04-29T12:25:10Z"
     },
     {
       "name": "Copilot",
@@ -153,21 +153,7 @@
       "current_task_ids": [],
       "branch": "feat/grok-research-critique",
       "next": "",
-      "last_update": "2026-04-24T07:49:16Z"
-    },
-    {
-      "name": "Qwen",
-      "capability_lane": [
-        "integration",
-        "schema",
-        "acceptance",
-        "code-agent"
-      ],
-      "status": "idle",
-      "current_task_ids": [],
-      "branch": "feat/qwen-code-agent",
-      "next": "",
-      "last_update": "2026-04-24T10:35:29Z"
+      "last_update": "2026-04-29T12:14:15Z"
     },
     {
       "name": "Claude2",
@@ -180,128 +166,11 @@
       "current_task_ids": [],
       "branch": "feat/claude2-execution-control",
       "next": "",
-      "last_update": "2026-04-24T07:33:46Z"
+      "last_update": "2026-04-29T11:49:22Z"
     }
   ],
-  "tasks": [
-    {
-      "id": "LUV-REVIEW-015",
-      "title": "Review returned frontend feedback and close loop for governance-audit-rail",
-      "summary_zh": "審閱 PKT-009-governance-audit-rail 的 frontend feedback bundle，判定是否直接關閉、補小修，或拆出具體 follow-up。",
-      "phase": "Execution / Lovable Review Closeout",
-      "owner": "Gemini",
-      "reviewer": "Codex2",
-      "status": "done",
-      "depends_on": [],
-      "artifacts": [
-        "../front-ai-trading-system/.coordination/responses/PKT-009-governance-audit-rail-contract-ready.yaml",
-        ".coordination/responses/PKT-009-governance-audit-rail-lovable-ui-task.yaml",
-        "/home/edna/code/pantheon/.coordination/responses/PKT-009-governance-audit-rail-lovable-prompt.md",
-        ".coordination/requests/PKT-009-governance-audit-rail-ui-done.yaml",
-        ".coordination/requests/PKT-009-governance-audit-rail-frontend-feedback.yaml"
-      ],
-      "acceptance": [
-        "PKT-009-governance-audit-rail 的 frontend feedback 已完成 Pantheon review，並給出明確 disposition",
-        "必要的後續工作已拆成可追蹤項目；若可直接關閉，已補齊 evidence",
-        "coordination summary、task board 與實際前端收尾狀態一致"
-      ],
-      "next": "Owner finalized approved task and closed it. Frontend feedback bundle is contract-correct and ready for loop closure.",
-      "last_update": "2026-04-17T14:36:00Z",
-      "feature_id": "PKT-009-governance-audit-rail",
-      "coordination_stage": "frontend_feedback_received",
-      "coordination_next_action": "Pantheon should review the frontend feedback bundle and decide follow-up work.",
-      "coordination_paths": {
-        "contract_ready": "../front-ai-trading-system/.coordination/responses/PKT-009-governance-audit-rail-contract-ready.yaml",
-        "lovable_task": ".coordination/responses/PKT-009-governance-audit-rail-lovable-ui-task.yaml",
-        "lovable_prompt": "/home/edna/code/pantheon/.coordination/responses/PKT-009-governance-audit-rail-lovable-prompt.md",
-        "ui_done": ".coordination/requests/PKT-009-governance-audit-rail-ui-done.yaml",
-        "frontend_feedback": ".coordination/requests/PKT-009-governance-audit-rail-frontend-feedback.yaml",
-        "bff_gap": null
-      },
-      "coordination_screen": "governance-audit-rail",
-      "worker_kind": "runtime-worker",
-      "source_repo_id": "pantheon",
-      "target_repo_id": null,
-      "task_class": "lovable_review_closeout",
-      "auto_created_by": "lovable-closeout-materialization",
-      "auto_generated": true,
-      "mutates_canonical": true,
-      "review_notes_zh": [
-        "前端 feedback 與 review packet 已核對完成；契約、降級語義、篩選 round-trip 與 replayability 皆符合 PKT-009 要求，無需再開 follow-up。"
-      ],
-      "review_file": ".coordination/reviews/PKT-009-governance-audit-rail-review.md"
-    },
-    {
-      "id": "STATE-REBASE-001-SIDECAR-ACCEPTANCE",
-      "title": "Prepare STATE-REBASE-001 acceptance packet and dependency map",
-      "summary_zh": "平行支援 STATE-REBASE-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
-      "phase": "Execution / Wave 1 - State Rebaseline",
-      "owner": "Gemini",
-      "reviewer": "Claude",
-      "status": "done",
-      "terminal_outcome": "completed",
-      "depends_on": [],
-      "artifacts": [
-        "support/sidecars/STATE-REBASE-001/STATE-REBASE-001-SIDECAR-ACCEPTANCE.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Owner finalized approved sidecar acceptance packet and closed it. Verification confirmed for STATE-REBASE-001.",
-      "last_update": "2026-04-19T16:45:00Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "STATE-REBASE-001",
-      "helper_kind": "acceptance_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization",
-      "review_file": "support/sidecars/STATE-REBASE-001/STATE-REBASE-001-SIDECAR-ACCEPTANCE.md",
-      "review_notes_zh": [
-        "Sidecar acceptance packet 通過審查：（1）僅建立 support/sidecars/ artifact，未修改任何 canonical truth；（2）依賴圖涵蓋 ai-status.json 中全部主線 STATE-REBASE-001 依賴任務；（3）引用的 docs/reviews/2026-04-19-state-rebaseline-001.md 確認存在，recompute_agents() 已在 ai_status.py:991 驗證。Packet 可作為 STATE-REBASE-001 正式 done 的支援材料。"
-      ]
-    },
-    {
-      "id": "EXEC-FRONT-CW03-PARTIAL-001-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare EXEC-FRONT-CW03-PARTIAL-001 BFF and frontend handoff packet",
-      "summary_zh": "平行支援 EXEC-FRONT-CW03-PARTIAL-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-      "phase": "Execution / Frontend Lane Implementation",
-      "owner": "Gemini",
-      "reviewer": "Codex2",
-      "status": "done",
-      "depends_on": [],
-      "artifacts": [
-        "support/sidecars/EXEC-FRONT-CW03-PARTIAL-001/EXEC-FRONT-CW03-PARTIAL-001-SIDECAR-BFF-HANDOFF.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Owner finalized approved sidecar handoff packet and closed it.",
-      "last_update": "2026-04-20T17:15:00Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "EXEC-FRONT-CW03-PARTIAL-001",
-      "helper_kind": "bff_handoff_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization",
-      "review_notes_zh": [
-        "packet 已核對：BFF route / projection / authority mapping 與 support handoff 一致；linked_evidence contract gap、transcript gate 與 partial activation 邊界敘述清楚，可交由 parent owner 決定是否吸收進主線。"
-      ]
-    }
-  ],
+  "tasks": [],
   "handoffs": [
-    {
-      "task_id": "LUV-REVIEW-015",
-      "from": "Gemini",
-      "to": "Codex2",
-      "message": "Review packet complete at .coordination/reviews/PKT-009-governance-audit-rail-review.md. Implementation is contract-correct and fully replayable from source_commit 5d419de6683f48fd2174cd5eac6bc50c73f78e13. All acceptance criteria pass. Disposition: APPROVED — loop can close.",
-      "status": "done",
-      "created_at": "2026-04-17T14:30:00Z",
-      "resolved_at": "2026-04-17T14:33:49Z"
-    },
     {
       "task_id": "LUV-REVIEW-007",
       "from": "Claude",
@@ -310,69 +179,6 @@
       "status": "done",
       "created_at": "2026-04-17T11:50:38Z",
       "resolved_at": "2026-04-17T12:39:53Z"
-    },
-    {
-      "task_id": "LUV-REVIEW-015",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T12:10:53Z",
-      "resolved_at": "2026-04-17T12:17:36Z"
-    },
-    {
-      "task_id": "LUV-REVIEW-015",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T12:17:36Z",
-      "resolved_at": "2026-04-17T12:21:43Z"
-    },
-    {
-      "task_id": "LUV-REVIEW-015",
-      "from": "Codex2",
-      "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-17T12:21:43Z",
-      "resolved_at": "2026-04-17T14:22:35Z"
-    },
-    {
-      "task_id": "LUV-REVIEW-015",
-      "from": "Codex2",
-      "to": "Gemini",
-      "message": "Approved via .coordination/reviews/PKT-009-governance-audit-rail-review.md. Frontend feedback bundle is contract-correct, replayable from source_commit 5d419de6683f48fd2174cd5eac6bc50c73f78e13, and ready for owner finalization to done.",
-      "status": "done",
-      "created_at": "2026-04-17T14:33:49Z",
-      "resolved_at": "2026-04-17T14:40:25Z"
-    },
-    {
-      "task_id": "STATE-REBASE-001-SIDECAR-ACCEPTANCE",
-      "from": "Claude",
-      "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-19T15:50:19Z",
-      "resolved_at": "2026-04-19T15:51:16Z"
-    },
-    {
-      "task_id": "STATE-REBASE-001-SIDECAR-ACCEPTANCE",
-      "from": "Claude",
-      "to": "Gemini",
-      "message": "Acceptance packet reviewed and approved. All three criteria met. Returning to Gemini for finalization to done.",
-      "status": "done",
-      "created_at": "2026-04-19T16:22:35Z",
-      "resolved_at": "2026-04-19T16:40:22Z"
-    },
-    {
-      "task_id": "EXEC-FRONT-CW03-PARTIAL-001-SIDECAR-BFF-HANDOFF",
-      "from": "Codex2",
-      "to": "Gemini",
-      "message": "Support packet reviewed and approved. The handoff is consistent with the live BFF contract, partial-activation boundaries, and current residual gaps. Owner can finalize this sidecar when ready.",
-      "status": "done",
-      "created_at": "2026-04-20T16:45:43Z",
-      "resolved_at": "2026-04-20T17:15:00Z"
     }
   ],
   "blockers": [],
@@ -382,7 +188,6 @@
     "Gemini": 30,
     "Codex": 30,
     "Codex2": 30,
-    "Qwen": 15,
     "Copilot": 25
   },
   "workload_summary": {
@@ -405,10 +210,10 @@
       "todo": 0
     },
     "Gemini": {
-      "total": 3,
+      "total": 0,
       "active": 0,
       "blocked": 0,
-      "done": 3,
+      "done": 0,
       "review": 0,
       "review_approved": 0,
       "todo": 0
@@ -423,15 +228,6 @@
       "todo": 0
     },
     "Codex2": {
-      "total": 0,
-      "active": 0,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 0
-    },
-    "Qwen": {
       "total": 0,
       "active": 0,
       "blocked": 0,

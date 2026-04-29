@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "SVC-RUNTIME-CONTROL-CLOSEOUT-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-28T15:20:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-RUNTIME-CONTROL-CLOSEOUT-SIDECAR-ACCEPTANCE",
+    "title": "Prepare SVC-RUNTIME-CONTROL-CLOSEOUT acceptance packet and dependency map",
+    "summary_zh": "平行支援 SVC-RUNTIME-CONTROL-CLOSEOUT，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 4: Service Layer Completion",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/SVC-RUNTIME-CONTROL-CLOSEOUT/SVC-RUNTIME-CONTROL-CLOSEOUT-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized Claude-approved sidecar acceptance packet. Support artifact and Claude review packet are committed; no canonical truth, runtime, registry, governance, or compose implementation files were changed by this sidecar.",
+    "last_update": "2026-04-28T15:20:15Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-RUNTIME-CONTROL-CLOSEOUT",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：support packet 只新增 support 檔，未動 L1/canonical 或 runtime/registry/compose。",
+      "驗證：runtime-manager 18081:8081 + /__health__、operator-bff PANTHEON_*_URL 指向 runtime-manager:8081 與 evolution:8093、internal_api_routes 已 mount，三組測試路徑皆存在；packet 對 caveat 的處置（auth/JWT/RBAC/MFA、legacy idempotency、deployment approval placeholder 全部交給 SVC-RUNTIME-HARDENING）正確。",
+      "時序差異不阻擋：packet 視 parent 為 review_approved，實際 parent 已於 14:29Z 歸檔 done；packet checklist 對 Gemini，實際 reviewer 因 capacity 自動轉為 Claude。"
+    ],
+    "review_file": "docs/reviews/2026-04-28-svc-runtime-control-closeout-sidecar-acceptance-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T15:20:15Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "187b238cee327343c3bcdefa59c5b394553d71ba",
+      "commit_subject": "SVC-RUNTIME-CONTROL-CLOSEOUT-SIDECAR-ACCEPTANCE add packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-RUNTIME-CONTROL-CLOSEOUT-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 58,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 14,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-RUNTIME-CONTROL-CLOSEOUT-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Acceptance packet and dependency map are ready for review. Support artifact only: support/sidecars/SVC-RUNTIME-CONTROL-CLOSEOUT/SVC-RUNTIME-CONTROL-CLOSEOUT-SIDECAR-ACCEPTANCE.md. Verified 41 focused runtime/control-plane/BFF command tests passed and docker compose config --quiet exited 0. Caveats remain routed to SVC-RUNTIME-HARDENING; no canonical/runtime files edited by this sidecar.",
+      "status": "done",
+      "created_at": "2026-04-28T14:29:21Z",
+      "resolved_at": "2026-04-28T14:48:25Z"
+    },
+    {
+      "task_id": "SVC-RUNTIME-CONTROL-CLOSEOUT-SIDECAR-ACCEPTANCE",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-28T14:48:25Z",
+      "resolved_at": "2026-04-28T15:15:46Z"
+    },
+    {
+      "task_id": "SVC-RUNTIME-CONTROL-CLOSEOUT-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Approved sidecar acceptance packet; support-only, all factual claims verified, return to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-28T15:15:46Z",
+      "resolved_at": "2026-04-28T15:20:15Z"
+    }
+  ],
+  "blockers": []
+}

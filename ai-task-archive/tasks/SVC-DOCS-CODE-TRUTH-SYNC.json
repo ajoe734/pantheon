@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "task_id": "SVC-DOCS-CODE-TRUTH-SYNC",
+  "archived_at": "2026-04-29T06:11:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-DOCS-CODE-TRUTH-SYNC",
+    "title": "Synchronize service blueprint docs with current code truth",
+    "summary_zh": "同步 phase4 starter 與 gap inventory 的 stale service-disposition 文字：以目前 docker-compose.yml 與 service entrypoints 為準，更新 consultation/source-ingest/search 已進 default stack 的實作狀態，並保留 BFF HA topology product-scope defer。",
+    "phase": "Planning Truth / Code Alignment",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "SVC-CONSULTATION-SERVICE-ACTIVATION",
+      "SVC-SOURCE-INGEST-SERVICE",
+      "SVC-SEARCH-SERVICE",
+      "SVC-COMPOSE"
+    ],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/starter-draft.md",
+      "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/phase2-phase6-gap-inventory.md",
+      "BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md",
+      "docker-compose.yml",
+      "services/consultation/main.py",
+      "services/source_ingestion/main.py",
+      "services/search/main.py"
+    ],
+    "acceptance": [
+      "starter draft no longer claims consultation source_ingestion and search are absent from default compose",
+      "gap inventory records old deferral as historical and cites current code backed state",
+      "BFF HA topology remains explicitly deferred and not converted into implementation work",
+      "updated docs cite current compose services and HTTP entrypoints"
+    ],
+    "next": "Owner finalized approved task. Service blueprint docs now cite current compose/service entrypoints for consultation/source-ingest/search; BFF HA topology remains product-scope deferred.",
+    "last_update": "2026-04-29T06:11:13Z",
+    "task_class": "documentation_truth_sync",
+    "auto_created_by": "codex-blueprint-diff-materialization",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "所有四項 acceptance 通過：starter-draft 與 gap inventory 已改成以 docker-compose.yml + service entrypoints 為當前真相，consultation/source-ingest/search 確認進入 default 單機 stack，BFF HA topology 仍為 2026-04-29 product-scope defer 並未轉為實作工作",
+      "非 blocking 後續：gap inventory 的 phase 3/phase 5 殘餘 gap 證據（BFF/feedback/runtime-manager/telemetry Dockerfile 與 BFF snapshot fallback 描述）也已對不上目前 compose，建議另開 follow-up truth-sync slice 處理，不影響本次核准"
+    ],
+    "review_file": ".coordination/reviews/SVC-DOCS-CODE-TRUTH-SYNC-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T06:11:13Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "f834ff35f5157e4bad30c96cafeb040b167d01e1",
+      "commit_subject": "SVC-DOCS-CODE-TRUTH-SYNC align service docs with code truth",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-DOCS-CODE-TRUTH-SYNC",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 148,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 32,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-DOCS-CODE-TRUTH-SYNC",
+      "from": "Claude2",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T03:12:18Z",
+      "resolved_at": "2026-04-29T03:14:13Z"
+    },
+    {
+      "task_id": "SVC-DOCS-CODE-TRUTH-SYNC",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Gemini is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-29T03:25:10Z",
+      "resolved_at": "2026-04-29T03:25:11Z"
+    },
+    {
+      "task_id": "SVC-DOCS-CODE-TRUTH-SYNC",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-29T03:36:44Z",
+      "resolved_at": "2026-04-29T03:36:45Z"
+    },
+    {
+      "task_id": "SVC-DOCS-CODE-TRUTH-SYNC",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Gemini is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-29T03:42:16Z",
+      "resolved_at": "2026-04-29T03:42:16Z"
+    },
+    {
+      "task_id": "SVC-DOCS-CODE-TRUTH-SYNC",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Docs updated for 2026-04-29 code truth: starter/gap inventory now show consultation-svc, source-ingest, and search-svc in default compose with /readyz plus HTTP entrypoints; BFF HA remains product-scope deferred. Verified docker compose config --quiet, compose service list, stale-text grep, and target git diff --check.",
+      "status": "done",
+      "created_at": "2026-04-29T03:52:25Z",
+      "resolved_at": "2026-04-29T04:49:32Z"
+    },
+    {
+      "task_id": "SVC-DOCS-CODE-TRUTH-SYNC",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-29T04:49:32Z",
+      "resolved_at": "2026-04-29T05:00:34Z"
+    },
+    {
+      "task_id": "SVC-DOCS-CODE-TRUTH-SYNC",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Codex2 to Copilot after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-29T05:00:34Z",
+      "resolved_at": "2026-04-29T06:03:21Z"
+    },
+    {
+      "task_id": "SVC-DOCS-CODE-TRUTH-SYNC",
+      "from": "Copilot",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Copilot to Claude2: Copilot is quota-paused while this mainline review is waiting; Claude2 is an available non-paused reviewer lane.",
+      "status": "done",
+      "created_at": "2026-04-29T06:03:21Z",
+      "resolved_at": "2026-04-29T06:07:57Z"
+    },
+    {
+      "task_id": "SVC-DOCS-CODE-TRUTH-SYNC",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: doc edits match current docker-compose.yml and service entrypoints; BFF HA topology remains explicitly deferred. Returned to owner Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-29T06:07:57Z",
+      "resolved_at": "2026-04-29T06:11:13Z"
+    }
+  ],
+  "blockers": []
+}

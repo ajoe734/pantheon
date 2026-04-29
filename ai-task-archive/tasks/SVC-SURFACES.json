@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "task_id": "SVC-SURFACES",
+  "archived_at": "2026-04-28T16:48:17Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-SURFACES",
+    "title": "Package BFF and feedback and rewire BFF off snapshots/defaults",
+    "summary_zh": "替 BFF 與 feedback 補 Docker packaging，並把 BFF read path 從 snapshot/default fallback 改成真正的 service clients。",
+    "phase": "Phase 4: Service Layer Completion",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "SVC-RUNTIME-CONTROL",
+      "SVC-RUNTIME-CONTROL-CLOSEOUT",
+      "SVC-GOVERNANCE-API",
+      "SVC-EVIDENCE",
+      "SVC-SERVICE-DISPOSITION"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/read_store.py",
+      "services/control-plane/bff/",
+      "services/control-plane/feedback/"
+    ],
+    "acceptance": [
+      "BFF no longer depends on snapshot/default fallback as the normal integration path",
+      "BFF and feedback are packaged and runnable in the target stack",
+      "PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK=false is the normal single-VM path and missing backend data surfaces degraded/unavailable instead of seeded defaults",
+      "BFF read clients follow SVC-GOVERNANCE-API and SVC-SERVICE-DISPOSITION boundaries for governance/runtime/evidence/consultation/search data"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase4-2026-04-15-service-layer-completion",
+      "phase": "phase4",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion",
+      "session_file": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-28T09:09:29Z",
+      "session_id": "phase4-2026-04-15-service-layer-completion",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized after Claude review approval. Delivery commit ad7895d records BFF service-backed read surfaces, feedback packaging, compose URL wiring, py_compile, docker compose config, and focused pytest 22 passed.",
+    "last_update": "2026-04-28T16:48:17Z",
+    "review_notes_zh": [
+      "BFF read path 已從 snapshot/default fallback 翻轉為 HTTP service-client 主路徑：read_store.py 的 CanonicalSnapshotAdapter 與 ServiceBackedReadAdapter 都新增 _HTTP_DATASETS 並把 allow_snapshot_fallback 預設成 False；main.py 的 _bool_from_env(default=False) 對齊單 VM 部署語義；missing service 透過 _dataset_surface_status 正確回 unavailable+unverifiable，不再以 seeded default 矇蔽 operator。",
+      "Feedback 服務獨立打包：新增 services/control-plane/feedback/Dockerfile（python:3.11-slim、port 8085）、main.py 補上 /__health__ 別名、compose 改用新 Dockerfile、加上 feedback-data 卷和 TRADER_FEEDBACK_STORE_PATH，舊的 DATABASE_URL/MinIO/NATS 依賴清掉，符合此服務實際 JSONL store 邊界。",
+      "BFF compose 環境改為 service-URL 驅動：移除 governance/runtime/incidents 的 :ro 卷掛載與對應 DATA_DIR env，改注入 PANTHEON_DEPLOYMENT_API_URL/PANTHEON_GOVERNANCE_APPROVAL_API_URL/PANTHEON_CAPITAL_API_URL/PANTHEON_EVOLUTION_API_URL/PANTHEON_INCIDENTS_API_URL/PANTHEON_POSTMORTEMS_API_URL/PANTHEON_TELEMETRY_API_URL/PANTHEON_LINEAGE_READ_URL 並新增 lineage-read 健康依賴；.env.example 同步補齊。",
+      "9 個 HTTP 端點皆已與真實 service routes 對齊（deployment/service.py:928、governance/main.py:225、capital/main.py:417,491、runtime-manager/main.py:221、incidents/main.py:236、postmortems/main.py:280、evolution/main.py:276、lineage-read/main.py:240），runtime-bindings 是唯一需要 Bearer 的 route，read client 也正確帶 PANTHEON_RUNTIME_MANAGER_TOKEN；lineage_edges 額外做 source_id/target_id 與 from/to_artifact_id 欄位轉換以保留 surface 契約。",
+      "新測試 test_read_store_service_clients.py 直接驗證 service-client 路徑（含 dataset_source==service_client）、改寫的 test_read_store_bootstrap_snapshot.py 同時驗證 fallback 關閉/開啟兩種行為。",
+      "本地 pytest 因環境缺少 pytest 模組無法重跑，已依賴 Codex 報告的 BFF 274 passed、feedback 18 passed；本機驗證 py_compile（exit 0）與 docker compose config --quiet（exit 0）通過。",
+      "不在本 packet 範圍：runtime-manager 安全強化由 SVC-RUNTIME-HARDENING 處理；compose stack 啟動/smoke 為 SVC-COMPOSE；consultation/source-ingest/search 啟用為各自的 SVC-* follow-up 任務。"
+    ],
+    "review_file": "docs/reviews/2026-04-28-svc-surfaces-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T16:48:17Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "ad7895d05b126648ffe5e106e3e54f3740e0a4fc",
+      "commit_subject": "SVC-SURFACES rewire BFF read surfaces to services",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-SURFACES",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 66,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 19,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-SURFACES",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented HTTP-backed BFF read clients for governance/deployment/capital/runtime/evidence surfaces, disabled local snapshot fallback as the normal BFF path, packaged control-plane feedback with Docker health wiring, and rewired compose/env to service URLs. Verification: BFF pytest 274 passed, feedback pytest 18 passed, py_compile passed with external pycache, docker compose config --quiet passed, git diff --check passed.",
+      "status": "done",
+      "created_at": "2026-04-28T16:28:31Z",
+      "resolved_at": "2026-04-28T16:41:49Z"
+    },
+    {
+      "task_id": "SVC-SURFACES",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: BFF read path now uses HTTP service clients with snapshot fallback off by default; feedback is independently packaged; service-family URL wiring matches SVC-GOVERNANCE-API/SVC-SERVICE-DISPOSITION boundaries.",
+      "status": "done",
+      "created_at": "2026-04-28T16:41:49Z",
+      "resolved_at": "2026-04-28T16:48:17Z"
+    }
+  ],
+  "blockers": []
+}

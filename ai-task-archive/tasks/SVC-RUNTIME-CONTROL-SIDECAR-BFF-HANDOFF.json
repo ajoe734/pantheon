@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "task_id": "SVC-RUNTIME-CONTROL-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-28T15:25:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-RUNTIME-CONTROL-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-RUNTIME-CONTROL BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-RUNTIME-CONTROL，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Phase 4: Service Layer Completion",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-BASELINE"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-RUNTIME-CONTROL/SVC-RUNTIME-CONTROL-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved support-only BFF/frontend handoff packet. Artifact remains support/sidecars/SVC-RUNTIME-CONTROL/SVC-RUNTIME-CONTROL-SIDECAR-BFF-HANDOFF.md; Claude approved sidecar scope, BFF/frontend guardrails, and 39-test evidence. Parent owner may absorb or discard packet sections.",
+    "last_update": "2026-04-28T15:25:07Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-RUNTIME-CONTROL",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar 為 support-only：未動 canonical/contract/runtime/BFF 真相",
+      "核對 docker-compose env 路由與 internal_api_routes 共享 RuntimeManagerService 一致",
+      "重跑 39 項驗證測試全數通過 (39 passed)",
+      "§4.2 明確禁止前端繞過 BFF 直呼 runtime-manager",
+      "§3、§8 將剩餘缺口正確路由到 runtime-control hardening / SVC-COMPOSE / SVC-SURFACES"
+    ],
+    "review_file": "docs/reviews/2026-04-28-svc-runtime-control-sidecar-bff-handoff-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T15:25:07Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 60,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 14,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-RUNTIME-CONTROL-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only BFF/frontend handoff packet is ready at support/sidecars/SVC-RUNTIME-CONTROL/SVC-RUNTIME-CONTROL-SIDECAR-BFF-HANDOFF.md; targeted runtime-manager/BFF verification passed (39 tests).",
+      "status": "done",
+      "created_at": "2026-04-28T14:36:03Z",
+      "resolved_at": "2026-04-28T15:20:14Z"
+    },
+    {
+      "task_id": "SVC-RUNTIME-CONTROL-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Approved as support-only handoff packet; verified evidence (39 tests), env routing, sidecar scope, and frontend/BFF guardrails. Returning to owner for closeout.",
+      "status": "done",
+      "created_at": "2026-04-28T15:20:14Z",
+      "resolved_at": "2026-04-28T15:25:07Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "task_id": "SVC-RUNTIME-CONTROL-CLOSEOUT",
+  "archived_at": "2026-04-28T14:29:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-RUNTIME-CONTROL-CLOSEOUT",
+    "title": "Review and close SVC-RUNTIME-CONTROL with hardening caveats",
+    "summary_zh": "由 Gemini 對 SVC-RUNTIME-CONTROL handoff 做 final review/closeout；若接受，關閉 task，並把 auth/JWT、legacy idempotency convergence、placeholder deployment approval 明確記為後續 hardening，不宣稱 production-grade。",
+    "phase": "Phase 4: Service Layer Completion",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-RUNTIME-CONTROL"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-28-svc-runtime-control-claude-handoff.md",
+      "services/runtime-manager/internal_api_routes.py",
+      "services/control_plane/internal_api.py",
+      "ai-status.json"
+    ],
+    "acceptance": [
+      "Gemini produces approved or rejected disposition for SVC-RUNTIME-CONTROL",
+      "auth JWT validation legacy idempotency convergence and placeholder deployment approval are recorded as post-close hardening gaps",
+      "SVC-RUNTIME-CONTROL is either archived done or returned with concrete reviewer blockers"
+    ],
+    "next": "Owner finalized approved closeout. Gemini/Codex review accepted SVC-RUNTIME-CONTROL with production-hardening caveats preserved in SVC-RUNTIME-HARDENING; no production-grade claim made for auth/JWT/RBAC/MFA, legacy idempotency convergence, or deployment approval authority.",
+    "last_update": "2026-04-28T14:29:55Z",
+    "task_class": "execution_closeout",
+    "auto_created_by": "codex-blueprint-diff-materialization",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：SVC-RUNTIME-CONTROL 已由 Gemini review_approved，closeout caveats 已落到 SVC-RUNTIME-HARDENING。",
+      "未宣稱 production-grade；auth/JWT/RBAC/MFA、legacy idempotency convergence、deployment approval placeholder 仍是後續 hardening。",
+      "驗證：pytest runtime-manager internal_api_routes/control_plane incident/BFF command_executor 共 41 passed；docker compose config --quiet 通過。"
+    ],
+    "review_file": "docs/reviews/2026-04-28-svc-runtime-control-claude-handoff.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T14:29:55Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 43,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 13,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-RUNTIME-CONTROL-CLOSEOUT",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Closeout review approved. Hardening gaps are tracked in SVC-RUNTIME-HARDENING; owner can finalize this closeout while SVC-RUNTIME-CONTROL remains pending Claude owner finalization to done.",
+      "status": "done",
+      "created_at": "2026-04-28T14:16:13Z",
+      "resolved_at": "2026-04-28T14:26:01Z"
+    },
+    {
+      "task_id": "SVC-RUNTIME-CONTROL-CLOSEOUT",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Auto-reassigned ownership from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-28T14:26:01Z",
+      "resolved_at": "2026-04-28T14:29:55Z"
+    }
+  ],
+  "blockers": []
+}

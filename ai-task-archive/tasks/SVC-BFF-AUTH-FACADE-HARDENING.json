@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "SVC-BFF-AUTH-FACADE-HARDENING",
+  "archived_at": "2026-04-29T12:42:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-BFF-AUTH-FACADE-HARDENING",
+    "title": "Harden BFF auth facade beyond stub bearer parser",
+    "summary_zh": "把 operator-bff 自身的 stub bearer parser 升級為可驗證的 auth facade，對齊 runtime-manager 已完成的 JWT/RBAC/MFA hardened boundary；保留明確 dev/test stub mode 但不能在 production 預設接受任意 bearer token。",
+    "phase": "Production Readiness / BFF Security",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-RUNTIME-HARDENING",
+      "SVC-SURFACES"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/test_command_executor.py",
+      "services/control-plane/bff/test_settings_contract.py",
+      "services/runtime_auth_inbound.py",
+      "docker-compose.yml"
+    ],
+    "acceptance": [
+      "BFF production/default mode verifies JWT issuer audience expiry and subject before building OperatorIdentity",
+      "BFF role and MFA checks reject invalid missing insufficient role and non-MFA high risk operator actions",
+      "Legacy colon stub token remains available only behind explicit dev/test permissive env flag",
+      "Tests cover valid JWT invalid JWT role denial MFA denial and dev stub compatibility",
+      "BFF still propagates auth MFA and idempotency headers to downstream command executor"
+    ],
+    "next": "Owner finalized approved task: BFF auth facade hardening verified. JWT strict mode enforces issuer/audience/expiry/subject/role/MFA; stub mode isolated to PANTHEON_BFF_AUTH_STUB=true; secret-misconfiguration returns 401 without leaking env keys. All 314 BFF tests pass.",
+    "last_update": "2026-04-29T12:42:49Z",
+    "review_notes_zh": [
+      "BFF auth facade hardening 已核對並補一個 reviewer hardening：JWT sub 必填，缺少 JWT secret 時回 401 且不外洩 runtime env key；明確 stub mode、JWT issuer/audience/expiry/role/MFA denial 與 settings/command MFA header path 均符合驗收。驗證：python3 -m pytest services/control-plane/bff/ -q => 314 passed, 32 warnings。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T12:42:49Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "d2a609ee4019e19f1a8bfdef1b65e8bdc8f2fdb3",
+      "commit_subject": "SVC-BFF-AUTH-FACADE-HARDENING finalize BFF auth facade hardening",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-BFF-AUTH-FACADE-HARDENING",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 101,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-BFF-AUTH-FACADE-HARDENING",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "BFF auth facade hardening complete. Changes: (1) main.py _extract_identity_jwt: passes mfa_required=True from PANTHEON_BFF_MFA_REQUIRED env var so MFA enforcement works at the identity layer; maps AUTH_JWT_SECRET_MISSING to 401 to avoid server config leakage. (2) test_settings_contract.py: updated to explicitly use @patch.dict(PANTHEON_BFF_AUTH_STUB=true) so contract tests are unambiguous about stub mode. (3) conftest.py: new autouse fixture sets PANTHEON_BFF_AUTH_STUB=true as default for all BFF tests unless explicitly overridden. (4) test_bff_auth_facade.py already covers all acceptance criteria (34 tests). All 313 BFF tests pass. Verify: python3 -m pytest services/control-plane/bff/ -q",
+      "status": "done",
+      "created_at": "2026-04-29T12:25:42Z",
+      "resolved_at": "2026-04-29T12:36:00Z"
+    },
+    {
+      "task_id": "SVC-BFF-AUTH-FACADE-HARDENING",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. Reviewer added JWT subject hardening and secret-misconfiguration response sanitization; full BFF suite passes (314 passed). Owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-29T12:36:00Z",
+      "resolved_at": "2026-04-29T12:42:49Z"
+    }
+  ],
+  "blockers": []
+}

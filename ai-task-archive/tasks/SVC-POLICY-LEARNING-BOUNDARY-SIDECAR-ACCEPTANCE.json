@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "SVC-POLICY-LEARNING-BOUNDARY-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-28T18:49:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-POLICY-LEARNING-BOUNDARY-SIDECAR-ACCEPTANCE",
+    "title": "Prepare SVC-POLICY-LEARNING-BOUNDARY acceptance packet and dependency map",
+    "summary_zh": "平行支援 SVC-POLICY-LEARNING-BOUNDARY，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Future-State Service Materialization",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-COMPOSE"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-POLICY-LEARNING-BOUNDARY/SVC-POLICY-LEARNING-BOUNDARY-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar acceptance packet without recording a delivery commit because this support-only sidecar is being absorbed into the active parent implementation review packet.",
+    "last_update": "2026-04-28T18:49:00Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-POLICY-LEARNING-BOUNDARY",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar 範圍正確，僅新增 support packet 且未動 canonical/runtime/compose",
+      "Compose port 占用 (8096-8099)、acceptance/dependency map、disabled adapter 邊界與 gate 文件參照皆已驗證準確",
+      "小幅快照偏移：packet §1 稱 parent 為 todo，目前為 in_progress (Codex2/Codex)；§9 handoff 仍寫 Copilot——交由 parent owner 在吸收時刷新即可，不阻擋此 sidecar 收尾"
+    ],
+    "review_file": "support/sidecars/SVC-POLICY-LEARNING-BOUNDARY/SVC-POLICY-LEARNING-BOUNDARY-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T18:49:00Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 83,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 24,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-POLICY-LEARNING-BOUNDARY-SIDECAR-ACCEPTANCE",
+      "from": "Copilot",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-28T18:14:40Z",
+      "resolved_at": "2026-04-28T18:14:40Z"
+    },
+    {
+      "task_id": "SVC-POLICY-LEARNING-BOUNDARY-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Support-only acceptance packet created at support/sidecars/SVC-POLICY-LEARNING-BOUNDARY/SVC-POLICY-LEARNING-BOUNDARY-SIDECAR-ACCEPTANCE.md; ready for Copilot review. No canonical truth or runtime implementation modified by this sidecar.",
+      "status": "done",
+      "created_at": "2026-04-28T18:29:09Z",
+      "resolved_at": "2026-04-28T18:37:28Z"
+    },
+    {
+      "task_id": "SVC-POLICY-LEARNING-BOUNDARY-SIDECAR-ACCEPTANCE",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-28T18:37:28Z",
+      "resolved_at": "2026-04-28T18:44:50Z"
+    },
+    {
+      "task_id": "SVC-POLICY-LEARNING-BOUNDARY-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Sidecar acceptance packet approved; scope kept to support artifact, references verified, returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-28T18:44:50Z",
+      "resolved_at": "2026-04-28T18:49:00Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "SVC-SURFACES-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-28T14:09:21Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-SURFACES-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-SURFACES BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-SURFACES，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Phase 4: Service Layer Completion",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-EVIDENCE",
+      "SVC-SERVICE-DISPOSITION"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-SURFACES/SVC-SURFACES-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar. BFF/frontend handoff packet remains support-only; parent SVC-SURFACES owner decides whether to absorb it into mainline work.",
+    "last_update": "2026-04-28T14:09:21Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-SURFACES",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：handoff packet 僅新增支援性材料，未提升為 canonical truth；BFF packaging/fallback flag、feedback service boundary、telemetry/lineage query gaps 與 SVC-SERVICE-DISPOSITION negative boundary 的描述已抽查，足以交由 parent owner 決定是否吸收進 SVC-SURFACES。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T14:09:21Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "ed1a756964a191bcb5e836606a5beec60e011ccf",
+      "commit_subject": "SVC-SURFACES-SIDECAR-BFF-HANDOFF add BFF handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-SURFACES-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 39,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 12,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-SURFACES-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only BFF/frontend handoff packet is ready for review at support/sidecars/SVC-SURFACES/SVC-SURFACES-SIDECAR-BFF-HANDOFF.md. It identifies fallback-disabled gaps, feedback service boundary ambiguity, telemetry/lineage query gaps, and the SVC-SERVICE-DISPOSITION negative boundary for consultation/source_ingestion/search.",
+      "status": "done",
+      "created_at": "2026-04-28T13:59:20Z",
+      "resolved_at": "2026-04-28T14:03:28Z"
+    },
+    {
+      "task_id": "SVC-SURFACES-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. Support-only BFF/frontend handoff packet is accepted; owner should finalize this sidecar to done and leave absorption decisions to SVC-SURFACES parent owner.",
+      "status": "done",
+      "created_at": "2026-04-28T14:03:28Z",
+      "resolved_at": "2026-04-28T14:09:21Z"
+    }
+  ],
+  "blockers": []
+}

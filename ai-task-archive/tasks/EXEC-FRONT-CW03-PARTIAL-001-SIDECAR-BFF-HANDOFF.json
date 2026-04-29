@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "task_id": "EXEC-FRONT-CW03-PARTIAL-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-29T13:30:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-FRONT-CW03-PARTIAL-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare EXEC-FRONT-CW03-PARTIAL-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 EXEC-FRONT-CW03-PARTIAL-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Execution / Frontend Lane Implementation",
+    "owner": "Gemini",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/EXEC-FRONT-CW03-PARTIAL-001/EXEC-FRONT-CW03-PARTIAL-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar handoff packet and closed it.",
+    "last_update": "2026-04-20T17:15:00Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EXEC-FRONT-CW03-PARTIAL-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "packet 已核對：BFF route / projection / authority mapping 與 support handoff 一致；linked_evidence contract gap、transcript gate 與 partial activation 邊界敘述清楚，可交由 parent owner 決定是否吸收進主線。"
+    ]
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-FRONT-CW03-PARTIAL-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Support packet reviewed and approved. The handoff is consistent with the live BFF contract, partial-activation boundaries, and current residual gaps. Owner can finalize this sidecar when ready.",
+      "status": "done",
+      "created_at": "2026-04-20T16:45:43Z",
+      "resolved_at": "2026-04-20T17:15:00Z"
+    }
+  ],
+  "blockers": []
+}

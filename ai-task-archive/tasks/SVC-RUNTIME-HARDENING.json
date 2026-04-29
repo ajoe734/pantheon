@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "task_id": "SVC-RUNTIME-HARDENING",
+  "archived_at": "2026-04-28T17:39:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-RUNTIME-HARDENING",
+    "title": "Harden runtime-control auth idempotency and approval authority",
+    "summary_zh": "把 runtime-control closeout 只記錄的 hardening caveats 轉成實作：JWT/RBAC/MFA、legacy internal API idempotency convergence、deployment approval placeholder 移除並改接權威 governance/deployment API。",
+    "phase": "Phase 4 Follow-up / Production Hardening",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-RUNTIME-CONTROL-CLOSEOUT",
+      "SVC-GOVERNANCE-API"
+    ],
+    "artifacts": [
+      "services/runtime-manager/",
+      "services/control_plane/internal_api.py",
+      "services/control-plane/bff/command_executor.py",
+      "services/governance/",
+      "services/deployment/"
+    ],
+    "acceptance": [
+      "protected runtime and internal command routes validate JWT claims RBAC and MFA policy",
+      "legacy internal API kill-switch path uses the durable foundation idempotency record path or has no divergent side-effect replay",
+      "ApproveDeployment no longer creates placeholder approval ids and calls the authoritative governance or deployment API",
+      "targeted tests cover auth denial MFA denial idempotent replay and approval integration"
+    ],
+    "next": "Owner finalized SVC-RUNTIME-HARDENING at commit 0e24f9e. Acceptance met: (1) inbound JWT/RBAC/MFA enforced via services/runtime_auth_inbound.py on runtime-manager and legacy services/control_plane/internal_api.py with permissive-mode JWT fallback hardening; (2) legacy internal-API kill-switch routed through service.execute_kill_switch with stable foundation idempotency keys (services/runtime-manager/internal_api_routes.py); (3) ApproveDeployment calls deployment-plane status authority (POST /api/deployment/plans/{plan_id}/status), placeholder approval ids and invalid governance DeploymentPlan lookup removed; ApproveDecision remains for governance ApprovalDecisions; compose service URLs (PANTHEON_DEPLOYMENT_API_URL, PANTHEON_GOVERNANCE_APPROVAL_API_URL) wired by SVC-COMPOSE; (4) 15 targeted tests in services/runtime-manager/test_runtime_hardening.py plus updated test_internal_api_incident header. Codex re-review approved at 2026-04-28T17:33:45Z (72 tests passed); evidence at docs/reviews/2026-04-28-svc-runtime-hardening-codex-rereview.md.",
+    "last_update": "2026-04-28T17:39:36Z",
+    "task_class": "production_hardening",
+    "auto_created_by": "codex-blueprint-diff-materialization",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "前一輪 deployment authority / governance target_type / compose wiring 問題已修正；re-review 期間補了一個 shared inbound auth hardening fix，未驗證 JWT-shaped token 不再在 permissive mode 降級成 legacy operator token；72 tests pass，僅剩既有 datetime.utcnow deprecation warnings。"
+    ],
+    "review_file": "docs/reviews/2026-04-28-svc-runtime-hardening-codex-rereview.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T17:39:36Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "0e24f9e9a8aa96fcaa470257cc6ea609fbbc9f13",
+      "commit_subject": "SVC-RUNTIME-HARDENING enforce inbound JWT/RBAC/MFA and deployment-plane approval authority",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-RUNTIME-HARDENING",
+        "Reviewer": "Codex",
+        "- services/runtime_auth_inbound.py": "shared inbound auth module enforcing",
+        "- services/runtime-manager/main.py": "applies require_authn role bundles",
+        "- services/runtime-manager/internal_api_routes.py": "legacy operator",
+        "- services/control_plane/internal_api.py": "legacy incident control-plane",
+        "- services/control_plane/test_internal_api_incident.py": "align consultation",
+        "- services/runtime-manager/test_runtime_hardening.py": "15 targeted tests",
+        "passed by Codex re-review at 2026-04-28T17": "33:45Z.",
+        "Co-Authored-By": "Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 61,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 21,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-RUNTIME-HARDENING",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Hardening implementation complete. Three acceptance items + targeted tests delivered: (1) JWT/RBAC/MFA validation in services/runtime_auth_inbound.py applied to runtime-manager main.py and legacy services/control_plane/internal_api.py with HS256 verification, role bundles, and gated MFA enforcement; (2) legacy internal-API kill-switch path now flows through service.execute_kill_switch via _SharedKillSwitchProxy.dispatch in services/runtime-manager/internal_api_routes.py, deriving stable idempotency keys when callers do not supply one; (3) approve_deployment route calls governance ApprovalDecision API (review→decide) using the validated auth context and returns 503/404/400 cleanly when governance is unconfigured/empty/invalid; (4) 15 new tests in services/runtime-manager/test_runtime_hardening.py cover bearer/MFA denial, JWT signature/expiry, role denial, foundation idempotency replay, and governance integration. Full pytest sweep: services/runtime-manager + services/control_plane + services/control-plane/bff/test_command_executor + services/governance + services/deployment = 76 passed; docker compose config exit 0. New env knobs: PANTHEON_RUNTIME_AUTH_MODE, PANTHEON_RUNTIME_JWT_SECRET, PANTHEON_RUNTIME_JWT_ISSUER, PANTHEON_RUNTIME_JWT_AUDIENCE, PANTHEON_RUNTIME_MFA_REQUIRED, PANTHEON_GOVERNANCE_API_URL.",
+      "status": "done",
+      "created_at": "2026-04-28T16:24:09Z",
+      "resolved_at": "2026-04-28T16:33:53Z"
+    },
+    {
+      "task_id": "SVC-RUNTIME-HARDENING",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-28T16:33:53Z",
+      "resolved_at": "2026-04-28T16:38:19Z"
+    },
+    {
+      "task_id": "SVC-RUNTIME-HARDENING",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review requested changes. See docs/reviews/2026-04-28-svc-runtime-hardening-codex-review.md: ApproveDeployment is not wired to PANTHEON_GOVERNANCE_APPROVAL_API_URL/default runtime-manager compose, forwards non-governance actor roles that real governance API rejects, and searches target_type=DeploymentPlan which governance cannot create. Targeted tests passed (69 passed), but real service-family approval authority path needs correction.",
+      "status": "done",
+      "created_at": "2026-04-28T16:38:19Z",
+      "resolved_at": "2026-04-28T16:38:19Z"
+    },
+    {
+      "task_id": "SVC-RUNTIME-HARDENING",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "ApproveDeployment refactored to deployment-plane authority (POST /api/deployment/plans/{plan_id}/status). Governance target_type=DeploymentPlan lookup removed entirely (governance enum can never produce that target). Compose wires PANTHEON_DEPLOYMENT_API_URL and PANTHEON_GOVERNANCE_APPROVAL_API_URL into the runtime-manager service. New contract test (test_approve_deployment_calls_deployment_status_with_real_payload_shape) validates the wire body against the real services/deployment/models.UpdatePlanStatusRequest Pydantic schema, addressing the permissive-mock concern. ApproveDecision remains the separate command for governance ApprovalDecisions. 71 tests pass across the review-cited suite (runtime-manager hardening + internal_api_routes, BFF command_executor, governance API, service-family contract). Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-28T17:10:41Z",
+      "resolved_at": "2026-04-28T17:33:45Z"
+    },
+    {
+      "task_id": "SVC-RUNTIME-HARDENING",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Codex re-review approved. ApproveDeployment now uses deployment-plane status authority, invalid governance DeploymentPlan lookup is gone, compose service URLs are wired, real deployment schema contract coverage exists, and reviewer-added JWT fallback hardening is covered. Owner may finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-28T17:33:45Z",
+      "resolved_at": "2026-04-28T17:39:36Z"
+    }
+  ],
+  "blockers": []
+}

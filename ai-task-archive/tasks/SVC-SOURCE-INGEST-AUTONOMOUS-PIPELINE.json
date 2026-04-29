@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "task_id": "SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE",
+  "archived_at": "2026-04-29T05:55:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE",
+    "title": "Advance source-ingest to autonomous durable ingest pipeline",
+    "summary_zh": "把 source-ingest 從接收 already-fetched records 的 deployable wrapper 推進成 baseline autonomous ingest pipeline：支援配置型 connector fetch job，持久化 source/evidence refs、水位、audit、DLQ，並補 smoke 覆蓋。",
+    "phase": "Service Hardening / Durable Source Pipeline",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "SVC-SOURCE-INGEST-SERVICE",
+      "SVC-COMPOSE"
+    ],
+    "artifacts": [
+      "services/source_ingestion/",
+      "services/knowledge/",
+      "docker-compose.yml",
+      "scripts/smoke_honest_stack.py"
+    ],
+    "acceptance": [
+      "service can trigger configured connector fetch without caller supplied already fetched records",
+      "ingest run persists source records watermarks audit actions and DLQ replay",
+      "source and evidence refs are durable and queryable by downstream consumers",
+      "compose or smoke verifies autonomous ingest happy path and failure replay"
+    ],
+    "next": "Owner finalized approved autonomous source-ingest pipeline. Delivery includes configured connector fetch jobs, durable source/evidence refs, watermarks, audit, DLQ replay, compose wiring, and smoke coverage. Verification on 2026-04-29: focused source_ingestion/evidence pytest passed (17 tests), py_compile passed for touched modules/scripts, and docker compose config --quiet passed.",
+    "last_update": "2026-04-29T05:55:45Z",
+    "task_class": "service_pipeline_hardening",
+    "auto_created_by": "codex-blueprint-diff-materialization",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：configured connector fetch 可由 connector_id 自主觸發，source/evidence refs、水位、audit、DLQ 與 replay 狀態皆持久化且可查詢；compose/smoke path 覆蓋 autonomous ingest happy path 與 failure replay。驗證：source_ingestion/evidence 焦點 pytest 17 passed，py_compile passed，docker compose config --quiet passed。"
+    ],
+    "review_file": "docs/reviews/2026-04-29-svc-source-ingest-autonomous-pipeline-codex2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T05:55:45Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "102ca2c3afaeb82e335642e8d5a1c1f7df753fb8",
+      "commit_subject": "SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE approve autonomous source ingest",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 149,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 31,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE",
+      "from": "Copilot",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-29T04:15:46Z",
+      "resolved_at": "2026-04-29T04:15:46Z"
+    },
+    {
+      "task_id": "SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-29T04:32:46Z",
+      "resolved_at": "2026-04-29T04:32:47Z"
+    },
+    {
+      "task_id": "SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE",
+      "from": "Copilot",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-29T04:43:47Z",
+      "resolved_at": "2026-04-29T04:43:47Z"
+    },
+    {
+      "task_id": "SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Gemini is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-29T04:55:00Z",
+      "resolved_at": "2026-04-29T04:55:00Z"
+    },
+    {
+      "task_id": "SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Ready for review: source-ingest now supports persisted configured connector fetch by connector_id, writes source/evidence refs to durable JSONL with query APIs, records watermarks/audit/DLQ state, exposes targeted DLQ replay, and honest-stack smoke covers autonomous ingest plus failure replay. Verification: focused pytest passed (19 tests) and python3 py_compile passed for touched modules/scripts.",
+      "status": "done",
+      "created_at": "2026-04-29T05:22:03Z",
+      "resolved_at": "2026-04-29T05:32:12Z"
+    },
+    {
+      "task_id": "SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-29T05:32:12Z",
+      "resolved_at": "2026-04-29T05:54:45Z"
+    },
+    {
+      "task_id": "SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved by Codex2. Owner Codex should finalize to done after confirming delivery checkpoint.",
+      "status": "done",
+      "created_at": "2026-04-29T05:54:45Z",
+      "resolved_at": "2026-04-29T05:55:45Z"
+    }
+  ],
+  "blockers": []
+}

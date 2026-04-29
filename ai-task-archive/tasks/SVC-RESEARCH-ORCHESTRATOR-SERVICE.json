@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE",
+  "archived_at": "2026-04-28T19:18:50Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE",
+    "title": "Materialize research-orchestrator-svc wrapper without OSS activation",
+    "summary_zh": "實作 research-orchestrator-svc HTTP wrapper，負責 research task/run lifecycle、artifact/proposal handoff 與 bounded dispatch；不啟用 Qlib/TRL/RL production paths。",
+    "phase": "Future-State Service Materialization",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-SOURCE-INGEST-SERVICE",
+      "SVC-SEARCH-SERVICE",
+      "SVC-COMPOSE"
+    ],
+    "artifacts": [
+      "services/research/",
+      "services/registry/",
+      "docker-compose.yml"
+    ],
+    "acceptance": [
+      "research-orchestrator service exposes task run status artifact handoff and health APIs",
+      "Dockerfile env storage and compose wiring are added",
+      "external learning framework production activation remains disabled unless separately approved",
+      "tests cover task lifecycle handoff idempotency and compose config"
+    ],
+    "next": "Owner finalized approved research-orchestrator-svc wrapper and closed it. Review approved by Codex; wrapper remains non-production for OSS learning adapters and includes lifecycle, artifact/proposal handoff, bounded dispatch, Docker/compose wiring, and targeted tests.",
+    "last_update": "2026-04-28T19:18:50Z",
+    "task_class": "future_state_service_wrapper",
+    "auto_created_by": "codex-blueprint-diff-materialization",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "research-orchestrator-svc 審查通過：HTTP task/run/status/artifact/proposal handoff、bounded stub dispatch、production adapter rejection、Docker/compose wiring與 targeted tests 均符合 task acceptance。驗證：pytest services/research/tests/test_research_orchestrator_http_service.py services/research/tests/test_research_orchestrator_compose_activation.py；docker compose config --quiet。"
+    ],
+    "review_file": "docs/reviews/2026-04-28-svc-research-orchestrator-service-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T19:18:50Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 93,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 26,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented research-orchestrator-svc wrapper with task/run lifecycle APIs, artifact/proposal handoff, bounded stub dispatch, production adapter rejection, Docker/compose wiring, and targeted tests. Verification: pytest services/research/tests/test_research_orchestrator_http_service.py services/research/tests/test_research_orchestrator_compose_activation.py; docker compose config --quiet.",
+      "status": "done",
+      "created_at": "2026-04-28T19:07:59Z",
+      "resolved_at": "2026-04-28T19:15:46Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. research-orchestrator-svc wrapper satisfies task acceptance; owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-28T19:15:46Z",
+      "resolved_at": "2026-04-28T19:18:50Z"
+    }
+  ],
+  "blockers": []
+}

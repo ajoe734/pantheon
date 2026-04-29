@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "SVC-DOCS-CODE-TRUTH-SYNC-POST-AUTONOMOUS",
+  "archived_at": "2026-04-29T12:10:58Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-DOCS-CODE-TRUTH-SYNC-POST-AUTONOMOUS",
+    "title": "Refresh docs after autonomous source and search pipeline work",
+    "summary_zh": "source-ingest/search 後續已前進到 configured autonomous fetch、DLQ replay 與 durable search no-document path；更新 phase4 starter 與 gap inventory，避免文件仍描述 already-fetched-only 或 autonomous later。",
+    "phase": "Planning Truth / Code Alignment",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE",
+      "SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE",
+      "SVC-DOCS-CODE-TRUTH-SYNC"
+    ],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/starter-draft.md",
+      "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/phase2-phase6-gap-inventory.md",
+      "services/source_ingestion/main.py",
+      "services/search/main.py",
+      "scripts/smoke_honest_stack.py"
+    ],
+    "acceptance": [
+      "Docs no longer say source-ingest is already-fetched-only or autonomous fetching is later",
+      "Docs reflect configured connector fetch persisted watermarks DLQ routing and DLQ replay",
+      "Docs reflect search durable evidence/index no-doc query path while retaining request document compatibility",
+      "Docs preserve BFF HA product-scope defer and research/learning production activation defer",
+      "Code references and compose dispositions match current implementation truth"
+    ],
+    "next": "Finalized: starter-draft.md and phase2-phase6-gap-inventory.md updated to reflect configured connector fetch, persisted watermarks, DLQ routing and replay, and durable search no-doc index path. Review approved by Codex with 27 contract tests passing. All acceptance criteria met.",
+    "last_update": "2026-04-29T12:10:58Z",
+    "review_notes_zh": [
+      "審閱通過：starter-draft.md 與 phase2-phase6-gap-inventory.md 已移除 source-ingest already-fetched-only/autonomous later 舊描述，並與 source_ingestion/search 服務、compose wiring、smoke path 的 configured connector fetch、watermark、DLQ replay、durable no-doc search/index reload truth 對齊；BFF HA product-scope defer 與 research/learning production activation defer 仍保留。驗證：27 個 source-ingest/search pytest 合約測試通過。"
+    ],
+    "review_file": "docs/reviews/2026-04-29-svc-docs-code-truth-sync-post-autonomous-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T12:10:58Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "de118964d57b22557ebb2f31ee7e3be71ae34984",
+      "commit_subject": "SVC-DOCS-CODE-TRUTH-SYNC-POST-AUTONOMOUS finalize approved doc sync",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-DOCS-CODE-TRUTH-SYNC-POST-AUTONOMOUS",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 106,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-DOCS-CODE-TRUTH-SYNC-POST-AUTONOMOUS",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Doc refresh complete. starter-draft.md and phase2-phase6-gap-inventory.md section 7 now reflect the autonomous pipeline work. Key changes: source-ingest rows remove 'already-fetched-only' framing and describe configured connector fetch, watermark advancement, DLQ routing, and DLQ replay; search-svc rows add durable no-doc index path, index reload/status endpoints, and backward-compatible request-document mode. All acceptance criteria met. Please review against services/source_ingestion/main.py, services/search/main.py, and scripts/smoke_honest_stack.py.",
+      "status": "done",
+      "created_at": "2026-04-29T11:39:28Z",
+      "resolved_at": "2026-04-29T11:57:42Z"
+    },
+    {
+      "task_id": "SVC-DOCS-CODE-TRUTH-SYNC-POST-AUTONOMOUS",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-29T11:57:42Z",
+      "resolved_at": "2026-04-29T12:00:36Z"
+    },
+    {
+      "task_id": "SVC-DOCS-CODE-TRUTH-SYNC-POST-AUTONOMOUS",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. Docs match current source-ingest/search autonomous pipeline truth and can be finalized by owner.",
+      "status": "done",
+      "created_at": "2026-04-29T12:00:36Z",
+      "resolved_at": "2026-04-29T12:10:58Z"
+    }
+  ],
+  "blockers": []
+}

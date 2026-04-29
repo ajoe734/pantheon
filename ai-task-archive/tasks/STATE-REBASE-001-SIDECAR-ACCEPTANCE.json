@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "task_id": "STATE-REBASE-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-29T13:30:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "STATE-REBASE-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare STATE-REBASE-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 STATE-REBASE-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / Wave 1 - State Rebaseline",
+    "owner": "Gemini",
+    "reviewer": "Claude",
+    "status": "done",
+    "terminal_outcome": "completed",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/STATE-REBASE-001/STATE-REBASE-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar acceptance packet and closed it. Verification confirmed for STATE-REBASE-001.",
+    "last_update": "2026-04-19T16:45:00Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "STATE-REBASE-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_file": "support/sidecars/STATE-REBASE-001/STATE-REBASE-001-SIDECAR-ACCEPTANCE.md",
+    "review_notes_zh": [
+      "Sidecar acceptance packet 通過審查：（1）僅建立 support/sidecars/ artifact，未修改任何 canonical truth；（2）依賴圖涵蓋 ai-status.json 中全部主線 STATE-REBASE-001 依賴任務；（3）引用的 docs/reviews/2026-04-19-state-rebaseline-001.md 確認存在，recompute_agents() 已在 ai_status.py:991 驗證。Packet 可作為 STATE-REBASE-001 正式 done 的支援材料。"
+    ]
+  },
+  "handoffs": [
+    {
+      "task_id": "STATE-REBASE-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T15:50:19Z",
+      "resolved_at": "2026-04-19T15:51:16Z"
+    },
+    {
+      "task_id": "STATE-REBASE-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Acceptance packet reviewed and approved. All three criteria met. Returning to Gemini for finalization to done.",
+      "status": "done",
+      "created_at": "2026-04-19T16:22:35Z",
+      "resolved_at": "2026-04-19T16:40:22Z"
+    }
+  ],
+  "blockers": []
+}

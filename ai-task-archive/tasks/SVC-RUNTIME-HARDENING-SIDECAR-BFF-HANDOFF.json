@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "SVC-RUNTIME-HARDENING-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-28T15:53:03Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-RUNTIME-HARDENING-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-RUNTIME-HARDENING BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-RUNTIME-HARDENING，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Phase 4 Follow-up / Production Hardening",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-RUNTIME-CONTROL-CLOSEOUT"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-RUNTIME-HARDENING/SVC-RUNTIME-HARDENING-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar BFF/frontend handoff packet and closed it. Support artifact is committed and ready for parent owner absorption decisions.",
+    "last_update": "2026-04-28T15:53:03Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-RUNTIME-HARDENING",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar 為 support-only，未動 canonical/L1 或 runtime/BFF/governance 實作",
+      "確認瀏覽器寫入路徑仍維持 BFF POST /api/v1/operator/commands，未引入直連 runtime-manager/internal API",
+      "Gap matrix 對齊 SVC-RUNTIME-HARDENING 的 JWT/RBAC/MFA、idempotency convergence、ApproveDeployment 真確路由",
+      "Operator journey 將正常、auth/MFA 拒絕、降級三條路線分開描述",
+      "驗證 focus 對 parent owner 有用且不宣稱本 sidecar 已完成實作驗證"
+    ],
+    "review_file": "support/sidecars/SVC-RUNTIME-HARDENING/SVC-RUNTIME-HARDENING-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T15:53:03Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "b70a883d1be2ad7360052d3950f5819f4b2bad41",
+      "commit_subject": "SVC-RUNTIME-HARDENING-SIDECAR-BFF-HANDOFF add packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-RUNTIME-HARDENING-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 62,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 16,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-RUNTIME-HARDENING-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Handoff packet ready for review: support/sidecars/SVC-RUNTIME-HARDENING/SVC-RUNTIME-HARDENING-SIDECAR-BFF-HANDOFF.md. Support-only artifact; no canonical truth or implementation files changed. Packet maps BFF/frontend gaps for JWT/RBAC/MFA, idempotency convergence, and authoritative ApproveDeployment routing, and keeps browser writes on POST /api/v1/operator/commands.",
+      "status": "done",
+      "created_at": "2026-04-28T15:21:10Z",
+      "resolved_at": "2026-04-28T15:30:50Z"
+    },
+    {
+      "task_id": "SVC-RUNTIME-HARDENING-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Sidecar handoff packet 為 support-only：BFF 端點、command_executor 路由、internal_api 的 placeholder approval id 三項主張皆於程式碼確認。Gap matrix、operator journey、frontend handoff 與 parent verification focus 對齊 SVC-RUNTIME-HARDENING 的 auth/idempotency/approval 範疇，且未動 canonical truth 或核心實作。Approve 後交回 owner Codex2 收尾。",
+      "status": "done",
+      "created_at": "2026-04-28T15:30:50Z",
+      "resolved_at": "2026-04-28T15:53:03Z"
+    }
+  ],
+  "blockers": []
+}

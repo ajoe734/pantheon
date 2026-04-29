@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "SVC-HEALTH-OBSERVABILITY-UNIFICATION-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-28T19:24:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-HEALTH-OBSERVABILITY-UNIFICATION-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-HEALTH-OBSERVABILITY-UNIFICATION BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-HEALTH-OBSERVABILITY-UNIFICATION，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Production Readiness / Observability",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-COMPOSE",
+      "SVC-CONSULTATION-SERVICE-ACTIVATION",
+      "SVC-SOURCE-INGEST-SERVICE"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-HEALTH-OBSERVABILITY-UNIFICATION/SVC-HEALTH-OBSERVABILITY-UNIFICATION-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved BFF/frontend handoff packet and closed the sidecar. Support artifact is committed and ready for parent owner absorption decision.",
+    "last_update": "2026-04-28T19:24:29Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-HEALTH-OBSERVABILITY-UNIFICATION",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar BFF handoff packet 通過審查：(1) 僅建立 support/sidecars/SVC-HEALTH-OBSERVABILITY-UNIFICATION/ 下的單一 markdown，未動到 canonical/L1、BFF 實作、compose 或 frontend 程式碼；(2) §2 對 BFF /health-only、PKT-011 五個 domain group、compose 與 smoke 混用 /__health__|/health|/healthz|infrastructure-native、新啟動服務只有 /health、parent 仍有 research-worker-gateway 與 reconciliation-drift 為 todo 等事實全部與 services/control-plane/bff/main.py、docker-compose.yml、scripts/smoke_honest_stack.py、ai-status.json 對齊；(3) 正確將 PKT-011 operator domain health 與未來 service readiness inventory 分離，並維持 BFF 為唯一 browser-facing health owner、禁止 client-side health synthesis；(4) §3 query gap、§4 operator journey、§6 verification 與 §7 implementation 順序覆蓋 parent acceptance 全部 bullet。唯一小註：§2 提到 smoke 腳本對 NATS 用 /healthz，實際 /healthz 只在 docker-compose 出現，但不影響支援材料價值。"
+    ],
+    "review_file": "docs/reviews/2026-04-28-svc-health-observability-unification-sidecar-bff-handoff-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T19:24:29Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "31101d25bf960e658ef2b56c4154380ccd94b5ae",
+      "commit_subject": "SVC-HEALTH-OBSERVABILITY-UNIFICATION-SIDECAR-BFF-HANDOFF add BFF handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-HEALTH-OBSERVABILITY-UNIFICATION-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 95,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 27,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-HEALTH-OBSERVABILITY-UNIFICATION-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "BFF/frontend support packet is ready for review. It separates PKT-011 operator domain health from raw service readiness, maps compose/smoke health endpoint gaps, and keeps the output support-only under support/sidecars/.",
+      "status": "done",
+      "created_at": "2026-04-28T19:06:18Z",
+      "resolved_at": "2026-04-28T19:17:11Z"
+    },
+    {
+      "task_id": "SVC-HEALTH-OBSERVABILITY-UNIFICATION-SIDECAR-BFF-HANDOFF",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-28T19:17:11Z",
+      "resolved_at": "2026-04-28T19:19:57Z"
+    },
+    {
+      "task_id": "SVC-HEALTH-OBSERVABILITY-UNIFICATION-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar packet approved: support-only artifact, current-state snapshot verified against BFF/compose/smoke/services, PKT-011 domain-health vs service-readiness boundary preserved. Returning to owner Codex for done finalization.",
+      "status": "done",
+      "created_at": "2026-04-28T19:19:57Z",
+      "resolved_at": "2026-04-28T19:24:29Z"
+    }
+  ],
+  "blockers": []
+}

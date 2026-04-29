@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "SD-FND-004",
+  "archived_at": "2026-04-28T09:11:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SD-FND-004",
+    "title": "Foundation adoption inventory and service rollout",
+    "summary_zh": "盤點 foundation envelope/primitives adoption 缺口，並把至少一條非 pilot 路徑接上 shared foundation primitive 與測試。",
+    "phase": "SD Residual / Foundations",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SD-FND-002",
+      "SD-FND-003"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-28-foundation-source-consultation-execution-task-packet.md"
+    ],
+    "acceptance": [
+      "adoption matrix checked in",
+      "new non-pilot path uses foundation primitives",
+      "targeted tests cover success replay rejection"
+    ],
+    "next": "Owner finalized approved SD-FND-004. Foundation adoption inventory and deployment dispatch rollout are complete; targeted verification passed: services/deployment/test_service.py (15 passed) and services/foundation/tests (10 passed).",
+    "last_update": "2026-04-28T09:11:55Z",
+    "task_class": "sd_materialization",
+    "source_packet": "docs/reviews/2026-04-28-foundation-source-consultation-execution-task-packet.md",
+    "auto_dispatch_boundary": "respect_dependencies_and_human_gates",
+    "review_notes_zh": [
+      "三項 acceptance 全數通過：adoption matrix 已產出（含 pilot/newly-adopted/deferred/excluded 行）；deployment plan dispatch 走 shared TraceContext/CommandEnvelope/IdempotencyRecord/PolicyDecision/AuditAction，foundation trace 透傳到 saga outbox，replay/conflict 由 request_hash 判定，policy denial 直接回 ErrorEnvelope。",
+      "本機重跑 foundation+deployment+runtime-manager+BFF pilot 共 110 tests 全綠（Codex2 報告的 74 為其子集）；無回歸。",
+      "Replay 路徑刻意不覆寫既有 metadata.foundation，保留首次 dispatch evidence，符合 IdempotencyRecord 語意；BFF CommandStore 新增的 foundation_context 欄位/lookup 為下一波 deferred 列的接口，可接受作為 additive surface。"
+    ],
+    "review_file": "docs/reviews/2026-04-28-sd-fnd-004-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T09:11:55Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "9aff8fa8aeb47d3f3270c4e60950a5f81837a4f3",
+      "commit_subject": "SD-FND-004 adopt foundation deployment dispatch",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SD-FND-004",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 21,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SD-FND-004",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implemented deployment dispatch foundation adoption; added adoption matrix and targeted tests (74 passed: BFF pilot, runtime-manager, deployment, foundation).",
+      "status": "done",
+      "created_at": "2026-04-28T08:45:51Z",
+      "resolved_at": "2026-04-28T08:51:16Z"
+    },
+    {
+      "task_id": "SD-FND-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Approved: deployment dispatch foundation adoption verified — matrix, primitives, and tests all satisfy acceptance. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-28T08:51:16Z",
+      "resolved_at": "2026-04-28T09:11:56Z"
+    }
+  ],
+  "blockers": []
+}
