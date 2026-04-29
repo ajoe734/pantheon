@@ -3,9 +3,9 @@
 **Task**: BP5-OSS-004
 **Owner**: Codex2
 **Reviewer**: Claude
-**Scope**: Define the formal approval checkpoint that must be passed before any FinRL, RLlib, or Ray Tune implementation lane opens
+**Scope**: Define the formal approval checkpoint that must be passed before any active FinRL, RLlib, or Ray Tune training/activation lane opens
 **Status**: Done — review approved by Claude 2026-04-16
-**Last Updated**: 2026-04-21
+**Last Updated**: 2026-04-29
 
 ---
 
@@ -14,8 +14,14 @@
 This document turns the deferred RL path from a prose-only caution into a concrete governance
 checkpoint.
 
-No FinRL, RLlib, or Ray Tune adapter, smoke test, or training implementation may begin until this
-gate is explicitly approved.
+No FinRL, RLlib, or Ray Tune active training lane, registry/governance-writing adapter, production
+dispatch, paper/canary/live runtime path, or capital-bound execution may begin until this gate is
+explicitly approved.
+
+Dormant repo-local preparation is allowed before approval only when it is fail-closed: explicit
+prep gates default off, offline/mock execution only, draft/none output envelopes, no registry or
+governance writes, no networked production backend, and no paper/live execution path. The
+RLlib/Ray Tune scaffold in `services/research/rllib` is in this dormant category.
 
 This gate exists because `services/learning/rl/PATH_DEFINITION.md` already defines when RL is
 justified, but the repo previously lacked one canonical approval packet naming:
@@ -68,8 +74,8 @@ If the gate is later reopened, the first task materialized from that approval sh
 
 ### What This Slice Explicitly Does Not Open
 
-- no `RLlib` train/eval lane yet
-- no `Ray Tune` search-output lane yet
+- no active `RLlib` train/eval lane yet
+- no active `Ray Tune` search-output lane yet
 - no paper or live deployment semantics
 - no broader RL architecture expansion beyond the already accepted gate and path documents
 
@@ -93,7 +99,7 @@ to `approved_for_adapter_work`.
 The RL path is either:
 
 - `closed`: default state; RL implementation remains deferred
-- `approved_for_adapter_work`: FinRL / RLlib governed adapter and smoke-path work may begin
+- `approved_for_adapter_work`: FinRL / RLlib production-capable governed adapter and smoke-path work may begin
 - `approved_for_training`: a specific approved adapter path may run governed training/eval loops
 - `rejected`: RL remains deferred and the evidence package was judged insufficient
 
@@ -212,7 +218,9 @@ Reject or keep the gate closed when any of the following are true:
 
 ## What Approval Unlocks
 
-If the gate reaches `approved_for_adapter_work`, the following work may be materialized:
+The repo may contain dormant prep-only scaffolds before approval if they meet the fail-closed rules
+above. If the gate reaches `approved_for_adapter_work`, the following activation work may be
+materialized:
 
 - FinRL governed single-agent policy-output adapter as the **first executable RL lane**
 - RLlib governed training/eval adapter

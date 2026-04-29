@@ -3,7 +3,7 @@
 **Task**: BP5-OSS-004
 **Owner**: Codex2
 **Reviewer**: Claude
-**Scope**: Define the executable activation path for deferred Qlib, TRL, FinRL, RLlib, and W&B rows
+**Scope**: Define the dormant implementation and executable activation path for deferred Qlib, TRL, FinRL, RLlib, and W&B rows
 **Status**: Done — review approved by Claude 2026-04-16
 **Last Updated**: 2026-04-29
 
@@ -16,12 +16,18 @@ platform. It consolidates the distributed per-row gate documents into one place,
 already-landed package pins and runnable baselines with checklist text that predates them,
 resolves activation ownership, and makes each row's executable next step explicit.
 
+The key boundary is **development allowed, activation gated**. Deferred rows may accumulate
+repo-local dormant implementation work such as interfaces, schema, feature flags, offline/mock
+smoke tests, Dockerfiles, and fail-closed adapters. They may not become active production,
+paper, canary, live, registry-writing, governance-writing, or networked backend paths until the
+named activation gate is satisfied.
+
 It does **not** replace the per-row gate documents. Those remain authoritative for detailed criteria
 and workflow design. This map adds:
 
 - one unambiguous status per row (what is true right now)
 - reconciled package-pin facts
-- explicit activation owner for the follow-on adapter + smoke work
+- explicit owner for dormant implementation work and later activation work
 - the one concrete thing that must happen next per row
 
 ---
@@ -156,11 +162,17 @@ Qwen (gate doc owner) for production DPO run when runtime data gates clear.
 **Current repo truth**:
 
 - `finrl==0.3.6` is already pinned in `services/research/finrl/requirements.txt`.
-- A FinRL research Dockerfile exists at `services/research/finrl/Dockerfile`.
+- The FinRL Dockerfile copies the repo-local deferred-prep adapter, worker, examples, and smoke
+  path while keeping execution behind an explicit env gate.
+- Repo-local dormant adapter pieces exist:
+  `GovernedFinRLPolicyAdapter`, `StubFinRLBackend`, `FinRLPPOBackend`, and
+  `run_finrl_workflow()`.
+- The worker requires `PANTHEON_FINRL_PREP_ENABLED=1`; the smoke path requires
+  `--enable-deferred-prep`.
+- The dormant output is an in-memory registry-ready envelope only: `artifact_state=draft`,
+  `deployment_summary.current_stage=none`, `gate_state=closed`, and no registry/governance write.
 - `FinRLTool` is already named in `services/control-plane/skills/skills.yaml` and the router/
   permission contracts.
-- The gate doc's §6 "Next Steps" references RS-003, REG-001, and artifact materialization as
-  future work; it does not acknowledge the already-landed package/container stub.
 - FinRL activation is blocked on the RL path gate (all five criteria in `PATH_DEFINITION.md §1`
   must be met before any RL training begins). The most critical: Qlib supervised alpha must be
   exhausted first.
@@ -171,8 +183,8 @@ Qwen (gate doc owner) for production DPO run when runtime data gates clear.
 |---|---|
 | Version pin | Done — `finrl==0.3.6` |
 | RL path approval (all five `PATH_DEFINITION.md §1` criteria met) | Not met — Qlib not yet active |
-| Governed policy-output mapping (single-agent, canonical `artifact_state`) | Missing |
-| One smoke path proving artifact production (not just pinned container) | Missing |
+| Governed policy-output mapping (single-agent, canonical `artifact_state`) | Prep-only done — canonical `rl_policy` draft envelope exists; production adapter activation remains gated |
+| One smoke path proving artifact production (not just pinned container) | Prep-only done — explicit CLI gate required; not production activation evidence |
 | Integration test confirming `FinRLTool` control-plane path resolves to governed adapter | Missing |
 
 **Activation prerequisite chain**:
@@ -181,15 +193,20 @@ Qwen (gate doc owner) for production DPO run when runtime data gates clear.
 3. ≥2 years intraday OHLCV + order fills must be available for the target universe
 4. Explicit RL path approval decision must be recorded (human gate or governance review)
 
-**Executable next step**: FinRL implementation work remains blocked until the RL path approval gate
-is passed. The prerequisite checkpoint is now formalized in
-`services/learning/rl/RL_PATH_APPROVAL_GATE.md`. The next executable action is to assemble the
-re-entry evidence packet and obtain approval to open the governed **FinRL-first** adapter lane.
-That first lane is intentionally limited to single-agent policy-output mapping plus one smoke path
-that proves a canonical `rl_policy` artifact envelope.
+**Executable next step**: Production RL activation remains blocked until the RL path approval gate
+is passed. Dormant pre-activation work is allowed if it stays fail-closed: repo-local interfaces,
+artifact schema, feature flags defaulting off, offline/mock smoke tests, and no production
+dispatch, registry write, paper/canary/live, or capital-bound execution path. The prerequisite
+activation checkpoint is formalized in `services/learning/rl/RL_PATH_APPROVAL_GATE.md`.
 
-**Activation owner for follow-on work**: Copilot (LP-005/RL path owner). The governed adapter
-and smoke path for FinRL are Copilot's lane once the RL path gate is passed.
+The next activation action is to assemble the re-entry evidence packet and obtain approval to open
+the governed **FinRL-first** adapter lane. That first active lane is intentionally limited to
+single-agent policy-output mapping plus one smoke path that proves a canonical `rl_policy`
+artifact envelope.
+
+**Activation owner for follow-on work**: Copilot (LP-005/RL path owner). Dormant scaffold work may
+be prepared before the gate; governed adapter activation and smoke evidence remain Copilot's lane
+once the RL path gate is passed.
 
 ---
 

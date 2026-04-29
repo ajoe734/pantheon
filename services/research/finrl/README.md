@@ -27,7 +27,8 @@ It does **not** reopen the RL gate in `services/learning/rl/RL_PATH_APPROVAL_GAT
 - `worker.py`: container entrypoint
 - `smoke_test.py`: explicit-gate smoke path
 - `test_adapter.py`: unit coverage
-- `examples/policy_dataset_sample.json`: governed sample dataset
+- `examples/policy_input_sample.json`: governed smoke input dataset
+- `examples/policy_dataset_sample.json`: smaller governed sample dataset
 
 ## Usage
 

@@ -5,7 +5,7 @@
 **Status**: LP-005 done  
 **Owner**: Copilot  
 **Reviewer**: Codex
-**Last Updated**: 2026-04-21
+**Last Updated**: 2026-04-29
 
 ---
 
@@ -17,7 +17,7 @@ This directory contains the specification for when, how, and under what constrai
 
 1. **PATH_DEFINITION.md**: Entry criteria, search/tuning workflow, registry constraints, and success criteria.
 2. **ENV_CONTRACT.md**: RLlib environment interface, data formats, training configurations, and reproducibility guarantees.
-3. **RL_PATH_APPROVAL_GATE.md**: Formal approval checkpoint that must pass before any FinRL/RLlib adapter or smoke work can begin.
+3. **RL_PATH_APPROVAL_GATE.md**: Formal approval checkpoint that must pass before any active FinRL/RLlib production train/eval, registry-writing, paper, or live path can begin.
 
 ---
 
@@ -43,6 +43,9 @@ Use Qlib instead if:
 - The first future implementation lane is `FinRL`, not `RLlib`
 - `RLlib + Ray Tune` only opens after a governed single-agent FinRL smoke path proves the
   canonical `rl_policy` artifact path
+- A repo-local RLlib/Ray Tune dormant scaffold exists under `services/research/rllib`; it stays
+  offline-only, requires explicit prep gates, emits `artifact_state=draft` with
+  `deployment_summary.current_stage=none`, and does not write registry or governance state
 
 ### Workflow Overview After Re-entry
 
@@ -72,12 +75,14 @@ Live Monitoring & Rollback
 |-----------|------|
 | **First executable lane** | FinRL single-agent policy-output mapping |
 | **Follow-on lane** | RLlib + Ray Tune after FinRL smoke proof |
+| **Dormant prep** | Allowed only when explicit-gated, offline, draft/none, and non-writing |
 | **Validation Horizon** | Train: 2023–2025-06, Validate: 2025-07–12, Test: 2026-01–03 |
 | **Stress Tests** | Must pass market regime shift, slippage sensitivity, vol regime shift (20% degradation max) |
 | **Lifecycle** | draft → candidate → paper → live (governance vocabulary per registry contract) |
 | **Rollback** | Automatic if single-day loss > 2% or rolling Sharpe drops > 20% |
 
-No RL implementation work opens until `RL_PATH_APPROVAL_GATE.md` is satisfied.
+No active RL training, production dispatch, registry/governance write, paper/canary/live runtime
+path, or capital-bound execution opens until `RL_PATH_APPROVAL_GATE.md` is satisfied.
 
 ---
 
@@ -180,7 +185,8 @@ The RL training flow requires implementation of support infrastructure. The conc
 
 ## Next Steps
 
-1. **Keep RL closed for this wave**: Do not materialize adapter or smoke-test tasks until the gate is reopened.
+1. **Keep RL activation closed for this wave**: Keep any dormant scaffold explicit-gated,
+   offline-only, draft/none, and non-writing until the gate is reopened.
 2. **Prepare the future reopen packet**: Accumulate the Qlib plateau evidence, sequential-decision justification, dataset package, and reward/environment sketch named in `RL_PATH_APPROVAL_GATE.md`.
 3. **Materialize FinRL first after approval**: The first future implementation task should be limited to a governed single-agent FinRL adapter plus one smoke path that emits a canonical `rl_policy` artifact envelope.
 4. **Open RLlib + Ray Tune only after FinRL proof**: Treat the broader train/eval and search path as a separate follow-on lane, not part of the first reopen slice.

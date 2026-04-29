@@ -5,7 +5,7 @@
 **Reviewer**: Codex  
 **Scope**: Define FinRL/RLlib + Ray Tune integration when sequential RL is justified  
 **Status**: Accepted  
-**Last Updated**: 2026-04-21
+**Last Updated**: 2026-04-29
 
 ---
 
@@ -30,6 +30,12 @@ immediate next execution wave.
 
 This turns RL from an abstract future option into a concrete next decision:
 **not this wave; FinRL first when re-entry criteria are met**.
+
+This decision gates **activation**, not every repository-local development task. Dormant
+pre-activation work may proceed when it is fail-closed: contracts, artifact schema, feature flags
+defaulting off, offline/mock harnesses, and non-registry-writing smoke scaffolds. It must not
+start active RL training, production dispatch, registry/governance writes, paper/canary/live
+runtime paths, or capital-bound execution before the approval packet reopens.
 
 ## Execution-Ready Re-entry Slice
 
@@ -552,7 +558,7 @@ Is supervised alpha exhausted (Sharpe stable for 3+ months)?
 ## 6. Next Steps
 
 1. **Qlib Plateau Evidence** (Copilot + Codex2): close the supervised path to `artifact_state=approved` and accumulate at least 3 months of stable evaluation evidence on the target strategy family.
-2. **Re-entry Packet** (Copilot): assemble the five-part reopen evidence packet in `RL_PATH_APPROVAL_GATE.md` before any RL adapter or smoke work opens.
+2. **Re-entry Packet** (Copilot): assemble the five-part reopen evidence packet in `RL_PATH_APPROVAL_GATE.md` before any active RL adapter, production training, registry write, or paper/live path opens.
 3. **FinRL First Lane** (Copilot + Codex): once the gate is reopened, implement the governed FinRL single-agent adapter, emit a canonical `rl_policy` artifact envelope, and prove the downstream registry-consumer path at `artifact_state=draft`.
 4. **Follow-on RLlib/Tune Lane** (Copilot + Claude): only after the FinRL smoke proof, decide whether broader train/eval plus search work is still justified and materialize that lane separately.
 5. **LEAN RL Execution** (Claude): implement the policy executor only after a governed artifact path exists for the approved framework lane.
