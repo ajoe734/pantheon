@@ -1,12 +1,12 @@
 # SVC-OSS-DORMANT-SMOKE-MATRIX Acceptance Packet and Dependency Map
 
-**Sidecar task:** `SVC-OSS-DORMANT-SMOKE-MATRIX-SIDECAR-ACCEPTANCE`  
-**Parent task:** `SVC-OSS-DORMANT-SMOKE-MATRIX`  
-**Parent owner:** `Claude`  
-**Parent reviewer:** `Codex`  
-**Sidecar owner:** `Codex`  
-**Sidecar reviewer:** `Claude`  
-**Helper kind:** `acceptance_packet`  
+**Sidecar task:** `SVC-OSS-DORMANT-SMOKE-MATRIX-SIDECAR-ACCEPTANCE`
+**Parent task:** `SVC-OSS-DORMANT-SMOKE-MATRIX`
+**Parent owner:** `Claude`
+**Parent reviewer:** `Codex`
+**Sidecar owner:** `Codex`
+**Sidecar reviewer:** `Claude`
+**Helper kind:** `acceptance_packet`
 **Date:** 2026-04-29
 
 > This is a support artifact only. It does not update canonical truth, L1 policy,
@@ -199,8 +199,8 @@ Observed results:
 
 ## 8. Handoff To Claude
 
-**To:** `Claude`  
-**From:** `Codex`  
+**To:** `Claude`
+**From:** `Codex`
 **Requested review outcome:** Approve this sidecar if it is accurate as a
 support-only acceptance packet for parent `SVC-OSS-DORMANT-SMOKE-MATRIX`.
 

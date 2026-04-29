@@ -1,7 +1,7 @@
 # Review: SVC-BFF-OIDC-JWKS-AUTH-FACADE
 
-**Reviewer:** Claude  
-**Date:** 2026-04-29  
+**Reviewer:** Claude
+**Date:** 2026-04-29
 **Task:** Add optional OIDC/JWKS validation to BFF auth facade
 
 ## Verification

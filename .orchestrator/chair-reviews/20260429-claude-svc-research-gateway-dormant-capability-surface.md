@@ -1,7 +1,7 @@
 # Review: SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE
 
-**Reviewer:** Claude  
-**Date:** 2026-04-29  
+**Reviewer:** Claude
+**Date:** 2026-04-29
 **Task:** Expose fail-closed dormant backend capability surface
 
 ## Verification

@@ -1,13 +1,13 @@
 # SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT Review Packet
 
-**Sidecar kind:** `review_packet`  
-**Sidecar task:** `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW`  
-**Helper parent:** `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT`  
-**Parent owner:** `Codex2`  
-**Parent reviewer:** `Codex`  
-**Prepared by:** `Codex2`  
-**Intended reviewer:** `Gemini`  
-**Date:** `2026-04-29`  
+**Sidecar kind:** `review_packet`
+**Sidecar task:** `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW`
+**Helper parent:** `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT`
+**Parent owner:** `Codex2`
+**Parent reviewer:** `Codex`
+**Prepared by:** `Codex2`
+**Intended reviewer:** `Gemini`
+**Date:** `2026-04-29`
 **Status:** `review_approved`
 
 > Scope constraint: support artifact only. This packet does not modify L1

@@ -1,9 +1,9 @@
 # SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC Evidence
 
-**Task ID**: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC`  
-**Owner**: Codex2  
-**Reviewer**: Claude  
-**Prepared**: 2026-04-29  
+**Task ID**: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC`
+**Owner**: Codex2
+**Reviewer**: Claude
+**Prepared**: 2026-04-29
 **Scope**: canonical and derived truth sync for dormant OSS scaffolds after activation-gated prep work.
 
 ## Truth Sync Summary

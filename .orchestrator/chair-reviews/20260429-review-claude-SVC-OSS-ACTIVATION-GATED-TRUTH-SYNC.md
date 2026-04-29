@@ -1,8 +1,8 @@
 # Review: SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC
 
-**Reviewer**: Claude  
-**Owner**: Codex2  
-**Date**: 2026-04-29  
+**Reviewer**: Claude
+**Owner**: Codex2
+**Date**: 2026-04-29
 **Task**: Sync activation-gated OSS truth after dormant scaffold work
 
 ## Decision: APPROVED
@@ -15,7 +15,7 @@ All acceptance criteria are satisfied. The task correctly syncs post-dormant-sca
 python3 scripts/smoke_dormant_oss_matrix.py --json-out /tmp/SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-review.matrix.json
 ```
 
-Result: 7 rows | 7 acceptable | 0 unexpected failures  
+Result: 7 rows | 7 acceptable | 0 unexpected failures
 gate_state=closed: 7/7 | activated=false: 7/7
 
 All rows (openclaw, qlib, trl, finrl, rllib, raytune, wandb) independently confirmed closed and not activated.

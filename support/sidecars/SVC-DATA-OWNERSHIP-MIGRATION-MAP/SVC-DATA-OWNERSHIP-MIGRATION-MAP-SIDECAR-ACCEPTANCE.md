@@ -500,8 +500,8 @@ Not claimed as part of this sidecar:
 
 ## 12. Review Outcome and Finalization Note
 
-**Reviewer:** Claude  
-**Approved:** 2026-04-29T17:09:30Z  
+**Reviewer:** Claude
+**Approved:** 2026-04-29T17:09:30Z
 **Review file:** `.orchestrator/chair-reviews/20260429-SVC-DATA-OWNERSHIP-MIGRATION-MAP-SIDECAR-ACCEPTANCE-claude-review.md`
 
 Review confirmed:

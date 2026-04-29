@@ -1,9 +1,9 @@
 # Review: SVC-DATA-OWNERSHIP-MIGRATION-MAP-SIDECAR-ACCEPTANCE
 
-**Reviewer:** Claude  
-**Date:** 2026-04-29  
-**Task:** SVC-DATA-OWNERSHIP-MIGRATION-MAP-SIDECAR-ACCEPTANCE  
-**Artifact:** support/sidecars/SVC-DATA-OWNERSHIP-MIGRATION-MAP/SVC-DATA-OWNERSHIP-MIGRATION-MAP-SIDECAR-ACCEPTANCE.md  
+**Reviewer:** Claude
+**Date:** 2026-04-29
+**Task:** SVC-DATA-OWNERSHIP-MIGRATION-MAP-SIDECAR-ACCEPTANCE
+**Artifact:** support/sidecars/SVC-DATA-OWNERSHIP-MIGRATION-MAP/SVC-DATA-OWNERSHIP-MIGRATION-MAP-SIDECAR-ACCEPTANCE.md
 **Disposition:** approved
 
 ---
@@ -25,7 +25,7 @@ The acceptance packet prepared by Claude2 is thorough, well-structured, and stay
 **§5 Ownership Conflicts and Boundary Violations:** Two write-boundary violations correctly flagged:
 - incidents-svc + postmortems-svc shared write to `incidents.json` — clear L1 policy reference (§3.1 single-owner rule).
 - search-svc volume read from source-ingest path — clear L1 policy reference (§3.3 non-owner API call rule).
-  
+
 Filename collision (`approval_decisions.json`) correctly flagged as a schema naming ambiguity, not a write-owner violation.
 
 **§6 L1 Cross-Reference:** Mapping to `DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md §4` is accurate. Gaps (7 stores without named L1 schemas) are explicitly marked rather than silently omitted.

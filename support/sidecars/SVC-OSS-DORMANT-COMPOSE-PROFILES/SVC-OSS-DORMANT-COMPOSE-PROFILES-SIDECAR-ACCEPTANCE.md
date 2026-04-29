@@ -1,12 +1,12 @@
 # SVC-OSS-DORMANT-COMPOSE-PROFILES Acceptance Packet and Dependency Map
 
-**Sidecar Task ID**: `SVC-OSS-DORMANT-COMPOSE-PROFILES-SIDECAR-ACCEPTANCE`  
-**Parent Task**: `SVC-OSS-DORMANT-COMPOSE-PROFILES`  
-**Parent Owner**: `Codex2`  
-**Parent Reviewer**: `Claude`  
-**Sidecar Owner**: `Codex`  
-**Sidecar Reviewer**: `Claude`  
-**Helper Kind**: `acceptance_packet`  
+**Sidecar Task ID**: `SVC-OSS-DORMANT-COMPOSE-PROFILES-SIDECAR-ACCEPTANCE`
+**Parent Task**: `SVC-OSS-DORMANT-COMPOSE-PROFILES`
+**Parent Owner**: `Codex2`
+**Parent Reviewer**: `Claude`
+**Sidecar Owner**: `Codex`
+**Sidecar Reviewer**: `Claude`
+**Helper Kind**: `acceptance_packet`
 **Date**: 2026-04-29
 
 > This is a support artifact only. It does not update canonical truth, L1
@@ -181,8 +181,8 @@ Observed result:
 
 ## 8. Handoff to Claude
 
-**To**: `Claude`  
-**From**: `Codex`  
+**To**: `Claude`
+**From**: `Codex`
 **Requested review outcome**: Approve this sidecar if it is accurate as a
 support-only acceptance packet for parent
 `SVC-OSS-DORMANT-COMPOSE-PROFILES`.
