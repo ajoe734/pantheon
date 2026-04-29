@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-17-full-blueprint-completion",
   "objective": "把目前 service-layer 藍圖落成可部署 single-VM stack：完成 runtime-control closeout、governance API family、BFF service-backed surfaces、compose smoke，並明確處置 consultation/source-ingest/search 的部署邊界",
-  "updated_at": "2026-04-29T13:30:40Z",
+  "updated_at": "2026-04-29T17:47:15Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,11 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "working",
+      "current_task_ids": [
+        "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF"
+      ],
       "branch": "feat/claude-execution-control",
-      "next": "",
-      "last_update": "2026-04-29T12:41:11Z"
+      "next": "BFF handoff packet created: support/sidecars/SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE/SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF.md — covers BFF query gap analysis (6 missing cross-service endpoints identified), operator journey map (4 journeys), normalized capability inventory for all 7 dormant backends, frontend display rules, and BFF design constraints. No canonical docs modified.",
+      "last_update": "2026-04-29T17:47:15Z"
     },
     {
       "name": "Gemini",
@@ -111,7 +113,7 @@
       "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
       "next": "",
-      "last_update": "2026-04-29T11:36:28Z"
+      "last_update": "2026-04-29T17:38:36Z"
     },
     {
       "name": "Codex",
@@ -121,11 +123,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "SVC-OSS-DORMANT-SMOKE-MATRIX"
+      ],
       "branch": "feat/codex-collab-system",
-      "next": "",
-      "last_update": "2026-04-29T12:33:28Z"
+      "next": "Assignment created",
+      "last_update": "2026-04-29T17:14:18Z"
     },
     {
       "name": "Codex2",
@@ -135,11 +139,15 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "reviewing",
+      "current_task_ids": [
+        "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+        "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+        "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW"
+      ],
       "branch": "feat/codex-collab-system",
-      "next": "",
-      "last_update": "2026-04-29T12:25:10Z"
+      "next": "Ready for Gemini review: created support-only review packet at support/sidecars/SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT/SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW.md. Verification rerun: unittest discovery for services/registry/experiments (9 OK), memory smoke, W&B offline smoke, py_compile, rg checks for no wandb import or SDK pin. No canonical truth or runtime implementation changed by this sidecar.",
+      "last_update": "2026-04-29T17:43:57Z"
     },
     {
       "name": "Copilot",
@@ -153,7 +161,7 @@
       "current_task_ids": [],
       "branch": "feat/grok-research-critique",
       "next": "",
-      "last_update": "2026-04-29T12:14:15Z"
+      "last_update": "2026-04-29T17:37:00Z"
     },
     {
       "name": "Claude2",
@@ -162,14 +170,311 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "SVC-CONSULTATION-POSTGRES-STORE-PILOT",
+        "SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT",
+        "SVC-OSS-DORMANT-COMPOSE-PROFILES"
+      ],
       "branch": "feat/claude2-execution-control",
-      "next": "",
-      "last_update": "2026-04-29T11:49:22Z"
+      "next": "Assignment created",
+      "last_update": "2026-04-29T17:09:51Z"
     }
   ],
-  "tasks": [],
+  "tasks": [
+    {
+      "id": "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+      "title": "Map JSONL service stores to Postgres ownership migration slices",
+      "summary_zh": "依程式碼盤點 JSONL/volume stores，映射到 shared Postgres cluster 的 schema/table/write-owner/read-only API migration order，作為後續 store pilot 的 blocking input。",
+      "phase": "Production Readiness / Data Ownership",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "review",
+      "depends_on": [],
+      "artifacts": [
+        "DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md",
+        "Pantheon_資料表_Schema_設計版.md",
+        "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/phase2-phase6-gap-inventory.md"
+      ],
+      "acceptance": [
+        "code-backed inventory lists every default compose JSONL store",
+        "each store has owner service target schema and migration priority",
+        "cross-service read and write rules match DATABASE ownership policy",
+        "first pilot scope and rollback path are named",
+        "no runtime behavior changes"
+      ],
+      "next": "Migration map ready for review: added svc-data-ownership-migration-map.md with code-backed default compose store inventory, owner schema/table targets, migration priority, first pilot scope, and rollback path; updated gap inventory to reference the artifact. Verification: git diff --check on touched docs; compose-derived default data-backed service coverage script reported missing from map: none.",
+      "last_update": "2026-04-29T17:33:29Z",
+      "task_class": "execution",
+      "auto_created_by": "Codex",
+      "auto_generated": true
+    },
+    {
+      "id": "SVC-CONSULTATION-POSTGRES-STORE-PILOT",
+      "title": "Add optional Postgres store pilot for consultation-svc",
+      "summary_zh": "在不破壞 JSONL default 的前提下，為 consultation-svc 增加 optional Postgres-backed store pilot，透過 env 啟用，保留現有 API contract 與 audit/outbox behavior。",
+      "phase": "Production Readiness / Data Ownership",
+      "owner": "Claude2",
+      "reviewer": "Gemini",
+      "status": "todo",
+      "depends_on": [
+        "SVC-DATA-OWNERSHIP-MIGRATION-MAP"
+      ],
+      "artifacts": [
+        "services/consultation/store.py",
+        "services/consultation/main.py",
+        "services/consultation/test_compose_activation.py",
+        "services/consultation/test_*.py",
+        "DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md"
+      ],
+      "acceptance": [
+        "JSONL remains default for single-VM baseline",
+        "Postgres store can be enabled by explicit env only",
+        "consult request memo handoff audit and outbox tests pass against new store abstraction",
+        "migration or schema bootstrap is documented",
+        "compose default remains unchanged unless explicitly profiled"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-29T14:14:40Z",
+      "task_class": "execution",
+      "auto_created_by": "Codex",
+      "auto_generated": true
+    },
+    {
+      "id": "SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT",
+      "title": "Add optional Postgres store pilot for source-ingest and search",
+      "summary_zh": "為 source-ingest/search 增加 optional Postgres-backed store pilot；JSONL 仍是 default baseline，透過 env 啟用 Postgres，驗證 write ownership 與 read-only sharing 邊界。",
+      "phase": "Production Readiness / Data Ownership",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+        "SVC-SOURCE-INGEST-EXTERNAL-FETCH-BASELINE",
+        "SVC-SEARCH-DURABLE-COMPAT-QUARANTINE"
+      ],
+      "artifacts": [
+        "services/source_ingestion",
+        "services/search",
+        "DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md",
+        "docker-compose.yml"
+      ],
+      "acceptance": [
+        "optional Postgres store can be enabled by env without breaking JSONL default",
+        "source evidence write owner remains source-ingest",
+        "search reads durable evidence through owned boundary or read-only contract",
+        "tests cover JSONL default and Postgres pilot path"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-29T15:05:27Z"
+    },
+    {
+      "id": "SVC-POSTGRES-TRAINING-RESEARCH-STORE-PILOT",
+      "title": "Add optional Postgres event-store pilot for training and research services",
+      "summary_zh": "為 training-session/research/policy-learning/research-worker-gateway 的 JSONL event stores 規劃並實作第一個 optional Postgres event-store pilot；不啟用 production research adapters。",
+      "phase": "Production Readiness / Data Ownership",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "SVC-DATA-OWNERSHIP-MIGRATION-MAP"
+      ],
+      "artifacts": [
+        "services/training-session",
+        "services/research",
+        "services/policy-learning",
+        "services/research-worker-gateway",
+        "DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md"
+      ],
+      "acceptance": [
+        "migration slice names table owner and read contract for each event store",
+        "one service lands optional Postgres event-store pilot behind env flag",
+        "JSONL default remains unchanged",
+        "research learning production adapters stay disabled"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-29T15:05:42Z"
+    },
+    {
+      "id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+      "title": "Close out W&B offline prep scaffold hardening",
+      "summary_zh": "把 W&B offline/prep-only scaffold 收斂成 reviewable closeout：無 SDK、無 network、需 explicit flag、canonical artifact/deployment fields 對齊；不做 SDK-backed activation。",
+      "phase": "Activation-Gated Experiment Backend Scaffold",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "review",
+      "depends_on": [],
+      "artifacts": [
+        "services/registry/experiments",
+        "services/registry/experiments/WANDB_ACTIVATION.md",
+        "services/learning/DEFERRED_OSS_ACTIVATION_MAP.md",
+        "RESEARCH_BACKEND_MATURITY_MATRIX.md"
+      ],
+      "acceptance": [
+        "EXPERIMENT_BACKEND wandb without deferred-prep flag fails closed",
+        "W&B mode only allows offline or dryrun",
+        "no wandb SDK import or network call is introduced",
+        "experiment records preserve canonical artifact_state and deployment_stage semantics in tests"
+      ],
+      "next": "Ready for review: W&B offline/prep scaffold is canonical-state aligned and still fail-closed. Changes: adapter now accepts artifact_state/deployment_stage as primary, maps legacy lifecycle_state only to compatibility fields, uses deployment_stage=live for rollback enforcement, keeps W&B behind PANTHEON_ENABLE_WANDB_DEFERRED_PREP and offline/dryrun modes only, and updates experiments README/WANDB gate/deferred map/maturity matrix. Verification: python3 -m unittest discover -s services/registry/experiments -p 'test_*.py' (9 tests OK); python3 services/registry/experiments/smoke_test.py; python3 services/registry/experiments/smoke_test.py --backend wandb; python3 -m py_compile services/registry/experiments/*.py; rg import/pin checks found no W&B SDK import or requirements pin. Note: worktree already contains unrelated dirty orchestrator/RLlib/archive files; review task-scoped files only.",
+      "last_update": "2026-04-29T17:22:35Z"
+    },
+    {
+      "id": "SVC-OSS-DORMANT-COMPOSE-PROFILES",
+      "title": "Add non-default dormant OSS smoke packaging profiles",
+      "summary_zh": "為 dormant/offline OSS scaffold 增加非 default 的 compose/profile 或 equivalent smoke packaging；只跑 explicit prep/offline smoke，不開 service default、不開 network/live/registry write。",
+      "phase": "Activation-Gated Runtime Packaging",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT",
+        "SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT",
+        "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+        "SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT",
+        "SVC-TRL-GATED-PREACTIVATION-PREFLIGHT"
+      ],
+      "artifacts": [
+        "docker-compose.yml",
+        "services/research/finrl",
+        "services/research/rllib",
+        "services/research/qlib",
+        "services/learning/trl",
+        "services/registry/experiments"
+      ],
+      "acceptance": [
+        "dormant profiles are not in default compose startup",
+        "profile commands require explicit deferred-prep flags or env vars",
+        "no ports secrets or live broker routes are exposed",
+        "compose config and targeted smoke commands are documented and testable"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-29T15:23:06Z"
+    },
+    {
+      "id": "SVC-OSS-DORMANT-SMOKE-MATRIX",
+      "title": "Add activation-gated dormant OSS smoke matrix",
+      "summary_zh": "建立 activation-gated OSS dormant smoke matrix：用 explicit flags/env 跑 OpenClaw/Qlib/TRL/FinRL/RLlib/Ray Tune/W&B offline smoke，輸出 gate_state closed / activation false 證據。",
+      "phase": "Activation-Gated Smoke Evidence",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "SVC-OPENCLAW-RUNTIME-ADOPTION-SCAFFOLD",
+        "SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT",
+        "SVC-TRL-GATED-PREACTIVATION-PREFLIGHT",
+        "SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT",
+        "SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT",
+        "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+        "SVC-OSS-DORMANT-COMPOSE-PROFILES"
+      ],
+      "artifacts": [
+        "scripts/smoke_honest_stack.py",
+        "integrations/openclaw",
+        "integrations/qlib",
+        "integrations/trl",
+        "services/research/finrl",
+        "services/research/rllib",
+        "services/registry/experiments"
+      ],
+      "acceptance": [
+        "smoke matrix records activated false for every gated row",
+        "all commands are offline or local fixture only",
+        "no registry governance network or live execution writes occur",
+        "failures clearly distinguish missing optional deps from activation permission"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-29T15:23:22Z"
+    },
+    {
+      "id": "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC",
+      "title": "Sync activation-gated OSS truth after dormant scaffold work",
+      "summary_zh": "在 dormant/pre-activation scaffold 完成後，同步 Deferred OSS map、maturity matrix、checklist、current-work，使 code truth 區分已開發 scaffold 與仍未啟用 production activation。",
+      "phase": "Planning Truth / Activation-Gated Code Alignment",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "SVC-OPENCLAW-RUNTIME-ADOPTION-SCAFFOLD",
+        "SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT",
+        "SVC-TRL-GATED-PREACTIVATION-PREFLIGHT",
+        "SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT",
+        "SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT",
+        "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+        "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE",
+        "SVC-OSS-DORMANT-COMPOSE-PROFILES",
+        "SVC-OSS-DORMANT-SMOKE-MATRIX"
+      ],
+      "artifacts": [
+        "services/learning/DEFERRED_OSS_ACTIVATION_MAP.md",
+        "RESEARCH_BACKEND_MATURITY_MATRIX.md",
+        "OSS_INTEGRATION_CHECKLIST.md",
+        "current-work.md",
+        "services/registry/experiments/WANDB_ACTIVATION.md",
+        "OPENCLAW_RUNTIME_CONTRACT.md"
+      ],
+      "acceptance": [
+        "docs do not claim missing adapters when dormant code exists",
+        "docs do not claim production activation for gated rows",
+        "current-work records not enabled but development allowed truth",
+        "all future activation gates remain explicit and dated"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-29T15:23:39Z"
+    },
+    {
+      "id": "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF",
+      "title": "Prepare SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE BFF and frontend handoff packet",
+      "summary_zh": "平行支援 SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+      "phase": "Activation-Gated Research Capability Surface",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "status": "in_progress",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE/SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "BFF handoff packet created: support/sidecars/SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE/SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF.md — covers BFF query gap analysis (6 missing cross-service endpoints identified), operator journey map (4 journeys), normalized capability inventory for all 7 dormant backends, frontend display rules, and BFF design constraints. No canonical docs modified.",
+      "last_update": "2026-04-29T17:47:15Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE",
+      "helper_kind": "bff_handoff_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW",
+      "title": "Prepare SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT review packet and evidence summary",
+      "summary_zh": "平行支援 SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "phase": "Activation-Gated Experiment Backend Scaffold",
+      "owner": "Codex2",
+      "reviewer": "Gemini",
+      "status": "review",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT/SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Ready for Gemini review: created support-only review packet at support/sidecars/SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT/SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW.md. Verification rerun: unittest discovery for services/registry/experiments (9 OK), memory smoke, W&B offline smoke, py_compile, rg checks for no wandb import or SDK pin. No canonical truth or runtime implementation changed by this sidecar.",
+      "last_update": "2026-04-29T17:43:57Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+      "helper_kind": "review_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    }
+  ],
   "handoffs": [
     {
       "task_id": "LUV-REVIEW-007",
@@ -179,6 +484,120 @@
       "status": "done",
       "created_at": "2026-04-17T11:50:38Z",
       "resolved_at": "2026-04-17T12:39:53Z"
+    },
+    {
+      "task_id": "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T16:37:39Z",
+      "resolved_at": "2026-04-29T16:39:18Z"
+    },
+    {
+      "task_id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T16:50:38Z",
+      "resolved_at": "2026-04-29T17:07:54Z"
+    },
+    {
+      "task_id": "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T17:03:10Z",
+      "resolved_at": "2026-04-29T17:05:56Z"
+    },
+    {
+      "task_id": "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T17:05:56Z",
+      "resolved_at": "2026-04-29T17:09:41Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T17:06:06Z",
+      "resolved_at": "2026-04-29T17:07:44Z"
+    },
+    {
+      "task_id": "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T17:09:41Z",
+      "resolved_at": "2026-04-29T17:12:49Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T17:11:20Z",
+      "resolved_at": "2026-04-29T17:42:59Z"
+    },
+    {
+      "task_id": "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T17:12:48Z",
+      "resolved_at": "2026-04-29T17:14:08Z"
+    },
+    {
+      "task_id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T17:15:38Z",
+      "resolved_at": "2026-04-29T17:16:58Z"
+    },
+    {
+      "task_id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: W&B offline/prep scaffold is canonical-state aligned and still fail-closed. Changes: adapter now accepts artifact_state/deployment_stage as primary, maps legacy lifecycle_state only to compatibility fields, uses deployment_stage=live for rollback enforcement, keeps W&B behind PANTHEON_ENABLE_WANDB_DEFERRED_PREP and offline/dryrun modes only, and updates experiments README/WANDB gate/deferred map/maturity matrix. Verification: python3 -m unittest discover -s services/registry/experiments -p 'test_*.py' (9 tests OK); python3 services/registry/experiments/smoke_test.py; python3 services/registry/experiments/smoke_test.py --backend wandb; python3 -m py_compile services/registry/experiments/*.py; rg import/pin checks found no W&B SDK import or requirements pin. Note: worktree already contains unrelated dirty orchestrator/RLlib/archive files; review task-scoped files only.",
+      "status": "pending",
+      "created_at": "2026-04-29T17:22:35Z"
+    },
+    {
+      "task_id": "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Migration map ready for review: added svc-data-ownership-migration-map.md with code-backed default compose store inventory, owner schema/table targets, migration priority, first pilot scope, and rollback path; updated gap inventory to reference the artifact. Verification: git diff --check on touched docs; compose-derived default data-backed service coverage script reported missing from map: none.",
+      "status": "pending",
+      "created_at": "2026-04-29T17:33:29Z"
+    },
+    {
+      "task_id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Gemini is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-29T17:40:03Z",
+      "resolved_at": "2026-04-29T17:40:03Z"
+    },
+    {
+      "task_id": "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Ready for Gemini review: created support-only review packet at support/sidecars/SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT/SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT-SIDECAR-REVIEW.md. Verification rerun: unittest discovery for services/registry/experiments (9 OK), memory smoke, W&B offline smoke, py_compile, rg checks for no wandb import or SDK pin. No canonical truth or runtime implementation changed by this sidecar.",
+      "status": "pending",
+      "created_at": "2026-04-29T17:43:57Z"
     }
   ],
   "blockers": [],
@@ -192,22 +611,22 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 0,
-      "active": 0,
+      "total": 1,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Claude2": {
-      "total": 0,
+      "total": 4,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 4
     },
     "Gemini": {
       "total": 0,
@@ -219,22 +638,22 @@
       "todo": 0
     },
     "Codex": {
-      "total": 0,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Codex2": {
-      "total": 0,
-      "active": 0,
+      "total": 4,
+      "active": 3,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 3,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Copilot": {
       "total": 0,
