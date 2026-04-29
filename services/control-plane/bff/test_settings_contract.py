@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import tempfile
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -16,7 +17,11 @@ from settings_store import SettingsStore
 ADMIN_TOKEN = "Bearer op-admin:admin:mfa"
 OPERATOR_TOKEN = "Bearer op-operator:operator"
 
+# These tests exercise settings contract logic; auth is satisfied via stub mode.
+_STUB_ENV = {"PANTHEON_BFF_AUTH_STUB": "true"}
 
+
+@patch.dict(os.environ, _STUB_ENV, clear=False)
 def test_settings_bundle_round_trip_and_export() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.settings_store
@@ -62,6 +67,7 @@ def test_settings_bundle_round_trip_and_export() -> None:
             bff_main.settings_store = original_store
 
 
+@patch.dict(os.environ, _STUB_ENV, clear=False)
 def test_settings_update_and_import_require_admin_mfa() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.settings_store
@@ -86,6 +92,7 @@ def test_settings_update_and_import_require_admin_mfa() -> None:
             bff_main.settings_store = original_store
 
 
+@patch.dict(os.environ, _STUB_ENV, clear=False)
 def test_settings_import_replaces_bundle_and_validates_json() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.settings_store

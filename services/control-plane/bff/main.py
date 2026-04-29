@@ -151,12 +151,34 @@ _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 # Auth / identity helpers
 # --------------------------------------------------------------------------- #
 
-# In production this would decode and verify a JWT.
-# Here we accept a stub token format: "Bearer <operator_id>:<comma_roles>[:mfa]"
-# e.g. "Bearer op-42:operator,approver:mfa"
-# Any other non-empty value is treated as a basic authenticated operator (no admin/mfa).
-# A missing Authorization header returns INVALID_TOKEN.
-def _extract_identity(authorization: Optional[str]) -> OperatorIdentity:
+# Production default: validates HS256 JWT (issuer, audience, expiry, subject)
+# via services.runtime_auth_inbound.validate_request_auth.
+#
+# Dev/test stub mode is available only when PANTHEON_BFF_AUTH_STUB=true.
+# Stub accepts "Bearer <operator_id>:<comma_roles>[:mfa]" for local iteration.
+#
+# BFF-scoped env vars (mapped to runtime_auth_inbound key names internally):
+#   PANTHEON_BFF_AUTH_MODE     - "strict" (default) or "permissive"
+#   PANTHEON_BFF_JWT_SECRET    - HS256 signing secret (required for JWT validation)
+#   PANTHEON_BFF_JWT_ISSUER    - optional expected iss claim
+#   PANTHEON_BFF_JWT_AUDIENCE  - optional expected aud claim
+#   PANTHEON_BFF_MFA_REQUIRED  - "true" to enforce X-MFA-Token on mfa_required routes
+#   PANTHEON_BFF_DEFAULT_ROLE  - default role for JWT sub without explicit roles claim
+
+_BFF_AUTH_STUB_ENV = "PANTHEON_BFF_AUTH_STUB"
+
+
+def _extract_identity(
+    authorization: Optional[str],
+    mfa_token: Optional[str] = None,
+) -> OperatorIdentity:
+    if _bool_from_env(_BFF_AUTH_STUB_ENV):
+        return _extract_identity_stub(authorization)
+    return _extract_identity_jwt(authorization, mfa_token=mfa_token)
+
+
+def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
+    """Legacy colon-format stub for PANTHEON_BFF_AUTH_STUB=true only."""
     if not authorization or not authorization.startswith("Bearer "):
         raise _bff_error(
             status_code=401,
@@ -185,6 +207,74 @@ def _extract_identity(authorization: Optional[str]) -> OperatorIdentity:
     roles = parts[1].split(",") if len(parts) > 1 else ["operator"]
     mfa_verified = len(parts) > 2 and parts[2] == "mfa"
     return OperatorIdentity(operator_id=operator_id, roles=roles, mfa_verified=mfa_verified)
+
+
+def _extract_identity_jwt(
+    authorization: Optional[str],
+    mfa_token: Optional[str] = None,
+) -> OperatorIdentity:
+    """JWT/RBAC auth facade for production. Validates issuer, audience, expiry, subject."""
+    try:
+        from services.runtime_auth_inbound import AuthError, validate_request_auth
+    except ImportError:
+        from runtime_auth_inbound import AuthError, validate_request_auth  # type: ignore[no-redef]
+
+    bff_env = {
+        "PANTHEON_RUNTIME_AUTH_MODE": os.getenv("PANTHEON_BFF_AUTH_MODE", "strict"),
+        "PANTHEON_RUNTIME_JWT_SECRET": os.getenv("PANTHEON_BFF_JWT_SECRET", ""),
+        "PANTHEON_RUNTIME_JWT_ISSUER": os.getenv("PANTHEON_BFF_JWT_ISSUER", ""),
+        "PANTHEON_RUNTIME_JWT_AUDIENCE": os.getenv("PANTHEON_BFF_JWT_AUDIENCE", ""),
+        "PANTHEON_RUNTIME_DEFAULT_ROLE": os.getenv("PANTHEON_BFF_DEFAULT_ROLE", "operator"),
+        "PANTHEON_RUNTIME_MFA_REQUIRED": os.getenv("PANTHEON_BFF_MFA_REQUIRED", "false"),
+    }
+    mfa_required = bff_env["PANTHEON_RUNTIME_MFA_REQUIRED"].lower() == "true"
+    try:
+        ctx = validate_request_auth(
+            authorization=authorization or "",
+            mfa_header=mfa_token or "",
+            mfa_required=mfa_required,
+            env=bff_env,
+        )
+    except AuthError as exc:
+        if exc.status_code == 403:
+            code = ErrorCode.INSUFFICIENT_ROLE
+        elif exc.code in ("MFA_REQUIRED", "MFA_VALIDATION_FAILED"):
+            code = ErrorCode.MFA_REQUIRED
+        else:
+            code = ErrorCode.INVALID_TOKEN
+        # Return a generic 401 rather than leaking server misconfiguration.
+        if exc.code == "AUTH_JWT_SECRET_MISSING":
+            effective_status = 401
+            effective_message = "JWT bearer token cannot be verified"
+            effective_reason = "AUTH_TOKEN_UNVERIFIED"
+        else:
+            effective_status = exc.status_code
+            effective_message = exc.message
+            effective_reason = exc.code
+        raise _bff_error(
+            status_code=effective_status,
+            code=code,
+            message=effective_message,
+            reason=effective_reason,
+            suggestion=(
+                "Re-authenticate with a valid JWT bearer token"
+                if effective_status == 401
+                else None
+            ),
+        )
+    if not str(ctx.claims.get("sub") or "").strip():
+        raise _bff_error(
+            status_code=401,
+            code=ErrorCode.INVALID_TOKEN,
+            message="JWT subject claim is required",
+            reason="AUTH_JWT_SUBJECT_MISSING",
+            suggestion="Re-authenticate with a valid JWT bearer token",
+        )
+    return OperatorIdentity(
+        operator_id=ctx.actor_id,
+        roles=sorted(ctx.roles),
+        mfa_verified=ctx.mfa_verified,
+    )
 
 
 def _bff_error(
@@ -5914,8 +6004,9 @@ async def get_settings(
 async def update_settings(
     body: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
 ):
-    identity = _extract_identity(authorization)
+    identity = _extract_identity(authorization, mfa_token=x_mfa_token)
     _require_admin_mfa(identity, "update_settings")
     patch = body.get("settings", body)
     try:
@@ -5944,8 +6035,9 @@ async def export_settings(
 async def import_settings(
     body: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
 ):
-    identity = _extract_identity(authorization)
+    identity = _extract_identity(authorization, mfa_token=x_mfa_token)
     _require_admin_mfa(identity, "import_settings")
     json_data = body.get("jsonData")
     if not isinstance(json_data, str):
@@ -11151,7 +11243,7 @@ async def submit_command(
     for status updates.
     """
     # 1. Authenticate
-    identity = _extract_identity(authorization)
+    identity = _extract_identity(authorization, mfa_token=x_mfa_token)
     cmd = _normalize_operator_command_payload(payload)
 
     foundation_context = _build_foundation_command_context(
