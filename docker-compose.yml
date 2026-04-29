@@ -417,7 +417,10 @@ services:
       BFF_DATA_DIR: /data/bff
       BFF_READ_SURFACE_STATE: fresh
       PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK: "false"
+      PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-ai-system-front-dev.lovable.app}
       PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS: "2.0"
+      PANTHEON_ENV: ${PANTHEON_ENV:-dev}
+      PANTHEON_LIVE_BROKER_ENABLED: ${PANTHEON_LIVE_BROKER_ENABLED:-false}
       PANTHEON_INTERNAL_API_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
