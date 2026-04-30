@@ -36,6 +36,15 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
     assert upstream["depends_on"]["openclaw-data-init"]["condition"] == "service_completed_successfully"
     assert "/healthz" in " ".join(upstream["healthcheck"]["test"])
     assert "profiles" not in adapter
+    assert adapter["environment"]["OPENCLAW_BROKER_SIDECAR_URL"] == "http://broker:8102"
+    assert adapter["environment"]["OPENCLAW_RUNTIME_MANAGER_URL"] == "http://runtime-manager:8081"
+    assert adapter["environment"]["PANTHEON_RUNTIME_MANAGER_TOKEN"] == "runtime-control-internal"
+
+    broker = services["broker"]
+    assert broker["build"]["dockerfile"] == "services/broker/Dockerfile"
+    assert broker["environment"]["PORT"] == "8102"
+    assert broker["environment"]["BROKER_PAPER_ENABLED"] == "false"
+    assert "profiles" not in broker
 
     smoke = services["smoke-stack"]
     assert smoke["environment"]["OPENCLAW_GATEWAY_ADAPTER_URL"] == "http://openclaw-gateway-adapter:8104"

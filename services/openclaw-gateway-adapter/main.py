@@ -4,8 +4,9 @@ This service is the Pantheon adapter layer defined in OPENCLAW_RUNTIME_CONTRACT.
 It exposes a controlled health/capability/session-metadata facade and degrades cleanly
 when the optional upstream gateway is absent or unhealthy.
 
-No live broker execution, paper, or production adapter paths are enabled here.
-All live operation paths are explicitly marked as deferred.
+Production and live broker execution remain disabled. The paper broker adapter
+surface is present but fail-closed unless OPENCLAW_PAPER_ADAPTER_ENABLED is set
+and a paper RuntimeBinding can be verified through runtime-manager.
 
 Routes
 ------
@@ -27,6 +28,12 @@ GET  /api/openclaw-adapter/lifecycle/sessions/{id}       — Pantheon-owned sess
 POST /api/openclaw-adapter/lifecycle/sessions            — idempotent create; records operator and audit trail
 POST /api/openclaw-adapter/lifecycle/sessions/{id}/cancel — operator-owned cancel; preserves state on degraded upstream
 GET  /api/openclaw-adapter/lifecycle/sessions/{id}/audit — append-only audit trail for the session
+
+POST /api/openclaw-adapter/broker/paper/orders       — gated paper order simulation handoff
+GET  /api/openclaw-adapter/broker/paper/orders       — gated paper order list via broker sidecar
+GET  /api/openclaw-adapter/broker/paper/orders/{id}  — gated paper order read via broker sidecar
+POST /api/openclaw-adapter/broker/live/orders        — always rejected
+GET  /api/openclaw-adapter/broker/audit              — paper intent/result audit trail
 """
 
 from __future__ import annotations
@@ -54,6 +61,11 @@ from tool_workflow_bridge import (
     ToolPolicy,
     ToolWorkflowBridge,
 )
+from paper_broker_adapter import (
+    PaperBrokerAdapter,
+    PaperBrokerAdapterError,
+    PaperBrokerAuditLog,
+)
 
 from services.foundation.health import (
     health_payload,
@@ -72,6 +84,8 @@ _PRODUCTION_BROKER_ENABLED = os.getenv("OPENCLAW_PRODUCTION_BROKER_ENABLED", "")
 _PAPER_ADAPTER_ENABLED = os.getenv("OPENCLAW_PAPER_ADAPTER_ENABLED", "").lower() in {"1", "true", "yes"}
 _LIVE_ADAPTER_ENABLED = os.getenv("OPENCLAW_LIVE_ADAPTER_ENABLED", "").lower() in {"1", "true", "yes"}
 _CAPITAL_BINDING_ENABLED = os.getenv("OPENCLAW_CAPITAL_BINDING_ENABLED", "").lower() in {"1", "true", "yes"}
+_BROKER_SIDECAR_URL = os.getenv("OPENCLAW_BROKER_SIDECAR_URL", "")
+_RUNTIME_MANAGER_URL = os.getenv("OPENCLAW_RUNTIME_MANAGER_URL", "") or os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "")
 
 # Static capability snapshot — reflects the minimum runtime contract from OPENCLAW_RUNTIME_CONTRACT.md §4.
 # Returned without a live upstream call so the adapter remains useful in degraded mode.
@@ -106,6 +120,7 @@ _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
         "paper_adapter": "OPENCLAW_PAPER_ADAPTER_ENABLED",
         "live_adapter": "OPENCLAW_LIVE_ADAPTER_ENABLED",
         "capital_binding": "OPENCLAW_CAPITAL_BINDING_ENABLED",
+        "paper_runtime_binding_check": "OPENCLAW_RUNTIME_MANAGER_URL",
     },
     "session_lifecycle": {
         "owner": "pantheon_adapter",
@@ -125,8 +140,9 @@ _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
     "note": (
         "This adapter exposes the Pantheon boundary facade and typed OpenClaw upstream client. "
         "Session lifecycle is Pantheon-owned with durable state, idempotent create, operator "
-        "ownership, and degraded recovery. Broker execution, paper/live adapter paths, and "
-        "capital binding remain deferred until their activation gates are passed."
+        "ownership, and degraded recovery. Production/live broker execution remains deferred. "
+        "Paper order submission is available only behind the explicit paper gate and requires "
+        "a verified active paper RuntimeBinding."
     ),
 }
 
@@ -520,7 +536,7 @@ app = FastAPI(
     description=(
         "Pantheon-owned boundary facade for the upstream OpenClaw-compatible gateway. "
         "Exposes health, capability metadata, and degraded-mode semantics. "
-        "No live broker or production adapter paths are activated."
+        "Live broker and production adapter paths remain disabled."
     ),
 )
 
@@ -534,6 +550,7 @@ register_fastapi_health_routes(
         "paper_adapter_enabled": _PAPER_ADAPTER_ENABLED,
         "live_adapter_enabled": _LIVE_ADAPTER_ENABLED,
         "capital_binding_enabled": _CAPITAL_BINDING_ENABLED,
+        "runtime_manager_url": _RUNTIME_MANAGER_URL or "not_configured",
     },
 )
 
@@ -569,6 +586,8 @@ def upstream_status() -> Dict[str, Any]:
 @app.get("/api/openclaw-adapter/capabilities")
 def get_capabilities() -> Dict[str, Any]:
     payload = dict(_CAPABILITY_SNAPSHOT)
+    payload["paper_adapter"] = "enabled" if _PAPER_ADAPTER_ENABLED else "deferred"
+    payload["paper_broker"] = _PAPER_BROKER.capability_snapshot()
     try:
         payload["upstream"] = {
             "status": "ok",
@@ -919,4 +938,127 @@ def list_bridge_audit(
     return JSONResponse(
         status_code=200,
         content={"status": "ok", "count": len(entries), "entries": entries},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Paper broker adapter (gated by OPENCLAW_PAPER_ADAPTER_ENABLED)
+# Live orders are always rejected regardless of gate state.
+# ---------------------------------------------------------------------------
+
+_PAPER_BROKER_AUDIT = PaperBrokerAuditLog()
+_PAPER_BROKER = PaperBrokerAdapter(
+    enabled=_PAPER_ADAPTER_ENABLED,
+    broker_url=_BROKER_SIDECAR_URL,
+    runtime_manager_url=_RUNTIME_MANAGER_URL,
+    audit_log=_PAPER_BROKER_AUDIT,
+)
+
+
+def _paper_broker_error_response(exc: PaperBrokerAdapterError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+
+
+class PaperOrderRequest(BaseModel):
+    capital_pool_id: str
+    strategy_id: str
+    symbol: str
+    qty: float
+    side: str
+    order_type: str = "market"
+    limit_price: Optional[float] = None
+
+
+@app.post("/api/openclaw-adapter/broker/paper/orders")
+def submit_paper_order(
+    req: PaperOrderRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+) -> JSONResponse:
+    if not x_operator_id:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "paper_broker_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for paper order submission.",
+            },
+        )
+    try:
+        result = _PAPER_BROKER.submit_paper_order(
+            capital_pool_id=req.capital_pool_id,
+            strategy_id=req.strategy_id,
+            symbol=req.symbol,
+            qty=req.qty,
+            side=req.side,
+            order_type=req.order_type,
+            limit_price=req.limit_price,
+            operator_id=x_operator_id,
+            trace_id=x_trace_id,
+        )
+    except PaperBrokerAdapterError as exc:
+        return _paper_broker_error_response(exc)
+    return JSONResponse(status_code=201, content=result)
+
+
+@app.get("/api/openclaw-adapter/broker/paper/orders")
+def list_paper_orders(
+    capital_pool_id: Optional[str] = None,
+    strategy_id: Optional[str] = None,
+    limit: int = 100,
+) -> JSONResponse:
+    try:
+        result = _PAPER_BROKER.list_paper_orders(
+            capital_pool_id=capital_pool_id,
+            strategy_id=strategy_id,
+            limit=limit,
+        )
+    except PaperBrokerAdapterError as exc:
+        return _paper_broker_error_response(exc)
+    return JSONResponse(status_code=200, content=result)
+
+
+@app.get("/api/openclaw-adapter/broker/paper/orders/{order_id}")
+def get_paper_order(order_id: str) -> JSONResponse:
+    try:
+        result = _PAPER_BROKER.get_paper_order(order_id)
+    except PaperBrokerAdapterError as exc:
+        return _paper_broker_error_response(exc)
+    return JSONResponse(status_code=200, content=result)
+
+
+@app.post("/api/openclaw-adapter/broker/live/orders")
+def reject_live_order(
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+) -> JSONResponse:
+    try:
+        _PAPER_BROKER.reject_live_order(operator_id=x_operator_id)
+    except PaperBrokerAdapterError as exc:
+        return _paper_broker_error_response(exc)
+    # unreachable — reject_live_order always raises
+    return JSONResponse(status_code=403, content={"status": "paper_broker_error", "error_code": "LIVE_ADAPTER_DISABLED"})  # pragma: no cover
+
+
+@app.get("/api/openclaw-adapter/broker/audit")
+def list_paper_broker_audit(
+    operator_id: Optional[str] = None,
+    capital_pool_id: Optional[str] = None,
+    limit: int = 100,
+) -> JSONResponse:
+    entries = _PAPER_BROKER.read_audit(
+        operator_id=operator_id,
+        capital_pool_id=capital_pool_id,
+        limit=limit,
+    )
+    return JSONResponse(
+        status_code=200,
+        content={"status": "ok", "count": len(entries), "entries": entries},
+    )
+
+
+@app.get("/api/openclaw-adapter/broker/capabilities")
+def broker_capabilities() -> JSONResponse:
+    return JSONResponse(
+        status_code=200,
+        content={"status": "ok", **_PAPER_BROKER.capability_snapshot()},
     )

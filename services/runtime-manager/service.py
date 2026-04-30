@@ -515,6 +515,10 @@ class RuntimeManagerService:
         5. stage consistency: target_stage must be a valid DeploymentMode value
         6. Single-runtime rule enforced by the store
 
+        Optional ``strategy_id`` is preserved in RuntimeBinding.metadata so
+        paper/runtime adapters can prove that order intents match the active
+        governed strategy without gaining RuntimeBinding write authority.
+
         ``_allow_cutover_bypass`` is an internal-only flag used by the REPLACE
         rollback path to bypass the single-runtime guard for exactly this one
         binding creation during the hot-swap cutover window.  Callers outside
@@ -535,6 +539,9 @@ class RuntimeManagerService:
         runtime_id = request.get("runtime_id") or f"rt-{uuid.uuid4().hex[:8]}"
         rollback_parent = request.get("rollback_parent")
         rollback_action_type = request.get("rollback_action_type")
+        binding_metadata = dict(request.get("metadata") or {}) if isinstance(request.get("metadata"), dict) else {}
+        if request.get("strategy_id"):
+            binding_metadata.setdefault("strategy_id", str(request.get("strategy_id")))
 
         # Pre-condition 1: plan status
         if plan_status not in ("approved", "executing"):
@@ -595,6 +602,7 @@ class RuntimeManagerService:
             persona_capital_binding_id=persona_capital_binding_id,
             rollback_parent=rollback_parent,
             rollback_action_type=rollback_action_type,
+            metadata=binding_metadata,
         )
 
         # Semantic validation (field-level)

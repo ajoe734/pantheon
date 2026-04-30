@@ -88,6 +88,11 @@ class RuntimeManagerServiceTests(unittest.TestCase):
         plan_bindings = self.service.list_by_plan("plan-001")
         self.assertEqual([item.binding_id for item in plan_bindings], [binding.binding_id])
 
+    def test_deploy_preserves_strategy_id_in_metadata_for_runtime_readers(self):
+        binding = self.service.deploy(_valid_deploy_request(strategy_id="strat-001"))
+
+        self.assertEqual(binding.metadata["strategy_id"], "strat-001")
+
     def test_deploy_rejects_rollback_parent_without_action_type(self):
         with self.assertRaisesRegex(RuntimeManagerError, "rollback_action_type is required"):
             self.service.deploy(

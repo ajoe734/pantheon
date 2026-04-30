@@ -12,6 +12,8 @@ Route summary
 POST  /api/runtimes/deploy
     Create a RuntimeBinding from a validated DeploymentPlan descriptor.
     Body: DeployPlanRequest fields (see service.py for field documentation).
+    Optional strategy_id is preserved in RuntimeBinding.metadata for read-side
+    adapter binding checks.
 
 GET   /api/runtime-bindings
     List all RuntimeBindings, optionally filtered by pool_id or plan_id.
