@@ -4,12 +4,129 @@ from __future__ import annotations
 
 import sys
 import os
+import json
+import tempfile
+from pathlib import Path
+from unittest import mock
 
 # Ensure the BFF module is importable
 sys.path.insert(0, os.path.dirname(__file__))
 
 from fastapi.testclient import TestClient
+
+_FIXTURE_TMP = tempfile.TemporaryDirectory(prefix="pantheon-bff-incident-smoke-")
+_FIXTURE_ROOT = Path(_FIXTURE_TMP.name)
+_INCIDENT_SERVICE_DIR = _FIXTURE_ROOT / "incidents"
+_BFF_DATA_DIR = _FIXTURE_ROOT / "bff"
+_INCIDENT_STORE_PATH = _INCIDENT_SERVICE_DIR / "incidents.json"
+
+
+def _seed_incident_service_store() -> None:
+    _INCIDENT_SERVICE_DIR.mkdir(parents=True, exist_ok=True)
+    _BFF_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    incident_live = {
+        "incident_id": "inc-20260410-001",
+        "title": "Unexpected drawdown in persona-alpha",
+        "severity": "high",
+        "status": "open",
+        "created_at": "2026-04-10T14:30:00Z",
+        "binding_id": "runtime-042",
+        "deployment_stage": "live",
+        "deployment_plan_id": "plan-F-042",
+        "capital_pool_id": "pool-main",
+        "persona_capital_binding_id": "binding-042",
+        "artifact_id": "artifact-042",
+        "artifact_version": "v2.1.0",
+        "runtime_id": "runtime-042",
+        "trace_id": "trace-inc-20260410-001",
+        "telemetry_event_ids": ["tl-001"],
+        "evidence_summary": "12% drawdown exceeded 10% threshold; runtime paused pending review.",
+        "lineage_ref": "artifact-042@v2.1.0",
+    }
+    incident_resolved = {
+        "incident_id": "inc-20260409-002",
+        "title": "Deployment plan plan-F-042 stalled at paper stage",
+        "severity": "medium",
+        "status": "resolved",
+        "created_at": "2026-04-09T08:00:00Z",
+        "resolved_at": "2026-04-09T10:30:00Z",
+        "binding_id": "runtime-042",
+        "deployment_stage": "paper",
+        "deployment_plan_id": "plan-F-042",
+        "capital_pool_id": "pool-main",
+        "persona_capital_binding_id": "binding-042",
+        "artifact_id": "artifact-042",
+        "artifact_version": "v2.1.0",
+        "runtime_id": "runtime-042",
+        "trace_id": "trace-inc-20260409-002",
+        "telemetry_event_ids": [],
+        "evidence_summary": "Promotion gate timeout during artifact validation.",
+        "lineage_ref": "artifact-042@v2.1.0",
+    }
+    postmortem = {
+        "postmortem_id": "pm-20260409-002",
+        "incident_id": "inc-20260409-002",
+        "title": "Postmortem: Deployment plan F-042 promotion timeout",
+        "status": "published",
+        "created_at": "2026-04-09T11:00:00Z",
+        "published_at": "2026-04-09T12:00:00Z",
+        "binding_id": "runtime-042",
+        "deployment_stage": "paper",
+        "deployment_plan_id": "plan-F-042",
+        "capital_pool_id": "pool-main",
+        "persona_capital_binding_id": "binding-042",
+        "artifact_id": "artifact-042",
+        "artifact_version": "v2.1.0",
+        "runtime_id": "runtime-042",
+        "trace_id": "trace-inc-20260409-002",
+        "root_cause": "Promotion gate timeout was set too low for artifact validation under load.",
+        "contributing_factors": [
+            "Artifact validation queue became saturated during peak load",
+            "Timeout threshold was insufficient for large artifact bundles",
+        ],
+        "timeline": [
+            {"at": "2026-04-09T08:00:00Z", "event": "Incident opened"},
+            {"at": "2026-04-09T10:30:00Z", "event": "Incident resolved"},
+            {"at": "2026-04-09T11:00:00Z", "event": "Postmortem drafted"},
+        ],
+        "action_items": [
+            "Increase promotion gate timeout to 120s",
+            "Add queue-depth alerting for promotion gate",
+        ],
+        "author_ids": ["platform"],
+    }
+    _INCIDENT_STORE_PATH.write_text(
+        json.dumps(
+            {
+                "incidents": [incident_live, incident_resolved],
+                "postmortems": [postmortem],
+            },
+            indent=2,
+            ensure_ascii=True,
+        ),
+        encoding="utf-8",
+    )
+
+
+_seed_incident_service_store()
+os.environ["BFF_DATA_DIR"] = str(_BFF_DATA_DIR)
+os.environ["INCIDENTS_DATA_DIR"] = str(_INCIDENT_SERVICE_DIR)
+os.environ["POSTMORTEMS_DATA_DIR"] = str(_INCIDENT_SERVICE_DIR)
+os.environ["PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK"] = "false"
+os.environ["BFF_READ_SURFACE_STATE"] = "fresh"
+for _env_name in (
+    "PANTHEON_BFF_INCIDENT_STORE",
+    "PANTHEON_BFF_POSTMORTEM_STORE",
+    "PANTHEON_INCIDENTS_API_URL",
+    "PANTHEON_INCIDENTS_URL",
+    "PANTHEON_POSTMORTEMS_API_URL",
+    "PANTHEON_POSTMORTEMS_URL",
+):
+    os.environ.pop(_env_name, None)
+
+import main as bff_main
 from main import app
+from read_store import ReadSurfaceStore
 
 client = TestClient(app)
 
@@ -83,6 +200,44 @@ def test_in02_incident_detail_not_found():
     resp = client.get("/api/v1/incidents/inc-nonexistent", headers={"Authorization": AUTH})
     assert resp.status_code == 404
     print("✅ IN-02: Incident Detail (404 for nonexistent)")
+
+
+def test_in02_missing_backend_does_not_fabricate_incidents():
+    with tempfile.TemporaryDirectory() as td:
+        unavailable_store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+        original_read_store = bff_main.read_store
+        with mock.patch.dict(
+            os.environ,
+            {
+                "INCIDENTS_DATA_DIR": "",
+                "POSTMORTEMS_DATA_DIR": "",
+                "PANTHEON_BFF_INCIDENT_STORE": "",
+                "PANTHEON_BFF_POSTMORTEM_STORE": "",
+                "PANTHEON_INCIDENTS_API_URL": "",
+                "PANTHEON_INCIDENTS_URL": "",
+                "PANTHEON_POSTMORTEMS_API_URL": "",
+                "PANTHEON_POSTMORTEMS_URL": "",
+            },
+            clear=False,
+        ):
+            bff_main.read_store = unavailable_store
+            try:
+                list_resp = client.get("/api/v1/incidents", headers={"Authorization": AUTH})
+                detail_resp = client.get("/api/v1/incidents/inc-20260410-001", headers={"Authorization": AUTH})
+            finally:
+                bff_main.read_store = original_read_store
+
+    assert list_resp.status_code == 200
+    list_body = list_resp.json()
+    assert list_body["items"] == []
+    assert list_body["meta"]["surfaces"]["incident_list"]["status"] == "unavailable"
+    assert list_body["meta"]["surfaces"]["incident_list"]["source"] == "missing"
+    assert list_body["meta"]["degradation"]["reason"]
+    assert detail_resp.status_code == 404
+    print("✅ IN-02: Missing backend does not fabricate incident records")
 
 
 def test_in03_postmortem_list():
@@ -328,6 +483,7 @@ if __name__ == "__main__":
         test_in01_resolved_incident_list_includes_resolved_at,
         test_in02_incident_detail,
         test_in02_incident_detail_not_found,
+        test_in02_missing_backend_does_not_fabricate_incidents,
         test_in03_postmortem_list,
         test_in04_postmortem_detail,
         test_in04_postmortem_not_found,
