@@ -591,25 +591,32 @@ def _smoke_raytune() -> SmokeRow:
 
 def _smoke_wandb() -> SmokeRow:
     """
-    W&B: offline deferred-prep scaffold.
+    W&B: offline local-store scaffold.
 
     Config-level gate: EXPERIMENT_BACKEND=wandb raises EnvironmentError at
-    import time unless PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1 is set.  The
-    offline prep smoke uses OfflineWandbPrepBackend (no W&B SDK required).
+    import time unless PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1 is set.  The
+    legacy PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1 flag remains accepted as a
+    compatibility alias.  The offline smoke uses OfflineWandbLocalBackend
+    (no W&B SDK required).
 
     Gate mechanism: config.selected_backend() raises EnvironmentError when
-    EXPERIMENT_BACKEND=wandb without PANTHEON_ENABLE_WANDB_DEFERRED_PREP.
+    EXPERIMENT_BACKEND=wandb without the offline-store flag or alias.
     Distinguishable from missing_optional_dep: the wandb SDK is simply not
-    installed; the prep scaffold works without it.
+    installed; the local-store scaffold works without it.
     """
     integration = "wandb"
     gate_mechanism = (
-        "EXPERIMENT_BACKEND=wandb requires PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1 "
-        "(config-level EnvironmentError gate)"
+        "EXPERIMENT_BACKEND=wandb requires PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1 "
+        "(PANTHEON_ENABLE_WANDB_DEFERRED_PREP compatibility alias accepted)"
     )
 
-    # Scrub PANTHEON_ENABLE_WANDB_DEFERRED_PREP so parent env contamination
-    # cannot bypass the gate denial check.
+    # Scrub W&B activation env so parent contamination cannot bypass the gate
+    # denial check.
+    wandb_scrub = {
+        "PANTHEON_ENABLE_WANDB_OFFLINE_STORE",
+        "PANTHEON_ENABLE_WANDB_DEFERRED_PREP",
+        "PANTHEON_WANDB_ONLINE_SYNC_ENABLED",
+    }
     denial_code, denial_out, denial_err = _run(
         [
             PYTHON, "-c",
@@ -623,11 +630,14 @@ def _smoke_wandb() -> SmokeRow:
             ),
         ],
         env={"EXPERIMENT_BACKEND": "wandb"},
-        scrub={"PANTHEON_ENABLE_WANDB_DEFERRED_PREP"},
+        scrub=wandb_scrub,
     )
+    denial_text = denial_err + denial_out
     gate_denial_verified = (
         denial_code != 0
-        and "reserved for deferred prep only" in (denial_err + denial_out)
+        and "reserved for the offline local run store" in denial_text
+        and "PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1" in denial_text
+        and "PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1 is accepted only as a compatibility alias" in denial_text
     )
 
     if not gate_denial_verified:
@@ -644,10 +654,11 @@ def _smoke_wandb() -> SmokeRow:
             ),
         )
 
-    # Run offline prep smoke with deferred-prep env flag set.
+    # Run offline local-store smoke with the canonical offline-store flag set.
     code, out, err = _run(
         [PYTHON, "services/registry/experiments/smoke_test.py", "--backend", "wandb"],
-        env={"PANTHEON_ENABLE_WANDB_DEFERRED_PREP": "1"},
+        env={"PANTHEON_ENABLE_WANDB_OFFLINE_STORE": "1"},
+        scrub={"PANTHEON_ENABLE_WANDB_DEFERRED_PREP", "PANTHEON_WANDB_ONLINE_SYNC_ENABLED"},
     )
     if code != 0:
         return SmokeRow(
@@ -657,6 +668,26 @@ def _smoke_wandb() -> SmokeRow:
             gate_state="unknown",
             activated=False,
             error_detail=_short(err or out),
+        )
+
+    # Prove the legacy deferred-prep flag remains a compatibility alias for
+    # reviewers and older runbooks while the canonical gate name moves forward.
+    alias_code, alias_out, alias_err = _run(
+        [PYTHON, "services/registry/experiments/smoke_test.py", "--backend", "wandb"],
+        env={"PANTHEON_ENABLE_WANDB_DEFERRED_PREP": "1"},
+        scrub={"PANTHEON_ENABLE_WANDB_OFFLINE_STORE", "PANTHEON_WANDB_ONLINE_SYNC_ENABLED"},
+    )
+    if alias_code != 0 or "passed with backend=wandb" not in alias_out:
+        return SmokeRow(
+            integration=integration,
+            gate_mechanism=gate_mechanism,
+            result="error",
+            gate_state="unknown",
+            activated=False,
+            error_detail=(
+                "compatibility alias smoke failed: "
+                f"exit={alias_code} stdout={_short(alias_out)} stderr={_short(alias_err)}"
+            ),
         )
 
     assertions_ok = "passed with backend=wandb" in out
@@ -684,6 +715,8 @@ def _smoke_wandb() -> SmokeRow:
             "prep_only": True,
             "sdk_backed": False,
             "wandb_sdk_present": wandb_sdk_present,
+            "offline_store_gate": "PANTHEON_ENABLE_WANDB_OFFLINE_STORE",
+            "deferred_prep_alias_verified": True,
             "activation_state": "deferred",
             "gate_denial_verified": True,
             "assertions": "OK",
