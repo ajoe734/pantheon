@@ -10,12 +10,16 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
 sys.path.insert(0, os.path.dirname(__file__))
 
 from read_store import ReadSurfaceStore
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _fake_post_capture(calls: list) -> callable:
@@ -152,3 +156,15 @@ def test_bff_search_returns_governed_refs_from_service() -> None:
     assert "exp-governed-001" in refs
     assert refs["exp-governed-001"]["evidence_bundle_id"] == "evbundle-governed-001"
     assert refs["exp-governed-001"]["citations"] == ["experiment:exp-governed-001"]
+
+
+def test_deployment_wires_durable_index_only_cutoff_for_search_service() -> None:
+    compose_text = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    start = compose_text.index("  search-svc:")
+    end = compose_text.index("\n  training-session-svc:", start)
+    search_block = compose_text[start:end]
+
+    assert "SEARCH_DURABLE_INDEX_ONLY: ${SEARCH_DURABLE_INDEX_ONLY:-false}" in search_block
+
+    prod_env = (REPO_ROOT / "env" / "prod-control.env.example").read_text(encoding="utf-8")
+    assert "SEARCH_DURABLE_INDEX_ONLY=true" in prod_env
