@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from services.foundation.health import register_fastapi_health_routes
-from store import PolicyLearningStore
+from store import PolicyLearningStore, build_policy_learning_store
 
 
 PRODUCTION_ADAPTERS = {"openclaw", "qlib", "trl", "finrl", "rllib", "ray_tune", "wandb"}
@@ -128,7 +128,7 @@ def _proposal_text(body: ProposalBody) -> str:
 
 
 app = FastAPI(title="Pantheon Policy Learning Service", version="0.1.0")
-store = PolicyLearningStore(_data_dir())
+store = build_policy_learning_store(_data_dir())
 register_fastapi_health_routes(
     app,
     "policy-learning",

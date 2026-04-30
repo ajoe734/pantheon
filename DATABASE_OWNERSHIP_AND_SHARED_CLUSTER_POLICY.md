@@ -1,6 +1,6 @@
 # DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY
 
-Last updated: 2026-04-09
+Last updated: 2026-04-30
 Status: canonical database ownership and cluster policy for Pantheon
 Tier: L1 Platform Architecture & Policy
 Scope: shared PostgreSQL cluster policy, schema ownership, write boundaries, and cross-service read/write rules
@@ -75,6 +75,31 @@ v1 不強制每個服務獨立 DB instance。
 | runtime | runtime-manager-svc |
 | telemetry | telemetry-svc |
 | incident / postmortem / evolution | telemetry-evolution-svc |
+
+---
+
+## 4.1 Production ownership wave 2 inventory
+
+This inventory records the service stores migrated or fenced in
+`SVC-POSTGRES-PRODUCTION-OWNERSHIP-WAVE2`. Dev/local rollback remains JSON or
+JSONL by backend env, but staging/prod env examples select Postgres owner
+stores so services do not require cross-service volume writes.
+
+| Service | Dev fallback | Postgres owner table | Write owner | Non-owner read contract |
+|---|---|---|---|---|
+| consultation-svc | `consultation` JSONL store | `consult_svc.lifecycle_events`, `consult_svc.audit_events`, `consult_svc.memo_publications`, `consult_svc.outbox_records` | consultation-svc | owner API or read role only |
+| source-ingest | `source_evidence.jsonl` | `source_ingest.source_evidence` | source-ingest | owner API or read role only |
+| search-svc | `search-index.jsonl` | `search_svc.search_index_snapshots` | search-svc | owner API or read role only |
+| search-svc evidence view | source evidence JSONL read fallback | `source_ingest.source_evidence` | source-ingest | search-svc reads through read-only repository/role |
+| training-session-svc | `teaching_events.jsonl` | `training_session.teaching_events` | training-session-svc | owner API or read role only |
+| policy-learning-svc | `policy_learning_jobs.json` | `policy_learning.jobs` | policy-learning-svc | owner API or read role only |
+| research-orchestrator-svc | `research_events.jsonl` | `research_orchestrator.research_events` | research-orchestrator-svc | owner API or read role only |
+| research-worker-gateway-svc | `worker_events.jsonl` | `research_worker_gateway.worker_events` | research-worker-gateway-svc | owner API or read role only |
+
+Compose wiring keeps the JSON/JSONL paths mounted for dev rollback. The
+production env example selects the Postgres backends with `DATABASE_URL` as the
+shared cluster DSN; service-specific `*_DSN` values can override it for stricter
+role separation.
 
 ---
 

@@ -85,14 +85,17 @@ services:
     environment:
       PORT: "8096"
       CONSULTATION_DATA_DIR: /data/consultation
-      # Postgres store pilot — disabled by default (JSONL is baseline).
-      # Set CONSULTATION_STORE_BACKEND=postgres and add postgres to depends_on to enable.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      # Dev rollback defaults to JSONL; staging/prod select postgres via env.
       CONSULTATION_STORE_BACKEND: ${CONSULTATION_STORE_BACKEND:-jsonl}
       CONSULTATION_STORE_DSN: ${CONSULTATION_STORE_DSN:-}
     volumes:
       - consultation-data:/data/consultation
     ports:
       - "${CONSULTATION_PORT:-18096}:8096"
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -114,14 +117,17 @@ services:
       SOURCE_INGEST_CONNECTOR_STORE_PATH: /data/source-ingest/connector_config.jsonl
       SOURCE_INGEST_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
       SOURCE_INGEST_MAX_RECORDS: ${SOURCE_INGEST_MAX_RECORDS:-100}
-      # Postgres evidence store pilot — disabled by default (JSONL is baseline).
-      # Set SOURCE_INGEST_EVIDENCE_BACKEND=postgres and add postgres to depends_on to enable.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      # Dev rollback defaults to JSONL; staging/prod select postgres via env.
       SOURCE_INGEST_EVIDENCE_BACKEND: ${SOURCE_INGEST_EVIDENCE_BACKEND:-jsonl}
       SOURCE_INGEST_EVIDENCE_DSN: ${SOURCE_INGEST_EVIDENCE_DSN:-}
     volumes:
       - source-ingest-data:/data/source-ingest
     ports:
       - "${SOURCE_INGEST_PORT:-18097}:8097"
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -142,8 +148,8 @@ services:
       SEARCH_DATA_DIR: /data/search
       SEARCH_INDEX_STORE_PATH: /data/search/search-index.jsonl
       SEARCH_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
-      # Postgres store pilots — disabled by default (JSONL is baseline).
-      # Set *_BACKEND=postgres and add postgres to depends_on to enable.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      # Dev rollback defaults to JSONL; staging/prod select postgres via env.
       SEARCH_INDEX_STORE_BACKEND: ${SEARCH_INDEX_STORE_BACKEND:-jsonl}
       SEARCH_INDEX_STORE_DSN: ${SEARCH_INDEX_STORE_DSN:-}
       SEARCH_EVIDENCE_BACKEND: ${SEARCH_EVIDENCE_BACKEND:-jsonl}
@@ -153,6 +159,9 @@ services:
       - source-ingest-data:/data/source-ingest:ro
     ports:
       - "${SEARCH_PORT:-18098}:8098"
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -171,10 +180,16 @@ services:
     environment:
       PORT: "8099"
       TRAINING_SESSION_DATA_DIR: /data/training-session
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      TRAINING_SESSION_EVENT_STORE_BACKEND: ${TRAINING_SESSION_EVENT_STORE_BACKEND:-jsonl}
+      TRAINING_SESSION_EVENT_STORE_DSN: ${TRAINING_SESSION_EVENT_STORE_DSN:-}
     volumes:
       - training-session-data:/data/training-session
     ports:
       - "${TRAINING_SESSION_PORT:-18099}:8099"
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -194,10 +209,16 @@ services:
       PORT: "8100"
       POLICY_LEARNING_DATA_DIR: /data/policy-learning
       POLICY_LEARNING_ENABLE_PRODUCTION_ADAPTERS: "false"
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      POLICY_LEARNING_STORE_BACKEND: ${POLICY_LEARNING_STORE_BACKEND:-json}
+      POLICY_LEARNING_STORE_DSN: ${POLICY_LEARNING_STORE_DSN:-}
     volumes:
       - policy-learning-data:/data/policy-learning
     ports:
       - "${POLICY_LEARNING_PORT:-18100}:8100"
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -218,10 +239,16 @@ services:
       RESEARCH_ORCHESTRATOR_DATA_DIR: /data/research-orchestrator
       RESEARCH_ORCHESTRATOR_MAX_ACTIVE_RUNS: ${RESEARCH_ORCHESTRATOR_MAX_ACTIVE_RUNS:-8}
       RESEARCH_ORCHESTRATOR_ENABLE_PRODUCTION_ADAPTERS: "false"
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      RESEARCH_ORCHESTRATOR_EVENT_STORE_BACKEND: ${RESEARCH_ORCHESTRATOR_EVENT_STORE_BACKEND:-jsonl}
+      RESEARCH_ORCHESTRATOR_EVENT_STORE_DSN: ${RESEARCH_ORCHESTRATOR_EVENT_STORE_DSN:-}
     volumes:
       - research-orchestrator-data:/data/research-orchestrator
     ports:
       - "${RESEARCH_ORCHESTRATOR_PORT:-18101}:8101"
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -864,9 +891,14 @@ services:
       RESEARCH_WORKER_GATEWAY_MAX_ACTIVE_JOBS: ${RESEARCH_WORKER_GATEWAY_MAX_ACTIVE_JOBS:-4}
       RESEARCH_WORKER_GATEWAY_ENABLE_PRODUCTION_ADAPTERS: "false"
       RESEARCH_ORCHESTRATOR_URL: http://research-orchestrator-svc:8101
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      RESEARCH_WORKER_GATEWAY_EVENT_STORE_BACKEND: ${RESEARCH_WORKER_GATEWAY_EVENT_STORE_BACKEND:-jsonl}
+      RESEARCH_WORKER_GATEWAY_EVENT_STORE_DSN: ${RESEARCH_WORKER_GATEWAY_EVENT_STORE_DSN:-}
     volumes:
       - research-worker-gateway-data:/data/research-worker-gateway
     depends_on:
+      postgres:
+        condition: service_healthy
       research-orchestrator-svc:
         condition: service_healthy
     ports:

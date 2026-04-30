@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from services.foundation.health import register_fastapi_health_routes
-from store import ResearchOrchestratorStore
+from store import ResearchOrchestratorStore, build_research_orchestrator_store
 
 
 PRODUCTION_ADAPTERS = {"openclaw", "qlib", "trl", "finrl", "rllib", "ray_tune", "wandb"}
@@ -178,7 +178,7 @@ class ProposalBody(BaseModel):
 
 
 app = FastAPI(title="Pantheon Research Orchestrator Service", version="0.1.0")
-store = ResearchOrchestratorStore(DATA_DIR)
+store = build_research_orchestrator_store(DATA_DIR)
 register_fastapi_health_routes(
     app,
     "research-orchestrator",

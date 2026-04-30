@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from services.foundation.health import register_fastapi_health_routes
-from store import ResearchWorkerGatewayStore
+from store import ResearchWorkerGatewayStore, build_research_worker_gateway_store
 
 
 SAFE_WORKERS = {"stub", "handoff_only", "manual"}
@@ -256,7 +256,7 @@ class CancelJobBody(BaseModel):
 
 
 app = FastAPI(title="Pantheon Research Worker Gateway", version="0.1.0")
-store = ResearchWorkerGatewayStore(DATA_DIR)
+store = build_research_worker_gateway_store(DATA_DIR)
 register_fastapi_health_routes(
     app,
     "research-worker-gateway",
