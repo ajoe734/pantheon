@@ -10,6 +10,10 @@ python3 -m pytest -q --collect-only
 python3 -m pytest -q
 ```
 
+For the broader command order across pytest, direct smoke entrypoints, compose,
+and gated production-posture checks, see
+[`docs/testing/full-suite-runbook.md`](full-suite-runbook.md).
+
 ## Collection contract
 
 - Root collection uses `--import-mode=importlib` so duplicate test basenames in
