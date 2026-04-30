@@ -3,7 +3,7 @@
 **Parent Task**: `SVC-OPENCLAW-SESSION-LIFECYCLE` — Add Pantheon-owned OpenClaw session lifecycle
 **Parent Owner**: Claude2
 **Parent Reviewer**: Codex
-**Parent Status**: `in_progress` (review changes requested — see Blocking Issue §3)
+**Parent Status**: `review_approved` (transition blocker fixed — see Review Note §3)
 **Sidecar Task**: `SVC-OPENCLAW-SESSION-LIFECYCLE-SIDECAR-BFF-HANDOFF`
 **Sidecar Owner**: Claude
 **Sidecar Reviewer**: Codex
@@ -29,7 +29,7 @@ lifecycle to `services/openclaw-gateway-adapter/`.
 | Idempotent create (`X-Idempotency-Key`) | `main.py:570–602` | done |
 | Operator identity audit trail (`X-Operator-Id`) | `session_lifecycle.py:228–232` | done |
 | Degraded upstream recovery (`lost` state) | `session_lifecycle.py:239–242` | done |
-| 61 lifecycle tests | `test_session_lifecycle.py`, `test_lifecycle_client.py` | pass |
+| 63 lifecycle tests | `test_session_lifecycle.py`, `test_lifecycle_client.py` | pass |
 
 **Activation posture**: `session_lifecycle_state: "activation_ready"`. Broker, paper, live, and
 capital-binding paths remain `deferred` and fail-closed.
@@ -102,27 +102,26 @@ The adapter exposes the following lifecycle surface at its own service address
 
 ---
 
-## 3. Blocking Issue — Read-Path Transition Bug
+## 3. Review Note — Read-Path Transition Bug
 
-**Status**: changes requested by Codex, review file at
+**Status**: fixed and approved by Codex, review file at
 `.orchestrator/reviews/SVC-OPENCLAW-SESSION-LIFECYCLE-review-codex.md`.
 
-Two valid read-time cases currently raise `LIFECYCLE_INVALID_TRANSITION` (409) instead of
+Two valid read-time cases previously raised `LIFECYCLE_INVALID_TRANSITION` (409) instead of
 returning the correct updated state:
 
-| Case | Current behavior | Expected behavior |
+| Case | Previous behavior | Corrected behavior |
 |---|---|---|
 | `active → canceled` (upstream reports session already canceled during GET) | 409 LIFECYCLE_INVALID_TRANSITION | transition to `canceled` via terminal refresh |
 | `cancel_requested → active` (concurrent GET while cancel is in flight, upstream still reports active) | 409 LIFECYCLE_INVALID_TRANSITION | return local `cancel_requested` record unchanged; do not push back to `active` |
 
-**BFF impact**: Until this is resolved, the `GET /lifecycle/sessions/{id}` proxy route can return
-a 409 for sessions in normal lifecycle observation. The BFF must not surface 409 as a state-read
-error to operators; it should treat a 409 from the lifecycle service as a BFF-internal anomaly and
-surface a degraded "state unavailable" panel until the parent task fix lands.
+**BFF impact**: The BFF should be written against the corrected lifecycle semantics. If a 409 from
+the lifecycle service appears on a normal read path again, treat it as a BFF-internal anomaly and
+surface a degraded "state unavailable" panel rather than presenting it as an operator error.
 
-**Prerequisite**: The BFF proxy implementation for `GET /lifecycle/sessions/{id}` should be
-written against the corrected lifecycle semantics. Do not attempt to work around the bug at the
-BFF layer — the fix belongs in `session_lifecycle.py:_ALLOWED_TRANSITIONS` and `get_session()`.
+**Implementation note**: Do not add a BFF workaround for the old transition bug. The parent task
+fix belongs in `session_lifecycle.py:_ALLOWED_TRANSITIONS` and `get_session()` and is already
+covered by the parent review.
 
 ---
 
@@ -130,7 +129,7 @@ BFF layer — the fix belongs in `session_lifecycle.py:_ALLOWED_TRANSITIONS` and
 
 The current BFF (`services/control-plane/bff/`) has no proxy or composed read surfaces for the
 OpenClaw session lifecycle. The gaps below represent forward work for the BFF owner after the
-parent task's blocking issue is resolved.
+review-approved parent lifecycle semantics are available on the implementation branch.
 
 ### 4.1 Missing Surface: Session List
 
@@ -186,18 +185,23 @@ than proxied directly. The BFF must translate the operator cancel intent into a
 `POST /api/openclaw-adapter/lifecycle/sessions/{id}/cancel` call, forwarding `X-Operator-Id`
 from the authenticated operator context.
 
-**Proposed command type**: `OPENCLAW_SESSION_CANCEL`
+**Proposed command type**: `OPENCLAW_SESSION_CANCEL` as the action/surface identifier. If this is
+added to `services/control-plane/bff/models.py::CommandType`, use a PascalCase wire value such as
+`OpenClawSessionCancel` to match existing BFF command enum values.
 
 **Required operator role**: `operator` or `admin` (align with RBAC matrix in
-`BFF_API_CONTRACT.md §6`).
+`BFF_API_CONTRACT.md §8`).
 
 **Write authority note**: The BFF is never the write authority for lifecycle state. It forwards
 the cancel command to the adapter and reflects the resulting record on the read surface.
 
 ### 4.5 Missing Surface: Upstream Status Panel
 
-**Gap**: No BFF read surface exposes `GET /api/openclaw-adapter/upstream/status` or
-`GET /api/openclaw-adapter/capabilities`.
+**Current inventory**: RS-04 (`/api/v1/operator/research/oss-activation-ready`) already composes
+OpenClaw adapter capability and upstream status for the OSS activation-ready operations view.
+
+**Gap**: No dedicated OpenClaw session-lifecycle status surface exposes those adapter readiness
+fields next to session list/detail workflows.
 
 **Proposed surface ID**: `OC-00` (Adapter Status)
 
@@ -236,9 +240,9 @@ Operator → OC-00 (adapter status) → OC-01 (session list)
    and what the upstream reported. Operators use this to verify session provenance and diagnose
    degraded states.
 
-5. **Cancel action**: Available only when `state` is not in `{canceled, failed}`. Sends
-   `OPENCLAW_SESSION_CANCEL` command with operator identity. After the command returns, the detail
-   panel refreshes from `OC-02`.
+5. **Cancel action**: Available only when `state` is not in `{canceled, failed}`. Sends the
+   `OPENCLAW_SESSION_CANCEL` action / `OpenClawSessionCancel` command with operator identity.
+   After the command returns, the detail panel refreshes from `OC-02`.
 
 ---
 
@@ -313,7 +317,7 @@ These assumptions are consistent with `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md §
 |---|---|
 | Adapter service unreachable | Show "session data unavailable" with last-known timestamp. Never show "no sessions" — that is a false negative. |
 | Adapter returns `lost`-state sessions | Surface them as-is with amber degraded banner. Do not hide or suppress `lost` records. |
-| Adapter GET returns 409 (pre-fix, see §3) | Treat as BFF-internal anomaly. Show "state unavailable" for that session. Do not forward the 409 to the operator as a user-facing error. |
+| Adapter GET unexpectedly returns 409 (regression/anomaly, see §3) | Treat as BFF-internal anomaly. Show "state unavailable" for that session. Do not forward the 409 to the operator as a user-facing error. |
 | Cancel command fails with upstream error | Return a `CommandReceipt` with `status: failed` and the upstream error detail. Show operator the last-known session state from `OC-02`. |
 | Adapter `activation_state != activation_ready` | Show an informational banner in the session list: "OpenClaw adapter is not fully ready. Session functionality may be limited." |
 
@@ -323,8 +327,10 @@ These assumptions are consistent with `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md §
 
 The following conditions must be true before the BFF owner starts building the proxy surfaces:
 
-1. **Parent task fix merged**: The `active→canceled` and `cancel_requested→active` transition bug
-   (§3) must be resolved in `session_lifecycle.py` and confirmed passing in CI.
+1. **Parent task fix finalized on the target branch**: The `active→canceled` and
+   `cancel_requested→active` transition bug (§3) is fixed and review-approved. BFF implementation
+   should still start from the finalized parent branch/commit rather than reintroducing a local
+   workaround.
 
 2. **`OpenClawLifecycleClient` available**: The typed client in `lifecycle_client.py` is ready for
    use. The BFF proxy should use it instead of raw HTTP calls to the adapter.
@@ -334,9 +340,9 @@ The following conditions must be true before the BFF owner starts building the p
    session lifecycle surfaces from "future / task-level" into the main surface catalog or a
    dedicated OpenClaw appendix entry.
 
-4. **RBAC role decision**: The BFF RBAC matrix (`BFF_API_CONTRACT.md §6`) does not yet include
-   `OPENCLAW_SESSION_CANCEL`. The BFF owner must decide whether this action requires `operator`
-   or `admin` role before wiring the command handler.
+4. **RBAC role decision**: The BFF RBAC matrix (`BFF_API_CONTRACT.md §8`) does not yet include
+   `OPENCLAW_SESSION_CANCEL` / `OpenClawSessionCancel`. The BFF owner must decide whether this
+   action requires `operator` or `admin` role before wiring the command handler.
 
 ---
 
@@ -349,10 +355,10 @@ The following conditions must be true before the BFF owner starts building the p
 | `services/openclaw-gateway-adapter/lifecycle_client.py` | Typed downstream client for BFF use |
 | `services/control-plane/bff/BFF_API_CONTRACT.md` | BFF canonical contract |
 | `services/control-plane/bff/BFF_SURFACE_INVENTORY.md §8 Appendix A` | Future surfaces list (RS-04, FB-*, RG-*) |
-| `.orchestrator/reviews/SVC-OPENCLAW-SESSION-LIFECYCLE-review-codex.md` | Codex review with blocking transition bug details |
+| `.orchestrator/reviews/SVC-OPENCLAW-SESSION-LIFECYCLE-review-codex.md` | Codex parent review approving the transition bug fix |
 
 ---
 
 *Support artifact — owned by Claude for task `SVC-OPENCLAW-SESSION-LIFECYCLE-SIDECAR-BFF-HANDOFF`.
 Not canonical truth. BFF owner should absorb the OC-0x surface proposals after the parent task
-fix is confirmed.*
+fix is finalized on the target branch.*
