@@ -29,7 +29,7 @@
    - 精煉 acceptance criteria
    - 確認 wave ordering 合理
    - 補充任何遺漏的任務
-5. 完成後執行：`python3 scripts/planning_state.py baton Qwen Gemini "Codex refinement complete. Qwen: please review schema/contract boundaries and raise any object ownership concerns."`
+5. 完成後執行：`python3 scripts/planning_state.py baton Codex2 Gemini "Codex refinement complete. Codex2: please review schema/contract boundaries and raise any object ownership concerns."`
 
 **關鍵 Gap（Claude audit 結果）：**
 - Group A（9 個）：有 domain objects，需要 FastAPI HTTP wrapper + Dockerfile
