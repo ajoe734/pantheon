@@ -360,3 +360,25 @@ This closes the service-boundary gap for a controlled OpenClaw adapter facade on
 - `services/search/main.py:278-326` — durable search path and explicit request-document compatibility path.
 - `services/openclaw-gateway-adapter/main.py:180-220` — deferred OpenClaw sessions and `CAPABILITY_DENIED` session creation.
 - `scripts/smoke_honest_stack.py:135-180` and `scripts/smoke_honest_stack.py:381-613` — smoke coverage for OpenClaw degraded semantics, source ingest, search, policy-learning, and research-orchestrator.
+
+## 14. SVC-SOURCE-SEARCH-AUTONOMOUS-CONNECTOR-INDEXER Closeout Note
+
+Updated: 2026-04-30
+
+The `SVC-SOURCE-SEARCH-AUTONOMOUS-CONNECTOR-INDEXER` execution slice closes the autonomous baseline gap that section 7 left for source-ingest and search: scheduled connector execution beyond caller-triggered `external_feed`, and a materialized index refresh path independent of query-time durable reload.
+
+Delivered scope (commit `7c4a924`):
+
+- Source-ingest: `ConnectorScheduleConfig` and `JsonlConnectorScheduleStore` (append-only with replay) back `PUT/GET /api/source-ingest/connectors/{id}/schedule` and `POST /api/source-ingest/run-scheduled`. The scheduled-run endpoint is watermark-driven and only executes connectors whose due time has elapsed.
+- Search: `JsonlMaterializedIndexStore` (append-only with last-state replay) backs `POST/GET /api/search/index/materialize`, separating materialization from `POST /api/search/index/reload`'s query-time path.
+- Existing watermark advancement, DLQ routing, replay, bounded-fetch guards, and the request-document compatibility quarantine remain enforced — this slice did not loosen any of those boundaries.
+- `scripts/smoke_honest_stack.py` exercises the scheduled-run and materialize endpoints; 14 focused tests cover schedule append/replay and materialized index append/replay.
+
+Verification (review-approved by Codex2):
+
+- `python3 -m pytest services/source_ingestion/ services/search/` → 64 passed
+- `docker compose config --quiet` → exit 0
+
+Disposition:
+
+This closes the autonomous-baseline gap only. It does not promote source-ingest into a production crawler, does not remove the bounded-fetch allowlist, and does not change the request-document quarantine. Downstream production-crawler or richer indexer work remains outside this slice.
