@@ -190,6 +190,30 @@ class OpenClawOpsClient:
             expected_status={200},
         )
 
+    # ------------------------------------------------------------------
+    # Live gate operator surface (read-only: status and audit)
+    # Dry handoff and gate validate remain on the adapter, not the BFF.
+    # ------------------------------------------------------------------
+
+    def get_live_gate_status(self) -> Dict[str, Any]:
+        """Return the current live gate capability and configuration status."""
+        return self._request("GET", "/api/openclaw-adapter/broker/live/gate/status")
+
+    def list_live_gate_audit(
+        self,
+        *,
+        operator_id: Optional[str] = None,
+        capital_pool_id: Optional[str] = None,
+        limit: int = 100,
+    ) -> Dict[str, Any]:
+        """Return the live gate audit trail (intents and outcomes)."""
+        query: Dict[str, str] = {"limit": str(limit)}
+        if operator_id:
+            query["operator_id"] = operator_id
+        if capital_pool_id:
+            query["capital_pool_id"] = capital_pool_id
+        return self._request("GET", "/api/openclaw-adapter/broker/live/gate/audit", query=query)
+
     def _request(
         self,
         method: str,

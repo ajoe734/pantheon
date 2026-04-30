@@ -66,6 +66,11 @@ from paper_broker_adapter import (
     PaperBrokerAdapterError,
     PaperBrokerAuditLog,
 )
+from live_gate_adapter import (
+    LiveGateAdapter,
+    LiveGateAuditLog,
+    LiveGateError,
+)
 
 from services.foundation.health import (
     health_payload,
@@ -90,11 +95,12 @@ _RUNTIME_MANAGER_URL = os.getenv("OPENCLAW_RUNTIME_MANAGER_URL", "") or os.geten
 # Static capability snapshot — reflects the minimum runtime contract from OPENCLAW_RUNTIME_CONTRACT.md §4.
 # Returned without a live upstream call so the adapter remains useful in degraded mode.
 _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
-    "adapter_version": "0.1.0",
+    "adapter_version": "0.2.0",
     "activation_state": "upstream_client_degraded",
     "broker_execution": "deferred",
     "paper_adapter": "deferred",
     "live_adapter": "deferred",
+    "live_gate_harness": "present_disabled",
     "capital_binding": "deferred",
     "session_lifecycle_state": "activation_ready",
     "fail_closed": True,
@@ -121,6 +127,7 @@ _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
         "live_adapter": "OPENCLAW_LIVE_ADAPTER_ENABLED",
         "capital_binding": "OPENCLAW_CAPITAL_BINDING_ENABLED",
         "paper_runtime_binding_check": "OPENCLAW_RUNTIME_MANAGER_URL",
+        "live_gate_harness": "OPENCLAW_LIVE_ADAPTER_ENABLED + OPENCLAW_LIVE_HUMAN_APPROVAL_TOKEN",
     },
     "session_lifecycle": {
         "owner": "pantheon_adapter",
@@ -587,7 +594,9 @@ def upstream_status() -> Dict[str, Any]:
 def get_capabilities() -> Dict[str, Any]:
     payload = dict(_CAPABILITY_SNAPSHOT)
     payload["paper_adapter"] = "enabled" if _PAPER_ADAPTER_ENABLED else "deferred"
+    payload["live_gate_harness"] = "enabled" if _LIVE_ADAPTER_ENABLED else "present_disabled"
     payload["paper_broker"] = _PAPER_BROKER.capability_snapshot()
+    payload["live_gate"] = _LIVE_GATE.capability_snapshot()
     try:
         payload["upstream"] = {
             "status": "ok",
@@ -954,6 +963,13 @@ _PAPER_BROKER = PaperBrokerAdapter(
     audit_log=_PAPER_BROKER_AUDIT,
 )
 
+_LIVE_GATE_AUDIT = LiveGateAuditLog()
+_LIVE_GATE = LiveGateAdapter(
+    enabled=_LIVE_ADAPTER_ENABLED,
+    runtime_manager_url=_RUNTIME_MANAGER_URL,
+    audit_log=_LIVE_GATE_AUDIT,
+)
+
 
 def _paper_broker_error_response(exc: PaperBrokerAdapterError) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
@@ -1032,11 +1048,138 @@ def reject_live_order(
     x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
 ) -> JSONResponse:
     try:
-        _PAPER_BROKER.reject_live_order(operator_id=x_operator_id)
-    except PaperBrokerAdapterError as exc:
-        return _paper_broker_error_response(exc)
+        _LIVE_GATE.reject_live_order(operator_id=x_operator_id)
+    except LiveGateError as exc:
+        return _live_gate_error_response(exc)
     # unreachable — reject_live_order always raises
-    return JSONResponse(status_code=403, content={"status": "paper_broker_error", "error_code": "LIVE_ADAPTER_DISABLED"})  # pragma: no cover
+    return JSONResponse(status_code=403, content={"status": "live_gate_error", "error_code": "LIVE_EXECUTION_DISABLED"})  # pragma: no cover
+
+
+# ---------------------------------------------------------------------------
+# Live gate harness (gated by OPENCLAW_LIVE_ADAPTER_ENABLED + all gate checks)
+# Live execution is always denied — only dry handoff is supported.
+# ---------------------------------------------------------------------------
+
+
+def _live_gate_error_response(exc: LiveGateError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+
+
+class LiveGateValidateRequest(BaseModel):
+    capital_pool_id: str
+
+
+class LiveGateDryHandoffRequest(BaseModel):
+    capital_pool_id: str
+    strategy_id: str
+    symbol: str
+    qty: float
+    side: str
+    order_type: str = "market"
+    limit_price: Optional[float] = None
+
+
+@app.get("/api/openclaw-adapter/broker/live/gate/status")
+def live_gate_status() -> JSONResponse:
+    """Return current live gate capability and configuration status."""
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "ok",
+            "live_gate_enabled": _LIVE_GATE.enabled,
+            "live_execution_enabled": False,
+            **_LIVE_GATE.capability_snapshot(),
+        },
+    )
+
+
+@app.post("/api/openclaw-adapter/broker/live/gate/validate")
+def live_gate_validate(
+    req: LiveGateValidateRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_human_approval_token: Optional[str] = Header(default=None, alias="X-Human-Approval-Token"),
+) -> JSONResponse:
+    """Run all live gate checks for a capital pool without performing a handoff.
+
+    Returns 200 with gate attestation when all gates pass.
+    Returns 403/409/503 with structured error when any gate fails.
+    """
+    if not x_operator_id:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "live_gate_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for live gate checks.",
+            },
+        )
+    try:
+        attestation = _LIVE_GATE.check_all_gates(
+            capital_pool_id=req.capital_pool_id,
+            human_approval_token=x_human_approval_token or "",
+            operator_id=x_operator_id,
+        )
+    except LiveGateError as exc:
+        return _live_gate_error_response(exc)
+    return JSONResponse(status_code=200, content={"status": "ok", "attestation": attestation})
+
+
+@app.post("/api/openclaw-adapter/broker/live/gate/dry-handoff")
+def live_gate_dry_handoff(
+    req: LiveGateDryHandoffRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_human_approval_token: Optional[str] = Header(default=None, alias="X-Human-Approval-Token"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+) -> JSONResponse:
+    """Validate all live gate checks and record a dry handoff intent.
+
+    No real broker execution occurs.  Returns a structured preview payload
+    with full gate attestation.  The audit log records the intent regardless
+    of gate outcome.
+    """
+    if not x_operator_id:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "live_gate_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for live gate dry handoff.",
+            },
+        )
+    try:
+        result = _LIVE_GATE.dry_handoff(
+            capital_pool_id=req.capital_pool_id,
+            strategy_id=req.strategy_id,
+            symbol=req.symbol,
+            qty=req.qty,
+            side=req.side,
+            order_type=req.order_type,
+            limit_price=req.limit_price,
+            operator_id=x_operator_id,
+            human_approval_token=x_human_approval_token or "",
+            trace_id=x_trace_id,
+        )
+    except LiveGateError as exc:
+        return _live_gate_error_response(exc)
+    return JSONResponse(status_code=200, content=result)
+
+
+@app.get("/api/openclaw-adapter/broker/live/gate/audit")
+def live_gate_audit(
+    operator_id: Optional[str] = None,
+    capital_pool_id: Optional[str] = None,
+    limit: int = 100,
+) -> JSONResponse:
+    """Return the append-only live gate intent and outcome audit trail."""
+    entries = _LIVE_GATE.read_audit(
+        operator_id=operator_id,
+        capital_pool_id=capital_pool_id,
+        limit=limit,
+    )
+    return JSONResponse(
+        status_code=200,
+        content={"status": "ok", "count": len(entries), "entries": entries},
+    )
 
 
 @app.get("/api/openclaw-adapter/broker/audit")

@@ -8340,6 +8340,73 @@ async def cancel_openclaw_session(
 
 
 # --------------------------------------------------------------------------- #
+# OpenClaw Live Gate Operator Surface (SVC-OPENCLAW-LIVE-GATE-HARNESS)
+# Read-only BFF projections: status and audit trail.
+# Dry handoff and gate validate remain on the adapter (require X-Human-Approval-Token).
+# --------------------------------------------------------------------------- #
+
+
+@app.get("/api/v1/operator/openclaw/live-gate/status")
+async def get_openclaw_live_gate_status(
+    authorization: Optional[str] = Header(default=None),
+):
+    """Return live gate capability and configuration status.
+
+    Reflects whether the live gate harness is enabled and which gate checks are
+    configured, without performing any gate evaluation.  Always fail-closed on
+    the live path.
+    """
+    identity = _extract_identity(authorization)
+    _require_openclaw_command_role(identity)
+    try:
+        payload = OpenClawOpsClient().get_live_gate_status()
+    except OpenClawOpsClientError as exc:
+        raise _openclaw_client_error(exc) from exc
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "ok",
+            "surface": "openclaw_live_gate_status",
+            "data": payload,
+            "snapshot_at": utc_now(),
+        },
+    )
+
+
+@app.get("/api/v1/operator/openclaw/live-gate/audit")
+async def get_openclaw_live_gate_audit(
+    capital_pool_id: Optional[str] = None,
+    limit: int = 100,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Return the live gate intent and outcome audit trail.
+
+    Scoped to the requesting operator when non-admin; admins may pass
+    capital_pool_id to filter across pools.
+    """
+    identity = _extract_identity(authorization)
+    _require_openclaw_command_role(identity)
+    operator_id = None if "admin" in identity.roles else identity.operator_id
+    try:
+        payload = OpenClawOpsClient().list_live_gate_audit(
+            operator_id=operator_id,
+            capital_pool_id=capital_pool_id,
+            limit=limit,
+        )
+    except OpenClawOpsClientError as exc:
+        raise _openclaw_client_error(exc) from exc
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "ok",
+            "surface": "openclaw_live_gate_audit",
+            "data": payload,
+            "snapshot_at": utc_now(),
+        },
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Source / Search Operator Ops Surface (SVC-SOURCE-SEARCH-OPS-BFF)
 # --------------------------------------------------------------------------- #
 

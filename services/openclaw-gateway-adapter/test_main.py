@@ -186,6 +186,8 @@ class TestCapabilities(unittest.TestCase):
         self.assertEqual(body["broker_execution"], "deferred")
         self.assertEqual(body["paper_adapter"], "deferred")
         self.assertEqual(body["live_adapter"], "deferred")
+        self.assertFalse(body["paper_broker"]["paper_adapter_enabled"])
+        self.assertEqual(body["paper_broker"]["runtime_binding_check"], "required_for_submit")
         self.assertIn("supported_session_types", body)
         self.assertEqual(body["upstream"]["status"], "degraded")
 
@@ -413,6 +415,184 @@ class TestCapabilityFenceCompleteness(unittest.TestCase):
         body = resp.json()
         for field in ("broker_execution", "paper_adapter", "live_adapter", "capital_binding"):
             self.assertNotEqual(body.get(field), "enabled", f"Expected {field} to be deferred, not enabled")
+
+
+# ---------------------------------------------------------------------------
+# Paper broker adapter HTTP routes
+# ---------------------------------------------------------------------------
+
+
+class TestPaperBrokerRoutes(unittest.TestCase):
+    """HTTP route coverage for the paper broker adapter endpoints in main.py."""
+
+    def _disabled_broker(self):
+        from paper_broker_adapter import PaperBrokerAdapter, PaperBrokerAdapterError
+
+        mock = MagicMock(spec=PaperBrokerAdapter)
+        mock.submit_paper_order.side_effect = PaperBrokerAdapterError(
+            "PAPER_ADAPTER_DISABLED",
+            "Paper broker adapter is disabled.",
+            status_code=503,
+        )
+        mock.list_paper_orders.side_effect = PaperBrokerAdapterError(
+            "PAPER_ADAPTER_DISABLED",
+            "Paper broker adapter is disabled.",
+            status_code=503,
+        )
+        mock.get_paper_order.side_effect = PaperBrokerAdapterError(
+            "PAPER_ADAPTER_DISABLED",
+            "Paper broker adapter is disabled.",
+            status_code=503,
+        )
+        mock.reject_live_order.side_effect = PaperBrokerAdapterError(
+            "LIVE_ADAPTER_DISABLED",
+            "Live broker execution is disabled.",
+            status_code=403,
+        )
+        mock.read_audit.return_value = []
+        mock.capability_snapshot.return_value = {
+            "paper_adapter_enabled": False,
+            "live_adapter_enabled": False,
+            "broker_sidecar_configured": False,
+            "deployment_stage": "none",
+            "is_real_capital": False,
+            "is_real_order": False,
+        }
+        return mock
+
+    def test_submit_paper_order_returns_503_when_gate_closed(self):
+        with patch.object(adapter_main, "_PAPER_BROKER", self._disabled_broker()):
+            resp = client.post(
+                "/api/openclaw-adapter/broker/paper/orders",
+                json={
+                    "capital_pool_id": "pool-1",
+                    "strategy_id": "strat-1",
+                    "symbol": "AAPL",
+                    "qty": 10.0,
+                    "side": "buy",
+                },
+                headers={"X-Operator-Id": "op-1"},
+            )
+        self.assertEqual(resp.status_code, 503)
+        body = resp.json()
+        self.assertEqual(body["error_code"], "PAPER_ADAPTER_DISABLED")
+
+    def test_submit_paper_order_requires_operator_id(self):
+        resp = client.post(
+            "/api/openclaw-adapter/broker/paper/orders",
+            json={
+                "capital_pool_id": "pool-1",
+                "strategy_id": "strat-1",
+                "symbol": "AAPL",
+                "qty": 10.0,
+                "side": "buy",
+            },
+        )
+        self.assertEqual(resp.status_code, 401)
+
+    def test_submit_paper_order_succeeds_when_gate_open(self):
+        from paper_broker_adapter import PaperBrokerAdapter
+
+        mock = MagicMock(spec=PaperBrokerAdapter)
+        mock.submit_paper_order.return_value = {
+            "status": "ok",
+            "order": {
+                "order_id": "ord-abc",
+                "fill_price": 100.0,
+                "fill_qty": 10.0,
+                "status": "filled",
+                "is_real_order": False,
+                "is_real_capital": False,
+                "sim_fill_flag": True,
+                "deployment_stage": "paper",
+            },
+        }
+        with patch.object(adapter_main, "_PAPER_BROKER", mock):
+            resp = client.post(
+                "/api/openclaw-adapter/broker/paper/orders",
+                json={
+                    "capital_pool_id": "pool-1",
+                    "strategy_id": "strat-1",
+                    "symbol": "AAPL",
+                    "qty": 10.0,
+                    "side": "buy",
+                },
+                headers={"X-Operator-Id": "op-1"},
+            )
+        self.assertEqual(resp.status_code, 201)
+        body = resp.json()
+        self.assertEqual(body["order"]["order_id"], "ord-abc")
+        self.assertFalse(body["order"]["is_real_order"])
+
+    def test_live_order_always_rejected(self):
+        from live_gate_adapter import LiveGateAdapter, LiveGateError
+
+        mock_gate = MagicMock(spec=LiveGateAdapter)
+        mock_gate.reject_live_order.side_effect = LiveGateError(
+            "LIVE_EXECUTION_DISABLED",
+            "Live broker execution is permanently disabled.",
+            status_code=403,
+            gate="live_execution",
+        )
+        with patch.object(adapter_main, "_LIVE_GATE", mock_gate):
+            resp = client.post(
+                "/api/openclaw-adapter/broker/live/orders",
+                headers={"X-Operator-Id": "op-1"},
+            )
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.json()["error_code"], "LIVE_EXECUTION_DISABLED")
+
+    def test_live_order_rejected_when_paper_gate_open(self):
+        from live_gate_adapter import LiveGateAdapter, LiveGateError
+
+        mock_gate = MagicMock(spec=LiveGateAdapter)
+        mock_gate.reject_live_order.side_effect = LiveGateError(
+            "LIVE_EXECUTION_DISABLED",
+            "Live broker execution is permanently disabled.",
+            status_code=403,
+            gate="live_execution",
+        )
+        with patch.object(adapter_main, "_LIVE_GATE", mock_gate):
+            resp = client.post(
+                "/api/openclaw-adapter/broker/live/orders",
+                headers={"X-Operator-Id": "op-1"},
+            )
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.json()["error_code"], "LIVE_EXECUTION_DISABLED")
+
+    def test_broker_capabilities_endpoint(self):
+        from paper_broker_adapter import PaperBrokerAdapter
+
+        mock = MagicMock(spec=PaperBrokerAdapter)
+        mock.capability_snapshot.return_value = {
+            "paper_adapter_enabled": False,
+            "live_adapter_enabled": False,
+            "broker_sidecar_configured": False,
+            "deployment_stage": "none",
+            "is_real_capital": False,
+            "is_real_order": False,
+        }
+        with patch.object(adapter_main, "_PAPER_BROKER", mock):
+            resp = client.get("/api/openclaw-adapter/broker/capabilities")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertFalse(body["live_adapter_enabled"])
+        self.assertFalse(body["is_real_order"])
+        self.assertFalse(body["is_real_capital"])
+
+    def test_broker_audit_endpoint_returns_list(self):
+        from paper_broker_adapter import PaperBrokerAdapter
+
+        mock = MagicMock(spec=PaperBrokerAdapter)
+        mock.read_audit.return_value = [
+            {"event": "paper_order_intent", "operator_id": "op-1"},
+        ]
+        with patch.object(adapter_main, "_PAPER_BROKER", mock):
+            resp = client.get("/api/openclaw-adapter/broker/audit")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(body["entries"][0]["event"], "paper_order_intent")
 
 
 if __name__ == "__main__":
