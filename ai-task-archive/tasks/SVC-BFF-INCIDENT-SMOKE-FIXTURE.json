@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "SVC-BFF-INCIDENT-SMOKE-FIXTURE",
+  "archived_at": "2026-04-30T13:54:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-BFF-INCIDENT-SMOKE-FIXTURE",
+    "title": "BFF incident and postmortem smoke fixture honesty",
+    "summary_zh": "BFF incident smoke still fails under auth stub because expected incident postmortem and composed review records are missing or routed differently. Align fixtures read-store and honest degraded behavior.",
+    "phase": "BFF Service-backed Read Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/control-plane/bff/smoke_test_incident.py",
+      "services/control-plane/bff/read_store.py",
+      "services/incidents",
+      "services/postmortems",
+      "docs"
+    ],
+    "acceptance": [
+      "PANTHEON_BFF_AUTH_STUB=true python3 services/control-plane/bff/smoke_test_incident.py passes",
+      "detail IDs used by smoke are seeded or created through service-backed paths",
+      "unavailable backend paths return honest degraded responses rather than fabricated records",
+      "RBAC strict-mode checks remain covered"
+    ],
+    "next": "Closed after Claude approval. Commit 29e8215 seeds the incident/postmortem smoke through a temporary service-backed store, disables local snapshot fallback, and verifies missing backend paths remain honestly degraded. Direct smoke passes 21/21, focused pytest passes 24 tests, and diff check is clean.",
+    "last_update": "2026-04-30T13:54:57Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-fulltest-materialization-20260430",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Claude review approved commit 29e8215. Direct BFF incident smoke passes 21/21, focused pytest passes 24 tests, and diff check is clean. The fixture stays service-backed with local snapshot fallback disabled and missing backend paths remain honestly degraded."
+    ],
+    "review_file": ".orchestrator/reviews/SVC-BFF-INCIDENT-SMOKE-FIXTURE-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T13:54:57Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "29e8215ff44db4187559d3423549ec705e8c6e89",
+      "commit_subject": "SVC-BFF-INCIDENT-SMOKE-FIXTURE seed service-backed smoke",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-BFF-INCIDENT-SMOKE-FIXTURE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 8,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 63,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-BFF-INCIDENT-SMOKE-FIXTURE",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-30T13:36:31Z",
+      "resolved_at": "2026-04-30T13:38:10Z"
+    },
+    {
+      "task_id": "SVC-BFF-INCIDENT-SMOKE-FIXTURE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "BFF incident smoke fix is ready in commit 29e8215. It seeds incidents/postmortems through a temp service-backed store with snapshot fallback disabled and verifies missing backend paths stay honestly degraded. Verification: direct smoke 21 passed, focused pytest 24 passed, diff check clean.",
+      "status": "done",
+      "created_at": "2026-04-30T13:54:03Z",
+      "resolved_at": "2026-04-30T13:54:40Z"
+    },
+    {
+      "task_id": "SVC-BFF-INCIDENT-SMOKE-FIXTURE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Claude review approved commit 29e8215; direct smoke, focused pytest, and diff check all pass. Owner may finalize with review artifact .orchestrator/reviews/SVC-BFF-INCIDENT-SMOKE-FIXTURE-review-claude.md.",
+      "status": "done",
+      "created_at": "2026-04-30T13:54:40Z",
+      "resolved_at": "2026-04-30T13:54:57Z"
+    }
+  ],
+  "blockers": []
+}
