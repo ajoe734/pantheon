@@ -465,6 +465,45 @@ class TestDegradedRecovery(unittest.TestCase):
         lost_sessions = store.list_sessions(state="lost")
         self.assertEqual(len(lost_sessions), 2)
 
+    def test_get_active_session_upstream_reports_canceled_transitions_to_canceled(self) -> None:
+        """Upstream reporting canceled for an active session must transition to canceled."""
+        upstream = _FakeUpstream()
+        store = _build_store(self.tmp, upstream)
+        record, _ = store.create_session(
+            agent_id="agent-x",
+            session_type="interactive",
+            operator_id="alice",
+            idempotency_key=None,
+        )
+        self.assertEqual(record.state, "active")
+        upstream.get_response = {"session_id": "upstream-1", "status": "canceled"}
+        readback = store.get_session(record.session_id)
+        self.assertEqual(readback.state, "canceled")
+        actions = [e["action"] for e in readback.audit_log]
+        self.assertIn("upstream_reported_canceled", actions)
+
+    def test_get_cancel_requested_upstream_still_active_preserves_local_state(self) -> None:
+        """cancel_requested must not regress to active when upstream still reports active."""
+        upstream = _FakeUpstream()
+        store = _build_store(self.tmp, upstream)
+        record, _ = store.create_session(
+            agent_id="agent-x",
+            session_type="interactive",
+            operator_id="alice",
+            idempotency_key=None,
+        )
+        # Force state to cancel_requested to simulate cancel in-flight.
+        store._transition(
+            record.session_id,
+            "cancel_requested",
+            actor="alice",
+            action="cancel_requested",
+            detail={},
+        )
+        upstream.get_response = {"session_id": "upstream-1", "status": "active"}
+        readback = store.get_session(record.session_id)
+        self.assertEqual(readback.state, "cancel_requested")
+
     def test_durable_state_persists_across_store_instances(self) -> None:
         upstream = _FakeUpstream()
         store_a = _build_store(self.tmp, upstream)

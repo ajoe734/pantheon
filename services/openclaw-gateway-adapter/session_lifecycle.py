@@ -44,7 +44,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 _TERMINAL_STATES = {"canceled", "failed"}
 _ALLOWED_TRANSITIONS: Dict[str, set[str]] = {
     "pending": {"active", "failed", "lost", "cancel_requested"},
-    "active": {"cancel_requested", "lost", "failed"},
+    "active": {"cancel_requested", "lost", "failed", "canceled"},
     "lost": {"active", "cancel_requested", "failed", "canceled"},
     "cancel_requested": {"canceled", "failed", "lost"},
     "canceled": set(),
@@ -306,7 +306,9 @@ class SessionLifecycleStore:
                 detail={"upstream_status": upstream_status},
                 upstream_payload=upstream_payload,
             )
-        else:
+        elif record.state != "cancel_requested":
+            # Do not push cancel_requested back to active: cancel is in-flight and
+            # the upstream has not processed it yet. Return the local record as-is.
             self._transition(
                 session_id,
                 "active",
