@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -214,6 +215,43 @@ class TestInstitutionalMemoryStore(unittest.TestCase):
             ["mem-00000000-0000-0000-0000-00000000000a", "mem-00000000-0000-0000-0000-000000000009"],
         )
         self.assertGreater(hits[0].relevance_score, hits[1].relevance_score)
+
+    def test_retention_policy_assigns_expiry_to_new_entries(self) -> None:
+        with mock.patch.dict("os.environ", {"PANTHEON_MEMORY_RETENTION_DAYS": "30"}, clear=False):
+            store = InstitutionalMemoryStore()
+            created = store.create(make_entry())
+
+        self.assertEqual(created.expires_at, "2026-05-17T08:00:00Z")
+
+    def test_retention_policy_rejects_non_utc_written_at_as_store_error(self) -> None:
+        store = InstitutionalMemoryStore()
+        with self.assertRaises(InstitutionalMemoryError):
+            store.create(make_entry(written_at="2026-04-17T08:00:00+01:00"))
+
+    def test_archive_expired_hides_entries_from_active_retrieval(self) -> None:
+        expired = make_entry(
+            entry_id="mem-00000000-0000-0000-0000-00000000000d",
+            expires_at="2026-04-18T00:00:00Z",
+        )
+        active = make_entry(
+            entry_id="mem-00000000-0000-0000-0000-00000000000e",
+            source_event_id="PM-active",
+            expires_at="2026-05-18T00:00:00Z",
+        )
+        store = InstitutionalMemoryStore()
+        store.create(expired)
+        store.create(active)
+
+        archived = store.archive_expired(now="2026-04-19T00:00:00Z")
+
+        self.assertEqual([entry.entry_id for entry in archived], [expired.entry_id])
+        self.assertEqual(store.require(expired.entry_id).archived_reason, "retention_ttl_expired")
+        self.assertEqual([entry.entry_id for entry in store.list()], [active.entry_id])
+        self.assertEqual([hit.entry.entry_id for hit in store.retrieve(query="Momentum")], [active.entry_id])
+        self.assertEqual(
+            {entry.entry_id for entry in store.list(active_only=False)},
+            {expired.entry_id, active.entry_id},
+        )
 
     def test_persistence_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

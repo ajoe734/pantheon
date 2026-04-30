@@ -62,24 +62,30 @@ try:
     from .models import (
         AcceptReviewRequest,
         ApprovalDecisionResponse,
+        AuthzCheckRequest,
+        AuthzCheckResponse,
         DecideRequest,
         ProposeApprovalRequest,
         RevokeRequest,
         WriteAuthorityEntry,
         WriteAuthorityResponse,
     )
+    from .authz import evaluate_authz_request
     from .pg_store import build_approval_decision_store, build_governance_audit_store
     from .write_authority import is_authorized_to_decide, matrix_as_list
 except ImportError:
     from models import (  # type: ignore
         AcceptReviewRequest,
         ApprovalDecisionResponse,
+        AuthzCheckRequest,
+        AuthzCheckResponse,
         DecideRequest,
         ProposeApprovalRequest,
         RevokeRequest,
         WriteAuthorityEntry,
         WriteAuthorityResponse,
     )
+    from authz import evaluate_authz_request  # type: ignore
     from pg_store import build_approval_decision_store, build_governance_audit_store  # type: ignore
     from write_authority import is_authorized_to_decide, matrix_as_list  # type: ignore
 
@@ -408,6 +414,35 @@ def get_write_authority() -> WriteAuthorityResponse:
             "an ApprovalDecision at the given risk level.  "
             "revoke_roles may revoke any decided decision."
         ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Routes — AuthZ check
+# ---------------------------------------------------------------------------
+
+@app.post(
+    "/api/governance/authz/check",
+    response_model=AuthzCheckResponse,
+    summary="Evaluate a narrow service authorization request",
+)
+def check_authz(body: AuthzCheckRequest) -> AuthzCheckResponse:
+    """Return allow/deny for service-to-service policy checks.
+
+    The first consumer is memory retrieval. Unsupported actions deny instead
+    of falling back to implicit allow.
+    """
+    decision = evaluate_authz_request(
+        action=body.action,
+        actor_id=body.actor_id,
+        actor_roles=body.actor_roles,
+        resource=body.resource,
+        context=body.context,
+    )
+    return AuthzCheckResponse(
+        allowed=bool(decision.get("allowed")),
+        reason=str(decision.get("reason") or "unknown"),
+        policy_version="governance-authz.v1",
     )
 
 

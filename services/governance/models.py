@@ -9,7 +9,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +94,20 @@ class DecideRequest(BaseModel):
 class RevokeRequest(BaseModel):
     actor_role: ActorRole
     actor_id: str
+
+
+class AuthzCheckRequest(BaseModel):
+    action: str
+    actor_id: str
+    actor_roles: List[str]
+    resource: Dict[str, Any] = Field(default_factory=dict)
+    context: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AuthzCheckResponse(BaseModel):
+    allowed: bool
+    reason: str
+    policy_version: str
 
 
 # ---------------------------------------------------------------------------

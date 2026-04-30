@@ -13,7 +13,7 @@ import json
 import os
 import threading
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -34,6 +34,10 @@ def _parse_utc_timestamp(value: str) -> datetime:
     if offset is None or offset != timezone.utc.utcoffset(parsed):
         raise ValueError("timestamp must be expressed in UTC")
     return parsed.astimezone(timezone.utc)
+
+
+def _format_utc_timestamp(value: datetime) -> str:
+    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _entry_sort_key(entry: "InstitutionalMemoryEntry") -> tuple[int, datetime]:
@@ -93,6 +97,9 @@ class InstitutionalMemoryEntry:
     scope_filter: Optional[str] = None
     embedding_ref: Optional[str] = None
     superseded_by: Optional[str] = None
+    expires_at: Optional[str] = None
+    archived_at: Optional[str] = None
+    archived_reason: Optional[str] = None
     reuse_count: int = 0
 
     def __post_init__(self) -> None:
@@ -136,7 +143,13 @@ class InstitutionalMemoryEntry:
 
     @property
     def is_active(self) -> bool:
-        return not bool(self.superseded_by)
+        return not bool(self.superseded_by or self.archived_at)
+
+    def is_expired(self, *, now: Optional[datetime] = None) -> bool:
+        if not self.expires_at:
+            return False
+        current = now or datetime.now(timezone.utc)
+        return _parse_utc_timestamp(self.expires_at) <= current.astimezone(timezone.utc)
 
     def to_dict(self) -> Dict[str, Any]:
         payload = asdict(self)
@@ -168,6 +181,18 @@ def validate_institutional_memory(entry: InstitutionalMemoryEntry) -> List[str]:
         _parse_utc_timestamp(entry.written_at)
     except ValueError:
         errors.append("written_at must be an ISO-8601 UTC timestamp")
+    if entry.expires_at:
+        try:
+            _parse_utc_timestamp(entry.expires_at)
+        except ValueError:
+            errors.append("expires_at must be an ISO-8601 UTC timestamp")
+    if entry.archived_at:
+        try:
+            _parse_utc_timestamp(entry.archived_at)
+        except ValueError:
+            errors.append("archived_at must be an ISO-8601 UTC timestamp")
+        if not entry.archived_reason:
+            errors.append("archived_reason is required when archived_at is set")
     if entry.scope == Scope.SYSTEM_WIDE.value and entry.scope_filter is not None:
         errors.append("scope_filter must be null/omitted when scope is 'system_wide'")
     if entry.scope in {Scope.STRATEGY_FAMILY.value, Scope.INSTRUMENT_CLASS.value} and not entry.scope_filter:
@@ -204,6 +229,38 @@ class RetrievalHit:
     relevance_score: float
 
 
+@dataclass(frozen=True)
+class InstitutionalRetentionPolicy:
+    """TTL policy for new institutional memory entries."""
+
+    ttl_days: Optional[int] = 365
+    archive_reason: str = "retention_ttl_expired"
+
+    @classmethod
+    def from_env(cls) -> "InstitutionalRetentionPolicy":
+        raw = os.getenv("PANTHEON_MEMORY_RETENTION_DAYS", "365").strip()
+        if raw.lower() in {"", "none", "never", "indefinite"}:
+            ttl_days: Optional[int] = None
+        else:
+            try:
+                parsed = int(raw)
+            except ValueError as exc:
+                raise InstitutionalMemoryError("PANTHEON_MEMORY_RETENTION_DAYS must be an integer or 'indefinite'") from exc
+            ttl_days = parsed if parsed > 0 else None
+        reason = os.getenv("PANTHEON_MEMORY_RETENTION_ARCHIVE_REASON", "retention_ttl_expired").strip()
+        return cls(ttl_days=ttl_days, archive_reason=reason or "retention_ttl_expired")
+
+    def apply_to_new_entry(self, entry: InstitutionalMemoryEntry) -> InstitutionalMemoryEntry:
+        if entry.expires_at or self.ttl_days is None:
+            return entry
+        try:
+            written_at = _parse_utc_timestamp(entry.written_at)
+        except ValueError as exc:
+            raise InstitutionalMemoryError("written_at must be an ISO-8601 UTC timestamp") from exc
+        expires_at = _format_utc_timestamp(written_at + timedelta(days=self.ttl_days))
+        return InstitutionalMemoryEntry(**{**entry.to_dict(), "expires_at": expires_at})
+
+
 class InstitutionalMemoryStore:
     """Thread-safe institutional memory store with optional JSON persistence."""
 
@@ -215,6 +272,7 @@ class InstitutionalMemoryStore:
             self._load(path)
 
     def create(self, entry: InstitutionalMemoryEntry) -> InstitutionalMemoryEntry:
+        entry = InstitutionalRetentionPolicy.from_env().apply_to_new_entry(entry)
         errors = validate_institutional_memory(entry)
         if errors:
             raise InstitutionalMemoryError(f"Invalid institutional memory entry: {errors}")
@@ -251,6 +309,8 @@ class InstitutionalMemoryStore:
         contributing_persona_id: Optional[str] = None,
         active_only: bool = True,
     ) -> List[InstitutionalMemoryEntry]:
+        if active_only:
+            self.archive_expired()
         with self._lock:
             entries = list(self._entries.values())
 
@@ -291,6 +351,32 @@ class InstitutionalMemoryStore:
             self._entries[entry_id] = updated
             self._save()
             return updated
+
+    def archive_expired(
+        self,
+        *,
+        now: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> List[InstitutionalMemoryEntry]:
+        policy = InstitutionalRetentionPolicy.from_env()
+        archive_time = _parse_utc_timestamp(now) if now else datetime.now(timezone.utc)
+        archived: List[InstitutionalMemoryEntry] = []
+        with self._lock:
+            for entry_id, entry in list(self._entries.items()):
+                if not entry.is_active or not entry.is_expired(now=archive_time):
+                    continue
+                updated = InstitutionalMemoryEntry(
+                    **{
+                        **entry.to_dict(),
+                        "archived_at": _format_utc_timestamp(archive_time),
+                        "archived_reason": reason or policy.archive_reason,
+                    }
+                )
+                self._entries[entry_id] = updated
+                archived.append(updated)
+            if archived:
+                self._save()
+        return archived
 
     def retrieve(
         self,

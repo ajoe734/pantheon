@@ -60,6 +60,35 @@ def test_write_authority_matrix():
         assert "revoke_roles" in entry
 
 
+def test_authz_allows_institutional_memory_retrieval_for_operator():
+    r = client.post("/api/governance/authz/check", json={
+        "action": "memory.retrieve",
+        "actor_id": "op-1",
+        "actor_roles": ["operator"],
+        "resource": {"scope": "institutional"},
+        "context": {"session_id": "sess-1"},
+    })
+    assert r.status_code == 200
+    assert r.json() == {
+        "allowed": True,
+        "reason": "authorized",
+        "policy_version": "governance-authz.v1",
+    }
+
+
+def test_authz_rejects_cross_persona_session_memory_retrieval():
+    r = client.post("/api/governance/authz/check", json={
+        "action": "memory.retrieve",
+        "actor_id": "persona-session-1",
+        "actor_roles": ["persona_session"],
+        "resource": {"scope": "both", "persona_id": "persona-beta"},
+        "context": {"session_id": "sess-1", "session_persona_id": "persona-alpha"},
+    })
+    assert r.status_code == 200
+    assert r.json()["allowed"] is False
+    assert r.json()["reason"] == "persona_scope_mismatch"
+
+
 # ---------------------------------------------------------------------------
 # Propose
 # ---------------------------------------------------------------------------

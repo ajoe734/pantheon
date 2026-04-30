@@ -1,7 +1,10 @@
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
+
+from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -24,6 +27,11 @@ from services.memory.institutional_memory_store import (
 
 SCHEMA_PATH = Path(__file__).parent / "institutional_memory_entry.schema.json"
 results: list[tuple[str, bool, str]] = []
+PRIMARY_ID = "mem-11111111-1111-1111-1111-111111111111"
+SECONDARY_ID = "mem-22222222-2222-2222-2222-222222222222"
+INVALID_ID = "mem-33333333-3333-3333-3333-333333333333"
+INVALID_SCHEMA_ID = "mem-44444444-4444-4444-4444-444444444444"
+OFFSET_ID = "mem-55555555-5555-5555-5555-555555555555"
 
 
 def check(label: str, ok: bool, detail: str = "") -> None:
@@ -35,7 +43,7 @@ def check(label: str, ok: bool, detail: str = "") -> None:
 
 def make_entry(**overrides) -> InstitutionalMemoryEntry:
     payload = {
-        "entry_id": "inst-smoke-001",
+        "entry_id": PRIMARY_ID,
         "knowledge_type": KnowledgeType.INCIDENT_LESSON.value,
         "content": {
             "headline": "Momentum buffers should widen near regime transitions.",
@@ -83,7 +91,7 @@ def smoke_s2_store_write_query_and_supersede() -> None:
     store = InstitutionalMemoryStore()
     primary = make_entry()
     secondary = make_entry(
-        entry_id="inst-smoke-002",
+        entry_id=SECONDARY_ID,
         knowledge_type=KnowledgeType.RESEARCH_FINDING.value,
         source_event_type=SourceEventType.RESEARCH_TASK_COMPLETED.value,
         source_event_id="RS-smoke-002",
@@ -100,15 +108,15 @@ def smoke_s2_store_write_query_and_supersede() -> None:
 
     hits = store.retrieve(query="momentum breakout", tags=["breakout"], limit=2)
     check("query returns both entries", len(hits) == 2, f"got {len(hits)} hits")
-    check("best hit is research finding", hits and hits[0].entry.entry_id == "inst-smoke-002")
+    check("best hit is research finding", hits and hits[0].entry.entry_id == SECONDARY_ID)
 
-    reused = store.mark_reused("inst-smoke-001", count=2)
+    reused = store.mark_reused(PRIMARY_ID, count=2)
     check("mark_reused increments count", reused.reuse_count == 2, f"reuse_count={reused.reuse_count}")
 
-    superseded = store.supersede("inst-smoke-001", "inst-smoke-002")
-    check("supersede records replacement id", superseded.superseded_by == "inst-smoke-002")
+    superseded = store.supersede(PRIMARY_ID, SECONDARY_ID)
+    check("supersede records replacement id", superseded.superseded_by == SECONDARY_ID)
     active_ids = [entry.entry_id for entry in store.list()]
-    check("superseded entry hidden from active list", active_ids == ["inst-smoke-002"], f"active={active_ids}")
+    check("superseded entry hidden from active list", active_ids == [SECONDARY_ID], f"active={active_ids}")
 
 
 def smoke_s3_persistence_round_trip() -> None:
@@ -117,14 +125,14 @@ def smoke_s3_persistence_round_trip() -> None:
         path = Path(tmpdir) / "institutional-memory.json"
         store = InstitutionalMemoryStore(path=path)
         store.create(make_entry())
-        store.mark_reused("inst-smoke-001", count=4)
+        store.mark_reused(PRIMARY_ID, count=4)
 
         reloaded = InstitutionalMemoryStore(path=path)
         check("persisted file exists", path.exists())
         check(
             "reloaded entry keeps reuse_count",
-            reloaded.require("inst-smoke-001").reuse_count == 4,
-            f"reuse_count={reloaded.require('inst-smoke-001').reuse_count}",
+            reloaded.require(PRIMARY_ID).reuse_count == 4,
+            f"reuse_count={reloaded.require(PRIMARY_ID).reuse_count}",
         )
 
 
@@ -136,7 +144,7 @@ def smoke_s4_invalid_persisted_payload_is_rejected() -> None:
             json.dumps(
                 [
                     {
-                        "entry_id": "inst-invalid-001",
+                        "entry_id": INVALID_ID,
                         "knowledge_type": KnowledgeType.INCIDENT_LESSON.value,
                         "content": {"headline": "Bad timestamp", "body": "No timezone suffix"},
                         "source_event_type": SourceEventType.POSTMORTEM_PUBLISHED.value,
@@ -160,7 +168,7 @@ def smoke_s5_non_utc_timestamp_is_rejected() -> None:
     print("\nS5: Non-UTC timestamp rejected")
     store = InstitutionalMemoryStore()
     try:
-        store.create(make_entry(entry_id="inst-offset-001", written_at="2026-04-17T08:00:00+01:00"))
+        store.create(make_entry(entry_id=OFFSET_ID, written_at="2026-04-17T08:00:00+01:00"))
         check("non-UTC timestamp rejected", False, "expected create failure did not occur")
     except InstitutionalMemoryError:
         check("non-UTC timestamp rejected", True)
@@ -174,7 +182,7 @@ def smoke_s6_schema_only_persisted_violation_is_rejected() -> None:
             json.dumps(
                 [
                     {
-                        "entry_id": "inst-invalid-schema-001",
+                        "entry_id": INVALID_SCHEMA_ID,
                         "knowledge_type": KnowledgeType.INCIDENT_LESSON.value,
                         "content": {
                             "headline": "Unexpected extra key",
@@ -201,6 +209,58 @@ def smoke_s6_schema_only_persisted_violation_is_rejected() -> None:
             check("schema-only persisted violation rejected", True)
 
 
+def smoke_s7_governed_retrieval_replay() -> None:
+    print("\nS7: Governed retrieval replay")
+    from services.memory import main as memory_main
+
+    tracked_env = {
+        "PANTHEON_MEMORY_STORE": os.environ.get("PANTHEON_MEMORY_STORE"),
+        "PANTHEON_MEMORY_AUTHZ_MODE": os.environ.get("PANTHEON_MEMORY_AUTHZ_MODE"),
+        "PANTHEON_GOVERNANCE_API_URL": os.environ.get("PANTHEON_GOVERNANCE_API_URL"),
+        "PANTHEON_GOVERNANCE_AUTHZ_URL": os.environ.get("PANTHEON_GOVERNANCE_AUTHZ_URL"),
+        "PANTHEON_GOVERNANCE_SERVICE_URL": os.environ.get("PANTHEON_GOVERNANCE_SERVICE_URL"),
+    }
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "institutional-memory.json"
+            os.environ["PANTHEON_MEMORY_STORE"] = str(store_path)
+            os.environ["PANTHEON_MEMORY_AUTHZ_MODE"] = "local"
+            os.environ.pop("PANTHEON_GOVERNANCE_API_URL", None)
+            os.environ.pop("PANTHEON_GOVERNANCE_AUTHZ_URL", None)
+            os.environ.pop("PANTHEON_GOVERNANCE_SERVICE_URL", None)
+            client = TestClient(memory_main.app)
+
+            create_response = client.post("/api/memory/entries", json=make_entry(reuse_count=0).to_dict())
+            check("facade writeback accepts canonical entry", create_response.status_code == 201, create_response.text)
+
+            reloaded = InstitutionalMemoryStore(path=store_path)
+            check("writeback survives store reload", reloaded.require(PRIMARY_ID).entry_id == PRIMARY_ID)
+
+            retrieve_response = client.get(
+                "/api/memory/retrieve",
+                params={
+                    "actor_id": "operator-1",
+                    "actor_roles": "operator",
+                    "session_id": "replay-smoke-001",
+                    "scope": "institutional",
+                    "query": "momentum regime",
+                    "tags": "regime_break",
+                },
+            )
+            check("governed retrieval succeeds", retrieve_response.status_code == 200, retrieve_response.text)
+            payload = retrieve_response.json() if retrieve_response.status_code == 200 else {}
+            hits = payload.get("hits") or []
+            check("retrieval returns replayed entry", bool(hits) and hits[0]["entry"]["entry_id"] == PRIMARY_ID)
+            replayed = InstitutionalMemoryStore(path=store_path)
+            check("retrieval increments reuse_count durably", replayed.require(PRIMARY_ID).reuse_count == 1)
+    finally:
+        for key, value in tracked_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def main() -> int:
     print("Institutional memory smoke test")
     smoke_s1_schema_validation()
@@ -209,6 +269,7 @@ def main() -> int:
     smoke_s4_invalid_persisted_payload_is_rejected()
     smoke_s5_non_utc_timestamp_is_rejected()
     smoke_s6_schema_only_persisted_violation_is_rejected()
+    smoke_s7_governed_retrieval_replay()
 
     passed = sum(1 for _, ok, _ in results if ok)
     failed = len(results) - passed
