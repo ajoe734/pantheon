@@ -192,6 +192,7 @@ Separate stable capability lanes from sprint ownership.
 
 - `Claude`: execution plane, control plane, governance review
 - `Gemini`: GCP, CI/CD, runtime packaging, worker operations
+- `Gemini2`: GCP, CI/CD, runtime packaging, worker operations
 - `Codex`: integration contracts, status system, schema, acceptance
 - `Codex2`: integration contracts, schema, acceptance, sidecar review
 - `Copilot`: coding assist, research ingestion, external search, spec review, critique
@@ -471,7 +472,7 @@ Please read these files before starting:
 - the L1 policy document that matches your task
 - L3 supporting docs only if you need rationale or migration history
 
-You are [Claude/Claude2/Gemini/Codex/Codex2/Copilot].
+You are [Claude/Claude2/Gemini/Gemini2/Codex/Codex2/Copilot].
 Follow the current owner/reviewer assignments from ai-status.json.
 Update progress through scripts/ai-status.sh instead of manually editing multiple Markdown files.
 Work in this order: finish assigned reviews first, then finalize your own `review_approved` tasks, then continue your own unblocked tasks, then claim other safe tasks and set the original owner as reviewer.
