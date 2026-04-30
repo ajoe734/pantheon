@@ -25,10 +25,12 @@ Conflict rule: this document overrides broader OpenClaw mentions in overview/pla
 > capital binding，或讓 OpenClaw 成為 execution kernel。
 >
 > 目前 repo truth（2026-04-30）：OpenClaw 的 fail-closed runtime-adoption scaffold 已落地，
-> 且 `openclaw-gateway-adapter` 已具備 typed upstream client，可呼叫 capabilities 與 session
-> list/get/create/cancel，並將 timeout、transport、HTTP status、schema error 映射為 Pantheon
-> adapter error envelope。broker session、paper/canary/live route、capital binding 與
-> execution-kernel 角色仍然關閉，必須等未來明確 activation gate。
+> `openclaw-gateway-adapter` 已具備 typed upstream client（capabilities、session lifecycle）、
+> Pantheon-owned session lifecycle store（durable state machine、idempotent create、operator
+> audit trail）、以及 tool/workflow bridge（allowed-tool policy、deny-by-default、operator
+> context mapping、request/response audit trail、broker/live/paper/capital 永久拒絕）。
+> 所有 invocation 均須提供 `X-Operator-Id`；broker session、paper/canary/live route、
+> capital binding 與 execution-kernel 角色仍然關閉，必須等未來明確 activation gate。
 
 ---
 
@@ -71,11 +73,29 @@ OpenClaw **不負責**：
 
 目前 adapter 的 upstream client surface：
 
+**Session / capability surfaces（SVC-OPENCLAW-UPSTREAM-CLIENT + SVC-OPENCLAW-SESSION-LIFECYCLE）：**
 - `GET /api/openclaw-adapter/capabilities`：回傳 Pantheon fail-closed capability snapshot，若 upstream 可達則附帶 upstream capabilities，否則維持 degraded。
 - `GET /api/openclaw-adapter/sessions`：呼叫 upstream session list 並正規化 session metadata。
 - `GET /api/openclaw-adapter/sessions/{session_id}`：呼叫 upstream session get。
 - `POST /api/openclaw-adapter/sessions`：呼叫 upstream session create，但不啟用 broker/paper/live/capital binding。
 - `POST /api/openclaw-adapter/sessions/{session_id}/cancel`：呼叫 upstream cancel。
+- `GET /api/openclaw-adapter/lifecycle/sessions`：Pantheon-owned 持久化 session list，可依 operator_id 與 state 篩選。
+- `GET /api/openclaw-adapter/lifecycle/sessions/{id}`：Pantheon-owned session record，active 時從 upstream 同步狀態。
+- `POST /api/openclaw-adapter/lifecycle/sessions`：idempotent create；記錄 operator identity、idempotency key、審計軌跡。
+- `POST /api/openclaw-adapter/lifecycle/sessions/{id}/cancel`：operator-owned cancel；upstream 不可達時保留 local record。
+- `GET /api/openclaw-adapter/lifecycle/sessions/{id}/audit`：append-only 審計軌跡。
+
+**Tool / workflow bridge surfaces（SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE）：**
+- `GET /api/openclaw-adapter/tools/policy`：查詢目前 allowed_tools / allowed_workflows policy；預設 deny-all。
+- `GET /api/openclaw-adapter/tools`：列出對目前 operator/session 有效的 tool set（policy allowlist ∩ upstream reported tools）；需 `X-Operator-Id`。
+- `POST /api/openclaw-adapter/tools/invoke`：invoked a named tool within a session；須通過 policy check；需 `X-Operator-Id` 與 session_id；audit trail 必寫；broker/live/paper tools 永遠拒絕。
+- `POST /api/openclaw-adapter/workflows/trigger`：觸發 workflow ref；須通過 policy check；需 `X-Operator-Id`；audit trail 必寫；broker/live/paper/capital workflow 前綴永遠拒絕。
+- `GET /api/openclaw-adapter/workflows/jobs/{job_id}`：查詢 workflow job 狀態（呼叫 upstream）。
+- `GET /api/openclaw-adapter/audit/invocations`：讀取 tool/workflow invocation audit log；可依 session_id / operator_id 篩選。
+
+**Policy 環境變數：**
+- `OPENCLAW_ALLOWED_TOOLS`：comma-separated 允許呼叫的 tool names；預設空 = deny all。
+- `OPENCLAW_ALLOWED_WORKFLOWS`：comma-separated 允許觸發的 workflow refs；預設空 = deny all。
 - `OPENCLAW_UPSTREAM_TIMEOUT` 與 `OPENCLAW_UPSTREAM_RETRIES` 控制 adapter 對 upstream 的 timeout/retry；未設定 upstream 或 upstream 不健康時，adapter 必須回 degraded/error envelope，不得自動啟用 execution path。
 
 ---

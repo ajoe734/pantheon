@@ -48,6 +48,12 @@ from session_lifecycle import (
     SessionLifecycleStore,
     SessionRecord,
 )
+from tool_workflow_bridge import (
+    BridgeAuditLog,
+    BridgeError,
+    ToolPolicy,
+    ToolWorkflowBridge,
+)
 
 from services.foundation.health import (
     health_payload,
@@ -265,6 +271,111 @@ class OpenClawUpstreamClient:
                 details={"payload_type": type(payload).__name__},
             )
         return self._normalize_session(payload)
+
+    def list_tools(self, *, agent_id: str) -> List[Dict[str, Any]]:
+        payload = self._request("GET", f"/api/tools?agent_id={agent_id}")
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            tools = payload.get("tools", [])
+            if isinstance(tools, list):
+                return tools
+        raise UpstreamClientError(
+            status_code=502,
+            error_code="UPSTREAM_SCHEMA_ERROR",
+            message="OpenClaw tool list response did not match the expected schema.",
+            retryable=False,
+            error_layer="schema",
+            details={"payload_type": type(payload).__name__},
+        )
+
+    def resolve_tools(self, *, agent_id: str, session_id: str) -> List[Dict[str, Any]]:
+        payload = self._request("GET", f"/api/tools/resolve?agent_id={agent_id}&session_id={session_id}")
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            tools = payload.get("tools", [])
+            if isinstance(tools, list):
+                return tools
+        raise UpstreamClientError(
+            status_code=502,
+            error_code="UPSTREAM_SCHEMA_ERROR",
+            message="OpenClaw tool resolve response did not match the expected schema.",
+            retryable=False,
+            error_layer="schema",
+            details={"payload_type": type(payload).__name__},
+        )
+
+    def invoke_tool(
+        self,
+        *,
+        session_id: str,
+        tool_name: str,
+        args: Any,
+        operator_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        payload = self._request(
+            "POST",
+            "/api/tools/invoke",
+            json_payload={
+                "session_id": session_id,
+                "tool_name": tool_name,
+                "args": args,
+                "operator_context": operator_context or {},
+            },
+            expected_statuses={200, 201, 202},
+        )
+        if not isinstance(payload, dict):
+            raise UpstreamClientError(
+                status_code=502,
+                error_code="UPSTREAM_SCHEMA_ERROR",
+                message="OpenClaw tool invoke response did not match the expected schema.",
+                retryable=False,
+                error_layer="schema",
+                details={"payload_type": type(payload).__name__},
+            )
+        return payload
+
+    def trigger_workflow(
+        self,
+        *,
+        workflow_ref: str,
+        context: Any,
+        operator_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        payload = self._request(
+            "POST",
+            "/api/workflows/trigger",
+            json_payload={
+                "workflow_ref": workflow_ref,
+                "context": context,
+                "operator_context": operator_context or {},
+            },
+            expected_statuses={200, 201, 202},
+        )
+        if not isinstance(payload, dict):
+            raise UpstreamClientError(
+                status_code=502,
+                error_code="UPSTREAM_SCHEMA_ERROR",
+                message="OpenClaw workflow trigger response did not match the expected schema.",
+                retryable=False,
+                error_layer="schema",
+                details={"payload_type": type(payload).__name__},
+            )
+        return payload
+
+    def get_job(self, job_id: str) -> Dict[str, Any]:
+        payload = self._request("GET", f"/api/jobs/{job_id}")
+        if not isinstance(payload, dict):
+            raise UpstreamClientError(
+                status_code=502,
+                error_code="UPSTREAM_SCHEMA_ERROR",
+                message="OpenClaw job status response did not match the expected schema.",
+                retryable=False,
+                error_layer="schema",
+                details={"payload_type": type(payload).__name__},
+            )
+        return payload
 
     def cancel_session(self, session_id: str) -> Dict[str, Any]:
         payload = self._request(
@@ -667,4 +778,145 @@ def lifecycle_session_audit(session_id: str) -> JSONResponse:
             "operator_id": record.operator_id,
             "audit_log": record.audit_log,
         },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tool / Workflow bridge
+# ---------------------------------------------------------------------------
+
+_BRIDGE_POLICY = ToolPolicy()
+_BRIDGE_AUDIT = BridgeAuditLog()
+_BRIDGE = ToolWorkflowBridge(policy=_BRIDGE_POLICY, audit_log=_BRIDGE_AUDIT)
+
+
+def _bridge_error_response(exc: BridgeError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+
+
+def _upstream_client_or_none() -> Optional[OpenClawUpstreamClient]:
+    if not OPENCLAW_GATEWAY_URL:
+        return None
+    return _client()
+
+
+class ToolInvokeRequest(BaseModel):
+    session_id: str
+    tool_name: str
+    args: Optional[Any] = None
+
+
+class WorkflowTriggerRequest(BaseModel):
+    workflow_ref: str
+    context: Optional[Any] = None
+
+
+@app.get("/api/openclaw-adapter/tools/policy")
+def get_tool_policy() -> Dict[str, Any]:
+    return _BRIDGE_POLICY.to_dict()
+
+
+@app.get("/api/openclaw-adapter/tools")
+def list_tools(
+    agent_id: str,
+    session_id: Optional[str] = None,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+) -> JSONResponse:
+    if not x_operator_id:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "bridge_error",
+                "error_code": "BRIDGE_OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required.",
+            },
+        )
+    try:
+        result = _BRIDGE.list_effective_tools(
+            agent_id=agent_id,
+            session_id=session_id,
+            operator_id=x_operator_id,
+            upstream=_upstream_client_or_none(),
+        )
+    except BridgeError as exc:
+        return _bridge_error_response(exc)
+    return JSONResponse(status_code=200, content=result)
+
+
+@app.post("/api/openclaw-adapter/tools/invoke")
+def invoke_tool(
+    req: ToolInvokeRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+) -> JSONResponse:
+    if not x_operator_id:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "bridge_error",
+                "error_code": "BRIDGE_OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required.",
+            },
+        )
+    try:
+        result = _BRIDGE.invoke_tool(
+            session_id=req.session_id,
+            tool_name=req.tool_name,
+            args=req.args,
+            operator_id=x_operator_id,
+            trace_id=x_trace_id,
+            upstream=_upstream_client_or_none(),
+        )
+    except BridgeError as exc:
+        return _bridge_error_response(exc)
+    return JSONResponse(status_code=200, content=result)
+
+
+@app.post("/api/openclaw-adapter/workflows/trigger")
+def trigger_workflow(
+    req: WorkflowTriggerRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+) -> JSONResponse:
+    if not x_operator_id:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "bridge_error",
+                "error_code": "BRIDGE_OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required.",
+            },
+        )
+    try:
+        result = _BRIDGE.trigger_workflow(
+            workflow_ref=req.workflow_ref,
+            context=req.context,
+            operator_id=x_operator_id,
+            trace_id=x_trace_id,
+            upstream=_upstream_client_or_none(),
+        )
+    except BridgeError as exc:
+        return _bridge_error_response(exc)
+    return JSONResponse(status_code=200, content=result)
+
+
+@app.get("/api/openclaw-adapter/workflows/jobs/{job_id}")
+def get_workflow_job(job_id: str) -> JSONResponse:
+    try:
+        result = _client().get_job(job_id)
+        return JSONResponse(status_code=200, content={"status": "ok", "job": result})
+    except UpstreamClientError as exc:
+        return _error_response(exc)
+
+
+@app.get("/api/openclaw-adapter/audit/invocations")
+def list_bridge_audit(
+    session_id: Optional[str] = None,
+    operator_id: Optional[str] = None,
+    limit: int = 100,
+) -> JSONResponse:
+    entries = _BRIDGE_AUDIT.read(session_id=session_id, operator_id=operator_id, limit=limit)
+    return JSONResponse(
+        status_code=200,
+        content={"status": "ok", "count": len(entries), "entries": entries},
     )
