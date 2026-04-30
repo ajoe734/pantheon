@@ -133,11 +133,14 @@ _DORMANT_OSS_BACKENDS = (
     "wandb",
 )
 _DORMANT_SAFE_DISPATCHERS = {"stub", "handoff_only", "manual"}
+_DORMANT_OFFLINE_SCOPE = "offline_worker_dispatch_enabled"
 _DORMANT_FAIL_CLOSED_REASONS = {
     "dispatch_mode_disabled",
     "execution_path_disabled",
     "governance_write_disabled",
     "learning_activation_disabled",
+    "offline_dispatch_not_available",
+    "offline_mode_required",
     "production_adapter_disabled",
     "registry_write_disabled",
     "unknown_adapter",
@@ -4787,6 +4790,165 @@ class ReadSurfaceStore:
                 return str(value)
         return ""
 
+    @staticmethod
+    def _dormant_dict_list(value: Any) -> List[Dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        return [dict(item) for item in value if isinstance(item, dict)]
+
+    @staticmethod
+    def _dormant_truncate(value: Any, *, limit: int = 1200) -> Optional[str]:
+        if value in (None, ""):
+            return None
+        text = str(value)
+        if len(text) <= limit:
+            return text
+        return text[: limit - 3] + "..."
+
+    @staticmethod
+    def _dormant_json_payload(value: Any) -> Any:
+        if isinstance(value, (dict, list)):
+            return value
+        if not isinstance(value, str):
+            return None
+        text = value.strip()
+        if not text or text[0] not in "[{":
+            return None
+        try:
+            return json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+
+    def _dormant_artifact_refs_from_worker_stdout(self, record: Dict[str, Any]) -> List[Dict[str, Any]]:
+        payload = self._dormant_json_payload(record.get("stdout"))
+        if not isinstance(payload, dict):
+            return []
+
+        refs: List[Dict[str, Any]] = []
+        manifest = payload.get("artifact_manifest")
+        if isinstance(manifest, dict):
+            files = manifest.get("files")
+            if isinstance(files, dict):
+                for name, path in sorted(files.items()):
+                    if path in (None, ""):
+                        continue
+                    ref: Dict[str, Any] = {
+                        "artifact_name": str(name),
+                        "storage_ref": str(path),
+                        "source_field": "stdout.artifact_manifest.files",
+                    }
+                    if payload.get("checksum"):
+                        ref["checksum"] = payload.get("checksum")
+                    refs.append(ref)
+
+        artifact_paths = payload.get("artifact_paths")
+        if isinstance(artifact_paths, dict):
+            for name, path in sorted(artifact_paths.items()):
+                if path in (None, ""):
+                    continue
+                refs.append(
+                    {
+                        "artifact_name": str(name),
+                        "storage_ref": str(path),
+                        "source_field": "stdout.artifact_paths",
+                    }
+                )
+
+        return refs
+
+    def _dormant_activity_artifact_refs(self, record: Dict[str, Any]) -> List[Dict[str, Any]]:
+        refs: List[Dict[str, Any]] = []
+        for field in ("artifact_refs", "output_refs"):
+            for ref in self._dormant_dict_list(record.get(field)):
+                projected = dict(ref)
+                projected.setdefault("source_field", field)
+                refs.append(projected)
+        refs.extend(self._dormant_artifact_refs_from_worker_stdout(record))
+        return refs
+
+    def _dormant_activity_logs(self, record: Dict[str, Any]) -> List[Dict[str, Any]]:
+        logs: List[Dict[str, Any]] = []
+        for event in self._dormant_dict_list(record.get("events")):
+            logs.append(
+                {
+                    "source": "event",
+                    "event_type": event.get("event_type"),
+                    "summary": event.get("summary"),
+                    "emitted_at": event.get("emitted_at"),
+                    "sequence_number": event.get("sequence_number"),
+                }
+            )
+        stdout = self._dormant_truncate(record.get("stdout"))
+        if stdout:
+            logs.append({"source": "stdout", "message": stdout})
+        stderr = self._dormant_truncate(record.get("stderr"))
+        if stderr:
+            logs.append({"source": "stderr", "severity": "error", "message": stderr})
+        return logs
+
+    def _dormant_activity_error_summary(
+        self,
+        record: Dict[str, Any],
+        *,
+        status: str,
+        rejection: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        errors: List[Dict[str, Any]] = []
+        if rejection:
+            errors.append(
+                {
+                    "kind": "rejection",
+                    "reason": rejection.get("reason"),
+                    "detail": rejection.get("detail"),
+                    "rejected_at": rejection.get("rejected_at"),
+                }
+            )
+
+        gateway_ref = record.get("gateway_ref")
+        if isinstance(gateway_ref, dict) and gateway_ref.get("error"):
+            errors.append(
+                {
+                    "kind": "gateway",
+                    "reason": gateway_ref.get("error"),
+                    "detail": "Downstream research-worker-gateway dispatch was unavailable.",
+                }
+            )
+
+        exit_code = record.get("exit_code")
+        stderr = self._dormant_truncate(record.get("stderr"))
+        if status in {"failed", "error"} or (exit_code not in (None, 0, "0")):
+            errors.append(
+                {
+                    "kind": "worker_exit",
+                    "reason": f"exit_code={exit_code}" if exit_code is not None else status,
+                    "detail": stderr,
+                }
+            )
+        elif stderr:
+            errors.append(
+                {
+                    "kind": "stderr",
+                    "reason": "stderr_observed",
+                    "detail": stderr,
+                }
+            )
+
+        cancel_reason = record.get("cancel_reason")
+        if cancel_reason:
+            errors.append(
+                {
+                    "kind": "cancel",
+                    "reason": cancel_reason,
+                    "detail": "Research operation was canceled before completion.",
+                }
+            )
+
+        return {
+            "has_error": bool(errors),
+            "error_count": len(errors),
+            "errors": errors,
+        }
+
     def _fetch_dormant_json(self, service: str, path_key: str) -> tuple[Dict[str, Any], Any]:
         spec = _DORMANT_SERVICE_SPECS[service]
         base_url = self._dormant_service_base_url(service)
@@ -4853,6 +5015,9 @@ class ReadSurfaceStore:
                     "status": item.get("status"),
                     "gate_state": item.get("gate_state") or "unknown",
                     "allowed_scope": item.get("allowed_scope") or "unknown",
+                    "offline_gate": payload.get("offline_gate"),
+                    "offline_dispatch": item.get("offline_dispatch"),
+                    "gateway_routing": item.get("gateway_routing"),
                     "activation_gate": item.get("activation_gate"),
                     "entrypoint": item.get("entrypoint"),
                     "purpose": item.get("purpose"),
@@ -4885,6 +5050,13 @@ class ReadSurfaceStore:
             rejection = record.get("rejection") if isinstance(record.get("rejection"), dict) else {}
             reason = str(rejection.get("reason") or "").strip()
             status = str(record.get("status") or "").strip().lower()
+            artifact_refs = self._dormant_activity_artifact_refs(record)
+            logs = self._dormant_activity_logs(record)
+            error_summary = self._dormant_activity_error_summary(
+                record,
+                status=status,
+                rejection=rejection,
+            )
             projected.append(
                 {
                     "service": service,
@@ -4900,6 +5072,12 @@ class ReadSurfaceStore:
                         status == "rejected"
                         and reason in _DORMANT_FAIL_CLOSED_REASONS
                     ),
+                    "gateway_ref": record.get("gateway_ref") if isinstance(record.get("gateway_ref"), dict) else None,
+                    "artifact_refs": artifact_refs,
+                    "proposal_refs": self._dormant_dict_list(record.get("proposal_refs")),
+                    "logs": logs,
+                    "error_summary": error_summary,
+                    "exit_code": record.get("exit_code"),
                     "updated_at": self._dormant_activity_time(record),
                 }
             )
@@ -4945,6 +5123,7 @@ class ReadSurfaceStore:
             if backend in entries_by_backend:
                 entries_by_backend[backend].append(entry)
 
+        offline_gate_observed = False
         for backend in _DORMANT_OSS_BACKENDS:
             entries = entries_by_backend[backend]
             observed_gate_states = {
@@ -4955,22 +5134,46 @@ class ReadSurfaceStore:
                 str(entry.get("allowed_scope") or "unknown").strip().lower()
                 for entry in entries
             }
+            backend_offline_ready = (
+                "activation_ready" in observed_gate_states
+                or _DORMANT_OFFLINE_SCOPE in observed_scopes
+                or any(str(entry.get("offline_dispatch") or "").lower() == "enabled" for entry in entries)
+                or any(str(entry.get("gateway_routing") or "").lower() == "enabled" for entry in entries)
+            )
+            offline_gate_observed = offline_gate_observed or backend_offline_ready
+            if backend_offline_ready:
+                gate_state = "activation_ready"
+                allowed_scope = _DORMANT_OFFLINE_SCOPE
+                offline_dispatch = "enabled"
+            elif entries and observed_gate_states == {"fail_closed"}:
+                gate_state = "fail_closed"
+                allowed_scope = (
+                    "capability_metadata_read_only"
+                    if observed_scopes == {"capability_metadata_read_only"}
+                    else "mixed"
+                )
+                offline_dispatch = "disabled"
+            elif entries:
+                gate_state = "mixed" if len(observed_gate_states) > 1 else next(iter(observed_gate_states))
+                allowed_scope = "mixed" if len(observed_scopes) > 1 else next(iter(observed_scopes))
+                offline_dispatch = "disabled"
+            else:
+                gate_state = "unknown"
+                allowed_scope = "unknown"
+                offline_dispatch = "disabled"
             backend_inventory.append(
                 {
                     "backend": backend,
                     "activated": False,
-                    "activation_state": "preactivation_only",
+                    "activation_state": (
+                        "offline_activation_ready"
+                        if backend_offline_ready
+                        else "preactivation_only"
+                    ),
                     "production_activation": "disabled",
-                    "gate_state": (
-                        "fail_closed"
-                        if entries and observed_gate_states == {"fail_closed"}
-                        else "unknown"
-                    ),
-                    "allowed_scope": (
-                        "capability_metadata_read_only"
-                        if entries and observed_scopes == {"capability_metadata_read_only"}
-                        else "unknown"
-                    ),
+                    "gate_state": gate_state,
+                    "allowed_scope": allowed_scope,
+                    "offline_dispatch": offline_dispatch,
                     "service_count": len(entries),
                     "services": {str(entry["service"]): entry for entry in entries},
                 }
@@ -4979,8 +5182,38 @@ class ReadSurfaceStore:
         activity.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
         activity = activity[: max(min(activity_limit, 100), 1)]
 
+        artifact_refs: List[Dict[str, Any]] = []
+        event_log_count = 0
+        stream_log_count = 0
+        for row in activity:
+            object_ref = {
+                "service": row.get("service"),
+                "object_type": row.get("object_type"),
+                "object_id": row.get("object_id"),
+                "backend": row.get("backend"),
+            }
+            for ref in row.get("artifact_refs") or []:
+                if isinstance(ref, dict):
+                    artifact_refs.append({**object_ref, **ref})
+            for log_entry in row.get("logs") or []:
+                if not isinstance(log_entry, dict):
+                    continue
+                if log_entry.get("source") == "event":
+                    event_log_count += 1
+                else:
+                    stream_log_count += 1
+
         rejected_activity = [
             row for row in activity if str(row.get("status") or "").lower() == "rejected"
+        ]
+        failed_activity = [
+            row for row in activity if str(row.get("status") or "").lower() in {"failed", "error"}
+        ]
+        error_rows = [
+            row
+            for row in activity
+            if isinstance(row.get("error_summary"), dict)
+            and row["error_summary"].get("has_error")
         ]
         observed_reasons = sorted(
             {
@@ -4992,13 +5225,24 @@ class ReadSurfaceStore:
         all_observed_fail_closed = all(
             bool(row.get("fail_closed_rejection")) for row in rejected_activity
         )
+        activation_state = (
+            "offline_activation_ready"
+            if offline_gate_observed
+            else "preactivation_only"
+        )
 
         return {
-            "surface": "research_oss_preactivation",
-            "activation_state": "preactivation_only",
+            "surface": "research_oss_activation_ready",
+            "surface_aliases": ["research_oss_preactivation"],
+            "activation_state": activation_state,
             "production_activation": "disabled",
             "activated": False,
-            "allowed_scope": "capability_metadata_read_only",
+            "offline_gate": "enabled" if offline_gate_observed else "disabled",
+            "allowed_scope": (
+                _DORMANT_OFFLINE_SCOPE
+                if offline_gate_observed
+                else "capability_metadata_read_only"
+            ),
             "write_paths": {
                 "training_dispatch": "disabled",
                 "paper_canary_live": "disabled",
@@ -5007,9 +5251,46 @@ class ReadSurfaceStore:
                 "broker_execution": "disabled",
                 "capital_binding": "disabled",
             },
+            "operator_controls": {
+                "read_operations": [
+                    "capability_inventory",
+                    "gate_state",
+                    "run_history",
+                    "artifact_refs",
+                    "logs",
+                    "error_summary",
+                ],
+                "activation_commands": "not_exposed",
+                "blocked_commands": {
+                    "enable_production_activation": "governance_required_not_available_in_bff",
+                    "promote_to_registry": "registry_governance_path_required_not_available_in_bff",
+                    "paper_canary_live": "deployment_governance_path_required_not_available_in_bff",
+                    "broker_execution": "execution_plane_gate_required_not_available_in_bff",
+                },
+            },
             "backend_inventory": backend_inventory,
             "safe_dispatch": safe_dispatch,
+            "run_history": activity,
             "activity": activity,
+            "artifact_refs": artifact_refs,
+            "log_summary": {
+                "event_log_count": event_log_count,
+                "stream_log_count": stream_log_count,
+                "activity_with_logs": len([row for row in activity if row.get("logs")]),
+            },
+            "error_summary": {
+                "activity_with_errors": len(error_rows),
+                "rejection_count": len(rejected_activity),
+                "failed_count": len(failed_activity),
+                "gateway_error_count": len(
+                    [
+                        error
+                        for row in error_rows
+                        for error in row.get("error_summary", {}).get("errors", [])
+                        if isinstance(error, dict) and error.get("kind") == "gateway"
+                    ]
+                ),
+            },
             "rejection_verification": {
                 "verification_state": (
                     "evidence_observed"

@@ -7991,14 +7991,11 @@ async def get_knowledge_workbench_overview(
     return _build_knowledge_workbench_overview(utc_now())
 
 
-@app.get("/api/v1/operator/research/oss-preactivation")
-async def get_research_oss_preactivation(
-    activity_limit: int = Query(default=20, ge=1, le=100),
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
+def _build_research_oss_activation_ready_response(
+    *,
+    activity_limit: int,
+    surface_key: str,
+) -> Dict[str, Any]:
     snapshot_at = utc_now()
     data = read_store.get_research_oss_preactivation_snapshot(
         activity_limit=activity_limit,
@@ -8018,18 +8015,51 @@ async def get_research_oss_preactivation(
     if service_surfaces and all(surface.get("status") == "unavailable" for surface in service_surfaces.values()):
         composite_status = "unavailable"
 
+    composite_surface = {
+        "status": composite_status,
+        "source": "service_client",
+    }
+    alias_key = (
+        "research_oss_preactivation"
+        if surface_key == "research_oss_activation_ready"
+        else "research_oss_activation_ready"
+    )
     meta = _snapshot_meta(snapshot_at)
     meta["surfaces"] = {
-        "research_oss_preactivation": {
-            "status": composite_status,
-            "source": "service_client",
-        },
+        surface_key: composite_surface,
+        alias_key: composite_surface,
         **service_surfaces,
     }
     return {
         "data": data,
         "meta": meta,
     }
+
+
+@app.get("/api/v1/operator/research/oss-activation-ready")
+async def get_research_oss_activation_ready(
+    activity_limit: int = Query(default=20, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _build_research_oss_activation_ready_response(
+        activity_limit=activity_limit,
+        surface_key="research_oss_activation_ready",
+    )
+
+
+@app.get("/api/v1/operator/research/oss-preactivation")
+async def get_research_oss_preactivation(
+    activity_limit: int = Query(default=20, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _build_research_oss_activation_ready_response(
+        activity_limit=activity_limit,
+        surface_key="research_oss_preactivation",
+    )
 
 
 @app.post("/api/v1/research/tickets")

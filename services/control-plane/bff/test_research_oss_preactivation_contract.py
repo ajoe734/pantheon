@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -33,6 +34,33 @@ def _capability_entries(actor_field: str, safe_dispatchers=None):
         }
         for backend in sorted(EXPECTED_BACKENDS)
     ]
+    return safe + dormant
+
+
+def _activation_ready_capability_entries(actor_field: str, safe_dispatchers=None):
+    safe_dispatchers = safe_dispatchers or ("stub", "handoff_only", "manual")
+    offline_ready = {"qlib", "trl", "finrl", "rllib", "ray_tune"}
+    safe = [
+        {actor_field: dispatcher, "status": "available"}
+        for dispatcher in safe_dispatchers
+    ]
+    dormant = []
+    for backend in sorted(EXPECTED_BACKENDS):
+        entry = {
+            actor_field: backend,
+            "status": "deferred",
+            "gate_state": "fail_closed",
+            "allowed_scope": "capability_metadata_read_only",
+            "activation_gate": f"{backend}_gate",
+        }
+        if backend in offline_ready:
+            entry["gate_state"] = "activation_ready"
+            entry["allowed_scope"] = "offline_worker_dispatch_enabled"
+            if actor_field == "worker":
+                entry["offline_dispatch"] = "enabled"
+            else:
+                entry["gateway_routing"] = "enabled"
+        dormant.append(entry)
     return safe + dormant
 
 
@@ -121,6 +149,141 @@ def _service_payloads():
     }
 
 
+def _activation_ready_service_payloads():
+    return {
+        ("http://research-orchestrator:8101", "/api/research-orchestrator/capabilities"): {
+            "service": "research-orchestrator",
+            "production_activation": "disabled",
+            "offline_gate": "enabled",
+            "capabilities": _activation_ready_capability_entries("adapter"),
+        },
+        ("http://research-orchestrator:8101", "/api/research-orchestrator/runs"): [
+            {
+                "run_id": "rrun-qlib-001",
+                "task_id": "rtask-qlib-001",
+                "adapter": "qlib",
+                "requested_mode": "offline",
+                "dispatch_mode": "offline",
+                "status": "dispatched",
+                "production_activation": "disabled",
+                "gateway_ref": {"gateway_job_id": "wjob-qlib-001", "gateway": "research-worker-gateway"},
+                "artifact_refs": [{"artifact_id": "rart-qlib-001", "artifact_type": "model_artifact"}],
+                "proposal_refs": [{"proposal_id": "rprop-qlib-001", "proposal_type": "registry_candidate"}],
+                "events": [
+                    {
+                        "event_type": "run_dispatched",
+                        "summary": "Offline-gated qlib dispatch recorded.",
+                        "emitted_at": "2026-04-30T06:00:00Z",
+                        "sequence_number": 1,
+                    }
+                ],
+                "updated_at": "2026-04-30T06:00:00Z",
+            }
+        ],
+        ("http://policy-learning:8100", "/api/policy-learning/capabilities"): {
+            "service": "policy-learning",
+            "production_activation": "disabled",
+            "offline_gate": "enabled",
+            "capabilities": _activation_ready_capability_entries("adapter", safe_dispatchers=("stub",)),
+        },
+        ("http://policy-learning:8100", "/api/policy-learning/jobs"): [
+            {
+                "job_id": "plj-qlib-001",
+                "policy_id": "policy-qlib-001",
+                "adapter": "qlib",
+                "requested_mode": "offline",
+                "status": "dispatched",
+                "production_activation": "disabled",
+                "gateway_ref": {"gateway_job_id": "wjob-qlib-001", "gateway": "research-worker-gateway"},
+                "events": [
+                    {
+                        "event_type": "proposal_dispatched",
+                        "summary": "Offline-gated policy learning proposal routed to gateway.",
+                        "emitted_at": "2026-04-30T06:01:00Z",
+                        "sequence_number": 1,
+                    }
+                ],
+                "updated_at": "2026-04-30T06:01:00Z",
+            }
+        ],
+        ("http://worker-gateway:8103", "/api/research-worker-gateway/capabilities"): {
+            "service": "research-worker-gateway",
+            "production_activation": "disabled",
+            "offline_gate": "enabled",
+            "capabilities": _activation_ready_capability_entries("worker"),
+        },
+        ("http://worker-gateway:8103", "/api/research-worker-gateway/jobs"): [
+            {
+                "job_id": "wjob-qlib-001",
+                "worker": "qlib",
+                "requested_mode": "offline",
+                "dispatch_mode": "offline",
+                "status": "completed",
+                "production_activation": "disabled",
+                "output_refs": [{"output_id": "wgout-qlib-001", "output_type": "offline_execution_output"}],
+                "stdout": json.dumps(
+                    {
+                        "backend": "stub_lgbm",
+                        "artifact_state": "draft",
+                        "deployment_stage": "none",
+                        "checksum": "sha256:qlib-artifact",
+                        "artifact_manifest": {
+                            "files": {
+                                "artifact_bundle": "/tmp/pantheon/qlib/artifact_bundle.json",
+                                "registry_entry": "/tmp/pantheon/qlib/registry_entry.json",
+                            }
+                        },
+                    }
+                ),
+                "stderr": "",
+                "exit_code": 0,
+                "events": [
+                    {
+                        "event_type": "job_completed",
+                        "summary": "Worker exit_code=0",
+                        "emitted_at": "2026-04-30T06:02:00Z",
+                        "sequence_number": 2,
+                    }
+                ],
+                "updated_at": "2026-04-30T06:02:00Z",
+            },
+            {
+                "job_id": "wjob-rllib-001",
+                "worker": "rllib",
+                "requested_mode": "offline",
+                "dispatch_mode": "offline",
+                "status": "failed",
+                "production_activation": "disabled",
+                "output_refs": [{"output_id": "wgout-rllib-001", "output_type": "offline_execution_output"}],
+                "stdout": "",
+                "stderr": "RLlib worker failed before artifact persistence",
+                "exit_code": 1,
+                "events": [
+                    {
+                        "event_type": "job_failed",
+                        "summary": "Worker exit_code=1",
+                        "emitted_at": "2026-04-30T06:03:00Z",
+                        "sequence_number": 2,
+                    }
+                ],
+                "updated_at": "2026-04-30T06:03:00Z",
+            },
+        ],
+        ("http://openclaw-adapter:8104", "/api/openclaw-adapter/capabilities"): {
+            "activation_state": "facade_only",
+            "broker_execution": "deferred",
+            "paper_adapter": "deferred",
+            "live_adapter": "deferred",
+            "capital_binding": "deferred",
+            "fail_closed": True,
+        },
+        ("http://openclaw-adapter:8104", "/api/openclaw-adapter/upstream/status"): {
+            "reachable": False,
+            "details": {"reason": "OPENCLAW_GATEWAY_URL not configured"},
+        },
+    }
+
+
 def test_operator_research_oss_preactivation_aggregates_fail_closed_services() -> None:
     responses = _service_payloads()
 
@@ -188,6 +351,77 @@ def test_operator_research_oss_preactivation_aggregates_fail_closed_services() -
         "governance_write_disabled",
     }
     assert {row["status"] for row in data["activity"]} >= {"queued", "rejected"}
+    assert payload["meta"]["surfaces"]["research_oss_preactivation"]["status"] == "ok"
+
+
+def test_operator_research_oss_activation_ready_reports_offline_artifacts_logs_and_errors() -> None:
+    responses = _activation_ready_service_payloads()
+
+    def fake_get(base_url: str, path: str, *, headers=None):
+        return True, responses[(base_url, path)]
+
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        with mock.patch.dict(
+            os.environ,
+            {
+                "PANTHEON_RESEARCH_ORCHESTRATOR_API_URL": "http://research-orchestrator:8101",
+                "PANTHEON_POLICY_LEARNING_API_URL": "http://policy-learning:8100",
+                "PANTHEON_RESEARCH_WORKER_GATEWAY_API_URL": "http://worker-gateway:8103",
+                "PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL": "http://openclaw-adapter:8104",
+            },
+            clear=False,
+        ):
+            bff_main.read_store = ReadSurfaceStore(
+                os.path.join(td, "read_surfaces.json"),
+                allow_local_snapshot_fallback=False,
+            )
+            client = TestClient(bff_main.app)
+            try:
+                with mock.patch("read_store._http_json_get", side_effect=fake_get):
+                    response = client.get(
+                        "/api/v1/operator/research/oss-activation-ready?activity_limit=10",
+                        headers={"Authorization": OPERATOR_AUTH},
+                    )
+            finally:
+                bff_main.read_store = original_store
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    data = payload["data"]
+
+    assert data["production_activation"] == "disabled"
+    assert data["activated"] is False
+    assert data["activation_state"] == "offline_activation_ready"
+    assert data["offline_gate"] == "enabled"
+    assert data["write_paths"]["registry_writes"] == "disabled"
+    assert data["write_paths"]["governance_writes"] == "disabled"
+    assert data["operator_controls"]["activation_commands"] == "not_exposed"
+    assert "enable_production_activation" in data["operator_controls"]["blocked_commands"]
+
+    inventory = {row["backend"]: row for row in data["backend_inventory"]}
+    assert inventory["qlib"]["activated"] is False
+    assert inventory["qlib"]["production_activation"] == "disabled"
+    assert inventory["qlib"]["gate_state"] == "activation_ready"
+    assert inventory["qlib"]["allowed_scope"] == "offline_worker_dispatch_enabled"
+    assert inventory["openclaw"]["gate_state"] == "fail_closed"
+
+    run_history = {row["object_id"]: row for row in data["run_history"]}
+    qlib_job = run_history["wjob-qlib-001"]
+    assert qlib_job["status"] == "completed"
+    assert qlib_job["exit_code"] == 0
+    assert any(ref.get("source_field") == "stdout.artifact_manifest.files" for ref in qlib_job["artifact_refs"])
+    assert any(log.get("source") == "stdout" for log in qlib_job["logs"])
+
+    failed_job = run_history["wjob-rllib-001"]
+    assert failed_job["error_summary"]["has_error"] is True
+    assert failed_job["error_summary"]["errors"][0]["kind"] == "worker_exit"
+    assert "RLlib worker failed" in failed_job["error_summary"]["errors"][0]["detail"]
+
+    assert any(ref.get("artifact_name") == "artifact_bundle" for ref in data["artifact_refs"])
+    assert data["log_summary"]["event_log_count"] >= 3
+    assert data["error_summary"]["failed_count"] == 1
+    assert payload["meta"]["surfaces"]["research_oss_activation_ready"]["status"] == "ok"
     assert payload["meta"]["surfaces"]["research_oss_preactivation"]["status"] == "ok"
 
 
