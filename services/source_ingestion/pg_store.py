@@ -92,7 +92,9 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
 
     def reload(self) -> None:
         self._source_records.clear()
+        self._source_dedupe_index.clear()
         self._evidence_items.clear()
+        self._evidence_dedupe_index.clear()
         self._bundles.clear()
         self._knowledge_objects.clear()
         with self._connect() as conn:
@@ -138,12 +140,14 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
 
     def add_source_record(self, source: SourceRecord) -> SourceRecord:
         stored = super().add_source_record(source)
-        self._upsert("source_record", stored.source_id, stored.to_dict())
+        if stored.source_id == source.source_id:
+            self._upsert("source_record", stored.source_id, stored.to_dict())
         return stored
 
     def add_evidence_item(self, item: EvidenceItem) -> EvidenceItem:
         stored = super().add_evidence_item(item)
-        self._upsert("evidence_item", stored.evidence_item_id, stored.to_dict())
+        if stored.evidence_item_id == item.evidence_item_id:
+            self._upsert("evidence_item", stored.evidence_item_id, stored.to_dict())
         return stored
 
     def add_bundle(self, bundle: EvidenceBundle) -> EvidenceBundle:

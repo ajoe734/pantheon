@@ -16,7 +16,9 @@ class InMemoryEvidenceRepository:
 
     def __init__(self) -> None:
         self._source_records: Dict[str, SourceRecord] = {}
+        self._source_dedupe_index: Dict[str, str] = {}
         self._evidence_items: Dict[str, EvidenceItem] = {}
+        self._evidence_dedupe_index: Dict[str, str] = {}
         self._bundles: Dict[str, EvidenceBundle] = {}
         self._knowledge_objects: Dict[str, KnowledgeObject] = {}
 
@@ -24,13 +26,27 @@ class InMemoryEvidenceRepository:
         """No-op for in-memory store; subclasses override to re-read from durable storage."""
 
     def add_source_record(self, source: SourceRecord) -> SourceRecord:
+        dedupe_key = _metadata_text(source.metadata, "source_dedupe_key")
+        if dedupe_key:
+            existing_source_id = self._source_dedupe_index.get(dedupe_key)
+            if existing_source_id and existing_source_id != source.source_id:
+                return self._source_records[existing_source_id]
         self._source_records[source.source_id] = source
+        if dedupe_key:
+            self._source_dedupe_index[dedupe_key] = source.source_id
         return source
 
     def add_evidence_item(self, item: EvidenceItem) -> EvidenceItem:
         if item.source_id not in self._source_records:
             raise EvidenceValidationError(f"EvidenceItem references unknown source_id: {item.source_id}")
+        dedupe_key = _metadata_text(item.metadata, "evidence_dedupe_key")
+        if dedupe_key:
+            existing_item_id = self._evidence_dedupe_index.get(dedupe_key)
+            if existing_item_id and existing_item_id != item.evidence_item_id:
+                return self._evidence_items[existing_item_id]
         self._evidence_items[item.evidence_item_id] = item
+        if dedupe_key:
+            self._evidence_dedupe_index[dedupe_key] = item.evidence_item_id
         return item
 
     def add_bundle(self, bundle: EvidenceBundle) -> EvidenceBundle:
@@ -58,8 +74,16 @@ class InMemoryEvidenceRepository:
     def get_source_record(self, source_id: str) -> SourceRecord | None:
         return self._source_records.get(source_id)
 
+    def get_source_record_by_dedupe_key(self, source_dedupe_key: str) -> SourceRecord | None:
+        source_id = self._source_dedupe_index.get(source_dedupe_key)
+        return self._source_records.get(source_id) if source_id else None
+
     def get_evidence_item(self, evidence_item_id: str) -> EvidenceItem | None:
         return self._evidence_items.get(evidence_item_id)
+
+    def get_evidence_item_by_dedupe_key(self, evidence_dedupe_key: str) -> EvidenceItem | None:
+        item_id = self._evidence_dedupe_index.get(evidence_dedupe_key)
+        return self._evidence_items.get(item_id) if item_id else None
 
     def get_bundle(self, evidence_bundle_id: str) -> EvidenceBundle | None:
         return self._bundles.get(evidence_bundle_id)
@@ -107,7 +131,9 @@ class JsonlEvidenceRepository(InMemoryEvidenceRepository):
 
     def reload(self) -> None:
         self._source_records.clear()
+        self._source_dedupe_index.clear()
         self._evidence_items.clear()
+        self._evidence_dedupe_index.clear()
         self._bundles.clear()
         self._knowledge_objects.clear()
         if not self.path.exists():
@@ -130,12 +156,14 @@ class JsonlEvidenceRepository(InMemoryEvidenceRepository):
 
     def add_source_record(self, source: SourceRecord) -> SourceRecord:
         stored = super().add_source_record(source)
-        self._append("source_record", stored.source_id, stored.to_dict())
+        if stored.source_id == source.source_id:
+            self._append("source_record", stored.source_id, stored.to_dict())
         return stored
 
     def add_evidence_item(self, item: EvidenceItem) -> EvidenceItem:
         stored = super().add_evidence_item(item)
-        self._append("evidence_item", stored.evidence_item_id, stored.to_dict())
+        if stored.evidence_item_id == item.evidence_item_id:
+            self._append("evidence_item", stored.evidence_item_id, stored.to_dict())
         return stored
 
     def add_bundle(self, bundle: EvidenceBundle) -> EvidenceBundle:
@@ -175,3 +203,11 @@ class JsonlEvidenceRepository(InMemoryEvidenceRepository):
         }
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
+
+
+def _metadata_text(metadata: Mapping[str, Any], key: str) -> str | None:
+    value = metadata.get(key)
+    if value in (None, ""):
+        return None
+    normalized = str(value).strip()
+    return normalized or None

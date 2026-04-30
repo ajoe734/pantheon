@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover - compatibility with older pydantic.
 
 from services.foundation import ActorRef, ActorType, DeadLetterQueue, DeadLetterReplayProcessor, SchemaRegistry
 from services.foundation.health import register_fastapi_health_routes
-from services.knowledge.evidence import EvidenceBundleBuilder, EvidenceItem
+from services.knowledge.evidence import EvidenceBundleBuilder, EvidenceItem, normalize_source_evidence, normalize_source_record
 from services.knowledge.evidence.models import EvidenceValidationError
 
 from .connectors import (
@@ -473,9 +473,34 @@ def _persist_source_evidence_refs(result: Any) -> dict[str, Any]:
             "knowledge_object_ids": [],
         }
 
-    evidence_items = [_evidence_item_for_record(record, result.run) for record in source_records]
+    normalized_source_records_by_id: dict[str, SourceRecord] = {}
+    source_by_evidence_item_id: dict[str, SourceRecord] = {}
+    evidence_items_by_id: dict[str, EvidenceItem] = {}
+    source_owner_by_dedupe_key: dict[str, SourceRecord] = {}
+    connector = manager.get_connector(result.run.connector_id)
+    connector_license_scope = connector.license_scope if connector else None
+    for record in source_records:
+        candidate_source = normalize_source_record(record, connector_license_scope=connector_license_scope)
+        source_dedupe_key = str(candidate_source.metadata["source_dedupe_key"])
+        source_owner = (
+            evidence_repository.get_source_record_by_dedupe_key(source_dedupe_key)
+            or source_owner_by_dedupe_key.get(source_dedupe_key)
+            or candidate_source
+        )
+        source_owner_by_dedupe_key[source_dedupe_key] = source_owner
+        normalized = normalize_source_evidence(
+            source_record=record,
+            evidence_item=_evidence_item_for_record(record, result.run),
+            connector_license_scope=connector_license_scope,
+            source_owner_id=source_owner.source_id,
+        )
+        normalized_source = source_owner if source_owner.source_id != record.source_id else normalized.source_record
+        normalized_source_records_by_id[normalized_source.source_id] = normalized_source
+        source_by_evidence_item_id[normalized.evidence_item.evidence_item_id] = normalized_source
+        evidence_items_by_id[normalized.evidence_item.evidence_item_id] = normalized.evidence_item
+    evidence_items = list(evidence_items_by_id.values())
     bundle = evidence_builder.build_bundle(
-        source_records=source_records,
+        source_records=list(normalized_source_records_by_id.values()),
         evidence_items=evidence_items,
         summary=f"Source ingest run {result.run.ingest_run_id} persisted {len(source_records)} source record(s).",
         created_by="source-ingest",
@@ -484,13 +509,15 @@ def _persist_source_evidence_refs(result: Any) -> dict[str, Any]:
             "connector_id": result.run.connector_id,
             "ingest_run_id": result.run.ingest_run_id,
             "trigger_type": result.run.trigger_type,
+            "normalization_schema": "source_evidence_normalization.v1",
         },
     )
     knowledge_object_ids: list[str] = []
-    for record, item in zip(source_records, evidence_items, strict=True):
+    for item in evidence_items:
+        record = source_by_evidence_item_id[item.evidence_item_id]
         metadata = dict(record.metadata)
         knowledge_object = evidence_builder.build_knowledge_object(
-            knowledge_object_id=str(metadata.get("knowledge_object_id") or _stable_ref("ko", record.source_id)),
+            knowledge_object_id=str(metadata.get("knowledge_object_id") or _stable_ref("ko", item.evidence_item_id)),
             source_record=record,
             evidence_item=item,
             evidence_bundle=bundle,
@@ -502,11 +529,14 @@ def _persist_source_evidence_refs(result: Any) -> dict[str, Any]:
                 "connector_id": record.connector_id,
                 "ingest_run_id": result.run.ingest_run_id,
                 "content_ref": record.content_ref,
+                "source_dedupe_key": metadata.get("source_dedupe_key"),
+                "evidence_dedupe_key": item.metadata.get("evidence_dedupe_key"),
+                "evidence_owner_id": item.metadata.get("evidence_owner_id"),
             },
         )
         knowledge_object_ids.append(knowledge_object.knowledge_object_id)
     return {
-        "source_ids": [record.source_id for record in source_records],
+        "source_ids": list(normalized_source_records_by_id),
         "evidence_item_ids": [item.evidence_item_id for item in evidence_items],
         "evidence_bundle_id": bundle.evidence_bundle_id,
         "knowledge_object_ids": knowledge_object_ids,

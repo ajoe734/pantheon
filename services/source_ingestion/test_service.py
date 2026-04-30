@@ -198,6 +198,61 @@ def test_configured_connector_fetch_runs_without_inline_records_and_persists_evi
     assert replayed_item.status_code == 200
 
 
+def test_source_evidence_normalization_sets_canonical_refs_and_dedupes_owner(client) -> None:
+    test_client, _, _ = client
+    response = test_client.post(
+        "/api/source-ingest/jobs",
+        json={
+            "connector": _connector(connector_id="conn-doi-normalization", license_scope="open"),
+            "trace_id": "trace-source-ingest-normalization",
+            "trigger_type": "manual",
+            "records": [
+                _record(
+                    source_id="src-paper-owner",
+                    connector_id="conn-doi-normalization",
+                    content_ref="https://doi.org/10.5555/Example.Paper",
+                    metadata={
+                        "body": "Canonical DOI evidence.",
+                        "access_scope": ["research"],
+                    },
+                ),
+                _record(
+                    source_id="src-paper-duplicate",
+                    connector_id="conn-doi-normalization",
+                    content_ref="https://dx.doi.org/10.5555/example.paper",
+                    metadata={
+                        "body": "Canonical DOI evidence.",
+                        "access_scope": ["research"],
+                    },
+                ),
+            ],
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["run"]["status"] == "completed"
+    assert set(body["evidence_refs"]["source_ids"]) == {"src-paper-owner"}
+
+    sources = test_client.get("/api/source-ingest/source-records")
+    assert sources.status_code == 200
+    persisted_sources = sources.json()["source_records"]
+    assert [source["source_id"] for source in persisted_sources] == ["src-paper-owner"]
+    metadata = persisted_sources[0]["metadata"]
+    assert metadata["canonical_doi"] == "10.5555/example.paper"
+    assert metadata["source_dedupe_key"] == "doi:10.5555/example.paper"
+    assert metadata["content_hash"].startswith("sha256:")
+    assert metadata["license_scope"] == "open"
+    assert metadata["access_scope"] == ["research"]
+
+    items = test_client.get("/api/source-ingest/evidence/items")
+    assert items.status_code == 200
+    persisted_items = items.json()["items"]
+    assert len(persisted_items) == 1
+    assert persisted_items[0]["source_id"] == "src-paper-owner"
+    assert persisted_items[0]["metadata"]["evidence_owner_id"] == persisted_items[0]["evidence_item_id"]
+
+
 def test_registry_exposes_connector_status_policy_and_provider_examples(client) -> None:
     test_client, _, _ = client
     configured = test_client.post(
