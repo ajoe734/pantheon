@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from services.foundation.health import register_fastapi_health_routes
@@ -47,6 +47,7 @@ EVIDENCE_STORE_PATH = Path(
 )
 FRESHNESS_SLA_SECONDS = max(1, int(os.getenv("SEARCH_FRESHNESS_SLA_SECONDS", "3600")))
 PIPELINE_RETENTION_RUNS = max(1, int(os.getenv("SEARCH_PIPELINE_RETENTION_RUNS", "500")))
+DURABLE_INDEX_ONLY = os.getenv("SEARCH_DURABLE_INDEX_ONLY", "false").strip().lower() in ("1", "true", "yes")
 
 
 class JsonlMaterializedIndexStore:
@@ -271,11 +272,13 @@ def create_app(
     pipeline_store_path: Path | None = None,
     freshness_sla_seconds: int | None = None,
     pipeline_retention_runs: int | None = None,
+    durable_index_only: bool | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Pantheon Search Service", version="0.1.0")
     store = build_search_index_store(index_store_path or INDEX_STORE_PATH)
     durable_repository = build_search_evidence_repository(evidence_store_path or EVIDENCE_STORE_PATH)
     materialize_store = JsonlMaterializedIndexStore(materialize_store_path or MATERIALIZE_STORE_PATH)
+    durable_only = durable_index_only if durable_index_only is not None else DURABLE_INDEX_ONLY
     retention_runs = pipeline_retention_runs if pipeline_retention_runs is not None else PIPELINE_RETENTION_RUNS
     pipeline_store = JsonlIndexPipelineStore(pipeline_store_path or PIPELINE_STORE_PATH, max_retention=retention_runs)
     sla_seconds = freshness_sla_seconds if freshness_sla_seconds is not None else FRESHNESS_SLA_SECONDS
@@ -311,6 +314,7 @@ def create_app(
             "pipeline_run_count": pipeline_store.count_runs(),
             "pipeline_retention_runs": pipeline_store.max_retention,
             "freshness_sla_seconds": sla_seconds,
+            "durable_index_only": durable_only,
         }
 
     @app.post("/api/search/index/refresh")
@@ -382,6 +386,11 @@ def create_app(
     def _query_search(body: SearchQueryBody, *, allow_request_documents_compat: bool = False) -> dict[str, Any]:
         try:
             if body.documents:
+                if durable_only:
+                    raise ValueError(
+                        "request documents are not allowed in durable-index-only mode; "
+                        "staging and production paths must use the durable evidence index"
+                    )
                 if not (allow_request_documents_compat or body.allow_request_documents_compat):
                     raise ValueError(
                         "request documents are compatibility-only; use "
@@ -427,7 +436,9 @@ def create_app(
         return _query_search(body)
 
     @app.post("/api/search/query/request-documents-compat")
-    def query_search_request_documents_compat(body: SearchQueryBody) -> dict[str, Any]:
+    def query_search_request_documents_compat(body: SearchQueryBody, response: Response) -> dict[str, Any]:
+        response.headers["Deprecation"] = "true"
+        response.headers["X-Search-Path"] = "request_documents_compat"
         return _query_search(body, allow_request_documents_compat=True)
 
     @app.get("/api/search/snapshots/{request_id}")
