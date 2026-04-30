@@ -13,6 +13,7 @@ import json
 import os
 import re
 import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -65,6 +66,8 @@ MAX_RECORDS_PER_JOB = int(os.getenv("SOURCE_INGEST_MAX_RECORDS", "100"))
 SCHEDULER_MAX_CONCURRENCY = max(1, int(os.getenv("SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY", "2")))
 FRONTIER_MAX_ATTEMPTS = max(1, int(os.getenv("SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS", "2")))
 FRONTIER_BACKOFF_SECONDS = max(0, int(os.getenv("SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS", "60")))
+# Optional: when set, notify search service after successful ingest runs (fire-and-forget).
+SEARCH_INGEST_NOTIFY_URL = os.getenv("SEARCH_INGEST_NOTIFY_URL", "").rstrip("/")
 
 app = FastAPI(title="Pantheon Source Ingest Service", version="0.1.0")
 manager = IngestManager()
@@ -596,7 +599,29 @@ def _run_job(
     )
     _append_audit_actions(result.audit_actions)
     evidence_refs = _persist_source_evidence_refs(result)
+    if result.run.status.value == "completed":
+        _notify_search_index_refresh(result.run.ingest_run_id)
     return result, evidence_refs
+
+
+def _notify_search_index_refresh(ingest_run_id: str) -> None:
+    """Fire-and-forget: POST to search service to trigger incremental index refresh."""
+    if not SEARCH_INGEST_NOTIFY_URL:
+        return
+    try:
+        payload = json.dumps(
+            {"triggered_by": "ingest_completion", "trigger_ref": ingest_run_id},
+            separators=(",", ":"),
+        ).encode("utf-8")
+        req = urllib.request.Request(
+            f"{SEARCH_INGEST_NOTIFY_URL}/api/search/index/refresh",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=2)  # noqa: S310
+    except Exception:
+        pass  # non-blocking; search freshness is eventually consistent
 
 
 def _result_error(result: Any) -> str:

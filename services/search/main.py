@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from services.foundation.health import register_fastapi_health_routes
@@ -24,6 +24,7 @@ from services.source_ingestion.connectors import SourceRecord
 from .filters import SearchAccessContext, SearchPolicyError, SearchRequest
 from .gateway import SearchGateway
 from .index_adapter import KeywordIndexAdapter
+from .index_pipeline import IncrementalIndexPipeline, JsonlIndexPipelineStore
 from .index_store import JsonlSearchIndexStore
 from .pg_store import build_search_evidence_repository, build_search_index_store
 
@@ -37,12 +38,15 @@ def _resolve_data_dir() -> Path:
 DATA_DIR = _resolve_data_dir()
 INDEX_STORE_PATH = Path(os.getenv("SEARCH_INDEX_STORE_PATH", str(DATA_DIR / "search-index.jsonl")))
 MATERIALIZE_STORE_PATH = Path(os.getenv("SEARCH_MATERIALIZE_STORE_PATH", str(DATA_DIR / "search-materialize.jsonl")))
+PIPELINE_STORE_PATH = Path(os.getenv("SEARCH_PIPELINE_STORE_PATH", str(DATA_DIR / "search-pipeline.jsonl")))
 EVIDENCE_STORE_PATH = Path(
     os.getenv(
         "SEARCH_EVIDENCE_STORE_PATH",
         os.getenv("SOURCE_INGEST_EVIDENCE_STORE_PATH", str(DATA_DIR / "source_evidence.jsonl")),
     )
 )
+FRESHNESS_SLA_SECONDS = max(1, int(os.getenv("SEARCH_FRESHNESS_SLA_SECONDS", "3600")))
+PIPELINE_RETENTION_RUNS = max(1, int(os.getenv("SEARCH_PIPELINE_RETENTION_RUNS", "500")))
 
 
 class JsonlMaterializedIndexStore:
@@ -142,6 +146,12 @@ class SearchQueryBody(BaseModel):
     require_citations: bool = True
     filters_applied: dict[str, Any] = Field(default_factory=dict)
     access_context: AccessContextBody = Field(default_factory=AccessContextBody)
+
+
+class IndexRefreshBody(BaseModel):
+    triggered_by: str = "manual"
+    trigger_ref: str | None = None
+    force_full: bool = False
 
 
 def _result_detail(document: SearchDocumentBody) -> str:
@@ -258,21 +268,32 @@ def create_app(
     index_store_path: Path | None = None,
     evidence_store_path: Path | None = None,
     materialize_store_path: Path | None = None,
+    pipeline_store_path: Path | None = None,
+    freshness_sla_seconds: int | None = None,
+    pipeline_retention_runs: int | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Pantheon Search Service", version="0.1.0")
     store = build_search_index_store(index_store_path or INDEX_STORE_PATH)
     durable_repository = build_search_evidence_repository(evidence_store_path or EVIDENCE_STORE_PATH)
     materialize_store = JsonlMaterializedIndexStore(materialize_store_path or MATERIALIZE_STORE_PATH)
+    retention_runs = pipeline_retention_runs if pipeline_retention_runs is not None else PIPELINE_RETENTION_RUNS
+    pipeline_store = JsonlIndexPipelineStore(pipeline_store_path or PIPELINE_STORE_PATH, max_retention=retention_runs)
+    sla_seconds = freshness_sla_seconds if freshness_sla_seconds is not None else FRESHNESS_SLA_SECONDS
+    pipeline = IncrementalIndexPipeline(durable_repository, pipeline_store, freshness_sla_seconds=sla_seconds)
     register_fastapi_health_routes(
         app,
         "pantheon-search",
         metrics=lambda: {
             "snapshot_count": len(store.list_snapshots()),
             "indexed_object_count": len(durable_repository.list_knowledge_objects()),
+            "pipeline_run_count": pipeline_store.count_runs(),
         },
         details=lambda: {
             "index_store_path": str(store.path),
             "evidence_store_path": str(durable_repository.path),
+            "pipeline_store_path": str(pipeline_store.path),
+            "pipeline_retention_runs": pipeline_store.max_retention,
+            "freshness_sla_seconds": sla_seconds,
         },
     )
 
@@ -287,6 +308,41 @@ def create_app(
             "evidence_store_path": str(durable_repository.path),
             "snapshot_count": len(store.list_snapshots()),
             "indexed_object_count": len(durable_repository.list_knowledge_objects()),
+            "pipeline_run_count": pipeline_store.count_runs(),
+            "pipeline_retention_runs": pipeline_store.max_retention,
+            "freshness_sla_seconds": sla_seconds,
+        }
+
+    @app.post("/api/search/index/refresh")
+    def refresh_index(body: IndexRefreshBody | None = Body(default=None)) -> dict[str, Any]:
+        """Trigger incremental (or full) index refresh from current evidence repository."""
+        try:
+            triggered_by = (body.triggered_by if body else "manual").strip() or "manual"
+            trigger_ref = body.trigger_ref if body else None
+            force_full = body.force_full if body else False
+            snapshot = pipeline.run(
+                triggered_by=triggered_by,
+                trigger_ref=trigger_ref,
+                force_full=force_full,
+            )
+            return {"pipeline_snapshot": snapshot.to_dict()}
+        except EvidenceValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/search/index/freshness")
+    def index_freshness() -> dict[str, Any]:
+        """Query index freshness SLA status."""
+        pipeline_store.reload()
+        return pipeline.freshness_status()
+
+    @app.get("/api/search/index/pipeline-runs")
+    def list_pipeline_runs(limit: int = 50) -> dict[str, Any]:
+        """List recent pipeline run snapshots."""
+        pipeline_store.reload()
+        runs = pipeline_store.list_runs(limit=min(max(limit, 1), 200))
+        return {
+            "runs": [r.to_dict() for r in reversed(runs)],
+            "total": pipeline_store.count_runs(),
         }
 
     @app.post("/api/search/index/reload")

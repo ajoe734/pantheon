@@ -476,6 +476,20 @@ def main() -> int:
         raise RuntimeError(f"source-ingest did not replay evidence bundle ref: {status} {evidence_bundle}")
     print("ok  source-ingest autonomously fetched and persisted source/evidence refs")
 
+    status, ingest_triggered_runs = _request_json(
+        "GET",
+        f"{SEARCH_URL}/api/search/index/pipeline-runs?limit=10",
+    )
+    if status != 200 or not any(
+        run.get("triggered_by") == "ingest_completion" and run.get("trigger_ref") == run_id
+        for run in ingest_triggered_runs.get("runs", [])
+    ):
+        raise RuntimeError(
+            f"search-svc did not record ingest-completion index trigger for {run_id}: "
+            f"{status} {ingest_triggered_runs}"
+        )
+    print("ok  search-svc recorded ingest-completion incremental index trigger")
+
     replay_connector_body = {
         "connector": {
             "connector_id": "conn-smoke-replay-notes",
@@ -592,6 +606,33 @@ def main() -> int:
     status, search_index = _request_json("POST", f"{SEARCH_URL}/api/search/index/reload")
     if status != 200 or search_index.get("indexed_object_count", 0) < 2:
         raise RuntimeError(f"search-svc did not load persisted source evidence index: {status} {search_index}")
+
+    status, pipeline_refresh = _request_json(
+        "POST",
+        f"{SEARCH_URL}/api/search/index/refresh",
+        body={"triggered_by": "honest_stack_smoke", "trigger_ref": run_id},
+    )
+    pipeline_snapshot = pipeline_refresh.get("pipeline_snapshot", {}) if pipeline_refresh else {}
+    if (
+        status != 200
+        or pipeline_snapshot.get("schema_version") != "index_pipeline_snapshot.v1"
+        or pipeline_snapshot.get("indexed_count", 0) < 2
+    ):
+        raise RuntimeError(f"search-svc pipeline refresh failed: {status} {pipeline_refresh}")
+    status, freshness = _request_json("GET", f"{SEARCH_URL}/api/search/index/freshness")
+    if (
+        status != 200
+        or freshness.get("status") != "fresh"
+        or freshness.get("last_pipeline_run_id") != pipeline_snapshot.get("pipeline_run_id")
+    ):
+        raise RuntimeError(f"search-svc freshness SLA status failed: {status} {freshness}")
+    status, pipeline_runs = _request_json("GET", f"{SEARCH_URL}/api/search/index/pipeline-runs?limit=10")
+    if status != 200 or not any(
+        run.get("pipeline_run_id") == pipeline_snapshot.get("pipeline_run_id")
+        for run in pipeline_runs.get("runs", [])
+    ):
+        raise RuntimeError(f"search-svc did not retain pipeline snapshot: {status} {pipeline_runs}")
+    print("ok  search-svc refreshed schema-versioned index pipeline and reported freshness")
 
     search_body = {
         "request_id": f"search-smoke-{suffix}",
