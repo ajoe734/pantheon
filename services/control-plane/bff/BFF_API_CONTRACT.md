@@ -1,6 +1,6 @@
 # BFF API Contract (v1)
 
-Last updated: 2026-04-12
+Last updated: 2026-04-30
 Status: canonical — governed BFF API contract for APP-001
 Tier: L2 Planning & Execution (formal API contract derived from L1 policy)
 Scope: API routes, request/response shapes, error contract, staleness model, RBAC matrix, composed views, and real-time feed contract for the governed BFF
@@ -412,6 +412,8 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
 | `/api/v1/operator/paper-live-drift/{runtime_id}` | drift report, RT-01, TL-02, TL-03, approval decision, incidents, evolution evidence | Paper-vs-live drift review with backend-owned threshold evaluation and follow-up actions | `operator` |
 | `/api/v1/operator/research/oss-activation-ready` | Research orchestrator, policy-learning, research-worker gateway, and OpenClaw adapter capability/activity metadata | Read-only OSS activation-ready operations view: capability, gate state, run history, artifact refs, logs, and error summaries; no activation, registry, governance, broker, or capital-binding write path | `operator` |
 | `/api/v1/operator/research/oss-preactivation` | Alias for `/api/v1/operator/research/oss-activation-ready` | Backward-compatible pre-activation route name; same read-only non-bypass contract | `operator` |
+| `/api/v1/operator/openclaw/ops` | OpenClaw adapter upstream status, Pantheon-owned lifecycle sessions, tool/workflow policy, and invocation audit | OpenClaw operator operations surface showing upstream reachability, degraded reasons, session lifecycle state, paper/live gate state, and bridge audit without enabling broker, paper, live, or capital-binding paths | `operator` |
+| `/api/v1/operator/openclaw/tool-workflow-bridge` | Alias for `/api/v1/operator/openclaw/ops` focused on bridge-oriented UI adoption | Backward-compatible bridge handoff route name; same read-only OpenClaw operations projection and fail-closed gate contract | `operator` |
 | `/api/v1/workbench/consultation` | CW-008 packet-family truth only | Consultation Workbench overview surface; truthful module status without fake request or committee UI | `operator` |
 | `/api/v1/workbench/knowledge` | KW-006 packet-family truth only | Knowledge Workbench overview surface; truthful module status without fake registry or evidence UI | `operator` |
 | `/api/v1/operator/deployment-review/{plan_id}` | DP-02, CP-02, CP-04, RT-02, RT-04 | Pre-deployment approval review | `operator` |

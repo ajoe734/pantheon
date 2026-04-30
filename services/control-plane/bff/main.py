@@ -67,6 +67,7 @@ from models import (
 )
 from command_queue import CommandStore
 from command_executor import execute_command_with_status
+from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 from read_store import ReadSurfaceStore
 from settings_store import SettingsStore
 
@@ -8036,6 +8037,151 @@ def _build_research_oss_activation_ready_response(
     }
 
 
+_OPENCLAW_COMMAND_ROLES = {"operator", "admin"}
+
+
+def _require_openclaw_command_role(identity: OperatorIdentity) -> None:
+    if _OPENCLAW_COMMAND_ROLES.intersection(identity.roles):
+        return
+    raise _bff_error(
+        403,
+        ErrorCode.INSUFFICIENT_ROLE,
+        "OpenClaw operator commands require operator or admin role",
+        "Operator does not hold the required OpenClaw command role",
+        precondition_failed="role_check",
+        suggestion="Escalate to a user with operator or admin role",
+    )
+
+
+def _require_openclaw_idempotency_key(value: Optional[str]) -> str:
+    key = str(value or "").strip()
+    if key:
+        return key
+    raise _bff_error(
+        400,
+        ErrorCode.INVALID_PARAMS,
+        "X-Idempotency-Key is required for OpenClaw operator commands",
+        "OpenClaw session lifecycle commands must be idempotent at the BFF boundary",
+        precondition_failed="idempotency_key",
+        suggestion="Retry with a stable X-Idempotency-Key for this operator action",
+    )
+
+
+def _authorized_openclaw_operator_filter(
+    identity: OperatorIdentity,
+    operator_id: Optional[str],
+) -> Optional[str]:
+    clean = str(operator_id or "").strip() or None
+    if clean and clean != identity.operator_id and "admin" not in identity.roles:
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "OpenClaw operator filter is not authorized",
+            "Non-admin operators may only filter OpenClaw sessions by their own operator id",
+            precondition_failed="operator_filter",
+            suggestion="Remove the operator_id filter or use an admin-role operator",
+        )
+    return clean
+
+
+def _openclaw_ops_meta(snapshot_at: str, data: Dict[str, Any], surface_key: str) -> Dict[str, Any]:
+    service_surfaces = {
+        service: {
+            key: value
+            for key, value in status.items()
+            if key in {"status", "source", "reason", "message", "http_status", "surface"}
+        }
+        for service, status in data.get("service_status", {}).items()
+        if isinstance(status, dict)
+    }
+    overall = str(data.get("overall_status") or "degraded")
+    alias_key = (
+        "openclaw_tool_workflow_bridge"
+        if surface_key == "openclaw_ops"
+        else "openclaw_ops"
+    )
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        surface_key: {"status": overall, "source": "service_client"},
+        alias_key: {"status": overall, "source": "service_client"},
+        **service_surfaces,
+    }
+    return meta
+
+
+def _build_openclaw_ops_response(
+    *,
+    session_limit: int,
+    audit_limit: int,
+    state: Optional[str],
+    operator_id: Optional[str],
+    agent_id: Optional[str],
+    effective_tools_session_id: Optional[str],
+    requesting_operator_id: str,
+    surface_key: str,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    data = read_store.get_openclaw_ops_snapshot(
+        session_limit=session_limit,
+        audit_limit=audit_limit,
+        operator_id=operator_id,
+        state=state,
+        agent_id=agent_id,
+        effective_tools_session_id=effective_tools_session_id,
+        requesting_operator_id=requesting_operator_id,
+    )
+    return {
+        "data": data,
+        "meta": _openclaw_ops_meta(snapshot_at, data, surface_key),
+    }
+
+
+def _openclaw_client_error(exc: OpenClawOpsClientError) -> HTTPException:
+    status_code = exc.status_code or 502
+    if status_code == 404:
+        code = ErrorCode.OBJECT_NOT_FOUND
+    elif status_code == 409:
+        code = ErrorCode.CONCURRENT_MODIFICATION
+    elif status_code == 403:
+        code = ErrorCode.PRECONDITION_NOT_MET
+    elif status_code >= 500:
+        code = ErrorCode.DOWNSTREAM_UNAVAILABLE
+    else:
+        code = ErrorCode.INVALID_PARAMS
+    return _bff_error(
+        status_code,
+        code,
+        exc.message,
+        exc.error_code,
+        precondition_failed="openclaw_adapter",
+        suggestion="Inspect GET /api/v1/operator/openclaw/ops for current adapter degradation state",
+    )
+
+
+def _openclaw_command_payload(
+    *,
+    command: str,
+    adapter_payload: Dict[str, Any],
+    accepted_at: str,
+) -> Dict[str, Any]:
+    return {
+        "data": {
+            "command": command,
+            "status": "accepted",
+            "accepted_at": accepted_at,
+            "adapter_status": adapter_payload.get("status"),
+            "replayed": bool(adapter_payload.get("replayed")),
+            "session": adapter_payload.get("session"),
+        },
+        "meta": {
+            **_snapshot_meta(accepted_at),
+            "surfaces": {
+                "openclaw_command": {"status": "ok", "source": "service_client"},
+            },
+        },
+    }
+
+
 @app.get("/api/v1/operator/research/oss-activation-ready")
 async def get_research_oss_activation_ready(
     activity_limit: int = Query(default=20, ge=1, le=100),
@@ -8059,6 +8205,132 @@ async def get_research_oss_preactivation(
     return _build_research_oss_activation_ready_response(
         activity_limit=activity_limit,
         surface_key="research_oss_preactivation",
+    )
+
+
+@app.get("/api/v1/operator/openclaw/ops")
+async def get_openclaw_ops(
+    session_limit: int = Query(default=25, ge=1, le=100),
+    audit_limit: int = Query(default=20, ge=1, le=100),
+    state: Optional[str] = Query(default=None),
+    operator_id: Optional[str] = Query(default=None),
+    agent_id: Optional[str] = Query(default=None),
+    session_id: Optional[str] = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    authorized_operator_id = _authorized_openclaw_operator_filter(identity, operator_id)
+    return _build_openclaw_ops_response(
+        session_limit=session_limit,
+        audit_limit=audit_limit,
+        state=state,
+        operator_id=authorized_operator_id,
+        agent_id=agent_id,
+        effective_tools_session_id=session_id,
+        requesting_operator_id=identity.operator_id,
+        surface_key="openclaw_ops",
+    )
+
+
+@app.get("/api/v1/operator/openclaw/tool-workflow-bridge")
+async def get_openclaw_tool_workflow_bridge(
+    session_limit: int = Query(default=25, ge=1, le=100),
+    audit_limit: int = Query(default=20, ge=1, le=100),
+    state: Optional[str] = Query(default=None),
+    operator_id: Optional[str] = Query(default=None),
+    agent_id: Optional[str] = Query(default=None),
+    session_id: Optional[str] = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    authorized_operator_id = _authorized_openclaw_operator_filter(identity, operator_id)
+    return _build_openclaw_ops_response(
+        session_limit=session_limit,
+        audit_limit=audit_limit,
+        state=state,
+        operator_id=authorized_operator_id,
+        agent_id=agent_id,
+        effective_tools_session_id=session_id,
+        requesting_operator_id=identity.operator_id,
+        surface_key="openclaw_tool_workflow_bridge",
+    )
+
+
+@app.post("/api/v1/operator/openclaw/sessions")
+async def create_openclaw_session(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    identity = _extract_identity(authorization)
+    _require_openclaw_command_role(identity)
+    idempotency_key = _require_openclaw_idempotency_key(x_idempotency_key)
+    agent_id = str(payload.get("agent_id") or "").strip()
+    session_type = str(payload.get("session_type") or "").strip()
+    if not agent_id or not session_type:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "agent_id and session_type are required",
+            "OpenClaw session create requires non-empty agent_id and session_type",
+        )
+    context_bundle = payload.get("context_bundle")
+    if context_bundle is not None and not isinstance(context_bundle, dict):
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "context_bundle must be an object when provided",
+            "OpenClaw session context_bundle must be a JSON object",
+        )
+    try:
+        adapter_payload = OpenClawOpsClient().create_session(
+            agent_id=agent_id,
+            session_type=session_type,
+            operator_id=identity.operator_id,
+            idempotency_key=idempotency_key,
+            context_bundle=context_bundle,
+        )
+    except OpenClawOpsClientError as exc:
+        raise _openclaw_client_error(exc) from exc
+    accepted_at = utc_now()
+    status_code = 200 if adapter_payload.get("replayed") else 202
+    return JSONResponse(
+        status_code=status_code,
+        content=_openclaw_command_payload(
+            command="OpenClawCreateSession",
+            adapter_payload=adapter_payload,
+            accepted_at=accepted_at,
+        ),
+    )
+
+
+@app.post("/api/v1/operator/openclaw/sessions/{session_id}/cancel")
+async def cancel_openclaw_session(
+    session_id: str,
+    authorization: Optional[str] = Header(default=None),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    identity = _extract_identity(authorization)
+    _require_openclaw_command_role(identity)
+    idempotency_key = _require_openclaw_idempotency_key(x_idempotency_key)
+    try:
+        adapter_payload = OpenClawOpsClient().cancel_session(
+            session_id=session_id,
+            operator_id=identity.operator_id,
+            idempotency_key=idempotency_key,
+        )
+    except OpenClawOpsClientError as exc:
+        raise _openclaw_client_error(exc) from exc
+    accepted_at = utc_now()
+    return JSONResponse(
+        status_code=202,
+        content=_openclaw_command_payload(
+            command="OpenClawCancelSession",
+            adapter_payload=adapter_payload,
+            accepted_at=accepted_at,
+        ),
     )
 
 

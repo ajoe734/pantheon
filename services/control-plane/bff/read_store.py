@@ -22,6 +22,7 @@ from services.consultation.models import (
 )
 from services.consultation.client import ConsultationClientError, ConsultationServiceClient
 from services.consultation.store import ConsultationStore
+from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 
 
 def _first_existing(paths: List[Path]) -> Optional[Path]:
@@ -194,6 +195,25 @@ _DORMANT_SERVICE_SPECS = {
         "actor_field": "adapter",
         "activity_kind": "openclaw_status",
         "id_fields": ("session_id", "id"),
+    },
+}
+
+_OPENCLAW_GATE_FIELDS = {
+    "broker_execution": {
+        "activation_gate": "OPENCLAW_PRODUCTION_BROKER_ENABLED",
+        "allowed_scope": "not_enabled",
+    },
+    "paper_adapter": {
+        "activation_gate": "OPENCLAW_PAPER_ADAPTER_ENABLED",
+        "allowed_scope": "paper_gate_not_enabled",
+    },
+    "live_adapter": {
+        "activation_gate": "OPENCLAW_LIVE_ADAPTER_ENABLED",
+        "allowed_scope": "live_gate_not_enabled",
+    },
+    "capital_binding": {
+        "activation_gate": "OPENCLAW_CAPITAL_BINDING_ENABLED",
+        "allowed_scope": "capital_binding_not_enabled",
     },
 }
 
@@ -5301,6 +5321,373 @@ class ReadSurfaceStore:
                 "observed_reasons": observed_reasons,
                 "all_observed_rejections_fail_closed": all_observed_fail_closed,
                 "expected_fail_closed_reasons": sorted(_DORMANT_FAIL_CLOSED_REASONS),
+            },
+            "service_status": service_status,
+        }
+
+    @staticmethod
+    def _openclaw_client() -> OpenClawOpsClient:
+        return OpenClawOpsClient()
+
+    @staticmethod
+    def _openclaw_error_surface(exc: OpenClawOpsClientError) -> Dict[str, Any]:
+        surface = exc.to_surface()
+        return {key: value for key, value in surface.items() if value is not None}
+
+    def _fetch_openclaw_surface(
+        self,
+        surface_key: str,
+        call: Any,
+    ) -> tuple[Dict[str, Any], Any]:
+        try:
+            payload = call()
+        except OpenClawOpsClientError as exc:
+            return self._openclaw_error_surface(exc), None
+        return {
+            "status": "ok",
+            "source": "service_client",
+            "surface": surface_key,
+        }, payload
+
+    @staticmethod
+    def _openclaw_gate_enabled(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        normalized = str(value or "").strip().lower()
+        return normalized in {"1", "true", "yes", "on", "enabled", "active", "available"}
+
+    @classmethod
+    def _project_openclaw_gate_state(cls, capabilities: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        activation_gates = capabilities.get("activation_gates")
+        if not isinstance(activation_gates, dict):
+            activation_gates = {}
+        gates: Dict[str, Dict[str, Any]] = {}
+        for gate_name, defaults in _OPENCLAW_GATE_FIELDS.items():
+            raw_state = capabilities.get(gate_name)
+            state = str(raw_state or "deferred").strip().lower()
+            enabled = cls._openclaw_gate_enabled(raw_state)
+            gates[gate_name] = {
+                "state": state,
+                "enabled": enabled,
+                "activation_gate": activation_gates.get(gate_name) or defaults["activation_gate"],
+                "allowed_scope": "enabled_by_adapter" if enabled else defaults["allowed_scope"],
+                "bff_activation_command": "not_exposed",
+            }
+        return gates
+
+    @staticmethod
+    def _project_openclaw_capabilities(capabilities: Dict[str, Any]) -> Dict[str, Any]:
+        upstream = capabilities.get("upstream") if isinstance(capabilities.get("upstream"), dict) else {}
+        return {
+            "adapter_version": capabilities.get("adapter_version"),
+            "activation_state": capabilities.get("activation_state") or "unknown",
+            "session_lifecycle_state": capabilities.get("session_lifecycle_state") or "unknown",
+            "fail_closed": bool(capabilities.get("fail_closed", True)),
+            "supported_session_types": list(capabilities.get("supported_session_types") or []),
+            "minimum_runtime_contract": capabilities.get("minimum_runtime_contract") or {},
+            "upstream_status": upstream.get("status"),
+            "upstream_error_code": upstream.get("error_code"),
+        }
+
+    @staticmethod
+    def _project_openclaw_upstream(
+        payload: Any,
+        surface: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            return {
+                "status": "unavailable",
+                "reachable": False,
+                "reason": surface.get("reason") or "upstream_status_unavailable",
+                "details": surface,
+            }
+        details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+        reachable = bool(payload.get("reachable"))
+        reason = (
+            details.get("reason")
+            or payload.get("reason")
+            or surface.get("reason")
+            or (None if reachable else "upstream_unreachable")
+        )
+        return {
+            "status": "ok" if reachable else "degraded",
+            "upstream_url": payload.get("upstream_url"),
+            "reachable": reachable,
+            "reason": reason,
+            "http_status": details.get("http_status"),
+            "probe": details.get("probe"),
+            "details": details,
+        }
+
+    @staticmethod
+    def _project_openclaw_session(record: Dict[str, Any]) -> Dict[str, Any]:
+        state = str(record.get("state") or record.get("status") or "unknown").strip().lower()
+        audit_log = record.get("audit_log") if isinstance(record.get("audit_log"), list) else []
+        context_bundle = record.get("context_bundle") if isinstance(record.get("context_bundle"), dict) else {}
+        last_error = record.get("last_error") if isinstance(record.get("last_error"), dict) else None
+        cancelable = state in {"pending", "active", "lost", "cancel_requested"}
+        return {
+            "session_id": record.get("session_id") or record.get("id"),
+            "agent_id": record.get("agent_id"),
+            "session_type": record.get("session_type"),
+            "state": state,
+            "operator_id": record.get("operator_id"),
+            "created_at": record.get("created_at"),
+            "updated_at": record.get("updated_at"),
+            "upstream_session_id": record.get("upstream_session_id"),
+            "degraded": state in {"lost", "failed"} or bool(last_error),
+            "last_error": last_error,
+            "audit_count": len(audit_log),
+            "latest_audit_event": audit_log[-1] if audit_log else None,
+            "context_keys": sorted(str(key) for key in context_bundle.keys()),
+            "allowedActions": {
+                "canCancel": cancelable,
+                "canInvokeTool": False,
+                "canTriggerWorkflow": False,
+            },
+        }
+
+    @staticmethod
+    def _project_openclaw_invocation(entry: Dict[str, Any]) -> Dict[str, Any]:
+        error = entry.get("error") if isinstance(entry.get("error"), dict) else None
+        return {
+            "at": entry.get("at"),
+            "request_type": entry.get("request_type"),
+            "trace_id": entry.get("trace_id"),
+            "operator_id": entry.get("operator_id"),
+            "session_id": entry.get("session_id"),
+            "tool_name": entry.get("tool_name"),
+            "workflow_ref": entry.get("workflow_ref"),
+            "policy_decision": entry.get("policy_decision"),
+            "policy_class": entry.get("policy_class"),
+            "policy_reason": entry.get("policy_reason"),
+            "outcome": entry.get("outcome"),
+            "retryable": bool(error.get("retryable")) if error else False,
+            "error": (
+                {
+                    "error_code": error.get("error_code"),
+                    "message": error.get("message"),
+                    "status_code": error.get("status_code"),
+                    "retryable": bool(error.get("retryable")),
+                }
+                if error
+                else None
+            ),
+            "args_hash": entry.get("args_hash"),
+            "context_hash": entry.get("context_hash"),
+        }
+
+    @staticmethod
+    def _openclaw_counts_by_key(rows: List[Dict[str, Any]], key: str) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        for row in rows:
+            value = str(row.get(key) or "unknown")
+            counts[value] = counts.get(value, 0) + 1
+        return counts
+
+    def get_openclaw_ops_snapshot(
+        self,
+        *,
+        session_limit: int = 25,
+        audit_limit: int = 20,
+        operator_id: Optional[str] = None,
+        state: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        effective_tools_session_id: Optional[str] = None,
+        requesting_operator_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        bounded_session_limit = max(min(session_limit, 100), 1)
+        bounded_audit_limit = max(min(audit_limit, 100), 1)
+        client = self._openclaw_client()
+
+        service_status: Dict[str, Dict[str, Any]] = {}
+
+        cap_surface, cap_payload = self._fetch_openclaw_surface(
+            "openclaw_capabilities",
+            client.get_capabilities,
+        )
+        service_status["openclaw_capabilities"] = cap_surface
+        capabilities = cap_payload if isinstance(cap_payload, dict) else {}
+
+        upstream_surface, upstream_payload = self._fetch_openclaw_surface(
+            "openclaw_upstream_status",
+            client.get_upstream_status,
+        )
+        service_status["openclaw_upstream_status"] = upstream_surface
+
+        session_surface, session_payload = self._fetch_openclaw_surface(
+            "openclaw_session_lifecycle",
+            lambda: client.list_lifecycle_sessions(operator_id=operator_id, state=state),
+        )
+        service_status["openclaw_session_lifecycle"] = session_surface
+
+        policy_surface, policy_payload = self._fetch_openclaw_surface(
+            "openclaw_tool_policy",
+            client.get_tool_policy,
+        )
+        service_status["openclaw_tool_policy"] = policy_surface
+
+        audit_surface, audit_payload = self._fetch_openclaw_surface(
+            "openclaw_invocation_audit",
+            lambda: client.list_invocation_audit(
+                operator_id=operator_id,
+                limit=bounded_audit_limit,
+            ),
+        )
+        service_status["openclaw_invocation_audit"] = audit_surface
+
+        effective_tools: Optional[Dict[str, Any]] = None
+        if agent_id and requesting_operator_id:
+            tools_surface, tools_payload = self._fetch_openclaw_surface(
+                "openclaw_effective_tools",
+                lambda: client.list_effective_tools(
+                    agent_id=agent_id,
+                    operator_id=requesting_operator_id,
+                    session_id=effective_tools_session_id,
+                ),
+            )
+            service_status["openclaw_effective_tools"] = tools_surface
+            effective_tools = tools_payload if isinstance(tools_payload, dict) else None
+
+        raw_sessions = []
+        if isinstance(session_payload, dict) and isinstance(session_payload.get("sessions"), list):
+            raw_sessions = [
+                dict(item)
+                for item in session_payload["sessions"]
+                if isinstance(item, dict)
+            ]
+        sessions = [
+            self._project_openclaw_session(item)
+            for item in raw_sessions[:bounded_session_limit]
+        ]
+
+        raw_invocations = []
+        if isinstance(audit_payload, dict) and isinstance(audit_payload.get("entries"), list):
+            raw_invocations = [
+                dict(item)
+                for item in audit_payload["entries"]
+                if isinstance(item, dict)
+            ]
+        invocations = [self._project_openclaw_invocation(item) for item in raw_invocations]
+
+        session_counts = self._openclaw_counts_by_key(sessions, "state")
+        invocation_outcomes = self._openclaw_counts_by_key(invocations, "outcome")
+        policy_decisions = self._openclaw_counts_by_key(invocations, "policy_decision")
+
+        upstream = self._project_openclaw_upstream(upstream_payload, upstream_surface)
+        gate_state = self._project_openclaw_gate_state(capabilities)
+
+        degraded_reasons: List[str] = []
+        for surface_key, surface in service_status.items():
+            if surface.get("status") == "ok":
+                continue
+            reason = str(surface.get("reason") or surface.get("message") or surface_key)
+            degraded_reasons.append(f"{surface_key}:{reason}")
+        if not upstream.get("reachable"):
+            degraded_reasons.append(f"openclaw_upstream:{upstream.get('reason') or 'unreachable'}")
+        cap_upstream = capabilities.get("upstream") if isinstance(capabilities.get("upstream"), dict) else {}
+        if cap_upstream.get("status") == "degraded":
+            degraded_reasons.append(
+                f"openclaw_capabilities_upstream:{cap_upstream.get('error_code') or 'degraded'}"
+            )
+        for session in sessions:
+            if session.get("degraded"):
+                last_error = session.get("last_error") if isinstance(session.get("last_error"), dict) else {}
+                degraded_reasons.append(
+                    "openclaw_session:"
+                    f"{session.get('session_id')}:{last_error.get('error_code') or session.get('state')}"
+                )
+
+        unique_reasons = sorted({reason for reason in degraded_reasons if reason})
+        surface_states = [surface.get("status") for surface in service_status.values()]
+        if surface_states and all(state == "unavailable" for state in surface_states):
+            overall_status = "unavailable"
+        elif any(state != "ok" for state in surface_states) or unique_reasons:
+            overall_status = "degraded"
+        else:
+            overall_status = "ok"
+
+        return {
+            "surface": "openclaw_ops",
+            "surface_aliases": ["openclaw_tool_workflow_bridge"],
+            "overall_status": overall_status,
+            "activation": self._project_openclaw_capabilities(capabilities),
+            "gate_state": gate_state,
+            "production_activation": "disabled",
+            "upstream": upstream,
+            "session_lifecycle": {
+                "status": session_surface.get("status"),
+                "count": len(sessions),
+                "state_counts": session_counts,
+                "sessions": sessions,
+                "degraded_session_count": len([s for s in sessions if s.get("degraded")]),
+                "filters": {"operator_id": operator_id, "state": state},
+            },
+            "tool_workflow": {
+                "policy": policy_payload if isinstance(policy_payload, dict) else {},
+                "effective_tools": effective_tools,
+                "audit": {
+                    "status": audit_surface.get("status"),
+                    "count": len(invocations),
+                    "outcome_counts": invocation_outcomes,
+                    "policy_decision_counts": policy_decisions,
+                    "entries": invocations,
+                },
+                "bridge_posture": {
+                    "policy_state": (
+                        "adapter_enforcing"
+                        if policy_surface.get("status") == "ok"
+                        else "degraded"
+                    ),
+                    "unknown_tools": "fail_closed",
+                    "disallowed_tools": "fail_closed",
+                    "workflow_triggers": "adapter_policy_checked",
+                    "bff_tool_invocation_commands": "not_exposed",
+                    "bff_workflow_trigger_commands": "not_exposed",
+                },
+            },
+            "operator_controls": {
+                "read_operations": [
+                    "upstream_status",
+                    "capability_inventory",
+                    "session_lifecycle",
+                    "tool_policy",
+                    "tool_workflow_audit",
+                    "degraded_reason",
+                ],
+                "commands": {
+                    "create_session": {
+                        "endpoint": "POST /api/v1/operator/openclaw/sessions",
+                        "requires_auth": True,
+                        "requires_idempotency_key": True,
+                        "adapter_route": "POST /api/openclaw-adapter/lifecycle/sessions",
+                    },
+                    "cancel_session": {
+                        "endpoint": "POST /api/v1/operator/openclaw/sessions/{session_id}/cancel",
+                        "requires_auth": True,
+                        "requires_idempotency_key": True,
+                        "adapter_route": "POST /api/openclaw-adapter/lifecycle/sessions/{session_id}/cancel",
+                    },
+                    "invoke_tool": "not_exposed_by_bff",
+                    "trigger_workflow": "not_exposed_by_bff",
+                },
+                "blocked_commands": {
+                    "enable_paper_adapter": "activation_gate_required_not_available_in_bff",
+                    "enable_live_adapter": "activation_gate_required_not_available_in_bff",
+                    "enable_broker_execution": "execution_gate_required_not_available_in_bff",
+                    "enable_capital_binding": "capital_binding_gate_required_not_available_in_bff",
+                },
+            },
+            "allowedActions": {
+                "canCreateSession": client.configured and session_surface.get("status") != "unavailable",
+                "canInvokeTool": False,
+                "canTriggerWorkflow": False,
+                "canEnablePaper": False,
+                "canEnableLive": False,
+            },
+            "degradation": {
+                "status": overall_status,
+                "reasons": unique_reasons,
             },
             "service_status": service_status,
         }
