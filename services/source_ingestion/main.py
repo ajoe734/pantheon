@@ -62,6 +62,9 @@ DLQ_STORE_PATH = Path(os.getenv("SOURCE_INGEST_DLQ_PATH", str(DATA_DIR / "source
 AUDIT_STORE_PATH = Path(os.getenv("SOURCE_INGEST_AUDIT_PATH", str(DATA_DIR / "source_ingest_audit.jsonl")))
 CONNECTOR_SCHEDULE_CONFIG_PATH = Path(os.getenv("SOURCE_INGEST_SCHEDULE_CONFIG_PATH", str(DATA_DIR / "connector_schedule.jsonl")))
 MAX_RECORDS_PER_JOB = int(os.getenv("SOURCE_INGEST_MAX_RECORDS", "100"))
+SCHEDULER_MAX_CONCURRENCY = max(1, int(os.getenv("SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY", "2")))
+FRONTIER_MAX_ATTEMPTS = max(1, int(os.getenv("SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS", "2")))
+FRONTIER_BACKOFF_SECONDS = max(0, int(os.getenv("SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS", "60")))
 
 app = FastAPI(title="Pantheon Source Ingest Service", version="0.1.0")
 manager = IngestManager()
@@ -84,6 +87,7 @@ register_fastapi_health_routes(
         "source_record_count": len(evidence_repository.list_source_records()),
         "evidence_item_count": len(evidence_repository.list_evidence_items()),
         "dlq_count": len(dead_letter_queue.entries()),
+        "frontier_count": len(store.list_frontier()),
     },
     details=lambda: {
         "store_path": str(SCHEDULE_STORE_PATH),
@@ -91,6 +95,9 @@ register_fastapi_health_routes(
         "source_evidence_path": str(SOURCE_EVIDENCE_STORE_PATH),
         "dlq_path": str(DLQ_STORE_PATH),
         "audit_path": str(AUDIT_STORE_PATH),
+        "scheduler_max_concurrency": SCHEDULER_MAX_CONCURRENCY,
+        "frontier_max_attempts": FRONTIER_MAX_ATTEMPTS,
+        "frontier_backoff_seconds": FRONTIER_BACKOFF_SECONDS,
     },
 )
 
@@ -200,6 +207,7 @@ class ConfiguredFetchBody(StrictBaseModel):
     max_bytes: int = 1_000_000
     max_records: int = 100
     default_access_scope: list[str] = Field(default_factory=lambda: ["public"])
+    respect_robots_txt: bool = True
     next_watermark: str | None = None
     fail_until_attempt: int = 0
     failure_reason: str = "configured connector fetch failed"
@@ -221,6 +229,7 @@ class ConfiguredFetchBody(StrictBaseModel):
                     "max_bytes": self.max_bytes,
                     "max_records": self.max_records,
                     "default_access_scope": self.default_access_scope,
+                    "respect_robots_txt": self.respect_robots_txt,
                 }
             )
         return payload
@@ -251,6 +260,14 @@ class ReplayDlqRequest(StrictBaseModel):
 class SetScheduleRequest(StrictBaseModel):
     interval_seconds: int = 0
     enabled: bool = False
+
+
+class RunScheduledRequest(StrictBaseModel):
+    max_concurrency: int | None = None
+
+
+class ReplayFrontierRequest(StrictBaseModel):
+    trace_id: str | None = None
 
 
 def _register_or_validate_connector(connector: SourceConnector) -> SourceConnector:
@@ -307,6 +324,7 @@ def _fetch_policy_summary(fetch: dict[str, Any] | None) -> dict[str, Any]:
                 "max_bytes": fetch.get("max_bytes"),
                 "max_records": fetch.get("max_records"),
                 "default_access_scope": list(fetch.get("default_access_scope") or []),
+                "respect_robots_txt": bool(fetch.get("respect_robots_txt", True)),
             }
         )
     elif mode == "static_records":
@@ -557,6 +575,7 @@ def _result_payload(result: Any, evidence_refs: dict[str, Any] | None = None) ->
         },
         "dlq_entries": [entry.to_dict() for entry in result.dlq_entries],
         "audit_actions": [action.to_dict() for action in result.audit_actions],
+        "frontier_id": getattr(result, "frontier_id", None),
     }
 
 
@@ -566,16 +585,62 @@ def _run_job(
     trace_id: str,
     trigger_type: str,
     fetch_batch: Any,
+    frontier_id: str | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     result = scheduler.run_once(
         connector_id=connector.connector_id,
         trace_id=trace_id,
         trigger_type=trigger_type,
         fetch_batch=fetch_batch,
+        frontier_id=frontier_id,
     )
     _append_audit_actions(result.audit_actions)
     evidence_refs = _persist_source_evidence_refs(result)
     return result, evidence_refs
+
+
+def _result_error(result: Any) -> str:
+    if result.dlq_entries:
+        return str(result.dlq_entries[0].reason)
+    return f"source ingest run ended with status={result.run.status.value}"
+
+
+def _run_frontier_item(item: Any) -> tuple[Any, dict[str, Any], Any]:
+    config = connector_store.get_config(item.connector_id)
+    if config is None:
+        updated = store.fail_frontier(
+            item.frontier_id,
+            error="connector config not found",
+            backoff_seconds=FRONTIER_BACKOFF_SECONDS,
+        )
+        raise SourceEvidenceError(f"Connector fetch is not configured: {item.connector_id}; frontier={updated.status}")
+    connector = _register_or_validate_connector(config.connector)
+    try:
+        result, evidence_refs = _run_job(
+            connector=connector,
+            trace_id=item.trace_id or f"frontier-{item.frontier_id}",
+            trigger_type=item.trigger_type,
+            fetch_batch=_configured_fetch(item.connector_id),
+            frontier_id=item.frontier_id,
+        )
+    except Exception as exc:
+        updated = store.fail_frontier(
+            item.frontier_id,
+            error=str(exc),
+            backoff_seconds=FRONTIER_BACKOFF_SECONDS,
+        )
+        raise SourceEvidenceError(f"frontier run failed before ingest result persisted: {updated.last_error}") from exc
+
+    if result.run.status.value in {"completed", "rejected"}:
+        updated = store.complete_frontier(item.frontier_id, ingest_run_id=result.run.ingest_run_id)
+    else:
+        updated = store.fail_frontier(
+            item.frontier_id,
+            error=_result_error(result),
+            backoff_seconds=FRONTIER_BACKOFF_SECONDS,
+            ingest_run_id=result.run.ingest_run_id,
+        )
+    return result, evidence_refs, updated
 
 
 def _replay_source_event(event: Any) -> str:
@@ -584,6 +649,16 @@ def _replay_source_event(event: Any) -> str:
     connector_id = str(event.payload.get("connector_id") or "").strip()
     if not connector_id:
         raise SourceEvidenceError("DLQ replay event is missing connector_id")
+    frontier_id = str(event.payload.get("frontier_id") or "").strip()
+    if frontier_id:
+        store.replay_frontier(frontier_id, trace_id=event.trace_id)
+        item = store.claim_frontier(frontier_id)
+        result, _evidence_refs, updated = _run_frontier_item(item)
+        if result.run.status.value != "completed":
+            raise SourceEvidenceError(
+                f"DLQ replay did not complete frontier {frontier_id}: run={result.run.status.value} frontier={updated.status}"
+            )
+        return f"crawl_frontier:{frontier_id}:source_ingest_run:{result.run.ingest_run_id}"
     config = connector_store.get_config(connector_id)
     if config is None:
         raise SourceEvidenceError(f"Connector fetch is not configured: {connector_id}")
@@ -614,6 +689,10 @@ def health() -> dict[str, Any]:
         "source_record_count": len(evidence_repository.list_source_records()),
         "evidence_item_count": len(evidence_repository.list_evidence_items()),
         "dlq_count": len(dead_letter_queue.entries()),
+        "frontier_count": len(store.list_frontier()),
+        "scheduler_max_concurrency": SCHEDULER_MAX_CONCURRENCY,
+        "frontier_max_attempts": FRONTIER_MAX_ATTEMPTS,
+        "frontier_backoff_seconds": FRONTIER_BACKOFF_SECONDS,
     }
 
 
@@ -729,6 +808,25 @@ def get_watermark(connector_id: str) -> dict[str, Any]:
     return {"watermark": watermark.to_dict()}
 
 
+@app.get("/api/source-ingest/frontier")
+def list_crawl_frontier(
+    status: Literal["queued", "running", "done", "failed", "retry"] | None = None,
+) -> dict[str, Any]:
+    return {"frontier": [item.to_dict() for item in store.list_frontier(status=status)]}
+
+
+@app.post("/api/source-ingest/frontier/{frontier_id}/replay")
+def replay_frontier(frontier_id: str, request: ReplayFrontierRequest | None = None) -> dict[str, Any]:
+    try:
+        trace_id = request.trace_id if request and request.trace_id else f"frontier-replay-{frontier_id}"
+        store.replay_frontier(frontier_id, trace_id=trace_id)
+        item = store.claim_frontier(frontier_id)
+        result, evidence_refs, frontier = _run_frontier_item(item)
+        return {**_result_payload(result, evidence_refs), "frontier": frontier.to_dict()}
+    except (EvidenceValidationError, SourceEvidenceError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/source-ingest/source-records")
 def list_source_records() -> dict[str, Any]:
     return {"source_records": [record.to_dict() for record in evidence_repository.list_source_records()]}
@@ -832,9 +930,14 @@ def get_connector_schedule(connector_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/source-ingest/run-scheduled")
-def run_scheduled_connectors() -> dict[str, Any]:
+def run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
+    now_iso = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    max_concurrency = request.max_concurrency if request and request.max_concurrency is not None else SCHEDULER_MAX_CONCURRENCY
+    if max_concurrency < 1:
+        raise HTTPException(status_code=400, detail="max_concurrency must be >= 1")
     schedules = schedule_config_store.list_schedules()
+    enqueued: list[dict[str, Any]] = []
     ran: list[dict[str, Any]] = []
     skipped: list[str] = []
     failed: list[dict[str, Any]] = []
@@ -858,22 +961,45 @@ def run_scheduled_connectors() -> dict[str, Any]:
             failed.append({"connector_id": sched.connector_id, "error": "connector config not found"})
             continue
         try:
-            connector = _register_or_validate_connector(config.connector)
-            result, evidence_refs = _run_job(
-                connector=connector,
+            _register_or_validate_connector(config.connector)
+            frontier = store.enqueue_frontier(
+                connector_id=sched.connector_id,
                 trace_id=f"scheduled-{sched.connector_id}-{int(now.timestamp())}",
                 trigger_type="scheduled",
-                fetch_batch=_configured_fetch(sched.connector_id),
+                max_attempts=FRONTIER_MAX_ATTEMPTS,
+                available_at=now_iso,
             )
-            ran.append({
-                "connector_id": sched.connector_id,
-                "run": result.run.to_dict(),
-                "evidence_refs": evidence_refs,
-            })
+            enqueued.append(frontier.to_dict())
         except (EvidenceValidationError, SourceEvidenceError) as exc:
             failed.append({"connector_id": sched.connector_id, "error": str(exc)})
 
+    claimed = store.claim_due_frontier(limit=max_concurrency, now=now_iso)
+    for frontier in claimed:
+        try:
+            result, evidence_refs, updated_frontier = _run_frontier_item(frontier)
+            payload = {
+                "connector_id": frontier.connector_id,
+                "frontier": updated_frontier.to_dict(),
+                "run": result.run.to_dict(),
+                "evidence_refs": evidence_refs,
+            }
+            if result.run.status.value == "failed":
+                failed.append({**payload, "error": _result_error(result)})
+            else:
+                ran.append(payload)
+        except (EvidenceValidationError, SourceEvidenceError) as exc:
+            latest = store.get_frontier(frontier.frontier_id)
+            failed.append(
+                {
+                    "connector_id": frontier.connector_id,
+                    "frontier": latest.to_dict() if latest else frontier.to_dict(),
+                    "error": str(exc),
+                }
+            )
+
     return {
+        "enqueued": enqueued,
+        "claimed": [item.to_dict() for item in claimed],
         "ran": ran,
         "skipped": skipped,
         "failed": failed,
@@ -881,6 +1007,8 @@ def run_scheduled_connectors() -> dict[str, Any]:
             "total_ran": len(ran),
             "total_skipped": len(skipped),
             "total_failed": len(failed),
+            "total_enqueued": len(enqueued),
+            "max_concurrency": max_concurrency,
         },
     }
 

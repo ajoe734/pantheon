@@ -121,3 +121,14 @@ def test_fetch_config_validation_rejects_unsafe_urls_secrets_and_overlarge_paylo
                 "max_bytes": 10_000_001,
             },
         )
+
+    with pytest.raises(SourceEvidenceError, match="timeout_seconds"):
+        store.upsert_config(
+            connector,
+            {
+                "mode": "external_feed",
+                "url": "https://feeds.example.test/feed.json",
+                "allowed_url_prefixes": ["https://feeds.example.test/"],
+                "timeout_seconds": 31,
+            },
+        )

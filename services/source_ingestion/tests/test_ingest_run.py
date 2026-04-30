@@ -233,3 +233,48 @@ def test_rejected_source_records_use_shared_dlq_and_do_not_advance_watermark(tmp
     assert result.dlq_entries[0].tags == ("source_ingestion", "scheduled_ingest", "source_record_rejected")
     assert result.audit_actions[0].action_type == "source_ingestion.source_record.dead_lettered"
     assert queue.load_from_spill() == 1
+
+
+def test_crawl_frontier_persists_retry_backoff_replay_and_done_state(tmp_path) -> None:
+    store = JsonlIngestScheduleStore(tmp_path / "schedule.jsonl")
+
+    queued = store.enqueue_frontier(
+        connector_id="conn-openalex",
+        trace_id="trace-frontier",
+        max_attempts=2,
+        available_at="2026-04-30T00:00:00Z",
+    )
+    assert queued.status == "queued"
+
+    running = store.claim_due_frontier(limit=1, now="2026-04-30T00:00:01Z")[0]
+    assert running.status == "running"
+    assert running.attempts == 1
+
+    retry = store.fail_frontier(
+        running.frontier_id,
+        error="upstream rate limit",
+        backoff_seconds=300,
+        ingest_run_id="ingest-failed",
+    )
+    assert retry.status == "retry"
+    assert retry.available_at is not None
+
+    replayed_store = JsonlIngestScheduleStore(tmp_path / "schedule.jsonl")
+    replayed_retry = replayed_store.get_frontier(queued.frontier_id)
+    assert replayed_retry is not None
+    assert replayed_retry.status == "retry"
+    assert replayed_store.claim_due_frontier(limit=1, now="1970-01-01T00:00:00Z") == []
+
+    replayed_store.replay_frontier(queued.frontier_id, trace_id="trace-frontier-replay")
+    replay_claim = replayed_store.claim_frontier(queued.frontier_id)
+    assert replay_claim.status == "running"
+    assert replay_claim.attempts == 2
+
+    done = replayed_store.complete_frontier(queued.frontier_id, ingest_run_id="ingest-replayed")
+    assert done.status == "done"
+    assert done.ingest_run_id == "ingest-replayed"
+
+    final_store = JsonlIngestScheduleStore(tmp_path / "schedule.jsonl")
+    final_item = final_store.get_frontier(queued.frontier_id)
+    assert final_item is not None
+    assert final_item.status == "done"

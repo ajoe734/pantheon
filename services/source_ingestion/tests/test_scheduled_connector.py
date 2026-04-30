@@ -18,9 +18,15 @@ def client():
     env_backup = {
         "SOURCE_INGEST_DATA_DIR": os.environ.get("SOURCE_INGEST_DATA_DIR"),
         "SOURCE_INGEST_MAX_RECORDS": os.environ.get("SOURCE_INGEST_MAX_RECORDS"),
+        "SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY": os.environ.get("SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY"),
+        "SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS": os.environ.get("SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS"),
+        "SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS": os.environ.get("SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS"),
     }
     os.environ["SOURCE_INGEST_DATA_DIR"] = tempdir
     os.environ["SOURCE_INGEST_MAX_RECORDS"] = "10"
+    os.environ["SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY"] = "1"
+    os.environ["SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS"] = "2"
+    os.environ["SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS"] = "300"
 
     sys.modules.pop("services.source_ingestion.main", None)
     module = importlib.import_module("services.source_ingestion.main")
@@ -140,6 +146,37 @@ def test_run_scheduled_runs_due_connector_and_persists_evidence(client) -> None:
     assert source.status_code == 200
 
 
+def test_run_scheduled_honors_bounded_concurrency(client) -> None:
+    test_client, _, _ = client
+    configured_a = _configure_with_records(test_client, connector_id="conn-sched-a")
+    configured_b = _configure_with_records(test_client, connector_id="conn-sched-b")
+    assert configured_a.status_code == 201, configured_a.text
+    assert configured_b.status_code == 201, configured_b.text
+
+    for connector_id in ("conn-sched-a", "conn-sched-b"):
+        scheduled = test_client.put(
+            f"/api/source-ingest/connectors/{connector_id}/schedule",
+            json={"interval_seconds": 1, "enabled": True},
+        )
+        assert scheduled.status_code == 200, scheduled.text
+
+    first = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+    assert first.status_code == 200, first.text
+    assert first.json()["summary"]["total_ran"] == 1
+    frontier = test_client.get("/api/source-ingest/frontier")
+    assert frontier.status_code == 200
+    statuses = [item["status"] for item in frontier.json()["frontier"]]
+    assert statuses.count("done") == 1
+    assert statuses.count("queued") == 1
+
+    second = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+    assert second.status_code == 200, second.text
+    assert second.json()["summary"]["total_ran"] == 1
+    done_frontier = test_client.get("/api/source-ingest/frontier?status=done")
+    assert done_frontier.status_code == 200
+    assert len(done_frontier.json()["frontier"]) == 2
+
+
 def test_run_scheduled_skips_disabled_connector(client) -> None:
     test_client, _, _ = client
     test_client.post(
@@ -159,6 +196,73 @@ def test_run_scheduled_skips_disabled_connector(client) -> None:
     body = response.json()
     assert body["summary"]["total_ran"] == 0
     assert body["summary"]["total_skipped"] == 1
+
+
+def test_run_scheduled_frontier_retry_backoff_and_dlq_replay_are_durable(client) -> None:
+    test_client, _, module = client
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": _connector(connector_id="conn-sched-replay", source_type="internal_note"),
+            "fetch": {
+                "mode": "static_records",
+                "next_watermark": "2026-04-30T02:00:00Z",
+                "fail_until_attempt": 2,
+                "failure_reason": "scheduled feed unavailable",
+                "records": [
+                    {
+                        "source_id": "src-conn-sched-replay-note-1",
+                        "title": "Replay scheduled note",
+                        "content_ref": "memory://scheduled/replay/note-1",
+                    }
+                ],
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+    scheduled = test_client.put(
+        "/api/source-ingest/connectors/conn-sched-replay/schedule",
+        json={"interval_seconds": 1, "enabled": True},
+    )
+    assert scheduled.status_code == 200, scheduled.text
+
+    first = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+    assert first.status_code == 200, first.text
+    first_body = first.json()
+    assert first_body["summary"]["total_failed"] == 1
+    assert first_body["failed"][0]["frontier"]["status"] == "retry"
+    assert first_body["failed"][0]["run"]["status"] == "failed"
+    assert first_body["failed"][0]["run"]["ingest_run_id"]
+    assert first_body["failed"][0]["frontier"]["ingest_run_id"] == first_body["failed"][0]["run"]["ingest_run_id"]
+
+    retry_frontier = test_client.get("/api/source-ingest/frontier?status=retry")
+    assert retry_frontier.status_code == 200
+    assert len(retry_frontier.json()["frontier"]) == 1
+    assert retry_frontier.json()["frontier"][0]["last_error"] == "scheduled feed unavailable"
+
+    immediate_retry = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+    assert immediate_retry.status_code == 200, immediate_retry.text
+    assert immediate_retry.json()["summary"]["total_ran"] == 0
+
+    replay = test_client.post(
+        "/api/source-ingest/dlq/replay",
+        json={"tag": "retry_exhausted", "reason": "test scheduled frontier replay"},
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["summary"]["applied"] == 1
+
+    done_frontier = test_client.get("/api/source-ingest/frontier?status=done")
+    assert done_frontier.status_code == 200
+    assert len(done_frontier.json()["frontier"]) == 1
+    assert done_frontier.json()["frontier"][0]["trigger_type"] == "dlq_replay"
+    source = test_client.get("/api/source-ingest/source-records/src-conn-sched-replay-note-1")
+    assert source.status_code == 200
+
+    reloaded = importlib.reload(module)
+    replay_client = TestClient(reloaded.app)
+    durable_frontier = replay_client.get("/api/source-ingest/frontier?status=done")
+    assert durable_frontier.status_code == 200
+    assert len(durable_frontier.json()["frontier"]) == 1
 
 
 def test_run_scheduled_skips_not_due_connector(client) -> None:

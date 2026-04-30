@@ -65,11 +65,19 @@ def _record(**overrides):
     return payload
 
 
-def _serve_json(payload: dict):
+def _serve_json(payload: dict, *, robots_txt: str | None = None):
     body = json.dumps(payload).encode("utf-8")
+    robots_body = robots_txt.encode("utf-8") if robots_txt is not None else None
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - stdlib callback name
+            if self.path == "/robots.txt" and robots_body is not None:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(robots_body)))
+                self.end_headers()
+                self.wfile.write(robots_body)
+                return
             if self.path != "/feed.json":
                 self.send_response(404)
                 self.end_headers()
@@ -440,6 +448,59 @@ def test_external_feed_rejects_unallowlisted_url_at_configuration(client) -> Non
     assert "outside allowed_url_prefixes" in configured.json()["detail"]
 
 
+def test_external_http_feed_respects_robots_disallow_and_routes_to_dlq(client) -> None:
+    test_client, _, _ = client
+    feed_payload = {
+        "next_watermark": "2026-04-28T22:45:00Z",
+        "records": [
+            {
+                "source_id": "src-robots-denied-note-1",
+                "title": "Robots denied note",
+                "content_ref": "https://feeds.example.test/source/robots-denied",
+            }
+        ],
+    }
+    server, feed_url = _serve_json(
+        feed_payload,
+        robots_txt="User-agent: pantheon-source-ingest\nDisallow: /feed.json\n",
+    )
+    try:
+        configured = test_client.post(
+            "/api/source-ingest/connectors",
+            json={
+                "connector": _connector(connector_id="conn-robots-denied", source_type="internal_note"),
+                "fetch": {
+                    "mode": "external_feed",
+                    "url": feed_url,
+                    "allowed_url_prefixes": [feed_url.rsplit("/", 1)[0] + "/"],
+                    "timeout_seconds": 2,
+                    "max_bytes": 4096,
+                    "max_records": 3,
+                },
+            },
+        )
+        assert configured.status_code == 201, configured.text
+
+        failed = test_client.post(
+            "/api/source-ingest/jobs",
+            json={
+                "connector_id": "conn-robots-denied",
+                "trace_id": "trace-source-ingest-robots-denied",
+                "trigger_type": "scheduled",
+            },
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert failed.status_code == 201, failed.text
+    body = failed.json()
+    assert body["run"]["status"] == "failed"
+    assert "robots.txt disallows" in body["dlq_entries"][0]["reason"]
+    watermark = test_client.get("/api/source-ingest/watermarks/conn-robots-denied")
+    assert watermark.status_code == 404
+
+
 def test_external_feed_size_failure_routes_to_dlq_without_advancing_watermark(client) -> None:
     test_client, data_dir, _ = client
     feed_path = data_dir / "oversized-feed.json"
@@ -488,6 +549,61 @@ def test_external_feed_size_failure_routes_to_dlq_without_advancing_watermark(cl
     assert body["watermark"] is None
     assert "exceeds fetch.max_bytes=16" in body["dlq_entries"][0]["reason"]
     watermark = test_client.get("/api/source-ingest/watermarks/conn-oversized-feed")
+    assert watermark.status_code == 404
+
+
+def test_external_feed_record_count_failure_routes_to_dlq_without_advancing_watermark(client) -> None:
+    test_client, data_dir, _ = client
+    feed_path = data_dir / "too-many-records-feed.json"
+    feed_path.write_text(
+        json.dumps(
+            {
+                "next_watermark": "2026-04-28T23:10:00Z",
+                "records": [
+                    {
+                        "source_id": "src-too-many-feed-note-1",
+                        "title": "Too many feed note 1",
+                        "content_ref": "file-feed://too-many-note-1",
+                    },
+                    {
+                        "source_id": "src-too-many-feed-note-2",
+                        "title": "Too many feed note 2",
+                        "content_ref": "file-feed://too-many-note-2",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": _connector(connector_id="conn-too-many-feed", source_type="internal_note"),
+            "fetch": {
+                "mode": "external_feed",
+                "url": feed_path.as_uri(),
+                "allowed_url_prefixes": [(data_dir / "").as_uri()],
+                "max_bytes": 4096,
+                "max_records": 1,
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+
+    failed = test_client.post(
+        "/api/source-ingest/jobs",
+        json={
+            "connector_id": "conn-too-many-feed",
+            "trace_id": "trace-source-ingest-too-many-feed",
+            "trigger_type": "scheduled",
+        },
+    )
+    assert failed.status_code == 201, failed.text
+    body = failed.json()
+    assert body["run"]["status"] == "failed"
+    assert "exceeds fetch.max_records=1" in body["dlq_entries"][0]["reason"]
+    watermark = test_client.get("/api/source-ingest/watermarks/conn-too-many-feed")
     assert watermark.status_code == 404
 
 

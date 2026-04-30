@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import urllib.parse
 import urllib.request
+import urllib.error
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -286,6 +287,7 @@ class JsonlConfiguredConnectorStore:
                 "max_records": max_records,
                 "next_watermark": fetch.get("next_watermark"),
                 "default_access_scope": _normalized_string_list(fetch.get("default_access_scope")) or ["public"],
+                "respect_robots_txt": bool(fetch.get("respect_robots_txt", True)),
                 "fail_until_attempt": fail_until_attempt,
                 "failure_reason": failure_reason,
             }
@@ -360,6 +362,8 @@ class ConfiguredConnectorFetcher:
             _validate_feed_url(prefix, "fetch.allowed_url_prefixes")
         if not _url_is_allowed(url, allowed_prefixes):
             raise SourceEvidenceError("external feed URL is outside allowed_url_prefixes")
+        if bool(fetch.get("respect_robots_txt", True)):
+            _assert_robots_allowed(url, allowed_prefixes, float(fetch["timeout_seconds"]))
         max_bytes = int(fetch["max_bytes"])
         raw: bytes
         if url.startswith("file://"):
@@ -376,6 +380,8 @@ class ConfiguredConnectorFetcher:
                 _validate_feed_url(final_url, "external feed redirect")
                 if not _url_is_allowed(final_url, allowed_prefixes):
                     raise SourceEvidenceError("external feed redirect is outside allowed_url_prefixes")
+                if bool(fetch.get("respect_robots_txt", True)):
+                    _assert_robots_allowed(final_url, allowed_prefixes, float(fetch["timeout_seconds"]))
                 raw = response.read(max_bytes + 1)
         if len(raw) > max_bytes:
             raise SourceEvidenceError(f"external feed response exceeds fetch.max_bytes={max_bytes}")
@@ -440,6 +446,63 @@ def _validate_feed_url(url: str, field_name: str) -> None:
     sensitive_query_keys = sorted(key for key in query if key.strip().lower() in SENSITIVE_CONFIG_KEYS)
     if sensitive_query_keys:
         raise SourceEvidenceError(f"{field_name} must not include inline secret query parameters")
+
+
+def _assert_robots_allowed(url: str, allowed_prefixes: list[str], timeout_seconds: float) -> None:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return
+    robots_url = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, "/robots.txt", "", "", ""))
+    _validate_feed_url(robots_url, "robots.txt URL")
+    if not _url_is_allowed(robots_url, allowed_prefixes):
+        raise SourceEvidenceError("robots.txt URL is outside allowed_url_prefixes")
+    try:
+        request = urllib.request.Request(
+            robots_url,
+            headers={"Accept": "text/plain", "User-Agent": "pantheon-source-ingest/0.1"},
+        )
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            if response.status >= 400:
+                return
+            robots_txt = response.read(100_000).decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        if exc.code in {401, 403}:
+            raise SourceEvidenceError("robots.txt denied source-ingest access") from exc
+        return
+    except OSError:
+        return
+    user_agent = "pantheon-source-ingest"
+    if not _robots_allows(robots_txt, user_agent, parsed.path or "/"):
+        raise SourceEvidenceError("robots.txt disallows source-ingest access to external feed")
+
+
+def _robots_allows(robots_txt: str, user_agent: str, path: str) -> bool:
+    active = False
+    matched = False
+    rules: list[tuple[str, str]] = []
+    for raw_line in robots_txt.splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line or ":" not in line:
+            continue
+        key, value = (part.strip() for part in line.split(":", 1))
+        key = key.lower()
+        if key == "user-agent":
+            active = value == "*" or value.lower() == user_agent.lower()
+            matched = matched or active
+            continue
+        if active and key in {"allow", "disallow"}:
+            rules.append((key, value))
+    if not matched:
+        return True
+    decision = True
+    longest = -1
+    for key, value in rules:
+        if value == "":
+            continue
+        if path.startswith(value) and len(value) >= longest:
+            longest = len(value)
+            decision = key == "allow"
+    return decision
 
 
 def _reject_inline_fetch_secrets(fetch: Mapping[str, Any]) -> None:

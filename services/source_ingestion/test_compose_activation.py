@@ -30,11 +30,22 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert source_ingest_env["SOURCE_INGEST_CONNECTOR_STORE_PATH"] == "/data/source-ingest/connector_config.jsonl"
     assert source_ingest_env["SOURCE_INGEST_EVIDENCE_STORE_PATH"] == "/data/source-ingest/source_evidence.jsonl"
     assert source_ingest_env["SOURCE_INGEST_MAX_RECORDS"] == "${SOURCE_INGEST_MAX_RECORDS:-100}"
+    assert source_ingest_env["SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY"] == "${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}"
+    assert source_ingest_env["SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS"] == "${SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS:-2}"
+    assert source_ingest_env["SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS"] == "${SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS:-60}"
     assert "source-ingest-data:/data/source-ingest" in source_ingest["volumes"]
     assert "${SOURCE_INGEST_PORT:-18097}:8097" in source_ingest["ports"]
     healthcheck = " ".join(source_ingest["healthcheck"]["test"])
     assert "os.environ.get('PORT','8097')" in healthcheck
     assert "/readyz" in healthcheck
+
+    source_ingest_scheduler = services["source-ingest-scheduler"]
+    scheduler_env = _env_map(source_ingest_scheduler)
+    assert source_ingest_scheduler["profiles"] == ["source-ingest-scheduler"]
+    assert source_ingest_scheduler["command"] == ["python", "-m", "services.source_ingestion.scheduler_worker"]
+    assert scheduler_env["SOURCE_INGEST_API_URL"] == "http://source-ingest:8097"
+    assert scheduler_env["SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY"] == "${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}"
+    assert "source-ingest" in source_ingest_scheduler["depends_on"]
 
     smoke_env = _env_map(services["smoke-stack"])
     assert smoke_env["SOURCE_INGEST_URL"] == "http://source-ingest:8097"
@@ -54,4 +65,5 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert '"keywords": ["compose", "smoke", "momentum", "volatility", source_search_token]' in smoke
     assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/connectors"' in smoke
     assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/jobs"' in smoke
+    assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/run-scheduled"' in smoke
     assert 'f"{SEARCH_URL}/api/search/query"' in smoke

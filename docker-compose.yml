@@ -125,6 +125,9 @@ services:
       SOURCE_INGEST_CONNECTOR_STORE_PATH: /data/source-ingest/connector_config.jsonl
       SOURCE_INGEST_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
       SOURCE_INGEST_MAX_RECORDS: ${SOURCE_INGEST_MAX_RECORDS:-100}
+      SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: ${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}
+      SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS: ${SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS:-2}
+      SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS: ${SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS:-60}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       # Dev rollback defaults to JSONL; staging/prod select postgres via env.
       SOURCE_INGEST_EVIDENCE_BACKEND: ${SOURCE_INGEST_EVIDENCE_BACKEND:-jsonl}
@@ -146,6 +149,21 @@ services:
       timeout: 5s
       retries: 10
       start_period: 5s
+
+  source-ingest-scheduler:
+    profiles: ["source-ingest-scheduler"]
+    build:
+      context: .
+      dockerfile: services/source_ingestion/Dockerfile
+    command: ["python", "-m", "services.source_ingestion.scheduler_worker"]
+    environment:
+      SOURCE_INGEST_API_URL: http://source-ingest:8097
+      SOURCE_INGEST_SCHEDULER_INTERVAL_SECONDS: ${SOURCE_INGEST_SCHEDULER_INTERVAL_SECONDS:-60}
+      SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: ${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}
+      SOURCE_INGEST_SCHEDULER_MAX_TICKS: ${SOURCE_INGEST_SCHEDULER_MAX_TICKS:-0}
+    depends_on:
+      source-ingest:
+        condition: service_healthy
 
   search-svc:
     build:
