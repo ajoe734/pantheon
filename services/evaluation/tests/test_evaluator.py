@@ -284,6 +284,36 @@ def test_evaluate_artifact_derives_target_fields():
     assert result.auditable_fields == {"target_metadata": artifact["metadata"]}
 
 
+def test_evaluate_artifact_preserves_experiment_refs_for_audit_lookup():
+    artifact = make_artifact()
+    artifact["metadata"] = {
+        "experiment_refs": [
+            {
+                "backend": "wandb",
+                "run_id": "wandb-local-123",
+                "run_uri": "wandb-local://runs/wandb-local-123",
+                "artifact_refs": {
+                    "artifact_handoff.json": {
+                        "artifact_ref": "wandb-local://artifacts/wandb-local-123/artifact_handoff.json",
+                        "checksum": "sha256:abc",
+                    }
+                },
+                "sync_status": "offline_local",
+            }
+        ]
+    }
+
+    result = evaluate_artifact(
+        artifact=artifact,
+        score_components=make_components(),
+    )
+
+    assert result.auditable_fields["target_metadata"] == artifact["metadata"]
+    assert result.auditable_fields["experiment_refs"] == artifact["metadata"]["experiment_refs"]
+    assert result.auditable_fields["experiment_refs"][0]["backend"] == "wandb"
+    assert result.auditable_fields["experiment_refs"][0]["sync_status"] == "offline_local"
+
+
 def test_evaluate_artifact_accepts_field_overrides():
     artifact = make_artifact()
     result = evaluate_artifact(

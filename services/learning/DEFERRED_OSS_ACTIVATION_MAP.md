@@ -40,7 +40,7 @@ and workflow design. This map adds:
 | `TRL` | `smoke-tested` | Yes — `trl>=0.8.0,<0.10.0` pinned in `services/learning/trl/requirements.txt` | Yes — `GovernedPreferencePairAdapter` + `StubDPOBackend` + `TRLDPOBackend` + `run_trl_dpo_workflow` | Yes — smoke passes (29 unit tests + assertions OK, revalidated 2026-04-29); evidence in `integrations/trl/` | Claude (OSS-NEXT-002 owner) — production blocked on runtime data gates |
 | `FinRL` | `criteria-defined` | Yes — `finrl==0.3.6` in `services/research/finrl/requirements.txt`; FinRL Dockerfile carries the deferred-prep scaffold | Prep-only yes — governed input adapter, stub backend, and FinRL import-path backend exist, but production activation remains closed | Prep-only yes — smoke requires `--enable-deferred-prep` and emits draft/none only | Copilot (RL path owner) → dormant contracts/scaffolds may proceed fail-closed; governed training activation requires explicit RL-path approval first |
 | `RLlib` | `version-pinned` | Yes — `ray[rllib]>=2.9.0,<3.0.0` and `ray[tune]>=2.9.0,<3.0.0` in `services/research/rllib/requirements.txt`; RLlib Dockerfile carries the deferred-prep scaffold | Prep-only yes — RLlib train/eval and Ray Tune search adapters exist, but production activation remains closed | Prep-only yes — both smoke paths require `--enable-deferred-prep` and emit draft/none only | Copilot (RL path owner) → dormant environment contracts/offline harnesses may proceed fail-closed; governed train/eval activation requires the RL path approval gate |
-| `W&B` | `criteria-defined` | No SDK pin landed yet | Prep-only yes — `EXPERIMENT_BACKEND=wandb` is selectable only behind `PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1`; `OfflineWandbPrepBackend` exists with no SDK-backed or networked activation | Prep-only yes — offline smoke path exists behind the explicit deferred-prep flag only | Qwen (gate doc owner) → offline/prep-only adapter generalization may proceed; SDK-backed or networked backend activation waits for all re-entry conditions |
+| `W&B` | `criteria-defined` | No SDK pin landed yet | Offline local-store only — `EXPERIMENT_BACKEND=wandb` is selectable only behind `PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1` (legacy `PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1` still accepted); `OfflineWandbLocalBackend` writes local JSON run/artifact refs with no SDK import or network activation | Offline local-store yes — smoke path exists behind the explicit flag only | Qwen (gate doc owner) → offline adapter upkeep may proceed; SDK-backed or networked backend activation waits for all re-entry conditions |
 
 ---
 
@@ -273,10 +273,13 @@ RLlib/Tune activation lane.
 - No `wandb` SDK pin exists in any `requirements.txt`.
 - `services/registry/experiments/config.py` now defines `EXPERIMENT_BACKEND` as an env-var
   selector (default `"mlflow"`). `"wandb"` is accepted only when
-  `PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1` is set, and `PANTHEON_WANDB_MODE` is restricted to
-  `offline` or `dryrun`.
+  `PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1` is set (legacy
+  `PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1` remains a compatibility alias), and
+  `PANTHEON_WANDB_MODE` is restricted to `offline` or `dryrun`.
 - `services/registry/experiments/adapter.py` exposes `RegistryExperimentAdapter` with an
-  `ExperimentBackend` protocol, backend factory wiring, and a prep-only `OfflineWandbPrepBackend`.
+  `ExperimentBackend` protocol, backend factory wiring, and an offline
+  `OfflineWandbLocalBackend` that writes W&B-compatible local run/artifact refs without importing
+  the SDK or connecting to the network.
 - `services/registry/experiments/README.md` explicitly states W&B remains deferred.
 - MLflow is now at `governed` status (`mlflow==3.10.1` pinned, runnable adapter present, smoke
   tested on 2026-04-15 per OSS-003). The 30-day operational history criterion is not yet met.
@@ -289,16 +292,16 @@ RLlib/Tune activation lane.
 |---|---|
 | MLflow ≥30 days operational history | Not met — MLflow governed as of 2026-04-15 |
 | Explicit operator preference documented | No documented operator request |
-| `EXPERIMENT_BACKEND` selector in `services/registry/experiments/config.py` | Done — default `"mlflow"`; W&B selectable only behind explicit deferred-prep flag |
-| `RegistryExperimentAdapter` generalized to accept non-MLflow backends | Prep-only done — backend protocol/factory exists, but no SDK-backed W&B backend is active |
+| `EXPERIMENT_BACKEND` selector in `services/registry/experiments/config.py` | Done — default `"mlflow"`; W&B selectable only behind explicit offline-store flag |
+| `RegistryExperimentAdapter` generalized to accept non-MLflow backends | Offline local-store done — backend protocol/factory exists, but no SDK-backed W&B backend is active |
 | Canonical `artifact_state` / `deployment_stage` migration landed in experiment bridge | Prep-only done — canonical fields are primary; legacy lifecycle is compatibility-only |
 | W&B SDK pin (`wandb>=0.16.0`) | Missing |
 | Network/infrastructure readiness for `api.wandb.ai` | Not verified |
 
 **Executable next step**: No SDK-backed, online, or production-supporting W&B activation task
-should open yet. The `EXPERIMENT_BACKEND` env-var stub is now in place, and offline/prep-only
-adapter generalization may continue if it remains non-networked, feature-flagged, and incapable
-of becoming the active backend. W&B remains formally deferred because the six re-entry conditions
+should open yet. The `EXPERIMENT_BACKEND` env-var selector and offline local-store adapter are now
+in place, and offline adapter upkeep may continue if it remains non-networked, feature-flagged,
+and incapable of becoming the active online backend. W&B remains formally deferred because the six re-entry conditions
 in `WANDB_ACTIVATION.md §7.3` are still unmet. The next activation action is to prepare a reopen
 packet once those six conditions are simultaneously satisfied; only then should Pantheon
 materialize separate execution tasks for SDK-backed W&B backend implementation.
@@ -323,7 +326,7 @@ separate execution task once all six re-entry conditions in `WANDB_ACTIVATION.md
 | `TRL` | Smoke-tested baseline landed — blocked on runtime data gates; non-writing preflight scaffold present | ≥200 FB-002 events, ≥100 pairs, active LP-002, and a ready downstream consumer | Accumulate FB-002 volume, run the TRL preflight, then run the first governed production DPO activation with `TRLDPOBackend` |
 | `FinRL` | Dormant adapter, worker, Dockerfile, examples, and explicit-gate smoke path are landed; outputs remain draft/none and non-writing | RL path approval gate not met (Qlib must plateau first) | Approval packet against `services/learning/rl/RL_PATH_APPROVAL_GATE.md`; then governed single-agent policy-output mapping |
 | `RLlib` | Version pin and dormant RLlib/Ray Tune prep scaffold landed; workers/smokes require explicit gates and output draft/none only | Same RL path approval gate as FinRL; production train/eval and registry-writing adapters remain closed | Approval packet against `services/learning/rl/RL_PATH_APPROVAL_GATE.md`; then governed activation lane after FinRL proof |
-| `W&B` | Deferred honestly; `EXPERIMENT_BACKEND` selector and prep-only offline path now landed | SDK-backed backend activation blocked; MLflow 30-day operational history not yet met | Keep offline/prep-only adapter generalization fail-closed; after all re-entry gates clear, implement SDK-backed backend |
+| `W&B` | Deferred honestly; `EXPERIMENT_BACKEND` selector and offline local run store now landed | SDK-backed backend activation blocked; MLflow 30-day operational history not yet met | Keep offline local adapter fail-closed; after all re-entry gates clear, implement SDK-backed backend |
 
 ---
 

@@ -16,8 +16,9 @@ The default backend is:
 - pinned to `mlflow==3.10.1`
 - self-hosted first, not SaaS-first
 
-The repo also now includes a prep-only offline `W&B` scaffold for the 2026-04-25 deferred-prep
-exception. That scaffold is feature-flagged, non-default, and not an activation claim.
+The repo also now includes a feature-flagged offline `W&B` local run store. It records
+W&B-compatible run and artifact refs into repo-local JSON files, does not import the W&B SDK,
+does not connect to the network, and is not an online activation claim.
 
 The experiment backend is not authoritative for promotion. It mirrors metadata so operators,
 research workers, and downstream evaluation tooling can inspect run lineage without bypassing
@@ -25,8 +26,8 @@ the local registry or promotion gate.
 
 ## Files
 
-- `adapter.py` — experiment-backend adapter surface, MLflow backend, and offline W&B prep scaffold
-- `config.py` — feature-flagged backend selector (`mlflow` default; `wandb` prep-only)
+- `adapter.py` — experiment-backend adapter surface, MLflow backend, and offline W&B local store
+- `config.py` — feature-flagged backend selector (`mlflow` default; `wandb` offline local only)
 - `test_adapter.py` — unit tests for registry-to-experiment mapping
 - `smoke_test.py` — local smoke path that proves one governed entry can round-trip into an
   experiment record and back into promoted metadata
@@ -71,6 +72,8 @@ The adapter writes these core tags into the selected experiment backend:
 - `pantheon.experiment_backend_version`
 
 The MLflow path also emits `pantheon.mlflow.version_pin` as a backend-specific compatibility tag.
+The W&B offline path emits `pantheon.wandb.offline_local`, `pantheon.wandb.mode`, and
+`pantheon.wandb.online_sync_gate` as backend-specific tags.
 
 Optional tags include:
 
@@ -148,7 +151,7 @@ Real MLflow check against the local tracking server:
 python3 services/registry/experiments/smoke_test.py --backend mlflow --tracking-uri http://localhost:5000
 ```
 
-Offline W&B deferred-prep smoke:
+Offline W&B local-store smoke:
 
 ```bash
 python3 services/registry/experiments/smoke_test.py --backend wandb
@@ -171,7 +174,9 @@ If neither is present, the adapter rejects syncing a `live` entry because the re
 
 ## W&B Status
 
-`W&B` remains `criteria-defined` and deferred. The repo now includes a feature-flagged,
-offline-only prep scaffold so reviewers can verify metadata-shape parity and selector wiring
-without changing the default backend. This does not imply SDK readiness, network readiness,
-or activation approval; `MLflow` remains the default backend and the only governed production path.
+`W&B` remains deferred for SDK-backed or online sync. The repo now includes a feature-flagged,
+offline-only local run store so reviewers can verify metadata-shape parity, local run/artifact
+refs, and selector wiring without changing the default backend. Online sync is guarded by
+`PANTHEON_WANDB_ONLINE_SYNC_ENABLED`, and even with that flag set this adapter raises until a
+separate approved SDK-backed implementation lands. `MLflow` remains the default backend and the
+only governed production path.

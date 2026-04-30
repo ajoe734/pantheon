@@ -55,7 +55,7 @@ Today the repo exposes:
 - `ExperimentBackend` protocol in `services/registry/experiments/adapter.py`
 - `RegistryExperimentAdapter` with pluggable backend factory wiring
 - `EXPERIMENT_BACKEND` selector in `services/registry/experiments/config.py` (default `"mlflow"`)
-- a feature-flagged offline `OfflineWandbPrepBackend` scaffold for deferred-prep smoke only
+- a feature-flagged offline `OfflineWandbLocalBackend` for local run/artifact refs only
 
 That means the repo now has the minimum prep surface for a second backend without changing
 registry-facing behavior, but it does **not** mean W&B is activated. The selector stays
@@ -121,13 +121,15 @@ The W&B path must enforce the same rollback constraints as the MLflow reference 
 ### 3.1 Backend Selection
 
 The repo now has a selector in `services/registry/experiments/config.py`, and it makes `wandb`
-selectable only for deferred prep. The current state is:
+selectable only for the offline local store. The current state is:
 
 - `EXPERIMENT_BACKEND` exists and defaults to `"mlflow"`.
-- `EXPERIMENT_BACKEND=wandb` requires `PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1`.
-- the prep scaffold only supports offline modes (`offline`, `dryrun`) and does not use the W&B SDK.
-- backend factory wiring exists, and the prep scaffold now mirrors canonical `artifact_state` /
-  `deployment_stage` fields; the real SDK-backed implementation still does not exist.
+- `EXPERIMENT_BACKEND=wandb` requires `PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1`; legacy
+  `PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1` is accepted as a compatibility alias.
+- the offline adapter only supports offline modes (`offline`, `dryrun`), writes local JSON
+  run/artifact refs, and does not use the W&B SDK.
+- backend factory wiring exists, and the offline local store now mirrors canonical `artifact_state` /
+  `deployment_stage` fields plus local run/artifact refs; the real SDK-backed implementation still does not exist.
 
 The expected target shape is:
 
@@ -136,8 +138,8 @@ The expected target shape is:
 EXPERIMENT_BACKEND = os.getenv("EXPERIMENT_BACKEND", "mlflow")  # "mlflow" or "wandb"
 ```
 
-The implementation must preserve this factory shape when W&B eventually moves from prep-only
-offline scaffold to a real SDK-backed backend.
+The implementation must preserve this factory shape when W&B eventually gains a real
+SDK-backed backend beside the offline local store.
 
 ### 3.2 Output Equivalence
 
@@ -207,7 +209,7 @@ The only W&B-specific check is: W&B run/artifact exists and is accessible.
 1. **Keep the defer gate explicit**: Outside the 2026-04-25 deferred-prep exception, do not open SDK-backed W&B implementation work while any §7.3 re-entry condition remains unmet.
 2. **W&B Version Selection**: Pin W&B SDK version (`wandb>=0.16.0` recommended) only after reopen is authorized.
 3. **Canonical State Migration**: Land `artifact_state` / `deployment_stage` support in the experiment bridge before any W&B backend is considered active.
-4. **SDK-backed Adapter Implementation**: Replace the prep-only offline scaffold with a real W&B backend that satisfies the same `ExperimentBackend.record()` and `ExperimentSyncResult` contract.
+4. **SDK-backed Adapter Implementation**: Add a real W&B backend beside the offline local store that satisfies the same `ExperimentBackend.record()` and `ExperimentSyncResult` contract.
 5. **Smoke Test**: Run a single registry entry through the real W&B path with mocked or controlled W&B API to validate metadata equivalence and rollback enforcement.
 6. **Infrastructure Validation**: Confirm outbound/network readiness and document the operator preference citation required by the reopen packet.
 
@@ -241,10 +243,10 @@ Additional context from OSS ecosystem gap analysis (`docs/reviews/2026-04-16-oss
 
 The following work from BP5-OSS-004 and OSS-003 remains intact and does not regress:
 
-- `EXPERIMENT_BACKEND` env-var selector in `services/registry/experiments/config.py` (default `"mlflow"`, `wandb` available only behind `PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1` and offline-only mode).
-- `services/registry/experiments/adapter.py` now carries prep-only pluggable backend wiring plus `OfflineWandbPrepBackend` for local dry-run parity checks.
+- `EXPERIMENT_BACKEND` env-var selector in `services/registry/experiments/config.py` (default `"mlflow"`, `wandb` available only behind `PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1` or legacy `PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1`, and offline-only mode).
+- `services/registry/experiments/adapter.py` now carries pluggable backend wiring plus `OfflineWandbLocalBackend` for local run/artifact ref parity checks.
 - `services/registry/experiments/adapter.py` mirrors canonical `artifact_state` and derived `deployment_stage`; legacy `lifecycle_state` is accepted only as `pantheon.compat.lifecycle_state` / `promoted_metadata.compat` during migration.
-- `services/registry/experiments/smoke_test.py --backend wandb` now proves offline metadata-shape parity for the deferred-prep lane using canonical state fields.
+- `services/registry/experiments/smoke_test.py --backend wandb` now proves offline metadata-shape parity for the local-store lane using canonical state fields.
 - Activation criteria in this document remain approved and authoritative.
 - `DEFERRED_OSS_ACTIVATION_MAP.md §5` documents the concrete blocking conditions.
 
@@ -270,13 +272,13 @@ When all six re-entry conditions above are met, the gate doc owner (Qwen) should
 
 ### 7.5 Execution Slice Closeout (EXEC-OSS-WANDB-001)
 
-`EXEC-OSS-WANDB-001` does **not**, by itself, authorize SDK-backed or online implementation. It closes the ambiguity about what the next reviewable step actually is. The later 2026-04-25 deferred-prep packet authorizes repo-local offline scaffold work only.
+`EXEC-OSS-WANDB-001` does **not**, by itself, authorize SDK-backed or online implementation. It closes the ambiguity about what the next reviewable step actually is. The later offline-store packet authorizes repo-local, non-networked adapter work only.
 
 Current execution-slice conclusion:
 
 - W&B remains formally deferred for the current wave.
-- The repo now has a prep-only `EXPERIMENT_BACKEND` selector path, pluggable adapter wiring, and an offline W&B smoke path, so the remaining blockers are the still-unmet re-entry criteria rather than missing repo-local scaffold work.
-- No SDK pin, network claim, or production-support claim should be inferred from the prep-only scaffold.
+- The repo now has an offline-only `EXPERIMENT_BACKEND` selector path, pluggable adapter wiring, and an offline W&B smoke path, so the remaining blockers are the still-unmet re-entry criteria rather than missing repo-local adapter work.
+- No SDK pin, network claim, or production-support claim should be inferred from the offline local store.
 
 Reviewer-ready next-step recommendation:
 

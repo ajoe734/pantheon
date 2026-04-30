@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
 from adapter import (
     ExperimentSyncError,
     InMemoryMlflowBackend,
+    LocalWandbRunStore,
+    OfflineWandbLocalBackend,
     OfflineWandbPrepBackend,
     RegistryExperimentAdapter,
 )
@@ -159,15 +162,20 @@ class TestRegistryExperimentAdapter(unittest.TestCase):
         self.assertNotIn("pantheon.lifecycle_state", result.record.tags)
         self.assertEqual(result.promoted_metadata["compat"]["legacy_lifecycle_state"], "live")
 
-    def test_wandb_prep_backend_preserves_promoted_metadata_shape(self):
-        backend = OfflineWandbPrepBackend(mode="offline")
+    def test_wandb_local_backend_preserves_promoted_metadata_shape_and_refs(self):
+        backend = OfflineWandbLocalBackend(mode="offline")
         adapter = RegistryExperimentAdapter(backend=backend)
 
         result = adapter.sync_registry_entry(build_registry_entry())
 
         self.assertEqual(result.experiment_ref.backend, "wandb")
+        self.assertTrue(result.experiment_ref.run_id.startswith("wandb-local-"))
+        self.assertTrue(result.experiment_ref.run_uri.startswith("wandb-local://runs/"))
+        self.assertEqual(result.experiment_ref.sync_status, "offline_local")
+        self.assertIn("artifact_handoff.json", result.experiment_ref.artifact_refs)
         self.assertEqual(result.record.tags["pantheon.experiment_backend"], "wandb")
-        self.assertEqual(result.record.tags["pantheon.wandb.prep_only"], "true")
+        self.assertEqual(result.record.tags["pantheon.wandb.offline_local"], "true")
+        self.assertEqual(result.record.tags["pantheon.wandb.online_sync_gate"], "PANTHEON_WANDB_ONLINE_SYNC_ENABLED")
         self.assertEqual(result.record.artifacts["artifact_handoff.json"]["backend"], "wandb")
         self.assertEqual(result.record.artifacts["artifact_handoff.json"]["artifact_state"], "approved")
         self.assertEqual(result.record.artifacts["artifact_handoff.json"]["deployment_stage"], "paper")
@@ -176,7 +184,47 @@ class TestRegistryExperimentAdapter(unittest.TestCase):
         self.assertEqual(result.promoted_metadata["promotion_state"], "approved")
         self.assertEqual(result.promoted_metadata["experiment_refs"][0]["backend"], "wandb")
         self.assertEqual(result.promoted_metadata["experiment_refs"][0]["aliases"], ["approved"])
+        self.assertEqual(result.promoted_metadata["experiment_refs"][0]["sync_status"], "offline_local")
+        self.assertIn("artifact_refs", result.promoted_metadata["experiment_refs"][0])
         self.assertIn(result.experiment_ref.run_id, backend.runs)
+
+    def test_wandb_local_store_resolves_run_and_artifact_refs(self):
+        with tempfile.TemporaryDirectory() as store_dir:
+            backend = OfflineWandbLocalBackend(mode="dryrun", store_dir=store_dir)
+            adapter = RegistryExperimentAdapter(backend=backend)
+
+            result = adapter.sync_registry_entry(build_registry_entry())
+
+            run = backend.get_run(result.experiment_ref.run_id)
+            self.assertIsNotNone(run)
+            self.assertEqual(run["run_uri"], result.experiment_ref.run_uri)
+            self.assertEqual(run["sync_status"], "offline_local")
+            self.assertEqual(run["online_sync"]["enabled"], False)
+
+            artifact = backend.get_artifact(result.experiment_ref.run_id, "artifact_handoff.json")
+            self.assertIsNotNone(artifact)
+            self.assertEqual(artifact["artifact_name"], "artifact_handoff.json")
+            self.assertEqual(
+                artifact["checksum"],
+                result.experiment_ref.artifact_refs["artifact_handoff.json"]["checksum"],
+            )
+
+    def test_wandb_online_sync_requires_explicit_gate_and_still_has_no_sdk_path(self):
+        backend = OfflineWandbLocalBackend(mode="offline")
+        adapter = RegistryExperimentAdapter(backend=backend)
+        result = adapter.sync_registry_entry(build_registry_entry())
+
+        with self.assertRaisesRegex(ExperimentSyncError, "online sync is disabled"):
+            backend.sync_online(result.experiment_ref.run_id)
+
+        with patch.dict(os.environ, {"PANTHEON_WANDB_ONLINE_SYNC_ENABLED": "1"}, clear=False):
+            with self.assertRaisesRegex(ExperimentSyncError, "SDK-backed/network sync is not implemented"):
+                backend.sync_online(result.experiment_ref.run_id)
+
+    def test_wandb_prep_backend_alias_remains_compatible(self):
+        self.assertIs(OfflineWandbPrepBackend, OfflineWandbLocalBackend)
+        with tempfile.TemporaryDirectory() as store_dir:
+            self.assertTrue(hasattr(LocalWandbRunStore(store_dir), "list_runs"))
 
     def test_selected_backend_rejects_wandb_without_feature_flag(self):
         with patch.dict(os.environ, {"EXPERIMENT_BACKEND": "wandb"}, clear=False):
@@ -195,7 +243,7 @@ class TestRegistryExperimentAdapter(unittest.TestCase):
             adapter = RegistryExperimentAdapter.from_env()
 
         self.assertEqual(adapter.backend.backend_name, "wandb")
-        self.assertEqual(adapter.backend.tracking_version, "deferred-prep-offline")
+        self.assertEqual(adapter.backend.tracking_version, "offline-local-store-v1")
 
     def test_selected_backend_rejects_online_wandb_mode(self):
         env = {

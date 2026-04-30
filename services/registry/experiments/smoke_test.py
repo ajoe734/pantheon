@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from adapter import InMemoryMlflowBackend, OfflineWandbPrepBackend, RegistryExperimentAdapter
+from adapter import InMemoryMlflowBackend, OfflineWandbLocalBackend, RegistryExperimentAdapter
 
 
 def parse_args() -> argparse.Namespace:
@@ -11,7 +11,7 @@ def parse_args() -> argparse.Namespace:
         "--backend",
         choices=("memory", "mlflow", "wandb"),
         default="memory",
-        help="Use the in-memory MLflow test backend, a real MLflow tracking server, or the offline W&B prep scaffold.",
+        help="Use the in-memory MLflow test backend, a real MLflow tracking server, or the offline W&B local store.",
     )
     parser.add_argument(
         "--tracking-uri",
@@ -27,7 +27,7 @@ def main() -> None:
         adapter = RegistryExperimentAdapter.from_tracking_uri(tracking_uri=args.tracking_uri)
         backend = None
     elif args.backend == "wandb":
-        backend = OfflineWandbPrepBackend()
+        backend = OfflineWandbLocalBackend()
         adapter = RegistryExperimentAdapter(backend=backend)
     else:
         backend = InMemoryMlflowBackend()
@@ -75,8 +75,13 @@ def main() -> None:
         assert recorded_run["artifacts"]["artifact_handoff.json"]["storage_ref"]["path"].endswith("/artifact.bin")
         if args.backend == "wandb":
             assert recorded_run["mode"] == "offline"
+            assert recorded_run["sync_status"] == "offline_local"
+            assert recorded_run["online_sync"]["enabled"] is False
             assert recorded_run["tags"]["pantheon.experiment_backend"] == "wandb"
-            assert recorded_run["tags"]["pantheon.wandb.prep_only"] == "true"
+            assert recorded_run["tags"]["pantheon.wandb.offline_local"] == "true"
+            assert result.experiment_ref.artifact_refs["artifact_handoff.json"]["artifact_ref"].startswith(
+                "wandb-local://artifacts/"
+            )
         else:
             assert recorded_run["tags"]["pantheon.experiment_backend"] == "mlflow"
 

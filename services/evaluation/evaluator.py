@@ -211,6 +211,13 @@ def evaluate_artifact(
     merged_auditable_fields = dict(auditable_fields or {})
     if artifact.get("metadata") is not None:
         merged_auditable_fields.setdefault("target_metadata", artifact["metadata"])
+    experiment_refs = artifact.get("experiment_refs")
+    if experiment_refs is None and isinstance(artifact.get("metadata"), Mapping):
+        experiment_refs = artifact["metadata"].get("experiment_refs")
+    if experiment_refs is None and artifact.get("experiment_ref") is not None:
+        experiment_refs = [artifact["experiment_ref"]]
+    if experiment_refs is not None:
+        merged_auditable_fields.setdefault("experiment_refs", experiment_refs)
 
     snapshot = EvaluationDataSnapshot(
         target_artifact_version=resolved_version,
