@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；production、paper、canary、live gate 預設仍 fail-closed。",
-  "updated_at": "2026-04-30T12:42:34Z",
+  "updated_at": "2026-04-30T14:06:18Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,13 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
+      "status": "ready",
       "current_task_ids": [
-        "SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE"
+        "SVC-OPENCLAW-HONEST-STACK-SEMANTICS"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Schema fix applied: added order lifecycle event types and order/position top-level properties to telemetry_event.schema.json. All 64 tests pass, smoke test passes.",
-      "last_update": "2026-04-30T12:42:34Z"
+      "next": "Supervisor preempted SVC-OPENCLAW-HONEST-STACK-SEMANTICS to free Claude for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
+      "last_update": "2026-04-30T13:59:42Z"
     },
     {
       "name": "Gemini",
@@ -109,13 +109,11 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "working",
-      "current_task_ids": [
-        "TEST-FULLSUITE-HARNESS-ISOLATION"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
-      "next": "Supervisor auto-started TEST-FULLSUITE-HARNESS-ISOLATION after successful dispatch.",
-      "last_update": "2026-04-30T12:38:28Z"
+      "next": "",
+      "last_update": "2026-04-30T13:25:14Z"
     },
     {
       "name": "Codex",
@@ -125,11 +123,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "TEST-FULLSUITE-RUNBOOK-CI-MATRIX"
+      ],
       "branch": "feat/codex-collab-system",
-      "next": "",
-      "last_update": "2026-04-30T09:31:08Z"
+      "next": "Ownership updated",
+      "last_update": "2026-04-30T14:00:30Z"
     },
     {
       "name": "Codex2",
@@ -139,13 +139,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "reviewing",
+      "status": "ready",
       "current_task_ids": [
-        "TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT"
+        "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Ready for review: portable bootstrap keeps non-Pantheon canonical files scoped to the bundle, repeated generic worker exits reassign at the configured threshold, and python3 -m pytest -q scripts/test_orchestrator_bundle.py scripts/test_supervisor.py passes (8 passed).",
-      "last_update": "2026-04-30T12:41:50Z"
+      "next": "Auto-reassigned ownership from Claude to Codex2 after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1777570800,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_dis. Task returned to todo until Codex2 starts a fresh run.",
+      "last_update": "2026-04-30T13:54:36Z"
     },
     {
       "name": "Copilot",
@@ -159,7 +159,7 @@
       "current_task_ids": [],
       "branch": "feat/grok-research-critique",
       "next": "",
-      "last_update": "2026-04-30T12:40:14Z"
+      "last_update": "2026-04-30T13:23:34Z"
     },
     {
       "name": "Claude2",
@@ -168,192 +168,35 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "SVC-BFF-INCIDENT-SMOKE-FIXTURE"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude2-execution-control",
-      "next": "Assignment created",
+      "next": "",
       "last_update": "2026-04-30T12:39:28Z"
+    },
+    {
+      "name": "Gemini2",
+      "capability_lane": [
+        "gcp",
+        "ci-cd",
+        "runtime-packaging",
+        "worker-ops"
+      ],
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "feat/gemini2-research-runtime",
+      "next": "",
+      "last_update": "2026-04-30T13:08:53Z"
     }
   ],
   "tasks": [
-    {
-      "id": "TEST-FULLSUITE-HARNESS-ISOLATION",
-      "title": "Full-suite pytest harness import isolation",
-      "summary_zh": "Root pytest collection currently fails because service-local main.py adapter.py smoke_test.py and test_main.py modules collide across import paths. Build a canonical harness so full pytest collection is usable without cross-service module pollution.",
-      "phase": "Full Test Stabilization",
-      "owner": "Gemini",
-      "reviewer": "Codex",
-      "status": "in_progress",
-      "depends_on": [],
-      "artifacts": [
-        "pytest.ini",
-        "conftest.py",
-        "services/**/conftest.py",
-        "scripts",
-        "docs/testing"
-      ],
-      "acceptance": [
-        "python3 -m pytest -q --collect-only has no import mismatch or module shadowing failures",
-        "root python3 -m pytest -q reports real test failures only and not collection pollution",
-        "direct smoke files are not accidentally collected as pytest tests unless intended",
-        "canonical CI or runbook commands are updated"
-      ],
-      "next": "Supervisor auto-started TEST-FULLSUITE-HARNESS-ISOLATION after successful dispatch.",
-      "last_update": "2026-04-30T12:38:28Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-fulltest-materialization-20260430",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT",
-      "title": "Orchestrator bundle and supervisor regression closeout",
-      "summary_zh": "Two orchestrator tests still fail after the full rerun. Align bootstrap canonical-file expectations for TARGET_ARCHITECTURE.md and fix or document supervisor repeated generic-exit reassignment behavior.",
-      "phase": "Full Test Stabilization",
-      "owner": "Codex2",
-      "reviewer": "Codex",
-      "status": "review",
-      "depends_on": [],
-      "artifacts": [
-        "scripts/test_orchestrator_bundle.py",
-        "scripts/test_supervisor.py",
-        "scripts/orchestrator_bundle.py",
-        ".orchestrator/supervisor.py"
-      ],
-      "acceptance": [
-        "TARGET_ARCHITECTURE.md bootstrap inclusion is decided and test plus implementation agree",
-        "supervisor repeated generic exit lifecycle matches documented reassigned or failed semantics",
-        "python3 -m pytest -q scripts/test_orchestrator_bundle.py scripts/test_supervisor.py passes"
-      ],
-      "next": "Ready for review: portable bootstrap keeps non-Pantheon canonical files scoped to the bundle, repeated generic worker exits reassign at the configured threshold, and python3 -m pytest -q scripts/test_orchestrator_bundle.py scripts/test_supervisor.py passes (8 passed).",
-      "last_update": "2026-04-30T12:41:50Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-fulltest-materialization-20260430",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN",
-      "title": "OpenClaw health and compose contract alignment",
-      "summary_zh": "Foundation health test is stale around OpenClaw readiness URLs and adapter semantics. Align compose healthchecks tests and docs with current /livez /readyz contract while keeping typo detection.",
-      "phase": "Service Contract Hardening",
-      "owner": "Codex2",
-      "reviewer": "Gemini",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        "services/foundation/tests/test_health.py",
-        "docker-compose.yml",
-        "services/openclaw-gateway-adapter",
-        "docs"
-      ],
-      "acceptance": [
-        "health test still rejects misspelled readiness paths",
-        "OpenClaw adapter health assertions reflect current livez readyz and degraded facade semantics",
-        "python3 -m pytest -q services/foundation/tests/test_health.py passes",
-        "docker compose -f docker-compose.yml config -q passes"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-04-30T12:38:34Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-fulltest-materialization-20260430",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "SVC-SOURCE-SEARCH-TEST-CLOSURE",
-      "title": "Source-search pipeline and SD-03 contract closure",
-      "summary_zh": "Source and search are deployable but two focused tests fail. Close the incremental index pipeline counting/watermark issue and align SD-03 connector schema with current connector model metadata.",
-      "phase": "Source/Search Production Baseline",
-      "owner": "Codex2",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        "services/search/index_pipeline.py",
-        "services/search/test_index_pipeline.py",
-        "services/search/tests/test_contracts.py",
-        "services/source_ingestion",
-        "docs/contracts"
-      ],
-      "acceptance": [
-        "incremental pipeline counts only new or updated objects according to documented watermark semantics",
-        "SD-03 schemas accept canonical SourceConnector payloads or serialization filters non-contract fields",
-        "python3 -m pytest -q services/search/test_index_pipeline.py services/search/tests/test_contracts.py passes",
-        "source-search production posture smoke remains green"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-04-30T12:38:46Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-fulltest-materialization-20260430",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE",
-      "title": "Telemetry order lifecycle canonical schema closure",
-      "summary_zh": "Telemetry capture tests show canonical schema mismatch for order lifecycle and position snapshot events. Make schema and payload agree without losing order evidence fields.",
-      "phase": "Telemetry Contract Hardening",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "in_progress",
-      "depends_on": [],
-      "artifacts": [
-        "services/telemetry/capture.py",
-        "services/telemetry/test_capture.py",
-        "services/telemetry/test_feedback_adapter.py",
-        "services/**/telemetry*.schema.json",
-        "docs"
-      ],
-      "acceptance": [
-        "order lifecycle and position snapshot events validate against canonical schema",
-        "order_id order_status price quantity and symbol are preserved in the documented location",
-        "PYTHONPATH=services/telemetry python3 -m pytest -q services/telemetry/test_capture.py services/telemetry/test_feedback_adapter.py passes",
-        "PYTHONPATH=. python3 services/telemetry/smoke_test.py passes"
-      ],
-      "next": "Schema fix applied: added order lifecycle event types and order/position top-level properties to telemetry_event.schema.json. All 64 tests pass, smoke test passes.",
-      "last_update": "2026-04-30T12:42:34Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-fulltest-materialization-20260430",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "SVC-RESEARCH-REPLICATION-SMOKE-FIX",
-      "title": "Research replication smoke entrypoint fix",
-      "summary_zh": "Research replication unit tests pass but direct smoke fails because entrypoint imports mix bare module and package-relative imports. Make smoke runnable from repo root and keep package tests green.",
-      "phase": "Research Pre-activation Hardening",
-      "owner": "Codex2",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        "services/research/replication/smoke_test.py",
-        "services/research/replication/gate.py",
-        "services/research/replication/__init__.py",
-        "docs"
-      ],
-      "acceptance": [
-        "python3 services/research/replication/smoke_test.py passes from repo root",
-        "module invocation is supported or documented",
-        "PYTHONPATH=services/research python3 -m pytest -q services/research/replication/test_gate.py remains green"
-      ],
-      "next": "Auto-reassigned ownership from Copilot to Codex2 after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Codex2 starts a fresh run.",
-      "last_update": "2026-04-30T12:41:44Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-fulltest-materialization-20260430",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
     {
       "id": "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
       "title": "W&B dormant OSS smoke matrix alignment",
       "summary_zh": "Dormant OSS matrix has a stale W&B denial-string assertion while the code now permits offline local-store opt-in and keeps online SDK activation gated. Align smoke evidence with current gate policy.",
       "phase": "OSS Pre-activation Hardening",
       "owner": "Codex2",
-      "reviewer": "Claude",
+      "reviewer": "Codex",
       "status": "todo",
       "depends_on": [],
       "artifacts": [
@@ -368,37 +211,8 @@
         "PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1 python3 services/registry/experiments/smoke_test.py --backend wandb passes",
         "no W&B SDK-backed or online activation is introduced"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-04-30T12:39:18Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-fulltest-materialization-20260430",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "SVC-BFF-INCIDENT-SMOKE-FIXTURE",
-      "title": "BFF incident and postmortem smoke fixture honesty",
-      "summary_zh": "BFF incident smoke still fails under auth stub because expected incident postmortem and composed review records are missing or routed differently. Align fixtures read-store and honest degraded behavior.",
-      "phase": "BFF Service-backed Read Closure",
-      "owner": "Claude2",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        "services/control-plane/bff/smoke_test_incident.py",
-        "services/control-plane/bff/read_store.py",
-        "services/incidents",
-        "services/postmortems",
-        "docs"
-      ],
-      "acceptance": [
-        "PANTHEON_BFF_AUTH_STUB=true python3 services/control-plane/bff/smoke_test_incident.py passes",
-        "detail IDs used by smoke are seeded or created through service-backed paths",
-        "unavailable backend paths return honest degraded responses rather than fabricated records",
-        "RBAC strict-mode checks remain covered"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-04-30T12:39:28Z",
+      "next": "Auto-reassigned ownership from Claude to Codex2 after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1777570800,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_dis. Task returned to todo until Codex2 starts a fresh run.",
+      "last_update": "2026-04-30T13:54:36Z",
       "task_class": "execution",
       "auto_created_by": "codex-fulltest-materialization-20260430",
       "auto_generated": true,
@@ -409,8 +223,8 @@
       "title": "OpenClaw honest-stack degraded semantics",
       "summary_zh": "Full compose smoke fails only on OpenClaw capability semantics because the smoke expects facade_only while service reports upstream_client_degraded. Decide the canonical state and align smoke service and docs while keeping fail-closed gates.",
       "phase": "OpenClaw Pre-activation Hardening",
-      "owner": "Codex2",
-      "reviewer": "Claude",
+      "owner": "Claude",
+      "reviewer": "Codex",
       "status": "todo",
       "depends_on": [],
       "artifacts": [
@@ -425,8 +239,8 @@
         "docker compose smoke-stack passes in an isolated project",
         "python3 scripts/smoke_openclaw_activation_ready_e2e.py remains green"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-04-30T12:39:39Z",
+      "next": "Supervisor preempted SVC-OPENCLAW-HONEST-STACK-SEMANTICS to free Claude for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
+      "last_update": "2026-04-30T13:59:42Z",
       "task_class": "execution",
       "auto_created_by": "codex-fulltest-materialization-20260430",
       "auto_generated": true,
@@ -437,8 +251,8 @@
       "title": "Canonical full-suite runbook and CI matrix",
       "summary_zh": "After the concrete failures are closed define one canonical full-suite matrix so future reruns are reproducible instead of ad hoc across pytest smoke direct entrypoints compose profiles and gated production-posture checks.",
       "phase": "Full Test Stabilization",
-      "owner": "Gemini",
-      "reviewer": "Codex",
+      "owner": "Codex",
+      "reviewer": "Claude",
       "status": "todo",
       "depends_on": [
         "TEST-FULLSUITE-HARNESS-ISOLATION",
@@ -464,8 +278,8 @@
         "no command activates Qlib TRL RL W&B paper canary or live execution by default",
         "runbook is linked from current work or CI documentation"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-04-30T12:39:49Z",
+      "next": "Ownership updated",
+      "last_update": "2026-04-30T12:51:00Z",
       "task_class": "execution",
       "auto_created_by": "codex-fulltest-materialization-20260430",
       "auto_generated": true,
@@ -483,12 +297,58 @@
       "resolved_at": "2026-04-17T12:39:53Z"
     },
     {
-      "task_id": "TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT",
+      "task_id": "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
       "from": "Codex2",
-      "to": "Codex",
-      "message": "Ready for review: portable bootstrap keeps non-Pantheon canonical files scoped to the bundle, repeated generic worker exits reassign at the configured threshold, and python3 -m pytest -q scripts/test_orchestrator_bundle.py scripts/test_supervisor.py passes (8 passed).",
-      "status": "pending",
-      "created_at": "2026-04-30T12:41:50Z"
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:21:19Z",
+      "resolved_at": "2026-04-30T13:25:15Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:21:22Z",
+      "resolved_at": "2026-04-30T13:25:26Z"
+    },
+    {
+      "task_id": "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:25:14Z",
+      "resolved_at": "2026-04-30T13:28:22Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS",
+      "from": "Claude",
+      "to": "Gemini2",
+      "message": "Helper-claimed by Gemini2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:25:26Z",
+      "resolved_at": "2026-04-30T13:27:04Z"
+    },
+    {
+      "task_id": "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:28:37Z",
+      "resolved_at": "2026-04-30T13:49:46Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:28:40Z",
+      "resolved_at": "2026-04-30T13:56:18Z"
     }
   ],
   "blockers": [],
@@ -496,21 +356,13 @@
     "Claude": 15,
     "Claude2": 15,
     "Gemini": 30,
+    "Gemini2": 30,
     "Codex": 30,
     "Codex2": 30,
     "Copilot": 25
   },
   "workload_summary": {
     "Claude": {
-      "total": 1,
-      "active": 1,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 1
-    },
-    "Claude2": {
       "total": 1,
       "active": 0,
       "blocked": 0,
@@ -519,16 +371,7 @@
       "review_approved": 0,
       "todo": 1
     },
-    "Gemini": {
-      "total": 2,
-      "active": 1,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 2
-    },
-    "Codex": {
+    "Claude2": {
       "total": 0,
       "active": 0,
       "blocked": 0,
@@ -537,14 +380,41 @@
       "review_approved": 0,
       "todo": 0
     },
-    "Codex2": {
-      "total": 6,
-      "active": 1,
+    "Gemini": {
+      "total": 0,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 1,
+      "review": 0,
       "review_approved": 0,
-      "todo": 5
+      "todo": 0
+    },
+    "Gemini2": {
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
+    },
+    "Codex": {
+      "total": 1,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 1
+    },
+    "Codex2": {
+      "total": 1,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 1
     },
     "Copilot": {
       "total": 0,

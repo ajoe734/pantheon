@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-04-30 20:42:34
+Last updated: 2026-04-30 22:06:18
 
 ## Objective
 
@@ -37,12 +37,13 @@ Last updated: 2026-04-30 20:42:34
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Schema fix applied: added order lifecycle event types and order/position top-level properties to telemetry_event.schema.json. All 64 tests pass, smoke test passes.
-- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Supervisor auto-started TEST-FULLSUITE-HARNESS-ISOLATION after successful dispatch.
-- `Codex`: integration, status-system, schema, acceptance; next: No active assignment
-- `Codex2`: integration, status-system, schema, acceptance; next: Ready for review: portable bootstrap keeps non-Pantheon canonical files scoped to the bundle, repeated generic worker exits reassign at the configured threshold, and python3 -m pytest -q scripts/test_orchestrator_bundle.py scripts/test_supervisor.py passes (8 passed).
+- `Claude`: execution, control-plane, governance-review; next: Supervisor preempted SVC-OPENCLAW-HONEST-STACK-SEMANTICS to free Claude for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.
+- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
+- `Codex`: integration, status-system, schema, acceptance; next: Ownership updated
+- `Codex2`: integration, status-system, schema, acceptance; next: Auto-reassigned ownership from Claude to Codex2 after repeated Claude terminal: {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1777570800,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_dis. Task returned to todo until Codex2 starts a fresh run.
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: Assignment created
+- `Claude2`: execution, control-plane, governance-review; next: No active assignment
+- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 
 ## Delivery Layers
 
@@ -50,16 +51,9 @@ Last updated: 2026-04-30 20:42:34
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `TEST-FULLSUITE-HARNESS-ISOLATION` | Full Test Stabilization | Full-suite pytest harness import isolation | Gemini | in_progress | - | Root pytest collection currently fails because service-local main.py adapter.py smoke_test.py and test_main.py modules collide across import paths. Build a canonical harness so full pytest collection is usable without cross-service module pollution. |
-| `TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT` | Full Test Stabilization | Orchestrator bundle and supervisor regression closeout | Codex2 | review | - | Two orchestrator tests still fail after the full rerun. Align bootstrap canonical-file expectations for TARGET_ARCHITECTURE.md and fix or document supervisor repeated generic-exit reassignment behavior. |
-| `SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN` | Service Contract Hardening | OpenClaw health and compose contract alignment | Codex2 | todo | - | Foundation health test is stale around OpenClaw readiness URLs and adapter semantics. Align compose healthchecks tests and docs with current /livez /readyz contract while keeping typo detection. |
-| `SVC-SOURCE-SEARCH-TEST-CLOSURE` | Source/Search Production Baseline | Source-search pipeline and SD-03 contract closure | Codex2 | todo | - | Source and search are deployable but two focused tests fail. Close the incremental index pipeline counting/watermark issue and align SD-03 connector schema with current connector model metadata. |
-| `SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE` | Telemetry Contract Hardening | Telemetry order lifecycle canonical schema closure | Claude | in_progress | - | Telemetry capture tests show canonical schema mismatch for order lifecycle and position snapshot events. Make schema and payload agree without losing order evidence fields. |
-| `SVC-RESEARCH-REPLICATION-SMOKE-FIX` | Research Pre-activation Hardening | Research replication smoke entrypoint fix | Codex2 | todo | - | Research replication unit tests pass but direct smoke fails because entrypoint imports mix bare module and package-relative imports. Make smoke runnable from repo root and keep package tests green. |
 | `SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN` | OSS Pre-activation Hardening | W&B dormant OSS smoke matrix alignment | Codex2 | todo | - | Dormant OSS matrix has a stale W&B denial-string assertion while the code now permits offline local-store opt-in and keeps online SDK activation gated. Align smoke evidence with current gate policy. |
-| `SVC-BFF-INCIDENT-SMOKE-FIXTURE` | BFF Service-backed Read Closure | BFF incident and postmortem smoke fixture honesty | Claude2 | todo | - | BFF incident smoke still fails under auth stub because expected incident postmortem and composed review records are missing or routed differently. Align fixtures read-store and honest degraded behavior. |
-| `SVC-OPENCLAW-HONEST-STACK-SEMANTICS` | OpenClaw Pre-activation Hardening | OpenClaw honest-stack degraded semantics | Codex2 | todo | - | Full compose smoke fails only on OpenClaw capability semantics because the smoke expects facade_only while service reports upstream_client_degraded. Decide the canonical state and align smoke service and docs while keeping fail-closed gates. |
-| `TEST-FULLSUITE-RUNBOOK-CI-MATRIX` | Full Test Stabilization | Canonical full-suite runbook and CI matrix | Gemini | todo | `TEST-FULLSUITE-HARNESS-ISOLATION`, `TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT`, `SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN`, `SVC-SOURCE-SEARCH-TEST-CLOSURE`, `SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE`, `SVC-RESEARCH-REPLICATION-SMOKE-FIX`, `SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN`, `SVC-BFF-INCIDENT-SMOKE-FIXTURE`, `SVC-OPENCLAW-HONEST-STACK-SEMANTICS` | After the concrete failures are closed define one canonical full-suite matrix so future reruns are reproducible instead of ad hoc across pytest smoke direct entrypoints compose profiles and gated production-posture checks. |
+| `SVC-OPENCLAW-HONEST-STACK-SEMANTICS` | OpenClaw Pre-activation Hardening | OpenClaw honest-stack degraded semantics | Claude | todo | - | Full compose smoke fails only on OpenClaw capability semantics because the smoke expects facade_only while service reports upstream_client_degraded. Decide the canonical state and align smoke service and docs while keeping fail-closed gates. |
+| `TEST-FULLSUITE-RUNBOOK-CI-MATRIX` | Full Test Stabilization | Canonical full-suite runbook and CI matrix | Codex | todo | `TEST-FULLSUITE-HARNESS-ISOLATION`, `TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT`, `SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN`, `SVC-SOURCE-SEARCH-TEST-CLOSURE`, `SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE`, `SVC-RESEARCH-REPLICATION-SMOKE-FIX`, `SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN`, `SVC-BFF-INCIDENT-SMOKE-FIXTURE`, `SVC-OPENCLAW-HONEST-STACK-SEMANTICS` | After the concrete failures are closed define one canonical full-suite matrix so future reruns are reproducible instead of ad hoc across pytest smoke direct entrypoints compose profiles and gated production-posture checks. |
 
 ### External / Upstream Integration Work
 
@@ -71,22 +65,15 @@ Last updated: 2026-04-30 20:42:34
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `TEST-FULLSUITE-HARNESS-ISOLATION` | Full Test Stabilization | Full-suite pytest harness import isolation | Root pytest collection currently fails because service-local main.py adapter.py smoke_test.py and test_main.py modules collide across import paths. Build a canonical harness so full pytest collection is usable without cross-service module pollution. | Gemini | Codex | in_progress | - | 2026-04-30 20:38:28 | Supervisor auto-started TEST-FULLSUITE-HARNESS-ISOLATION after successful dispatch. |
-| `TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT` | Full Test Stabilization | Orchestrator bundle and supervisor regression closeout | Two orchestrator tests still fail after the full rerun. Align bootstrap canonical-file expectations for TARGET_ARCHITECTURE.md and fix or document supervisor repeated generic-exit reassignment behavior. | Codex2 | Codex | review | - | 2026-04-30 20:41:50 | Ready for review: portable bootstrap keeps non-Pantheon canonical files scoped to the bundle, repeated generic worker exits reassign at the configured threshold, and python3 -m pytest -q scripts/test_orchestrator_bundle.py scripts/test_supervisor.py passes (8 passed). |
-| `SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN` | Service Contract Hardening | OpenClaw health and compose contract alignment | Foundation health test is stale around OpenClaw readiness URLs and adapter semantics. Align compose healthchecks tests and docs with current /livez /readyz contract while keeping typo detection. | Codex2 | Gemini | todo | - | 2026-04-30 20:38:34 | Assignment created |
-| `SVC-SOURCE-SEARCH-TEST-CLOSURE` | Source/Search Production Baseline | Source-search pipeline and SD-03 contract closure | Source and search are deployable but two focused tests fail. Close the incremental index pipeline counting/watermark issue and align SD-03 connector schema with current connector model metadata. | Codex2 | Claude | todo | - | 2026-04-30 20:38:46 | Assignment created |
-| `SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE` | Telemetry Contract Hardening | Telemetry order lifecycle canonical schema closure | Telemetry capture tests show canonical schema mismatch for order lifecycle and position snapshot events. Make schema and payload agree without losing order evidence fields. | Claude | Codex | in_progress | - | 2026-04-30 20:42:34 | Schema fix applied: added order lifecycle event types and order/position top-level properties to telemetry_event.schema.json. All 64 tests pass, smoke test passes. |
-| `SVC-RESEARCH-REPLICATION-SMOKE-FIX` | Research Pre-activation Hardening | Research replication smoke entrypoint fix | Research replication unit tests pass but direct smoke fails because entrypoint imports mix bare module and package-relative imports. Make smoke runnable from repo root and keep package tests green. | Codex2 | Codex | todo | - | 2026-04-30 20:41:44 | Auto-reassigned ownership from Copilot to Codex2 after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Codex2 starts a fresh run. |
-| `SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN` | OSS Pre-activation Hardening | W&B dormant OSS smoke matrix alignment | Dormant OSS matrix has a stale W&B denial-string assertion while the code now permits offline local-store opt-in and keeps online SDK activation gated. Align smoke evidence with current gate policy. | Codex2 | Claude | todo | - | 2026-04-30 20:39:18 | Assignment created |
-| `SVC-BFF-INCIDENT-SMOKE-FIXTURE` | BFF Service-backed Read Closure | BFF incident and postmortem smoke fixture honesty | BFF incident smoke still fails under auth stub because expected incident postmortem and composed review records are missing or routed differently. Align fixtures read-store and honest degraded behavior. | Claude2 | Codex | todo | - | 2026-04-30 20:39:28 | Assignment created |
-| `SVC-OPENCLAW-HONEST-STACK-SEMANTICS` | OpenClaw Pre-activation Hardening | OpenClaw honest-stack degraded semantics | Full compose smoke fails only on OpenClaw capability semantics because the smoke expects facade_only while service reports upstream_client_degraded. Decide the canonical state and align smoke service and docs while keeping fail-closed gates. | Codex2 | Claude | todo | - | 2026-04-30 20:39:39 | Assignment created |
-| `TEST-FULLSUITE-RUNBOOK-CI-MATRIX` | Full Test Stabilization | Canonical full-suite runbook and CI matrix | After the concrete failures are closed define one canonical full-suite matrix so future reruns are reproducible instead of ad hoc across pytest smoke direct entrypoints compose profiles and gated production-posture checks. | Gemini | Codex | todo | `TEST-FULLSUITE-HARNESS-ISOLATION`, `TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT`, `SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN`, `SVC-SOURCE-SEARCH-TEST-CLOSURE`, `SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE`, `SVC-RESEARCH-REPLICATION-SMOKE-FIX`, `SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN`, `SVC-BFF-INCIDENT-SMOKE-FIXTURE`, `SVC-OPENCLAW-HONEST-STACK-SEMANTICS` | 2026-04-30 20:39:49 | Assignment created |
+| `SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN` | OSS Pre-activation Hardening | W&B dormant OSS smoke matrix alignment | Dormant OSS matrix has a stale W&B denial-string assertion while the code now permits offline local-store opt-in and keeps online SDK activation gated. Align smoke evidence with current gate policy. | Codex2 | Codex | todo | - | 2026-04-30 21:54:36 | Auto-reassigned ownership from Claude to Codex2 after repeated Claude terminal: {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1777570800,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_dis. Task returned to todo until Codex2 starts a fresh run. |
+| `SVC-OPENCLAW-HONEST-STACK-SEMANTICS` | OpenClaw Pre-activation Hardening | OpenClaw honest-stack degraded semantics | Full compose smoke fails only on OpenClaw capability semantics because the smoke expects facade_only while service reports upstream_client_degraded. Decide the canonical state and align smoke service and docs while keeping fail-closed gates. | Claude | Codex | todo | - | 2026-04-30 21:59:42 | Supervisor preempted SVC-OPENCLAW-HONEST-STACK-SEMANTICS to free Claude for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
+| `TEST-FULLSUITE-RUNBOOK-CI-MATRIX` | Full Test Stabilization | Canonical full-suite runbook and CI matrix | After the concrete failures are closed define one canonical full-suite matrix so future reruns are reproducible instead of ad hoc across pytest smoke direct entrypoints compose profiles and gated production-posture checks. | Codex | Claude | todo | `TEST-FULLSUITE-HARNESS-ISOLATION`, `TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT`, `SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN`, `SVC-SOURCE-SEARCH-TEST-CLOSURE`, `SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE`, `SVC-RESEARCH-REPLICATION-SMOKE-FIX`, `SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN`, `SVC-BFF-INCIDENT-SMOKE-FIXTURE`, `SVC-OPENCLAW-HONEST-STACK-SEMANTICS` | 2026-04-30 20:51:00 | Ownership updated |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| `TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT` | Codex2 | Codex | Ready for review: portable bootstrap keeps non-Pantheon canonical files scoped to the bundle, repeated generic worker exits reassign at the configured threshold, and python3 -m pytest -q scripts/test_orchestrator_bundle.py scripts/test_supervisor.py passes (8 passed). | pending | 2026-04-30 20:41:50 |
+| _(none)_ | - | - | - | - | - |
 
 ## Blockers
 
@@ -102,7 +89,7 @@ Last updated: 2026-04-30 20:42:34
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-04-30 20:41:44
+- Last coordination scan: 2026-04-30 21:56:13
 - Tracked features: `46`
 - Lovable-ready packets: `45`
 - Waiting for Lovable/front-end: `0`
@@ -169,23 +156,23 @@ Last updated: 2026-04-30 20:42:34
 
 ## Latest Checkpoints
 
-- 2026-04-30 20:41:48 Orchestrator: PostToolUse: Glob
-- 2026-04-30 20:41:50 Codex2: `TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT` Handoff to Codex: Ready for review: portable bootstrap keeps non-Pantheon canonical files scoped to the bundle, repeated generic worker exits reassign at the configured threshold, and python3 -m pytest -q scripts/test_orchestrator_bundle.py scripts/test_supervisor.py passes (8 passed).
-- 2026-04-30 20:41:51 Orchestrator: PreToolUse: Read
-- 2026-04-30 20:41:51 Orchestrator: PostToolUse: Read
-- 2026-04-30 20:41:55 Orchestrator: `SVC-RESEARCH-REPLICATION-SMOKE-FIX` Auto-reassigned ownership from Copilot to Codex2 after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Codex2 starts a fresh run.
-- 2026-04-30 20:41:55 Orchestrator: `TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT` Wake-up queued for supervisor: review_ready_dispatch
-- 2026-04-30 20:41:55 Orchestrator: `TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT` Worker started via codex: review_ready_dispatch
-- 2026-04-30 20:41:55 Orchestrator: `TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT` Worker superseded after task responsibility moved to another agent.
-- 2026-04-30 20:41:55 Orchestrator: `SVC-RESEARCH-REPLICATION-SMOKE-FIX` Worker superseded after task responsibility moved to another agent.
-- 2026-04-30 20:41:59 Orchestrator: `TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
-- 2026-04-30 20:42:10 Orchestrator: PreToolUse: Edit
-- 2026-04-30 20:42:10 Orchestrator: PostToolUse: Edit
-- 2026-04-30 20:42:18 Orchestrator: PreToolUse: Edit
-- 2026-04-30 20:42:18 Orchestrator: PostToolUse: Edit
-- 2026-04-30 20:42:21 Orchestrator: PreToolUse: Bash
-- 2026-04-30 20:42:24 Orchestrator: PostToolUse: Bash
-- 2026-04-30 20:42:27 Orchestrator: PreToolUse: Bash
-- 2026-04-30 20:42:28 Orchestrator: PostToolUse: Bash
-- 2026-04-30 20:42:33 Orchestrator: PreToolUse: Bash
-- 2026-04-30 20:42:34 Claude: `SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE` Schema fix applied: added order lifecycle event types and order/position top-level properties to telemetry_event.schema.json. All 64 tests pass, smoke test passes.
+- 2026-04-30 21:57:54 Orchestrator: PostToolUse: Glob
+- 2026-04-30 21:57:54 Orchestrator: PostToolUse: Glob
+- 2026-04-30 21:57:58 Orchestrator: PreToolUse: Read
+- 2026-04-30 21:57:58 Orchestrator: PreToolUse: Glob
+- 2026-04-30 21:57:59 Orchestrator: PostToolUse: Read
+- 2026-04-30 21:57:59 Orchestrator: PostToolUse: Glob
+- 2026-04-30 21:58:14 Orchestrator: Terminated older supervisor process 2956712 while starting 3019954.
+- 2026-04-30 21:58:47 Orchestrator: PreToolUse: Glob
+- 2026-04-30 21:58:48 Orchestrator: PreToolUse: Glob
+- 2026-04-30 21:58:48 Orchestrator: PostToolUse: Glob
+- 2026-04-30 21:58:48 Orchestrator: PostToolUse: Glob
+- 2026-04-30 21:58:51 Orchestrator: PreToolUse: Bash
+- 2026-04-30 21:58:52 Orchestrator: PostToolUse: Bash
+- 2026-04-30 21:59:39 Codex: `SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF` Assigned SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF to Codex with reviewer Claude
+- 2026-04-30 21:59:42 Orchestrator: `TEST-FULLSUITE-HARNESS-ISOLATION` Worker superseded after task responsibility moved to another agent.
+- 2026-04-30 21:59:42 Orchestrator: SessionEnd: SessionEnd
+- 2026-04-30 22:00:30 Claude: `SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF` Claude review approved sidecar packet 0f4e012 and closeout 9c79ad1; owner may finalize with review artifact .orchestrator/reviews/SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF-review-claude.md.
+- 2026-04-30 22:00:44 Codex: `SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF` Closed support-only BFF/frontend handoff sidecar after Claude approval; artifact documents query gaps, operator journey, and parent smoke evidence without canonical/runtime changes.
+- 2026-04-30 22:06:05 Codex: `TEST-FULLSUITE-HARNESS-ISOLATION` Codex review approved pytest isolation harness; owner may finalize with review artifact .orchestrator/reviews/TEST-FULLSUITE-HARNESS-ISOLATION-review-codex.md.
+- 2026-04-30 22:06:18 Codex2: `TEST-FULLSUITE-HARNESS-ISOLATION` Closed pytest isolation harness after Codex review; root collection now reaches 2214 tests without import mismatch, and remaining full-suite failures are runtime/domain issues outside this task.
