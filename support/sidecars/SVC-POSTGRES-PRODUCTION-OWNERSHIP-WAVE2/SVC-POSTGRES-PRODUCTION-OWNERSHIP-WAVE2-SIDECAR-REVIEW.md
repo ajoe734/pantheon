@@ -7,6 +7,7 @@ Reviewer: Codex
 Date: 2026-04-30
 Helper kind: `review_packet`
 Mutates canonical truth: no
+Closeout status: Codex reviewed and approved this sidecar packet on 2026-04-30.
 
 ## Scope
 
@@ -105,7 +106,7 @@ This packet does not claim:
 
 | Non-claim | Correct disposition |
 |---|---|
-| The parent task is approved or done. | Parent remains in `review` until its assigned reviewer acts. |
+| The parent task was approved by this packet. | Parent approval and closeout remain owned by the parent task's assigned reviewer/owner flow. |
 | A live staging/prod database migration has been applied. | The evidence covers code, env, compose, and focused tests, not an actual deployed database. |
 | Control-plane wave 3 stores are migrated. | Those belong to `SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3`. |
 | Service-specific Postgres roles or grants are fully materialized. | DSN override hooks exist; concrete role/grant matrix remains a later database administration slice. |
@@ -126,3 +127,13 @@ Recommended reviewer disposition:
    support packet.
 3. Do not treat this packet as approval of the parent task; parent review stays
    with Claude unless reassigned in `ai-status.json`.
+
+## Owner Closeout Addendum
+
+Codex approved this sidecar on 2026-04-30 as an accurate support-only review
+packet. The approval confirms that this artifact stayed bounded to review
+evidence and handoff material, with no L1 canonical truth or runtime,
+registry, governance implementation changes.
+
+Closeout verification re-ran the focused wave 2 Postgres store tests and the
+support artifact whitespace check from `/home/edna/code/pantheon`.
