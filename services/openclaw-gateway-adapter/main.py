@@ -21,6 +21,12 @@ GET  /api/openclaw-adapter/sessions            — typed upstream session list; 
 GET  /api/openclaw-adapter/sessions/{id}       — typed upstream session read; degrades when absent
 POST /api/openclaw-adapter/sessions            — typed upstream session create; broker paths remain disabled
 POST /api/openclaw-adapter/sessions/{id}/cancel — typed upstream session cancel; broker paths remain disabled
+
+GET  /api/openclaw-adapter/lifecycle/sessions            — Pantheon-owned durable session list
+GET  /api/openclaw-adapter/lifecycle/sessions/{id}       — Pantheon-owned session record (refreshes from upstream when active)
+POST /api/openclaw-adapter/lifecycle/sessions            — idempotent create; records operator and audit trail
+POST /api/openclaw-adapter/lifecycle/sessions/{id}/cancel — operator-owned cancel; preserves state on degraded upstream
+GET  /api/openclaw-adapter/lifecycle/sessions/{id}/audit — append-only audit trail for the session
 """
 
 from __future__ import annotations
@@ -33,9 +39,15 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Header
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+from session_lifecycle import (
+    LifecycleError,
+    SessionLifecycleStore,
+    SessionRecord,
+)
 
 from services.foundation.health import (
     health_payload,
@@ -64,6 +76,7 @@ _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
     "paper_adapter": "deferred",
     "live_adapter": "deferred",
     "capital_binding": "deferred",
+    "session_lifecycle_state": "activation_ready",
     "fail_closed": True,
     "supported_session_types": [
         "interactive",
@@ -76,7 +89,7 @@ _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
     ],
     "minimum_runtime_contract": {
         "agent_provisioning": "defined",
-        "session_lifecycle": "defined",
+        "session_lifecycle": "owned",
         "tool_resolution": "defined",
         "skill_resolution": "defined",
         "multi_agent_consultation": "defined",
@@ -88,10 +101,26 @@ _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
         "live_adapter": "OPENCLAW_LIVE_ADAPTER_ENABLED",
         "capital_binding": "OPENCLAW_CAPITAL_BINDING_ENABLED",
     },
+    "session_lifecycle": {
+        "owner": "pantheon_adapter",
+        "store": "durable",
+        "state_machine": [
+            "pending",
+            "active",
+            "cancel_requested",
+            "canceled",
+            "failed",
+            "lost",
+        ],
+        "idempotency_header": "X-Idempotency-Key",
+        "operator_header": "X-Operator-Id",
+        "degraded_recovery": True,
+    },
     "note": (
         "This adapter exposes the Pantheon boundary facade and typed OpenClaw upstream client. "
-        "Broker execution, paper/live adapter paths, and capital binding remain deferred until "
-        "their activation gates are passed."
+        "Session lifecycle is Pantheon-owned with durable state, idempotent create, operator "
+        "ownership, and degraded recovery. Broker execution, paper/live adapter paths, and "
+        "capital binding remain deferred until their activation gates are passed."
     ),
 }
 
@@ -499,3 +528,143 @@ def cancel_session(session_id: str) -> JSONResponse:
         return JSONResponse(status_code=200, content={"status": "ok", "session": _client().cancel_session(session_id)})
     except UpstreamClientError as exc:
         return _error_response(exc)
+
+
+# ---------------------------------------------------------------------------
+# Pantheon-owned session lifecycle (durable state machine + audit + idempotency)
+# ---------------------------------------------------------------------------
+
+
+def _lifecycle_upstream_factory() -> Optional[OpenClawUpstreamClient]:
+    """Hand the lifecycle a configured upstream client when one exists.
+
+    Returning None signals to the lifecycle that no upstream channel is
+    configured; the lifecycle then keeps records in a degraded local-only state
+    instead of raising, which is what the SVC-OPENCLAW-SESSION-LIFECYCLE
+    acceptance ("degraded upstream recovery preserves known session state")
+    requires.
+    """
+    if not OPENCLAW_GATEWAY_URL:
+        return None
+    return _client()
+
+
+_LIFECYCLE_STORE = SessionLifecycleStore(upstream_factory=_lifecycle_upstream_factory)
+
+
+def _serialize_record(record: SessionRecord) -> Dict[str, Any]:
+    return record.to_dict()
+
+
+def _lifecycle_error_response(exc: LifecycleError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+
+
+class LifecycleCreateRequest(BaseModel):
+    agent_id: str
+    session_type: str
+    context_bundle: Optional[Dict[str, Any]] = None
+
+
+@app.post("/api/openclaw-adapter/lifecycle/sessions")
+def lifecycle_create_session(
+    req: LifecycleCreateRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+) -> JSONResponse:
+    if not x_operator_id:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "lifecycle_error",
+                "error_code": "LIFECYCLE_OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for session lifecycle commands.",
+            },
+        )
+    try:
+        record, replayed = _LIFECYCLE_STORE.create_session(
+            agent_id=req.agent_id,
+            session_type=req.session_type,
+            operator_id=x_operator_id,
+            idempotency_key=x_idempotency_key,
+            context_bundle=req.context_bundle,
+        )
+    except LifecycleError as exc:
+        return _lifecycle_error_response(exc)
+    status_code = 200 if replayed else 201
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "ok",
+            "replayed": replayed,
+            "session": _serialize_record(record),
+        },
+    )
+
+
+@app.get("/api/openclaw-adapter/lifecycle/sessions")
+def lifecycle_list_sessions(
+    operator_id: Optional[str] = None,
+    state: Optional[str] = None,
+) -> JSONResponse:
+    records = _LIFECYCLE_STORE.list_sessions(operator_id=operator_id, state=state)
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "ok",
+            "sessions": [_serialize_record(r) for r in records],
+        },
+    )
+
+
+@app.get("/api/openclaw-adapter/lifecycle/sessions/{session_id}")
+def lifecycle_get_session(session_id: str) -> JSONResponse:
+    try:
+        record = _LIFECYCLE_STORE.get_session(session_id)
+    except LifecycleError as exc:
+        return _lifecycle_error_response(exc)
+    return JSONResponse(
+        status_code=200,
+        content={"status": "ok", "session": _serialize_record(record)},
+    )
+
+
+@app.post("/api/openclaw-adapter/lifecycle/sessions/{session_id}/cancel")
+def lifecycle_cancel_session(
+    session_id: str,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+) -> JSONResponse:
+    if not x_operator_id:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "lifecycle_error",
+                "error_code": "LIFECYCLE_OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for session lifecycle commands.",
+            },
+        )
+    try:
+        record = _LIFECYCLE_STORE.cancel_session(session_id, operator_id=x_operator_id)
+    except LifecycleError as exc:
+        return _lifecycle_error_response(exc)
+    return JSONResponse(
+        status_code=200,
+        content={"status": "ok", "session": _serialize_record(record)},
+    )
+
+
+@app.get("/api/openclaw-adapter/lifecycle/sessions/{session_id}/audit")
+def lifecycle_session_audit(session_id: str) -> JSONResponse:
+    try:
+        record = _LIFECYCLE_STORE.get_session(session_id, refresh_from_upstream=False)
+    except LifecycleError as exc:
+        return _lifecycle_error_response(exc)
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "ok",
+            "session_id": record.session_id,
+            "operator_id": record.operator_id,
+            "audit_log": record.audit_log,
+        },
+    )
