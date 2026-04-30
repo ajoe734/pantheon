@@ -359,6 +359,7 @@ EOF
                     "gemini": {
                         "cli": "gemini",
                         "home": "~/.gemini2",
+                        "model": "gemini-2.5-flash-lite",
                         "env": {"GOOGLE_CLOUD_PROJECT": "gemini2-project"},
                     },
                 },
@@ -432,6 +433,8 @@ EOF
         self.assertTrue(report["providers"]["gemini2"]["supports_auto_approve"])
         self.assertEqual(report["providers"]["gemini2"]["paths"]["binary"], "/usr/bin/gemini")
         self.assertEqual(report["providers"]["gemini2"]["paths"]["home"], os.path.expanduser("~/.gemini2"))
+        self.assertEqual(report["providers"]["gemini2"]["selected_model"], "gemini-2.5-flash-lite")
+        self.assertEqual(report["providers"]["gemini2"]["settings"]["gemini.model"], "gemini-2.5-flash-lite")
         self.assertEqual(report["providers"]["gemini2"]["settings"]["env.GOOGLE_CLOUD_PROJECT"], "gemini2-project")
 
     def test_force_push_is_denied(self) -> None:

@@ -202,6 +202,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
                             "cli": "gemini",
                             "home": str(root / "gemini2-home"),
                             "include_directories": True,
+                            "model": "gemini-2.5-flash-lite",
                             "env": {"GOOGLE_CLOUD_PROJECT": "gemini2-project"},
                         },
                         "approval": {"default_approval_mode": "auto_edit"},
@@ -228,6 +229,8 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.target, "Gemini2")
         self.assertIn("-gemini2-gemini2-", Path(str(result.log_path)).name)
+        self.assertIn("--model", result.command)
+        self.assertEqual(result.command[result.command.index("--model") + 1], "gemini-2.5-flash-lite")
         self.assertIn("--approval-mode", result.command)
         self.assertIn("--include-directories", result.command)
         env = spawn.call_args.kwargs["env"]

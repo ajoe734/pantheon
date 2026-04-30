@@ -194,7 +194,11 @@ class GeminiAdapter(BaseAdapter):
         cli = _configured_gemini_cli(self.config, provider_id) or gemini_settings.get("cli") or "gemini"
         agent_cfg = agent_config_for(self.config, request.agent_id)
         display_name = str(agent_cfg.get("display_name") or request.agent_id)
-        command = [cli, "--prompt", request.message]
+        command = [cli]
+        model = str(gemini_settings.get("model") or "").strip()
+        if model:
+            command.extend(["--model", model])
+        command.extend(["--prompt", request.message])
         approval_mode = approval.get("default_approval_mode")
         if approval_mode:
             command.extend(["--approval-mode", approval_mode])

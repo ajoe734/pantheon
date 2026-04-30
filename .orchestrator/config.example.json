@@ -396,6 +396,7 @@
         "cli": ".orchestrator/bin/gemini2",
         "home": "~/.gemini2",
         "include_directories": true,
+        "model": "gemini-2.5-flash-lite",
         "env": {
           "GOOGLE_CLOUD_PROJECT": "YOUR_GEMINI_CODE_ASSIST_PROJECT",
           "GOOGLE_CLOUD_PROJECT_ID": "YOUR_GEMINI_CODE_ASSIST_PROJECT"

@@ -431,6 +431,7 @@
         "cli": ".orchestrator/bin/gemini2",
         "home": "/home/edna/.gemini2",
         "include_directories": true,
+        "model": "gemini-2.5-flash-lite",
         "env": {
           "GOOGLE_CLOUD_PROJECT": "pantheon-493602",
           "GOOGLE_CLOUD_PROJECT_ID": "pantheon-493602"
@@ -547,8 +548,7 @@
     "sidecar_only_agents": [],
     "disabled_agents": [
       "Copilot",
-      "Gemini",
-      "Gemini2"
+      "Gemini"
     ],
     "dependency_done_statuses": [
       "done"

@@ -559,6 +559,9 @@ def _gemini_provider_report(
     workspace_settings: dict[str, Any],
     gemini_applied: bool,
 ) -> dict[str, Any]:
+    provider_config = (config.get("providers", {}).get(provider_id, {}) or {})
+    gemini_runtime = provider_config.get("gemini", {}) or {}
+    selected_model = str(gemini_runtime.get("model") or "").strip() or None
     provider_binary = _configured_provider_binary(config, provider_id, "gemini", "gemini")
     provider_settings = _gemini_settings(config, provider_id)
     oauth_creds_path = _gemini_oauth_creds_path(config, provider_id)
@@ -572,7 +575,7 @@ def _gemini_provider_report(
         "Gemini CLI non-interactive auth requires either a selected auth type in ~/.gemini/settings.json or one of the documented environment-variable auth paths.",
     ]
     if provider_id != "gemini":
-        notes.append(f"Provider `{provider_id}` shares the Gemini CLI auth/settings profile with the base Gemini provider.")
+        notes.append(f"Provider `{provider_id}` uses its configured Gemini CLI home/env profile when provided.")
     return {
         "installed": installed,
         "host_layer": "VS Code extension + CLI" if gemini_path and provider_binary else ("CLI" if provider_binary else "VS Code extension"),
@@ -587,8 +590,8 @@ def _gemini_provider_report(
         "cloud_agent_supported": False,
         "supports_auto_approve": bool(provider_binary and auth_ready),
         "supports_defer_resume": False,
-        "supported_models": [],
-        "selected_model": None,
+        "supported_models": [selected_model] if selected_model else [],
+        "selected_model": selected_model,
         "auth_ready": auth_ready,
         "applied": gemini_applied,
         "verified": "verified" if installed else "unavailable",
@@ -608,6 +611,7 @@ def _gemini_provider_report(
             "security.autoAddToPolicyByDefault": provider_settings.get("security", {}).get("autoAddToPolicyByDefault"),
             "security.disableYoloMode": provider_settings.get("security", {}).get("disableYoloMode"),
             "security.auth.selectedType": auth_type,
+            "gemini.model": selected_model,
             "env.GOOGLE_CLOUD_PROJECT": runtime_env.get("GOOGLE_CLOUD_PROJECT"),
             "env.GOOGLE_CLOUD_PROJECT_ID": runtime_env.get("GOOGLE_CLOUD_PROJECT_ID"),
             "env.GOOGLE_CLOUD_LOCATION": runtime_env.get("GOOGLE_CLOUD_LOCATION"),
