@@ -4,8 +4,8 @@
 **Helper task:** SVC-OPENCLAW-LIVE-GATE-HARNESS-SIDECAR-BFF-HANDOFF  
 **Parent task:** SVC-OPENCLAW-LIVE-GATE-HARNESS  
 **Author:** Claude  
-**Reviewer:** Claude2  
-**Status:** ready for review  
+**Reviewer:** Codex  
+**Status:** revised — error catalogue expanded per Codex review (2026-04-30)  
 **Created:** 2026-04-30  
 
 ---
@@ -107,25 +107,33 @@ Existing `test_openclaw_ops_surface.py` covers the ops aggregate but not these d
 
 ## 4. Error Code Catalogue
 
-The live gate adapter returns structured errors. The frontend should handle each distinctly.
+The live gate adapter returns structured errors. The frontend should handle each distinctly. Codes are ordered by gate check sequence.
 
-| `error_code` | HTTP status | Meaning | Recommended UI action |
-|---|---|---|---|
-| `LIVE_GATE_DISABLED` | 503 | `OPENCLAW_LIVE_ADAPTER_ENABLED` is not set | Show "Live gate is not active" banner; no retry option |
-| `HUMAN_APPROVAL_NOT_CONFIGURED` | 503 | `OPENCLAW_LIVE_HUMAN_APPROVAL_TOKEN` is missing server-side | Show "Live gate misconfigured — contact operator admin" |
-| `HUMAN_APPROVAL_TOKEN_MISSING` | 401 | No `X-Human-Approval-Token` in request | Prompt operator to enter approval token |
-| `HUMAN_APPROVAL_TOKEN_INVALID` | 403 | Token does not match | Show "Approval token rejected"; do not retry automatically |
-| `CAPITAL_POOL_REQUIRED` | 400 | `capital_pool_id` not provided | Validate form before submission |
-| `LIVE_RUNTIME_BINDING_NOT_FOUND` | 409 | No active live RuntimeBinding for the pool | Show "No active live binding for this pool" with pool ID |
-| `LIVE_RUNTIME_BINDING_REQUIRED` | 409 | Binding exists but is not `deployment_mode: live` | Show binding mode mismatch; link to binding review |
-| `KILL_SWITCH_UNSAFE_STATE` | 409 | Safe mode is not `normal` or `normal_restored` | Show "Kill switch / safe mode is active; clear before proceeding" with current `safe_mode_state` |
-| `BINDING_IN_UNSAFE_STATE` | 409 | Binding is in `pending_pause / paused / retired / failed` | Show binding status + "Resolve rollback before live gate" |
-| `BINDING_NOT_ACTIVE` | 409 | Binding status is not `active` | Show binding status; no automatic retry |
-| `RUNTIME_MANAGER_NOT_CONFIGURED` | 503 | No runtime-manager URL configured | Show "Runtime manager not configured" banner |
-| `RUNTIME_MANAGER_UNAVAILABLE` | 503 | runtime-manager network error | Transient — allow retry with back-off |
-| `RUNTIME_MANAGER_ERROR` | 502 | runtime-manager returned upstream error | Show error and runtime-manager status |
-| `OPERATOR_REQUIRED` | 401 | No `X-Operator-Id` in request | Should not occur for authenticated operators; check auth chain |
-| `LIVE_EXECUTION_DISABLED` | 403 | Live order was submitted to the always-rejected endpoint | Should not occur from normal UI; if seen, show "Live execution is permanently disabled in this deployment" |
+> **Revision note (2026-04-30):** Six codes (`CAPITAL_BINDING_MISMATCH`, `RUNTIME_BINDING_CHECK_FAILED`, `RUNTIME_BINDING_SCHEMA_ERROR`, `SAFE_MODE_CHECK_FAILED`, `SAFE_MODE_CHECK_ERROR`, `SAFE_MODE_SCHEMA_ERROR`) were absent from the initial packet and added per Codex review. These originate from runtime-manager communication paths and the capital pool identity check added in commit 27c4fe8.
+
+| `error_code` | HTTP status | Gate | Meaning | Recommended UI action |
+|---|---|---|---|---|
+| `LIVE_GATE_DISABLED` | 503 | `live_adapter_enabled` | `OPENCLAW_LIVE_ADAPTER_ENABLED` is not set | Show "Live gate is not active" banner; no retry option |
+| `HUMAN_APPROVAL_NOT_CONFIGURED` | 503 | `human_approval_token` | `OPENCLAW_LIVE_HUMAN_APPROVAL_TOKEN` is missing server-side | Show "Live gate misconfigured — contact operator admin" |
+| `HUMAN_APPROVAL_TOKEN_MISSING` | 401 | `human_approval_token` | No `X-Human-Approval-Token` in request | Prompt operator to enter approval token |
+| `HUMAN_APPROVAL_TOKEN_INVALID` | 403 | `human_approval_token` | Token does not match | Show "Approval token rejected"; do not retry automatically |
+| `CAPITAL_POOL_REQUIRED` | 400 | `active_live_runtime_binding` | `capital_pool_id` not provided | Validate form before submission |
+| `RUNTIME_MANAGER_NOT_CONFIGURED` | 503 | `active_live_runtime_binding` | No runtime-manager URL configured | Show "Runtime manager not configured" banner |
+| `RUNTIME_BINDING_CHECK_FAILED` | 503 | `active_live_runtime_binding` | Binding resolver raised an unexpected exception | Treat as transient; allow retry with back-off; escalate if persistent |
+| `RUNTIME_MANAGER_UNAVAILABLE` | 503 | `active_live_runtime_binding` | runtime-manager network error during binding lookup | Transient — allow retry with back-off |
+| `RUNTIME_MANAGER_ERROR` | 502 | `active_live_runtime_binding` | runtime-manager returned an upstream error (HTTP ≥ 400) | Show error and runtime-manager status |
+| `RUNTIME_BINDING_SCHEMA_ERROR` | 502 | `active_live_runtime_binding` | runtime-manager binding response was not a valid object | Treat as adapter-side issue; show "Unexpected response from runtime manager"; escalate |
+| `LIVE_RUNTIME_BINDING_NOT_FOUND` | 409 | `active_live_runtime_binding` | No active live RuntimeBinding for the pool | Show "No active live binding for this pool" with pool ID |
+| `CAPITAL_BINDING_MISMATCH` | 409 | `active_live_runtime_binding` | Active RuntimeBinding `capital_pool_id` does not match the requested pool | Show "Capital pool identity mismatch on active binding" with expected vs actual pool ID; do not retry without operator review |
+| `LIVE_RUNTIME_BINDING_REQUIRED` | 409 | `active_live_runtime_binding` | Binding exists but is not `deployment_mode: live` | Show binding mode mismatch; link to binding review |
+| `SAFE_MODE_CHECK_FAILED` | 503 | `kill_switch_safe_mode` | Safe mode resolver raised an unexpected exception | Treat as transient; allow retry with back-off; escalate if persistent |
+| `SAFE_MODE_CHECK_ERROR` | 502 | `kill_switch_safe_mode` | runtime-manager safe-mode endpoint returned HTTP ≥ 400 | Show "Kill switch check failed" with status; escalate to operator admin |
+| `SAFE_MODE_SCHEMA_ERROR` | 502 | `kill_switch_safe_mode` | runtime-manager safe-mode response missing `safe_mode_state` | Treat as adapter-side issue; show "Unexpected safe mode response"; escalate |
+| `KILL_SWITCH_UNSAFE_STATE` | 409 | `kill_switch_safe_mode` | Safe mode is not `normal` or `normal_restored` | Show "Kill switch / safe mode is active; clear before proceeding" with current `safe_mode_state` |
+| `BINDING_IN_UNSAFE_STATE` | 409 | `binding_not_in_rollback` | Binding is in `pending_pause / paused / retired / failed` | Show binding status + "Resolve rollback before live gate" |
+| `BINDING_NOT_ACTIVE` | 409 | `binding_not_in_rollback` | Binding status is not `active` | Show binding status; no automatic retry |
+| `OPERATOR_REQUIRED` | 401 | auth | No `X-Operator-Id` in request | Should not occur for authenticated operators; check auth chain |
+| `LIVE_EXECUTION_DISABLED` | 403 | endpoint | Live order was submitted to the always-rejected endpoint | Should not occur from normal UI; if seen, show "Live execution is permanently disabled in this deployment" |
 
 ---
 
