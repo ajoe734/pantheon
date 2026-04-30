@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import copy
 import io
+import json
 import os
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -119,6 +121,21 @@ class TestRLlibPPOBackend(unittest.TestCase):
         self.assertEqual(result.backend, "rllib_ppo")
         self.assertTrue(result.metrics["framework_import_ready"])
         self.assertEqual(result.policy_payload["framework_import"], "ray.rllib")
+        self.assertEqual(result.policy_payload["fit_mode"], "bounded_offline_rllib_adapter")
+
+    def test_real_backend_does_not_delegate_to_stub(self) -> None:
+        fake_ray = types.ModuleType("ray")
+        fake_ray.__version__ = "2.9.3"
+        fake_rllib = types.ModuleType("ray.rllib")
+        prepared = GovernedRLlibTrainEvalAdapter().prepare(MINIMAL_DATASET)
+        with patch.dict(sys.modules, {"ray": fake_ray, "ray.rllib": fake_rllib}, clear=False):
+            with patch.object(
+                StubRLlibBackend,
+                "train_and_evaluate",
+                side_effect=AssertionError("stub called"),
+            ):
+                result = RLlibPPOBackend().train_and_evaluate(prepared, RLlibTrainingConfig())
+        self.assertEqual(result.backend, "rllib_ppo")
 
 
 class TestDeferredPrepGate(unittest.TestCase):
@@ -147,6 +164,25 @@ class TestRLlibEntrypointGates(unittest.TestCase):
             os.environ.pop("PANTHEON_RLLIB_PREP_ENABLED", None)
             with patch("sys.stderr", new=io.StringIO()):
                 self.assertEqual(worker_main(), 2)
+
+    def test_enabled_worker_persists_artifact_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env = {
+                "PANTHEON_RLLIB_PREP_ENABLED": "1",
+                "PANTHEON_RLLIB_BACKEND": "stub",
+                "RLLIB_OUTPUT_DIR": tmpdir,
+            }
+            with patch.dict(os.environ, env, clear=False):
+                with patch("sys.stdout", new=io.StringIO()) as stdout:
+                    self.assertEqual(worker_main(), 0)
+            output = json.loads(stdout.getvalue())
+            artifact_paths = output["artifact_paths"]
+            self.assertTrue(Path(artifact_paths["artifact_bundle"]).exists())
+            self.assertTrue(Path(artifact_paths["registry_entry"]).exists())
+            self.assertTrue(Path(artifact_paths["candidate_packet"]).exists())
+            persisted = json.loads(Path(artifact_paths["artifact_bundle"]).read_text(encoding="utf-8"))
+            self.assertEqual(persisted["governance"]["gate_state"], "closed")
+            self.assertEqual(persisted["registry_hints"]["artifact_state"], "draft")
 
 
 class TestRunRLlibWorkflow(unittest.TestCase):

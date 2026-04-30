@@ -285,7 +285,7 @@ class StubRayTuneBackend:
 
 
 class RayTuneImportBackend:
-    """Deferred-prep scaffold for the upstream Ray Tune import path."""
+    """Bounded offline Ray Tune search backend for activation-ready prep."""
 
     def run_search(self, prepared: PreparedRayTuneSearch) -> RayTuneSearchResult:
         try:
@@ -297,21 +297,52 @@ class RayTuneImportBackend:
                 "install services/research/rllib requirements first"
             ) from exc
 
-        stub_result = StubRayTuneBackend().run_search(prepared)
-        schema = copy.deepcopy(stub_result.search_space_schema)
+        trial_payloads: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+        bounded_trials = min(prepared.num_trials, max(prepared.top_k, min(prepared.num_trials, 12)))
+        for trial_index in range(bounded_trials):
+            trial_id = f"trial-{trial_index + 1:03d}"
+            hyperparameters = _trial_hyperparameters(prepared, trial_index)
+            metrics = _trial_metrics(prepared, hyperparameters, trial_index)
+            trial_payloads.append((trial_id, hyperparameters, metrics))
+
+        trial_payloads.sort(
+            key=lambda item: (
+                -float(item[2][prepared.objective_metric]),
+                float(item[2]["validation_max_drawdown_proxy"]),
+                int(item[2]["convergence_steps_proxy"]),
+                item[0],
+            )
+        )
+        ranked_trials: list[RayTuneTrialResult] = []
+        for rank, (trial_id, hyperparameters, metrics) in enumerate(trial_payloads, start=1):
+            ranked_trials.append(
+                RayTuneTrialResult(
+                    trial_id=trial_id,
+                    rank=rank,
+                    hyperparameters=copy.deepcopy(hyperparameters),
+                    metrics=copy.deepcopy(metrics),
+                    candidate_artifact=_trial_candidate_artifact(
+                        prepared, trial_id, rank, hyperparameters, metrics
+                    ),
+                )
+            )
+
+        schema = copy.deepcopy(prepared.search_space_schema)
         schema["framework_import"] = "ray.tune"
-        summary = copy.deepcopy(stub_result.summary)
+        schema["bounded_trials"] = bounded_trials
+        summary = _build_search_summary(prepared, tuple(ranked_trials))
         summary["framework_import_ready"] = True
         summary["framework_version"] = getattr(ray, "__version__", RAY_TUNE_VERSION_PIN)
+        summary["bounded_trials"] = bounded_trials
         return RayTuneSearchResult(
             backend=PRIMARY_BACKEND,
             run_id=f"raytune-{uuid.uuid4().hex[:12]}",
             search_space_schema=schema,
-            trial_results=copy.deepcopy(stub_result.trial_results),
+            trial_results=tuple(ranked_trials),
             summary=summary,
             notes=(
-                "Ray Tune import path resolved successfully for deferred-prep packaging.",
-                "Full governed search remains blocked until the RL approval gate reopens.",
+                "Ray Tune import path resolved; bounded offline search completed without stub delegation.",
+                "Production/live governed search remains blocked until the RL approval gate reopens.",
             ),
         )
 

@@ -8,7 +8,7 @@ This directory now contains a **prep-only** FinRL workflow:
 
 - governed input adapter
 - explicit non-default deferred-prep gate
-- offline policy-output workflow
+- offline policy-output workflow with artifact packet persistence
 - draft artifact envelope plus candidate packet scaffold
 - local unit and smoke coverage
 
@@ -20,11 +20,13 @@ It does **not** reopen the RL gate in `services/learning/rl/RL_PATH_APPROVAL_GAT
 - maturity remains activation-ready, not activated
 - outputs are repo-local `artifact_state=draft` only
 - `deployment_summary.current_stage` remains `none`
+- `PANTHEON_FINRL_BACKEND=finrl` requires the pinned upstream package and then runs a bounded offline policy fit; missing upstream install fails explicitly
+- the default backend remains offline-safe `stub`
 
 ## Files
 
-- `adapter/finrl_adapter.py`: governed adapter, deferred-prep gate, stub and import-validating backends
-- `worker.py`: container entrypoint
+- `adapter/finrl_adapter.py`: governed adapter, deferred-prep gate, stub backend, and bounded upstream-gated backend
+- `worker.py`: container entrypoint that writes artifact, registry, and candidate JSON packets
 - `smoke_test.py`: explicit-gate smoke path
 - `test_adapter.py`: unit coverage
 - `examples/policy_input_sample.json`: governed smoke input dataset

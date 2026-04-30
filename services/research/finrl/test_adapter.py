@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import copy
+import io
+import json
 import os
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -22,6 +25,7 @@ from adapter.finrl_adapter import (
     StubFinRLBackend,
     run_finrl_workflow,
 )
+from worker import main as worker_main
 
 MINIMAL_DATASET = {
     "dataset_id": "dataset:finrl-test-001",
@@ -102,6 +106,15 @@ class TestFinRLPPOBackend(unittest.TestCase):
         self.assertEqual(result.backend, "finrl_ppo")
         self.assertTrue(result.metrics["framework_import_ready"])
         self.assertEqual(result.policy_payload["framework_import"], "finrl")
+        self.assertEqual(result.policy_payload["fit_mode"], "bounded_offline_finrl_adapter")
+
+    def test_real_backend_does_not_delegate_to_stub(self) -> None:
+        fake_finrl = types.SimpleNamespace(__name__="finrl", __version__="0.3.6")
+        prepared = GovernedFinRLPolicyAdapter().prepare(MINIMAL_DATASET)
+        with patch.dict(sys.modules, {"finrl": fake_finrl}, clear=False):
+            with patch.object(StubFinRLBackend, "train", side_effect=AssertionError("stub called")):
+                result = FinRLPPOBackend().train(prepared, PolicyTrainingConfig())
+        self.assertEqual(result.backend, "finrl_ppo")
 
 
 class TestDeferredPrepGate(unittest.TestCase):
@@ -118,6 +131,27 @@ class TestDeferredPrepGate(unittest.TestCase):
     def test_env_gate_accepts_enabled_value(self) -> None:
         with patch.dict(os.environ, {"PANTHEON_FINRL_PREP_ENABLED": "1"}, clear=False):
             DeferredPrepGate.require_env()
+
+
+class TestFinRLWorkerArtifacts(unittest.TestCase):
+    def test_enabled_worker_persists_artifact_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env = {
+                "PANTHEON_FINRL_PREP_ENABLED": "1",
+                "PANTHEON_FINRL_BACKEND": "stub",
+                "FINRL_OUTPUT_DIR": tmpdir,
+            }
+            with patch.dict(os.environ, env, clear=False):
+                with patch("sys.stdout", new=io.StringIO()) as stdout:
+                    self.assertEqual(worker_main(), 0)
+            output = json.loads(stdout.getvalue())
+            artifact_paths = output["artifact_paths"]
+            self.assertTrue(Path(artifact_paths["artifact_bundle"]).exists())
+            self.assertTrue(Path(artifact_paths["registry_entry"]).exists())
+            self.assertTrue(Path(artifact_paths["candidate_packet"]).exists())
+            persisted = json.loads(Path(artifact_paths["artifact_bundle"]).read_text(encoding="utf-8"))
+            self.assertEqual(persisted["governance"]["gate_state"], "closed")
+            self.assertEqual(persisted["registry_hints"]["artifact_state"], "draft")
 
 
 class TestRunFinRLWorkflow(unittest.TestCase):

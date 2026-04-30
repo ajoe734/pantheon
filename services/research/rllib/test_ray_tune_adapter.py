@@ -5,6 +5,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -89,6 +90,21 @@ class TestRayTuneImportBackend(unittest.TestCase):
         self.assertEqual(result.search_result.backend, "ray_tune_search")
         self.assertTrue(result.search_result.summary["framework_import_ready"])
         self.assertEqual(result.search_result.search_space_schema["framework_import"], "ray.tune")
+        self.assertLessEqual(len(result.search_result.trial_results), SAMPLE_DATASET["records"].__len__())
+        self.assertEqual(result.search_result.summary["bounded_trials"], 12)
+
+    def test_real_backend_does_not_delegate_to_stub(self) -> None:
+        fake_ray = types.ModuleType("ray")
+        fake_ray.__version__ = "2.9.3"
+        fake_tune = types.ModuleType("ray.tune")
+        with patch.dict(sys.modules, {"ray": fake_ray, "ray.tune": fake_tune}, clear=False):
+            with patch.object(
+                StubRayTuneBackend,
+                "run_search",
+                side_effect=AssertionError("stub called"),
+            ):
+                result = run_ray_tune_workflow(SAMPLE_DATASET, backend=RayTuneImportBackend())
+        self.assertEqual(result.search_result.backend, "ray_tune_search")
 
 
 class TestRayTuneDeferredPrepGate(unittest.TestCase):
@@ -117,6 +133,25 @@ class TestRayTuneEntrypointGates(unittest.TestCase):
             os.environ.pop("PANTHEON_RAYTUNE_PREP_ENABLED", None)
             with patch("sys.stderr", new=io.StringIO()):
                 self.assertEqual(ray_tune_worker_main(), 2)
+
+    def test_enabled_worker_persists_optimizer_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env = {
+                "PANTHEON_RAYTUNE_PREP_ENABLED": "1",
+                "PANTHEON_RAYTUNE_BACKEND": "stub",
+                "RAYTUNE_OUTPUT_DIR": tmpdir,
+            }
+            with patch.dict(os.environ, env, clear=False):
+                with patch("sys.stdout", new=io.StringIO()) as stdout:
+                    self.assertEqual(ray_tune_worker_main(), 0)
+            output = json.loads(stdout.getvalue())
+            artifact_paths = output["artifact_paths"]
+            self.assertTrue(Path(artifact_paths["artifact_bundle"]).exists())
+            self.assertTrue(Path(artifact_paths["registry_entry"]).exists())
+            self.assertTrue(Path(artifact_paths["candidate_packet"]).exists())
+            persisted = json.loads(Path(artifact_paths["artifact_bundle"]).read_text(encoding="utf-8"))
+            self.assertEqual(persisted["governance"]["gate_state"], "closed")
+            self.assertEqual(persisted["registry_hints"]["artifact_state"], "draft")
 
 
 class TestRunRayTuneWorkflow(unittest.TestCase):

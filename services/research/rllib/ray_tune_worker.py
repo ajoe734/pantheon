@@ -21,6 +21,22 @@ from adapter import (
 from config import selected_tune_backend
 
 
+def _persist_artifacts(result) -> dict[str, str]:
+    output_dir = Path(os.environ.get("RAYTUNE_OUTPUT_DIR", "/tmp/pantheon/research/ray_tune"))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    artifacts = {
+        "artifact_bundle": result.artifact_bundle,
+        "registry_entry": result.registry_entry,
+        "candidate_packet": result.candidate_packet,
+    }
+    paths: dict[str, str] = {}
+    for name, payload in artifacts.items():
+        path = output_dir / f"{result.search_result.run_id}.{name}.json"
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        paths[name] = str(path)
+    return paths
+
+
 def main() -> int:
     try:
         RayTuneDeferredPrepGate.require_env()
@@ -67,6 +83,7 @@ def main() -> int:
         "deployment_stage": result.registry_entry["deployment_summary"]["current_stage"],
         "candidate_next_state": result.candidate_packet["requested_artifact_state"],
         "storage_path": result.registry_entry["storage_ref"]["path"],
+        "artifact_paths": _persist_artifacts(result),
         "backend": result.search_result.backend,
         "search_strategy": result.prepared_search.search_strategy,
         "num_trials": len(result.search_result.trial_results),
