@@ -5,11 +5,20 @@ End-to-end integration tests with realistic research payloads.
 """
 
 import json
+import os
 import sys
 from datetime import datetime
 
-from gate_schema import ReplicationRequest, CandidateAdmissionStatus
-from gate import ReplicationGate, create_promotion_request
+# Allow running as a direct script from repo root:
+#   python3 services/research/replication/smoke_test.py
+# Adds services/research to sys.path so replication is importable as a package,
+# which lets gate.py's relative imports resolve correctly.
+_RESEARCH_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _RESEARCH_DIR not in sys.path:
+    sys.path.insert(0, _RESEARCH_DIR)
+
+from replication.gate_schema import ReplicationRequest, CandidateAdmissionStatus
+from replication.gate import ReplicationGate, create_promotion_request
 
 
 def create_realistic_research_handoff() -> dict:
