@@ -76,66 +76,50 @@
     ],
     "owner_fallbacks": {
       "Claude": [
-        "Codex",
-        "Qwen",
-        "Copilot",
-        "Gemini"
+        "Codex"
       ],
       "Gemini": [
         "Codex",
-        "Qwen",
-        "Claude",
-        "Copilot"
+        "Claude"
+      ],
+      "Gemini2": [
+        "Codex",
+        "Claude"
       ],
       "Codex": [
-        "Qwen",
-        "Claude",
-        "Copilot",
-        "Gemini"
+        "Claude"
       ],
       "Copilot": [
         "Codex",
-        "Qwen",
-        "Claude",
-        "Gemini"
+        "Claude"
       ],
       "Qwen": [
         "Codex",
-        "Claude",
-        "Copilot",
-        "Gemini"
+        "Claude"
       ]
     },
     "reviewer_fallbacks": {
       "Claude": [
-        "Codex",
-        "Qwen",
-        "Copilot",
-        "Gemini"
+        "Codex"
       ],
       "Gemini": [
         "Codex",
-        "Qwen",
-        "Claude",
-        "Copilot"
+        "Claude"
+      ],
+      "Gemini2": [
+        "Codex",
+        "Claude"
       ],
       "Codex": [
-        "Qwen",
-        "Claude",
-        "Copilot",
-        "Gemini"
+        "Claude"
       ],
       "Copilot": [
         "Codex",
-        "Qwen",
-        "Claude",
-        "Gemini"
+        "Claude"
       ],
       "Qwen": [
         "Codex",
-        "Claude",
-        "Copilot",
-        "Gemini"
+        "Claude"
       ]
     }
   },
@@ -332,6 +316,13 @@
       "wake_template": ".orchestrator/templates/wakeup.txt",
       "file_inbox_path": ".llm-inbox/gemini.md"
     },
+    "gemini2": {
+      "display_name": "Gemini2",
+      "provider": "gemini2",
+      "adapter": "gemini",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/gemini2.md"
+    },
     "codex": {
       "display_name": "Codex",
       "provider": "codex",
@@ -402,6 +393,26 @@
       },
       "gemini": {
         "cli": "gemini",
+        "include_directories": true
+      },
+      "approval": {
+        "default_approval_mode": "auto_edit",
+        "workspace_agent_yolo_mode": false,
+        "enable_permanent_tool_approval": true,
+        "auto_add_to_policy_by_default": true,
+        "disable_yolo_mode": false,
+        "disable_always_allow": false
+      }
+    },
+    "gemini2": {
+      "delivery_mode": "gemini",
+      "file_inbox": {
+        "path": ".llm-inbox/gemini2.md",
+        "open_in_vscode": false
+      },
+      "gemini": {
+        "cli": ".orchestrator/bin/gemini2",
+        "home": "~/.gemini2",
         "include_directories": true
       },
       "approval": {
@@ -504,6 +515,7 @@
       "in_progress",
       "todo"
     ],
+    "disabled_agents": [],
     "dependency_done_statuses": [
       "done"
     ],

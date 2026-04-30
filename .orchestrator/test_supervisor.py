@@ -107,6 +107,34 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
+    def test_ignores_log_search_result_json_that_mentions_quota(self) -> None:
+        worker = self._worker_for_log(
+            "\n".join(
+                [
+                    "exec",
+                    '.orchestrator/logs/20260417T134622225365Z-claude.log:24:{"type":"user","message":{"content":"402 You have no quota"}}',
+                    "No local failure happened in this session.",
+                ]
+            )
+            + "\n"
+        )
+
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_ignores_pretty_json_field_that_mentions_auth_failure(self) -> None:
+        worker = self._worker_for_log(
+            "\n".join(
+                [
+                    "succeeded in 252ms:",
+                    '"next": "Auto-reassigned ownership from Gemini2 after repeated Gemini2 auth: not authenticated",',
+                    "No local failure happened in this session.",
+                ]
+            )
+            + "\n"
+        )
+
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
     def test_classifies_gemini_capacity_failure(self) -> None:
         config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
         worker = {"provider": "gemini"}
@@ -1029,6 +1057,70 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         queued_event = queue_delivery_event.call_args.args[1]
         self.assertEqual(queued_event["task_id"], "FB-003")
         self.assertEqual(queued_event["target_agent"], "Copilot")
+
+    def test_dispatcher_helper_claims_todo_when_owner_lane_is_disabled(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "disabled_agents": ["Gemini2"],
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "require_owner_higher_priority_load": True,
+                },
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Gemini2": ["Codex", "Claude"],
+                }
+            },
+            "agents": {
+                "gemini2": {"id": "gemini2", "display_name": "Gemini2", "provider": "gemini2"},
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        state = {"queue": {"events": {}}, "workers": {}}
+        status = {
+            "tasks": [
+                {
+                    "id": "FB-009-SIDECAR-BFF-HANDOFF",
+                    "status": "todo",
+                    "owner": "Gemini2",
+                    "reviewer": "Claude",
+                    "depends_on": [],
+                    "task_class": "sidecar",
+                    "helper_parent": "FB-009",
+                    "helper_kind": "bff_handoff_packet",
+                },
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state)
+
+        self.assertTrue(changed)
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "FB-009-SIDECAR-BFF-HANDOFF")
+        self.assertEqual(kwargs["new_owner"], "Codex")
+        self.assertEqual(kwargs["new_reviewer"], "Gemini2")
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "FB-009-SIDECAR-BFF-HANDOFF")
+        self.assertEqual(queued_event["target_agent"], "Codex")
+        self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
 
     def test_dispatcher_helper_claims_in_progress_when_owner_lane_is_paused(self) -> None:
         config = {

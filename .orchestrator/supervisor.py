@@ -93,6 +93,14 @@ SEARCH_RESULT_JSON_FIELD_PATTERN = re.compile(
     r"^(?:[^:\s][^:]*:)?\d+[:-]\s*\"[A-Za-z0-9_]+\"\s*:\s*",
     re.IGNORECASE,
 )
+JSON_FIELD_LINE_PATTERN = re.compile(
+    r"^\"[A-Za-z0-9_]+\"\s*:\s*",
+    re.IGNORECASE,
+)
+SEARCH_RESULT_LOG_JSON_PATTERN = re.compile(
+    r"^[^\s:]+\.log:\d+[:-]\s*\{",
+    re.IGNORECASE,
+)
 
 LOCAL_TZ = ZoneInfo("Asia/Taipei")
 SUPERVISOR_LOG_QUIET = False
@@ -1203,7 +1211,7 @@ def chair_review_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings = dict(config.get("chair_review", {}) or {})
     settings.setdefault("enabled", True)
     settings.setdefault("cooldown_seconds", 1800)
-    settings.setdefault("candidates", ["Codex", "Codex2", "Claude", "Claude2", "Copilot", "Gemini"])
+    settings.setdefault("candidates", ["Codex", "Codex2", "Claude", "Claude2"])
     settings.setdefault("task_id", "OPS-CHAIR-REVIEW")
     settings.setdefault("output_dir", ".orchestrator/chair-reviews")
     settings.setdefault("skill_path", ".orchestrator/skills/chairman-review.md")
@@ -2433,6 +2441,10 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
             continue
         if SEARCH_RESULT_JSON_FIELD_PATTERN.search(stripped):
             continue
+        if JSON_FIELD_LINE_PATTERN.search(stripped):
+            continue
+        if SEARCH_RESULT_LOG_JSON_PATTERN.search(stripped):
+            continue
         if any(pattern.search(stripped) for pattern in WORKER_FAILURE_FALSE_POSITIVE_PATTERNS):
             continue
         if any(pattern.search(stripped) for pattern in WORKER_FAILURE_PATTERNS):
@@ -2501,7 +2513,7 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if any(marker in normalized for marker in retryable_capacity_markers):
         return {"kind": "capacity_retryable", "transient": True, "label": "capacity/429"}
-    if provider == "gemini" and any(marker in normalized for marker in unknown_critical_markers):
+    if provider.startswith("gemini") and any(marker in normalized for marker in unknown_critical_markers):
         return {"kind": "unknown_critical", "transient": False, "label": "unknown critical error"}
     if any(pattern in normalized for pattern in transient_patterns):
         return {"kind": "transient", "transient": True, "label": "transient"}
@@ -2610,6 +2622,8 @@ def provider_dispatch_paused(state: dict[str, Any], provider: str | None) -> boo
 def agent_dispatch_paused(config: dict[str, Any], state: dict[str, Any], agent_id: str | None) -> bool:
     if not agent_id:
         return False
+    if agent_dispatch_disabled(config, agent_id):
+        return True
     agent = agent_config_for(config, agent_id)
     provider_id = str(agent.get("provider") or agent.get("id") or agent_id)
     return provider_dispatch_paused(state, provider_id)
@@ -2843,11 +2857,15 @@ def worker_reassignment_settings(config: dict[str, Any]) -> dict[str, Any]:
                 default_eligible_statuses.append(normalized)
     settings.setdefault("eligible_statuses", default_eligible_statuses or ["todo", "in_progress", "review", "review_approved"])
     default_fallbacks = {
-        "Claude": ["Codex", "Qwen", "Grok", "Gemini"],
-        "Gemini": ["Codex", "Qwen", "Claude", "Grok"],
-        "Codex": ["Qwen", "Claude", "Grok", "Gemini"],
-        "Qwen": ["Codex", "Claude", "Grok", "Gemini"],
-        "Grok": ["Codex", "Qwen", "Claude", "Gemini"],
+        "Claude": ["Codex", "Codex2"],
+        "Claude2": ["Codex", "Codex2", "Claude"],
+        "Gemini": ["Codex", "Codex2", "Claude"],
+        "Gemini2": ["Codex", "Codex2", "Claude"],
+        "Codex": ["Codex2", "Claude"],
+        "Codex2": ["Codex", "Claude"],
+        "Copilot": ["Codex", "Codex2", "Claude"],
+        "Qwen": ["Codex", "Codex2", "Claude"],
+        "Grok": ["Codex", "Codex2", "Claude"],
     }
     settings.setdefault("owner_fallbacks", default_fallbacks)
     settings.setdefault("reviewer_fallbacks", default_fallbacks)
@@ -2879,9 +2897,59 @@ def sidecar_only_agent_names(config: dict[str, Any]) -> set[str]:
     }
 
 
+def disabled_dispatch_agent_keys(config: dict[str, Any]) -> set[str]:
+    keys: set[str] = set()
+    agents = config.get("agents", {}) or {}
+    for raw_value in ready_dispatch_settings(config).get("disabled_agents", []) or []:
+        raw = str(raw_value or "").strip()
+        if not raw:
+            continue
+        keys.add(raw.casefold())
+        normalized = normalize_agent_id(raw)
+        if normalized:
+            keys.add(normalized.casefold())
+        agent = agents.get(normalized) if normalized else None
+        if not isinstance(agent, dict):
+            continue
+        display = str(agent.get("display_name") or agent.get("name") or normalized).strip()
+        provider = str(agent.get("provider") or "").strip()
+        if display:
+            keys.add(display.casefold())
+        if provider:
+            keys.add(provider.casefold())
+            provider_id = normalize_agent_id(provider)
+            if provider_id:
+                keys.add(provider_id.casefold())
+    return keys
+
+
+def agent_dispatch_disabled(config: dict[str, Any], agent_name: str | None) -> bool:
+    name = str(agent_name or "").strip()
+    if not name:
+        return False
+    keys = disabled_dispatch_agent_keys(config)
+    if name.casefold() in keys:
+        return True
+    agent_id = normalize_agent_id(name)
+    if agent_id and agent_id.casefold() in keys:
+        return True
+    agent = (config.get("agents", {}) or {}).get(agent_id)
+    if isinstance(agent, dict):
+        display = str(agent.get("display_name") or agent.get("name") or agent_id).strip()
+        provider = str(agent.get("provider") or "").strip()
+        return bool(
+            (display and display.casefold() in keys)
+            or (provider and provider.casefold() in keys)
+            or (provider and normalize_agent_id(provider).casefold() in keys)
+        )
+    return False
+
+
 def agent_can_take_task(config: dict[str, Any], agent_name: str | None, task: dict[str, Any] | None) -> bool:
     name = str(agent_name or "").strip()
     if not name:
+        return False
+    if agent_dispatch_disabled(config, name):
         return False
     if not isinstance(task, dict) or task_is_sidecar(task):
         return True
@@ -4333,6 +4401,7 @@ def ready_dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("finalize_statuses", ["review_approved"])
     settings.setdefault("owned_statuses", ["in_progress", "todo"])
     settings.setdefault("sidecar_only_agents", [])
+    settings.setdefault("disabled_agents", [])
     legacy_done_statuses = settings.get("done_statuses", ["done", "review_approved"])
     settings.setdefault("dependency_done_statuses", ["done"])
     settings.setdefault("worker_terminal_statuses", legacy_done_statuses)
@@ -4480,11 +4549,11 @@ def dynamic_sidecar_kind(task: dict[str, Any]) -> str | None:
 
 def preferred_agents_for_sidecar(kind: str) -> list[str]:
     mapping = {
-        "review_packet": ["Qwen", "Codex", "Copilot", "Claude", "Gemini"],
-        "acceptance_packet": ["Codex", "Qwen", "Copilot", "Claude", "Gemini"],
-        "bff_handoff_packet": ["Copilot", "Codex", "Qwen", "Claude", "Gemini"],
+        "review_packet": ["Codex2", "Codex", "Claude"],
+        "acceptance_packet": ["Codex", "Codex2", "Claude"],
+        "bff_handoff_packet": ["Claude", "Codex", "Codex2"],
     }
-    return mapping.get(kind, ["Codex", "Qwen", "Copilot", "Claude", "Gemini"])
+    return mapping.get(kind, ["Codex", "Codex2", "Claude"])
 
 
 def normalize_mainline_task_assignment(config: dict[str, Any], task: dict[str, Any]) -> bool:
@@ -5225,7 +5294,7 @@ def choose_helper_claim_agent(
     fallbacks = normalized_mapping_values(worker_reassignment_settings(config).get("owner_fallbacks", {}), owner_name)
     if not fallbacks:
         return False
-    if owner_paused and task_status in paused_owner_statuses:
+    if owner_paused:
         return idle_agent_name in fallbacks
     owner_loads = agent_loads.get(owner_name, [])
     if helper_settings.get("require_owner_higher_priority_load", True):

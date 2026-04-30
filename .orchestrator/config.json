@@ -35,9 +35,7 @@
       "Codex",
       "Codex2",
       "Claude",
-      "Claude2",
-      "Copilot",
-      "Gemini"
+      "Claude2"
     ],
     "task_id": "OPS-CHAIR-REVIEW",
     "output_dir": ".orchestrator/chair-reviews",
@@ -94,65 +92,69 @@
     "owner_fallbacks": {
       "Claude": [
         "Codex",
+        "Codex2"
+      ],
+      "Claude2": [
+        "Codex",
         "Codex2",
-        "Copilot",
-        "Gemini"
+        "Claude"
       ],
       "Gemini": [
         "Codex",
         "Codex2",
-        "Claude",
-        "Copilot"
+        "Claude"
+      ],
+      "Gemini2": [
+        "Codex",
+        "Codex2",
+        "Claude"
       ],
       "Codex": [
         "Codex2",
-        "Claude",
-        "Copilot",
-        "Gemini"
+        "Claude"
       ],
       "Codex2": [
         "Codex",
-        "Claude",
-        "Copilot",
-        "Gemini"
+        "Claude"
       ],
       "Copilot": [
         "Codex",
         "Codex2",
-        "Claude",
-        "Gemini"
+        "Claude"
       ]
     },
     "reviewer_fallbacks": {
       "Claude": [
         "Codex",
+        "Codex2"
+      ],
+      "Claude2": [
+        "Codex",
         "Codex2",
-        "Copilot",
-        "Gemini"
+        "Claude"
       ],
       "Gemini": [
         "Codex",
         "Codex2",
-        "Claude",
-        "Copilot"
+        "Claude"
+      ],
+      "Gemini2": [
+        "Codex",
+        "Codex2",
+        "Claude"
       ],
       "Codex": [
         "Codex2",
-        "Claude",
-        "Copilot",
-        "Gemini"
+        "Claude"
       ],
       "Codex2": [
         "Codex",
-        "Claude",
-        "Copilot",
-        "Gemini"
+        "Claude"
       ],
       "Copilot": [
         "Codex",
         "Codex2",
-        "Claude",
-        "Gemini"
+        "Claude"
       ]
     }
   },
@@ -280,6 +282,13 @@
       "adapter": "gemini",
       "wake_template": ".orchestrator/templates/wakeup.txt",
       "file_inbox_path": ".llm-inbox/gemini.md"
+    },
+    "gemini2": {
+      "display_name": "Gemini2",
+      "provider": "gemini2",
+      "adapter": "gemini",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/gemini2.md"
     },
     "codex": {
       "display_name": "Codex",
@@ -411,6 +420,31 @@
         "fallback_mode": null
       }
     },
+    "gemini2": {
+      "delivery_mode": "gemini",
+      "allow_inbox_fallback": false,
+      "file_inbox": {
+        "path": ".llm-inbox/gemini2.md",
+        "open_in_vscode": false
+      },
+      "gemini": {
+        "cli": ".orchestrator/bin/gemini2",
+        "home": "/home/edna/.gemini2",
+        "include_directories": true
+      },
+      "approval": {
+        "default_approval_mode": "auto_edit",
+        "workspace_agent_yolo_mode": false,
+        "enable_permanent_tool_approval": true,
+        "auto_add_to_policy_by_default": true,
+        "disable_yolo_mode": false,
+        "disable_always_allow": false
+      },
+      "retry": {
+        "max_attempts": 5,
+        "fallback_mode": null
+      }
+    },
     "codex": {
       "delivery_mode": "codex",
       "file_inbox": {
@@ -507,6 +541,12 @@
       "todo"
     ],
     "sidecar_only_agents": [],
+    "disabled_agents": [
+      "Copilot",
+      "Gemini",
+      "Gemini2",
+      "Qwen"
+    ],
     "dependency_done_statuses": [
       "done"
     ],
