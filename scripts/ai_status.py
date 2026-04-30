@@ -211,6 +211,7 @@ def flatten_canonical_document_layers(layers: dict[str, list[str]]) -> list[str]
 def sync_canonical_document_metadata(state: dict[str, Any]) -> None:
     default_layers = default_canonical_document_layers()
     layers = state.get("canonical_document_layers")
+    merge_default_layers = str(state.get("project") or "").strip() in {"", "pantheon"}
     if not isinstance(layers, dict) or not layers:
         layers = default_layers
     else:
@@ -220,7 +221,7 @@ def sync_canonical_document_metadata(state: dict[str, Any]) -> None:
                 normalized_layers[str(key)] = [str(item) for item in value]
         if not normalized_layers:
             normalized_layers = default_layers
-        else:
+        elif merge_default_layers:
             for key, default_documents in default_layers.items():
                 existing_documents = normalized_layers.get(key, [])
                 merged_documents = list(existing_documents)

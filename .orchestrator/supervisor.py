@@ -4222,7 +4222,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 )
                 generic_threshold = max(1, int(provider_guardrail_settings(config).get("generic_exit_reassign_after", 2)))
                 reassigned_to = None
-                if failure_count >= generic_threshold and not chair_review_settings(config).get("reassignment_actions_enabled", True):
+                if failure_count >= generic_threshold:
                     reassigned_to = maybe_reassign_task_after_worker_failure(
                         config,
                         state,
