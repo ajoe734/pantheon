@@ -1,14 +1,14 @@
 # Qlib Production Activation Packet
 
-Last updated: 2026-04-29
-Owner: APP-003-QLIB-ACTIVATION-001 (Codex2)
-Reviewer: Codex
-Status: prepared for first governed LightGBM alpha activation; data-gated
+Last updated: 2026-04-30
+Owner: SVC-QLIB-ACTIVATION-READY-ADAPTER (Codex)
+Reviewer: Claude2
+Status: activation-ready behind explicit offline gates; production remains data-gated
 
 ## 1. Purpose
 
 This packet is the reviewable activation surface for the `Qlib` row after the
-adapter and smoke baseline landed under `OSS-NEXT-001`.
+adapter moved from smoke-only packaging to an activation-ready offline worker.
 
 It does two things:
 
@@ -17,17 +17,32 @@ It does two things:
    production LightGBM alpha run may start
 
 This packet does **not** claim that Qlib is production-activated today. It
-formalizes that the remaining blockers are RS-003 and governed market-data
-gates, not missing repo-local adapter code.
+formalizes that the repo-local adapter, worker, artifact handoff, and gateway
+offline execution path are ready, while production remains blocked on RS-003,
+governed market-data, and StrategySpec evidence gates.
 
 ## 2. Current Disposition
 
-Current row status remains `smoke-tested`.
+Current checklist row status remains `smoke-tested` because the checklist has no
+separate `activation-ready` state and production activation is not open.
 
-Repo-local truth as of 2026-04-29:
+Repo-local truth as of 2026-04-30:
 
 - the governed Qlib adapter exists at `services/research/qlib/adapter/qlib_adapter.py`
 - the offline pre-activation preflight scaffold exists at `services/research/qlib/preflight.py`
+- `validate_activation_ready_dataset()` enforces the >=50 instrument, >=2 year,
+  >=504 daily-period production data floors before training when
+  `enforce_activation_ready=True`
+- `persist_qlib_run_artifacts()` writes `artifact_bundle.json`, `registry_entry.json`,
+  `candidate_packet.json`, and `manifest.json` without writing registry truth
+- `services/research/qlib/worker.py` is fail-closed unless
+  `PANTHEON_QLIB_ACTIVATION_READY_ENABLED=1` is set, and it requires explicit
+  `QLIB_BACKEND=stub|real`
+- selecting `QLIB_BACKEND=real` runs `QlibLightGBMBackend` or returns the explicit
+  `Install services/research/qlib/requirements.txt first` error
+- `services/research-worker-gateway` can execute the Qlib worker only under
+  `PANTHEON_OFFLINE_GATE_ENABLED=true`; production/paper/canary/live remain
+  rejected
 - the default smoke path still passes via `python3 services/research/qlib/smoke_test.py`
 - unit coverage still passes via
   `python3 -m unittest discover -s services/research/qlib -p 'test_*.py'`
@@ -36,8 +51,8 @@ Repo-local truth as of 2026-04-29:
 
 The gate is therefore cleared only in the truthful sense:
 
-- all repo-local code gates are closed
-- the first governed LightGBM activation packet is now prepared
+- all repo-local safety gates are closed by default
+- the first governed LightGBM activation-ready handoff is now prepared
 - the actual production LightGBM run must wait until the upstream strategy and
   governed dataset gates are proven
 
@@ -91,6 +106,8 @@ following evidence to the execution/review lane:
    - canonical `artifact_state=draft`
    - `deployment_summary.current_stage=none`
    - lineage refs back to source dataset and source strategy spec
+   - non-writing `candidate_packet` requesting only `draft -> candidate`
+   - artifact manifest with checksum and paths for the persisted handoff files
 
 The governed output target remains unchanged:
 
@@ -103,7 +120,7 @@ The governed output target remains unchanged:
 
 ## 5. Verification Snapshot
 
-Revalidated in this session on 2026-04-29:
+Revalidated in this session on 2026-04-30:
 
 1. `python3 services/research/qlib/smoke_test.py`
    - Result: passed
@@ -111,10 +128,25 @@ Revalidated in this session on 2026-04-29:
    - Output confirms `artifact_state=draft`, `deployment_stage=none`, and
      governed storage under `research/qlib/`
 2. `python3 -m unittest discover -s services/research/qlib -p 'test_*.py'`
-   - Result: 19 tests passed, including the fail-closed preflight checks
+   - Result: 28 tests passed, including preflight, activation-ready data floors,
+     candidate packet, persistence, explicit backend error, and fail-closed worker checks
+3. `pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py`
+   - Result: 2 tests passed
+   - Closed gate: Qlib offline dispatch is rejected
+   - Open gate: Qlib worker runs with explicit env gate, enforces data floors,
+     persists handoff artifacts, and leaves production activation disabled
+4. `python3 -m pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py services/research-worker-gateway/tests/test_research_worker_gateway_gate_dispatch.py`
+   - Result: 11 tests passed
+   - Confirms closed-gate rejection, open-gate offline subprocess execution,
+     stdout/stderr/exit-code persistence, capability gate metadata, and
+     paper/canary/live fail-closed behavior
+5. `python3 -m pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_rejection_policy.py services/research-worker-gateway/tests/test_research_worker_gateway_http_service.py`
+   - Result: 9 tests passed
+   - Confirms the pre-existing rejection and HTTP contract still fail closed
 
-These checks prove the adapter is still runnable and governance-safe. They do
-not satisfy the production activation thresholds by themselves.
+These checks prove the adapter is activation-ready for offline gated research
+handoff and governance-safe. They do not satisfy the production activation
+thresholds by themselves.
 
 ## 6. Disposition
 
@@ -128,5 +160,5 @@ The truthful next action is:
 4. execute the first governed LightGBM activation through `QlibLightGBMBackend`
 5. submit the resulting `qlib_alpha` artifact for registry admission
 
-Until those five items exist, the row is prepared for activation but still
-blocked from production use.
+Until those five items exist, the row is activation-ready behind offline gates
+but still blocked from production use.

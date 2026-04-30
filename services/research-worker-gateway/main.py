@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
@@ -18,6 +21,7 @@ PRODUCTION_MODES = {"production", "paper", "canary", "live"}
 ACTIVE_STATUSES = {"queued", "running", "cancel_requested"}
 TERMINAL_STATUSES = {"completed", "failed", "canceled", "rejected"}
 FAIL_CLOSED_SCOPE = "capability_metadata_read_only"
+OFFLINE_DISPATCH_ENABLED_SCOPE = "offline_worker_dispatch_enabled"
 
 WORKER_REGISTRY: Dict[str, Dict[str, Any]] = {
     "stub": {
@@ -38,9 +42,10 @@ WORKER_REGISTRY: Dict[str, Dict[str, Any]] = {
     "qlib": {
         "status": "deferred",
         "entrypoint": "services/research/qlib/worker.py",
-        "activation_gate": "services/research/qlib/requirements.txt",
+        "activation_gate": "PANTHEON_QLIB_ACTIVATION_READY_ENABLED",
         "gate_state": "fail_closed",
         "allowed_scope": FAIL_CLOSED_SCOPE,
+        "preflight": "services/research/qlib/preflight.py",
     },
     "finrl": {
         "status": "deferred",
@@ -108,6 +113,9 @@ WORKER_REGISTRY: Dict[str, Dict[str, Any]] = {
 }
 
 
+OFFLINE_WORKERS: set[str] = {w for w, meta in WORKER_REGISTRY.items() if "entrypoint" in meta}
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -124,14 +132,44 @@ def _production_adapters_allowed() -> bool:
     return os.getenv("RESEARCH_WORKER_GATEWAY_ENABLE_PRODUCTION_ADAPTERS", "false").lower() == "true"
 
 
+def _offline_gate_enabled() -> bool:
+    return os.getenv("PANTHEON_OFFLINE_GATE_ENABLED", "false").lower() == "true"
+
+
 def _orchestrator_url() -> str:
     return os.getenv("RESEARCH_ORCHESTRATOR_URL", "http://research-orchestrator-svc:8101")
+
+
+def _repo_root() -> str:
+    return os.getenv("PANTHEON_REPO_ROOT", str(Path(__file__).resolve().parents[2]))
 
 
 DATA_DIR = _data_dir()
 MAX_ACTIVE_JOBS = _max_active_jobs()
 PRODUCTION_ADAPTERS_ALLOWED = _production_adapters_allowed()
+OFFLINE_GATE_ENABLED = _offline_gate_enabled()
 ORCHESTRATOR_URL = _orchestrator_url()
+
+
+def _execute_worker(entrypoint: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute a declared worker entrypoint as a subprocess when the offline gate is open."""
+    entrypoint_abs = os.path.join(_repo_root(), entrypoint)
+    env = dict(os.environ)
+    env.update({str(k): str(v) for k, v in parameters.items() if isinstance(v, (str, int, float, bool))})
+    timeout = int(os.getenv("PANTHEON_OFFLINE_WORKER_TIMEOUT", "300"))
+    try:
+        result = subprocess.run(
+            [sys.executable, entrypoint_abs],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+        )
+        return {"stdout": result.stdout, "stderr": result.stderr, "exit_code": result.returncode}
+    except subprocess.TimeoutExpired:
+        return {"stdout": "", "stderr": f"Worker entrypoint timed out after {timeout}s", "exit_code": -1}
+    except Exception as exc:
+        return {"stdout": "", "stderr": str(exc), "exit_code": -2}
 
 
 def _next_id(prefix: str, timestamp: str, existing: set[str]) -> str:
@@ -177,6 +215,7 @@ def _flatten_request_text(body: "DispatchJobBody") -> str:
 
 def _rejection_for(body: "DispatchJobBody", worker: str, requested_mode: str, dispatch_mode: str, timestamp: str) -> Optional[Dict[str, Any]]:
     request_text = _flatten_request_text(body)
+    # Absolute safety boundaries — always blocked regardless of gate state.
     if "ep5" in request_text or "production_training" in request_text or "production-learning" in request_text:
         return {
             "reason": "learning_activation_disabled",
@@ -205,7 +244,8 @@ def _rejection_for(body: "DispatchJobBody", worker: str, requested_mode: str, di
             "rejected_at": timestamp,
             "rejected_by": "research-worker-gateway",
         }
-    if worker in PRODUCTION_WORKERS or requested_mode in PRODUCTION_MODES:
+    # Production/paper/canary/live modes are always fail-closed, even when offline gate is open.
+    if requested_mode in PRODUCTION_MODES:
         return {
             "reason": "production_adapter_disabled",
             "detail": "Production research adapters and paper/canary/live modes are fail-closed in this service boundary.",
@@ -219,10 +259,29 @@ def _rejection_for(body: "DispatchJobBody", worker: str, requested_mode: str, di
             "rejected_at": timestamp,
             "rejected_by": "research-worker-gateway",
         }
+    # Offline gate path: when PANTHEON_OFFLINE_GATE_ENABLED is set and dispatch_mode is "offline",
+    # allow workers with declared local entrypoints to execute.
+    if OFFLINE_GATE_ENABLED and dispatch_mode == "offline":
+        if worker in OFFLINE_WORKERS:
+            return None
+        return {
+            "reason": "offline_dispatch_not_available",
+            "detail": f"Worker '{worker}' has no declared local entrypoint for offline dispatch.",
+            "rejected_at": timestamp,
+            "rejected_by": "research-worker-gateway",
+        }
+    # Standard safe dispatch path.
     if dispatch_mode not in SAFE_DISPATCH_MODES:
         return {
             "reason": "dispatch_mode_disabled",
             "detail": "Only stub, handoff_only, and manual dispatch modes are enabled.",
+            "rejected_at": timestamp,
+            "rejected_by": "research-worker-gateway",
+        }
+    if worker in PRODUCTION_WORKERS:
+        return {
+            "reason": "production_adapter_disabled",
+            "detail": "Production research adapters and paper/canary/live modes are fail-closed in this service boundary.",
             "rejected_at": timestamp,
             "rejected_by": "research-worker-gateway",
         }
@@ -298,19 +357,30 @@ def health() -> Dict[str, Any]:
 
 @app.get("/api/research-worker-gateway/capabilities")
 def capabilities() -> Dict[str, Any]:
+    def _effective_metadata(worker: str, meta: Dict[str, Any]) -> Dict[str, Any]:
+        if OFFLINE_GATE_ENABLED and worker in OFFLINE_WORKERS:
+            updated = dict(meta)
+            updated["gate_state"] = "activation_ready"
+            updated["allowed_scope"] = OFFLINE_DISPATCH_ENABLED_SCOPE
+            updated["offline_dispatch"] = "enabled"
+            return updated
+        return meta
+
     return {
         "service": "research-worker-gateway",
         "default_dispatch_mode": "stub",
         "production_activation": "disabled",
+        "offline_gate": "enabled" if OFFLINE_GATE_ENABLED else "disabled",
         "bounded_dispatch": {"max_active_jobs": MAX_ACTIVE_JOBS},
         "safety_boundary": {
             "registry_writes": "disabled",
             "governance_writes": "disabled",
             "lean_execution": "disabled",
             "ep5_activation": "disabled",
+            "paper_canary_live": "disabled",
         },
         "capabilities": [
-            {"worker": worker, **metadata}
+            {"worker": worker, **_effective_metadata(worker, metadata)}
             for worker, metadata in sorted(WORKER_REGISTRY.items())
         ],
     }
@@ -334,27 +404,36 @@ def dispatch_job(body: DispatchJobBody) -> Dict[str, Any]:
 
     job_id = _next_id("wjob", timestamp, {str(job.get("job_id") or "") for job in store.list_jobs()})
     events: List[Dict[str, Any]] = []
-    status = "rejected" if rejection else "queued"
-    summary = rejection["detail"] if rejection else "Safe research worker gateway job queued for stub dispatch."
-    events.append(_event(timestamp, "job_rejected" if rejection else "job_queued", summary, body.actor_id, job_id, events))
+    is_offline_dispatch = rejection is None and OFFLINE_GATE_ENABLED and dispatch_mode == "offline" and worker in OFFLINE_WORKERS
+    if rejection:
+        status = "rejected"
+        summary = rejection["detail"]
+    elif is_offline_dispatch:
+        status = "running"
+        summary = f"Offline-gated worker '{worker}' dispatch started; entrypoint will be executed."
+    else:
+        status = "queued"
+        summary = "Safe research worker gateway job queued for stub dispatch."
+    events.append(_event(timestamp, "job_rejected" if rejection else "job_dispatched" if is_offline_dispatch else "job_queued", summary, body.actor_id, job_id, events))
 
     output_refs: List[Dict[str, Any]] = []
     if rejection is None:
+        output_type = "offline_execution_output" if is_offline_dispatch else "dispatch_stub"
         output_id = _next_id("wgout", timestamp, {str(output.get("output_id") or "") for output in store.list_outputs()})
         output = store.put_output(
             {
                 "id": output_id,
                 "output_id": output_id,
                 "job_id": job_id,
-                "output_type": "dispatch_stub",
+                "output_type": output_type,
                 "storage_ref": f"research-worker-gateway://jobs/{job_id}",
-                "summary": "Queued safe stub dispatch; no production worker process was started.",
+                "summary": "Offline worker execution output ref." if is_offline_dispatch else "Queued safe stub dispatch; no production worker process was started.",
                 "created_at": timestamp,
             }
         )
         output_refs.append({"output_id": output["output_id"], "output_type": output["output_type"]})
 
-    job = {
+    job: Dict[str, Any] = {
         "id": job_id,
         "job_id": job_id,
         "worker": worker,
@@ -368,6 +447,8 @@ def dispatch_job(body: DispatchJobBody) -> Dict[str, Any]:
         "input_refs": body.input_refs,
         "parameters": body.parameters,
         "output_refs": output_refs,
+        "stdout": None,
+        "stderr": None,
         "exit_code": None,
         "created_by": body.actor_id,
         "created_at": timestamp,
@@ -377,6 +458,30 @@ def dispatch_job(body: DispatchJobBody) -> Dict[str, Any]:
         "cancel_reason": None,
         "events": events,
     }
+
+    if is_offline_dispatch:
+        entrypoint = WORKER_REGISTRY[worker]["entrypoint"]
+        execution = _execute_worker(entrypoint, body.parameters)
+        job["stdout"] = execution["stdout"]
+        job["stderr"] = execution["stderr"]
+        job["exit_code"] = execution["exit_code"]
+        completed_at = utc_now()
+        job["status"] = "completed" if execution["exit_code"] == 0 else "failed"
+        job["updated_at"] = completed_at
+        done_event = _event(
+            completed_at,
+            "job_completed" if execution["exit_code"] == 0 else "job_failed",
+            f"Worker exit_code={execution['exit_code']}",
+            "system",
+            job_id,
+            events,
+        )
+        job["events"] = events + [done_event]
+        store.put_job(job)
+        store.append_event(events[0])
+        store.append_event(done_event)
+        return job
+
     store.put_job(job)
     for event in events:
         store.append_event(event)
@@ -425,6 +530,8 @@ def get_job_status(job_id: str) -> Dict[str, Any]:
         "rejection": job.get("rejection"),
         "cancel_reason": job.get("cancel_reason"),
         "output_refs": job.get("output_refs", []),
+        "stdout": job.get("stdout"),
+        "stderr": job.get("stderr"),
         "exit_code": job.get("exit_code"),
         "events": job.get("events", []),
         "updated_at": job.get("updated_at"),

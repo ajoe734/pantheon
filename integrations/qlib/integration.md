@@ -1,9 +1,9 @@
 # Qlib Integration — Governed LightGBM Alpha Adapter
 
-Last updated: 2026-04-24
-Owner: APP-003-QLIB-ACTIVATION-001 (Codex2)
-Reviewer: Codex
-Status: smoke-tested governed adapter verified; activation packet prepared
+Last updated: 2026-04-30
+Owner: SVC-QLIB-ACTIVATION-READY-ADAPTER (Codex)
+Reviewer: Claude2
+Status: activation-ready offline adapter verified; production gates remain closed
 Implementation home: `services/research/qlib/`
 
 ## 1. Locked Upstream Selection
@@ -29,9 +29,11 @@ Accepted mode:
 
 - governed OHLCV data is validated and feature-engineered before Qlib sees it
 - Qlib LightGBM training runs inside `services/research/qlib/`
-- the adapter emits a governed `qlib_alpha` artifact bundle and a registry-ready entry
+- the adapter emits a governed `qlib_alpha` artifact bundle, a registry-ready entry,
+  and a non-writing candidate packet for registry review
 - the default CI path uses a deterministic stub backend (no Qlib install required)
-- worker/runtime paths can switch to the real Qlib `LGBModel` backend
+- worker/runtime paths require explicit activation-ready env gating and can switch
+  to the real Qlib `LGBModel` backend
 
 Rejected mode:
 
@@ -48,6 +50,8 @@ The runnable adapter path is implemented and exercised:
   - `GovernedQlibDataAdapter`
   - `StubLightGBMBackend`
   - `QlibLightGBMBackend`
+  - `validate_activation_ready_dataset()`
+  - `persist_qlib_run_artifacts()`
   - `run_qlib_workflow()`
 - `services/research/qlib/smoke_test.py`
 - `services/research/qlib/test_adapter.py`
@@ -66,6 +70,20 @@ The adapter takes governed OHLCV records and emits:
    - `artifact_state=draft`
    - `deployment_summary.current_stage=none`
    - lineage points back to source dataset refs and training run
+3. `candidate_packet`
+   - requests only `draft -> candidate`
+   - keeps `deployment_stage=none`
+   - names `registry_service_only` as the write authority
+   - projects the candidate entry without writing registry truth
+
+Activation-ready data floors are enforced by `validate_activation_ready_dataset()` before
+training when `enforce_activation_ready=True`:
+
+- at least 50 instruments
+- at least 2.0 years of source history
+- at least 504 periods per instrument for the v1 daily lane
+- `data_frequency=daily`
+- a bound `source_strategy_spec_id`
 
 ## 4. Feature Engineering
 
@@ -84,9 +102,15 @@ framing (predict next-day returns, not sequential decisions).
 ## 5. Runtime and Packaging Notes
 
 - Base worker image: `python:3.11-slim`
-- Default command: `python worker.py` (Dockerfile CMD)
+- Worker command: `python worker.py` after explicitly setting
+  `PANTHEON_QLIB_ACTIVATION_READY_ENABLED=1`
 - Smoke test requires no external dependencies (stub backend)
 - Optional Qlib backend requires `pip install -r services/research/qlib/requirements.txt`
+- `QLIB_BACKEND` must be explicitly set to `stub` or `real`; selecting `real`
+  either runs `QlibLightGBMBackend` or returns the explicit install error from the
+  adapter rather than silently falling back to the stub
+- `QLIB_OUTPUT_DIR` receives `artifact_bundle.json`, `registry_entry.json`,
+  `candidate_packet.json`, and `manifest.json`
 
 Two execution modes are intentionally supported:
 
@@ -102,7 +126,10 @@ That proof exists because:
 - the adapter path is real code, not a placeholder contract
 - the service has a dedicated dependency file and Docker worker image
 - the repo ships an executable smoke test with a governed sample dataset
-- unit tests (14 tests) validate governed filtering and packaging logic
+- unit tests validate governed filtering, activation-ready data floors, candidate
+  packet generation, artifact persistence, and fail-closed worker gating
+- gateway coverage proves Qlib offline dispatch fails closed by default and succeeds
+  only when the offline gate plus Qlib activation-ready env are explicitly set
 - registry output uses canonical `artifact_state` + `deployment_summary.current_stage`
 
 ## 7. Evidence References

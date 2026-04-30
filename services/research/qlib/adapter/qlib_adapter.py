@@ -10,9 +10,11 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import uuid
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import date, datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 
 QLIB_VERSION_PIN = "0.9.6"
@@ -21,6 +23,11 @@ STUB_BACKEND = "stub_lgbm"
 REQUIRED_OHLCV_FIELDS = ("open", "high", "low", "close", "volume")
 MIN_INSTRUMENTS = 2  # smoke-test floor; production requires >=50 (ACTIVATION_CRITERIA §1)
 MIN_PERIODS = 5  # smoke-test floor; production requires 2+ years daily
+ACTIVATION_READY_MIN_INSTRUMENTS = 50
+ACTIVATION_READY_MIN_HISTORY_YEARS = 2.0
+ACTIVATION_READY_MIN_DAILY_PERIODS = 504
+ACTIVATION_READY_ENABLE_ENV_VAR = "PANTHEON_QLIB_ACTIVATION_READY_ENABLED"
+TRUE_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
 def utc_now() -> str:
@@ -39,6 +46,29 @@ class QlibWorkflowError(ValueError):
     """Raised when a governed Qlib workflow cannot be built safely."""
 
 
+class ActivationReadyGate:
+    """Explicit non-default gate for repo-local Qlib activation-ready entrypoints."""
+
+    @classmethod
+    def require_cli_flag(cls, enabled: bool, *, flag_name: str = "--enable-activation-ready") -> None:
+        if enabled:
+            return
+        raise EnvironmentError(
+            "Qlib activation-ready execution is disabled by default. "
+            f"Re-run with {flag_name} to execute this offline gated path."
+        )
+
+    @classmethod
+    def require_env(cls, *, env_var: str = ACTIVATION_READY_ENABLE_ENV_VAR) -> None:
+        raw = os.getenv(env_var, "")
+        if str(raw).strip().lower() in TRUE_ENV_VALUES:
+            return
+        raise EnvironmentError(
+            "Qlib activation-ready execution is disabled by default. "
+            f"Set {env_var}=1 to run this offline gated worker."
+        )
+
+
 @dataclass(frozen=True)
 class PreparedQlibDataset:
     dataset_id: str
@@ -53,6 +83,11 @@ class PreparedQlibDataset:
     data_frequency: str
     num_instruments: int
     num_periods: int
+    min_periods_per_instrument: int
+    history_start: str | None = None
+    history_end: str | None = None
+    history_years: float = 0.0
+    min_instrument_history_years: float = 0.0
 
     @property
     def num_samples(self) -> int:
@@ -75,6 +110,11 @@ class PreparedQlibDataset:
             "feature_names": list(self.feature_names),
             "data_frequency": self.data_frequency,
             "instruments": list(self.instruments),
+            "min_periods_per_instrument": self.min_periods_per_instrument,
+            "history_start": self.history_start,
+            "history_end": self.history_end,
+            "history_years": self.history_years,
+            "min_instrument_history_years": self.min_instrument_history_years,
         }
 
 
@@ -106,6 +146,7 @@ class QlibRunResult:
     training_result: BackendTrainingResult
     artifact_bundle: dict[str, Any]
     registry_entry: dict[str, Any]
+    candidate_packet: dict[str, Any]
 
 
 class LightGBMBackend(Protocol):
@@ -156,6 +197,9 @@ class GovernedQlibDataAdapter:
         all_features: list[tuple[float, ...]] = []
         all_labels: list[float] = []
         all_periods: list[str] = []
+        parsed_dates: list[date] = []
+        instrument_history_years: list[float] = []
+        periods_per_instrument: list[int] = []
 
         for instrument in instruments:
             series = sorted(instrument_series[instrument], key=lambda r: r.get("date", ""))
@@ -163,6 +207,14 @@ class GovernedQlibDataAdapter:
                 raise QlibWorkflowError(
                     f"instrument {instrument} has fewer than {MIN_PERIODS} periods"
                 )
+            periods_per_instrument.append(len(series))
+            instrument_dates = [
+                parsed_date
+                for parsed_date in (_parse_record_date(row.get("date")) for row in series)
+                if parsed_date is not None
+            ]
+            parsed_dates.extend(instrument_dates)
+            instrument_history_years.append(_history_years(instrument_dates))
             closes = [float(r["close"]) for r in series]
             volumes = [float(r["volume"]) for r in series]
             for i in range(2, len(series)):
@@ -181,6 +233,8 @@ class GovernedQlibDataAdapter:
             raise QlibWorkflowError("No usable samples after feature engineering")
 
         periods_unique = tuple(dict.fromkeys(all_periods))
+        history_start = min(parsed_dates).isoformat() if parsed_dates else None
+        history_end = max(parsed_dates).isoformat() if parsed_dates else None
         return PreparedQlibDataset(
             dataset_id=dataset_id,
             strategy_id=strategy_id,
@@ -194,6 +248,14 @@ class GovernedQlibDataAdapter:
             data_frequency=data_frequency,
             num_instruments=len(instruments),
             num_periods=len(periods_unique),
+            min_periods_per_instrument=min(periods_per_instrument) if periods_per_instrument else 0,
+            history_start=history_start,
+            history_end=history_end,
+            history_years=round(_history_years(parsed_dates), 4),
+            min_instrument_history_years=round(
+                min(instrument_history_years) if instrument_history_years else 0.0,
+                4,
+            ),
         )
 
     def _normalize_refs(self, dataset: Mapping[str, Any]) -> list[str]:
@@ -403,19 +465,81 @@ def run_qlib_workflow(
     *,
     backend: LightGBMBackend | None = None,
     config: TrainingConfig | None = None,
+    enforce_activation_ready: bool = False,
 ) -> QlibRunResult:
     prepared = GovernedQlibDataAdapter().prepare(dataset)
+    if enforce_activation_ready:
+        validate_activation_ready_dataset(prepared)
     training_config = config or TrainingConfig()
     trainer = backend or StubLightGBMBackend()
     training_result = trainer.train(prepared, training_config)
     artifact_bundle = _build_artifact_bundle(prepared, training_result, training_config)
     registry_entry = _build_registry_entry(prepared, training_result, artifact_bundle, training_config)
+    candidate_packet = _build_candidate_packet(registry_entry, prepared, training_result)
     return QlibRunResult(
         prepared_dataset=prepared,
         training_result=training_result,
         artifact_bundle=artifact_bundle,
         registry_entry=registry_entry,
+        candidate_packet=candidate_packet,
     )
+
+
+def validate_activation_ready_dataset(dataset: PreparedQlibDataset) -> None:
+    """Enforce Qlib production-data quality floors before model training."""
+    failures: list[str] = []
+    if dataset.num_instruments < ACTIVATION_READY_MIN_INSTRUMENTS:
+        failures.append(
+            f"instrument count {dataset.num_instruments} < {ACTIVATION_READY_MIN_INSTRUMENTS}"
+        )
+    if dataset.history_years < ACTIVATION_READY_MIN_HISTORY_YEARS:
+        failures.append(
+            f"history years {dataset.history_years:.2f} < {ACTIVATION_READY_MIN_HISTORY_YEARS:.1f}"
+        )
+    if dataset.min_instrument_history_years < ACTIVATION_READY_MIN_HISTORY_YEARS:
+        failures.append(
+            "minimum per-instrument history "
+            f"{dataset.min_instrument_history_years:.2f} < {ACTIVATION_READY_MIN_HISTORY_YEARS:.1f}"
+        )
+    if dataset.min_periods_per_instrument < ACTIVATION_READY_MIN_DAILY_PERIODS:
+        failures.append(
+            "minimum periods per instrument "
+            f"{dataset.min_periods_per_instrument} < {ACTIVATION_READY_MIN_DAILY_PERIODS}"
+        )
+    if dataset.data_frequency.lower() != "daily":
+        failures.append(f"data_frequency={dataset.data_frequency!r}, need 'daily' for v1 activation")
+    if not dataset.source_strategy_spec_id:
+        failures.append("source_strategy_spec_id missing")
+    if failures:
+        raise QlibWorkflowError("Activation-ready Qlib data gates failed: " + "; ".join(failures))
+
+
+def persist_qlib_run_artifacts(result: QlibRunResult, output_dir: str | Path) -> dict[str, Any]:
+    """Persist activation-ready handoff artifacts without writing the registry."""
+    base = Path(output_dir)
+    base.mkdir(parents=True, exist_ok=True)
+    files = {
+        "artifact_bundle": base / "artifact_bundle.json",
+        "registry_entry": base / "registry_entry.json",
+        "candidate_packet": base / "candidate_packet.json",
+    }
+    payloads = {
+        "artifact_bundle": result.artifact_bundle,
+        "registry_entry": result.registry_entry,
+        "candidate_packet": result.candidate_packet,
+    }
+    for key, path in files.items():
+        path.write_text(json.dumps(payloads[key], indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    manifest = {
+        "created_at": utc_now(),
+        "registry_id": result.registry_entry["registry_id"],
+        "checksum": result.registry_entry["checksum"],
+        "backend": result.training_result.backend,
+        "files": {key: str(path) for key, path in files.items()},
+    }
+    manifest_path = base / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return manifest
 
 
 def _build_artifact_bundle(
@@ -502,8 +626,83 @@ def _build_registry_entry(
             "num_instruments": dataset.num_instruments,
             "num_samples": dataset.num_samples,
             "data_frequency": dataset.data_frequency,
+            "entry_criteria_satisfied": {
+                "version_pinned": True,
+                "governed_data_adapter_present": True,
+                "lightgbm_backend_present": True,
+                "activation_ready_data_volume_met": (
+                    dataset.num_instruments >= ACTIVATION_READY_MIN_INSTRUMENTS
+                    and dataset.history_years >= ACTIVATION_READY_MIN_HISTORY_YEARS
+                    and dataset.min_instrument_history_years >= ACTIVATION_READY_MIN_HISTORY_YEARS
+                    and dataset.min_periods_per_instrument >= ACTIVATION_READY_MIN_DAILY_PERIODS
+                    and dataset.data_frequency.lower() == "daily"
+                ),
+                "source_strategy_spec_bound": bool(dataset.source_strategy_spec_id),
+            },
         },
         "approved_at": None,
         "approver": None,
         "rollback_target": None,
     }
+
+
+def _build_candidate_packet(
+    registry_entry: Mapping[str, Any],
+    dataset: PreparedQlibDataset,
+    result: BackendTrainingResult,
+) -> dict[str, Any]:
+    candidate_projection = copy.deepcopy(dict(registry_entry))
+    candidate_projection["artifact_state"] = "candidate"
+    candidate_projection["deployment_summary"] = {"current_stage": "none"}
+    candidate_projection.setdefault("metadata", {})[
+        "candidate_promotion_scope"
+    ] = "offline_alpha_model_review_only"
+    return {
+        "packet_id": f"qlib-candidate-{dataset.strategy_id}",
+        "current_artifact_state": registry_entry["artifact_state"],
+        "requested_artifact_state": "candidate",
+        "deployment_stage": registry_entry["deployment_summary"]["current_stage"],
+        "gate_state": "closed",
+        "allowed_next_action": "offline_registry_review_only",
+        "registry_write_authority": "registry_service_only",
+        "required_checks": [
+            "RS-003 candidate proof and StrategySpec binding must remain attached.",
+            "Governed data floors must remain satisfied before candidate admission.",
+            "Qlib alpha output is scoring-only and must not route to LEAN directly.",
+            "Registry admission must happen through the registry service, never this adapter.",
+        ],
+        "source_run_id": result.run_id,
+        "source_dataset_refs": list(dataset.source_dataset_refs),
+        "dataset_floor_summary": {
+            "num_instruments": dataset.num_instruments,
+            "history_years": dataset.history_years,
+            "min_instrument_history_years": dataset.min_instrument_history_years,
+            "min_periods_per_instrument": dataset.min_periods_per_instrument,
+            "data_frequency": dataset.data_frequency,
+        },
+        "candidate_registry_projection": candidate_projection,
+        "evaluator_handoff": {
+            "consumer": "EV-001",
+            "model_family": "qlib_alpha",
+            "candidate_use": "offline_review_only",
+            "minimum_artifact_state_for_scoring": "approved",
+        },
+    }
+
+
+def _parse_record_date(value: Any) -> date | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip()
+    try:
+        return date.fromisoformat(raw[:10])
+    except ValueError:
+        return None
+
+
+def _history_years(values: Sequence[date]) -> float:
+    if len(values) < 2:
+        return 0.0
+    start = min(values)
+    end = max(values)
+    return max((end - start).days / 365.25, 0.0)

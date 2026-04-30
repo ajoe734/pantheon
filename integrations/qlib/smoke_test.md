@@ -1,9 +1,9 @@
 # Qlib Integration — Smoke Test
 
-Last updated: 2026-04-24
-Owner: APP-003-QLIB-ACTIVATION-001 (Codex2)
-Reviewer: Codex
-Status: executable smoke path revalidated
+Last updated: 2026-04-30
+Owner: SVC-QLIB-ACTIVATION-READY-ADAPTER (Codex)
+Reviewer: Claude2
+Status: smoke and activation-ready offline path revalidated
 Primary entrypoint: `python3 services/research/qlib/smoke_test.py`
 
 ## 1. Objective
@@ -42,6 +42,12 @@ Unit coverage:
 python3 -m unittest discover -s services/research/qlib -p 'test_*.py'
 ```
 
+Gateway activation-ready offline path:
+
+```bash
+pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py
+```
+
 ## 4. What the Smoke Path Verifies
 
 The smoke script loads `examples/equity_dataset_sample.json` and proves that:
@@ -53,6 +59,10 @@ The smoke script loads `examples/equity_dataset_sample.json` and proves that:
 5. the artifact carries a `sha256:` checksum and a governed storage path
 6. `governance.direct_live_influence` is `false`
 7. `governance.lean_consumption` is `scoring_only_not_direct_action`
+8. `candidate_packet` requests only `draft -> candidate` and declares
+   `registry_service_only` as write authority
+9. activation-ready data floors fail closed for insufficient datasets
+10. worker execution requires `PANTHEON_QLIB_ACTIVATION_READY_ENABLED=1`
 
 ## 5. Verified Result
 
@@ -73,11 +83,24 @@ Revalidated on 2026-04-24 with the default stub backend:
 - `mse = 3.5745e-05`
 - assertions: OK
 
-Unit coverage result on 2026-04-24:
+Unit coverage result on 2026-04-30:
 
 - `python3 -m unittest discover -s services/research/qlib -p 'test_*.py'`
-- `Ran 14 tests`
+- `Ran 28 tests`
 - `OK`
+
+Gateway path result on 2026-04-30:
+
+- `pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py`
+- `2 passed`
+- closed gate rejects Qlib offline dispatch
+- open offline gate plus Qlib env gate executes the worker and persists handoff artifacts
+- combined activation/dispatch verification also passed:
+  `python3 -m pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py services/research-worker-gateway/tests/test_research_worker_gateway_gate_dispatch.py`
+  (`11 passed`)
+- rejection/http regression verification also passed:
+  `python3 -m pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_rejection_policy.py services/research-worker-gateway/tests/test_research_worker_gateway_http_service.py`
+  (`9 passed`)
 
 ## 6. Acceptance
 
@@ -87,4 +110,6 @@ Treat the Qlib row as smoke-proven when:
 - the workflow emits a registry_id and governed storage path
 - `artifact_state=draft` and `deployment_stage=none` are confirmed
 - `direct_live_influence=false` is confirmed
-- unit coverage still passes (14 tests)
+- candidate packet and artifact manifest are emitted without registry writes
+- unit coverage still passes (28 tests)
+- gateway Qlib activation test still proves closed-gate rejection and explicit-gate offline success

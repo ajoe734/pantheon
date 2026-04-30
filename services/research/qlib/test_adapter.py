@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import copy
+import os
+import subprocess
 import sys
+import tempfile
 import types
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,12 +17,15 @@ if str(SERVICE_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICE_DIR))
 
 from adapter.qlib_adapter import (
+    ActivationReadyGate,
     GovernedQlibDataAdapter,
     QlibLightGBMBackend,
     QlibWorkflowError,
     StubLightGBMBackend,
     TrainingConfig,
+    persist_qlib_run_artifacts,
     run_qlib_workflow,
+    validate_activation_ready_dataset,
 )
 
 MINIMAL_DATASET = {
@@ -173,6 +180,24 @@ class TestQlibLightGBMBackend(unittest.TestCase):
         self.assertEqual(FakeLGBModel.predict_segments, ["valid"])
         self.assertIsNotNone(FakeLGBModel.fit_dataset)
 
+    def test_missing_upstream_backend_raises_explicit_install_error(self) -> None:
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fail_qlib_import(name, *args, **kwargs):
+            if name == "qlib" or name.startswith("qlib."):
+                raise ImportError("qlib missing")
+            return real_import(name, *args, **kwargs)
+
+        prepared = GovernedQlibDataAdapter().prepare(MINIMAL_DATASET)
+        with patch("builtins.__import__", side_effect=fail_qlib_import):
+            with self.assertRaisesRegex(
+                QlibWorkflowError,
+                "Install services/research/qlib/requirements.txt",
+            ):
+                QlibLightGBMBackend().train(prepared, TrainingConfig())
+
 
 class TestRunQlibWorkflow(unittest.TestCase):
 
@@ -202,6 +227,107 @@ class TestRunQlibWorkflow(unittest.TestCase):
         result = run_qlib_workflow(MINIMAL_DATASET)
         gov = result.artifact_bundle["governance"]
         self.assertEqual(gov["lean_consumption"], "scoring_only_not_direct_action")
+
+    def test_candidate_packet_targets_candidate_without_registry_write(self) -> None:
+        result = run_qlib_workflow(MINIMAL_DATASET)
+        packet = result.candidate_packet
+        self.assertEqual(packet["current_artifact_state"], "draft")
+        self.assertEqual(packet["requested_artifact_state"], "candidate")
+        self.assertEqual(packet["deployment_stage"], "none")
+        self.assertEqual(packet["registry_write_authority"], "registry_service_only")
+        self.assertEqual(packet["candidate_registry_projection"]["artifact_state"], "candidate")
+        self.assertEqual(packet["evaluator_handoff"]["minimum_artifact_state_for_scoring"], "approved")
+
+    def test_activation_ready_data_floors_reject_small_dataset(self) -> None:
+        result = run_qlib_workflow(MINIMAL_DATASET)
+        with self.assertRaisesRegex(QlibWorkflowError, "Activation-ready Qlib data gates failed"):
+            validate_activation_ready_dataset(result.prepared_dataset)
+
+    def test_activation_ready_data_floors_accept_large_dataset(self) -> None:
+        result = run_qlib_workflow(
+            _activation_ready_dataset(),
+            enforce_activation_ready=True,
+            config=TrainingConfig(n_estimators=10),
+        )
+        self.assertEqual(result.prepared_dataset.num_instruments, 50)
+        self.assertGreaterEqual(result.prepared_dataset.min_periods_per_instrument, 504)
+        self.assertTrue(
+            result.registry_entry["metadata"]["entry_criteria_satisfied"][
+                "activation_ready_data_volume_met"
+            ]
+        )
+
+    def test_persist_artifacts_writes_handoff_files(self) -> None:
+        result = run_qlib_workflow(MINIMAL_DATASET)
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = persist_qlib_run_artifacts(result, tmp)
+            self.assertIn("candidate_packet", manifest["files"])
+            self.assertEqual(manifest["checksum"], result.registry_entry["checksum"])
+            for path in manifest["files"].values():
+                self.assertTrue(os.path.exists(path))
+
+
+class TestActivationReadyGate(unittest.TestCase):
+    def test_cli_gate_requires_explicit_flag(self) -> None:
+        with self.assertRaises(EnvironmentError):
+            ActivationReadyGate.require_cli_flag(False)
+
+    def test_env_gate_requires_explicit_enable(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PANTHEON_QLIB_ACTIVATION_READY_ENABLED", None)
+            with self.assertRaises(EnvironmentError):
+                ActivationReadyGate.require_env()
+
+    def test_env_gate_accepts_enabled_value(self) -> None:
+        with patch.dict(os.environ, {"PANTHEON_QLIB_ACTIVATION_READY_ENABLED": "1"}, clear=False):
+            ActivationReadyGate.require_env()
+
+    def test_worker_entrypoint_requires_env_gate(self) -> None:
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key != "PANTHEON_QLIB_ACTIVATION_READY_ENABLED"
+        }
+        proc = subprocess.run(
+            [sys.executable, str(SERVICE_DIR / "worker.py")],
+            cwd=str(SERVICE_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("disabled by default", proc.stderr)
+
+
+def _activation_ready_dataset() -> dict:
+    records = []
+    start = date(2024, 1, 1)
+    for inst_idx in range(50):
+        instrument = f"SYM{inst_idx:03d}"
+        base = 100.0 + inst_idx
+        for period_idx in range(504):
+            day = start + timedelta(days=period_idx * 2)
+            close = base + period_idx * 0.05
+            records.append(
+                {
+                    "instrument": instrument,
+                    "date": day.isoformat(),
+                    "open": close - 0.2,
+                    "high": close + 0.4,
+                    "low": close - 0.5,
+                    "close": close,
+                    "volume": 1_000_000 + inst_idx * 1000 + period_idx,
+                }
+            )
+    return {
+        "dataset_id": "dataset:activation-ready-daily",
+        "strategy_id": "equity-cross-sectional-alpha",
+        "source_dataset_refs": ["dataset:equity-top50-daily-activation-ready"],
+        "source_strategy_spec_id": "strategy-spec:rs003-alpha-v1",
+        "data_frequency": "daily",
+        "records": records,
+    }
 
 
 if __name__ == "__main__":
