@@ -65,6 +65,7 @@ from tool_workflow_bridge import (  # noqa: E402
     BridgeError,
     ToolPolicy,
     ToolWorkflowBridge,
+    _ALWAYS_BLOCKED_TOOL_PREFIXES,
     _ALWAYS_BLOCKED_TOOLS,
 )
 
@@ -214,8 +215,73 @@ class TestToolPolicy(unittest.TestCase):
         self.assertIn("allowed_tools", d)
         self.assertIn("allowed_workflows", d)
         self.assertIn("always_blocked_tools", d)
+        self.assertIn("always_blocked_tool_prefixes", d)
         self.assertIn("default_posture", d)
         self.assertEqual(d["default_posture"], "deny_all")
+
+    # ------------------------------------------------------------------
+    # Regression: dotted namespace tool refs must be blocked by prefix
+    # ------------------------------------------------------------------
+
+    def test_dotted_broker_tool_blocked_even_in_allowlist(self):
+        """broker.submit and similar dotted refs must be blocked regardless of allowlist."""
+        dotted_blocked = [
+            "broker.submit", "broker.cancel", "broker.order",
+            "live.trade", "live.execute", "live.place",
+            "paper.backtest", "paper.execute", "paper.run",
+            "capital.bind_pool", "capital.release", "capital.allocate",
+            "canary.deploy", "canary.run",
+            "lean.deploy", "lean.run",
+        ]
+        policy = ToolPolicy(allowed_tools=dotted_blocked)
+        for name in dotted_blocked:
+            d = policy.evaluate_tool(name)
+            self.assertFalse(d.allowed, f"Dotted tool '{name}' should be blocked")
+            self.assertEqual(d.policy_class, "always_blocked", f"Wrong policy_class for '{name}'")
+
+    def test_case_varied_exact_blocked_tool_names_denied(self):
+        """Uppercase/mixed-case variants of always-blocked tool names must be denied."""
+        case_variants = [
+            "BROKER_ORDER", "Broker_Order", "LIVE_ORDER", "Live_Order",
+            "PAPER_ORDER", "Paper_Order", "CAPITAL_BIND", "Capital_Bind",
+            "LEAN_DEPLOY", "Lean_Deploy", "LIVE_EXECUTE", "PAPER_EXECUTE",
+            "CANARY_ORDER", "Submit_Order", "BROKER_SESSION_CREATE",
+        ]
+        policy = ToolPolicy(allowed_tools=case_variants)
+        for name in case_variants:
+            d = policy.evaluate_tool(name)
+            self.assertFalse(d.allowed, f"Case-variant tool '{name}' should be blocked")
+            self.assertEqual(d.policy_class, "always_blocked", f"Wrong policy_class for '{name}'")
+
+    def test_case_varied_dotted_tool_refs_denied(self):
+        """Mixed-case dotted refs like BROKER.SUBMIT must also be blocked."""
+        case_dotted = [
+            "BROKER.SUBMIT", "Broker.Submit", "LIVE.TRADE", "Live.Trade",
+            "PAPER.BACKTEST", "Paper.Backtest", "CAPITAL.BIND_POOL",
+        ]
+        policy = ToolPolicy(allowed_tools=case_dotted)
+        for name in case_dotted:
+            d = policy.evaluate_tool(name)
+            self.assertFalse(d.allowed, f"Case-dotted tool '{name}' should be blocked")
+            self.assertEqual(d.policy_class, "always_blocked", f"Wrong policy_class for '{name}'")
+
+    def test_safe_tools_not_affected_by_prefix_check(self):
+        """Legitimate tool names that share no blocked prefix must still be allowed."""
+        safe_tools = ["search", "summarize", "analyze", "research_scan", "backfill_data"]
+        policy = ToolPolicy(allowed_tools=safe_tools)
+        for name in safe_tools:
+            d = policy.evaluate_tool(name)
+            self.assertTrue(d.allowed, f"Safe tool '{name}' should be allowed")
+            self.assertEqual(d.policy_class, "allowlist")
+
+    def test_all_blocked_tool_prefixes_enforced(self):
+        """Every prefix in _ALWAYS_BLOCKED_TOOL_PREFIXES blocks dotted tool names."""
+        policy = ToolPolicy(allowed_tools=["anything"])
+        for prefix in _ALWAYS_BLOCKED_TOOL_PREFIXES:
+            tool_name = f"{prefix}action"
+            d = policy.evaluate_tool(tool_name)
+            self.assertFalse(d.allowed, f"Tool '{tool_name}' with prefix '{prefix}' should be blocked")
+            self.assertEqual(d.policy_class, "always_blocked")
 
 
 # ---------------------------------------------------------------------------

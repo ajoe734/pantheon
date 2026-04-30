@@ -120,6 +120,15 @@ _ALWAYS_BLOCKED_TOOLS = frozenset({
     "broker_session_cancel",
 })
 
+_ALWAYS_BLOCKED_TOOL_PREFIXES = (
+    "broker.",
+    "live.",
+    "paper.",
+    "canary.",
+    "capital.",
+    "lean.",
+)
+
 _ALWAYS_BLOCKED_WORKFLOW_PREFIXES = (
     "broker.",
     "live.",
@@ -167,12 +176,20 @@ class ToolPolicy:
         return sorted(self._allowed_workflows)
 
     def evaluate_tool(self, tool_name: str) -> PolicyDecision:
-        if tool_name in _ALWAYS_BLOCKED_TOOLS:
+        normalized = tool_name.lower()
+        if normalized in _ALWAYS_BLOCKED_TOOLS:
             return PolicyDecision(
                 allowed=False,
                 reason=f"Tool '{tool_name}' is always blocked (broker/live/paper path).",
                 policy_class="always_blocked",
             )
+        for prefix in _ALWAYS_BLOCKED_TOOL_PREFIXES:
+            if normalized.startswith(prefix):
+                return PolicyDecision(
+                    allowed=False,
+                    reason=f"Tool '{tool_name}' matches always-blocked prefix '{prefix}'.",
+                    policy_class="always_blocked",
+                )
         if not self._allowed_tools:
             return PolicyDecision(
                 allowed=False,
@@ -222,6 +239,7 @@ class ToolPolicy:
             "allowed_tools": self.allowed_tools,
             "allowed_workflows": self.allowed_workflows,
             "always_blocked_tools": sorted(_ALWAYS_BLOCKED_TOOLS),
+            "always_blocked_tool_prefixes": list(_ALWAYS_BLOCKED_TOOL_PREFIXES),
             "always_blocked_workflow_prefixes": list(_ALWAYS_BLOCKED_WORKFLOW_PREFIXES),
             "default_posture": "deny_all",
             "note": (

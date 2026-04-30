@@ -1,8 +1,8 @@
 {
   "project": "pantheon",
-  "sprint": "2026-04-17-full-blueprint-completion",
-  "objective": "把目前 service-layer 藍圖落成可部署 single-VM stack：完成 runtime-control closeout、governance API family、BFF service-backed surfaces、compose smoke，並明確處置 consultation/source-ingest/search 的部署邊界",
-  "updated_at": "2026-04-30T03:43:13Z",
+  "sprint": "2026-04-30-activation-ready-platform-closure",
+  "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；production、paper、canary、live gate 預設仍 fail-closed。",
+  "updated_at": "2026-04-30T06:54:19Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,11 +93,14 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "working",
+      "current_task_ids": [
+        "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE",
+        "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF"
+      ],
       "branch": "feat/claude-execution-control",
-      "next": "",
-      "last_update": "2026-04-30T03:31:23Z"
+      "next": "Fixed tool policy prefix bypass: added _ALWAYS_BLOCKED_TOOL_PREFIXES, case normalization in evaluate_tool, and 5 regression tests for dotted/case-varied dangerous tool names. Full suite: 119/119 pass.",
+      "last_update": "2026-04-30T06:54:19Z"
     },
     {
       "name": "Gemini",
@@ -107,11 +110,14 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "SVC-OPENCLAW-ACTIVATION-READY-E2E",
+        "SVC-SOURCE-SEARCH-PROD-HARDENING"
+      ],
       "branch": "feat/gemini-research-runtime",
-      "next": "",
-      "last_update": "2026-04-30T02:49:29Z"
+      "next": "Assignment created",
+      "last_update": "2026-04-30T06:40:19Z"
     },
     {
       "name": "Codex",
@@ -121,11 +127,14 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "SVC-OPENCLAW-BFF-OPS-SURFACE",
+        "SVC-SEARCH-RETRIEVAL-AND-CUTOFF"
+      ],
       "branch": "feat/codex-collab-system",
-      "next": "",
-      "last_update": "2026-04-30T03:21:02Z"
+      "next": "Assignment created",
+      "last_update": "2026-04-30T06:51:42Z"
     },
     {
       "name": "Codex2",
@@ -135,11 +144,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "working",
+      "current_task_ids": [
+        "SVC-OSS-ACTIVATION-READY-SMOKE-MATRIX"
+      ],
       "branch": "feat/codex-collab-system",
-      "next": "",
-      "last_update": "2026-04-30T03:41:35Z"
+      "next": "Supervisor auto-started SVC-OSS-ACTIVATION-READY-SMOKE-MATRIX after successful dispatch.",
+      "last_update": "2026-04-30T06:54:08Z"
     },
     {
       "name": "Copilot",
@@ -153,7 +164,7 @@
       "current_task_ids": [],
       "branch": "feat/grok-research-critique",
       "next": "",
-      "last_update": "2026-04-30T03:08:29Z"
+      "last_update": "2026-04-30T06:20:56Z"
     },
     {
       "name": "Claude2",
@@ -162,14 +173,365 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "ready",
+      "current_task_ids": [
+        "SVC-SEARCH-INDEXING-PIPELINE"
+      ],
       "branch": "feat/claude2-execution-control",
-      "next": "",
-      "last_update": "2026-04-30T03:18:14Z"
+      "next": "Assignment created",
+      "last_update": "2026-04-30T04:18:52Z"
     }
   ],
-  "tasks": [],
+  "tasks": [
+    {
+      "id": "SVC-OSS-ACTIVATION-READY-SMOKE-MATRIX",
+      "title": "Add activation-ready OSS smoke matrix",
+      "summary_zh": "建立整體 smoke/e2e matrix：證明預設 gate 關閉、測試 gate 開啟時 Qlib/TRL/RL/W&B offline path 可跑並產 artifact，且沒有 registry/governance/live 寫入。",
+      "phase": "OSS Activation-Ready Development",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "in_progress",
+      "depends_on": [
+        "SVC-OSS-ACTIVATION-READY-BFF-OPS"
+      ],
+      "artifacts": [
+        "scripts",
+        "services/research-worker-gateway",
+        "services/research",
+        "services/policy-learning",
+        "services/learning",
+        "services/registry/experiments",
+        "docker-compose.yml"
+      ],
+      "acceptance": [
+        "default matrix proves qlib trl rl wandb paper canary live fail closed",
+        "enabled offline matrix runs bounded jobs and emits artifacts",
+        "no registry governance broker or live writes occur",
+        "compose profiles document activation-ready but disabled posture",
+        "CI friendly focused tests pass"
+      ],
+      "next": "Supervisor auto-started SVC-OSS-ACTIVATION-READY-SMOKE-MATRIX after successful dispatch.",
+      "last_update": "2026-04-30T06:54:08Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-materialization-20260430",
+      "mutates_canonical": true
+    },
+    {
+      "id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE",
+      "title": "Bridge OpenClaw tools and workflows safely",
+      "summary_zh": "建立安全 tool/workflow bridge：Pantheon auth/context 映射、allowed tool policy、request/response audit、錯誤降級；先不碰 broker/live。",
+      "phase": "OpenClaw Activation-Ready Development",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "depends_on": [
+        "SVC-OPENCLAW-UPSTREAM-CLIENT",
+        "SVC-OPENCLAW-SESSION-LIFECYCLE"
+      ],
+      "artifacts": [
+        "services/openclaw-gateway-adapter",
+        "services/control-plane/bff",
+        "services/runtime-manager",
+        "OPENCLAW_RUNTIME_CONTRACT.md"
+      ],
+      "acceptance": [
+        "allowed tool and workflow policy is enforced",
+        "Pantheon operator identity and request context map into upstream calls",
+        "request response audit trail is written",
+        "unknown or disallowed tools fail closed",
+        "no broker paper live execution is enabled by this task"
+      ],
+      "next": "Fixed tool policy prefix bypass: added _ALWAYS_BLOCKED_TOOL_PREFIXES, case normalization in evaluate_tool, and 5 regression tests for dotted/case-varied dangerous tool names. Full suite: 119/119 pass.",
+      "last_update": "2026-04-30T06:54:19Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-materialization-20260430",
+      "mutates_canonical": true
+    },
+    {
+      "id": "SVC-OPENCLAW-PAPER-BROKER-ADAPTER",
+      "title": "Add gated OpenClaw paper broker adapter",
+      "summary_zh": "新增 paper-only broker adapter harness：只在 explicit paper gate 下接 runtime/broker sidecar，支援 order simulation 與 audit；live 仍關。",
+      "phase": "OpenClaw Activation-Ready Development",
+      "owner": "Codex2",
+      "reviewer": "Claude2",
+      "status": "todo",
+      "depends_on": [
+        "SVC-OPENCLAW-SESSION-LIFECYCLE",
+        "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE"
+      ],
+      "artifacts": [
+        "services/openclaw-gateway-adapter",
+        "services/runtime-manager",
+        "services/broker",
+        "docker-compose.yml",
+        "PAPER_CANARY_LIVE_POLICY.md"
+      ],
+      "acceptance": [
+        "paper adapter is disabled by default and requires explicit gate",
+        "paper orders route through simulation path not live broker",
+        "capital and strategy binding checks are enforced",
+        "audit trail captures order intent and result",
+        "tests prove live remains rejected"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-30T04:17:40Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-materialization-20260430",
+      "mutates_canonical": true
+    },
+    {
+      "id": "SVC-OPENCLAW-LIVE-GATE-HARNESS",
+      "title": "Add OpenClaw live gate harness without activation",
+      "summary_zh": "開發 live gate harness 但不啟用 live：human approval、capital binding、kill switch、rollback/error policy 都要在程式上完整，預設仍拒絕。",
+      "phase": "OpenClaw Activation-Ready Development",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "SVC-OPENCLAW-PAPER-BROKER-ADAPTER"
+      ],
+      "artifacts": [
+        "services/openclaw-gateway-adapter",
+        "services/runtime-manager",
+        "services/control-plane/bff",
+        "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md",
+        "ROLLBACK_AND_POSITION_SEMANTICS.md"
+      ],
+      "acceptance": [
+        "live path remains disabled without all gates",
+        "human approval capital binding kill switch and rollback checks are enforced before any live handoff",
+        "missing approval or unsafe capital state fails closed",
+        "tests cover denied live and mocked fully approved dry handoff",
+        "no real broker live execution occurs"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-30T04:17:51Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-materialization-20260430",
+      "mutates_canonical": true
+    },
+    {
+      "id": "SVC-OPENCLAW-BFF-OPS-SURFACE",
+      "title": "Expose OpenClaw operations in BFF",
+      "summary_zh": "補 BFF OpenClaw operator surface：upstream status、session lifecycle、tool/workflow audit、paper/live gate state、degraded reason 都能看見。",
+      "phase": "OpenClaw Activation-Ready Development",
+      "owner": "Codex",
+      "reviewer": "Claude2",
+      "status": "todo",
+      "depends_on": [
+        "SVC-OPENCLAW-SESSION-LIFECYCLE",
+        "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "services/openclaw-gateway-adapter",
+        "docs/pantheon-handoffs"
+      ],
+      "acceptance": [
+        "BFF reads OpenClaw status and sessions through service client",
+        "BFF exposes tool workflow audit and degraded reason",
+        "BFF displays paper and live gate state without enabling them",
+        "operator commands require auth and idempotency",
+        "tests cover healthy degraded and denied states"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-30T04:18:01Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-materialization-20260430",
+      "mutates_canonical": true
+    },
+    {
+      "id": "SVC-OPENCLAW-ACTIVATION-READY-E2E",
+      "title": "Add OpenClaw activation-ready E2E profile",
+      "summary_zh": "建立 OpenClaw fake-upstream + compose/smoke profile：證明 facade、session、tool bridge、paper gate、live deny 全部可驗證。",
+      "phase": "OpenClaw Activation-Ready Development",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "SVC-OPENCLAW-PAPER-BROKER-ADAPTER",
+        "SVC-OPENCLAW-LIVE-GATE-HARNESS",
+        "SVC-OPENCLAW-BFF-OPS-SURFACE"
+      ],
+      "artifacts": [
+        "services/openclaw-gateway-adapter",
+        "services/control-plane/bff",
+        "scripts",
+        "docker-compose.yml",
+        "docs/deployment"
+      ],
+      "acceptance": [
+        "fake upstream E2E covers capabilities sessions tools and paper adapter",
+        "default compose remains degraded safe when upstream absent",
+        "live path is explicitly denied in E2E",
+        "activation-ready profile documents required gates and env vars",
+        "focused tests and compose config pass"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-30T04:18:12Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-materialization-20260430",
+      "mutates_canonical": true
+    },
+    {
+      "id": "SVC-SEARCH-INDEXING-PIPELINE",
+      "title": "Build incremental search indexing pipeline",
+      "summary_zh": "把 search materialized index 推成正式 indexing pipeline：ingest completion trigger、incremental refresh、schema versioned snapshots、freshness SLA 與 retention。",
+      "phase": "Source / Search Platform",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER",
+        "SVC-SOURCE-EVIDENCE-NORMALIZATION"
+      ],
+      "artifacts": [
+        "services/search",
+        "services/source_ingestion",
+        "docker-compose.yml",
+        "scripts/smoke_honest_stack.py"
+      ],
+      "acceptance": [
+        "ingest completion can trigger incremental index refresh",
+        "index snapshots are schema versioned and retained",
+        "normal query path does not rebuild from request documents",
+        "index freshness status is queryable",
+        "tests cover incremental update delete or stale source handling"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-30T04:18:52Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-materialization-20260430",
+      "mutates_canonical": true
+    },
+    {
+      "id": "SVC-SEARCH-RETRIEVAL-AND-CUTOFF",
+      "title": "Harden search retrieval and cut off request document normal path",
+      "summary_zh": "補 retrieval rank/filter/access/citation contract，並把 request-document compatibility 移到 dev/test/deprecated 路徑；staging/prod 正常路徑只走 durable index。",
+      "phase": "Source / Search Platform",
+      "owner": "Codex",
+      "reviewer": "Claude2",
+      "status": "todo",
+      "depends_on": [
+        "SVC-SEARCH-INDEXING-PIPELINE"
+      ],
+      "artifacts": [
+        "services/search",
+        "services/control-plane/bff",
+        "docs/deployment",
+        "scripts"
+      ],
+      "acceptance": [
+        "durable index is the only normal staging production query path",
+        "request document compatibility is dev test or explicitly deprecated only",
+        "ranking filters access control and citations are deterministic",
+        "BFF uses service-backed search client only",
+        "tests cover cutoff and compatibility quarantine"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-30T04:19:02Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-materialization-20260430",
+      "mutates_canonical": true
+    },
+    {
+      "id": "SVC-SOURCE-SEARCH-OPS-BFF",
+      "title": "Expose source and search operations in BFF",
+      "summary_zh": "補 operator ops surface：connector health、crawl runs、DLQ、index freshness、reindex controls、audit/error summary 都透過 service-backed BFF 呈現。",
+      "phase": "Source / Search Platform",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER",
+        "SVC-SEARCH-INDEXING-PIPELINE"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "services/source_ingestion",
+        "services/search",
+        "docs/pantheon-handoffs"
+      ],
+      "acceptance": [
+        "BFF exposes connector health crawl runs DLQ and replay state",
+        "BFF exposes index freshness snapshots and reindex controls",
+        "BFF commands are idempotent and auth guarded",
+        "BFF does not read source or search volumes directly",
+        "tests cover degraded source and stale index states"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-30T04:19:13Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-materialization-20260430",
+      "mutates_canonical": true
+    },
+    {
+      "id": "SVC-SOURCE-SEARCH-PROD-HARDENING",
+      "title": "Harden source and search production posture",
+      "summary_zh": "收斂 source/search staging/prod posture：Postgres/object-store backend 強制、metrics/health/alerts、idempotency、compose profiles、end-to-end smoke。",
+      "phase": "Source / Search Platform",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER",
+        "SVC-SOURCE-EVIDENCE-NORMALIZATION",
+        "SVC-SEARCH-INDEXING-PIPELINE",
+        "SVC-SEARCH-RETRIEVAL-AND-CUTOFF",
+        "SVC-SOURCE-SEARCH-OPS-BFF"
+      ],
+      "artifacts": [
+        "services/source_ingestion",
+        "services/search",
+        "docker-compose.yml",
+        "docker-compose.control.yml",
+        "docker-compose.exec.yml",
+        "env",
+        "docs/deployment",
+        "scripts"
+      ],
+      "acceptance": [
+        "staging production env rejects jsonl only source search backend",
+        "Postgres and object store ownership are documented and enforced",
+        "health live ready metrics expose consistent service state",
+        "idempotency keys protect ingest index and reindex commands",
+        "end-to-end smoke covers connector to evidence to index to BFF query"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-30T04:19:23Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-materialization-20260430",
+      "mutates_canonical": true
+    },
+    {
+      "id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
+      "title": "Prepare SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE BFF and frontend handoff packet",
+      "summary_zh": "平行支援 SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+      "phase": "OpenClaw Activation-Ready Development",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "status": "in_progress",
+      "depends_on": [
+        "SVC-OPENCLAW-UPSTREAM-CLIENT"
+      ],
+      "artifacts": [
+        "support/sidecars/SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE/SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Review changes requested: sidecar packet is stale against current adapter bridge routes. main.py is now 922 lines and exposes /tools/policy, /tools, /tools/invoke, /workflows/trigger, /workflows/jobs/{job_id}, and /audit/invocations. Refresh sections 3/4/6/8 to separate implemented adapter bridge routes from the still-missing BFF composed/frontend contract. See .orchestrator/reviews/SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF-review-codex2.md.",
+      "last_update": "2026-04-30T06:51:44Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE",
+      "helper_kind": "bff_handoff_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    }
+  ],
   "handoffs": [
     {
       "task_id": "LUV-REVIEW-007",
@@ -179,6 +541,78 @@
       "status": "done",
       "created_at": "2026-04-17T11:50:38Z",
       "resolved_at": "2026-04-17T12:39:53Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T06:22:39Z",
+      "resolved_at": "2026-04-30T06:24:14Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T06:28:15Z",
+      "resolved_at": "2026-04-30T06:29:44Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "BFF handoff packet ready for review. Covers: tool/workflow bridge BFF gap matrix (§6 — 8 gap areas), candidate composed route OC-10/OC-11/OC-12/OC-13 surface proposal (§4), operator journey and frontend screen regions (§5), command boundary rules (§4.2), and parent+sidecar reviewer checklists (§7). Ownership transferred from Codex2 draft to Claude; verification confirmed routes match main.py (671 lines), BFF read_store.py OpenClaw consumption (dormant capability projection only), and BFF_SURFACE_INVENTORY.md Appendix A gap (no OC-* tool/workflow surfaces exist). No canonical truth modified.",
+      "status": "done",
+      "created_at": "2026-04-30T06:33:03Z",
+      "resolved_at": "2026-04-30T06:51:44Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T06:38:58Z",
+      "resolved_at": "2026-04-30T06:40:13Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete. Commit 2f9b982. New: tool_workflow_bridge.py (ToolPolicy deny-by-default, BridgeAuditLog JSONL, ToolWorkflowBridge with operator context mapping), 7 new routes in main.py, upstream client extended with tool/workflow methods, 51 new tests all pass (114 total). OPENCLAW_RUNTIME_CONTRACT.md updated. Verification: compile clean; 114 tests passed. Ready for review against acceptance criteria.",
+      "status": "done",
+      "created_at": "2026-04-30T06:46:41Z",
+      "resolved_at": "2026-04-30T06:50:32Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: tool policy only exact-blocks broker/live/paper/capital tool names, so dotted refs like broker.submit/live.trade pass when allowlisted. See .orchestrator/reviews/SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-review-codex.md. Focused verification passed, but regression tests and prefix/case normalization are required before approval.",
+      "status": "done",
+      "created_at": "2026-04-30T06:50:32Z",
+      "resolved_at": "2026-04-30T06:50:32Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review changes requested: sidecar packet is stale against current adapter bridge routes. main.py is now 922 lines and exposes /tools/policy, /tools, /tools/invoke, /workflows/trigger, /workflows/jobs/{job_id}, and /audit/invocations. Refresh sections 3/4/6/8 to separate implemented adapter bridge routes from the still-missing BFF composed/frontend contract. See .orchestrator/reviews/SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF-review-codex2.md.",
+      "status": "done",
+      "created_at": "2026-04-30T06:51:44Z",
+      "resolved_at": "2026-04-30T06:51:44Z"
+    },
+    {
+      "task_id": "SVC-OSS-ACTIVATION-READY-SMOKE-MATRIX",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T06:52:54Z",
+      "resolved_at": "2026-04-30T06:54:08Z"
     }
   ],
   "blockers": [],
@@ -192,49 +626,49 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 0,
-      "active": 0,
+      "total": 2,
+      "active": 2,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 2
     },
     "Claude2": {
-      "total": 0,
+      "total": 2,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 2
     },
     "Gemini": {
-      "total": 0,
+      "total": 2,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 2
     },
     "Codex": {
-      "total": 0,
+      "total": 2,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 2
     },
     "Codex2": {
-      "total": 0,
-      "active": 0,
+      "total": 3,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 3
     },
     "Copilot": {
       "total": 0,
