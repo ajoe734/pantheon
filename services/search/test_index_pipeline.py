@@ -340,8 +340,8 @@ def test_pipeline_incremental_only_new_objects(tmp_path):
     assert second_snap.is_full_rebuild is False
     assert second_snap.indexed_count == 3
     assert "ko-new" in second_snap.indexed_object_ids
-    # The new object must be counted as incremental; old objects below the watermark may not be
-    assert second_snap.incremental_count >= 1
+    # The new object must be counted as incremental; old objects below the watermark must not be.
+    assert second_snap.incremental_count == 1
     assert second_snap.triggered_by == "ingest_completion"
     assert second_snap.trigger_ref == "run-xyz"
 

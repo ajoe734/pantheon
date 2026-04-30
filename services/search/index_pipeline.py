@@ -185,11 +185,16 @@ class IncrementalIndexPipeline:
         if is_full_rebuild:
             new_objects = list(all_objects)
         else:
-            # Incremental: only objects created/updated after the last pipeline run
+            # Incremental: index brand-new ids plus objects created/updated since the last pipeline run.
             new_objects = []
             for obj in all_objects:
                 effective_time = self._object_effective_time(obj)
-                if effective_time is None or last_indexed_at is None or effective_time >= last_indexed_at:
+                if (
+                    obj.knowledge_object_id not in previous_ids
+                    or effective_time is None
+                    or last_indexed_at is None
+                    or effective_time >= last_indexed_at
+                ):
                     new_objects.append(obj)
 
         adapter = KeywordIndexAdapter(
