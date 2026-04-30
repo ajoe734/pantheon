@@ -1148,6 +1148,33 @@ services:
     restart: "no"
 
   # ===========================================================================
+  # OpenClaw activation-ready E2E smoke — disabled by default.
+  #
+  # Run:
+  #   docker compose --profile openclaw-activation-ready-e2e run --rm openclaw-activation-ready-e2e
+  #
+  # The smoke starts local fake OpenClaw/runtime-manager/broker fixtures inside
+  # the container and proves facade, session lifecycle, tool bridge, gated paper
+  # simulation, and explicit live denial without publishing ports or enabling
+  # production broker paths.
+  # ===========================================================================
+
+  openclaw-activation-ready-e2e:
+    profiles: ["openclaw-activation-ready-e2e"]
+    image: pantheon-openclaw-activation-ready-e2e-adapter:latest
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: services/openclaw-gateway-adapter/Dockerfile
+    environment:
+      OPENCLAW_PRODUCTION_BROKER_ENABLED: "false"
+      OPENCLAW_CAPITAL_BINDING_ENABLED: "false"
+      OPENCLAW_LIVE_ADAPTER_ENABLED: "false"
+      PANTHEON_LIVE_BROKER_ENABLED: "false"
+    command: ["python", "scripts/smoke_openclaw_activation_ready_e2e.py"]
+    restart: "no"
+
+  # ===========================================================================
   # Dormant OSS deferred-prep smoke profiles — activation-gated; not started by default
   #
   # Run a single service:
