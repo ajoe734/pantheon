@@ -9225,6 +9225,171 @@ class ReadSurfaceStore:
             "provider_examples": json.loads(json.dumps(provider_examples)),
         }
 
+    # ---------------------------------------------------------------------- #
+    # Source / Search Ops BFF surfaces (SVC-SOURCE-SEARCH-OPS-BFF)
+    # ---------------------------------------------------------------------- #
+
+    def get_source_ops_snapshot(
+        self,
+        *,
+        crawl_run_limit: int = 50,
+        dlq_status: Optional[str] = None,
+        frontier_status: Optional[str] = None,
+        audit_limit: int = 20,
+    ) -> Dict[str, Any]:
+        """Composite source-ingestion operator surface.
+
+        Calls the source-ingest service for connector health, crawl runs,
+        DLQ state, frontier, and audit.  The BFF never reads volumes directly.
+        """
+        base_url = self._source_ingest_service_url()
+        if not base_url:
+            return {
+                "source": "missing",
+                "connector_health": [],
+                "crawl_runs": [],
+                "dlq": [],
+                "frontier": [],
+                "audit": [],
+                "summary": {
+                    "connector_count": 0,
+                    "recent_run_count": 0,
+                    "dlq_count": 0,
+                    "frontier_count": 0,
+                    "audit_count": 0,
+                },
+            }
+
+        # connectors / health
+        avail_reg, payload_reg = _http_json_get(base_url, "/api/source-ingest/registry")
+        connectors: List[Dict[str, Any]] = []
+        if avail_reg and isinstance(payload_reg, dict):
+            raw = payload_reg.get("connectors")
+            if isinstance(raw, list):
+                connectors = json.loads(json.dumps(raw))
+
+        # crawl runs
+        runs_path = "/api/source-ingest/jobs"
+        avail_runs, payload_runs = _http_json_get(base_url, runs_path)
+        crawl_runs: List[Dict[str, Any]] = []
+        if avail_runs and isinstance(payload_runs, dict):
+            raw = payload_runs.get("runs")
+            if isinstance(raw, list):
+                crawl_runs = json.loads(json.dumps(raw[-crawl_run_limit:]))
+
+        # DLQ
+        dlq_path = "/api/source-ingest/dlq"
+        if dlq_status:
+            dlq_path += f"?status={dlq_status}"
+        avail_dlq, payload_dlq = _http_json_get(base_url, dlq_path)
+        dlq_entries: List[Dict[str, Any]] = []
+        if avail_dlq and isinstance(payload_dlq, dict):
+            raw = payload_dlq.get("entries")
+            if isinstance(raw, list):
+                dlq_entries = json.loads(json.dumps(raw))
+
+        # frontier
+        frontier_path = "/api/source-ingest/frontier"
+        if frontier_status:
+            frontier_path += f"?status={frontier_status}"
+        avail_fr, payload_fr = _http_json_get(base_url, frontier_path)
+        frontier: List[Dict[str, Any]] = []
+        if avail_fr and isinstance(payload_fr, dict):
+            raw = payload_fr.get("frontier")
+            if isinstance(raw, list):
+                frontier = json.loads(json.dumps(raw))
+
+        # audit
+        avail_audit, payload_audit = _http_json_get(base_url, "/api/source-ingest/audit")
+        audit: List[Dict[str, Any]] = []
+        if avail_audit and isinstance(payload_audit, dict):
+            raw = payload_audit.get("actions")
+            if isinstance(raw, list):
+                audit = json.loads(json.dumps(raw[-audit_limit:]))
+
+        service_available = any([avail_reg, avail_runs, avail_dlq, avail_fr, avail_audit])
+        return {
+            "source": "service_client" if service_available else "unavailable",
+            "connector_health": connectors,
+            "crawl_runs": crawl_runs,
+            "dlq": dlq_entries,
+            "frontier": frontier,
+            "audit": audit,
+            "summary": {
+                "connector_count": len(connectors),
+                "recent_run_count": len(crawl_runs),
+                "dlq_count": len(dlq_entries),
+                "frontier_count": len(frontier),
+                "audit_count": len(audit),
+            },
+        }
+
+    def get_search_ops_snapshot(
+        self,
+        *,
+        pipeline_run_limit: int = 50,
+    ) -> Dict[str, Any]:
+        """Composite search-index operator surface.
+
+        Calls the search service for index freshness and pipeline runs.
+        The BFF never reads search volumes directly.
+        """
+        base_url = self._search_service_url()
+        if not base_url:
+            return {
+                "source": "missing",
+                "index_freshness": None,
+                "pipeline_runs": [],
+                "materialized_index": None,
+                "summary": {
+                    "pipeline_run_count": 0,
+                    "freshness_ok": False,
+                    "freshness_status": "unknown",
+                },
+            }
+
+        # index freshness
+        avail_fresh, payload_fresh = _http_json_get(base_url, "/api/search/index/freshness")
+        freshness: Optional[Dict[str, Any]] = None
+        if avail_fresh and isinstance(payload_fresh, dict):
+            freshness = json.loads(json.dumps(payload_fresh))
+
+        # pipeline runs
+        runs_path = f"/api/search/index/pipeline-runs?limit={pipeline_run_limit}"
+        avail_pipe, payload_pipe = _http_json_get(base_url, runs_path)
+        pipeline_runs: List[Dict[str, Any]] = []
+        pipeline_total: int = 0
+        if avail_pipe and isinstance(payload_pipe, dict):
+            raw = payload_pipe.get("runs")
+            if isinstance(raw, list):
+                pipeline_runs = json.loads(json.dumps(raw))
+            pipeline_total = int(payload_pipe.get("total") or len(pipeline_runs))
+
+        # materialized index (best-effort; 404 → None)
+        avail_mat, payload_mat = _http_json_get(base_url, "/api/search/index/materialize")
+        materialized: Optional[Dict[str, Any]] = None
+        if avail_mat and isinstance(payload_mat, dict):
+            materialized = json.loads(json.dumps(payload_mat))
+
+        service_available = any([avail_fresh, avail_pipe, avail_mat])
+        freshness_ok = bool(freshness and freshness.get("within_sla"))
+        freshness_status = "unknown"
+        if freshness:
+            freshness_status = "ok" if freshness_ok else "stale"
+
+        return {
+            "source": "service_client" if service_available else "unavailable",
+            "index_freshness": freshness,
+            "pipeline_runs": pipeline_runs,
+            "pipeline_run_total": pipeline_total,
+            "materialized_index": materialized,
+            "summary": {
+                "pipeline_run_count": pipeline_total,
+                "freshness_ok": freshness_ok,
+                "freshness_status": freshness_status,
+            },
+        }
+
     def _build_research_search_repository(self, documents: List[Dict[str, Any]]):
         from services.knowledge.evidence import (
             EvidenceBundleBuilder,

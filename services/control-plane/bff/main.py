@@ -68,6 +68,11 @@ from models import (
 from command_queue import CommandStore
 from command_executor import execute_command_with_status
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+from source_search_ops_client import (
+    SearchIndexCommandClient,
+    SourceIngestCommandClient,
+    SourceSearchOpsClientError,
+)
 from read_store import ReadSurfaceStore
 from settings_store import SettingsStore
 
@@ -8330,6 +8335,292 @@ async def cancel_openclaw_session(
             command="OpenClawCancelSession",
             adapter_payload=adapter_payload,
             accepted_at=accepted_at,
+        ),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Source / Search Operator Ops Surface (SVC-SOURCE-SEARCH-OPS-BFF)
+# --------------------------------------------------------------------------- #
+
+_SOURCE_SEARCH_COMMAND_ROLES = {"operator", "admin"}
+
+
+def _require_source_search_command_role(identity: OperatorIdentity) -> None:
+    if _SOURCE_SEARCH_COMMAND_ROLES.intersection(identity.roles):
+        return
+    raise _bff_error(
+        403,
+        ErrorCode.INSUFFICIENT_ROLE,
+        "Source/search operator commands require operator or admin role",
+        "Operator does not hold the required source/search command role",
+        precondition_failed="role_check",
+        suggestion="Escalate to a user with operator or admin role",
+    )
+
+
+def _require_source_search_idempotency_key(value: Optional[str]) -> str:
+    key = str(value or "").strip()
+    if key:
+        return key
+    raise _bff_error(
+        400,
+        ErrorCode.INVALID_PARAMS,
+        "X-Idempotency-Key is required for source/search operator commands",
+        "Source/search commands must be idempotent at the BFF boundary",
+        precondition_failed="idempotency_key",
+        suggestion="Retry with a stable X-Idempotency-Key for this operator action",
+    )
+
+
+def _source_search_client_error(exc: SourceSearchOpsClientError) -> HTTPException:
+    status_code = exc.status_code or 502
+    if status_code == 404:
+        code = ErrorCode.OBJECT_NOT_FOUND
+    elif status_code == 409:
+        code = ErrorCode.CONCURRENT_MODIFICATION
+    elif status_code == 403:
+        code = ErrorCode.PRECONDITION_NOT_MET
+    elif status_code >= 500:
+        code = ErrorCode.DOWNSTREAM_UNAVAILABLE
+    else:
+        code = ErrorCode.INVALID_PARAMS
+    return _bff_error(
+        status_code,
+        code,
+        exc.message,
+        exc.error_code,
+        precondition_failed="source_search_service",
+        suggestion="Inspect GET /api/v1/operator/source/ops or /api/v1/operator/search/ops for current state",
+    )
+
+
+def _source_search_command_payload(
+    *,
+    command: str,
+    service_payload: Dict[str, Any],
+    accepted_at: str,
+) -> Dict[str, Any]:
+    return {
+        "data": {
+            "command": command,
+            "status": "accepted",
+            "accepted_at": accepted_at,
+            "service_result": service_payload,
+        },
+        "meta": {
+            **_snapshot_meta(accepted_at),
+            "surfaces": {
+                "source_search_command": {"status": "ok", "source": "service_client"},
+            },
+        },
+    }
+
+
+@app.get("/api/v1/operator/source/ops")
+async def get_source_ops(
+    crawl_run_limit: int = Query(default=50, ge=1, le=200),
+    dlq_status: Optional[str] = Query(default=None),
+    frontier_status: Optional[str] = Query(default=None),
+    audit_limit: int = Query(default=20, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Source-ingestion operator ops surface.
+
+    Returns connector health, recent crawl runs, DLQ state, crawl frontier,
+    and audit summary.  The BFF never reads source volumes directly.
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    data = read_store.get_source_ops_snapshot(
+        crawl_run_limit=crawl_run_limit,
+        dlq_status=dlq_status,
+        frontier_status=frontier_status,
+        audit_limit=audit_limit,
+    )
+    source_status = "ok" if data.get("source") == "service_client" else data.get("source", "unavailable")
+    return {
+        "data": data,
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "source_ops": {"status": source_status, "source": data.get("source", "unavailable")},
+            },
+        },
+    }
+
+
+@app.get("/api/v1/operator/search/ops")
+async def get_search_ops(
+    pipeline_run_limit: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Search-index operator ops surface.
+
+    Returns index freshness, recent pipeline runs, and materialized index snapshot.
+    The BFF never reads search volumes directly.
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    data = read_store.get_search_ops_snapshot(
+        pipeline_run_limit=pipeline_run_limit,
+    )
+    source_status = "ok" if data.get("source") == "service_client" else data.get("source", "unavailable")
+    freshness_ok = data.get("summary", {}).get("freshness_ok", False)
+    if source_status == "ok" and not freshness_ok:
+        source_status = "stale"
+    return {
+        "data": data,
+        "meta": {
+            **_snapshot_meta(snapshot_at),
+            "surfaces": {
+                "search_ops": {"status": source_status, "source": data.get("source", "unavailable")},
+            },
+        },
+    }
+
+
+@app.post("/api/v1/operator/source/dlq/replay", status_code=202)
+async def replay_source_dlq(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """Replay pending source-ingest DLQ entries.
+
+    Idempotent: pass the same X-Idempotency-Key to safely retry without
+    double-processing.  Auth guarded to operator/admin role.
+    """
+    identity = _extract_identity(authorization)
+    _require_source_search_command_role(identity)
+    idempotency_key = _require_source_search_idempotency_key(x_idempotency_key)
+    entry_ids = payload.get("entry_ids") if isinstance(payload.get("entry_ids"), list) else None
+    tag = str(payload.get("tag") or "retry_exhausted")
+    reason = str(payload.get("reason") or f"operator-approved BFF DLQ replay by {identity.operator_id}")
+    try:
+        result = SourceIngestCommandClient().replay_dlq(
+            entry_ids=entry_ids,
+            tag=tag,
+            reason=reason,
+            actor_id=identity.operator_id,
+            idempotency_key=idempotency_key,
+        )
+    except SourceSearchOpsClientError as exc:
+        raise _source_search_client_error(exc) from exc
+    return JSONResponse(
+        status_code=202,
+        content=_source_search_command_payload(
+            command="SourceDLQReplay",
+            service_payload=result,
+            accepted_at=utc_now(),
+        ),
+    )
+
+
+@app.post("/api/v1/operator/source/frontier/{frontier_id}/replay", status_code=202)
+async def replay_source_frontier(
+    frontier_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """Replay a specific crawl frontier item.
+
+    Idempotent: retrying the same frontier_id with the same X-Idempotency-Key
+    is safe.  Auth guarded to operator/admin role.
+    """
+    identity = _extract_identity(authorization)
+    _require_source_search_command_role(identity)
+    idempotency_key = _require_source_search_idempotency_key(x_idempotency_key)
+    if not frontier_id.strip():
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_PARAMS,
+            "frontier_id is required",
+            "frontier_id must be a non-empty string",
+        )
+    trace_id = str(payload.get("trace_id") or "").strip() or None
+    try:
+        result = SourceIngestCommandClient().replay_frontier(
+            frontier_id=frontier_id.strip(),
+            trace_id=trace_id,
+            idempotency_key=idempotency_key,
+        )
+    except SourceSearchOpsClientError as exc:
+        raise _source_search_client_error(exc) from exc
+    return JSONResponse(
+        status_code=202,
+        content=_source_search_command_payload(
+            command="SourceFrontierReplay",
+            service_payload=result,
+            accepted_at=utc_now(),
+        ),
+    )
+
+
+@app.post("/api/v1/operator/search/index/refresh", status_code=202)
+async def trigger_search_index_refresh(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """Trigger an incremental (or full) search index refresh.
+
+    Idempotent: same X-Idempotency-Key can be retried safely.
+    Auth guarded to operator/admin role.
+    """
+    identity = _extract_identity(authorization)
+    _require_source_search_command_role(identity)
+    idempotency_key = _require_source_search_idempotency_key(x_idempotency_key)
+    triggered_by = str(payload.get("triggered_by") or f"bff-operator:{identity.operator_id}")
+    trigger_ref = str(payload.get("trigger_ref") or "").strip() or None
+    force_full = bool(payload.get("force_full", False))
+    try:
+        result = SearchIndexCommandClient().trigger_refresh(
+            triggered_by=triggered_by,
+            trigger_ref=trigger_ref,
+            force_full=force_full,
+            idempotency_key=idempotency_key,
+        )
+    except SourceSearchOpsClientError as exc:
+        raise _source_search_client_error(exc) from exc
+    return JSONResponse(
+        status_code=202,
+        content=_source_search_command_payload(
+            command="SearchIndexRefresh",
+            service_payload=result,
+            accepted_at=utc_now(),
+        ),
+    )
+
+
+@app.post("/api/v1/operator/search/index/materialize", status_code=202)
+async def trigger_search_index_materialize(
+    authorization: Optional[str] = Header(default=None),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """Materialize a search index snapshot for recovery and audit.
+
+    Idempotent: same X-Idempotency-Key can be retried safely.
+    Auth guarded to operator/admin role.
+    """
+    identity = _extract_identity(authorization)
+    _require_source_search_command_role(identity)
+    idempotency_key = _require_source_search_idempotency_key(x_idempotency_key)
+    try:
+        result = SearchIndexCommandClient().trigger_materialize(
+            idempotency_key=idempotency_key,
+        )
+    except SourceSearchOpsClientError as exc:
+        raise _source_search_client_error(exc) from exc
+    return JSONResponse(
+        status_code=202,
+        content=_source_search_command_payload(
+            command="SearchIndexMaterialize",
+            service_payload=result,
+            accepted_at=utc_now(),
         ),
     )
 
