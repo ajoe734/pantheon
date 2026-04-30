@@ -324,6 +324,7 @@ def _default_degraded_rows(tmp: Path) -> list[SmokeRow]:
         _check(
             "default:capabilities-fail-closed",
             status == 200
+            and caps.get("activation_state") == "upstream_client_degraded"
             and caps.get("broker_execution") == "deferred"
             and caps.get("paper_adapter") == "deferred"
             and caps.get("live_adapter") == "deferred"
@@ -394,6 +395,7 @@ def _activation_ready_rows(tmp: Path) -> list[SmokeRow]:
             _check(
                 "activation:capabilities-upstream",
                 status == 200
+                and caps.get("activation_state") == "upstream_client_ready"
                 and (caps.get("upstream") or {}).get("status") == "ok"
                 and caps.get("paper_adapter") == "enabled"
                 and caps.get("live_adapter") == "deferred",

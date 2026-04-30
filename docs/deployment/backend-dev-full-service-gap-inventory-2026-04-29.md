@@ -65,7 +65,8 @@ Branch `HEAD` adds this service to default root compose:
 - port: `18104 -> 8104`
 - healthcheck: `/livez`
 - readiness: `/readyz`
-- safety state: facade/degraded only
+- safety state: upstream-client-ready/degraded capability facade only;
+  broker/paper/live/capital gates remain deferred by default
 - production broker: forced disabled
 - paper adapter: forced disabled
 
@@ -94,7 +95,8 @@ docker compose --profile openclaw ...
 ```
 
 It is intentionally not a default dev service. The safe default is to deploy
-the Pantheon-owned adapter and let it report degraded upstream status. If dev
+the Pantheon-owned adapter and let it report `upstream_client_degraded` with a
+degraded upstream envelope. If dev
 needs every optional profile service too, start the profile explicitly and run
 the OpenClaw smoke path separately.
 

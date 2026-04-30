@@ -598,11 +598,14 @@ def get_capabilities() -> Dict[str, Any]:
     payload["paper_broker"] = _PAPER_BROKER.capability_snapshot()
     payload["live_gate"] = _LIVE_GATE.capability_snapshot()
     try:
+        upstream_capabilities = _client().get_capabilities()
+        payload["activation_state"] = "upstream_client_ready"
         payload["upstream"] = {
             "status": "ok",
-            "capabilities": _client().get_capabilities(),
+            "capabilities": upstream_capabilities,
         }
     except UpstreamClientError as exc:
+        payload["activation_state"] = "upstream_client_degraded"
         payload["upstream"] = {**exc.to_payload(), "status": "degraded"}
     return payload
 

@@ -276,6 +276,7 @@ class TestCapabilities(unittest.TestCase):
             resp = client.get("/api/openclaw-adapter/capabilities")
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
+        self.assertEqual(body["activation_state"], "upstream_client_ready")
         self.assertEqual(body["upstream"]["status"], "ok")
         self.assertEqual(body["upstream"]["capabilities"]["tools"], ["shell"])
 

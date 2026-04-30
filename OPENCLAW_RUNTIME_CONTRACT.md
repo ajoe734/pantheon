@@ -77,10 +77,10 @@ OpenClaw **不負責**：
 - `GET /livez`：Pantheon adapter process liveness；不得因 optional upstream OpenClaw gateway absent 而失敗。
 - `GET /readyz`：Pantheon adapter readiness；upstream OpenClaw gateway absent / degraded 時回 degraded/503。
 - Root compose 的 `openclaw-gateway-adapter` healthcheck 使用 `/livez`；optional `openclaw-gateway` profile healthcheck 使用 upstream `/readyz`。
-- `GET /api/openclaw-adapter/capabilities`：回傳 Pantheon fail-closed capability snapshot，若 upstream 可達則附帶 upstream capabilities，否則維持 degraded。
+- `GET /api/openclaw-adapter/capabilities`：回傳 Pantheon fail-closed capability snapshot；若 upstream 可達則 `activation_state=upstream_client_ready` 並附帶 upstream capabilities，若 upstream absent/degraded 則 `activation_state=upstream_client_degraded` 且 upstream envelope 維持 degraded。兩種狀態都不得啟用 broker / paper / live / capital binding gate。
 - `GET /api/openclaw-adapter/sessions`：呼叫 upstream session list 並正規化 session metadata。
 - `GET /api/openclaw-adapter/sessions/{session_id}`：呼叫 upstream session get。
-- `POST /api/openclaw-adapter/sessions`：呼叫 upstream session create，但不啟用 broker/paper/live/capital binding。
+- `POST /api/openclaw-adapter/sessions`：呼叫 upstream session create；upstream absent/degraded 時回 typed upstream error envelope（例如 `UPSTREAM_UNAVAILABLE`），但不啟用 broker/paper/live/capital binding。
 - `POST /api/openclaw-adapter/sessions/{session_id}/cancel`：呼叫 upstream cancel。
 - `GET /api/openclaw-adapter/lifecycle/sessions`：Pantheon-owned 持久化 session list，可依 operator_id 與 state 篩選。
 - `GET /api/openclaw-adapter/lifecycle/sessions/{id}`：Pantheon-owned session record，active 時從 upstream 同步狀態。

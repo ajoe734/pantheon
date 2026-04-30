@@ -190,7 +190,7 @@ What is already solid:
 Residual gaps:
 
 1. `openclaw-gateway-adapter` is now a default Pantheon-owned facade around the optional upstream `openclaw-gateway` container. It proves health/capability/degraded semantics, not upstream session execution.
-2. OpenClaw session creation remains explicitly deferred: `POST /api/openclaw-adapter/sessions` returns non-retryable `CAPABILITY_DENIED`, and root compose keeps broker/paper activation flags false.
+2. OpenClaw session creation remains explicitly fail-closed: `POST /api/openclaw-adapter/sessions` may return non-retryable `CAPABILITY_DENIED` or retryable upstream `UPSTREAM_UNAVAILABLE`, and root compose keeps broker/paper activation flags false.
 3. `DSPy`, `imitation`, and `MLflow` are smoke-tested, but the checklist still calls out missing canonical `integration.md` and `governance.md` normalization work.
 4. `TRL`, `Qlib`, `FinRL`, `RLlib`, `Ray Tune`, and `W&B` remain deferred/criteria-gated unless a separate activation task changes their status.
 
@@ -342,7 +342,7 @@ Current code truth:
 - The upstream `openclaw-gateway` image remains optional under the `openclaw` profile and its compose healthcheck uses `/readyz`. The adapter healthcheck uses `/livez`, so the Pantheon adapter process can be healthy while upstream OpenClaw is absent.
 - The adapter exposes `/healthz`, `/livez`, `/readyz`, `/metrics`, `/api/openclaw-adapter/upstream/status`, `/api/openclaw-adapter/capabilities`, and deferred session metadata routes under `/api/openclaw-adapter/sessions`.
 - `/readyz` degrades when the optional upstream gateway is absent or unhealthy. Capability metadata remains readable in degraded mode.
-- Session creation returns a non-retryable `CAPABILITY_DENIED` deferral. `OPENCLAW_PRODUCTION_BROKER_ENABLED=false` and `OPENCLAW_PAPER_ADAPTER_ENABLED=false` are locked in compose.
+- Session creation remains fail-closed and may return a non-retryable `CAPABILITY_DENIED` deferral or a retryable upstream `UPSTREAM_UNAVAILABLE` envelope. `OPENCLAW_PRODUCTION_BROKER_ENABLED=false` and `OPENCLAW_PAPER_ADAPTER_ENABLED=false` are locked in compose.
 - `scripts/smoke_honest_stack.py` now covers the adapter liveness facade, readiness/degraded semantics, capability metadata, and denied session creation path.
 
 Disposition:
@@ -358,7 +358,7 @@ This closes the service-boundary gap for a controlled OpenClaw adapter facade on
 - `docker-compose.yml:843-927` — smoke profile environment and dependency graph.
 - `services/source_ingestion/configured.py:120-166` — configured fetch accepts `static_records` and bounded allowlisted `external_feed` JSON inputs.
 - `services/search/main.py:278-326` — durable search path and explicit request-document compatibility path.
-- `services/openclaw-gateway-adapter/main.py:180-220` — deferred OpenClaw sessions and `CAPABILITY_DENIED` session creation.
+- `services/openclaw-gateway-adapter/main.py:180-220` — fail-closed OpenClaw sessions with deferred or upstream-unavailable session creation.
 - `scripts/smoke_honest_stack.py:135-180` and `scripts/smoke_honest_stack.py:381-613` — smoke coverage for OpenClaw degraded semantics, source ingest, search, policy-learning, and research-orchestrator.
 
 ## 14. SVC-SOURCE-SEARCH-AUTONOMOUS-CONNECTOR-INDEXER Closeout Note

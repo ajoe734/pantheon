@@ -63,8 +63,13 @@ with `LIVE_EXECUTION_DISABLED`.
 The smoke verifies:
 
 - default `/livez` is OK while `/readyz` degrades when upstream is absent;
-- capabilities remain broker/live deferred by default;
+- default capabilities report `activation_state=upstream_client_degraded`
+  only with an upstream degraded envelope, while broker/live remain deferred;
+- default session create remains fail-closed when upstream is absent and may
+  return a typed upstream-unavailable envelope instead of a legacy facade-only
+  capability-denied stub;
 - fake upstream capabilities are reachable in the activation-ready path;
+- fake upstream capabilities report `activation_state=upstream_client_ready`;
 - lifecycle session create persists an active Pantheon-owned session;
 - effective tools are policy allowlist intersected with upstream tools;
 - disallowed broker/paper tool invocation is denied;

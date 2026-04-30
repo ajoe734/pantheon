@@ -79,7 +79,7 @@ Last updated by: Codex (`SVC-DOCS-FUTURE-STATE-TRUTH-SYNC`, 2026-04-29)
   - Explicit deferrals:
     - The single-VM test profile runs `operator-bff` as one replica. This intentionally defers the multi-replica BFF HA requirement in `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md`; as of 2026-04-29 this is a product-scope defer, not a pending implementation task, because the operator frontend is expected to have low concurrent human usage. Reopen only if operator concurrency, availability SLOs, external customer access, or audit requirements make BFF outage a material risk.
     - The baseline locks deployability and smoke wiring only. It does not claim production-grade upstream OSS integration, full research-worker activation, paper/canary/live activation, or final BFF read-path convergence beyond the service contracts named here.
-    - OpenClaw session creation remains explicitly deferred at the Pantheon adapter boundary: `POST /api/openclaw-adapter/sessions` returns non-retryable `CAPABILITY_DENIED`, and both `OPENCLAW_PRODUCTION_BROKER_ENABLED` and `OPENCLAW_PAPER_ADAPTER_ENABLED` are false in root compose.
+    - OpenClaw session creation remains explicitly fail-closed at the Pantheon adapter boundary: `POST /api/openclaw-adapter/sessions` may return non-retryable `CAPABILITY_DENIED` or retryable upstream `UPSTREAM_UNAVAILABLE`, and both `OPENCLAW_PRODUCTION_BROKER_ENABLED` and `OPENCLAW_PAPER_ADAPTER_ENABLED` are false in root compose.
     - Bounded external source fetch and search request-document quarantine are active hardening tasks, not already-complete production crawler/search claims. Until `SVC-SOURCE-INGEST-EXTERNAL-FETCH-BASELINE` lands, configured source fetch is static-record replay only. Until `SVC-SEARCH-DURABLE-COMPAT-QUARANTINE` is accepted, callers should still treat durable no-doc search as the normal path and request-document search as compatibility-only.
   - Current code-backed service disposition:
     - `consultation`, `source_ingestion`, and `search` are no longer outside the default single-VM compose baseline. Current truth comes from `docker-compose.yml` plus the service entrypoints:
@@ -130,5 +130,5 @@ This table is retained as the original materialization plan that produced the cu
 - [R5] `docker-compose.yml:843-927` — smoke profile environment and dependency graph.
 - [R6] `services/source_ingestion/configured.py:120-136` — configured fetch currently accepts `static_records` only.
 - [R7] `services/search/main.py:278-326` — durable search path and explicit request-document compatibility path.
-- [R8] `services/openclaw-gateway-adapter/main.py:180-220` — deferred OpenClaw sessions and `CAPABILITY_DENIED` session creation.
+- [R8] `services/openclaw-gateway-adapter/main.py:180-220` — fail-closed OpenClaw sessions with deferred or upstream-unavailable session creation.
 - [R9] `scripts/smoke_honest_stack.py:135-180` and `scripts/smoke_honest_stack.py:381-613` — smoke coverage for OpenClaw degraded semantics, source ingest, search, policy-learning, and research-orchestrator.

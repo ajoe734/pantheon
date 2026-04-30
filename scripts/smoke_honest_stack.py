@@ -182,9 +182,21 @@ def main() -> int:
     if status not in {200, 503} or openclaw_ready.get("status") not in {"ok", "degraded"}:
         raise RuntimeError(f"openclaw-gateway-adapter readiness semantics failed: {status} {openclaw_ready}")
     status, openclaw_capabilities = _request_json("GET", f"{OPENCLAW_GATEWAY_ADAPTER_URL}/api/openclaw-adapter/capabilities")
+    openclaw_activation_state = openclaw_capabilities.get("activation_state")
+    openclaw_upstream_status = (openclaw_capabilities.get("upstream") or {}).get("status")
+    openclaw_activation_safe = (
+        (
+            openclaw_activation_state == "upstream_client_degraded"
+            and openclaw_upstream_status == "degraded"
+        )
+        or (
+            openclaw_activation_state == "upstream_client_ready"
+            and openclaw_upstream_status == "ok"
+        )
+    )
     if (
         status != 200
-        or openclaw_capabilities.get("activation_state") != "facade_only"
+        or not openclaw_activation_safe
         or openclaw_capabilities.get("broker_execution") != "deferred"
         or openclaw_capabilities.get("paper_adapter") != "deferred"
         or openclaw_capabilities.get("live_adapter") != "deferred"
@@ -202,9 +214,20 @@ def main() -> int:
         openclaw_session = json.loads(body) if body else {}
     if (
         status != 503
-        or openclaw_session.get("status") != "deferred"
-        or openclaw_session.get("error_code") != "CAPABILITY_DENIED"
-        or openclaw_session.get("retryable") is not False
+        or openclaw_session.get("status") not in {"deferred", "upstream_error"}
+        or openclaw_session.get("error_code") not in {"CAPABILITY_DENIED", "UPSTREAM_UNAVAILABLE"}
+        or (
+            openclaw_session.get("error_code") == "CAPABILITY_DENIED"
+            and openclaw_session.get("retryable") is not False
+        )
+        or (
+            openclaw_session.get("error_code") == "UPSTREAM_UNAVAILABLE"
+            and (
+                openclaw_session.get("retryable") is not True
+                or openclaw_session.get("owner_plane") != "openclaw_runtime"
+                or openclaw_session.get("error_layer") != "upstream"
+            )
+        )
     ):
         raise RuntimeError(f"openclaw-gateway-adapter session path was not safely deferred: {status} {openclaw_session}")
     print("ok  openclaw-gateway-adapter exposes facade/degraded semantics without broker activation")
