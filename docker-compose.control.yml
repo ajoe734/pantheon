@@ -90,6 +90,11 @@ services:
       PORT: "8082"
       GOVERNANCE_DATA_DIR: /data/governance
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      # Dev rollback defaults to JSON/JSONL; staging/prod select postgres via env.
+      GOVERNANCE_STORE_BACKEND: ${GOVERNANCE_STORE_BACKEND:-json}
+      GOVERNANCE_STORE_DSN: ${GOVERNANCE_STORE_DSN:-}
+      GOVERNANCE_AUDIT_BACKEND: ${GOVERNANCE_AUDIT_BACKEND:-jsonl}
+      GOVERNANCE_AUDIT_DSN: ${GOVERNANCE_AUDIT_DSN:-}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
       PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
@@ -170,6 +175,9 @@ services:
       INCIDENTS_DATA_DIR: /data/incidents
       PANTHEON_TELEMETRY_URL: http://telemetry:8083
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      # Dev rollback defaults to JSON; staging/prod select postgres via env.
+      INCIDENT_STORE_BACKEND: ${INCIDENT_STORE_BACKEND:-json}
+      INCIDENT_STORE_DSN: ${INCIDENT_STORE_DSN:-}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
       - incident-data:/data/incidents
@@ -199,6 +207,9 @@ services:
       INCIDENTS_DATA_DIR: /data/incidents
       PANTHEON_TELEMETRY_URL: http://telemetry:8083
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      # Shares the incident owner schema; dev rollback remains JSON.
+      POSTMORTEM_STORE_BACKEND: ${POSTMORTEM_STORE_BACKEND:-json}
+      POSTMORTEM_STORE_DSN: ${POSTMORTEM_STORE_DSN:-}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
       PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
     volumes:
@@ -363,6 +374,9 @@ services:
     environment:
       PORT: "8086"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      # Dev rollback defaults to JSON; staging/prod select postgres via env.
+      PANTHEON_MEMORY_STORE_BACKEND: ${PANTHEON_MEMORY_STORE_BACKEND:-json}
+      PANTHEON_MEMORY_STORE_DSN: ${PANTHEON_MEMORY_STORE_DSN:-}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
       PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
@@ -443,8 +457,15 @@ services:
     environment:
       PORT: "8089"
       PROMOTION_DATA_DIR: /data/promotion
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      # Dev rollback defaults to JSON; staging/prod select postgres via env.
+      PROMOTION_STORE_BACKEND: ${PROMOTION_STORE_BACKEND:-json}
+      PROMOTION_STORE_DSN: ${PROMOTION_STORE_DSN:-}
     volumes:
       - promotion-data:/data/promotion
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "${PROMOTION_PORT:-38089}:8089"
     healthcheck:
@@ -461,8 +482,17 @@ services:
     environment:
       PORT: "8092"
       CAPITAL_DATA_DIR: /data/capital
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      # Dev rollback defaults to JSON/JSONL; staging/prod select postgres via env.
+      CAPITAL_STORE_BACKEND: ${CAPITAL_STORE_BACKEND:-json}
+      CAPITAL_STORE_DSN: ${CAPITAL_STORE_DSN:-}
+      CAPITAL_AUDIT_BACKEND: ${CAPITAL_AUDIT_BACKEND:-jsonl}
+      CAPITAL_AUDIT_DSN: ${CAPITAL_AUDIT_DSN:-}
     volumes:
       - capital-data:/data/capital
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "${CAPITAL_PORT:-38092}:8092"
     healthcheck:

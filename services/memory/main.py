@@ -13,10 +13,16 @@ from .institutional_memory_store import (
     InstitutionalMemoryEntry,
     InstitutionalMemoryError,
     InstitutionalMemoryStore,
+    build_institutional_memory_store,
 )
 
 app = FastAPI(title="Pantheon Memory Service", version="0.1.0")
-register_fastapi_health_routes(app, "memory", details=lambda: {"store_path": str(_store_path())})
+STORE_BACKEND = os.getenv("PANTHEON_MEMORY_STORE_BACKEND", "json").strip().lower() or "json"
+register_fastapi_health_routes(
+    app,
+    "memory",
+    details=lambda: {"store_path": str(_store_path()), "store_backend": STORE_BACKEND},
+)
 
 
 def _store_path() -> Path:
@@ -30,7 +36,7 @@ def _store_path() -> Path:
 def _store() -> InstitutionalMemoryStore:
     path = _store_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    return InstitutionalMemoryStore(path=path)
+    return build_institutional_memory_store(path)
 
 
 @app.get("/__health__")

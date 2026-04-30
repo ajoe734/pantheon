@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from services.foundation.health import register_fastapi_health_routes
-from store import ReconciliationDriftStore
+from store import ReconciliationDriftStore, build_reconciliation_drift_store
 
 
 DEFAULT_WARNING_RELATIVE_DELTA = 0.2
@@ -310,7 +310,8 @@ class HandoffBody(BaseModel):
 
 
 DATA_DIR = _data_dir()
-store = ReconciliationDriftStore(DATA_DIR)
+STORE_BACKEND = os.getenv("RECONCILIATION_DRIFT_STORE_BACKEND", "json").strip().lower() or "json"
+store = build_reconciliation_drift_store(DATA_DIR)
 app = FastAPI(title="Pantheon Reconciliation Drift Service", version="0.1.0")
 register_fastapi_health_routes(
     app,
@@ -333,7 +334,7 @@ register_fastapi_health_routes(
         "evaluation_count": len(store.list_evaluations()),
         "alert_count": len(store.list_alert_handoffs()),
     },
-    details=lambda: {"data_dir": DATA_DIR},
+    details=lambda: {"data_dir": DATA_DIR, "store_backend": STORE_BACKEND},
 )
 
 

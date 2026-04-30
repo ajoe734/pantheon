@@ -85,6 +85,7 @@ try:
         PostmortemStatus,
         validate_postmortem,
     )
+    from services.incident.pg_store import build_incident_store  # type: ignore
 except ImportError:
     from incident.incident import (  # type: ignore
         IncidentCase,
@@ -94,6 +95,7 @@ except ImportError:
         PostmortemStatus,
         validate_postmortem,
     )
+    from incident.pg_store import build_incident_store  # type: ignore
 
 try:
     from .models import (
@@ -133,11 +135,12 @@ log = logging.getLogger(__name__)
 DATA_DIR = os.getenv("POSTMORTEMS_DATA_DIR", os.getenv("INCIDENTS_DATA_DIR", "/tmp/pantheon/incidents"))
 os.makedirs(DATA_DIR, exist_ok=True)
 STORE_PATH = Path(DATA_DIR) / "incidents.json"
+STORE_BACKEND = (os.getenv("POSTMORTEM_STORE_BACKEND") or os.getenv("INCIDENT_STORE_BACKEND", "json")).strip().lower() or "json"
 
 # Shared IncidentStore — postmortem service uses the same backing store so that
 # referential integrity (postmortem references incident) is enforced in-process.
 # In production, both services connect to the shared Pantheon incidents DB schema.
-store: IncidentStore = IncidentStore(path=STORE_PATH)
+store: IncidentStore = build_incident_store(STORE_PATH)
 reference_validator = CanonicalReferenceValidator()
 
 # ---------------------------------------------------------------------------
@@ -159,7 +162,7 @@ register_fastapi_health_routes(
     "postmortems",
     dependencies=lambda: {"incidents": {"status": "ok", "store_path": str(STORE_PATH)}},
     metrics=lambda: {"postmortem_count": len(store.list_postmortems())},
-    details=lambda: {"data_dir": DATA_DIR, "store_path": str(STORE_PATH)},
+    details=lambda: {"data_dir": DATA_DIR, "store_path": str(STORE_PATH), "store_backend": STORE_BACKEND},
 )
 
 # ---------------------------------------------------------------------------

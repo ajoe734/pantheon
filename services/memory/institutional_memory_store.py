@@ -10,12 +10,15 @@ This module provides:
 from __future__ import annotations
 
 import json
+import os
 import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+
+from services.foundation.postgres_json_store import PostgresJsonOwnerStore
 
 
 def utc_now() -> str:
@@ -359,6 +362,98 @@ class InstitutionalMemoryStore:
             if errors:
                 raise InstitutionalMemoryError(f"Invalid persisted entry {entry.entry_id}: {errors}")
             self._entries[entry.entry_id] = entry
+
+
+class PostgresInstitutionalMemoryStore(InstitutionalMemoryStore):
+    """Postgres owner store for institutional memory entries."""
+
+    def __init__(
+        self,
+        *,
+        dsn: str,
+        table: str = "memory.institutional_memory_entries",
+        bootstrap: bool = True,
+    ) -> None:
+        self._records = PostgresJsonOwnerStore(
+            dsn=dsn,
+            table=table,
+            owner_service="memory-svc",
+            bootstrap=bootstrap,
+        )
+        super().__init__(path=None)
+        self._refresh_from_postgres()
+
+    def create(self, entry: InstitutionalMemoryEntry) -> InstitutionalMemoryEntry:
+        self._refresh_from_postgres()
+        return super().create(entry)
+
+    def get(self, entry_id: str) -> Optional[InstitutionalMemoryEntry]:
+        self._refresh_from_postgres()
+        return super().get(entry_id)
+
+    def require(self, entry_id: str) -> InstitutionalMemoryEntry:
+        self._refresh_from_postgres()
+        return super().require(entry_id)
+
+    def list(
+        self,
+        *,
+        knowledge_type: Optional[str] = None,
+        scope: Optional[str] = None,
+        scope_filter: Optional[str] = None,
+        contributing_persona_id: Optional[str] = None,
+        active_only: bool = True,
+    ) -> List[InstitutionalMemoryEntry]:
+        self._refresh_from_postgres()
+        return super().list(
+            knowledge_type=knowledge_type,
+            scope=scope,
+            scope_filter=scope_filter,
+            contributing_persona_id=contributing_persona_id,
+            active_only=active_only,
+        )
+
+    def mark_reused(self, entry_id: str, count: int = 1) -> InstitutionalMemoryEntry:
+        self._refresh_from_postgres()
+        return super().mark_reused(entry_id, count=count)
+
+    def supersede(self, entry_id: str, replacement_entry_id: str) -> InstitutionalMemoryEntry:
+        self._refresh_from_postgres()
+        return super().supersede(entry_id, replacement_entry_id)
+
+    def _save(self) -> None:
+        for entry in self._entries.values():
+            self._records.put(entry.entry_id, entry.to_dict())
+
+    def _refresh_from_postgres(self) -> None:
+        entries: Dict[str, InstitutionalMemoryEntry] = {}
+        for record in self._records.list_all():
+            json_errors = validate_institutional_memory_json(record)
+            if json_errors:
+                entry_id = record.get("entry_id", "<unknown>")
+                raise InstitutionalMemoryError(
+                    f"Schema validation failed for persisted entry {entry_id}: {json_errors}"
+                )
+            entry = InstitutionalMemoryEntry.from_dict(record)
+            errors = validate_institutional_memory(entry)
+            if errors:
+                raise InstitutionalMemoryError(f"Invalid persisted entry {entry.entry_id}: {errors}")
+            entries[entry.entry_id] = entry
+        self._entries = entries
+
+
+def build_institutional_memory_store(path: Path) -> InstitutionalMemoryStore:
+    backend = os.getenv("PANTHEON_MEMORY_STORE_BACKEND", "json").strip().lower()
+    if backend in ("", "json"):
+        return InstitutionalMemoryStore(path=path)
+    if backend != "postgres":
+        raise ValueError("PANTHEON_MEMORY_STORE_BACKEND must be json or postgres")
+    dsn = os.getenv("PANTHEON_MEMORY_STORE_DSN") or os.getenv("DATABASE_URL")
+    if not dsn:
+        raise ValueError("PANTHEON_MEMORY_STORE_DSN or DATABASE_URL is required for Postgres memory store")
+    bootstrap = os.getenv("PANTHEON_MEMORY_STORE_BOOTSTRAP", "1").strip().lower() not in ("0", "false", "no")
+    table = os.getenv("PANTHEON_MEMORY_STORE_TABLE", "memory.institutional_memory_entries")
+    return PostgresInstitutionalMemoryStore(dsn=dsn, table=table, bootstrap=bootstrap)
 
 
 _default_store: Optional[InstitutionalMemoryStore] = None

@@ -26,7 +26,6 @@ Routes
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import sys
@@ -69,7 +68,7 @@ try:
         WriteAuthorityEntry,
         WriteAuthorityResponse,
     )
-    from .audit_log import append_audit_event
+    from .pg_store import build_approval_decision_store, build_governance_audit_store
     from .write_authority import is_authorized_to_decide, matrix_as_list
 except ImportError:
     from models import (  # type: ignore
@@ -81,7 +80,7 @@ except ImportError:
         WriteAuthorityEntry,
         WriteAuthorityResponse,
     )
-    from audit_log import append_audit_event  # type: ignore
+    from pg_store import build_approval_decision_store, build_governance_audit_store  # type: ignore
     from write_authority import is_authorized_to_decide, matrix_as_list  # type: ignore
 
 logging.basicConfig(level=logging.INFO)
@@ -97,7 +96,9 @@ os.makedirs(DATA_DIR, exist_ok=True)
 AUDIT_LOG_PATH = os.path.join(DATA_DIR, "audit.jsonl")
 STORE_PATH     = os.path.join(DATA_DIR, "approval_decisions.json")
 
-store: ApprovalDecisionStore = ApprovalDecisionStore(storage_path=STORE_PATH)
+STORE_BACKEND = os.getenv("GOVERNANCE_STORE_BACKEND", "json").strip().lower() or "json"
+store = build_approval_decision_store(STORE_PATH)
+audit_store = build_governance_audit_store(AUDIT_LOG_PATH)
 
 # ---------------------------------------------------------------------------
 # FastAPI application
@@ -116,7 +117,7 @@ register_fastapi_health_routes(
     app,
     "governance",
     metrics=lambda: {"approval_count": len(store.list_all())},
-    details=lambda: {"data_dir": DATA_DIR, "store_path": STORE_PATH},
+    details=lambda: {"data_dir": DATA_DIR, "store_path": STORE_PATH, "store_backend": STORE_BACKEND},
 )
 
 # ---------------------------------------------------------------------------
@@ -133,7 +134,7 @@ def _emit(
     detail: Optional[Dict[str, Any]] = None,
 ) -> None:
     try:
-        append_audit_event(
+        audit_store.append_event(
             event_type=event_type,
             decision_id=decision.decision_id,
             actor_id=decision.actor_id,
@@ -149,7 +150,6 @@ def _emit(
             ),
             target_id=decision.target_id,
             detail=detail,
-            audit_log_path=AUDIT_LOG_PATH,
         )
     except Exception as exc:
         log.warning("Audit write failed: %s", exc)
@@ -428,28 +428,7 @@ def get_audit_events(
     Events are returned most-recent first.  Filter by decision_id to trace a
     single approval object through its lifecycle.
     """
-    events: List[Dict[str, Any]] = []
-    try:
-        audit_path = Path(AUDIT_LOG_PATH)
-        if not audit_path.exists():
-            return events
-        with audit_path.open() as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                    if decision_id and event.get("decision_id") != decision_id:
-                        continue
-                    events.append(event)
-                except json.JSONDecodeError:
-                    continue
-    except OSError:
-        return events
-
-    events.reverse()
-    return events[:limit]
+    return audit_store.list_events(decision_id=decision_id, limit=limit)
 
 
 # ---------------------------------------------------------------------------

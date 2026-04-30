@@ -379,15 +379,19 @@ class IncidentStore:
         self._incidents: Dict[str, IncidentCase] = {}
         self._postmortems: Dict[str, Postmortem] = {}
         self._path = path
+        self._loaded_mtime_ns: Optional[int] = None
         if path and path.exists():
             self._load(path)
+            self._loaded_mtime_ns = path.stat().st_mtime_ns
 
     def _refresh_from_disk(self) -> None:
         if not self._path or not self._path.exists():
             return
-        self._incidents.clear()
-        self._postmortems.clear()
+        mtime_ns = self._path.stat().st_mtime_ns
+        if self._loaded_mtime_ns == mtime_ns:
+            return
         self._load(self._path)
+        self._loaded_mtime_ns = mtime_ns
 
     # ---- IncidentCase reads ----
 
@@ -557,6 +561,7 @@ class IncidentStore:
                 "postmortems": [p.to_dict() for p in self._postmortems.values()],
             }
             self._path.write_text(json.dumps(data, indent=2))
+            self._loaded_mtime_ns = self._path.stat().st_mtime_ns
 
     def _load(self, path: Path) -> None:
         text = path.read_text()

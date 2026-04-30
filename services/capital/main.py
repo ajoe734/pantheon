@@ -8,7 +8,6 @@ This service wraps the canonical capital governance objects with:
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import sys
@@ -32,7 +31,6 @@ from persona_capital_binding import (  # type: ignore
 )
 
 try:
-    from .audit_log import append_audit_event
     from .models import (
         ActivateBindingRequest,
         BindingAdmissibilityResponse,
@@ -44,9 +42,9 @@ try:
         UpdateCapitalPoolStatusRequest,
         WriteAuthorityResponse,
     )
+    from .pg_store import build_capital_audit_store, build_capital_binding_store, build_capital_pool_store
     from .write_authority import is_authorized, matrix_as_list
 except ImportError:
-    from audit_log import append_audit_event  # type: ignore
     from models import (  # type: ignore
         ActivateBindingRequest,
         BindingAdmissibilityResponse,
@@ -58,6 +56,7 @@ except ImportError:
         UpdateCapitalPoolStatusRequest,
         WriteAuthorityResponse,
     )
+    from pg_store import build_capital_audit_store, build_capital_binding_store, build_capital_pool_store  # type: ignore
     from write_authority import is_authorized, matrix_as_list  # type: ignore
 
 log = logging.getLogger(__name__)
@@ -78,14 +77,16 @@ DATA_DIR = _resolve_data_dir()
 POOL_STORE_PATH = DATA_DIR / "capital_pools.json"
 BINDING_STORE_PATH = DATA_DIR / "persona_capital_bindings.json"
 AUDIT_LOG_PATH = DATA_DIR / "capital_audit.jsonl"
+STORE_BACKEND = os.getenv("CAPITAL_STORE_BACKEND", "json").strip().lower() or "json"
 
 
 class CapitalServiceError(ValueError):
     """Raised for cross-object service boundary errors."""
 
 
-pool_store = CapitalPoolStore(path=POOL_STORE_PATH)
-binding_store = PersonaCapitalBindingStore(path=BINDING_STORE_PATH)
+pool_store = build_capital_pool_store(POOL_STORE_PATH)
+binding_store = build_capital_binding_store(BINDING_STORE_PATH)
+audit_store = build_capital_audit_store(AUDIT_LOG_PATH)
 
 
 class CapitalBoundaryService:
@@ -95,10 +96,12 @@ class CapitalBoundaryService:
         pool_store: CapitalPoolStore,
         binding_store: PersonaCapitalBindingStore,
         audit_log_path: Path,
+        audit_store: Any,
     ) -> None:
         self.pool_store = pool_store
         self.binding_store = binding_store
         self.audit_log_path = audit_log_path
+        self.audit_store = audit_store
 
     def create_pool(self, body: CreateCapitalPoolRequest) -> CapitalPool:
         self._authorize("CapitalPool", "create", body.actor_role)
@@ -318,19 +321,7 @@ class CapitalBoundaryService:
         resource_type: str | None = None,
         resource_id: str | None = None,
     ) -> list[Dict[str, Any]]:
-        if not self.audit_log_path.exists():
-            return []
-        events: list[Dict[str, Any]] = []
-        for line in self.audit_log_path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            event = json.loads(line)
-            if resource_type and event.get("resource_type") != resource_type:
-                continue
-            if resource_id and event.get("resource_id") != resource_id:
-                continue
-            events.append(event)
-        return events
+        return self.audit_store.list_events(resource_type=resource_type, resource_id=resource_id)
 
     def _authorize(self, resource_type: str, operation: str, actor_role: str) -> None:
         if not is_authorized(resource_type, operation, actor_role):
@@ -348,14 +339,13 @@ class CapitalBoundaryService:
         actor_role: str,
         detail: Dict[str, Any],
     ) -> None:
-        append_audit_event(
+        self.audit_store.append_event(
             event_type=event_type,
             resource_type=resource_type,
             resource_id=resource_id,
             actor_id=actor_id,
             actor_role=actor_role,
             detail=detail,
-            audit_log_path=str(self.audit_log_path),
         )
 
     @staticmethod
@@ -386,7 +376,7 @@ register_fastapi_health_routes(
         "capital_pool_count": len(get_capital_service().list_pools()),
         "binding_count": len(get_capital_service().list_bindings()),
     },
-    details=lambda: {"data_dir": str(DATA_DIR)},
+    details=lambda: {"data_dir": str(DATA_DIR), "store_backend": STORE_BACKEND},
 )
 
 
@@ -395,6 +385,7 @@ def get_capital_service() -> CapitalBoundaryService:
         pool_store=pool_store,
         binding_store=binding_store,
         audit_log_path=AUDIT_LOG_PATH,
+        audit_store=audit_store,
     )
 
 

@@ -81,6 +81,7 @@ try:
         IncidentStore,
         validate_incident_case,
     )
+    from services.incident.pg_store import build_incident_store  # type: ignore
 except ImportError:
     from incident.incident import (  # type: ignore
         IncidentCase,
@@ -89,6 +90,7 @@ except ImportError:
         IncidentStore,
         validate_incident_case,
     )
+    from incident.pg_store import build_incident_store  # type: ignore
 
 try:
     from .models import (
@@ -126,8 +128,9 @@ log = logging.getLogger(__name__)
 DATA_DIR = os.getenv("INCIDENTS_DATA_DIR", "/tmp/pantheon/incidents")
 os.makedirs(DATA_DIR, exist_ok=True)
 STORE_PATH = Path(DATA_DIR) / "incidents.json"
+STORE_BACKEND = (os.getenv("INCIDENT_STORE_BACKEND") or os.getenv("POSTMORTEM_STORE_BACKEND", "json")).strip().lower() or "json"
 
-store: IncidentStore = IncidentStore(path=STORE_PATH)
+store: IncidentStore = build_incident_store(STORE_PATH)
 reference_validator = CanonicalReferenceValidator()
 
 # ---------------------------------------------------------------------------
@@ -147,7 +150,7 @@ register_fastapi_health_routes(
     app,
     "incidents",
     metrics=lambda: {"incident_count": len(store.list_incidents())},
-    details=lambda: {"data_dir": DATA_DIR, "store_path": str(STORE_PATH)},
+    details=lambda: {"data_dir": DATA_DIR, "store_path": str(STORE_PATH), "store_backend": STORE_BACKEND},
 )
 
 # ---------------------------------------------------------------------------

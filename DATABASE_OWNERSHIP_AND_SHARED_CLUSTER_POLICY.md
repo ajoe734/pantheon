@@ -101,6 +101,33 @@ production env example selects the Postgres backends with `DATABASE_URL` as the
 shared cluster DSN; service-specific `*_DSN` values can override it for stricter
 role separation.
 
+## 4.2 Production ownership wave 3 inventory
+
+This inventory records the control-plane stores migrated in
+`SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3`. Dev/local rollback remains JSON or
+JSONL by backend env; staging/prod env examples select Postgres owner stores.
+
+| Service | Dev fallback | Postgres owner table | Write owner | Non-owner read contract |
+|---|---|---|---|---|
+| governance-svc | `approval_decisions.json` | `governance.approval_decisions` | governance-svc | owner API or read role only |
+| governance-svc audit | `audit.jsonl` | `governance.audit_events` | governance-svc | owner API or read role only |
+| capital-pool-svc | `capital_pools.json` | `capital.capital_pools` | capital-pool-svc | owner API or read role only |
+| capital-pool-svc bindings | `persona_capital_bindings.json` | `capital.persona_capital_bindings` | capital-pool-svc | owner API or read role only |
+| capital-pool-svc audit | `capital_audit.jsonl` | `capital.audit_events` | capital-pool-svc | owner API or read role only |
+| incident-svc | `incidents.json` incident records | `incident.incident_cases` | incident-svc | owner API or read role only |
+| postmortem-svc | `incidents.json` postmortem records | `incident.postmortems` | postmortem-svc | owner API or read role only |
+| promotion-svc approvals | `approval_decisions.json` | `promotion.approval_decisions` | promotion-svc | owner API or read role only |
+| promotion-svc deployment plans | `deployment_plans.json` | `promotion.deployment_plans` | promotion-svc | owner API or read role only |
+| promotion-svc deployment extensions | `deployment_plan_extensions.json` | `promotion.deployment_plan_extensions` | promotion-svc | owner API or read role only |
+| reconciliation-drift-svc evaluations | `drift_evaluations.json` | `reconciliation_drift.drift_evaluations` | reconciliation-drift-svc | owner API or read role only |
+| reconciliation-drift-svc alerts | `alert_handoffs.json` | `reconciliation_drift.alert_handoffs` | reconciliation-drift-svc | owner API or read role only |
+| memory-svc | `institutional_memory_entries.json` | `memory.institutional_memory_entries` | memory-svc | owner API or read role only |
+
+The `PostgresJsonOwnerStore` foundation primitive enforces explicit owner-store
+construction and supports read-only mode for non-owner consumers. Compose keeps
+the local data volumes so operators can roll staging/prod back to JSON/JSONL by
+changing only the backend env values.
+
 ---
 
 ## 5. 典型案例

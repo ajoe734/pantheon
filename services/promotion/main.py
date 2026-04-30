@@ -13,6 +13,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
 from services.foundation.health import register_fastapi_health_routes
+from services.promotion.pg_store import (
+    build_promotion_approval_store,
+    build_promotion_deployment_store,
+    build_promotion_extension_store,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 GOVERNANCE_DIR = ROOT / "services" / "control-plane" / "governance"
@@ -43,6 +48,7 @@ DATA_DIR = Path(os.getenv("PROMOTION_DATA_DIR", "/tmp/pantheon/promotion"))
 APPROVAL_STORE_PATH = DATA_DIR / "approval_decisions.json"
 DEPLOYMENT_STORE_PATH = DATA_DIR / "deployment_plans.json"
 DEPLOYMENT_EXT_PATH = DATA_DIR / "deployment_plan_extensions.json"
+STORE_BACKEND = os.getenv("PROMOTION_STORE_BACKEND", "json").strip().lower() or "json"
 
 
 class ApprovalCreateRequest(BaseModel):
@@ -142,9 +148,9 @@ class ExtensionStore:
         self._path.write_text(json.dumps(self._items, indent=2), encoding="utf-8")
 
 
-approval_store = ApprovalDecisionStore(str(APPROVAL_STORE_PATH))
-deployment_store = DeploymentPlanStore(str(DEPLOYMENT_STORE_PATH))
-deployment_ext_store = ExtensionStore(DEPLOYMENT_EXT_PATH)
+approval_store = build_promotion_approval_store(APPROVAL_STORE_PATH)
+deployment_store = build_promotion_deployment_store(DEPLOYMENT_STORE_PATH)
+deployment_ext_store = build_promotion_extension_store(DEPLOYMENT_EXT_PATH)
 stage_planner = StagePlanner()
 
 
@@ -229,7 +235,7 @@ def create_app() -> FastAPI:
             "approval_count": len(approval_store.list_all()),
             "deployment_count": len(deployment_store.list_all()),
         },
-        details=lambda: {"port": PORT, "data_dir": str(DATA_DIR)},
+        details=lambda: {"port": PORT, "data_dir": str(DATA_DIR), "store_backend": STORE_BACKEND},
     )
 
     @app.get("/__health__")
