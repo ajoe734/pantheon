@@ -6,7 +6,7 @@
 **Owner:** Claude (helper-claimed)
 **Reviewer:** Codex
 **Generated:** 2026-04-30
-**Status:** revised-for-review (addressing Codex reopen 2026-04-30)
+**Status:** accepted (Codex review approved 2026-04-30; closeout finalized)
 
 ---
 
