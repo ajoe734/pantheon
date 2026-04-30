@@ -28,7 +28,7 @@ The parent task `SVC-SOURCE-SEARCH-OPS-BFF` must build an operator ops surface i
 
 Current repo state:
 
-- `services/source_ingestion/main.py` exposes a complete ingest ops API including connectors, jobs, frontier, DLQ, audit, schedule, and source records — **none of these are currently proxied through the BFF operator surface**.
+- `services/source_ingestion/main.py` exposes a complete ingest API including connectors, jobs, frontier, DLQ, audit, schedule, source records, evidence records, and knowledge objects — **none of these are currently proxied through the BFF operator surface**.
 - `services/search/main.py` exposes index status, freshness, pipeline runs, refresh, reload, materialize, and query routes — **none of these operator-facing routes are currently proxied through the BFF operator surface**.
 - `services/control-plane/bff/read_store.py` has `get_source_connector_registry()` (reads `GET /api/source-ingest/registry`) and `research_search_index` dataset plumbing (reads from search service). These are the **only existing BFF↔service touchpoints for source/search**.
 - The BFF API contract (`BFF_API_CONTRACT.md`) does not yet list any `/api/v1/operator/source` or `/api/v1/operator/search` routes.
@@ -78,8 +78,13 @@ The BFF/frontend gap is therefore the entire ops panel: no BFF routes exist to g
 | `POST /api/source-ingest/run-scheduled` | POST | Trigger all due scheduled connectors | Operator command; requires auth + idempotency |
 | `GET /api/source-ingest/audit` | GET | Ingest audit actions log | Candidate source for audit/error summary |
 | `GET /api/source-ingest/source-records` | GET | List source records | Low-level; not needed in ops panel directly |
+| `GET /api/source-ingest/source-records/{source_id}` | GET | Get one source record | Low-level detail route; not needed in ops panel directly |
 | `GET /api/source-ingest/evidence/items` | GET | Evidence items | Not needed in ops panel directly |
+| `GET /api/source-ingest/evidence/items/{evidence_item_id}` | GET | Get one evidence item | Not needed in ops panel directly |
 | `GET /api/source-ingest/evidence/bundles` | GET | Evidence bundles | Not needed in ops panel directly |
+| `GET /api/source-ingest/evidence/bundles/{evidence_bundle_id}` | GET | Get one evidence bundle | Not needed in ops panel directly |
+| `GET /api/source-ingest/evidence/knowledge-objects` | GET | Knowledge objects derived from evidence | Not needed in ops panel directly |
+| `GET /api/source-ingest/evidence/knowledge-objects/{knowledge_object_id}` | GET | Get one knowledge object | Not needed in ops panel directly |
 
 ### 3.2 Search Service Routes (Available, Not Yet BFF-Proxied as Ops Surface)
 
