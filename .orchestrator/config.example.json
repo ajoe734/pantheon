@@ -413,7 +413,11 @@
       "gemini": {
         "cli": ".orchestrator/bin/gemini2",
         "home": "~/.gemini2",
-        "include_directories": true
+        "include_directories": true,
+        "env": {
+          "GOOGLE_CLOUD_PROJECT": "YOUR_GEMINI_CODE_ASSIST_PROJECT",
+          "GOOGLE_CLOUD_PROJECT_ID": "YOUR_GEMINI_CODE_ASSIST_PROJECT"
+        }
       },
       "approval": {
         "default_approval_mode": "auto_edit",

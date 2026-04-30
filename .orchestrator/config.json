@@ -430,7 +430,11 @@
       "gemini": {
         "cli": ".orchestrator/bin/gemini2",
         "home": "/home/edna/.gemini2",
-        "include_directories": true
+        "include_directories": true,
+        "env": {
+          "GOOGLE_CLOUD_PROJECT": "pantheon-493602",
+          "GOOGLE_CLOUD_PROJECT_ID": "pantheon-493602"
+        }
       },
       "approval": {
         "default_approval_mode": "auto_edit",

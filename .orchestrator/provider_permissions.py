@@ -73,6 +73,18 @@ def _gemini_oauth_creds_path(config: dict[str, Any] | None = None, provider_id: 
     return _gemini_home(config, provider_id) / ".gemini" / "oauth_creds.json"
 
 
+def _gemini_runtime_env(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> dict[str, str]:
+    env = dict(os.environ)
+    provider = (config or {}).get("providers", {}).get(provider_id, {}) or {}
+    for block_name in ("runtime", "gemini"):
+        block = provider.get(block_name, {}) or {}
+        for key, value in (block.get("env", {}) or {}).items():
+            if value is None:
+                continue
+            env[str(key)] = os.path.expanduser(str(value))
+    return env
+
+
 def _gemini_settings(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> dict[str, Any]:
     return load_json(_gemini_settings_path(config, provider_id), default={}) or {}
 
@@ -85,43 +97,56 @@ def _today_utc() -> date:
     return datetime.now(timezone.utc).date()
 
 
-def _truthy_env(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+def _truthy_env(name: str, env: dict[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    return source.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _gemini_env_auth_type() -> str | None:
-    if _truthy_env("GOOGLE_GENAI_USE_GCA"):
+def _gemini_env_auth_type(env: dict[str, str] | None = None) -> str | None:
+    if _truthy_env("GOOGLE_GENAI_USE_GCA", env):
         return "oauth-personal"
-    if _truthy_env("GEMINI_CLI_USE_COMPUTE_ADC"):
+    if _truthy_env("GEMINI_CLI_USE_COMPUTE_ADC", env):
         return "compute-default-credentials"
-    if _truthy_env("GOOGLE_GENAI_USE_VERTEXAI"):
+    if _truthy_env("GOOGLE_GENAI_USE_VERTEXAI", env):
         return "vertex-ai"
-    if os.environ.get("GEMINI_API_KEY"):
+    source = env if env is not None else os.environ
+    if source.get("GEMINI_API_KEY"):
         return "gemini-api-key"
     return None
 
 
-def _gemini_selected_auth_type(settings: dict[str, Any], *, oauth_creds_path: Path = GEMINI_OAUTH_CREDS_PATH) -> str | None:
+def _gemini_selected_auth_type(
+    settings: dict[str, Any],
+    *,
+    oauth_creds_path: Path = GEMINI_OAUTH_CREDS_PATH,
+    env: dict[str, str] | None = None,
+) -> str | None:
     return (
-        _gemini_env_auth_type()
+        _gemini_env_auth_type(env)
         or settings.get("security", {}).get("auth", {}).get("selectedType")
         or ("oauth-personal" if oauth_creds_path.exists() else None)
     )
 
 
-def _gemini_auth_ready(settings: dict[str, Any], *, oauth_creds_path: Path = GEMINI_OAUTH_CREDS_PATH) -> bool:
-    auth_type = _gemini_selected_auth_type(settings, oauth_creds_path=oauth_creds_path)
+def _gemini_auth_ready(
+    settings: dict[str, Any],
+    *,
+    oauth_creds_path: Path = GEMINI_OAUTH_CREDS_PATH,
+    env: dict[str, str] | None = None,
+) -> bool:
+    source = env if env is not None else os.environ
+    auth_type = _gemini_selected_auth_type(settings, oauth_creds_path=oauth_creds_path, env=source)
     if auth_type == "oauth-personal":
         return oauth_creds_path.exists()
     if auth_type == "gemini-api-key":
-        return bool(os.environ.get("GEMINI_API_KEY"))
+        return bool(source.get("GEMINI_API_KEY"))
     if auth_type == "vertex-ai":
         return bool(
-            os.environ.get("GOOGLE_API_KEY")
-            or (os.environ.get("GOOGLE_CLOUD_PROJECT") and os.environ.get("GOOGLE_CLOUD_LOCATION"))
+            source.get("GOOGLE_API_KEY")
+            or (source.get("GOOGLE_CLOUD_PROJECT") and source.get("GOOGLE_CLOUD_LOCATION"))
         )
     if auth_type == "compute-default-credentials":
-        if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        if source.get("GOOGLE_APPLICATION_CREDENTIALS"):
             return True
         gcloud = command_exists("gcloud")
         return bool(gcloud) and run_command([gcloud, "auth", "application-default", "print-access-token"]).returncode == 0
@@ -496,6 +521,7 @@ def desired_gemini_settings(config: dict[str, Any], provider_id: str = "gemini")
     auth_type = _gemini_selected_auth_type(
         _gemini_settings(config, provider_id),
         oauth_creds_path=_gemini_oauth_creds_path(config, provider_id),
+        env=_gemini_runtime_env(config, provider_id),
     )
     security: dict[str, Any] = {
         "enablePermanentToolApproval": to_bool(approval.get("enable_permanent_tool_approval", True)),
@@ -597,8 +623,9 @@ def _gemini_provider_report(
     provider_binary = _configured_provider_binary(config, provider_id, "gemini", "gemini")
     provider_settings = _gemini_settings(config, provider_id)
     oauth_creds_path = _gemini_oauth_creds_path(config, provider_id)
-    auth_ready = _gemini_auth_ready(provider_settings, oauth_creds_path=oauth_creds_path)
-    auth_type = _gemini_selected_auth_type(provider_settings, oauth_creds_path=oauth_creds_path)
+    runtime_env = _gemini_runtime_env(config, provider_id)
+    auth_ready = _gemini_auth_ready(provider_settings, oauth_creds_path=oauth_creds_path, env=runtime_env)
+    auth_type = _gemini_selected_auth_type(provider_settings, oauth_creds_path=oauth_creds_path, env=runtime_env)
     installed = bool(gemini_path or provider_binary)
     notes = [
         "Verified CLI approval flags and settings schema from the locally installed Gemini CLI package.",
@@ -642,6 +669,9 @@ def _gemini_provider_report(
             "security.autoAddToPolicyByDefault": provider_settings.get("security", {}).get("autoAddToPolicyByDefault"),
             "security.disableYoloMode": provider_settings.get("security", {}).get("disableYoloMode"),
             "security.auth.selectedType": auth_type,
+            "env.GOOGLE_CLOUD_PROJECT": runtime_env.get("GOOGLE_CLOUD_PROJECT"),
+            "env.GOOGLE_CLOUD_PROJECT_ID": runtime_env.get("GOOGLE_CLOUD_PROJECT_ID"),
+            "env.GOOGLE_CLOUD_LOCATION": runtime_env.get("GOOGLE_CLOUD_LOCATION"),
         },
         "notes": notes,
     }
@@ -660,8 +690,9 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     claude_local = _claude_local_settings()
     gemini_settings = _gemini_settings(config, "gemini")
     qwen_settings = _qwen_settings()
-    gemini_auth_ready = _gemini_auth_ready(gemini_settings, oauth_creds_path=_gemini_oauth_creds_path(config, "gemini"))
-    gemini_auth_type = _gemini_selected_auth_type(gemini_settings, oauth_creds_path=_gemini_oauth_creds_path(config, "gemini"))
+    gemini_env = _gemini_runtime_env(config, "gemini")
+    gemini_auth_ready = _gemini_auth_ready(gemini_settings, oauth_creds_path=_gemini_oauth_creds_path(config, "gemini"), env=gemini_env)
+    gemini_auth_type = _gemini_selected_auth_type(gemini_settings, oauth_creds_path=_gemini_oauth_creds_path(config, "gemini"), env=gemini_env)
     custom_agents = _custom_agents_info()
 
     claude_permissions = claude_local.get("permissions", {})

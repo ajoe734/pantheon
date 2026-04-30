@@ -199,7 +199,12 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
                     "gemini2": {
                         "delivery_mode": "gemini",
                         "allow_inbox_fallback": False,
-                        "gemini": {"cli": "gemini", "home": str(root / "gemini2-home"), "include_directories": True},
+                        "gemini": {
+                            "cli": "gemini",
+                            "home": str(root / "gemini2-home"),
+                            "include_directories": True,
+                            "env": {"GOOGLE_CLOUD_PROJECT": "gemini2-project"},
+                        },
                         "approval": {"default_approval_mode": "auto_edit"},
                     }
                 },
@@ -231,6 +236,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertEqual(env["ORCH_AGENT_ID"], "gemini2")
         self.assertEqual(env["ORCH_PROVIDER"], "gemini2")
         self.assertEqual(env["GEMINI_CLI_HOME"], str(root / "gemini2-home"))
+        self.assertEqual(env["GOOGLE_CLOUD_PROJECT"], "gemini2-project")
         self.assertEqual(env["ORCH_TASK_ID"], "T-GEMINI2")
         self.assertEqual(env["ORCH_REASON"], "owned_ready_dispatch")
 
