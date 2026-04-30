@@ -573,8 +573,6 @@ def summarize_failure_reason(reason: str | None, provider: str | None = None, *,
         return {"kind": "unknown", "summary": f"{provider_label} failure", "detail": ""}
 
     lowered = raw.lower()
-    if "qwen oauth free tier was discontinued" in lowered:
-        return {"kind": "quota", "summary": "Qwen OAuth free tier discontinued", "detail": raw[: max(420, limit)]}
     if "you have no quota" in lowered:
         return {"kind": "quota", "summary": "402 You have no quota", "detail": raw[: max(420, limit)]}
     if "credit balance is too low" in lowered or "billing_error" in lowered:

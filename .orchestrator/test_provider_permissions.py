@@ -7,16 +7,10 @@ from unittest import mock
 
 import permission_broker
 import provider_permissions
-from provider_permissions import ROOT, _qwen_auth_type_blocked_reason, _verified_claude_hooks
+from provider_permissions import ROOT, _verified_claude_hooks
 
 
 class ProviderPermissionsTest(unittest.TestCase):
-    def test_qwen_oauth_is_blocked_after_free_tier_discontinuation(self) -> None:
-        reason = _qwen_auth_type_blocked_reason("qwen-oauth")
-
-        self.assertIsNotNone(reason)
-        self.assertIn("2026-04-15", reason)
-
     def test_verified_claude_hooks_use_absolute_broker_path(self) -> None:
         expected = str(Path(ROOT) / ".orchestrator" / "permission_broker.py")
         hooks = _verified_claude_hooks()
@@ -280,7 +274,6 @@ EOF
                 },
                 "gemini": {},
                 "codex": {},
-                "qwen": {},
                 "copilot": {},
             },
         }
@@ -300,7 +293,6 @@ EOF
             mock.patch.object(provider_permissions, "_find_extension", side_effect=fake_find_extension),
             mock.patch.object(provider_permissions, "_claude_local_settings", return_value={"permissions": {"defaultMode": "acceptEdits"}}),
             mock.patch.object(provider_permissions, "_gemini_settings", return_value={}),
-            mock.patch.object(provider_permissions, "_qwen_settings", return_value={}),
             mock.patch.object(provider_permissions, "_custom_agents_info", return_value={}),
             mock.patch.object(provider_permissions, "_relevant_extensions", return_value=[]),
             mock.patch.object(
@@ -342,6 +334,7 @@ EOF
             report = provider_permissions.provider_capabilities(config)
 
         self.assertIn("claude2", report["providers"])
+        self.assertNotIn("qwen", report["providers"])
         self.assertTrue(report["providers"]["claude2"]["auth_ready"])
         self.assertTrue(report["providers"]["claude2"]["supports_auto_approve"])
         self.assertEqual(report["providers"]["claude2"]["paths"]["home"], os.path.expanduser("~/.claude2"))
@@ -371,7 +364,6 @@ EOF
                 },
                 "claude": {},
                 "codex": {},
-                "qwen": {},
                 "copilot": {},
             },
         }
@@ -401,7 +393,6 @@ EOF
             ),
             mock.patch.object(provider_permissions, "_gemini_auth_ready", return_value=True),
             mock.patch.object(provider_permissions, "_gemini_selected_auth_type", return_value="oauth-personal"),
-            mock.patch.object(provider_permissions, "_qwen_settings", return_value={}),
             mock.patch.object(provider_permissions, "_custom_agents_info", return_value={}),
             mock.patch.object(provider_permissions, "_relevant_extensions", return_value=[]),
             mock.patch.object(
@@ -436,6 +427,7 @@ EOF
             report = provider_permissions.provider_capabilities(config)
 
         self.assertIn("gemini2", report["providers"])
+        self.assertNotIn("qwen", report["providers"])
         self.assertTrue(report["providers"]["gemini2"]["auth_ready"])
         self.assertTrue(report["providers"]["gemini2"]["supports_auto_approve"])
         self.assertEqual(report["providers"]["gemini2"]["paths"]["binary"], "/usr/bin/gemini")

@@ -3,26 +3,8 @@
   // Copy to `.orchestrator/config.local.json` if you want a fresh personal override file.
   "supervisor": {
     // Refresh provider capabilities on each supervisor loop so dashboard state updates
-    // automatically after `qwen auth qwen-oauth` succeeds.
+    // after local auth or IAM changes.
     "auto_refresh_provider_capabilities": true
-  },
-  "providers": {
-    "qwen": {
-      "qwen": {
-        // Standalone Qwen Code CLI path. Leave as `qwen` if it is on PATH.
-        "cli": "qwen",
-
-        // Default local flow: official Qwen OAuth. Complete it once with:
-        //   qwen auth qwen-oauth
-        "auth_type": "qwen-oauth"
-
-        // Optional OpenAI-compatible endpoint example:
-        // "auth_type": "openai",
-        // "model": "qwen3-coder-plus",
-        // "openai_api_key_env": "OPENAI_API_KEY",
-        // "openai_base_url_env": "OPENAI_BASE_URL"
-      }
-    }
   },
   "coordination": {
     "repositories": {

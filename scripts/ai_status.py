@@ -102,13 +102,7 @@ AGENT_ALIASES = {
     "copilot_host": "Copilot",
 }
 
-RETIRED_AGENT_REPLACEMENTS = {
-    "qwen": "Codex2",
-    "qwen coder": "Codex2",
-    "qwen2.5-coder": "Codex2",
-    "qwen3": "Codex2",
-    "千問": "Codex2",
-}
+RETIRED_AGENT_REPLACEMENTS = {}
 
 STATUS_LABELS = {
     "todo": "todo",

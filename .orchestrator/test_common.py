@@ -80,15 +80,6 @@ class FailureSummaryTests(unittest.TestCase):
         self.assertEqual(result["kind"], "quota")
         self.assertEqual(result["summary"], "Credit balance is too low")
 
-    def test_summarize_failure_reason_treats_qwen_oauth_discontinued_as_quota(self) -> None:
-        result = common.summarize_failure_reason(
-            "Qwen OAuth free tier was discontinued on 2026-04-15; switch to providers.qwen.qwen.auth_type=openai with OPENAI-compatible credentials.",
-            "Qwen",
-        )
-
-        self.assertEqual(result["kind"], "quota")
-        self.assertEqual(result["summary"], "Qwen OAuth free tier discontinued")
-
     def test_summarize_failure_reason_treats_codex_usage_limit_as_quota(self) -> None:
         result = common.summarize_failure_reason(
             "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.",

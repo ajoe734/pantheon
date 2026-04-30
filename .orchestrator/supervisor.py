@@ -1146,7 +1146,7 @@ def build_discussion_planning_message(planning_state: dict[str, Any], agent_name
     summary = str(planning_state.get("summary") or "").strip()
     objective = str(planning_state.get("objective") or "").strip()
     baton_owner = str(planning_state.get("baton_owner") or "Codex")
-    next_reviewer = str(planning_state.get("next_reviewer") or "Qwen")
+    next_reviewer = str(planning_state.get("next_reviewer") or "Codex2")
     current_round = int(planning_state.get("current_round") or 0)
     consensus_status = str(planning_state.get("consensus_status") or "not_started")
     readout_path = discussion_planning_readout_path(planning_state, agent_name)
@@ -2489,7 +2489,6 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         "quota exceeded",
         "free daily quota has been reached",
         "free tier quota exceeded",
-        "qwen oauth free tier was discontinued",
         "quota will reset after",
         "terminalquotaerror",
     }
@@ -2864,7 +2863,6 @@ def worker_reassignment_settings(config: dict[str, Any]) -> dict[str, Any]:
         "Codex": ["Codex2", "Claude"],
         "Codex2": ["Codex", "Claude"],
         "Copilot": ["Codex", "Codex2", "Claude"],
-        "Qwen": ["Codex", "Codex2", "Claude"],
         "Grok": ["Codex", "Codex2", "Claude"],
     }
     settings.setdefault("owner_fallbacks", default_fallbacks)

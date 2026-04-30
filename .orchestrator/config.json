@@ -548,8 +548,7 @@
     "disabled_agents": [
       "Copilot",
       "Gemini",
-      "Gemini2",
-      "Qwen"
+      "Gemini2"
     ],
     "dependency_done_statuses": [
       "done"

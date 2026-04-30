@@ -96,7 +96,6 @@ GENERATED_EXACT_PATHS = {
 GENERATED_PREFIXES = (
     ".orchestrator/backups/",
     ".orchestrator/logs/",
-    ".qwen/",
     ".venv-bff/",
     "dist/",
 )

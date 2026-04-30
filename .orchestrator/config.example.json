@@ -92,10 +92,6 @@
       "Copilot": [
         "Codex",
         "Claude"
-      ],
-      "Qwen": [
-        "Codex",
-        "Claude"
       ]
     },
     "reviewer_fallbacks": {
@@ -114,10 +110,6 @@
         "Claude"
       ],
       "Copilot": [
-        "Codex",
-        "Claude"
-      ],
-      "Qwen": [
         "Codex",
         "Claude"
       ]
@@ -239,9 +231,6 @@
       "Codex": [
         "your-github-handle"
       ],
-      "Qwen": [
-        "your-github-handle"
-      ],
       "Copilot": [
         "your-github-handle"
       ]
@@ -336,13 +325,6 @@
       "adapter": "copilot_local",
       "wake_template": ".orchestrator/templates/wakeup.txt",
       "file_inbox_path": ".llm-inbox/copilot.md"
-    },
-    "qwen": {
-      "display_name": "Qwen",
-      "provider": "qwen",
-      "adapter": "qwen",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/qwen.md"
     },
     "grok": {
       "display_name": "Copilot (legacy alias)",
@@ -483,27 +465,6 @@
         "supported": [
           "claude"
         ]
-      }
-    },
-    "qwen": {
-      "delivery_mode": "qwen",
-      "file_inbox": {
-        "path": ".llm-inbox/qwen.md",
-        "open_in_vscode": false
-      },
-      "qwen": {
-        "cli": "qwen",
-        "approval_mode": "yolo",
-        "include_directories": true,
-        "output_format": "stream-json",
-        "include_partial_messages": false,
-        "channel": "CI",
-        "auth_type": null,
-        "model": null,
-        "model_env": "OPENAI_MODEL",
-        "openai_api_key_env": "OPENAI_API_KEY",
-        "openai_base_url_env": "OPENAI_BASE_URL",
-        "extra_args": []
       }
     }
   },

@@ -32,7 +32,6 @@ patterns = [
     r"\bclaude\b.*\s-p\b",
     r"\bgemini\b",
     r"\bcopilot\b.*--autopilot",
-    r"\bqwen\b.*\s-p\b",
 ]
 
 lines = subprocess.check_output(["ps", "-eo", "pid=,args="], text=True).splitlines()
@@ -67,7 +66,6 @@ patterns = [
     r"\bclaude\b.*\s-p\b",
     r"\bgemini\b",
     r"\bcopilot\b.*--autopilot",
-    r"\bqwen\b.*\s-p\b",
 ]
 
 lines = subprocess.check_output(["ps", "-eo", "pid=,args="], text=True).splitlines()

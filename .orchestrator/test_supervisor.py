@@ -184,19 +184,6 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertEqual(result["kind"], "quota_terminal")
         self.assertFalse(result["transient"])
 
-    def test_classifies_qwen_oauth_discontinued_failure_as_terminal(self) -> None:
-        config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
-        worker = {"provider": "qwen"}
-
-        result = supervisor.classify_worker_failure(
-            config,
-            worker,
-            "Qwen OAuth free tier was discontinued on 2026-04-15; switch to providers.qwen.qwen.auth_type=openai with OPENAI-compatible credentials.",
-        )
-
-        self.assertEqual(result["kind"], "quota_terminal")
-        self.assertFalse(result["transient"])
-
     def test_classifies_codex_usage_limit_failure_as_terminal_quota(self) -> None:
         config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
         worker = {"provider": "codex"}
@@ -2325,7 +2312,6 @@ class UnderutilizationSidecarDispatchTests(unittest.TestCase):
                 "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
                 "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
                 "gemini": {"id": "gemini", "display_name": "Gemini", "provider": "gemini"},
-                "qwen": {"id": "qwen", "display_name": "Qwen", "provider": "qwen"},
             },
         }
 
@@ -2383,7 +2369,7 @@ class UnderutilizationSidecarDispatchTests(unittest.TestCase):
             "id": "APP-001-SIDECAR-BFF-HANDOFF",
             "phase": "Phase 5: Persona and Application Surfaces",
             "status": "todo",
-            "owner": "Qwen",
+            "owner": "Gemini",
             "reviewer": "Claude",
             "depends_on": [],
             "title": "Prepare APP-001 BFF and frontend handoff packet",
@@ -2414,7 +2400,7 @@ class UnderutilizationSidecarDispatchTests(unittest.TestCase):
         create_sidecar_task.assert_called_once()
         kwargs = create_sidecar_task.call_args.kwargs
         self.assertEqual(kwargs["sidecar_id"], "APP-001-SIDECAR-BFF-HANDOFF")
-        self.assertEqual(kwargs["owner"], "Qwen")
+        self.assertEqual(kwargs["owner"], "Gemini")
         self.assertEqual(kwargs["reviewer"], "Claude")
         self.assertEqual(kwargs["helper_parent"], "APP-001")
         self.assertEqual(kwargs["helper_kind"], "bff_handoff_packet")
@@ -2422,7 +2408,7 @@ class UnderutilizationSidecarDispatchTests(unittest.TestCase):
         queue_delivery_event.assert_called_once()
         queued_event = queue_delivery_event.call_args.args[1]
         self.assertEqual(queued_event["task_id"], "APP-001-SIDECAR-BFF-HANDOFF")
-        self.assertEqual(queued_event["target_agent"], "Qwen")
+        self.assertEqual(queued_event["target_agent"], "Gemini")
         self.assertEqual(queued_event["task"]["task_class"], "sidecar")
         self.assertEqual(state["underutilization"]["last_sidecar_wave_at"], "2026-04-10T00:16:05Z")
         self.assertIn("created 1 visible sidecar", state["underutilization"]["last_sidecar_wave_reason"])
@@ -2496,7 +2482,7 @@ class UnderutilizationSidecarDispatchTests(unittest.TestCase):
             "id": "APP-001-SIDECAR-BFF-HANDOFF",
             "phase": "Phase 5: Persona and Application Surfaces",
             "status": "done",
-            "owner": "Qwen",
+            "owner": "Gemini",
             "reviewer": "Claude",
             "depends_on": [],
             "title": "Prepare APP-001 BFF and frontend handoff packet",

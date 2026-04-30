@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -28,12 +27,10 @@ CLAUDE_LOCAL_SETTINGS_PATH = ROOT / ".claude" / "settings.local.json"
 CLAUDE_LOCAL_EXAMPLE_PATH = ROOT / ".claude" / "settings.local.example.json"
 GEMINI_SETTINGS_PATH = Path.home() / ".gemini" / "settings.json"
 GEMINI_OAUTH_CREDS_PATH = Path.home() / ".gemini" / "oauth_creds.json"
-QWEN_SETTINGS_PATH = Path.home() / ".qwen" / "settings.json"
 CODEX_CONFIG_PATH = Path.home() / ".codex" / "config.toml"
 EXTENSIONS_DIR = Path.home() / ".vscode-server" / "extensions"
 COPILOT_CONFIG_DIR = Path.home() / ".copilot"
 COPILOT_CONFIG_PATH = COPILOT_CONFIG_DIR / "config.json"
-QWEN_OAUTH_FREE_TIER_END_DATE = date(2026, 4, 15)
 
 
 def _find_extension(prefix: str) -> tuple[Path | None, str | None]:
@@ -87,14 +84,6 @@ def _gemini_runtime_env(config: dict[str, Any] | None = None, provider_id: str =
 
 def _gemini_settings(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> dict[str, Any]:
     return load_json(_gemini_settings_path(config, provider_id), default={}) or {}
-
-
-def _qwen_settings() -> dict[str, Any]:
-    return load_json(QWEN_SETTINGS_PATH, default={}) or {}
-
-
-def _today_utc() -> date:
-    return datetime.now(timezone.utc).date()
 
 
 def _truthy_env(name: str, env: dict[str, str] | None = None) -> bool:
@@ -247,56 +236,6 @@ def _copilot_auth_ready(gh_binary: str | None) -> bool:
     if any(os.environ.get(name) for name in ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")):
         return True
     return _copilot_config_auth_ready()
-
-
-def _configured_value(settings: dict[str, Any], key: str, env_name: str | None = None) -> str | None:
-    direct = str(settings.get(key) or "").strip()
-    if direct:
-        return direct
-    source_name = str(settings.get(f"{key}_env") or settings.get(f"{key}_ENV") or env_name or "").strip()
-    if source_name:
-        value = os.environ.get(source_name)
-        return str(value).strip() if value else None
-    return None
-
-
-def _qwen_saved_auth_ready(binary: str | None) -> bool:
-    if not binary:
-        return False
-    result = run_command([binary, "auth", "status"])
-    output = ((result.stdout or "") + (result.stderr or "")).lower()
-    return bool(output) and "no authentication method configured" not in output
-
-
-def _qwen_auth_type(runtime: dict[str, Any], settings: dict[str, Any]) -> str:
-    return str(runtime.get("auth_type") or settings.get("security", {}).get("auth", {}).get("selectedType") or "").strip()
-
-
-def _qwen_oauth_free_tier_active(today: date | None = None) -> bool:
-    return (today or _today_utc()) < QWEN_OAUTH_FREE_TIER_END_DATE
-
-
-def _qwen_auth_type_blocked_reason(auth_type: str | None, today: date | None = None) -> str | None:
-    if str(auth_type or "").strip() != "qwen-oauth":
-        return None
-    if _qwen_oauth_free_tier_active(today):
-        return None
-    return (
-        "Qwen OAuth free tier was discontinued on 2026-04-15; "
-        "switch to providers.qwen.qwen.auth_type=openai with OPENAI-compatible credentials."
-    )
-
-
-def _qwen_env_auth_ready(runtime: dict[str, Any], auth_type: str) -> bool:
-    if auth_type == "openai":
-        return bool(_configured_value(runtime, "openai_api_key", "OPENAI_API_KEY"))
-    if auth_type == "anthropic":
-        return bool(os.environ.get("ANTHROPIC_API_KEY"))
-    if auth_type == "gemini":
-        return bool(os.environ.get("GEMINI_API_KEY"))
-    if auth_type == "vertex-ai":
-        return bool(os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"))
-    return False
 
 
 def _configured_provider_binary(config: dict[str, Any], provider: str, section: str, default: str) -> str | None:
@@ -689,7 +628,6 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     copilot_path, copilot_version = _find_extension("github.copilot-chat")
     claude_local = _claude_local_settings()
     gemini_settings = _gemini_settings(config, "gemini")
-    qwen_settings = _qwen_settings()
     gemini_env = _gemini_runtime_env(config, "gemini")
     gemini_auth_ready = _gemini_auth_ready(gemini_settings, oauth_creds_path=_gemini_oauth_creds_path(config, "gemini"), env=gemini_env)
     gemini_auth_type = _gemini_selected_auth_type(gemini_settings, oauth_creds_path=_gemini_oauth_creds_path(config, "gemini"), env=gemini_env)
@@ -701,25 +639,14 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     desired_gemini = desired_gemini_settings(config, "gemini")
     codex_binary = command_exists("codex")
     gemini_binary = _configured_provider_binary(config, "gemini", "gemini", "gemini")
-    qwen_binary = _configured_provider_binary(config, "qwen", "qwen", "qwen")
     copilot_binary = _configured_provider_binary(config, "copilot", "local", "copilot")
     gh_binary = command_exists(config.get("providers", {}).get("copilot", {}).get("cloud", {}).get("cli") or "gh")
     gh_version = _gh_version(gh_binary)
     gh_auth_ready = _gh_auth_ready(gh_binary)
     copilot_auth_ready = _copilot_auth_ready(gh_binary)
     copilot_settings = config.get("providers", {}).get("copilot", {})
-    qwen_runtime = config.get("providers", {}).get("qwen", {}).get("qwen", {})
     copilot_model_preference = copilot_settings.get("model_preference", {})
-    qwen_version = (run_command([qwen_binary, "--version"]).stdout or "").strip() if qwen_binary else None
-    qwen_auth_type = _qwen_auth_type(qwen_runtime, qwen_settings)
-    qwen_model = _configured_value(qwen_runtime, "model", "OPENAI_MODEL") or str(qwen_settings.get("model", {}).get("name") or "").strip() or None
-    qwen_openai_api_key = _configured_value(qwen_runtime, "openai_api_key", "OPENAI_API_KEY")
-    qwen_openai_base_url = _configured_value(qwen_runtime, "openai_base_url", "OPENAI_BASE_URL")
-    qwen_saved_auth = _qwen_saved_auth_ready(qwen_binary)
-    qwen_auth_blocked_reason = _qwen_auth_type_blocked_reason(qwen_auth_type)
-    qwen_auth_ready = not qwen_auth_blocked_reason and (qwen_saved_auth or _qwen_env_auth_ready(qwen_runtime, qwen_auth_type))
     gemini_installed = bool(gemini_path or gemini_binary)
-    qwen_installed = bool(qwen_binary)
     codex_installed = bool(openai_path or codex_binary)
     copilot_installed = bool(copilot_path or copilot_binary or gh_binary)
 
@@ -860,53 +787,6 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
                 "notes": [
                     "Verified CLI flags from the locally installed Codex CLI help output.",
                     "No verified persistent approval config keys were found in local extension metadata, so auto-approve is applied per orchestrated run rather than globally.",
-                ],
-            },
-            "qwen": {
-                "installed": qwen_installed,
-                "host_layer": "Official Qwen Code CLI",
-                "delivery_mode": config.get("providers", {}).get("qwen", {}).get("delivery_mode", "qwen"),
-                "approval_mode": str(qwen_runtime.get("approval_mode") or "yolo"),
-                "persistent_allow_supported": False,
-                "default_auto_approve_supported": bool(qwen_binary and qwen_auth_ready),
-                "full_access_supported": bool(qwen_binary and qwen_auth_ready),
-                "per_tool_allow_supported": bool(qwen_binary and qwen_auth_ready),
-                "local_cli_worker_supported": bool(qwen_binary and qwen_auth_ready),
-                "vscode_link_supported": False,
-                "cloud_agent_supported": False,
-                "supports_auto_approve": bool(qwen_binary and qwen_auth_ready),
-                "supports_defer_resume": bool(qwen_binary),
-                "auth_ready": qwen_auth_ready,
-                "supported_models": [qwen_model] if qwen_model else [],
-                "selected_model": qwen_model,
-                "applied": bool(qwen_binary),
-                "verified": "verified" if (qwen_binary and qwen_auth_ready) else ("partial" if qwen_binary else "unavailable"),
-                "version": qwen_version,
-                "paths": {
-                    "binary": qwen_binary,
-                    "settings": str(QWEN_SETTINGS_PATH),
-                },
-                "settings": {
-                    "security.auth.selectedType": qwen_settings.get("security", {}).get("auth", {}).get("selectedType"),
-                    "runtime.auth_type": qwen_runtime.get("auth_type"),
-                    "runtime.model": qwen_runtime.get("model"),
-                    "runtime.model_env": qwen_runtime.get("model_env"),
-                    "runtime.openai_api_key_env": qwen_runtime.get("openai_api_key_env"),
-                    "runtime.openai_base_url_env": qwen_runtime.get("openai_base_url_env"),
-                    "runtime.approval_mode": qwen_runtime.get("approval_mode"),
-                    "runtime.channel": qwen_runtime.get("channel"),
-                    "resolved.openai_base_url": qwen_openai_base_url,
-                    "auth_blocked_reason": qwen_auth_blocked_reason,
-                },
-                "notes": [
-                    "Qwen is wired as a standalone provider via the official `qwen` CLI rather than through Copilot model routing.",
-                    *(
-                        [qwen_auth_blocked_reason, "Use `providers.qwen.qwen.auth_type=openai` plus OPENAI-compatible env vars for a supported non-interactive setup."]
-                        if qwen_auth_blocked_reason
-                        else [
-                            "Run `qwen auth qwen-oauth` for the official free tier, or set `providers.qwen.qwen.auth_type=openai` plus OPENAI-compatible env vars for a custom endpoint."
-                        ]
-                    ),
                 ],
             },
             "copilot": {

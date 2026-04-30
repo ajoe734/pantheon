@@ -16,7 +16,6 @@ from adapters.claude_cli import ClaudeCLIAdapter
 from adapters.copilot_local import CopilotLocalAdapter
 from adapters.codex import CodexAdapter
 from adapters.gemini import GeminiAdapter
-from adapters.qwen import QwenAdapter
 
 
 class AdapterFallbackPolicyTests(unittest.TestCase):
@@ -260,24 +259,6 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertFalse(result.manual_confirmation_required)
         self.assertEqual(result.mode, "copilot_local")
-
-    def test_qwen_can_disable_inbox_fallback(self) -> None:
-        config = {
-            "agents": {"qwen": {"id": "qwen", "display_name": "Qwen", "provider": "qwen"}},
-            "providers": {
-                "qwen": {
-                    "allow_inbox_fallback": False,
-                    "qwen": {"cli": "qwen"},
-                }
-            },
-        }
-        request = DeliveryRequest(agent_id="qwen", provider="qwen", delivery_mode="qwen", message="wake")
-        adapter = QwenAdapter(config=config, provider_capabilities={})
-        with mock.patch("adapters.qwen.command_exists", return_value=None):
-            result = adapter.deliver(request)
-        self.assertFalse(result.ok)
-        self.assertFalse(result.manual_confirmation_required)
-        self.assertEqual(result.mode, "qwen")
 
 
 if __name__ == "__main__":
