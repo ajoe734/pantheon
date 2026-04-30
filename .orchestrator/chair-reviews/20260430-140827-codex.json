@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization remains and runnable OpenClaw support work exists; current blockers are provider-scoped, not global.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
+    "TEST-FULLSUITE-RUNBOOK-CI-MATRIX"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-OPENCLAW-HONEST-STACK-SEMANTICS"
+  ]
+}
