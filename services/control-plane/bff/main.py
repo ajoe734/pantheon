@@ -106,7 +106,11 @@ if _cors_origins:
             "Cache-Control",
             "Content-Type",
             "Last-Event-ID",
+            "X-Correlation-Id",
+            "X-Idempotency-Key",
             "X-MFA-Token",
+            "X-Request-Id",
+            "X-Trace-Id",
         ],
     )
 
@@ -167,8 +171,14 @@ _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 #
 # OIDC/JWKS mode (optional; activated when PANTHEON_BFF_JWKS_URI is non-empty):
 #   PANTHEON_BFF_JWKS_URI      - JWKS endpoint URI (e.g. https://idp/.well-known/jwks.json)
+#   PANTHEON_BFF_OIDC_DISCOVERY_URL - OIDC discovery metadata URL used to resolve jwks_uri
 #   PANTHEON_BFF_OIDC_ISSUER   - expected iss claim for OIDC tokens (overrides JWT_ISSUER)
 #   PANTHEON_BFF_OIDC_AUDIENCE - expected aud claim for OIDC tokens (overrides JWT_AUDIENCE)
+#   PANTHEON_BFF_ROLE_CLAIMS   - comma-separated role claim paths (e.g. groups,roles)
+#   PANTHEON_BFF_ROLE_MAP      - external=internal role map; semicolon-separated
+#   PANTHEON_BFF_ROLE_MAP_MODE - passthrough (default) or strict
+#   PANTHEON_BFF_MFA_CLAIMS    - comma-separated MFA claim paths (e.g. amr,acr)
+#   PANTHEON_BFF_MFA_VALUES    - accepted MFA proof values (e.g. mfa,totp,webauthn)
 #   When JWKS_URI is set, RS256/ES256 JWKS path is used instead of HS256.
 #   Strict default still applies: stub tokens are never accepted unless AUTH_STUB=true.
 
@@ -235,8 +245,14 @@ def _extract_identity_jwt(
         "PANTHEON_RUNTIME_MFA_REQUIRED": os.getenv("PANTHEON_BFF_MFA_REQUIRED", "false"),
         # OIDC/JWKS optional path — active only when JWKS_URI is set.
         "PANTHEON_RUNTIME_JWKS_URI": os.getenv("PANTHEON_BFF_JWKS_URI", ""),
+        "PANTHEON_RUNTIME_OIDC_DISCOVERY_URL": os.getenv("PANTHEON_BFF_OIDC_DISCOVERY_URL", ""),
         "PANTHEON_RUNTIME_OIDC_ISSUER": os.getenv("PANTHEON_BFF_OIDC_ISSUER", ""),
         "PANTHEON_RUNTIME_OIDC_AUDIENCE": os.getenv("PANTHEON_BFF_OIDC_AUDIENCE", ""),
+        "PANTHEON_RUNTIME_ROLE_CLAIMS": os.getenv("PANTHEON_BFF_ROLE_CLAIMS", ""),
+        "PANTHEON_RUNTIME_ROLE_MAP": os.getenv("PANTHEON_BFF_ROLE_MAP", ""),
+        "PANTHEON_RUNTIME_ROLE_MAP_MODE": os.getenv("PANTHEON_BFF_ROLE_MAP_MODE", ""),
+        "PANTHEON_RUNTIME_MFA_CLAIMS": os.getenv("PANTHEON_BFF_MFA_CLAIMS", ""),
+        "PANTHEON_RUNTIME_MFA_VALUES": os.getenv("PANTHEON_BFF_MFA_VALUES", ""),
     }
     mfa_required = bff_env["PANTHEON_RUNTIME_MFA_REQUIRED"].lower() == "true"
     try:
@@ -260,6 +276,7 @@ def _extract_identity_jwt(
             "JWKS_NO_MATCHING_KEY",
             "JWKS_INVALID_KEY",
             "JWKS_LIBRARY_UNAVAILABLE",
+            "OIDC_DISCOVERY_FAILED",
         }
         if exc.code in _opaque_codes:
             effective_status = 401

@@ -496,6 +496,7 @@ def _make_rs256_jwt(
     kid: str | None = "test-kid-1",
     alg: str = "RS256",
     exp_offset: int = 3600,
+    extra: dict | None = None,
 ) -> str:
     """Sign an RS256 JWT with the test RSA private key."""
     from cryptography.hazmat.primitives import hashes, serialization
@@ -510,6 +511,8 @@ def _make_rs256_jwt(
     }
     if roles is not None:
         payload["roles"] = roles
+    if extra:
+        payload.update(extra)
     header = {"alg": alg, "typ": "JWT"}
     if kid is not None:
         header["kid"] = kid
@@ -617,6 +620,27 @@ class TestExtractIdentityJwks:
         identity = self._call(f"Bearer {token}", mfa_token="123456")
         assert identity.mfa_verified is True
 
+    def test_role_and_mfa_claim_mapping_can_be_strict(self):
+        token = _make_rs256_jwt(
+            sub="op-idp-admin",
+            roles=None,
+            extra={"groups": ["pantheon-staging-admins"], "amr": ["pwd", "mfa"]},
+        )
+        identity = self._call(
+            f"Bearer {token}",
+            env_overrides={
+                "PANTHEON_BFF_ROLE_CLAIMS": "groups",
+                "PANTHEON_BFF_ROLE_MAP": "pantheon-staging-admins=admin;pantheon-staging-operators=operator",
+                "PANTHEON_BFF_ROLE_MAP_MODE": "strict",
+                "PANTHEON_BFF_MFA_CLAIMS": "amr",
+                "PANTHEON_BFF_MFA_VALUES": "mfa",
+                "PANTHEON_BFF_MFA_REQUIRED": "true",
+            },
+        )
+        assert identity.operator_id == "op-idp-admin"
+        assert identity.roles == ["admin"]
+        assert identity.mfa_verified is True
+
     # ---- kid matching ----
 
     def test_kid_mismatch_raises_401(self):
@@ -715,6 +739,29 @@ class TestExtractIdentityJwks:
         assert exc_info.value.status_code == 401
         assert "JWKS_NO_MATCHING_KEY" not in json.dumps(exc_info.value.detail)
 
+    def test_oidc_discovery_failure_returns_generic_401(self):
+        """OIDC discovery failures must not leak discovery URL or internal code."""
+        from fastapi import HTTPException
+        from services.runtime_auth_inbound import AuthError
+        discovery_url = "https://idp.example.com/.well-known/openid-configuration"
+        token = _make_rs256_jwt()
+        env = {
+            **_JWKS_ENV,
+            "PANTHEON_BFF_JWKS_URI": "",
+            "PANTHEON_BFF_OIDC_DISCOVERY_URL": discovery_url,
+        }
+        with patch(
+            "services.runtime_auth_inbound._fetch_oidc_metadata",
+            side_effect=AuthError("OIDC_DISCOVERY_FAILED", "OIDC discovery unavailable", 401),
+        ):
+            with patch.dict(os.environ, env, clear=False):
+                with pytest.raises(HTTPException) as exc_info:
+                    _extract_identity_jwt(f"Bearer {token}")
+        assert exc_info.value.status_code == 401
+        detail_str = json.dumps(exc_info.value.detail)
+        assert discovery_url not in detail_str
+        assert "OIDC_DISCOVERY_FAILED" not in detail_str
+
     # ---- cache behaviour ----
 
     def test_jwks_cache_used_on_second_call(self):
@@ -738,6 +785,122 @@ class TestExtractIdentityJwks:
         finally:
             auth_mod._JWKS_CACHE.clear()
             auth_mod._JWKS_CACHE.update(original_cache)
+
+    def test_jwks_cache_miss_refreshes_for_rotated_kid(self):
+        """A cached JWKS kid miss should force one refresh before rejecting."""
+        from unittest.mock import MagicMock
+        import services.runtime_auth_inbound as auth_mod
+
+        original_cache = dict(auth_mod._JWKS_CACHE)
+        jwks_uri = _JWKS_ENV["PANTHEON_BFF_JWKS_URI"]
+        token = _make_rs256_jwt(sub="op-rotated", roles=["operator"], kid="test-kid-1")
+        auth_mod._JWKS_CACHE.clear()
+        auth_mod._JWKS_CACHE[jwks_uri] = (_TEST_JWKS_ALT_KID, time.time())
+        try:
+            response = MagicMock()
+            response.read.return_value = json.dumps({"keys": _TEST_JWKS}).encode("utf-8")
+            response.__enter__.return_value = response
+            with patch("services.runtime_auth_inbound.urllib.request.urlopen", return_value=response) as urlopen:
+                with patch.dict(os.environ, _JWKS_ENV, clear=False):
+                    identity = _extract_identity_jwt(f"Bearer {token}")
+            assert identity.operator_id == "op-rotated"
+            assert urlopen.call_count == 1
+        finally:
+            auth_mod._JWKS_CACHE.clear()
+            auth_mod._JWKS_CACHE.update(original_cache)
+
+    def test_oidc_discovery_url_resolves_jwks_uri(self):
+        token = _make_rs256_jwt(
+            sub="op-discovery",
+            roles=["operator"],
+            issuer="https://discovery-idp.example.com",
+        )
+        env = {
+            **_JWKS_ENV,
+            "PANTHEON_BFF_JWKS_URI": "",
+            "PANTHEON_BFF_OIDC_DISCOVERY_URL": "https://discovery-idp.example.com/.well-known/openid-configuration",
+            "PANTHEON_BFF_OIDC_ISSUER": "",
+        }
+        with patch(
+            "services.runtime_auth_inbound._fetch_oidc_metadata",
+            return_value={
+                "issuer": "https://discovery-idp.example.com",
+                "jwks_uri": "https://discovery-idp.example.com/jwks.json",
+            },
+        ) as discovery:
+            with patch(_JWKS_FETCH_TARGET, return_value=_TEST_JWKS) as fetch:
+                with patch.dict(os.environ, env, clear=False):
+                    identity = _extract_identity_jwt(f"Bearer {token}")
+        assert identity.operator_id == "op-discovery"
+        discovery.assert_called_once()
+        assert fetch.call_args.args[0] == "https://discovery-idp.example.com/jwks.json"
+
+    # ---- role claim mapping ----
+
+    def test_role_singular_claim_passthrough(self):
+        """'role' (singular) claim is honored via default passthrough mapping."""
+        token = _make_rs256_jwt(sub="op-role-single", roles=None, extra={"role": "reviewer"})
+        identity = self._call(f"Bearer {token}")
+        assert "reviewer" in identity.roles
+
+    def test_default_role_fallback_when_no_role_claim(self):
+        """No roles/role claim in token → PANTHEON_BFF_DEFAULT_ROLE is applied."""
+        token = _make_rs256_jwt(sub="op-norole", roles=None)
+        identity = self._call(
+            f"Bearer {token}",
+            env_overrides={"PANTHEON_BFF_DEFAULT_ROLE": "reviewer"},
+        )
+        assert identity.roles == ["reviewer"]
+
+    def test_strict_role_map_rejects_unmapped_group(self):
+        """Strict role map gives empty roles when the IdP group has no mapping entry."""
+        token = _make_rs256_jwt(
+            sub="op-unmapped",
+            roles=None,
+            extra={"groups": ["unknown-idp-group"]},
+        )
+        identity = self._call(
+            f"Bearer {token}",
+            env_overrides={
+                "PANTHEON_BFF_ROLE_CLAIMS": "groups",
+                "PANTHEON_BFF_ROLE_MAP": "pantheon-admins=admin",
+                "PANTHEON_BFF_ROLE_MAP_MODE": "strict",
+            },
+        )
+        assert not identity.roles  # unmapped group must not silently become any BFF role
+
+    def test_role_map_passthrough_multiple_roles(self):
+        """Passthrough mode keeps all claim roles that are not remapped."""
+        token = _make_rs256_jwt(sub="op-multi", roles=["operator", "reviewer"])
+        identity = self._call(f"Bearer {token}")
+        assert "operator" in identity.roles
+        assert "reviewer" in identity.roles
+
+    # ---- MFA claim mapping ----
+
+    def test_mfa_from_amr_claim_default_paths(self):
+        """amr=[mfa] in token payload signals mfa_verified via default claim paths."""
+        token = _make_rs256_jwt(sub="op-amr", roles=["operator"], extra={"amr": ["pwd", "mfa"]})
+        identity = self._call(f"Bearer {token}")
+        assert identity.mfa_verified is True
+
+    def test_mfa_from_acr_claim(self):
+        """acr=mfa in token payload signals mfa_verified."""
+        token = _make_rs256_jwt(sub="op-acr", roles=["operator"], extra={"acr": "mfa"})
+        identity = self._call(f"Bearer {token}")
+        assert identity.mfa_verified is True
+
+    def test_mfa_from_boolean_mfa_verified_claim(self):
+        """Boolean mfa_verified=true claim signals mfa_verified."""
+        token = _make_rs256_jwt(sub="op-mfabool", roles=["operator"], extra={"mfa_verified": True})
+        identity = self._call(f"Bearer {token}")
+        assert identity.mfa_verified is True
+
+    def test_mfa_not_verified_without_any_claim(self):
+        """Token without amr/acr/mfa claims and without X-MFA-Token header is not MFA-verified."""
+        token = _make_rs256_jwt(sub="op-nomfa", roles=["operator"])
+        identity = self._call(f"Bearer {token}")
+        assert identity.mfa_verified is False
 
     # ---- HS256 backward compatibility ----
 

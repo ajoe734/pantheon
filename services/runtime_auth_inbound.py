@@ -45,10 +45,28 @@ PANTHEON_RUNTIME_DEFAULT_ROLE
 PANTHEON_RUNTIME_JWKS_URI
     Optional JWKS endpoint. When set, JWT-shaped bearer tokens are verified
     through the JWKS path instead of the HS256 shared-secret path.
+PANTHEON_RUNTIME_OIDC_DISCOVERY_URL
+    Optional OIDC discovery metadata URL. When set and JWKS_URI is unset,
+    ``jwks_uri`` is resolved from this metadata document.
 PANTHEON_RUNTIME_OIDC_ISSUER
     Optional issuer override for JWKS/OIDC tokens.
 PANTHEON_RUNTIME_OIDC_AUDIENCE
     Optional audience override for JWKS/OIDC tokens.
+PANTHEON_RUNTIME_ROLE_CLAIMS
+    Comma-separated claim paths used to resolve roles. Defaults to
+    ``roles,role``. Dot paths such as ``realm_access.roles`` are supported.
+PANTHEON_RUNTIME_ROLE_MAP
+    Optional semicolon-separated external-to-internal role map, for example
+    ``idp-admins=admin;idp-operators=operator``.
+PANTHEON_RUNTIME_ROLE_MAP_MODE
+    ``passthrough`` (default; preserve unmapped role values) or ``strict``
+    (only mapped values become Pantheon roles).
+PANTHEON_RUNTIME_MFA_CLAIMS
+    Comma-separated claim paths used to resolve IdP-confirmed MFA. Defaults to
+    ``amr,acr,mfa,mfa_verified``.
+PANTHEON_RUNTIME_MFA_VALUES
+    Comma-separated values treated as MFA proof. Defaults to common true/MFA
+    markers such as ``true,mfa,otp,totp,webauthn``.
 """
 from __future__ import annotations
 
@@ -65,7 +83,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Mapping, Optional, Sequence, Tuple
 
 
 _DEFAULT_ROLE = "operator"
@@ -219,9 +237,19 @@ _JWKS_CACHE: dict[str, tuple[list, float]] = {}
 _JWKS_CACHE_LOCK = threading.Lock()
 _JWKS_CACHE_TTL = 300.0  # 5 minutes
 _JWKS_ALLOWED_ALGS = frozenset({"RS256", "ES256"})
+_OIDC_DISCOVERY_CACHE: dict[str, tuple[dict[str, Any], float]] = {}
+_OIDC_DISCOVERY_CACHE_LOCK = threading.Lock()
+_DEFAULT_ROLE_CLAIMS = ("roles", "role")
+_DEFAULT_MFA_CLAIMS = ("amr", "acr", "mfa", "mfa_verified")
+_DEFAULT_MFA_VALUES = frozenset({"true", "1", "yes", "mfa", "otp", "totp", "webauthn"})
 
 
-def _fetch_jwks_keys(uri: str, *, now: Optional[float] = None) -> list:
+def _fetch_jwks_keys(
+    uri: str,
+    *,
+    now: Optional[float] = None,
+    force_refresh: bool = False,
+) -> list:
     """Fetch JWKS keys from *uri* with an in-memory TTL cache.
 
     Returns the list of JWK dicts from the ``keys`` array.
@@ -229,12 +257,13 @@ def _fetch_jwks_keys(uri: str, *, now: Optional[float] = None) -> list:
     raw network exceptions or internal URIs in error output.
     """
     current = now if now is not None else time.time()
-    with _JWKS_CACHE_LOCK:
-        entry = _JWKS_CACHE.get(uri)
-        if entry is not None:
-            cached_keys, fetched_at = entry
-            if current - fetched_at < _JWKS_CACHE_TTL:
-                return cached_keys
+    if not force_refresh:
+        with _JWKS_CACHE_LOCK:
+            entry = _JWKS_CACHE.get(uri)
+            if entry is not None:
+                cached_keys, fetched_at = entry
+                if current - fetched_at < _JWKS_CACHE_TTL:
+                    return cached_keys
 
     try:
         req = urllib.request.Request(uri, headers={"Accept": "application/json"})
@@ -250,6 +279,40 @@ def _fetch_jwks_keys(uri: str, *, now: Optional[float] = None) -> list:
     with _JWKS_CACHE_LOCK:
         _JWKS_CACHE[uri] = (keys, current)
     return keys
+
+
+def _fetch_oidc_metadata(
+    uri: str,
+    *,
+    now: Optional[float] = None,
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    """Fetch OIDC discovery metadata and cache it for the JWKS cache TTL."""
+    current = now if now is not None else time.time()
+    if not force_refresh:
+        with _OIDC_DISCOVERY_CACHE_LOCK:
+            entry = _OIDC_DISCOVERY_CACHE.get(uri)
+            if entry is not None:
+                cached_metadata, fetched_at = entry
+                if current - fetched_at < _JWKS_CACHE_TTL:
+                    return cached_metadata
+
+    try:
+        req = urllib.request.Request(uri, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            raw = resp.read().decode("utf-8")
+        metadata = json.loads(raw)
+        if not isinstance(metadata, dict):
+            raise ValueError("OIDC metadata must be an object")
+        jwks_uri = metadata.get("jwks_uri")
+        if not isinstance(jwks_uri, str) or not jwks_uri.strip():
+            raise ValueError("OIDC metadata missing jwks_uri")
+    except (urllib.error.URLError, urllib.error.HTTPError, ValueError, json.JSONDecodeError) as exc:
+        raise AuthError("OIDC_DISCOVERY_FAILED", "OIDC discovery unavailable", 401) from exc
+
+    with _OIDC_DISCOVERY_CACHE_LOCK:
+        _OIDC_DISCOVERY_CACHE[uri] = (metadata, current)
+    return metadata
 
 
 def _find_jwks_key(keys: list, kid: Optional[str]) -> Optional[dict]:
@@ -401,6 +464,9 @@ def _verify_jwt_jwks(
     keys = _fetch_jwks_keys(jwks_uri, now=now)
     key = _find_jwks_key(keys, kid)
     if key is None:
+        keys = _fetch_jwks_keys(jwks_uri, now=now, force_refresh=True)
+        key = _find_jwks_key(keys, kid)
+    if key is None:
         raise AuthError("JWKS_NO_MATCHING_KEY", "No matching JWKS key for this token", 401)
 
     public_key = _public_key_from_jwk(key, alg)
@@ -438,28 +504,102 @@ def _parse_structured_token(token: str, default_role: str) -> AuthContext:
     )
 
 
-def _claims_to_context(claims: Mapping[str, Any], default_role: str) -> AuthContext:
+def _split_csv(value: str) -> list[str]:
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _claim_path_value(claims: Mapping[str, Any], path: str) -> Any:
+    current: Any = claims
+    for part in path.split("."):
+        if not isinstance(current, Mapping):
+            return None
+        current = current.get(part)
+    return current
+
+
+def _claim_values(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, bool):
+        return ["true" if value else "false"]
+    if isinstance(value, (int, float)):
+        return [str(value)]
+    if isinstance(value, str):
+        return [part for part in re.split(r"[\s,]+", value.strip()) if part]
+    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray, str)):
+        values: list[str] = []
+        for item in value:
+            values.extend(_claim_values(item))
+        return values
+    return [str(value)]
+
+
+def _parse_role_map(raw: str) -> dict[str, str]:
+    role_map: dict[str, str] = {}
+    if not raw.strip():
+        return role_map
+    for entry in raw.split(";"):
+        if not entry.strip() or "=" not in entry:
+            continue
+        external, internal = entry.split("=", 1)
+        external = external.strip()
+        internal = internal.strip()
+        if external and internal:
+            role_map[external] = internal
+    return role_map
+
+
+def _claim_indicates_mfa(value: Any, accepted_values: frozenset[str]) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value and "true" in accepted_values
+    return any(str(item).strip().lower() in accepted_values for item in _claim_values(value))
+
+
+def _claims_to_context(
+    claims: Mapping[str, Any],
+    default_role: str,
+    *,
+    role_claims: Sequence[str] = _DEFAULT_ROLE_CLAIMS,
+    role_map: Optional[Mapping[str, str]] = None,
+    role_map_mode: str = "passthrough",
+    mfa_claims: Sequence[str] = _DEFAULT_MFA_CLAIMS,
+    mfa_values: frozenset[str] = _DEFAULT_MFA_VALUES,
+) -> AuthContext:
     actor_id = str(
         claims.get("sub")
         or claims.get("actor_id")
         or claims.get("preferred_username")
         or "internal-api-operator"
     ).strip() or "internal-api-operator"
-    raw_roles = claims.get("roles")
-    if isinstance(raw_roles, str):
-        roles_iter: Iterable[str] = [raw_roles]
-    elif isinstance(raw_roles, Sequence):
-        roles_iter = [str(role) for role in raw_roles if str(role).strip()]
-    else:
-        single = claims.get("role")
-        roles_iter = [str(single)] if single else [default_role]
-    roles = frozenset(role.strip() for role in roles_iter if role and str(role).strip())
+    role_values: list[str] = []
+    for claim_path in role_claims:
+        role_values.extend(_claim_values(_claim_path_value(claims, claim_path)))
+
+    mapping = role_map or {}
+    strict_mapping = bool(mapping) and role_map_mode.strip().lower() == "strict"
+    mapped_roles: list[str] = []
+    for role_value in role_values:
+        mapped = mapping.get(role_value)
+        if mapped:
+            mapped_roles.append(mapped)
+        elif not strict_mapping:
+            mapped_roles.append(role_value)
+
+    roles = frozenset(role.strip() for role in mapped_roles if role and str(role).strip())
     if not roles:
-        roles = frozenset({default_role})
+        roles = frozenset() if strict_mapping and role_values else frozenset({default_role})
+
+    mfa_verified = any(
+        _claim_indicates_mfa(_claim_path_value(claims, claim_path), mfa_values)
+        for claim_path in mfa_claims
+    )
     return AuthContext(
         actor_id=actor_id,
         roles=roles,
         claims=dict(claims),
+        mfa_verified=mfa_verified,
         token_kind="jwt",
     )
 
@@ -493,9 +633,23 @@ def validate_request_auth(
     issuer = _env(env, "PANTHEON_RUNTIME_JWT_ISSUER") or None
     audience = _env(env, "PANTHEON_RUNTIME_JWT_AUDIENCE") or None
     default_role = _env(env, "PANTHEON_RUNTIME_DEFAULT_ROLE") or _DEFAULT_ROLE
+    role_claims = _split_csv(_env(env, "PANTHEON_RUNTIME_ROLE_CLAIMS", ",".join(_DEFAULT_ROLE_CLAIMS)))
+    if not role_claims:
+        role_claims = list(_DEFAULT_ROLE_CLAIMS)
+    role_map = _parse_role_map(_env(env, "PANTHEON_RUNTIME_ROLE_MAP"))
+    role_map_mode = _env(env, "PANTHEON_RUNTIME_ROLE_MAP_MODE", "passthrough")
+    mfa_claims = _split_csv(_env(env, "PANTHEON_RUNTIME_MFA_CLAIMS", ",".join(_DEFAULT_MFA_CLAIMS)))
+    if not mfa_claims:
+        mfa_claims = list(_DEFAULT_MFA_CLAIMS)
+    mfa_values = frozenset(
+        value.lower() for value in _split_csv(_env(env, "PANTHEON_RUNTIME_MFA_VALUES", ",".join(sorted(_DEFAULT_MFA_VALUES))))
+    )
+    if not mfa_values:
+        mfa_values = _DEFAULT_MFA_VALUES
 
     if _looks_like_jwt(token):
         jwks_uri = _env(env, "PANTHEON_RUNTIME_JWKS_URI")
+        oidc_discovery_url = _env(env, "PANTHEON_RUNTIME_OIDC_DISCOVERY_URL")
         if jwks_uri:
             # OIDC/JWKS path: active when PANTHEON_RUNTIME_JWKS_URI is configured.
             # OIDC-specific issuer/audience override the generic JWT ones when set.
@@ -507,7 +661,34 @@ def validate_request_auth(
                 issuer=oidc_issuer,
                 audience=oidc_audience,
             )
-            ctx = _claims_to_context(claims, default_role=default_role)
+            ctx = _claims_to_context(
+                claims,
+                default_role=default_role,
+                role_claims=role_claims,
+                role_map=role_map,
+                role_map_mode=role_map_mode,
+                mfa_claims=mfa_claims,
+                mfa_values=mfa_values,
+            )
+        elif oidc_discovery_url:
+            metadata = _fetch_oidc_metadata(oidc_discovery_url)
+            oidc_issuer = _env(env, "PANTHEON_RUNTIME_OIDC_ISSUER") or str(metadata.get("issuer") or "").strip() or issuer
+            oidc_audience = _env(env, "PANTHEON_RUNTIME_OIDC_AUDIENCE") or audience
+            claims = _verify_jwt_jwks(
+                token,
+                jwks_uri=str(metadata["jwks_uri"]).strip(),
+                issuer=oidc_issuer,
+                audience=oidc_audience,
+            )
+            ctx = _claims_to_context(
+                claims,
+                default_role=default_role,
+                role_claims=role_claims,
+                role_map=role_map,
+                role_map_mode=role_map_mode,
+                mfa_claims=mfa_claims,
+                mfa_values=mfa_values,
+            )
         elif not secret and mode == "strict":
             raise AuthError(
                 "AUTH_JWT_SECRET_MISSING",
@@ -521,7 +702,15 @@ def validate_request_auth(
                 issuer=issuer,
                 audience=audience,
             )
-            ctx = _claims_to_context(claims, default_role=default_role)
+            ctx = _claims_to_context(
+                claims,
+                default_role=default_role,
+                role_claims=role_claims,
+                role_map=role_map,
+                role_map_mode=role_map_mode,
+                mfa_claims=mfa_claims,
+                mfa_values=mfa_values,
+            )
         else:
             raise AuthError(
                 "AUTH_JWT_UNVERIFIED",
@@ -551,7 +740,7 @@ def validate_request_auth(
     )
 
     mfa_token = (mfa_header or "").strip()
-    mfa_verified = False
+    mfa_verified = ctx.mfa_verified
     if mfa_token:
         if not _MFA_PATTERN.fullmatch(mfa_token):
             raise AuthError(
@@ -560,7 +749,7 @@ def validate_request_auth(
                 400,
             )
         mfa_verified = True
-    elif enforce_mfa:
+    elif enforce_mfa and not mfa_verified:
         raise AuthError(
             "MFA_REQUIRED",
             "MFA token (X-MFA-Token) is required for this operation",
