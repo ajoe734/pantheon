@@ -31,6 +31,7 @@ from services.foundation import ActorRef, ActorType, DeadLetterQueue, DeadLetter
 from services.foundation.health import register_fastapi_health_routes
 from services.knowledge.evidence import EvidenceBundleBuilder, EvidenceItem, normalize_source_evidence, normalize_source_record
 from services.knowledge.evidence.models import EvidenceValidationError
+from services.source_search_posture import require_source_search_posture
 
 from .connectors import (
     AuthType,
@@ -68,6 +69,7 @@ FRONTIER_MAX_ATTEMPTS = max(1, int(os.getenv("SOURCE_INGEST_FRONTIER_MAX_ATTEMPT
 FRONTIER_BACKOFF_SECONDS = max(0, int(os.getenv("SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS", "60")))
 # Optional: when set, notify search service after successful ingest runs (fire-and-forget).
 SEARCH_INGEST_NOTIFY_URL = os.getenv("SEARCH_INGEST_NOTIFY_URL", "").rstrip("/")
+PRODUCTION_POSTURE = require_source_search_posture("source-ingest")
 
 app = FastAPI(title="Pantheon Source Ingest Service", version="0.1.0")
 manager = IngestManager()
@@ -84,6 +86,9 @@ replay_processor = DeadLetterReplayProcessor(schema_registry=SchemaRegistry())
 register_fastapi_health_routes(
     app,
     "pantheon-source-ingest",
+    dependencies=lambda: {
+        "source_search_posture": PRODUCTION_POSTURE.to_dict(),
+    },
     metrics=lambda: {
         "run_count": len(store.list_runs()),
         "connector_count": len(connector_store.list_configs()),
@@ -91,6 +96,7 @@ register_fastapi_health_routes(
         "evidence_item_count": len(evidence_repository.list_evidence_items()),
         "dlq_count": len(dead_letter_queue.entries()),
         "frontier_count": len(store.list_frontier()),
+        "posture_alert_count": PRODUCTION_POSTURE.alert_count(),
     },
     details=lambda: {
         "store_path": str(SCHEDULE_STORE_PATH),
@@ -101,6 +107,7 @@ register_fastapi_health_routes(
         "scheduler_max_concurrency": SCHEDULER_MAX_CONCURRENCY,
         "frontier_max_attempts": FRONTIER_MAX_ATTEMPTS,
         "frontier_backoff_seconds": FRONTIER_BACKOFF_SECONDS,
+        "source_search_posture": PRODUCTION_POSTURE.to_dict(),
     },
 )
 
@@ -718,6 +725,8 @@ def health() -> dict[str, Any]:
         "scheduler_max_concurrency": SCHEDULER_MAX_CONCURRENCY,
         "frontier_max_attempts": FRONTIER_MAX_ATTEMPTS,
         "frontier_backoff_seconds": FRONTIER_BACKOFF_SECONDS,
+        "source_search_posture": PRODUCTION_POSTURE.to_dict(),
+        "posture_alert_count": PRODUCTION_POSTURE.alert_count(),
     }
 
 

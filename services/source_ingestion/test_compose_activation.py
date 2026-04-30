@@ -33,6 +33,9 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert source_ingest_env["SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY"] == "${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}"
     assert source_ingest_env["SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS"] == "${SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS:-2}"
     assert source_ingest_env["SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS"] == "${SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS:-60}"
+    assert source_ingest_env["PANTHEON_SOURCE_SEARCH_POSTURE"] == "${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}"
+    assert source_ingest_env["PANTHEON_S3_ENDPOINT"] == "${PANTHEON_S3_ENDPOINT:-http://minio:9000}"
+    assert source_ingest_env["PANTHEON_ARTIFACT_BUCKET"] == "${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}"
     assert "source-ingest-data:/data/source-ingest" in source_ingest["volumes"]
     assert "${SOURCE_INGEST_PORT:-18097}:8097" in source_ingest["ports"]
     healthcheck = " ".join(source_ingest["healthcheck"]["test"])
@@ -67,3 +70,12 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/jobs"' in smoke
     assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/run-scheduled"' in smoke
     assert 'f"{SEARCH_URL}/api/search/query"' in smoke
+
+    prod_env = (compose_path.parent / "env/prod-control.env.example").read_text(encoding="utf-8")
+    assert "PANTHEON_SOURCE_SEARCH_POSTURE=production" in prod_env
+    assert "SOURCE_INGEST_EVIDENCE_BACKEND=postgres" in prod_env
+    assert "PANTHEON_S3_ENDPOINT=http://minio:9000" in prod_env
+
+    prod_smoke = (compose_path.parent / "scripts/smoke_source_search_prod_posture.py").read_text(encoding="utf-8")
+    assert "posture_alert_count" in prod_smoke
+    assert '"SOURCE_INGEST_EVIDENCE_BACKEND": "postgres"' in prod_smoke

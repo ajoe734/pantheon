@@ -18,6 +18,9 @@ def test_compose_wires_search_service_and_bff_normal_path() -> None:
     assert search["environment"]["SEARCH_DATA_DIR"] == "/data/search"
     assert search["environment"]["SEARCH_INDEX_STORE_PATH"] == "/data/search/search-index.jsonl"
     assert search["environment"]["SEARCH_EVIDENCE_STORE_PATH"] == "/data/source-ingest/source_evidence.jsonl"
+    assert search["environment"]["PANTHEON_SOURCE_SEARCH_POSTURE"] == "${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}"
+    assert search["environment"]["PANTHEON_S3_ENDPOINT"] == "${PANTHEON_S3_ENDPOINT:-http://minio:9000}"
+    assert search["environment"]["PANTHEON_ARTIFACT_BUCKET"] == "${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}"
     assert "search-data:/data/search" in search["volumes"]
     assert "source-ingest-data:/data/source-ingest:ro" in search["volumes"]
     assert search["ports"] == ["${SEARCH_PORT:-18098}:8098"]
@@ -38,6 +41,16 @@ def test_honest_stack_smoke_waits_for_and_queries_search_service() -> None:
     assert 'f"{SEARCH_URL}/api/search/snapshots/{search_body[\'request_id\']}"' in smoke
     assert '"query": f"momentum volatility {source_search_token}"' in smoke
     assert '"documents": [' not in smoke
+
+    prod_env = (ROOT / "env/prod-control.env.example").read_text(encoding="utf-8")
+    assert "PANTHEON_SOURCE_SEARCH_POSTURE=production" in prod_env
+    assert "SEARCH_INDEX_STORE_BACKEND=postgres" in prod_env
+    assert "SEARCH_EVIDENCE_BACKEND=postgres" in prod_env
+    assert "SEARCH_DURABLE_INDEX_ONLY=true" in prod_env
+
+    prod_smoke = (ROOT / "scripts/smoke_source_search_prod_posture.py").read_text(encoding="utf-8")
+    assert "posture_alert_count" in prod_smoke
+    assert '"SEARCH_INDEX_STORE_BACKEND": "postgres"' in prod_smoke
 
 
 def test_search_dockerfile_exposes_service_port_and_uses_service_requirements() -> None:

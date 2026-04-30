@@ -20,6 +20,7 @@ from services.knowledge.evidence import (
 )
 from services.knowledge.evidence.models import EvidenceValidationError
 from services.source_ingestion.connectors import SourceRecord
+from services.source_search_posture import require_source_search_posture
 
 from .filters import SearchAccessContext, SearchPolicyError, SearchRequest
 from .gateway import SearchGateway
@@ -48,6 +49,7 @@ EVIDENCE_STORE_PATH = Path(
 FRESHNESS_SLA_SECONDS = max(1, int(os.getenv("SEARCH_FRESHNESS_SLA_SECONDS", "3600")))
 PIPELINE_RETENTION_RUNS = max(1, int(os.getenv("SEARCH_PIPELINE_RETENTION_RUNS", "500")))
 DURABLE_INDEX_ONLY = os.getenv("SEARCH_DURABLE_INDEX_ONLY", "false").strip().lower() in ("1", "true", "yes")
+PRODUCTION_POSTURE = require_source_search_posture("search")
 
 
 class JsonlMaterializedIndexStore:
@@ -286,10 +288,14 @@ def create_app(
     register_fastapi_health_routes(
         app,
         "pantheon-search",
+        dependencies=lambda: {
+            "source_search_posture": PRODUCTION_POSTURE.to_dict(),
+        },
         metrics=lambda: {
             "snapshot_count": len(store.list_snapshots()),
             "indexed_object_count": len(durable_repository.list_knowledge_objects()),
             "pipeline_run_count": pipeline_store.count_runs(),
+            "posture_alert_count": PRODUCTION_POSTURE.alert_count(),
         },
         details=lambda: {
             "index_store_path": str(store.path),
@@ -297,6 +303,7 @@ def create_app(
             "pipeline_store_path": str(pipeline_store.path),
             "pipeline_retention_runs": pipeline_store.max_retention,
             "freshness_sla_seconds": sla_seconds,
+            "source_search_posture": PRODUCTION_POSTURE.to_dict(),
         },
     )
 
@@ -315,6 +322,8 @@ def create_app(
             "pipeline_retention_runs": pipeline_store.max_retention,
             "freshness_sla_seconds": sla_seconds,
             "durable_index_only": durable_only,
+            "source_search_posture": PRODUCTION_POSTURE.to_dict(),
+            "posture_alert_count": PRODUCTION_POSTURE.alert_count(),
         }
 
     @app.post("/api/search/index/refresh")
