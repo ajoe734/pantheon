@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-30T14:42:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS-SIDECAR-ACCEPTANCE",
+    "title": "Prepare SVC-OPENCLAW-HONEST-STACK-SEMANTICS acceptance packet and dependency map",
+    "summary_zh": "平行支援 SVC-OPENCLAW-HONEST-STACK-SEMANTICS，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "OpenClaw Pre-activation Hardening",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/SVC-OPENCLAW-HONEST-STACK-SEMANTICS/SVC-OPENCLAW-HONEST-STACK-SEMANTICS-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed support-only OpenClaw acceptance sidecar after Codex2 approval; packet and dependency map are committed and parent semantics task has already absorbed the needed docs/code alignment.",
+    "last_update": "2026-04-30T14:42:22Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Codex2 review approved the support-only acceptance packet: it changes no canonical/runtime files, maps ready/degraded OpenClaw semantics, and leaves full compose verification to the parent owner."
+    ],
+    "review_file": ".orchestrator/reviews/SVC-OPENCLAW-HONEST-STACK-SEMANTICS-SIDECAR-ACCEPTANCE-review-codex2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T14:42:22Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "6586d854fca142b8877ecc2ef7ae48d14f1e331b",
+      "commit_subject": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS-SIDECAR-ACCEPTANCE finalize review",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verification": "docker compose config --quiet",
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 8,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 8,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet and dependency map are ready for review. Artifact: support/sidecars/SVC-OPENCLAW-HONEST-STACK-SEMANTICS/SVC-OPENCLAW-HONEST-STACK-SEMANTICS-SIDECAR-ACCEPTANCE.md. Verification: python3 scripts/smoke_openclaw_activation_ready_e2e.py passed 13/13; docker compose config --quiet passed. Full compose smoke left to parent owner.",
+      "status": "done",
+      "created_at": "2026-04-30T14:28:12Z",
+      "resolved_at": "2026-04-30T14:41:59Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Codex2 approved support-only acceptance packet; owner may finalize with review artifact .orchestrator/reviews/SVC-OPENCLAW-HONEST-STACK-SEMANTICS-SIDECAR-ACCEPTANCE-review-codex2.md.",
+      "status": "done",
+      "created_at": "2026-04-30T14:41:59Z",
+      "resolved_at": "2026-04-30T14:42:22Z"
+    }
+  ],
+  "blockers": []
+}

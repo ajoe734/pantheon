@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "task_id": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS",
+  "archived_at": "2026-04-30T14:41:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS",
+    "title": "OpenClaw honest-stack degraded semantics",
+    "summary_zh": "Full compose smoke fails only on OpenClaw capability semantics because the smoke expects facade_only while service reports upstream_client_degraded. Decide the canonical state and align smoke service and docs while keeping fail-closed gates.",
+    "phase": "OpenClaw Pre-activation Hardening",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "scripts/smoke_honest_stack.py",
+      "services/openclaw-gateway-adapter/main.py",
+      "docs/openclaw",
+      "docs/deployment"
+    ],
+    "acceptance": [
+      "honest stack accepts upstream_client_degraded only when upstream is unavailable and fail-closed gates remain intact or service normalizes to documented facade_only",
+      "smoke fails if broker paper or live execution gates open unexpectedly",
+      "docker compose smoke-stack passes in an isolated project",
+      "python3 scripts/smoke_openclaw_activation_ready_e2e.py remains green"
+    ],
+    "next": "Closed OpenClaw honest-stack semantics after Codex approval; capability states now distinguish upstream_client_ready from upstream_client_degraded, session errors remain fail-closed, docs and smoke coverage are aligned.",
+    "last_update": "2026-04-30T14:41:19Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-fulltest-materialization-20260430",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Codex review approved OpenClaw honest-stack semantics: activation_state now matches upstream envelope, fail-closed gates remain deferred, E2E and focused tests pass. Full compose OpenClaw section passed; later BFF strict-auth 401 is outside this task."
+    ],
+    "review_file": ".orchestrator/reviews/SVC-OPENCLAW-HONEST-STACK-SEMANTICS-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T14:41:19Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "3b9888bbfa01eaa7baa8b10626ef033815554e72",
+      "commit_subject": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS finalize review",
+      "commit_author": {
+        "name": "Codex2",
+        "email": "codex2@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verification": "docker compose config --quiet",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 8,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 7,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:21:22Z",
+      "resolved_at": "2026-04-30T13:25:26Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS",
+      "from": "Claude",
+      "to": "Gemini2",
+      "message": "Helper-claimed by Gemini2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:25:26Z",
+      "resolved_at": "2026-04-30T13:27:04Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:28:40Z",
+      "resolved_at": "2026-04-30T13:56:18Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: aligned OpenClaw capability/session degraded semantics. Verification: python3 -m pytest services/openclaw-gateway-adapter/test_main.py scripts/test_smoke_openclaw_activation_ready_e2e.py -q (40 passed); python3 scripts/smoke_openclaw_activation_ready_e2e.py (13/13 passed); python3 -m py_compile scripts/smoke_honest_stack.py services/openclaw-gateway-adapter/main.py; docker compose config --quiet. Isolated full compose smoke now passes the OpenClaw section and then fails later at BFF /api/v1/consult/requests with strict-auth JWT 401, outside this task scope.",
+      "status": "done",
+      "created_at": "2026-04-30T14:37:10Z",
+      "resolved_at": "2026-04-30T14:41:02Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Codex approved OpenClaw honest-stack degraded semantics; owner may finalize with review artifact .orchestrator/reviews/SVC-OPENCLAW-HONEST-STACK-SEMANTICS-review-codex.md.",
+      "status": "done",
+      "created_at": "2026-04-30T14:41:02Z",
+      "resolved_at": "2026-04-30T14:41:19Z"
+    }
+  ],
+  "blockers": []
+}

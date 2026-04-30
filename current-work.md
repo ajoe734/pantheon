@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-04-30 22:06:18
+Last updated: 2026-04-30 22:48:42
 
 ## Objective
 
@@ -37,10 +37,10 @@ Last updated: 2026-04-30 22:06:18
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Supervisor preempted SVC-OPENCLAW-HONEST-STACK-SEMANTICS to free Claude for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.
+- `Claude`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Ownership updated
-- `Codex2`: integration, status-system, schema, acceptance; next: Auto-reassigned ownership from Claude to Codex2 after repeated Claude terminal: {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1777570800,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_dis. Task returned to todo until Codex2 starts a fresh run.
+- `Codex`: integration, status-system, schema, acceptance; next: No active assignment
+- `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
 - `Claude2`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
@@ -51,9 +51,7 @@ Last updated: 2026-04-30 22:06:18
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN` | OSS Pre-activation Hardening | W&B dormant OSS smoke matrix alignment | Codex2 | todo | - | Dormant OSS matrix has a stale W&B denial-string assertion while the code now permits offline local-store opt-in and keeps online SDK activation gated. Align smoke evidence with current gate policy. |
-| `SVC-OPENCLAW-HONEST-STACK-SEMANTICS` | OpenClaw Pre-activation Hardening | OpenClaw honest-stack degraded semantics | Claude | todo | - | Full compose smoke fails only on OpenClaw capability semantics because the smoke expects facade_only while service reports upstream_client_degraded. Decide the canonical state and align smoke service and docs while keeping fail-closed gates. |
-| `TEST-FULLSUITE-RUNBOOK-CI-MATRIX` | Full Test Stabilization | Canonical full-suite runbook and CI matrix | Codex | todo | `TEST-FULLSUITE-HARNESS-ISOLATION`, `TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT`, `SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN`, `SVC-SOURCE-SEARCH-TEST-CLOSURE`, `SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE`, `SVC-RESEARCH-REPLICATION-SMOKE-FIX`, `SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN`, `SVC-BFF-INCIDENT-SMOKE-FIXTURE`, `SVC-OPENCLAW-HONEST-STACK-SEMANTICS` | After the concrete failures are closed define one canonical full-suite matrix so future reruns are reproducible instead of ad hoc across pytest smoke direct entrypoints compose profiles and gated production-posture checks. |
+| _(none)_ | - | - | - | - | - | - |
 
 ### External / Upstream Integration Work
 
@@ -65,9 +63,6 @@ Last updated: 2026-04-30 22:06:18
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN` | OSS Pre-activation Hardening | W&B dormant OSS smoke matrix alignment | Dormant OSS matrix has a stale W&B denial-string assertion while the code now permits offline local-store opt-in and keeps online SDK activation gated. Align smoke evidence with current gate policy. | Codex2 | Codex | todo | - | 2026-04-30 21:54:36 | Auto-reassigned ownership from Claude to Codex2 after repeated Claude terminal: {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1777570800,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_dis. Task returned to todo until Codex2 starts a fresh run. |
-| `SVC-OPENCLAW-HONEST-STACK-SEMANTICS` | OpenClaw Pre-activation Hardening | OpenClaw honest-stack degraded semantics | Full compose smoke fails only on OpenClaw capability semantics because the smoke expects facade_only while service reports upstream_client_degraded. Decide the canonical state and align smoke service and docs while keeping fail-closed gates. | Claude | Codex | todo | - | 2026-04-30 21:59:42 | Supervisor preempted SVC-OPENCLAW-HONEST-STACK-SEMANTICS to free Claude for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
-| `TEST-FULLSUITE-RUNBOOK-CI-MATRIX` | Full Test Stabilization | Canonical full-suite runbook and CI matrix | After the concrete failures are closed define one canonical full-suite matrix so future reruns are reproducible instead of ad hoc across pytest smoke direct entrypoints compose profiles and gated production-posture checks. | Codex | Claude | todo | `TEST-FULLSUITE-HARNESS-ISOLATION`, `TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT`, `SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN`, `SVC-SOURCE-SEARCH-TEST-CLOSURE`, `SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE`, `SVC-RESEARCH-REPLICATION-SMOKE-FIX`, `SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN`, `SVC-BFF-INCIDENT-SMOKE-FIXTURE`, `SVC-OPENCLAW-HONEST-STACK-SEMANTICS` | 2026-04-30 20:51:00 | Ownership updated |
 
 ## Handoff Queue
 
@@ -89,7 +84,7 @@ Last updated: 2026-04-30 22:06:18
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-04-30 21:56:13
+- Last coordination scan: 2026-04-30 22:44:35
 - Tracked features: `46`
 - Lovable-ready packets: `45`
 - Waiting for Lovable/front-end: `0`
@@ -156,23 +151,23 @@ Last updated: 2026-04-30 22:06:18
 
 ## Latest Checkpoints
 
-- 2026-04-30 21:57:54 Orchestrator: PostToolUse: Glob
-- 2026-04-30 21:57:54 Orchestrator: PostToolUse: Glob
-- 2026-04-30 21:57:58 Orchestrator: PreToolUse: Read
-- 2026-04-30 21:57:58 Orchestrator: PreToolUse: Glob
-- 2026-04-30 21:57:59 Orchestrator: PostToolUse: Read
-- 2026-04-30 21:57:59 Orchestrator: PostToolUse: Glob
-- 2026-04-30 21:58:14 Orchestrator: Terminated older supervisor process 2956712 while starting 3019954.
-- 2026-04-30 21:58:47 Orchestrator: PreToolUse: Glob
-- 2026-04-30 21:58:48 Orchestrator: PreToolUse: Glob
-- 2026-04-30 21:58:48 Orchestrator: PostToolUse: Glob
-- 2026-04-30 21:58:48 Orchestrator: PostToolUse: Glob
-- 2026-04-30 21:58:51 Orchestrator: PreToolUse: Bash
-- 2026-04-30 21:58:52 Orchestrator: PostToolUse: Bash
-- 2026-04-30 21:59:39 Codex: `SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF` Assigned SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF to Codex with reviewer Claude
-- 2026-04-30 21:59:42 Orchestrator: `TEST-FULLSUITE-HARNESS-ISOLATION` Worker superseded after task responsibility moved to another agent.
-- 2026-04-30 21:59:42 Orchestrator: SessionEnd: SessionEnd
-- 2026-04-30 22:00:30 Claude: `SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF` Claude review approved sidecar packet 0f4e012 and closeout 9c79ad1; owner may finalize with review artifact .orchestrator/reviews/SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF-review-claude.md.
-- 2026-04-30 22:00:44 Codex: `SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF` Closed support-only BFF/frontend handoff sidecar after Claude approval; artifact documents query gaps, operator journey, and parent smoke evidence without canonical/runtime changes.
-- 2026-04-30 22:06:05 Codex: `TEST-FULLSUITE-HARNESS-ISOLATION` Codex review approved pytest isolation harness; owner may finalize with review artifact .orchestrator/reviews/TEST-FULLSUITE-HARNESS-ISOLATION-review-codex.md.
-- 2026-04-30 22:06:18 Codex2: `TEST-FULLSUITE-HARNESS-ISOLATION` Closed pytest isolation harness after Codex review; root collection now reaches 2214 tests without import mismatch, and remaining full-suite failures are runtime/domain issues outside this task.
+- 2026-04-30 22:44:35 Orchestrator: `OPS-CHAIR-REVIEW` Idle workers and underutilization (0.14) justify sidecar approval; no global blocker; existing sidecar is in review and nearly closed; cap at 1 new sidecar targeted at TEST-FULLSUITE-RUNBOOK-CI-MATRIX pre-work only.
+- 2026-04-30 22:44:36 Orchestrator: `TEST-FULLSUITE-RUNBOOK-CI-MATRIX` Wake-up queued for supervisor: owned_ready_dispatch
+- 2026-04-30 22:44:36 Codex: `TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE` Assigned TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE to Codex2 with reviewer Codex
+- 2026-04-30 22:44:47 Orchestrator: `TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE` Wake-up queued for supervisor: owned_ready_dispatch
+- 2026-04-30 22:44:47 Orchestrator: `TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE` Auto-created sidecar TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE for TEST-FULLSUITE-RUNBOOK-CI-MATRIX (acceptance_packet) while utilization remained below threshold.
+- 2026-04-30 22:44:47 Orchestrator: utilization 0.00 stayed below threshold 0.50; created 1 visible sidecar task(s)
+- 2026-04-30 22:44:47 Orchestrator: `TEST-FULLSUITE-RUNBOOK-CI-MATRIX` Worker started via codex: owned_ready_dispatch
+- 2026-04-30 22:44:47 Codex: `TEST-FULLSUITE-RUNBOOK-CI-MATRIX` Supervisor auto-started TEST-FULLSUITE-RUNBOOK-CI-MATRIX after successful dispatch.
+- 2026-04-30 22:44:54 Codex: `TEST-FULLSUITE-RUNBOOK-CI-MATRIX` Started canonical full-suite runbook and CI matrix closeout now that OpenClaw dependency is archived.
+- 2026-04-30 22:44:58 Orchestrator: `TEST-FULLSUITE-RUNBOOK-CI-MATRIX` Supervisor auto-started TEST-FULLSUITE-RUNBOOK-CI-MATRIX after successful dispatch.
+- 2026-04-30 22:44:58 Orchestrator: `TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE` Worker started via codex: owned_ready_dispatch
+- 2026-04-30 22:44:59 Codex2: `TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE` Supervisor auto-started TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE after successful dispatch.
+- 2026-04-30 22:45:09 Orchestrator: `TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE` Supervisor auto-started TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE after successful dispatch.
+- 2026-04-30 22:46:17 Codex: `TEST-FULLSUITE-RUNBOOK-CI-MATRIX` Handoff to Claude: Canonical full-suite runbook and CI matrix is ready for review. Artifact: docs/testing/full-suite-runbook.md linked from docs/testing/pytest-harness.md. Verification: ci_stage0 validate passed; py_compile smoke/gate scripts passed; pytest scripts/test_ci_stage0.py scripts/test_smoke_openclaw_activation_ready_e2e.py scripts/test_smoke_oss_activation_ready_matrix.py passed 12 tests; git diff --check passed.
+- 2026-04-30 22:46:32 Codex: `TEST-FULLSUITE-RUNBOOK-CI-MATRIX` Drafting canonical full-suite runbook in docs/testing and linking it from CI-stage documentation; unrelated state-file changes left untouched.
+- 2026-04-30 22:46:52 Claude: `TEST-FULLSUITE-RUNBOOK-CI-MATRIX` Claude approved canonical full-suite runbook and CI matrix; owner may finalize with review artifact .orchestrator/reviews/TEST-FULLSUITE-RUNBOOK-CI-MATRIX-review-claude.md.
+- 2026-04-30 22:47:09 Codex: `TEST-FULLSUITE-RUNBOOK-CI-MATRIX` Closed canonical full-suite runbook and CI matrix after Claude approval; docs/testing/full-suite-runbook.md now defines the safe default matrix and links from pytest harness docs.
+- 2026-04-30 22:47:17 Codex2: `TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE` Handoff to Codex: Acceptance packet and dependency map prepared at support/sidecars/TEST-FULLSUITE-RUNBOOK-CI-MATRIX/TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE.md; support-only scope, no canonical/runtime changes.
+- 2026-04-30 22:48:22 Codex: `TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE` Codex approved support-only runbook sidecar packet; owner may finalize with review artifact .orchestrator/reviews/TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE-review-codex.md.
+- 2026-04-30 22:48:42 Codex2: `TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE` Closed support-only full-suite runbook sidecar after Codex approval; packet is committed as audit support and parent runbook task is already archived.

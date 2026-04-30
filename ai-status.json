@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；production、paper、canary、live gate 預設仍 fail-closed。",
-  "updated_at": "2026-04-30T14:06:18Z",
+  "updated_at": "2026-04-30T14:48:42Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,12 +93,10 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "SVC-OPENCLAW-HONEST-STACK-SEMANTICS"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude-execution-control",
-      "next": "Supervisor preempted SVC-OPENCLAW-HONEST-STACK-SEMANTICS to free Claude for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
+      "next": "",
       "last_update": "2026-04-30T13:59:42Z"
     },
     {
@@ -123,13 +121,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "waiting",
-      "current_task_ids": [
-        "TEST-FULLSUITE-RUNBOOK-CI-MATRIX"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/codex-collab-system",
-      "next": "Ownership updated",
-      "last_update": "2026-04-30T14:00:30Z"
+      "next": "",
+      "last_update": "2026-04-30T14:46:52Z"
     },
     {
       "name": "Codex2",
@@ -139,13 +135,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/codex-collab-system",
-      "next": "Auto-reassigned ownership from Claude to Codex2 after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1777570800,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_dis. Task returned to todo until Codex2 starts a fresh run.",
-      "last_update": "2026-04-30T13:54:36Z"
+      "next": "",
+      "last_update": "2026-04-30T14:48:22Z"
     },
     {
       "name": "Copilot",
@@ -189,103 +183,7 @@
       "last_update": "2026-04-30T13:08:53Z"
     }
   ],
-  "tasks": [
-    {
-      "id": "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
-      "title": "W&B dormant OSS smoke matrix alignment",
-      "summary_zh": "Dormant OSS matrix has a stale W&B denial-string assertion while the code now permits offline local-store opt-in and keeps online SDK activation gated. Align smoke evidence with current gate policy.",
-      "phase": "OSS Pre-activation Hardening",
-      "owner": "Codex2",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        "scripts/smoke_dormant_oss_matrix.py",
-        "services/registry/experiments/config.py",
-        "services/registry/experiments/WANDB_ACTIVATION.md",
-        "docs"
-      ],
-      "acceptance": [
-        "python3 scripts/smoke_dormant_oss_matrix.py passes",
-        "W&B row verifies offline-store gate and deferred-prep compatibility alias",
-        "PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1 python3 services/registry/experiments/smoke_test.py --backend wandb passes",
-        "no W&B SDK-backed or online activation is introduced"
-      ],
-      "next": "Auto-reassigned ownership from Claude to Codex2 after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1777570800,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_dis. Task returned to todo until Codex2 starts a fresh run.",
-      "last_update": "2026-04-30T13:54:36Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-fulltest-materialization-20260430",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS",
-      "title": "OpenClaw honest-stack degraded semantics",
-      "summary_zh": "Full compose smoke fails only on OpenClaw capability semantics because the smoke expects facade_only while service reports upstream_client_degraded. Decide the canonical state and align smoke service and docs while keeping fail-closed gates.",
-      "phase": "OpenClaw Pre-activation Hardening",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        "scripts/smoke_honest_stack.py",
-        "services/openclaw-gateway-adapter/main.py",
-        "docs/openclaw",
-        "docs/deployment"
-      ],
-      "acceptance": [
-        "honest stack accepts upstream_client_degraded only when upstream is unavailable and fail-closed gates remain intact or service normalizes to documented facade_only",
-        "smoke fails if broker paper or live execution gates open unexpectedly",
-        "docker compose smoke-stack passes in an isolated project",
-        "python3 scripts/smoke_openclaw_activation_ready_e2e.py remains green"
-      ],
-      "next": "Supervisor preempted SVC-OPENCLAW-HONEST-STACK-SEMANTICS to free Claude for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
-      "last_update": "2026-04-30T13:59:42Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-fulltest-materialization-20260430",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "TEST-FULLSUITE-RUNBOOK-CI-MATRIX",
-      "title": "Canonical full-suite runbook and CI matrix",
-      "summary_zh": "After the concrete failures are closed define one canonical full-suite matrix so future reruns are reproducible instead of ad hoc across pytest smoke direct entrypoints compose profiles and gated production-posture checks.",
-      "phase": "Full Test Stabilization",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [
-        "TEST-FULLSUITE-HARNESS-ISOLATION",
-        "TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT",
-        "SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN",
-        "SVC-SOURCE-SEARCH-TEST-CLOSURE",
-        "SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE",
-        "SVC-RESEARCH-REPLICATION-SMOKE-FIX",
-        "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
-        "SVC-BFF-INCIDENT-SMOKE-FIXTURE",
-        "SVC-OPENCLAW-HONEST-STACK-SEMANTICS"
-      ],
-      "artifacts": [
-        "docs/testing",
-        "ci",
-        "scripts",
-        "ai-status.json",
-        "current-work.md"
-      ],
-      "acceptance": [
-        "full-suite runbook lists root pytest per-service smoke compile compose config full compose smoke and gated production-posture commands",
-        "required PYTHONPATH and env flags are explicit",
-        "no command activates Qlib TRL RL W&B paper canary or live execution by default",
-        "runbook is linked from current work or CI documentation"
-      ],
-      "next": "Ownership updated",
-      "last_update": "2026-04-30T12:51:00Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-fulltest-materialization-20260430",
-      "auto_generated": true,
-      "mutates_canonical": true
-    }
-  ],
+  "tasks": [],
   "handoffs": [
     {
       "task_id": "LUV-REVIEW-007",
@@ -295,60 +193,6 @@
       "status": "done",
       "created_at": "2026-04-17T11:50:38Z",
       "resolved_at": "2026-04-17T12:39:53Z"
-    },
-    {
-      "task_id": "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-30T13:21:19Z",
-      "resolved_at": "2026-04-30T13:25:15Z"
-    },
-    {
-      "task_id": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-30T13:21:22Z",
-      "resolved_at": "2026-04-30T13:25:26Z"
-    },
-    {
-      "task_id": "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
-      "from": "Claude",
-      "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-30T13:25:14Z",
-      "resolved_at": "2026-04-30T13:28:22Z"
-    },
-    {
-      "task_id": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS",
-      "from": "Claude",
-      "to": "Gemini2",
-      "message": "Helper-claimed by Gemini2 while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-30T13:25:26Z",
-      "resolved_at": "2026-04-30T13:27:04Z"
-    },
-    {
-      "task_id": "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-30T13:28:37Z",
-      "resolved_at": "2026-04-30T13:49:46Z"
-    },
-    {
-      "task_id": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-30T13:28:40Z",
-      "resolved_at": "2026-04-30T13:56:18Z"
     }
   ],
   "blockers": [],
@@ -363,13 +207,13 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Claude2": {
       "total": 0,
@@ -399,22 +243,22 @@
       "todo": 0
     },
     "Codex": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Codex2": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Copilot": {
       "total": 0,
