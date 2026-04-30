@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization remains and usable lanes exist, but duplicate sidecars should be blocked for parents with active sidecar work.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING",
+    "SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260430T032038Z-a48ca60b",
+      "decision": "deny",
+      "reason": "The approval belongs to a superseded Claude reviewer worker and would stage current shared generated state after ownership moved to the active Codex closeout worker.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING",
+    "SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING-SIDECAR-BFF-HANDOFF"
+  ]
+}

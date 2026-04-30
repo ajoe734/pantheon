@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Low utilization and runnable todo backlog exist; only the review-stuck parent should be blocked from more sidecars.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE",
+      "role": "reviewer",
+      "from": "Codex2",
+      "to": "Claude",
+      "reason": "Codex2 failed the same review dispatch twice without terminal status; Claude is an independent reviewer and its pause is time-limited/expired, so reassignment breaks the loop."
+    }
+  ],
+  "recommended_focus": [
+    "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE",
+    "SVC-POSTGRES-PRODUCTION-OWNERSHIP-WAVE2",
+    "SVC-STAGING-DUAL-VM-COMPOSE-CONTRACT",
+    "SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING"
+  ]
+}

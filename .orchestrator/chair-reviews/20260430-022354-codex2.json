@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization is low, no approvals are pending, and runnable support work exists while Codex and Claude remain active.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-BFF-SERVICE-BACKED-READ-STORE-CUTOFF",
+    "SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3"
+  ]
+}

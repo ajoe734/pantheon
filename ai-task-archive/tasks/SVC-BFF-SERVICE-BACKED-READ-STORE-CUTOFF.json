@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "task_id": "SVC-BFF-SERVICE-BACKED-READ-STORE-CUTOFF",
+  "archived_at": "2026-04-30T03:05:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-BFF-SERVICE-BACKED-READ-STORE-CUTOFF",
+    "title": "Cut BFF staging prod read path over to service-backed clients",
+    "summary_zh": "切斷 BFF staging/prod 對 local JSON snapshot 與 cross-service volume 的正常讀取依賴；改成 service-backed HTTP read clients。dev 可保留 snapshot fallback 但 staging/prod 必須顯式 degraded/unavailable。",
+    "phase": "BFF / Service-Backed Read Surfaces",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE",
+      "SVC-STAGING-DUAL-VM-COMPOSE-CONTRACT"
+    ],
+    "artifacts": [
+      "services/control-plane/bff",
+      "services/control-plane/bff/read_store.py",
+      "docker-compose.yml",
+      "docker-compose.control.yml",
+      "env/prod-control.env.example",
+      "docs/bff"
+    ],
+    "acceptance": [
+      "BFF staging prod read mode rejects silent snapshot fallback",
+      "governance deployment capital runtime registry incidents postmortems evolution memory use service-backed clients where service URLs exist",
+      "missing services surface degraded or unavailable not local defaults",
+      "dev snapshot fallback remains explicit and tested",
+      "tests cover cutoff mode and degraded mode",
+      "compose config passes"
+    ],
+    "next": "Finalized service-backed BFF read cutoff with task-scoped commit f0e88ca. Verification passed: pytest services/control-plane/bff/test_read_store_service_clients.py services/control-plane/bff/test_kw01_institutional_memory_contract.py services/control-plane/bff/test_staging_read_store_cutoff_contract.py; docker compose -f docker-compose.yml -f docker-compose.control.yml config --quiet; docker compose -f docker-compose.control.yml config --quiet; bash scripts/validate_split_topology.sh.",
+    "last_update": "2026-04-30T03:05:56Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "review_notes_zh": [
+      "Memory HTTP read client normalizes the services/memory flat API shape into KW-01 summary/detail fields, including source_event, scope, lifecycle, and usage projections.",
+      "Reviewer amended docker-compose.control.yml with a Compose volumes override so the rendered base+control config no longer mounts governance/runtime/incident read volumes into operator-bff.",
+      "Verification passed: pytest services/control-plane/bff/test_read_store_service_clients.py services/control-plane/bff/test_kw01_institutional_memory_contract.py services/control-plane/bff/test_staging_read_store_cutoff_contract.py; docker compose -f docker-compose.yml -f docker-compose.control.yml config --quiet; docker compose -f docker-compose.control.yml config --quiet; bash scripts/validate_split_topology.sh."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T03:05:56Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "f0e88caba5580cc8749eb9898d872f13b3d0fed6",
+      "commit_subject": "SVC-BFF-SERVICE-BACKED-READ-STORE-CUTOFF finalize BFF read cutoff",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-BFF-SERVICE-BACKED-READ-STORE-CUTOFF",
+        "Reviewer": "Codex",
+        "Verification": "pytest services/control-plane/bff/test_read_store_service_clients.py services/control-plane/bff/test_kw01_institutional_memory_contract.py services/control-plane/bff/test_staging_read_store_cutoff_contract.py; docker compose -f docker-compose.yml -f docker-compose.control.yml config --quiet; docker compose -f docker-compose.control.yml config --quiet; bash scripts/validate_split_topology.sh"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 41,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 12,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-BFF-SERVICE-BACKED-READ-STORE-CUTOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T02:18:56Z",
+      "resolved_at": "2026-04-30T02:33:07Z"
+    },
+    {
+      "task_id": "SVC-BFF-SERVICE-BACKED-READ-STORE-CUTOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T02:38:41Z",
+      "resolved_at": "2026-04-30T02:40:14Z"
+    },
+    {
+      "task_id": "SVC-BFF-SERVICE-BACKED-READ-STORE-CUTOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: staging/prod BFF local snapshot fallback is explicitly disabled; control compose removes BFF cross-service read volumes; memory read surface uses HTTP service client; focused pytest and docker compose config pass.",
+      "status": "done",
+      "created_at": "2026-04-30T02:49:53Z",
+      "resolved_at": "2026-04-30T02:54:35Z"
+    },
+    {
+      "task_id": "SVC-BFF-SERVICE-BACKED-READ-STORE-CUTOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Changes requested: memory HTTP read client must normalize the real services/memory API shape (flat source_event_type/source_event_id/scope/scope_filter/reuse_count/superseded_by) into the BFF KW-01 contract. Current projection only understands nested snapshot shape, so service-backed scope filters, reuse_count, supersession, and source_context degrade incorrectly. Add/adjust tests to mock the real memory service response shape, then rerun focused BFF tests and docker compose config.",
+      "status": "done",
+      "created_at": "2026-04-30T02:54:35Z",
+      "resolved_at": "2026-04-30T02:54:35Z"
+    },
+    {
+      "task_id": "SVC-BFF-SERVICE-BACKED-READ-STORE-CUTOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Memory HTTP read client now normalizes the real services/memory flat API shape into KW-01 summaries/details, including source_event_type/source_event_id, scope/scope_filter, reuse_count, and superseded_by. Verification: pytest services/control-plane/bff/test_read_store_service_clients.py services/control-plane/bff/test_kw01_institutional_memory_contract.py services/control-plane/bff/test_staging_read_store_cutoff_contract.py; docker compose -f docker-compose.yml -f docker-compose.control.yml config.",
+      "status": "done",
+      "created_at": "2026-04-30T02:58:55Z",
+      "resolved_at": "2026-04-30T03:04:26Z"
+    },
+    {
+      "task_id": "SVC-BFF-SERVICE-BACKED-READ-STORE-CUTOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved after reviewer-side compose merge fix. Focused BFF tests pass, merged compose renders operator-bff with only bff-data, and split topology validation passes. Owner should finalize with a task-scoped commit.",
+      "status": "done",
+      "created_at": "2026-04-30T03:04:26Z",
+      "resolved_at": "2026-04-30T03:05:56Z"
+    }
+  ],
+  "blockers": []
+}

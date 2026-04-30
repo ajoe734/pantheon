@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "One sidecar slot is already in use for Wave3 acceptance; one slot remains open. Claude2 and Gemini are idle, no global blockers exist, and a compose-config approval unblock on the critical path is imminent.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING",
+    "SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING",
+    "SVC-BFF-SERVICE-BACKED-READ-STORE-CUTOFF"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260430T022542Z-f740bf87",
+      "decision": "allow",
+      "reason": "Read-only compose config introspection with bounded output (head -20); no writes, no destructive operations, no credential access. Scoped to the active task's compose verification step for SVC-SOURCE-SEARCH-AUTONOMOUS-CONNECTOR-INDEXER.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-SOURCE-SEARCH-AUTONOMOUS-CONNECTOR-INDEXER",
+    "SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3"
+  ]
+}

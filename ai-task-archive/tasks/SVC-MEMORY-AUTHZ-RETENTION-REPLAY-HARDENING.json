@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "task_id": "SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING",
+  "archived_at": "2026-04-30T03:16:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING",
+    "title": "Harden memory authz retention and replay path",
+    "summary_zh": "補強 memory layer production posture：governance AuthZ integration、retention/TTL policy、cross-plane golden replay 驗證與 read facade 行為測試。",
+    "phase": "Memory / Production Hardening",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3"
+    ],
+    "artifacts": [
+      "services/memory",
+      "services/control-plane/bff",
+      "services/governance",
+      "scripts",
+      "docs/services/memory",
+      "MEMORY_LAYER_DESIGN_NOTE.md"
+    ],
+    "acceptance": [
+      "memory retrieval enforces governance authz or explicit deny boundary",
+      "retention TTL or archive policy is implemented and documented",
+      "golden replay includes memory writeback and retrieval path",
+      "unauthorized persona session access is rejected",
+      "focused memory and replay tests pass",
+      "docs no longer list authz retention replay as unowned open items"
+    ],
+    "next": "Closeout complete. Task-scoped commit 8448e36 records memory retrieval AuthZ fail-closed behavior, retention/archive-on-read, governed replay coverage, docs, and Claude review packet. Verification rerun: python3 services/memory/smoke_test_institutional_memory.py -> 17 passed; python3 -m pytest services/memory/test_institutional_memory_store.py services/memory/test_main.py services/governance/test_governance_api.py -q -> 57 passed; python3 -m pytest services/control-plane/bff/test_kw01_institutional_memory_contract.py services/control-plane/bff/test_read_store_service_clients.py -q -> 11 passed.",
+    "last_update": "2026-04-30T03:16:49Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "review_notes_zh": [
+      "審查通過",
+      "所有6項驗收準則均滿足：governance AuthZ fail-closed 邊界、retention TTL archive-on-read、governed retrieval replay with durable reuse_count、cross-persona isolation rejected (persona_scope_mismatch)",
+      "17 smoke checks + 57 pytest + 11 BFF contract tests 全部通過",
+      "docs §9 已標記 authz/retention/replay 為 Resolved by production-hardening slice",
+      "無阻礙問題，移交 Codex2 進行 closeout finalization"
+    ],
+    "review_file": ".orchestrator/reviews/SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T03:16:49Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "8448e36c56336672c793dfcac16712ddc6f4a52e",
+      "commit_subject": "SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING harden memory retrieval",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING",
+        "Reviewer": "Claude",
+        "Verification": "python3 services/memory/smoke_test_institutional_memory.py -> 17 passed; python3 -m pytest services/memory/test_institutional_memory_store.py services/memory/test_main.py services/governance/test_governance_api.py -q -> 57 passed; python3 -m pytest services/control-plane/bff/test_kw01_institutional_memory_contract.py services/control-plane/bff/test_read_store_service_clients.py -q -> 11 passed."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 32,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 15,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T02:42:52Z",
+      "resolved_at": "2026-04-30T02:44:46Z"
+    },
+    {
+      "task_id": "SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T02:52:44Z",
+      "resolved_at": "2026-04-30T02:54:19Z"
+    },
+    {
+      "task_id": "SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Memory hardening ready for review: governance AuthZ endpoint and fail-closed memory retrieve facade added; retention TTL/archive fields and archive-on-active-read implemented; BFF memory list/detail remains service-backed; golden replay smoke covers writeback, reload, governed retrieval, and durable reuse_count. Verification: python3 services/memory/smoke_test_institutional_memory.py; python3 -m pytest services/memory/test_institutional_memory_store.py services/memory/test_main.py services/governance/test_governance_api.py -q; python3 -m pytest services/control-plane/bff/test_kw01_institutional_memory_contract.py services/control-plane/bff/test_read_store_service_clients.py -q.",
+      "status": "done",
+      "created_at": "2026-04-30T03:10:26Z",
+      "resolved_at": "2026-04-30T03:14:10Z"
+    },
+    {
+      "task_id": "SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all 6 acceptance criteria met; authz fail-closed, retention TTL with archive-on-read, governed retrieval replay, cross-persona isolation all verified. 17 smoke + 57 pytest + 11 BFF tests pass. Return to Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-04-30T03:14:10Z",
+      "resolved_at": "2026-04-30T03:16:49Z"
+    }
+  ],
+  "blockers": []
+}

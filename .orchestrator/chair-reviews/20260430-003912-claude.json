@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 1,
+  "reason": "Backlog has one runnable todo task (SVC-STAGING-DUAL-VM-COMPOSE-CONTRACT); all idle lanes are paused ~8h but no global blocker exists — pre-authorizing so supervisor can dispatch when first pause lifts.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "SVC-STAGING-DUAL-VM-COMPOSE-CONTRACT",
+      "role": "owner",
+      "from": "Codex",
+      "to": "Claude2",
+      "reason": "Codex is already executing SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE and cannot start a second task; Claude2 execution/control-plane lane fits the deployment topology work and will be available once its lane pause clears (~08:49Z)"
+    }
+  ],
+  "recommended_focus": [
+    "SVC-STAGING-DUAL-VM-COMPOSE-CONTRACT",
+    "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE"
+  ]
+}

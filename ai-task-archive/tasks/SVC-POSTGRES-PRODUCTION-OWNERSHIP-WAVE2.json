@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "task_id": "SVC-POSTGRES-PRODUCTION-OWNERSHIP-WAVE2",
+  "archived_at": "2026-04-30T02:09:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-POSTGRES-PRODUCTION-OWNERSHIP-WAVE2",
+    "title": "Continue Postgres production ownership migration beyond pilots",
+    "summary_zh": "將資料層從 optional Postgres pilot 推進到 production ownership wave：補齊剩餘 JSONL event/state store 的 owner table、read contract、staging env 與 rollback；保留 dev JSONL fallback 但 staging/prod 不再依賴 cross-service volume sharing。",
+    "phase": "Production Readiness / Data Ownership",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+      "SVC-CONSULTATION-POSTGRES-STORE-PILOT",
+      "SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT",
+      "SVC-POSTGRES-TRAINING-RESEARCH-STORE-PILOT"
+    ],
+    "artifacts": [
+      "services/research",
+      "services/policy-learning",
+      "services/research-worker-gateway",
+      "services/source_ingestion",
+      "services/search",
+      "services/consultation",
+      "services/training-session",
+      "docker-compose.yml",
+      "docker-compose.control.yml",
+      "env/prod-control.env.example",
+      "DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md"
+    ],
+    "acceptance": [
+      "remaining JSONL stores are code-inventoried against compose",
+      "Postgres-backed owner stores are added or explicitly fenced by migration slice",
+      "staging/prod env examples can select Postgres ownership without cross-service volume writes",
+      "read-only sharing follows owner API or read-role boundary",
+      "dev JSONL fallback and rollback path remain tested",
+      "focused tests and compose config pass"
+    ],
+    "next": "Done: implementation commit 1eaf381 delivered wave2 Postgres owner stores; closeout commit 534ea44 preserved Claude approval and sidecar evidence; closeout verification reran focused pytest for research, research-worker-gateway, and policy-learning Postgres store tests (6 passed). Worktree still contains unrelated staging dual-VM/generated state changes outside this task.",
+    "last_update": "2026-04-30T02:09:06Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "review_notes_zh": [
+      "審查通過：wave2 全部 8 個服務 Postgres owner store 均已實作或補齊；env-gated 工廠、dev JSONL fallback、prod-control.env.example 選項、DATABASE_OWNERSHIP policy 清單均符合驗收條件。6 項測試全數通過。",
+      "後續：SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3 可繼續推進 governance/capital 等 control-plane stores"
+    ],
+    "review_file": ".orchestrator/chair-reviews/20260430-SVC-POSTGRES-PRODUCTION-OWNERSHIP-WAVE2-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T02:09:06Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "534ea44e15453dd91db9c7884e4b4fede3003fb0",
+      "commit_subject": "SVC-POSTGRES-PRODUCTION-OWNERSHIP-WAVE2 finalize review artifacts",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-POSTGRES-PRODUCTION-OWNERSHIP-WAVE2",
+        "Reviewer": "Claude",
+        "Verification": "python3 -m pytest services/research/tests/test_research_postgres_event_store.py services/research-worker-gateway/tests/test_research_worker_gateway_postgres_event_store.py services/policy-learning/tests/test_policy_learning_postgres_store.py -v (6 passed)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 27,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 5,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-POSTGRES-PRODUCTION-OWNERSHIP-WAVE2",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implemented wave 2 Postgres production ownership: added env-gated Postgres owner stores for research events, research-worker gateway events, and policy-learning jobs; wired compose/prod env ownership backend selection with dev JSON/JSONL rollback; documented inventory/read contracts. Commit 1eaf381. Verification: focused Postgres store tests 28 passed; affected HTTP tests 15 passed; compose activation tests passed per-file; docker compose config and prod-control config passed.",
+      "status": "done",
+      "created_at": "2026-04-30T00:41:50Z",
+      "resolved_at": "2026-04-30T01:30:37Z"
+    },
+    {
+      "task_id": "SVC-POSTGRES-PRODUCTION-OWNERSHIP-WAVE2",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude auth: Authentication failure",
+      "status": "done",
+      "created_at": "2026-04-30T01:30:37Z",
+      "resolved_at": "2026-04-30T01:49:48Z"
+    },
+    {
+      "task_id": "SVC-POSTGRES-PRODUCTION-OWNERSHIP-WAVE2",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-30T01:49:48Z",
+      "resolved_at": "2026-04-30T02:06:18Z"
+    },
+    {
+      "task_id": "SVC-POSTGRES-PRODUCTION-OWNERSHIP-WAVE2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all 6 wave2 acceptance criteria met; 6 focused tests pass; returning to Codex2 for closeout",
+      "status": "done",
+      "created_at": "2026-04-30T02:06:18Z",
+      "resolved_at": "2026-04-30T02:09:06Z"
+    }
+  ],
+  "blockers": []
+}

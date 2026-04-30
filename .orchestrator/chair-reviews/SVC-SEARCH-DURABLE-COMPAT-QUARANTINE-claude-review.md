@@ -1,6 +1,6 @@
 # Review: SVC-SEARCH-DURABLE-COMPAT-QUARANTINE
 
-Reviewer: Claude  
+Reviewer: Claude
 Date: 2026-04-29
 
 ## Scope Verified

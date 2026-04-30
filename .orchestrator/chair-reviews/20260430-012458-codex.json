@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 0,
+  "reason": "Existing sidecars are unresolved and runnable mainline backlog is blocked behind current reviews.",
+  "blocked_by": [
+    "SVC-POSTGRES-PRODUCTION-OWNERSHIP-WAVE2 review is suspended on pending approval apr-20260430T012452Z-3e9afe85.",
+    "Current execution todo backlog depends on review tasks that have not cleared.",
+    "The latest sidecar wave already has unresolved sidecar work assigned to paused Gemini/Copilot-derived lanes."
+  ],
+  "blocked_sidecar_parents": [
+    "SVC-POSTGRES-PRODUCTION-OWNERSHIP-WAVE2",
+    "SVC-STAGING-DUAL-VM-COMPOSE-CONTRACT"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260430T012452Z-3e9afe85",
+      "decision": "allow",
+      "reason": "Read-only docker compose config validation scoped to the active review; it parses configuration and writes no project state.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-POSTGRES-PRODUCTION-OWNERSHIP-WAVE2",
+    "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE",
+    "SVC-STAGING-DUAL-VM-COMPOSE-CONTRACT"
+  ]
+}

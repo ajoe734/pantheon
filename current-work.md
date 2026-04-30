@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-04-30 06:23:49
+Last updated: 2026-04-30 11:43:13
 
 ## Objective
 
@@ -39,7 +39,7 @@ Last updated: 2026-04-30 06:23:49
 
 - `Claude`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Supervisor resumed SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE for finalize after successful dispatch.
+- `Codex`: integration, status-system, schema, acceptance; next: No active assignment
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
 - `Claude2`: execution, control-plane, governance-review; next: No active assignment
@@ -50,7 +50,7 @@ Last updated: 2026-04-30 06:23:49
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE` | Planning Truth / Activation-Gated Code Alignment | [Sidecar] [Auto] [Parent SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC] Prepare SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC acceptance packet and dependency map | Codex | review_approved | `SVC-OPENCLAW-RUNTIME-ADOPTION-SCAFFOLD`, `SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT`, `SVC-TRL-GATED-PREACTIVATION-PREFLIGHT`, `SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT`, `SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT`, `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT`, `SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE`, `SVC-OSS-DORMANT-COMPOSE-PROFILES`, `SVC-OSS-DORMANT-SMOKE-MATRIX` | 平行支援 SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
+| _(none)_ | - | - | - | - | - | - |
 
 ### External / Upstream Integration Work
 
@@ -62,13 +62,12 @@ Last updated: 2026-04-30 06:23:49
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE` | Planning Truth / Activation-Gated Code Alignment | [Sidecar] [Auto] [Parent SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC] Prepare SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC acceptance packet and dependency map | 平行支援 SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Codex | Claude | review_approved | `SVC-OPENCLAW-RUNTIME-ADOPTION-SCAFFOLD`, `SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT`, `SVC-TRL-GATED-PREACTIVATION-PREFLIGHT`, `SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT`, `SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT`, `SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT`, `SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE`, `SVC-OSS-DORMANT-COMPOSE-PROFILES`, `SVC-OSS-DORMANT-SMOKE-MATRIX` | 2026-04-30 06:23:49 | Supervisor resumed SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE for finalize after successful dispatch. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE` | Claude | Codex | Review approved by Claude (reassigned from Claude2). All nine dependency rows are correctly mapped with commit SHAs and gate assertions. Smoke matrix rerun: 7/7 closed, activated=false. No canonical truth was modified. Parent owner (Codex) should absorb the sync watchlist items into the canonical truth-sync task. | pending | 2026-04-30 06:10:21 |
+| _(none)_ | - | - | - | - | - |
 
 ## Blockers
 
@@ -84,7 +83,7 @@ Last updated: 2026-04-30 06:23:49
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-04-30 06:22:38
+- Last coordination scan: 2026-04-30 11:42:54
 - Tracked features: `46`
 - Lovable-ready packets: `45`
 - Waiting for Lovable/front-end: `0`
@@ -151,23 +150,23 @@ Last updated: 2026-04-30 06:23:49
 
 ## Latest Checkpoints
 
-- 2026-04-30 06:16:15 Orchestrator: PostToolUse: TodoWrite
-- 2026-04-30 06:16:22 Orchestrator: PreToolUse: Bash
-- 2026-04-30 06:16:22 Claude: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC` Claude review approved: independent smoke matrix rerun 7/7 gate_state=closed activated=false; all docs correctly distinguish dormant scaffold from production activation; no gated paths opened; return to Codex2 for closeout
-- 2026-04-30 06:16:33 Orchestrator: PostToolUse: Bash
-- 2026-04-30 06:16:35 Orchestrator: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC` Worker superseded after task responsibility moved to another agent.
-- 2026-04-30 06:16:35 Orchestrator: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC` Wake-up queued for supervisor: owned_finalize_dispatch
-- 2026-04-30 06:16:36 Orchestrator: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC` Worker started via codex: owned_finalize_dispatch
-- 2026-04-30 06:16:36 Orchestrator: SessionEnd: SessionEnd
-- 2026-04-30 06:16:36 Codex2: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC` Supervisor resumed SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC for finalize after successful dispatch.
-- 2026-04-30 06:16:36 Orchestrator: PreToolUse: Bash
-- 2026-04-30 06:16:47 Orchestrator: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC` Supervisor resumed SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC for finalize after successful dispatch.
-- 2026-04-30 06:17:54 Codex2: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC` Done: activation-gated OSS truth sync finalized in commit 036daa7. Closeout verification rerun: git diff --check on task docs/evidence; python3 scripts/smoke_dormant_oss_matrix.py --json-out /tmp/SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC.closeout.matrix.json => 7/7 acceptable, gate_state=closed 7/7, activated=false 7/7; stale wording rg scan returned no matches. Docs now distinguish landed dormant scaffolds from future production activation gates without opening broker/live/capital/registry/governance paths.
-- 2026-04-30 06:17:56 Orchestrator: Dispatch pause for copilot expired at 2026-04-30 06:17:27; dispatch is enabled again.
-- 2026-04-30 06:17:57 Orchestrator: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC` Worker superseded after task responsibility moved to another agent.
-- 2026-04-30 06:19:06 Orchestrator: Dispatch pause for gemini expired at 2026-04-30 06:18:42; dispatch is enabled again.
-- 2026-04-30 06:20:17 Orchestrator: underutilized but no sidecar candidates matched the catalog or dynamic fallback
-- 2026-04-30 06:23:47 Orchestrator: Dispatch pause for codex expired at 2026-04-30 06:22:47; dispatch is enabled again.
-- 2026-04-30 06:23:48 Orchestrator: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE` Wake-up queued for supervisor: owned_finalize_dispatch
-- 2026-04-30 06:23:48 Orchestrator: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE` Worker started via codex: owned_finalize_dispatch
-- 2026-04-30 06:23:49 Codex: `SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE` Supervisor resumed SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE for finalize after successful dispatch.
+- 2026-04-30 11:37:25 Orchestrator: PreToolUse: Bash
+- 2026-04-30 11:37:25 Orchestrator: PostToolUse: Bash
+- 2026-04-30 11:37:33 Orchestrator: Stop: Stop
+- 2026-04-30 11:37:33 Orchestrator: SessionEnd: SessionEnd
+- 2026-04-30 11:37:47 Orchestrator: `SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING` Worker superseded after task responsibility moved to another agent.
+- 2026-04-30 11:37:47 Orchestrator: `SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF` Paused new dispatches for copilot until 2026-04-30 11:52:47 after terminal quota failure: 402 You have no quota
+- 2026-04-30 11:37:57 Orchestrator: `SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF` Auto-reassigned review from Copilot to Codex after repeated Copilot quota terminal: 402 You have no quota
+- 2026-04-30 11:37:57 Orchestrator: `SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF` Wake-up queued for supervisor: review_ready_dispatch
+- 2026-04-30 11:37:57 Orchestrator: `SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF` Worker started via codex: review_ready_dispatch
+- 2026-04-30 11:37:57 Orchestrator: `SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF` Worker superseded after task responsibility moved to another agent.
+- 2026-04-30 11:38:00 Orchestrator: `SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
+- 2026-04-30 11:39:14 Orchestrator: `SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
+- 2026-04-30 11:40:26 Orchestrator: `SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
+- 2026-04-30 11:40:33 Codex: `SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF` Review approved for support-only BFF/frontend handoff packet. Owner Codex2 should perform closeout finalization.
+- 2026-04-30 11:41:35 Orchestrator: `SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF` Worker superseded after task responsibility moved to another agent.
+- 2026-04-30 11:41:35 Orchestrator: `SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF` Wake-up queued for supervisor: owned_finalize_dispatch
+- 2026-04-30 11:41:35 Orchestrator: `SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF` Worker started via codex: owned_finalize_dispatch
+- 2026-04-30 11:41:35 Codex2: `SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF` Supervisor resumed SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF for finalize after successful dispatch.
+- 2026-04-30 11:41:45 Orchestrator: `SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF` Supervisor resumed SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF for finalize after successful dispatch.
+- 2026-04-30 11:43:13 Codex2: `SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF` Finalized support-only BFF/frontend handoff packet after Codex review approval. Task artifact updated with reviewer/status closeout metadata; scoped commit 3f4de7f created. Verification: test -f support/sidecars/SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING/SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF.md; git diff --check -- support/sidecars/SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING/SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF.md.

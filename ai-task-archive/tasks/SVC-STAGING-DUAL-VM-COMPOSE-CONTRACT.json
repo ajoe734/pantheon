@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "SVC-STAGING-DUAL-VM-COMPOSE-CONTRACT",
+  "archived_at": "2026-04-30T02:18:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-STAGING-DUAL-VM-COMPOSE-CONTRACT",
+    "title": "Harden dev single-VM and staging dual-VM compose contract",
+    "summary_zh": "把 dev single-VM 與 staging dual-VM compose contract 收斂成程式碼可驗證狀態：default compose 明確作為 dev baseline；staging VM1 control compose 與 VM2 exec compose 用 env/examples/docs 明確連線並消除 governance/control surface 矛盾。",
+    "phase": "Deployment / Staging Topology",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-COMPOSE",
+      "DEPLOY-007",
+      "DEPLOY-008"
+    ],
+    "artifacts": [
+      "docker-compose.yml",
+      "docker-compose.control.yml",
+      "docker-compose.exec.yml",
+      "env/prod-control.env.example",
+      "env/prod-exec.env.example",
+      "docs/deployment/staging-live-topology.md",
+      "scripts"
+    ],
+    "acceptance": [
+      "default compose is labelled and verified as dev single-VM baseline",
+      "control compose excludes execution and broker secrets while including or explicitly fencing required control-plane services",
+      "exec compose excludes BFF and control-plane services while hosting runtime-manager broker adapter exchange adapter and paper runtime",
+      "control env example wires runtime-manager to VM2 internal URL without storing broker secrets",
+      "topology docs and compose comments no longer contradict governance or runtime placement",
+      "compose config and split-topology verification script pass"
+    ],
+    "next": "Closeout complete: committed compose/env/docs/validator/review artifact as 77b8ab7. Verification passed: docker compose -f docker-compose.yml config --quiet; docker compose --env-file env/prod-control.env.example -f docker-compose.control.yml config --quiet; docker compose --env-file env/prod-exec.env.example -f docker-compose.exec.yml config --quiet; bash scripts/validate_split_topology.sh. Unrelated pre-existing dirty files were left unstaged.",
+    "last_update": "2026-04-30T02:18:05Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "review_notes_zh": [
+      "審查通過：全部 6 項驗收條件均符合；validator 覆蓋服務存在/排除、env 值、broker secret 禁止鍵；compose config 三份均通過；topology docs 與 compose 合約一致無矛盾。",
+      "後續：Codex 需 closeout 並建立 task-scoped commit，SVC-BFF-SERVICE-BACKED-READ-STORE-CUTOFF 可依賴此任務繼續推進。"
+    ],
+    "review_file": ".orchestrator/chair-reviews/20260430-SVC-STAGING-DUAL-VM-COMPOSE-CONTRACT-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T02:18:05Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "77b8ab71488de55b1910b359e5eb1ebcab0fd784",
+      "commit_subject": "SVC-STAGING-DUAL-VM-COMPOSE-CONTRACT harden compose split contract",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-STAGING-DUAL-VM-COMPOSE-CONTRACT",
+        "Reviewer": "Claude",
+        "Verification": "docker compose -f docker-compose.yml config --quiet; docker compose --env-file env/prod-control.env.example -f docker-compose.control.yml config --quiet; docker compose --env-file env/prod-exec.env.example -f docker-compose.exec.yml config --quiet; bash scripts/validate_split_topology.sh"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 23,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 8,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-STAGING-DUAL-VM-COMPOSE-CONTRACT",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: labelled root compose as dev single-VM baseline; hardened VM1 control compose with governance/deployment surfaces and VM2 runtime-manager URLs without broker secrets; wired VM2 exec telemetry back to VM1; documented topology; added scripts/validate_split_topology.sh. Verification: docker compose config --quiet passed for root/control/exec, bash -n scripts/validate_split_topology.sh passed, bash scripts/validate_split_topology.sh passed.",
+      "status": "done",
+      "created_at": "2026-04-30T00:55:21Z",
+      "resolved_at": "2026-04-30T02:10:21Z"
+    },
+    {
+      "task_id": "SVC-STAGING-DUAL-VM-COMPOSE-CONTRACT",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 6 acceptance criteria met; validator covers service presence/exclusion, env values, broker secret key forbids; all three compose configs pass; topology docs align with compose contracts. Returning to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-04-30T02:10:21Z",
+      "resolved_at": "2026-04-30T02:18:05Z"
+    }
+  ],
+  "blockers": []
+}
