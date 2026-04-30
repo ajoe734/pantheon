@@ -423,6 +423,18 @@ class LiveGateAdapter:
                 gate="active_live_runtime_binding",
                 details={"capital_pool_id": capital_pool_id},
             )
+        if binding.get("capital_pool_id") != capital_pool_id:
+            raise LiveGateError(
+                "CAPITAL_BINDING_MISMATCH",
+                "Active RuntimeBinding capital_pool_id does not match the requested capital pool.",
+                status_code=409,
+                gate="active_live_runtime_binding",
+                details={
+                    "expected_capital_pool_id": capital_pool_id,
+                    "actual_capital_pool_id": binding.get("capital_pool_id"),
+                    "binding_id": binding.get("binding_id"),
+                },
+            )
         if binding.get("deployment_mode") != "live":
             raise LiveGateError(
                 "LIVE_RUNTIME_BINDING_REQUIRED",

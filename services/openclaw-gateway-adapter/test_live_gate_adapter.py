@@ -259,6 +259,23 @@ class TestCapitalBindingGate(unittest.TestCase):
         err = ctx.exception
         self.assertEqual(err.error_code, "CAPITAL_POOL_REQUIRED")
 
+    def test_wrong_pool_binding_fails_closed(self) -> None:
+        # Binding is active+live but for pool-b; request is for pool-a.
+        wrong_pool_binding = {**_ACTIVE_LIVE_BINDING, "capital_pool_id": "pool-b"}
+        adapter = _make_adapter(enabled=True, token=_VALID_TOKEN, binding=wrong_pool_binding)
+        with self.assertRaises(LiveGateError) as ctx:
+            adapter.check_all_gates(
+                capital_pool_id="pool-a",
+                human_approval_token=_VALID_TOKEN,
+                operator_id="op-1",
+            )
+        err = ctx.exception
+        self.assertEqual(err.error_code, "CAPITAL_BINDING_MISMATCH")
+        self.assertEqual(err.gate, "active_live_runtime_binding")
+        self.assertEqual(err.status_code, 409)
+        self.assertEqual(err.details.get("expected_capital_pool_id"), "pool-a")
+        self.assertEqual(err.details.get("actual_capital_pool_id"), "pool-b")
+
 
 # ---------------------------------------------------------------------------
 # Gate 4 — kill switch safe mode
