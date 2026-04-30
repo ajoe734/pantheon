@@ -2,7 +2,7 @@
 
 **Purpose**: Define and govern the integration path for Transformer Reward Learning (TRL) preference-learning workflows in Pantheon.
 
-**Status**: LP-004 approved for v1 contract lock  
+**Status**: LP-004 contract locked; activation-ready adapter present behind explicit gate
 **Owner**: Grok  
 **Reviewer**: Codex
 
@@ -62,12 +62,29 @@ Use imitation learning (LP-002) if:
 ### Downstream: REG-001 (Registry Gate)
 - Output: preference model artifact + metadata
 - Registry entry shape: `artifact_type=model_artifact` with `metadata.model_family=preference_model`
-- Lifecycle: `draft` → `candidate` (passes evaluation) → `paper` (operator review)
+- Lifecycle: `draft` → `candidate` → `approved`; deployment remains `none` until a separate deployment owner acts
 - Governance: artifact must follow registry contract and include governance metadata
 
 ### Downstream: EV-001 (Evaluator and Critic Contracts)
 - Integration: TRL models can be used as input to evaluators to score candidate strategies
 - Pattern: critics can use learned preference models to assess alignment with operator intent
+- Candidate preference models are offline-review inputs only; evaluator scoring requires a separately approved preference model.
+
+## Activation-Ready Adapter
+
+The executable adapter is in `adapter/trl_adapter.py`; the container entrypoint is `worker.py`.
+
+- Default behavior is fail-closed. `worker.py` exits without training unless `PANTHEON_TRL_ACTIVATION_READY_ENABLED=1` is set.
+- The adapter can ingest normalized FB-002 dictionaries or `TraderFeedbackEvent` objects from `services.feedback.models`.
+- Activation-ready data floors are enforced by `validate_activation_ready_dataset()`:
+  - at least 200 governed FB-002 source events
+  - at least 100 constructed preference pairs
+  - at least 2 strategy families represented
+- The workflow emits three non-writing handoff artifacts:
+  - `artifact_bundle.json`
+  - `registry_entry.json`
+  - `candidate_packet.json`
+- `candidate_packet.json` requests registry review to `candidate` only; it does not write to registry, governance, LEAN, or deployment state.
 
 ---
 
@@ -79,6 +96,8 @@ services/learning/trl/
 ├── PREFERENCE_LEARNING_CONTRACT.md   (scope, data, constraints, evaluation)
 ├── WORKFLOW_DEFINITION.md        (implementation workflow)
 ├── EV-001_INTEGRATION.md         (integration with evaluators and critics)
+├── worker.py                     (gated activation-ready container entrypoint)
+├── adapter/trl_adapter.py        (FB-002 ingestion, DPO backend, handoff packets)
 └── examples/
     ├── preference_pair_sample.json
     └── training_config_sample.yaml
@@ -163,22 +182,19 @@ See `WORKFLOW_DEFINITION.md` for step-by-step implementation details.
 - [x] Registry handoff contract defined (artifact shape, metadata, promotion states)
 - [x] Workflow steps documented in WORKFLOW_DEFINITION.md
 - [x] Integration with EV-001 (evaluator contract) sketched
+- [x] Activation-ready adapter emits artifact/checksum, registry entry, and candidate handoff packet behind explicit gate
 
 ---
 
 ## Next Steps
 
-1. **Codex Review**: Submit PREFERENCE_LEARNING_CONTRACT.md and WORKFLOW_DEFINITION.md to Codex for alignment with TARGET_ARCHITECTURE and feedback governance.
+1. **Runtime FB-002 Run**: Point `TRL_PREFERENCE_EVENTS_PATH` at a governed FB-002 export that satisfies the activation-ready floors.
 
-2. **Smoke Test**: Build a minimal preference model:
-   - Extract preference pairs from FB-002 mock data
-   - Train a logistic regression model to predict approval probability
-   - Evaluate on holdout set
-   - Package and submit to registry (draft state)
+2. **Real Backend Validation**: Run with `TRL_BACKEND=real` in the TRL container after package installation and record the upstream install/runtime result.
 
-3. **FB-002 Validation**: Ensure FB-002 feedback ingestion is delivering clean events with complete governance metadata.
+3. **Registry Review**: Submit `candidate_packet.json` through the registry review path; do not let the worker write registry state directly.
 
-4. **Evaluator Integration** (follow-up to EV-001): Define how preference models feed into evaluator contracts.
+4. **Evaluator Use**: Allow EV-001 consumption only after the preference model is approved.
 
 ---
 
@@ -194,7 +210,7 @@ See `WORKFLOW_DEFINITION.md` for step-by-step implementation details.
 
 ---
 
-**Document Status**: APPROVED for v1 contract lock  
+**Document Status**: APPROVED for v1 contract lock; activation-ready adapter documented
 **Owner**: Grok  
 **Reviewer**: Codex  
-**Last Updated**: 2026-04-06
+**Last Updated**: 2026-04-30

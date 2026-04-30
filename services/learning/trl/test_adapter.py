@@ -2,16 +2,38 @@
 from __future__ import annotations
 
 import unittest
+import os
+import subprocess
+import tempfile
+import sys
+from pathlib import Path
+from unittest.mock import patch
 
+from services.feedback.models import (
+    ActorRole,
+    ArtifactType,
+    Channel,
+    EditItem,
+    EditOperation,
+    FeedbackEventType,
+    GovernedLinkage,
+    PromotionState,
+    TraderFeedbackEvent,
+)
 from services.learning.trl.adapter import (
+    ActivationReadyGate,
     GovernedPreferencePairAdapter,
     PreferencePair,
     StubDPOBackend,
     TrainingConfig,
     TRLWorkflowError,
+    persist_trl_run_artifacts,
     run_trl_dpo_workflow,
+    run_trl_dpo_workflow_from_feedback_store,
+    validate_activation_ready_dataset,
 )
 
+SERVICE_DIR = Path(__file__).resolve().parent
 
 # Minimal valid event fixtures
 def _approve_event(idx: int = 1, family: str = "equity_cross_sectional") -> dict:
@@ -154,6 +176,50 @@ class TestGovernedPreferencePairAdapter(unittest.TestCase):
                 source_dataset_refs=["ref"],
             )
 
+    def test_build_dataset_from_fb002_dataclass_events(self) -> None:
+        events = [
+            TraderFeedbackEvent(
+                event_id="fb002-001",
+                event_type=FeedbackEventType.APPROVE,
+                created_at="2026-04-30T04:00:00Z",
+                actor_id="operator-1",
+                actor_role=ActorRole.OPERATOR,
+                channel=Channel.API,
+                target=GovernedLinkage(
+                    strategy_id="family-a",
+                    registry_id="reg-a",
+                    artifact_type=ArtifactType.MODEL_ARTIFACT,
+                    promotion_state=PromotionState.CANDIDATE,
+                ),
+            ),
+            TraderFeedbackEvent(
+                event_id="fb002-002",
+                event_type=FeedbackEventType.EDIT,
+                created_at="2026-04-30T04:01:00Z",
+                actor_id="operator-2",
+                actor_role=ActorRole.APPROVER,
+                channel=Channel.API,
+                target=GovernedLinkage(
+                    strategy_id="family-b",
+                    registry_id="reg-b",
+                    artifact_type=ArtifactType.MODEL_ARTIFACT,
+                    promotion_state=PromotionState.PAPER,
+                ),
+                edits=[EditItem(path="/threshold", operation=EditOperation.REPLACE, value=0.8)],
+            ),
+        ]
+        ds = self.adapter.build_dataset_from_feedback_events(
+            events,
+            dataset_id="fb002-ds",
+            strategy_id="preference-strategy",
+            source_dataset_refs=["feedback-store://fb002"],
+        )
+        self.assertEqual(ds.num_pairs, 2)
+        self.assertEqual(ds.source_feedback_event_ids, ("fb002-001", "fb002-002"))
+        self.assertEqual(ds.action_distribution["edit"], 1)
+        edit_pair = [p for p in ds.pairs if p.action == "edit"][0]
+        self.assertTrue(edit_pair.chosen["artifact_id"].endswith(":edited"))
+
 
 class TestStubDPOBackend(unittest.TestCase):
     def _make_dataset(self) -> object:
@@ -238,6 +304,120 @@ class TestRunTRLDPOWorkflow(unittest.TestCase):
             source_dataset_refs=["ref-lin"],
         )
         self.assertTrue(result.registry_entry["lineage"]["source_feedback_event_ids"])
+
+    def test_candidate_packet_targets_candidate_without_deployment(self) -> None:
+        result = run_trl_dpo_workflow(
+            self._events(),
+            dataset_id="ds-candidate",
+            strategy_id="strat-candidate",
+            source_dataset_refs=["ref-candidate"],
+        )
+        packet = result.candidate_packet
+        self.assertEqual(packet["current_artifact_state"], "draft")
+        self.assertEqual(packet["requested_artifact_state"], "candidate")
+        self.assertEqual(packet["deployment_stage"], "none")
+        self.assertEqual(packet["candidate_registry_projection"]["artifact_state"], "candidate")
+        self.assertEqual(packet["evaluator_handoff"]["minimum_artifact_state_for_scoring"], "approved")
+
+    def test_activation_ready_data_floors_reject_small_dataset(self) -> None:
+        result = run_trl_dpo_workflow(
+            self._events(),
+            dataset_id="ds-small",
+            strategy_id="strat-small",
+            source_dataset_refs=["ref-small"],
+        )
+        with self.assertRaises(TRLWorkflowError):
+            validate_activation_ready_dataset(
+                result.preference_dataset,
+                source_event_count=len(self._events()),
+            )
+
+    def test_activation_ready_data_floors_accept_large_diverse_dataset(self) -> None:
+        events = [
+            _approve_event(i, "family-a" if i % 2 == 0 else "family-b")
+            for i in range(1, 201)
+        ]
+        result = run_trl_dpo_workflow(
+            events,
+            dataset_id="ds-large",
+            strategy_id="strat-large",
+            source_dataset_refs=["ref-large"],
+            enforce_activation_ready=True,
+        )
+        self.assertEqual(result.preference_dataset.num_pairs, 200)
+        self.assertTrue(
+            result.registry_entry["metadata"]["entry_criteria_satisfied"][
+                "activation_ready_data_volume_met"
+            ]
+        )
+
+    def test_run_workflow_from_feedback_store_events(self) -> None:
+        events = [
+            TraderFeedbackEvent(
+                event_id=f"fb-store-{i}",
+                event_type=FeedbackEventType.APPROVE,
+                created_at="2026-04-30T04:00:00Z",
+                actor_id=f"operator-{i}",
+                actor_role=ActorRole.OPERATOR,
+                channel=Channel.API,
+                target=GovernedLinkage(
+                    strategy_id="store-family-a" if i == 1 else "store-family-b",
+                    registry_id=f"reg-store-{i}",
+                    artifact_type=ArtifactType.MODEL_ARTIFACT,
+                    promotion_state=PromotionState.CANDIDATE,
+                ),
+            )
+            for i in (1, 2)
+        ]
+        result = run_trl_dpo_workflow_from_feedback_store(
+            events,
+            dataset_id="ds-store",
+            strategy_id="strat-store",
+            source_dataset_refs=["feedback-store://memory"],
+        )
+        self.assertEqual(result.preference_dataset.num_pairs, 2)
+        self.assertEqual(result.training_result.backend, "stub_dpo")
+
+    def test_persist_artifacts_writes_handoff_files(self) -> None:
+        result = run_trl_dpo_workflow(
+            self._events(),
+            dataset_id="ds-persist",
+            strategy_id="strat-persist",
+            source_dataset_refs=["ref-persist"],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = persist_trl_run_artifacts(result, tmp)
+            self.assertIn("candidate_packet", manifest["files"])
+            for path in manifest["files"].values():
+                self.assertTrue(os.path.exists(path))
+
+
+class TestActivationReadyGate(unittest.TestCase):
+    def test_cli_gate_requires_explicit_flag(self) -> None:
+        with self.assertRaises(EnvironmentError):
+            ActivationReadyGate.require_cli_flag(False)
+
+    def test_env_gate_requires_explicit_enable(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PANTHEON_TRL_ACTIVATION_READY_ENABLED", None)
+            with self.assertRaises(EnvironmentError):
+                ActivationReadyGate.require_env()
+
+    def test_env_gate_accepts_enabled_value(self) -> None:
+        with patch.dict(os.environ, {"PANTHEON_TRL_ACTIVATION_READY_ENABLED": "1"}, clear=False):
+            ActivationReadyGate.require_env()
+
+    def test_worker_entrypoint_requires_env_gate(self) -> None:
+        proc = subprocess.run(
+            [sys.executable, str(SERVICE_DIR / "worker.py")],
+            cwd=str(SERVICE_DIR),
+            env={k: v for k, v in os.environ.items() if k != "PANTHEON_TRL_ACTIVATION_READY_ENABLED"},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("disabled by default", proc.stderr)
 
 
 if __name__ == "__main__":

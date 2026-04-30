@@ -92,10 +92,11 @@ WORKER_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "trl": {
         "status": "deferred",
-        "entrypoint": "services/learning/trl/preflight.py",
-        "activation_gate": "services/learning/trl/ACTIVATION_CRITERIA.md",
+        "entrypoint": "services/learning/trl/worker.py",
+        "activation_gate": "PANTHEON_TRL_ACTIVATION_READY_ENABLED",
         "gate_state": "fail_closed",
         "allowed_scope": FAIL_CLOSED_SCOPE,
+        "preflight": "services/learning/trl/preflight.py",
     },
     "wandb": {
         "status": "deferred",

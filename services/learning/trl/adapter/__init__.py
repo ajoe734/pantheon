@@ -7,6 +7,7 @@ Governance boundary:
 - CI / smoke tests use StubDPOBackend (no TRL install required).
 """
 from .trl_adapter import (
+    ActivationReadyGate,
     GovernedPreferencePairAdapter,
     PreferencePair,
     PreferencePairDataset,
@@ -15,10 +16,14 @@ from .trl_adapter import (
     TrainingConfig,
     TRLRunResult,
     TRLWorkflowError,
+    persist_trl_run_artifacts,
     run_trl_dpo_workflow,
+    run_trl_dpo_workflow_from_feedback_store,
+    validate_activation_ready_dataset,
 )
 
 __all__ = [
+    "ActivationReadyGate",
     "GovernedPreferencePairAdapter",
     "PreferencePair",
     "PreferencePairDataset",
@@ -27,5 +32,8 @@ __all__ = [
     "TrainingConfig",
     "TRLRunResult",
     "TRLWorkflowError",
+    "persist_trl_run_artifacts",
     "run_trl_dpo_workflow",
+    "run_trl_dpo_workflow_from_feedback_store",
+    "validate_activation_ready_dataset",
 ]

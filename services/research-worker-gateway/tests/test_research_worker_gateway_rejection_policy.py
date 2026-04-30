@@ -132,6 +132,9 @@ def test_capabilities_list_activation_gated_backend_inventory() -> None:
         assert worker in workers
         assert workers[worker]["gate_state"] == "fail_closed"
         assert workers[worker]["allowed_scope"] == "capability_metadata_read_only"
+        if worker == "trl":
+            assert workers[worker]["entrypoint"] == "services/learning/trl/worker.py"
+            assert workers[worker]["activation_gate"] == "PANTHEON_TRL_ACTIVATION_READY_ENABLED"
 
         denied = client.post(
             "/api/research-worker-gateway/jobs",
