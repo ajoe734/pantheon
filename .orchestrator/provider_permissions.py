@@ -59,8 +59,22 @@ def _claude_local_settings() -> dict[str, Any]:
     return load_json(CLAUDE_LOCAL_SETTINGS_PATH, default={}) or {}
 
 
-def _gemini_settings() -> dict[str, Any]:
-    return load_json(GEMINI_SETTINGS_PATH, default={}) or {}
+def _gemini_home(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> Path:
+    provider = ((config or {}).get("providers", {}).get(provider_id, {}) or {}).get("gemini", {}) or {}
+    home = str(provider.get("home") or "").strip()
+    return Path(os.path.expanduser(home)) if home else Path.home()
+
+
+def _gemini_settings_path(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> Path:
+    return _gemini_home(config, provider_id) / ".gemini" / "settings.json"
+
+
+def _gemini_oauth_creds_path(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> Path:
+    return _gemini_home(config, provider_id) / ".gemini" / "oauth_creds.json"
+
+
+def _gemini_settings(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> dict[str, Any]:
+    return load_json(_gemini_settings_path(config, provider_id), default={}) or {}
 
 
 def _qwen_settings() -> dict[str, Any]:
@@ -87,18 +101,18 @@ def _gemini_env_auth_type() -> str | None:
     return None
 
 
-def _gemini_selected_auth_type(settings: dict[str, Any]) -> str | None:
+def _gemini_selected_auth_type(settings: dict[str, Any], *, oauth_creds_path: Path = GEMINI_OAUTH_CREDS_PATH) -> str | None:
     return (
         _gemini_env_auth_type()
         or settings.get("security", {}).get("auth", {}).get("selectedType")
-        or ("oauth-personal" if GEMINI_OAUTH_CREDS_PATH.exists() else None)
+        or ("oauth-personal" if oauth_creds_path.exists() else None)
     )
 
 
-def _gemini_auth_ready(settings: dict[str, Any]) -> bool:
-    auth_type = _gemini_selected_auth_type(settings)
+def _gemini_auth_ready(settings: dict[str, Any], *, oauth_creds_path: Path = GEMINI_OAUTH_CREDS_PATH) -> bool:
+    auth_type = _gemini_selected_auth_type(settings, oauth_creds_path=oauth_creds_path)
     if auth_type == "oauth-personal":
-        return GEMINI_OAUTH_CREDS_PATH.exists()
+        return oauth_creds_path.exists()
     if auth_type == "gemini-api-key":
         return bool(os.environ.get("GEMINI_API_KEY"))
     if auth_type == "vertex-ai":
@@ -477,9 +491,12 @@ def desired_claude_local_settings(config: dict[str, Any], current: dict[str, Any
     return {**existing, "permissions": next_permissions, "hooks": merged_hooks}
 
 
-def desired_gemini_settings(config: dict[str, Any]) -> dict[str, Any]:
-    approval = config.get("providers", {}).get("gemini", {}).get("approval", {})
-    auth_type = _gemini_selected_auth_type(_gemini_settings())
+def desired_gemini_settings(config: dict[str, Any], provider_id: str = "gemini") -> dict[str, Any]:
+    approval = config.get("providers", {}).get(provider_id, {}).get("approval", {})
+    auth_type = _gemini_selected_auth_type(
+        _gemini_settings(config, provider_id),
+        oauth_creds_path=_gemini_oauth_creds_path(config, provider_id),
+    )
     security: dict[str, Any] = {
         "enablePermanentToolApproval": to_bool(approval.get("enable_permanent_tool_approval", True)),
         "autoAddToPolicyByDefault": to_bool(approval.get("auto_add_to_policy_by_default", True)),
@@ -568,6 +585,68 @@ def _claude_provider_report(
     }
 
 
+def _gemini_provider_report(
+    config: dict[str, Any],
+    *,
+    provider_id: str,
+    gemini_path: Path | None,
+    gemini_version: str | None,
+    workspace_settings: dict[str, Any],
+    gemini_applied: bool,
+) -> dict[str, Any]:
+    provider_binary = _configured_provider_binary(config, provider_id, "gemini", "gemini")
+    provider_settings = _gemini_settings(config, provider_id)
+    oauth_creds_path = _gemini_oauth_creds_path(config, provider_id)
+    auth_ready = _gemini_auth_ready(provider_settings, oauth_creds_path=oauth_creds_path)
+    auth_type = _gemini_selected_auth_type(provider_settings, oauth_creds_path=oauth_creds_path)
+    installed = bool(gemini_path or provider_binary)
+    notes = [
+        "Verified CLI approval flags and settings schema from the locally installed Gemini CLI package.",
+        "YOLO can be enabled either per-run with CLI flags or through the VS Code extension setting.",
+        "Gemini CLI non-interactive auth requires either a selected auth type in ~/.gemini/settings.json or one of the documented environment-variable auth paths.",
+    ]
+    if provider_id != "gemini":
+        notes.append(f"Provider `{provider_id}` shares the Gemini CLI auth/settings profile with the base Gemini provider.")
+    return {
+        "installed": installed,
+        "host_layer": "VS Code extension + CLI" if gemini_path and provider_binary else ("CLI" if provider_binary else "VS Code extension"),
+        "delivery_mode": (config.get("providers", {}).get(provider_id, {}) or {}).get("delivery_mode", "gemini"),
+        "approval_mode": provider_settings.get("general", {}).get("defaultApprovalMode") or "default",
+        "persistent_allow_supported": True,
+        "default_auto_approve_supported": True,
+        "full_access_supported": True,
+        "per_tool_allow_supported": True,
+        "local_cli_worker_supported": bool(provider_binary and auth_ready),
+        "vscode_link_supported": bool(gemini_path),
+        "cloud_agent_supported": False,
+        "supports_auto_approve": bool(provider_binary and auth_ready),
+        "supports_defer_resume": False,
+        "supported_models": [],
+        "selected_model": None,
+        "auth_ready": auth_ready,
+        "applied": gemini_applied,
+        "verified": "verified" if installed else "unavailable",
+        "version": gemini_version,
+        "paths": {
+            "extension": str(gemini_path) if gemini_path else None,
+            "binary": provider_binary,
+            "workspace_settings": str(WORKSPACE_SETTINGS_PATH),
+            "home": str(_gemini_home(config, provider_id)),
+            "cli_settings": str(_gemini_settings_path(config, provider_id)),
+            "oauth_creds": str(oauth_creds_path) if oauth_creds_path.exists() else None,
+        },
+        "settings": {
+            "geminicodeassist.agentYoloMode": _workspace_setting(workspace_settings, "geminicodeassist.agentYoloMode"),
+            "general.defaultApprovalMode": provider_settings.get("general", {}).get("defaultApprovalMode"),
+            "security.enablePermanentToolApproval": provider_settings.get("security", {}).get("enablePermanentToolApproval"),
+            "security.autoAddToPolicyByDefault": provider_settings.get("security", {}).get("autoAddToPolicyByDefault"),
+            "security.disableYoloMode": provider_settings.get("security", {}).get("disableYoloMode"),
+            "security.auth.selectedType": auth_type,
+        },
+        "notes": notes,
+    }
+
+
 def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any]:
     config = config or load_config()
     from adapters import build_adapter
@@ -579,16 +658,16 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     openai_path, openai_version = _find_extension("openai.chatgpt")
     copilot_path, copilot_version = _find_extension("github.copilot-chat")
     claude_local = _claude_local_settings()
-    gemini_settings = _gemini_settings()
+    gemini_settings = _gemini_settings(config, "gemini")
     qwen_settings = _qwen_settings()
-    gemini_auth_ready = _gemini_auth_ready(gemini_settings)
-    gemini_auth_type = _gemini_selected_auth_type(gemini_settings)
+    gemini_auth_ready = _gemini_auth_ready(gemini_settings, oauth_creds_path=_gemini_oauth_creds_path(config, "gemini"))
+    gemini_auth_type = _gemini_selected_auth_type(gemini_settings, oauth_creds_path=_gemini_oauth_creds_path(config, "gemini"))
     custom_agents = _custom_agents_info()
 
     claude_permissions = claude_local.get("permissions", {})
     desired_workspace = desired_workspace_settings(config)
     desired_claude = desired_claude_local_settings(config, current=claude_local)
-    desired_gemini = desired_gemini_settings(config)
+    desired_gemini = desired_gemini_settings(config, "gemini")
     codex_binary = command_exists("codex")
     gemini_binary = _configured_provider_binary(config, "gemini", "gemini", "gemini")
     qwen_binary = _configured_provider_binary(config, "qwen", "qwen", "qwen")
@@ -660,6 +739,18 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
             ]
         )
     )
+    gemini_provider_ids = list(
+        dict.fromkeys(
+            [
+                "gemini",
+                *[
+                    provider_id
+                    for provider_id, settings in (config.get("providers", {}) or {}).items()
+                    if provider_id != "gemini" and (settings or {}).get("delivery_mode") == "gemini"
+                ],
+            ]
+        )
+    )
 
     report = {
         "generated_at": utc_now(),
@@ -695,47 +786,16 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
                 )
                 for provider_id in claude_provider_ids
             },
-            "gemini": {
-                "installed": gemini_installed,
-                "host_layer": "VS Code extension + CLI" if gemini_path and gemini_binary else ("CLI" if gemini_binary else "VS Code extension"),
-                "delivery_mode": "gemini",
-                "approval_mode": gemini_settings.get("general", {}).get("defaultApprovalMode") or "default",
-                "persistent_allow_supported": True,
-                "default_auto_approve_supported": True,
-                "full_access_supported": True,
-                "per_tool_allow_supported": True,
-                "local_cli_worker_supported": bool(gemini_binary and gemini_auth_ready),
-                "vscode_link_supported": bool(gemini_path),
-                "cloud_agent_supported": False,
-                "supports_auto_approve": bool(gemini_binary and gemini_auth_ready),
-                "supports_defer_resume": False,
-                "supported_models": [],
-                "selected_model": None,
-                "auth_ready": gemini_auth_ready,
-                "applied": gemini_applied,
-                "verified": "verified" if gemini_installed else "unavailable",
-                "version": gemini_version,
-                "paths": {
-                    "extension": str(gemini_path) if gemini_path else None,
-                    "workspace_settings": str(WORKSPACE_SETTINGS_PATH),
-                    "cli_settings": str(GEMINI_SETTINGS_PATH),
-                    "oauth_creds": str(GEMINI_OAUTH_CREDS_PATH) if GEMINI_OAUTH_CREDS_PATH.exists() else None,
-                },
-                "settings": {
-                    "geminicodeassist.agentYoloMode": _workspace_setting(workspace_settings, "geminicodeassist.agentYoloMode"),
-                    "general.defaultApprovalMode": gemini_settings.get("general", {}).get("defaultApprovalMode"),
-                    "security.enablePermanentToolApproval": gemini_settings.get("security", {}).get(
-                        "enablePermanentToolApproval"
-                    ),
-                    "security.autoAddToPolicyByDefault": gemini_settings.get("security", {}).get("autoAddToPolicyByDefault"),
-                    "security.disableYoloMode": gemini_settings.get("security", {}).get("disableYoloMode"),
-                    "security.auth.selectedType": gemini_auth_type,
-                },
-                "notes": [
-                    "Verified CLI approval flags and settings schema from the locally installed Gemini CLI package.",
-                    "YOLO can be enabled either per-run with CLI flags or through the VS Code extension setting.",
-                    "Gemini CLI non-interactive auth requires either a selected auth type in ~/.gemini/settings.json or one of the documented environment-variable auth paths.",
-                ],
+            **{
+                provider_id: _gemini_provider_report(
+                    config,
+                    provider_id=provider_id,
+                    gemini_path=gemini_path,
+                    gemini_version=gemini_version,
+                    workspace_settings=workspace_settings,
+                    gemini_applied=gemini_applied if provider_id == "gemini" else True,
+                )
+                for provider_id in gemini_provider_ids
             },
             "codex": {
                 "installed": codex_installed,

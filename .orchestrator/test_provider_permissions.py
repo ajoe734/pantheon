@@ -346,6 +346,97 @@ EOF
         self.assertTrue(report["providers"]["claude2"]["supports_auto_approve"])
         self.assertEqual(report["providers"]["claude2"]["paths"]["home"], os.path.expanduser("~/.claude2"))
 
+    def test_provider_capabilities_include_custom_gemini_provider(self) -> None:
+        config = {
+            "paths": {
+                "status_file": ".orchestrator/ai-status.json",
+                "activity_log": "ai-activity-log.jsonl",
+                "current_work": "current-work.md",
+                "dashboard": "dashboard-bundle.json",
+                "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
+            },
+            "agents": {},
+            "providers": {
+                "gemini": {
+                    "delivery_mode": "gemini",
+                    "gemini": {"cli": "gemini"},
+                },
+                "gemini2": {
+                    "delivery_mode": "gemini",
+                    "gemini": {"cli": "gemini", "home": "~/.gemini2"},
+                },
+                "claude": {},
+                "codex": {},
+                "qwen": {},
+                "copilot": {},
+            },
+        }
+
+        def fake_find_extension(prefix: str) -> tuple[Path | None, str | None]:
+            if prefix == "google.geminicodeassist":
+                return Path("/tmp/google.geminicodeassist-2.79.0"), "2.79.0"
+            return None, None
+
+        with (
+            mock.patch.object(provider_permissions, "_code_cli_info", return_value={}),
+            mock.patch.object(provider_permissions, "_workspace_settings", return_value={"geminicodeassist.agentYoloMode": False}),
+            mock.patch.object(provider_permissions, "_find_extension", side_effect=fake_find_extension),
+            mock.patch.object(provider_permissions, "_claude_local_settings", return_value={"permissions": {}}),
+            mock.patch.object(
+                provider_permissions,
+                "_gemini_settings",
+                return_value={
+                    "general": {"defaultApprovalMode": "auto_edit"},
+                    "security": {
+                        "enablePermanentToolApproval": True,
+                        "autoAddToPolicyByDefault": True,
+                        "disableYoloMode": False,
+                        "auth": {"selectedType": "oauth-personal"},
+                    },
+                },
+            ),
+            mock.patch.object(provider_permissions, "_gemini_auth_ready", return_value=True),
+            mock.patch.object(provider_permissions, "_gemini_selected_auth_type", return_value="oauth-personal"),
+            mock.patch.object(provider_permissions, "_qwen_settings", return_value={}),
+            mock.patch.object(provider_permissions, "_custom_agents_info", return_value={}),
+            mock.patch.object(provider_permissions, "_relevant_extensions", return_value=[]),
+            mock.patch.object(
+                provider_permissions,
+                "desired_workspace_settings",
+                return_value={
+                    "claudeCode.initialPermissionMode": "acceptEdits",
+                    "claudeCode.allowDangerouslySkipPermissions": False,
+                    "geminicodeassist.agentYoloMode": False,
+                    "github.copilot.chat.backgroundAgent.enabled": False,
+                    "github.copilot.chat.cloudAgent.enabled": False,
+                    "github.copilot.chat.claudeAgent.enabled": False,
+                },
+            ),
+            mock.patch.object(provider_permissions, "desired_claude_local_settings", return_value={"permissions": {"defaultMode": "acceptEdits"}}),
+            mock.patch.object(
+                provider_permissions,
+                "desired_gemini_settings",
+                return_value={
+                    "general": {"defaultApprovalMode": "auto_edit"},
+                    "security": {
+                        "enablePermanentToolApproval": True,
+                        "autoAddToPolicyByDefault": True,
+                        "disableYoloMode": False,
+                        "auth": {"selectedType": "oauth-personal"},
+                    },
+                },
+            ),
+            mock.patch.object(provider_permissions, "command_exists", side_effect=lambda cmd: "/usr/bin/gemini" if cmd == "gemini" else None),
+            mock.patch.object(provider_permissions, "claude_auth_ready", return_value=False),
+        ):
+            report = provider_permissions.provider_capabilities(config)
+
+        self.assertIn("gemini2", report["providers"])
+        self.assertTrue(report["providers"]["gemini2"]["auth_ready"])
+        self.assertTrue(report["providers"]["gemini2"]["supports_auto_approve"])
+        self.assertEqual(report["providers"]["gemini2"]["paths"]["binary"], "/usr/bin/gemini")
+        self.assertEqual(report["providers"]["gemini2"]["paths"]["home"], os.path.expanduser("~/.gemini2"))
+
     def test_force_push_is_denied(self) -> None:
         command = "git push --force origin HEAD"
 

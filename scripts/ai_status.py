@@ -65,6 +65,11 @@ KNOWN_AGENTS = {
         "default_branch": "feat/gemini-research-runtime",
         "target_workload": 30,
     },
+    "Gemini2": {
+        "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+        "default_branch": "feat/gemini2-research-runtime",
+        "target_workload": 30,
+    },
     "Codex": {
         "capability_lane": ["integration", "status-system", "schema", "acceptance"],
         "default_branch": "feat/codex-collab-system",
@@ -85,6 +90,8 @@ KNOWN_AGENTS = {
 AGENT_ALIASES = {
     "claude2": "Claude2",
     "claude 2": "Claude2",
+    "gemini2": "Gemini2",
+    "gemini 2": "Gemini2",
     "codex2": "Codex2",
     "codex (2)": "Codex2",
     "codex3": "Codex",

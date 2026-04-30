@@ -182,6 +182,58 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertFalse(result.manual_confirmation_required)
         self.assertEqual(result.mode, "gemini")
 
+    def test_gemini_alias_uses_provider_specific_config_and_identity_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = {
+                "paths": {"status_file": str(root / "ai-status.json")},
+                "agents": {
+                    "gemini2": {
+                        "id": "gemini2",
+                        "display_name": "Gemini2",
+                        "provider": "gemini2",
+                        "adapter": "gemini",
+                    }
+                },
+                "providers": {
+                    "gemini2": {
+                        "delivery_mode": "gemini",
+                        "allow_inbox_fallback": False,
+                        "gemini": {"cli": "gemini", "home": str(root / "gemini2-home"), "include_directories": True},
+                        "approval": {"default_approval_mode": "auto_edit"},
+                    }
+                },
+            }
+            request = DeliveryRequest(
+                agent_id="gemini2",
+                provider="gemini2",
+                delivery_mode="gemini",
+                message="wake",
+                task_id="T-GEMINI2",
+                reason="owned_ready_dispatch",
+            )
+            adapter = GeminiAdapter(config=config, provider_capabilities={})
+            fake_process = mock.Mock(pid=1234)
+            with (
+                mock.patch("adapters.gemini.command_exists", return_value="gemini"),
+                mock.patch("adapters.gemini._gemini_auth_ready", return_value=True),
+                mock.patch("adapters.gemini.spawn_background_process", return_value=(fake_process, root / "gemini2.log")) as spawn,
+            ):
+                result = adapter.deliver(request)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.target, "Gemini2")
+        self.assertIn("-gemini2-gemini2-", Path(str(result.log_path)).name)
+        self.assertIn("--approval-mode", result.command)
+        self.assertIn("--include-directories", result.command)
+        env = spawn.call_args.kwargs["env"]
+        self.assertEqual(env["AI_NAME"], "Gemini2")
+        self.assertEqual(env["ORCH_AGENT_ID"], "gemini2")
+        self.assertEqual(env["ORCH_PROVIDER"], "gemini2")
+        self.assertEqual(env["GEMINI_CLI_HOME"], str(root / "gemini2-home"))
+        self.assertEqual(env["ORCH_TASK_ID"], "T-GEMINI2")
+        self.assertEqual(env["ORCH_REASON"], "owned_ready_dispatch")
+
     def test_copilot_can_disable_inbox_fallback(self) -> None:
         config = {
             "providers": {

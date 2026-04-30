@@ -20,14 +20,44 @@ GEMINI_SETTINGS_PATH = Path.home() / ".gemini" / "settings.json"
 GEMINI_OAUTH_CREDS_PATH = Path.home() / ".gemini" / "oauth_creds.json"
 
 
-def _configured_gemini_cli(config: dict | None = None) -> str | None:
-    provider = ((config or {}).get("providers", {}).get("gemini", {}) or {})
+def _provider_key(config: dict | None, agent_id: str | None = None, provider_id: str | None = None) -> str:
+    if provider_id:
+        return str(provider_id).strip() or "gemini"
+    if agent_id:
+        agent = agent_config_for(config or {}, agent_id)
+        return str(agent.get("provider") or agent.get("id") or agent_id).strip() or "gemini"
+    return "gemini"
+
+
+def _provider_settings(config: dict | None = None, provider_id: str | None = None) -> dict:
+    providers = (config or {}).get("providers", {}) or {}
+    key = _provider_key(config, provider_id=provider_id)
+    return providers.get(key) or providers.get("gemini") or {}
+
+
+def _gemini_home(config: dict | None = None, provider_id: str | None = None) -> Path:
+    provider = _provider_settings(config, provider_id)
+    runtime = provider.get("gemini", {})
+    home = str(runtime.get("home") or "").strip()
+    return Path(os.path.expanduser(home)) if home else Path.home()
+
+
+def _gemini_settings_path(config: dict | None = None, provider_id: str | None = None) -> Path:
+    return _gemini_home(config, provider_id) / ".gemini" / "settings.json"
+
+
+def _gemini_oauth_creds_path(config: dict | None = None, provider_id: str | None = None) -> Path:
+    return _gemini_home(config, provider_id) / ".gemini" / "oauth_creds.json"
+
+
+def _configured_gemini_cli(config: dict | None = None, provider_id: str | None = None) -> str | None:
+    provider = _provider_settings(config, provider_id)
     runtime = provider.get("gemini", {})
     return command_exists(runtime.get("cli") or "gemini")
 
 
-def _allow_inbox_fallback(config: dict | None = None) -> bool:
-    provider = ((config or {}).get("providers", {}).get("gemini", {}) or {})
+def _allow_inbox_fallback(config: dict | None = None, provider_id: str | None = None) -> bool:
+    provider = _provider_settings(config, provider_id)
     return bool(provider.get("allow_inbox_fallback", True))
 
 
@@ -35,11 +65,11 @@ def _truthy_env(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _gemini_settings() -> dict:
-    return load_json(GEMINI_SETTINGS_PATH, default={}) or {}
+def _gemini_settings(config: dict | None = None, provider_id: str | None = None) -> dict:
+    return load_json(_gemini_settings_path(config, provider_id), default={}) or {}
 
 
-def _gemini_selected_auth_type() -> str | None:
+def _gemini_selected_auth_type(config: dict | None = None, provider_id: str | None = None) -> str | None:
     if _truthy_env("GOOGLE_GENAI_USE_GCA"):
         return "oauth-personal"
     if _truthy_env("GEMINI_CLI_USE_COMPUTE_ADC"):
@@ -48,16 +78,16 @@ def _gemini_selected_auth_type() -> str | None:
         return "vertex-ai"
     if os.environ.get("GEMINI_API_KEY"):
         return "gemini-api-key"
-    settings = _gemini_settings()
+    settings = _gemini_settings(config, provider_id)
     return settings.get("security", {}).get("auth", {}).get("selectedType") or (
-        "oauth-personal" if GEMINI_OAUTH_CREDS_PATH.exists() else None
+        "oauth-personal" if _gemini_oauth_creds_path(config, provider_id).exists() else None
     )
 
 
-def _gemini_auth_ready() -> bool:
-    auth_type = _gemini_selected_auth_type()
+def _gemini_auth_ready(config: dict | None = None, provider_id: str | None = None) -> bool:
+    auth_type = _gemini_selected_auth_type(config, provider_id)
     if auth_type == "oauth-personal":
-        return GEMINI_OAUTH_CREDS_PATH.exists()
+        return _gemini_oauth_creds_path(config, provider_id).exists()
     if auth_type == "gemini-api-key":
         return bool(os.environ.get("GEMINI_API_KEY"))
     if auth_type == "vertex-ai":
@@ -74,8 +104,10 @@ class GeminiAdapter(BaseAdapter):
     name = "gemini"
 
     def capability(self, agent_id: str) -> DeliveryCapability:
-        cli = _configured_gemini_cli(self.config)
-        auth_ready = _gemini_auth_ready()
+        provider_id = _provider_key(self.config, agent_id=agent_id)
+        allow_inbox_fallback = _allow_inbox_fallback(self.config, provider_id)
+        cli = _configured_gemini_cli(self.config, provider_id)
+        auth_ready = _gemini_auth_ready(self.config, provider_id)
         supported = bool(cli and auth_ready)
         if cli and auth_ready:
             notes = "Uses the verified Gemini CLI `--prompt`, local auth config, and approval mode settings."
@@ -83,24 +115,25 @@ class GeminiAdapter(BaseAdapter):
             notes = "Gemini CLI is installed but not authenticated for non-interactive use."
         else:
             notes = "Gemini CLI is not installed."
-        if not supported and not _allow_inbox_fallback(self.config):
+        if not supported and not allow_inbox_fallback:
             notes = f"{notes} Inbox fallback is disabled for this provider."
         return DeliveryCapability(
             adapter=self.name,
             supported=bool(cli),
-            requires_manual_confirmation=bool(not supported and _allow_inbox_fallback(self.config)),
+            requires_manual_confirmation=bool(not supported and allow_inbox_fallback),
             can_auto_deliver=supported,
             can_auto_approve_edits=supported,
-            delivery_mode="gemini" if (supported or not _allow_inbox_fallback(self.config)) else "file_inbox",
+            delivery_mode="gemini" if (supported or not allow_inbox_fallback) else "file_inbox",
             verified="verified" if supported else ("partial" if cli else "unavailable"),
-            host="Gemini CLI" if (cli or not _allow_inbox_fallback(self.config)) else "Gemini CLI + inbox fallback",
+            host="Gemini CLI" if (cli or not allow_inbox_fallback) else "Gemini CLI + inbox fallback",
             notes=notes,
         )
 
     def deliver(self, request: DeliveryRequest) -> DeliveryResult:
+        provider_id = _provider_key(self.config, agent_id=request.agent_id, provider_id=request.provider)
         capability = self.capability(request.agent_id)
         if not capability.supported or not capability.can_auto_deliver:
-            if not _allow_inbox_fallback(self.config):
+            if not _allow_inbox_fallback(self.config, provider_id):
                 reason = capability.notes or "Gemini auto-delivery is unavailable and inbox fallback is disabled."
                 return DeliveryResult(
                     ok=False,
@@ -136,10 +169,12 @@ class GeminiAdapter(BaseAdapter):
                 metadata=result.metadata,
             )
 
-        provider = self.config.get("providers", {}).get("gemini", {})
+        provider = _provider_settings(self.config, provider_id)
         gemini_settings = provider.get("gemini", {})
         approval = provider.get("approval", {})
-        cli = _configured_gemini_cli(self.config) or gemini_settings.get("cli") or "gemini"
+        cli = _configured_gemini_cli(self.config, provider_id) or gemini_settings.get("cli") or "gemini"
+        agent_cfg = agent_config_for(self.config, request.agent_id)
+        display_name = str(agent_cfg.get("display_name") or request.agent_id)
         command = [cli, "--prompt", request.message]
         approval_mode = approval.get("default_approval_mode")
         if approval_mode:
@@ -147,19 +182,32 @@ class GeminiAdapter(BaseAdapter):
         if gemini_settings.get("include_directories"):
             command.extend(["--include-directories", str(config_path(self.config, "status_file").parents[0])])
 
-        run_id = new_runtime_id("gemini")
-        log_path = runtime_log_path("gemini", request.agent_id)
+        spawn_env: dict[str, str] = dict(os.environ)
+        spawn_env["AI_NAME"] = display_name
+        spawn_env["ORCH_AGENT_ID"] = request.agent_id
+        spawn_env["ORCH_PROVIDER"] = provider_id
+        gemini_home = _gemini_home(self.config, provider_id)
+        if gemini_home != Path.home():
+            spawn_env["GEMINI_CLI_HOME"] = str(gemini_home)
+        if request.task_id:
+            spawn_env["ORCH_TASK_ID"] = request.task_id
+        if request.reason:
+            spawn_env["ORCH_REASON"] = request.reason
+
+        run_id = new_runtime_id(provider_id)
+        log_path = runtime_log_path(provider_id, request.agent_id)
         process, _ = spawn_background_process(
             command,
             cwd=config_path(self.config, "status_file").parents[0],
             log_path=log_path,
+            env=spawn_env,
         )
 
         return DeliveryResult(
             ok=True,
             adapter=self.name,
             mode="gemini",
-            target=agent_config_for(self.config, request.agent_id).get("display_name", request.agent_id),
+            target=display_name,
             auto_delivered=True,
             manual_confirmation_required=False,
             notes="Gemini CLI wake-up started in the background.",
