@@ -35,6 +35,18 @@ def _provider_settings(config: dict | None = None, provider_id: str | None = Non
     return providers.get(key) or providers.get("gemini") or {}
 
 
+def _provider_env(config: dict | None = None, provider_id: str | None = None) -> dict[str, str]:
+    provider = _provider_settings(config, provider_id)
+    env: dict[str, str] = {}
+    for block_name in ("runtime", "gemini"):
+        block = provider.get(block_name, {}) or {}
+        for key, value in (block.get("env", {}) or {}).items():
+            if value is None:
+                continue
+            env[str(key)] = os.path.expanduser(str(value))
+    return env
+
+
 def _gemini_home(config: dict | None = None, provider_id: str | None = None) -> Path:
     provider = _provider_settings(config, provider_id)
     runtime = provider.get("gemini", {})
@@ -61,22 +73,28 @@ def _allow_inbox_fallback(config: dict | None = None, provider_id: str | None = 
     return bool(provider.get("allow_inbox_fallback", True))
 
 
-def _truthy_env(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+def _truthy_env(name: str, env: dict[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    return source.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _gemini_settings(config: dict | None = None, provider_id: str | None = None) -> dict:
     return load_json(_gemini_settings_path(config, provider_id), default={}) or {}
 
 
-def _gemini_selected_auth_type(config: dict | None = None, provider_id: str | None = None) -> str | None:
-    if _truthy_env("GOOGLE_GENAI_USE_GCA"):
+def _gemini_selected_auth_type(
+    config: dict | None = None,
+    provider_id: str | None = None,
+    env: dict[str, str] | None = None,
+) -> str | None:
+    env = env or {**os.environ, **_provider_env(config, provider_id)}
+    if _truthy_env("GOOGLE_GENAI_USE_GCA", env):
         return "oauth-personal"
-    if _truthy_env("GEMINI_CLI_USE_COMPUTE_ADC"):
+    if _truthy_env("GEMINI_CLI_USE_COMPUTE_ADC", env):
         return "compute-default-credentials"
-    if _truthy_env("GOOGLE_GENAI_USE_VERTEXAI"):
+    if _truthy_env("GOOGLE_GENAI_USE_VERTEXAI", env):
         return "vertex-ai"
-    if os.environ.get("GEMINI_API_KEY"):
+    if env.get("GEMINI_API_KEY"):
         return "gemini-api-key"
     settings = _gemini_settings(config, provider_id)
     return settings.get("security", {}).get("auth", {}).get("selectedType") or (
@@ -85,18 +103,19 @@ def _gemini_selected_auth_type(config: dict | None = None, provider_id: str | No
 
 
 def _gemini_auth_ready(config: dict | None = None, provider_id: str | None = None) -> bool:
-    auth_type = _gemini_selected_auth_type(config, provider_id)
+    env = {**os.environ, **_provider_env(config, provider_id)}
+    auth_type = _gemini_selected_auth_type(config, provider_id, env)
     if auth_type == "oauth-personal":
         return _gemini_oauth_creds_path(config, provider_id).exists()
     if auth_type == "gemini-api-key":
-        return bool(os.environ.get("GEMINI_API_KEY"))
+        return bool(env.get("GEMINI_API_KEY"))
     if auth_type == "vertex-ai":
         return bool(
-            os.environ.get("GOOGLE_API_KEY")
-            or (os.environ.get("GOOGLE_CLOUD_PROJECT") and os.environ.get("GOOGLE_CLOUD_LOCATION"))
+            env.get("GOOGLE_API_KEY")
+            or (env.get("GOOGLE_CLOUD_PROJECT") and env.get("GOOGLE_CLOUD_LOCATION"))
         )
     if auth_type == "compute-default-credentials":
-        return bool(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or command_exists("gcloud"))
+        return bool(env.get("GOOGLE_APPLICATION_CREDENTIALS") or command_exists("gcloud"))
     return False
 
 
@@ -183,6 +202,7 @@ class GeminiAdapter(BaseAdapter):
             command.extend(["--include-directories", str(config_path(self.config, "status_file").parents[0])])
 
         spawn_env: dict[str, str] = dict(os.environ)
+        spawn_env.update(_provider_env(self.config, provider_id))
         spawn_env["AI_NAME"] = display_name
         spawn_env["ORCH_AGENT_ID"] = request.agent_id
         spawn_env["ORCH_PROVIDER"] = provider_id
