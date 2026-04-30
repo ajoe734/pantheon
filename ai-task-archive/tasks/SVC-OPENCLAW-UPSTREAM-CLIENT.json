@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "SVC-OPENCLAW-UPSTREAM-CLIENT",
+  "archived_at": "2026-04-30T05:20:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OPENCLAW-UPSTREAM-CLIENT",
+    "title": "Implement typed OpenClaw upstream client",
+    "summary_zh": "把 OpenClaw adapter 從只 probe health 補成 typed upstream client：capabilities、session list/get/create/cancel、timeout/retry/error mapping；預設仍可 degraded。",
+    "phase": "OpenClaw Activation-Ready Development",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-OPENCLAW-GATEWAY-ADAPTER-BOUNDARY"
+    ],
+    "artifacts": [
+      "services/openclaw-gateway-adapter",
+      "OPENCLAW_RUNTIME_CONTRACT.md",
+      "docker-compose.yml"
+    ],
+    "acceptance": [
+      "typed client covers health capabilities sessions list get create cancel",
+      "timeouts retries and upstream error mapping are explicit",
+      "missing or unhealthy upstream still degrades cleanly",
+      "no broker paper or live execution is enabled by this task",
+      "unit tests use fake upstream"
+    ],
+    "next": "Closeout finalized for typed OpenClaw upstream client. Implementation commit 803c64b42081196f99a6fc0c94ff9788cc01289f is present; finalization commit 13af983 records closeout metadata because another task commit was already HEAD. Verification rerun: pytest -q services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_compose_activation.py (30 passed); python3 -m py_compile services/openclaw-gateway-adapter/main.py services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_compose_activation.py.",
+    "last_update": "2026-04-30T05:20:41Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-materialization-20260430",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：五項 acceptance criteria 全部達標，30 測試通過，typed upstream client 完整覆蓋 capabilities/session list/get/create/cancel，timeout/retry/error mapping 明確，broker/paper/live/capital gates 全部 fail-closed 且 compose 明確設 false。",
+      "後續：Codex2 作為 owner 執行 closeout finalization，task-scoped commit，再以 ai-status.sh done 收尾。"
+    ],
+    "review_file": ".orchestrator/chair-reviews/SVC-OPENCLAW-UPSTREAM-CLIENT-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T05:20:41Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "13af9830187dbe714d7cb32302a8093fd9d9cc48",
+      "commit_subject": "SVC-OPENCLAW-UPSTREAM-CLIENT closeout finalization",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-OPENCLAW-UPSTREAM-CLIENT",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 27,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 10,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OPENCLAW-UPSTREAM-CLIENT",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T04:31:09Z",
+      "resolved_at": "2026-04-30T04:38:04Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-UPSTREAM-CLIENT",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: OpenClaw gateway adapter now has a typed upstream client for capabilities and session list/get/create/cancel, retryable timeout/transport/5xx mapping, HTTP/schema error envelopes, degraded capabilities when upstream is absent, and compose env wiring for timeout/retry plus fail-closed broker/paper/live/capital gates. Updated OPENCLAW_RUNTIME_CONTRACT.md with the delivered adapter surface. Verified: pytest -q services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_compose_activation.py; python3 -m py_compile services/openclaw-gateway-adapter/main.py services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_compose_activation.py.",
+      "status": "done",
+      "created_at": "2026-04-30T04:42:34Z",
+      "resolved_at": "2026-04-30T05:00:23Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-UPSTREAM-CLIENT",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all 5 acceptance criteria met, 30 tests passed, typed upstream client complete with timeout/retry/error mapping, broker/paper/live/capital gates all fail-closed. Returned to Codex2 for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-04-30T05:00:23Z",
+      "resolved_at": "2026-04-30T05:20:41Z"
+    }
+  ],
+  "blockers": []
+}

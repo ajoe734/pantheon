@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-30T07:41:31Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "OpenClaw Activation-Ready Development",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-OPENCLAW-UPSTREAM-CLIENT"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE/SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: sidecar BFF/frontend handoff packet committed at e2336b4, review records committed at 28cafc3, verified adapter/BFF route inventory and python3 -m pytest services/control-plane/bff/test_openclaw_ops_surface.py -q => 4 passed. Scope remained support-only with no canonical truth, runtime, registry, governance, or frontend implementation changes.",
+    "last_update": "2026-04-30T07:41:31Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：支援 artifact 僅限 sidecar scope，未修改 canonical truth；adapter bridge routes（§3.1）與 BFF 路由（§3.2）均與現行 codebase 吻合；BFF gap matrix 與 frontend guidance 語意正確；4 個 BFF OpenClaw ops surface tests 全通過",
+      "後續：owner (Codex) 進行 task-scoped commit 並 done 收尾；parent owner 可視需要將 §4.2/§5 納入主線 BFF command contract。"
+    ],
+    "review_file": ".orchestrator/reviews/SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T07:41:31Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "28cafc36aa2a034989b57a32df2730343a82fe50",
+      "commit_subject": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF closeout review records",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude",
+        "Verification": "python3 -m pytest services/control-plane/bff/test_openclaw_ops_surface.py -q => 4 passed. Route spot-checks confirmed adapter bridge routes and BFF OpenClaw ops/session facades match the approved packet; unrelated dirty worktree files left unstaged."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 52,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 29,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T06:22:39Z",
+      "resolved_at": "2026-04-30T06:24:14Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T06:28:15Z",
+      "resolved_at": "2026-04-30T06:29:44Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "BFF handoff packet ready for review. Covers: tool/workflow bridge BFF gap matrix (§6 — 8 gap areas), candidate composed route OC-10/OC-11/OC-12/OC-13 surface proposal (§4), operator journey and frontend screen regions (§5), command boundary rules (§4.2), and parent+sidecar reviewer checklists (§7). Ownership transferred from Codex2 draft to Claude; verification confirmed routes match main.py (671 lines), BFF read_store.py OpenClaw consumption (dormant capability projection only), and BFF_SURFACE_INVENTORY.md Appendix A gap (no OC-* tool/workflow surfaces exist). No canonical truth modified.",
+      "status": "done",
+      "created_at": "2026-04-30T06:33:03Z",
+      "resolved_at": "2026-04-30T06:51:44Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review changes requested: sidecar packet is stale against current adapter bridge routes. main.py is now 922 lines and exposes /tools/policy, /tools, /tools/invoke, /workflows/trigger, /workflows/jobs/{job_id}, and /audit/invocations. Refresh sections 3/4/6/8 to separate implemented adapter bridge routes from the still-missing BFF composed/frontend contract. See .orchestrator/reviews/SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF-review-codex2.md.",
+      "status": "done",
+      "created_at": "2026-04-30T06:51:44Z",
+      "resolved_at": "2026-04-30T06:51:44Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Refreshed BFF/frontend handoff packet after Codex2 review request: adapter bridge routes now reflected; remaining gap scoped to BFF projection/frontend contract only.",
+      "status": "done",
+      "created_at": "2026-04-30T07:03:13Z",
+      "resolved_at": "2026-04-30T07:23:39Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Refreshed sidecar BFF/frontend handoff packet for current repo truth: adapter bridge routes, BFF OpenClaw ops read/alias routes, BFF session create/cancel facades, and remaining invoke/trigger/frontend adoption gaps are now separated. Verification: python3 -m pytest services/control-plane/bff/test_openclaw_ops_surface.py -q => 4 passed.",
+      "status": "done",
+      "created_at": "2026-04-30T07:23:39Z",
+      "resolved_at": "2026-04-30T07:28:07Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Sidecar BFF/frontend handoff packet is committed for review at e2336b4. Scope remains support-only: adapter bridge routes, BFF ops read/alias routes, session create/cancel facades, remaining invoke/trigger/frontend adoption gaps. Verification: python3 -m pytest services/control-plane/bff/test_openclaw_ops_surface.py -q => 4 passed.",
+      "status": "done",
+      "created_at": "2026-04-30T07:28:07Z",
+      "resolved_at": "2026-04-30T07:32:47Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Chair reassigned review from Codex2 to Claude: Codex2 has failed twice as reviewer with 'Worker exited before terminal status'; Claude has governance-review capability and is the supervisor-designated fallback target; reassigning breaks the bad-loop and clears the third pending handoff before another cycle failure.",
+      "status": "done",
+      "created_at": "2026-04-30T07:32:47Z",
+      "resolved_at": "2026-04-30T07:36:20Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: sidecar packet is support-only, no canonical truth modified, all §3.1 adapter bridge routes and §3.2 BFF routes verified against current codebase, BFF gap matrix accurate, 4 BFF OpenClaw ops surface tests pass. Owner to finalize with task-scoped commit.",
+      "status": "done",
+      "created_at": "2026-04-30T07:36:20Z",
+      "resolved_at": "2026-04-30T07:41:31Z"
+    }
+  ],
+  "blockers": []
+}

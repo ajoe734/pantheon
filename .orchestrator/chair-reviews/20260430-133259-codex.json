@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilized lanes and runnable execution backlog exist; current blockers are provider-scoped, not global.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-SOURCE-SEARCH-TEST-CLOSURE",
+    "TEST-FULLSUITE-HARNESS-ISOLATION",
+    "SVC-BFF-INCIDENT-SMOKE-FIXTURE"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260430T133231Z-bb6b1ad9",
+      "decision": "allow",
+      "reason": "Read-only docker compose config validation; it does not start services or mutate files and is scoped to current task evidence.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-RESEARCH-REPLICATION-SMOKE-FIX",
+    "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
+    "OPS-GEMINI2-AUTH-RECOVERY"
+  ]
+}

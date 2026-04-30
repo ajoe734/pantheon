@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 0,
+  "reason": "No runnable execution backlog or parent task exists for sidecar support.",
+  "blocked_by": [
+    "ai-status task board is empty and the last sidecar scan found no eligible candidates"
+  ],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": []
+}

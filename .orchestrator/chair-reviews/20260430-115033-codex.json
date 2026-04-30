@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Execution backlog is empty, so sidecars would be orphaned despite idle capacity.",
+  "blocked_by": [
+    "active task board and execution backlog are empty; no sidecar parent/support need exists",
+    "accepted phase4 plan has not been materialized into runnable execution tasks"
+  ],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SUP-MATERIALIZE-NEXT-WAVE",
+    "OPS-PUBLISH-BRANCH-DIVERGENCE",
+    "OPS-CLAUDE2-QUOTA-RECOVERY"
+  ]
+}

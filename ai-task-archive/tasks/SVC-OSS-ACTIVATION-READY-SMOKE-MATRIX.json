@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "SVC-OSS-ACTIVATION-READY-SMOKE-MATRIX",
+  "archived_at": "2026-04-30T07:40:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OSS-ACTIVATION-READY-SMOKE-MATRIX",
+    "title": "Add activation-ready OSS smoke matrix",
+    "summary_zh": "建立整體 smoke/e2e matrix：證明預設 gate 關閉、測試 gate 開啟時 Qlib/TRL/RL/W&B offline path 可跑並產 artifact，且沒有 registry/governance/live 寫入。",
+    "phase": "OSS Activation-Ready Development",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-OSS-ACTIVATION-READY-BFF-OPS"
+    ],
+    "artifacts": [
+      "scripts",
+      "services/research-worker-gateway",
+      "services/research",
+      "services/policy-learning",
+      "services/learning",
+      "services/registry/experiments",
+      "docker-compose.yml"
+    ],
+    "acceptance": [
+      "default matrix proves qlib trl rl wandb paper canary live fail closed",
+      "enabled offline matrix runs bounded jobs and emits artifacts",
+      "no registry governance broker or live writes occur",
+      "compose profiles document activation-ready but disabled posture",
+      "CI friendly focused tests pass"
+    ],
+    "next": "Finalized activation-ready OSS smoke matrix with task-scoped commit 0353c46; verified PYTHONPATH=scripts python3 -m unittest scripts.test_smoke_oss_activation_ready_matrix and python3 scripts/smoke_oss_activation_ready_matrix.py --output-dir /tmp/pantheon-oss-matrix-closeout --json-out /tmp/pantheon-oss-matrix-closeout/report.json (16/16 rows passed, forbidden writes false).",
+    "last_update": "2026-04-30T07:40:12Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-materialization-20260430",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：預設 gate fail-closed (dispatch_mode_disabled / production_adapter_disabled)；gate 開啟時 qlib/trl/finrl/rllib/W&B offline 路徑產 local artifact，無 registry/governance/live 寫入；compose profile 文件化 activation-ready 但預設停用；三個聚焦測試全過。",
+      "後續：owner 建立 task-scoped commit 後 done 收尾。"
+    ],
+    "review_file": ".orchestrator/reviews/SVC-OSS-ACTIVATION-READY-SMOKE-MATRIX-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T07:40:12Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "0353c4632d8105d2eb50249d67cebdfa7d28bc3b",
+      "commit_subject": "SVC-OSS-ACTIVATION-READY-SMOKE-MATRIX add activation-ready smoke matrix",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-OSS-ACTIVATION-READY-SMOKE-MATRIX",
+        "Reviewer": "Claude",
+        "Verification": "PYTHONPATH=scripts python3 -m unittest scripts.test_smoke_oss_activation_ready_matrix; python3 scripts/smoke_oss_activation_ready_matrix.py --output-dir /tmp/pantheon-oss-matrix-closeout --json-out /tmp/pantheon-oss-matrix-closeout/report.json"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 53,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 28,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OSS-ACTIVATION-READY-SMOKE-MATRIX",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T06:52:54Z",
+      "resolved_at": "2026-04-30T06:54:08Z"
+    },
+    {
+      "task_id": "SVC-OSS-ACTIVATION-READY-SMOKE-MATRIX",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implemented activation-ready OSS smoke matrix: default Qlib/TRL/RL/W&B and paper/canary/live fail closed; explicit offline Qlib/TRL/FinRL/RLlib/W&B local paths emit local artifacts only; focused tests and matrix run pass.",
+      "status": "done",
+      "created_at": "2026-04-30T06:59:53Z",
+      "resolved_at": "2026-04-30T07:04:47Z"
+    },
+    {
+      "task_id": "SVC-OSS-ACTIVATION-READY-SMOKE-MATRIX",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: default gate fail-closed verified for all OSS workers and paper/canary/live; enabled offline paths produce local draft artifacts with no forbidden writes; compose documents activation-ready but disabled posture; all 3 focused tests pass. Owner to finalize.",
+      "status": "done",
+      "created_at": "2026-04-30T07:04:47Z",
+      "resolved_at": "2026-04-30T07:40:12Z"
+    }
+  ],
+  "blockers": []
+}

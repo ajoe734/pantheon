@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Execution backlog remains parallelizable and no global blocker exists; avoid duplicating the active OpenClaw bridge sidecar.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-OPENCLAW-BFF-OPS-SURFACE",
+    "SVC-SOURCE-SEARCH-OPS-BFF"
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT",
+  "archived_at": "2026-04-30T12:46:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT",
+    "title": "Orchestrator bundle and supervisor regression closeout",
+    "summary_zh": "Two orchestrator tests still fail after the full rerun. Align bootstrap canonical-file expectations for TARGET_ARCHITECTURE.md and fix or document supervisor repeated generic-exit reassignment behavior.",
+    "phase": "Full Test Stabilization",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "scripts/test_orchestrator_bundle.py",
+      "scripts/test_supervisor.py",
+      "scripts/orchestrator_bundle.py",
+      ".orchestrator/supervisor.py"
+    ],
+    "acceptance": [
+      "TARGET_ARCHITECTURE.md bootstrap inclusion is decided and test plus implementation agree",
+      "supervisor repeated generic exit lifecycle matches documented reassigned or failed semantics",
+      "python3 -m pytest -q scripts/test_orchestrator_bundle.py scripts/test_supervisor.py passes"
+    ],
+    "next": "Closeout finalized with task-scoped commit 869ed04 after focused verification: python3 -m pytest -q scripts/test_orchestrator_bundle.py scripts/test_supervisor.py => 8 passed. Unrelated dirty worktree changes were left unstaged, including chair-review candidate artifacts and OpenClaw health task edits.",
+    "last_update": "2026-04-30T12:46:16Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-fulltest-materialization-20260430",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Focused regression 通過：python3 -m pytest -q scripts/test_orchestrator_bundle.py scripts/test_supervisor.py => 8 passed。",
+      "審查確認 portable bootstrap canonical metadata 不再把非 Pantheon 專案強制合併 Pantheon canonical files，且 repeated generic worker exit 會在 configured threshold 觸發 reassignment。",
+      "Closeout 時請 owner 將 task-scoped commit 聚焦於 scripts/ai_status.py 的 canonical metadata scoping 與 .orchestrator/supervisor.py 的 generic-exit reassignment 行為；同檔案內 chair_review candidates 預設變更看起來不是本 task acceptance 的必要部分，請分開處理或在 commit body 說明。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T12:46:16Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "869ed0469cd7c08a9f645d8d7a03c89cc1c09f7c",
+      "commit_subject": "TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT finalize regressions",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT",
+        "Reviewer": "Codex",
+        "Verification": "python3 -m pytest -q scripts/test_orchestrator_bundle.py scripts/test_supervisor.py => 8 passed"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 88,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 51,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: portable bootstrap keeps non-Pantheon canonical files scoped to the bundle, repeated generic worker exits reassign at the configured threshold, and python3 -m pytest -q scripts/test_orchestrator_bundle.py scripts/test_supervisor.py passes (8 passed).",
+      "status": "done",
+      "created_at": "2026-04-30T12:41:50Z",
+      "resolved_at": "2026-04-30T12:44:21Z"
+    },
+    {
+      "task_id": "TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: focused orchestrator bundle/supervisor regressions pass; owner should finalize with a task-scoped commit and keep unrelated chair-review candidate changes out or explicitly documented.",
+      "status": "done",
+      "created_at": "2026-04-30T12:44:21Z",
+      "resolved_at": "2026-04-30T12:46:16Z"
+    }
+  ],
+  "blockers": []
+}

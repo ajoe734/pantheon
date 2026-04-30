@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "SVC-OPENCLAW-BFF-OPS-SURFACE",
+  "archived_at": "2026-04-30T07:25:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OPENCLAW-BFF-OPS-SURFACE",
+    "title": "Expose OpenClaw operations in BFF",
+    "summary_zh": "補 BFF OpenClaw operator surface：upstream status、session lifecycle、tool/workflow audit、paper/live gate state、degraded reason 都能看見。",
+    "phase": "OpenClaw Activation-Ready Development",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "SVC-OPENCLAW-SESSION-LIFECYCLE",
+      "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE"
+    ],
+    "artifacts": [
+      "services/control-plane/bff",
+      "services/openclaw-gateway-adapter",
+      "docs/pantheon-handoffs"
+    ],
+    "acceptance": [
+      "BFF reads OpenClaw status and sessions through service client",
+      "BFF exposes tool workflow audit and degraded reason",
+      "BFF displays paper and live gate state without enabling them",
+      "operator commands require auth and idempotency",
+      "tests cover healthy degraded and denied states"
+    ],
+    "next": "Closeout complete: task-scoped commit 52078b8 exposes OpenClaw BFF ops surface, records Claude2 approval and frontend handoff, and verifies python3 -m pytest services/control-plane/bff/test_openclaw_ops_surface.py -q => 4 passed.",
+    "last_update": "2026-04-30T07:25:20Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-materialization-20260430",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：五項驗收標準全部達標。openclaw_ops_client 封裝所有 adapter 呼叫；gate fail-closed 確認 (paper/live enabled 恆為 False)；auth 401/403、idempotency 400 測試涵蓋；BFF contract 和前端 handoff spec 更新。",
+      "後續：owner (Codex) 建立 task-scoped commit 後以 done 收尾。"
+    ],
+    "review_file": ".orchestrator/reviews/SVC-OPENCLAW-BFF-OPS-SURFACE-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T07:25:20Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "52078b85652d73f9b36356cae645e75142d1243e",
+      "commit_subject": "SVC-OPENCLAW-BFF-OPS-SURFACE expose OpenClaw BFF ops",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-OPENCLAW-BFF-OPS-SURFACE",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 51,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 25,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OPENCLAW-BFF-OPS-SURFACE",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Implemented BFF OpenClaw ops surface: GET /api/v1/operator/openclaw/ops plus tool-workflow alias, service-client-backed upstream/session/policy/audit projection, paper/live gates visible but not enabled, idempotent authenticated session create/cancel facades, BFF API contract and handoff spec updated. Verification: pytest services/control-plane/bff/test_openclaw_ops_surface.py services/control-plane/bff/test_research_oss_preactivation_contract.py services/openclaw-gateway-adapter/test_session_lifecycle.py services/openclaw-gateway-adapter/test_tool_workflow_bridge.py => 88 passed; pytest services/control-plane/bff => 356 passed.",
+      "status": "done",
+      "created_at": "2026-04-30T07:19:38Z",
+      "resolved_at": "2026-04-30T07:22:46Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-BFF-OPS-SURFACE",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: all 5 acceptance criteria met — service-client-backed ops surface, fail-closed gate state, auth+idempotency enforced, healthy/degraded/denied states tested. Returned to Codex for closeout commit.",
+      "status": "done",
+      "created_at": "2026-04-30T07:22:46Z",
+      "resolved_at": "2026-04-30T07:25:20Z"
+    }
+  ],
+  "blockers": []
+}

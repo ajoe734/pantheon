@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "task_id": "SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-30T05:14:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "OSS Activation-Ready Development",
+    "owner": "Claude2",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+      "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER/SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: BFF/frontend handoff packet complete and committed (babe666 + closeout stamp 06f5f2f). Four BFF query gaps documented (offline run list, run detail read, gate state exposure, sync_status rendering). Operator journey mapped. Frontend rendering rules for wandb-local:// URIs and sync_status badges defined. Env var reference and advisory BFF-OPS file list compiled. No canonical truth modified. Reviewer Codex2 approved 2026-04-30T05:12:13Z. Sidecar closeout done.",
+    "last_update": "2026-04-30T05:14:18Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar BFF handoff packet 僅新增 support/sidecars 下的支援 artifact，未修改 L1 canonical truth、核心 contract truth 或 runtime/registry/governance implementation；內容涵蓋 4 個 BFF query gaps、operator journey、frontend wandb-local:// 與 sync_status rendering rules、env var reference，以及交給 SVC-OSS-ACTIVATION-READY-BFF-OPS 的 advisory file-change list。|驗證：python3 -m pytest -q services/control-plane/bff/test_research_oss_preactivation_contract.py（2 passed）；git show --stat --oneline babe666 -- support/sidecars/SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER/SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER-SIDECAR-BFF-HANDOFF.md 確認該 commit 只新增 sidecar handoff artifact。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T05:14:18Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "06f5f2f85c5ffb8cf6ce1c7e69168c90b2931e55",
+      "commit_subject": "SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER-SIDECAR-BFF-HANDOFF closeout stamp",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Codex2 review approval (2026-04-30T05": "12:13Z). No content changed;",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex2",
+        "Verification": "support artifact only — no runtime code, no canonical truth modified."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 55,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 5,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "BFF and frontend handoff packet complete: 4 BFF query gaps documented (offline run list, run detail read, gate state exposure, sync_status rendering gap), operator journey mapped, frontend rules for wandb-local:// URIs and sync_status badges defined, env var reference compiled, advisory file-change list for SVC-OSS-ACTIVATION-READY-BFF-OPS provided. No canonical truth modified. Commit: babe666.",
+      "status": "done",
+      "created_at": "2026-04-30T05:06:36Z",
+      "resolved_at": "2026-04-30T05:12:13Z"
+    },
+    {
+      "task_id": "SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Review approved: BFF/frontend handoff packet is scoped to support artifact only, documents the required W&B offline BFF gaps and frontend rendering rules, and does not alter canonical truth or runtime implementation. Owner should finalize with task-scoped closeout.",
+      "status": "done",
+      "created_at": "2026-04-30T05:12:13Z",
+      "resolved_at": "2026-04-30T05:14:19Z"
+    }
+  ],
+  "blockers": []
+}

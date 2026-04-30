@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "No global blocker exists, but active sidecars are already at cap and should not duplicate current parents.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-OPENCLAW-LIVE-GATE-HARNESS",
+    "SVC-SOURCE-SEARCH-PROD-HARDENING"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-OPENCLAW-LIVE-GATE-HARNESS",
+    "SVC-OPENCLAW-LIVE-GATE-HARNESS-SIDECAR-BFF-HANDOFF",
+    "SVC-SOURCE-SEARCH-PROD-HARDENING-SIDECAR-ACCEPTANCE",
+    "SVC-OPENCLAW-ACTIVATION-READY-E2E"
+  ]
+}

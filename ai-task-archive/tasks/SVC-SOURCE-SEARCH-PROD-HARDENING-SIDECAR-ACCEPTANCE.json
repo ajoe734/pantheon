@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "task_id": "SVC-SOURCE-SEARCH-PROD-HARDENING-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-30T09:24:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-SOURCE-SEARCH-PROD-HARDENING-SIDECAR-ACCEPTANCE",
+    "title": "Prepare SVC-SOURCE-SEARCH-PROD-HARDENING acceptance packet and dependency map",
+    "summary_zh": "平行支援 SVC-SOURCE-SEARCH-PROD-HARDENING，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Source / Search Platform",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER",
+      "SVC-SOURCE-EVIDENCE-NORMALIZATION",
+      "SVC-SEARCH-INDEXING-PIPELINE",
+      "SVC-SEARCH-RETRIEVAL-AND-CUTOFF",
+      "SVC-SOURCE-SEARCH-OPS-BFF"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-SOURCE-SEARCH-PROD-HARDENING/SVC-SOURCE-SEARCH-PROD-HARDENING-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar acceptance packet finalized. All 5 acceptance criteria confirmed against commit b99ebcb. Task-scoped commit fa0e892 contains support artifact only; no L1 canonical or runtime changes. Reviewer Codex approved after factual corrections. Parent owner Codex2 may absorb packet as follow-up reference.",
+    "last_update": "2026-04-30T09:24:24Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-SOURCE-SEARCH-PROD-HARDENING",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar acceptance packet 經 factual correction 後仍維持 support-only 範圍，未修改 L1 canonical truth、runtime、registry 或 governance 實作。",
+      "已修正 reviewer 交接、parent 已 done、錯列 task brief、以及過期 parent closeout 指令；packet 現在作為 post-closeout support evidence。",
+      "驗證：python3 -m py_compile services/source_search_posture.py scripts/smoke_source_search_prod_posture.py；python3 -m pytest -q services/test_source_search_posture.py（5 passed）；packet trailing-whitespace scan clean。"
+    ],
+    "review_file": "support/sidecars/SVC-SOURCE-SEARCH-PROD-HARDENING/SVC-SOURCE-SEARCH-PROD-HARDENING-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T09:24:24Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "fa0e89255239b2a0040e2369b6d0a72ebdc5f7eb",
+      "commit_subject": "SVC-SOURCE-SEARCH-PROD-HARDENING-SIDECAR-ACCEPTANCE closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "acceptance criteria verified against commit b99ebcb": "fail-closed posture",
+        "trailing-whitespace scan": "clean",
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-SOURCE-SEARCH-PROD-HARDENING-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 67,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 43,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-SOURCE-SEARCH-PROD-HARDENING-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T09:06:03Z",
+      "resolved_at": "2026-04-30T09:07:34Z"
+    },
+    {
+      "task_id": "SVC-SOURCE-SEARCH-PROD-HARDENING-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T09:10:36Z",
+      "resolved_at": "2026-04-30T09:11:14Z"
+    },
+    {
+      "task_id": "SVC-SOURCE-SEARCH-PROD-HARDENING-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Acceptance packet ready at support/sidecars/SVC-SOURCE-SEARCH-PROD-HARDENING/SVC-SOURCE-SEARCH-PROD-HARDENING-SIDECAR-ACCEPTANCE.md. All 5 acceptance criteria verified against commit b99ebcb: fail-closed posture startup, Postgres+object-store enforcement, health/metrics consistent, idempotency pre-existing and unmodified, E2E smoke documented. Closeout recommendation included for parent owner Codex2.",
+      "status": "done",
+      "created_at": "2026-04-30T09:12:59Z",
+      "resolved_at": "2026-04-30T09:17:41Z"
+    },
+    {
+      "task_id": "SVC-SOURCE-SEARCH-PROD-HARDENING-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Chair reassigned review from Codex2 to Codex: Codex2 lane is paused and cannot receive the review dispatch; Codex is idle, shares the same integration/acceptance capability lane, and has prior familiarity with the source/search surface as reviewer on SVC-SEARCH-RETRIEVAL-AND-CUTOFF.",
+      "status": "done",
+      "created_at": "2026-04-30T09:17:41Z",
+      "resolved_at": "2026-04-30T09:22:16Z"
+    },
+    {
+      "task_id": "SVC-SOURCE-SEARCH-PROD-HARDENING-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Approved after factual corrections to the support packet. Packet remains sidecar-only; no canonical/runtime changes. Claude should finalize with a task-scoped support-artifact commit, then parent owner Codex2 may decide whether to absorb it as follow-up reference.",
+      "status": "done",
+      "created_at": "2026-04-30T09:22:16Z",
+      "resolved_at": "2026-04-30T09:24:24Z"
+    }
+  ],
+  "blockers": []
+}

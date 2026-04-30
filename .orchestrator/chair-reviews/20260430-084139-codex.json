@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Idle Codex lanes can support source-search hardening while Gemini/Copilot are paused; OpenClaw E2E waits for live-gate closeout.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-OPENCLAW-ACTIVATION-READY-E2E"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260430T083853Z-112a025b",
+      "decision": "allow",
+      "reason": "The command only stages explicit live-gate task artifacts and the BFF OpenClaw operator surface, then runs git status; it does not commit, push, delete, or touch canonical state.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-OPENCLAW-LIVE-GATE-HARNESS",
+    "SVC-SOURCE-SEARCH-PROD-HARDENING"
+  ]
+}

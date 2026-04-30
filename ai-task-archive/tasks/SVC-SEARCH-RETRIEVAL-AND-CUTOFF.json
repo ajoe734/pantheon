@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "task_id": "SVC-SEARCH-RETRIEVAL-AND-CUTOFF",
+  "archived_at": "2026-04-30T08:42:53Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-SEARCH-RETRIEVAL-AND-CUTOFF",
+    "title": "Harden search retrieval and cut off request document normal path",
+    "summary_zh": "補 retrieval rank/filter/access/citation contract，並把 request-document compatibility 移到 dev/test/deprecated 路徑；staging/prod 正常路徑只走 durable index。",
+    "phase": "Source / Search Platform",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-SEARCH-INDEXING-PIPELINE"
+    ],
+    "artifacts": [
+      "services/search",
+      "services/control-plane/bff",
+      "docs/deployment",
+      "scripts"
+    ],
+    "acceptance": [
+      "durable index is the only normal staging production query path",
+      "request document compatibility is dev test or explicitly deprecated only",
+      "ranking filters access control and citations are deterministic",
+      "BFF uses service-backed search client only",
+      "tests cover cutoff and compatibility quarantine"
+    ],
+    "next": "Owner closeout: all acceptance criteria verified. 40 focused search/BFF cutoff contract tests passed; 78 search tests passed (pre-existing test_contracts.py schema failure excluded, outside task scope). Durable-index-only is the only staging/prod query path; request-document compat endpoint carries Deprecation+X-Search-Path headers and is quarantined. BFF uses /api/search/query without request documents. Ranking, top_k, ACL/license/env/persona/workspace filters, and citation contract covered by test_retrieval_rank_filter_cutoff_contract.py. Reviewed deliverable durable in commits b1cd89b (owner) + 31c76b3 (reviewer support) + 76c74e3 (closeout finalization). Acceptance record written to docs/deployment/search-retrieval-cutoff-acceptance.md.",
+    "last_update": "2026-04-30T08:42:53Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-materialization-20260430",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Codex review approved: owner commit b1cd89b plus reviewer support commit 31c76b3 satisfy retrieval rank/filter/access/citation and request-document cutoff acceptance.",
+      "Verification: 40 focused search/BFF cutoff tests passed; 78 search tests passed with pre-existing test_contracts.py schema failure excluded."
+    ],
+    "review_file": ".orchestrator/reviews/SVC-SEARCH-RETRIEVAL-AND-CUTOFF-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T08:42:53Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "76c74e3f761b903ee9a57b8d7329261e9b370ae3",
+      "commit_subject": "SVC-SEARCH-RETRIEVAL-AND-CUTOFF closeout finalization",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "All acceptance criteria verified": "40 focused cutoff/BFF contract tests",
+        "- python3 -m pytest services/search/tests/test_retrieval_rank_filter_cutoff_contract.py services/search/tests/test_http_service.py services/search/tests/test_service_activation_contract.py services/control-plane/bff/test_search_retrieval_cutoff_contract.py services/control-plane/bff/test_search_service_client.py services/control-plane/bff/test_staging_read_store_cutoff_contract.py -q": "40 passed",
+        "- python3 -m pytest services/search -q --ignore=services/search/tests/test_contracts.py": "78 passed",
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-SEARCH-RETRIEVAL-AND-CUTOFF",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 64,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 38,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-SEARCH-RETRIEVAL-AND-CUTOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T07:41:13Z",
+      "resolved_at": "2026-04-30T07:58:00Z"
+    },
+    {
+      "task_id": "SVC-SEARCH-RETRIEVAL-AND-CUTOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T07:57:59Z",
+      "resolved_at": "2026-04-30T08:12:30Z"
+    },
+    {
+      "task_id": "SVC-SEARCH-RETRIEVAL-AND-CUTOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T08:16:44Z",
+      "resolved_at": "2026-04-30T08:18:01Z"
+    },
+    {
+      "task_id": "SVC-SEARCH-RETRIEVAL-AND-CUTOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Retrieval hardening and request-document cutoff complete. Commit b1cd89b: added SEARCH_DURABLE_INDEX_ONLY enforcement, deprecation header on compat endpoint, and 26 new contract tests. 78 search tests pass (1 pre-existing schema test excluded). Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-30T08:33:21Z",
+      "resolved_at": "2026-04-30T08:39:07Z"
+    },
+    {
+      "task_id": "SVC-SEARCH-RETRIEVAL-AND-CUTOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. Owner should finalize closeout. Reviewed b1cd89b plus reviewer support commit 31c76b3; 40 focused cutoff/search tests passed and 78 search tests passed excluding the pre-existing schema contract failure.",
+      "status": "done",
+      "created_at": "2026-04-30T08:39:07Z",
+      "resolved_at": "2026-04-30T08:42:54Z"
+    }
+  ],
+  "blockers": []
+}

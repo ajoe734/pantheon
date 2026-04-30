@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "task_id": "SVC-SEARCH-RETRIEVAL-AND-CUTOFF-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-30T07:57:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-SEARCH-RETRIEVAL-AND-CUTOFF-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-SEARCH-RETRIEVAL-AND-CUTOFF BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-SEARCH-RETRIEVAL-AND-CUTOFF，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Source / Search Platform",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-SEARCH-INDEXING-PIPELINE"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-SEARCH-RETRIEVAL-AND-CUTOFF/SVC-SEARCH-RETRIEVAL-AND-CUTOFF-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete. Task-scoped commit 32eb0ef includes BFF handoff packet and Claude reviewer approval. Artifact verified: support/sidecars/SVC-SEARCH-RETRIEVAL-AND-CUTOFF/SVC-SEARCH-RETRIEVAL-AND-CUTOFF-SIDECAR-BFF-HANDOFF.md. No canonical truth modified. Sidecar finalized.",
+    "last_update": "2026-04-30T07:57:29Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-SEARCH-RETRIEVAL-AND-CUTOFF",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "BFF handoff packet 內容準確完整；核心聲明均已對照 main.py、read_store.py 及 git log 驗證；Section 5 遺漏 /api/search/index/reload 但不影響 handoff 目的；guard rails 正確禁止 compat 路徑暴露；post-parent-task impact table 範圍適當"
+    ],
+    "review_file": ".orchestrator/reviews/SVC-SEARCH-RETRIEVAL-AND-CUTOFF-SIDECAR-BFF-HANDOFF-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T07:57:29Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "32eb0ef0b99ce129a11c897091d09f33d83851cf",
+      "commit_subject": "SVC-SEARCH-RETRIEVAL-AND-CUTOFF-SIDECAR-BFF-HANDOFF add BFF handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Sidecar is support-only": "no canonical truth, runtime, or frontend implementation modified.",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "SVC-SEARCH-RETRIEVAL-AND-CUTOFF-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 60,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 32,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-SEARCH-RETRIEVAL-AND-CUTOFF-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "BFF handoff packet created for SVC-SEARCH-RETRIEVAL-AND-CUTOFF: parent task status snapshot, current BFF search route (GET /api/v1/research/search), search service internal routes not BFF-exposed, BFF query gap matrix, operator journey, frontend screen regions, guard rails, post-parent-task change impact, and reviewer checklist. Artifact: support/sidecars/SVC-SEARCH-RETRIEVAL-AND-CUTOFF/SVC-SEARCH-RETRIEVAL-AND-CUTOFF-SIDECAR-BFF-HANDOFF.md. Verification: git diff --check on artifact passed (new file).",
+      "status": "done",
+      "created_at": "2026-04-30T07:53:16Z",
+      "resolved_at": "2026-04-30T07:55:51Z"
+    },
+    {
+      "task_id": "SVC-SEARCH-RETRIEVAL-AND-CUTOFF-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: BFF handoff packet verified against source files and git history. All major claims confirmed. Minor omission of /api/search/index/reload in Section 5 is non-material. Approved and returned to Claude2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-30T07:55:51Z",
+      "resolved_at": "2026-04-30T07:57:29Z"
+    }
+  ],
+  "blockers": []
+}

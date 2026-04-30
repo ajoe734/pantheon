@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE",
+  "archived_at": "2026-04-30T07:07:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE",
+    "title": "Bridge OpenClaw tools and workflows safely",
+    "summary_zh": "建立安全 tool/workflow bridge：Pantheon auth/context 映射、allowed tool policy、request/response audit、錯誤降級；先不碰 broker/live。",
+    "phase": "OpenClaw Activation-Ready Development",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-OPENCLAW-UPSTREAM-CLIENT",
+      "SVC-OPENCLAW-SESSION-LIFECYCLE"
+    ],
+    "artifacts": [
+      "services/openclaw-gateway-adapter",
+      "services/control-plane/bff",
+      "services/runtime-manager",
+      "OPENCLAW_RUNTIME_CONTRACT.md"
+    ],
+    "acceptance": [
+      "allowed tool and workflow policy is enforced",
+      "Pantheon operator identity and request context map into upstream calls",
+      "request response audit trail is written",
+      "unknown or disallowed tools fail closed",
+      "no broker paper live execution is enabled by this task"
+    ],
+    "next": "Owner finalized: compile clean; prefix bypass fix verified (broker.submit/live.trade/paper.backtest/capital.bind_pool all return always_blocked); 119/119 adapter tests pass; review artifact committed in a40e81f. Task closes on commits fe768f5 (fix) + 2f9b982 (initial) + a40e81f (closeout).",
+    "last_update": "2026-04-30T07:07:06Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-materialization-20260430",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Follow-up review approved: dotted and mixed-case broker/live/paper/capital/canary/lean tool refs are rejected before allowlist; reproduction returns always_blocked. Verification: compile clean, bridge tests 56/56, adapter suite 119/119."
+    ],
+    "review_file": ".orchestrator/reviews/SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T07:07:06Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "a40e81fae5857119d887b462d9b3ea22f8aae3ec",
+      "commit_subject": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE: closeout — commit review artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "2f9b982 and fe768f5. Verification": "compile clean; prefix bypass",
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 46,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 23,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T06:38:58Z",
+      "resolved_at": "2026-04-30T06:40:13Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete. Commit 2f9b982. New: tool_workflow_bridge.py (ToolPolicy deny-by-default, BridgeAuditLog JSONL, ToolWorkflowBridge with operator context mapping), 7 new routes in main.py, upstream client extended with tool/workflow methods, 51 new tests all pass (114 total). OPENCLAW_RUNTIME_CONTRACT.md updated. Verification: compile clean; 114 tests passed. Ready for review against acceptance criteria.",
+      "status": "done",
+      "created_at": "2026-04-30T06:46:41Z",
+      "resolved_at": "2026-04-30T06:50:32Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: tool policy only exact-blocks broker/live/paper/capital tool names, so dotted refs like broker.submit/live.trade pass when allowlisted. See .orchestrator/reviews/SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-review-codex.md. Focused verification passed, but regression tests and prefix/case normalization are required before approval.",
+      "status": "done",
+      "created_at": "2026-04-30T06:50:32Z",
+      "resolved_at": "2026-04-30T06:50:32Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Fixed review findings: added _ALWAYS_BLOCKED_TOOL_PREFIXES, case normalization in evaluate_tool, and 5 regression tests covering dotted refs (broker.submit, live.trade, etc.) and mixed-case variants. Reproduction command from review now returns always_blocked for all four dotted tool names. Full suite 119/119 pass. Commit: fe768f5.",
+      "status": "done",
+      "created_at": "2026-04-30T06:54:54Z",
+      "resolved_at": "2026-04-30T06:57:26Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: prefix-bypass finding fixed in fe768f5; reproduction returns always_blocked for broker.submit/live.trade/paper.backtest/capital.bind_pool; compile clean; bridge tests 56/56; adapter suite 119/119. Owner to finalize.",
+      "status": "done",
+      "created_at": "2026-04-30T06:57:26Z",
+      "resolved_at": "2026-04-30T07:07:06Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization at 0.33 with no blocker on Claude/Codex providers; Claude2 is functionally idle (all assigned tasks have unsatisfied upstream deps) and available for sidecar support work.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-OPENCLAW-UPSTREAM-CLIENT",
+    "SVC-SOURCE-CONNECTOR-FRAMEWORK",
+    "SVC-RL-FINRL-RLLIB-RAYTUNE-ACTIVATION-READY",
+    "SVC-OPENCLAW-SESSION-LIFECYCLE",
+    "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER"
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization is real with 3 paused lanes; no active sidecar pressure; Copilot is idle; execution backlog has safely parallelizable support work for upcoming OpenClaw tasks.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-OPENCLAW-SESSION-LIFECYCLE"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260430T053752Z-c975bc63",
+      "decision": "allow",
+      "reason": "Read-only Explore agent scoped to existing OpenClaw service directories for SVC-OPENCLAW-SESSION-LIFECYCLE implementation context. No writes, commits, pushes, or canonical mutations. Unblocking this is critical-path for 4 downstream OpenClaw tasks.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-OPENCLAW-SESSION-LIFECYCLE",
+    "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER",
+    "SVC-OSS-ACTIVATION-READY-BFF-OPS"
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE",
+  "archived_at": "2026-04-30T12:48:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE",
+    "title": "Telemetry order lifecycle canonical schema closure",
+    "summary_zh": "Telemetry capture tests show canonical schema mismatch for order lifecycle and position snapshot events. Make schema and payload agree without losing order evidence fields.",
+    "phase": "Telemetry Contract Hardening",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/telemetry/capture.py",
+      "services/telemetry/test_capture.py",
+      "services/telemetry/test_feedback_adapter.py",
+      "services/**/telemetry*.schema.json",
+      "docs"
+    ],
+    "acceptance": [
+      "order lifecycle and position snapshot events validate against canonical schema",
+      "order_id order_status price quantity and symbol are preserved in the documented location",
+      "PYTHONPATH=services/telemetry python3 -m pytest -q services/telemetry/test_capture.py services/telemetry/test_feedback_adapter.py passes",
+      "PYTHONPATH=. python3 services/telemetry/smoke_test.py passes"
+    ],
+    "next": "Closeout complete. 64 pytest tests pass; smoke passes. Implementation commit 43db6a7 (schema closure) + closeout commit 56bf744 (review artifact). All acceptance criteria met: order_id, order_status, fill_status, quantity, price, symbol, position_qty preserved; order lifecycle and position snapshot events validate against canonical telemetry_event.schema.json.",
+    "last_update": "2026-04-30T12:48:55Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-fulltest-materialization-20260430",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Focused telemetry regression 通過：PYTHONPATH=services/telemetry python3 -m pytest -q services/telemetry/test_capture.py services/telemetry/test_feedback_adapter.py => 64 passed。",
+      "Smoke 通過：PYTHONPATH=. python3 services/telemetry/smoke_test.py => All smoke tests passed。",
+      "審查確認 canonical telemetry_event.schema.json 已納入 order/fill/cancel/position event types 與 top-level order/position evidence fields；舊 feedback-side execution schema 是分離 legacy schema，不阻擋本 canonical closure。"
+    ],
+    "review_file": ".orchestrator/reviews/SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T12:48:55Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "56bf7440ccac78f85318264098b5c2c8a6afb4fd",
+      "commit_subject": "SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE: closeout — add review artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 90,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 52,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Schema closure complete. Added order lifecycle event types (order_submitted, order_canceled, position_snapshot, etc.) and top-level order/position fields (order_id, order_status, fill_status, quantity, price, symbol, position_qty) to telemetry_event.schema.json. All 64 pytest tests pass; smoke test passes. Commit: 43db6a7.",
+      "status": "done",
+      "created_at": "2026-04-30T12:43:05Z",
+      "resolved_at": "2026-04-30T12:47:34Z"
+    },
+    {
+      "task_id": "SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: canonical telemetry order lifecycle schema closure passes focused tests and smoke; owner should finalize with task-scoped closeout.",
+      "status": "done",
+      "created_at": "2026-04-30T12:47:34Z",
+      "resolved_at": "2026-04-30T12:48:55Z"
+    }
+  ],
+  "blockers": []
+}

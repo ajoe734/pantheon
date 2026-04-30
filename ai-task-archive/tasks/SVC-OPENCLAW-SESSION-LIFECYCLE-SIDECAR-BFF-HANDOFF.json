@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "SVC-OPENCLAW-SESSION-LIFECYCLE-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-30T06:38:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OPENCLAW-SESSION-LIFECYCLE-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-OPENCLAW-SESSION-LIFECYCLE BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-OPENCLAW-SESSION-LIFECYCLE，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "OpenClaw Activation-Ready Development",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-OPENCLAW-UPSTREAM-CLIENT"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-OPENCLAW-SESSION-LIFECYCLE/SVC-OPENCLAW-SESSION-LIFECYCLE-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner closeout: sidecar BFF handoff packet updated to reflect review-approved parent state, commit 3318af9. Artifact covers BFF query gaps OC-00–OC-03, operator journey, frontend component surface, and degraded path assumptions. Support-only — no canonical truth modified.",
+    "last_update": "2026-04-30T06:38:45Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-OPENCLAW-SESSION-LIFECYCLE",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過 — sidecar handoff packet 維持 support-only，未修改 canonical truth 或核心 runtime/registry/governance 實作",
+      "已補窄幅 reviewer support update：parent blocker 改為已 review-approved、OC-00 對齊現有 RS-04、cancel command 命名/RBAC 參考對齊 BFF 現況"
+    ],
+    "review_file": ".orchestrator/reviews/SVC-OPENCLAW-SESSION-LIFECYCLE-SIDECAR-BFF-HANDOFF-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T06:38:45Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "3318af99850c1590daf089ceacfd627765b0e998",
+      "commit_subject": "SVC-OPENCLAW-SESSION-LIFECYCLE-SIDECAR-BFF-HANDOFF closeout packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "- parent status": "in_progress → review_approved (transition bug fixed)",
+        "- section §3": "blocking issue → review note (bug resolved)",
+        "- test count": "61 → 63 (matches final parent deliverable)",
+        "- command type": "aligned to BFF PascalCase enum convention (OpenClawSessionCancel)",
+        "- RBAC section reference": "§6 → §8 (correct BFF_API_CONTRACT section)",
+        "- OC-00": "note that RS-04 already covers OSS activation status",
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-OPENCLAW-SESSION-LIFECYCLE-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Verification": "artifact reviewed against Codex review notes; support-only, no canonical truth modified"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 54,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 18,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OPENCLAW-SESSION-LIFECYCLE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T06:22:34Z",
+      "resolved_at": "2026-04-30T06:24:04Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-SESSION-LIFECYCLE-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "BFF handoff packet ready for review. Covers: lifecycle endpoint inventory (5 routes, full SessionRecord shape, error codes), 5 BFF query gaps (OC-00 adapter status, OC-01 session list, OC-02 session detail, OC-03 audit trail, OPENCLAW_SESSION_CANCEL command), operator journey, frontend component surface with state badge map, and degraded path assumptions aligned to BFF_HA policy. Pre-conditions section flags that the parent task active->canceled / cancel_requested->active transition bug must land before BFF proxy is implemented.",
+      "status": "done",
+      "created_at": "2026-04-30T06:27:35Z",
+      "resolved_at": "2026-04-30T06:36:40Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-SESSION-LIFECYCLE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. Support-only BFF handoff packet is aligned with parent lifecycle approval, existing RS-04 OpenClaw status coverage, BFF command enum conventions, and BFF_HA degraded behavior. Returning to Claude for owner closeout.",
+      "status": "done",
+      "created_at": "2026-04-30T06:36:40Z",
+      "resolved_at": "2026-04-30T06:38:45Z"
+    }
+  ],
+  "blockers": []
+}
