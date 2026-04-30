@@ -16,8 +16,11 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
     assert adapter["build"]["dockerfile"] == "services/openclaw-gateway-adapter/Dockerfile"
     assert adapter["environment"]["PORT"] == "8104"
     assert adapter["environment"]["OPENCLAW_GATEWAY_URL"] == "http://openclaw-gateway:18789"
+    assert adapter["environment"]["OPENCLAW_UPSTREAM_RETRIES"] == "${OPENCLAW_UPSTREAM_RETRIES:-1}"
     assert adapter["environment"]["OPENCLAW_PRODUCTION_BROKER_ENABLED"] == "false"
     assert adapter["environment"]["OPENCLAW_PAPER_ADAPTER_ENABLED"] == "false"
+    assert adapter["environment"]["OPENCLAW_LIVE_ADAPTER_ENABLED"] == "false"
+    assert adapter["environment"]["OPENCLAW_CAPITAL_BINDING_ENABLED"] == "false"
     assert adapter["ports"] == ["${OPENCLAW_GATEWAY_ADAPTER_PORT:-18104}:8104"]
 
     healthcheck = " ".join(adapter["healthcheck"]["test"])

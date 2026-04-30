@@ -1,6 +1,6 @@
 # OPENCLAW_RUNTIME_CONTRACT.md
 
-Last updated: 2026-04-29
+Last updated: 2026-04-30
 Status: canonical runtime-boundary contract for upstream OpenClaw-compatible runtimes
 Tier: L1 Platform Architecture & Policy
 Scope: upstream runtime dependency, adapter boundary, and ownership split between Pantheon and runtime substrate
@@ -24,9 +24,11 @@ Conflict rule: this document overrides broader OpenClaw mentions in overview/pla
 > fail-closed 方式驗證；不得因此啟用 paper / canary / live execution、broker session、
 > capital binding，或讓 OpenClaw 成為 execution kernel。
 >
-> 目前 repo truth（2026-04-29）：OpenClaw 的 fail-closed runtime-adoption scaffold 已落地。
-> 這只證明 adapter/capability metadata 與拒絕路徑存在；broker session、paper/canary/live
-> route、capital binding 與 execution-kernel 角色仍然關閉，必須等未來明確 activation gate。
+> 目前 repo truth（2026-04-30）：OpenClaw 的 fail-closed runtime-adoption scaffold 已落地，
+> 且 `openclaw-gateway-adapter` 已具備 typed upstream client，可呼叫 capabilities 與 session
+> list/get/create/cancel，並將 timeout、transport、HTTP status、schema error 映射為 Pantheon
+> adapter error envelope。broker session、paper/canary/live route、capital binding 與
+> execution-kernel 角色仍然關閉，必須等未來明確 activation gate。
 
 ---
 
@@ -66,6 +68,15 @@ OpenClaw **不負責**：
 5. consult bus / sub-agent orchestration
 6. cron / hooks 到 Pantheon jobs 的橋接
 7. auth / capability resolution / policy filtering
+
+目前 adapter 的 upstream client surface：
+
+- `GET /api/openclaw-adapter/capabilities`：回傳 Pantheon fail-closed capability snapshot，若 upstream 可達則附帶 upstream capabilities，否則維持 degraded。
+- `GET /api/openclaw-adapter/sessions`：呼叫 upstream session list 並正規化 session metadata。
+- `GET /api/openclaw-adapter/sessions/{session_id}`：呼叫 upstream session get。
+- `POST /api/openclaw-adapter/sessions`：呼叫 upstream session create，但不啟用 broker/paper/live/capital binding。
+- `POST /api/openclaw-adapter/sessions/{session_id}/cancel`：呼叫 upstream cancel。
+- `OPENCLAW_UPSTREAM_TIMEOUT` 與 `OPENCLAW_UPSTREAM_RETRIES` 控制 adapter 對 upstream 的 timeout/retry；未設定 upstream 或 upstream 不健康時，adapter 必須回 degraded/error envelope，不得自動啟用 execution path。
 
 ---
 

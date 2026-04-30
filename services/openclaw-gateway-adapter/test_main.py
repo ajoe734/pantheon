@@ -9,6 +9,8 @@ import types
 import unittest
 from unittest.mock import MagicMock, patch
 
+import httpx
+
 
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
@@ -168,15 +170,34 @@ class TestUpstreamStatus(unittest.TestCase):
 
 class TestCapabilities(unittest.TestCase):
     def test_capabilities_returned_without_upstream(self):
-        with patch.object(adapter_main, "_probe_upstream", return_value={"reachable": False}):
+        error = adapter_main.UpstreamClientError(
+            status_code=503,
+            error_code="UPSTREAM_UNAVAILABLE",
+            message="gateway absent",
+            retryable=True,
+        )
+        mock_client = MagicMock()
+        mock_client.get_capabilities.side_effect = error
+        with patch.object(adapter_main, "_client", return_value=mock_client):
             resp = client.get("/api/openclaw-adapter/capabilities")
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
-        self.assertEqual(body["activation_state"], "facade_only")
+        self.assertEqual(body["activation_state"], "upstream_client_degraded")
         self.assertEqual(body["broker_execution"], "deferred")
         self.assertEqual(body["paper_adapter"], "deferred")
         self.assertEqual(body["live_adapter"], "deferred")
         self.assertIn("supported_session_types", body)
+        self.assertEqual(body["upstream"]["status"], "degraded")
+
+    def test_capabilities_include_upstream_when_available(self):
+        mock_client = MagicMock()
+        mock_client.get_capabilities.return_value = {"tools": ["shell"], "sessions": True}
+        with patch.object(adapter_main, "_client", return_value=mock_client):
+            resp = client.get("/api/openclaw-adapter/capabilities")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["upstream"]["status"], "ok")
+        self.assertEqual(body["upstream"]["capabilities"]["tools"], ["shell"])
 
     def test_capabilities_not_live_execution(self):
         resp = client.get("/api/openclaw-adapter/capabilities")
@@ -192,30 +213,154 @@ class TestCapabilities(unittest.TestCase):
 
 class TestSessions(unittest.TestCase):
     def test_list_sessions_degraded_when_upstream_absent(self):
-        with patch.object(adapter_main, "_probe_upstream", return_value={"reachable": False, "reason": "no gateway"}):
+        mock_client = MagicMock()
+        mock_client.list_sessions.side_effect = adapter_main.UpstreamClientError(
+            status_code=503,
+            error_code="UPSTREAM_UNAVAILABLE",
+            message="no gateway",
+            retryable=True,
+        )
+        with patch.object(adapter_main, "_client", return_value=mock_client):
             resp = client.get("/api/openclaw-adapter/sessions")
         self.assertEqual(resp.status_code, 503)
         body = resp.json()
         self.assertEqual(body["status"], "upstream_unavailable")
         self.assertEqual(body["sessions"], [])
+        self.assertEqual(body["upstream"]["error_code"], "UPSTREAM_UNAVAILABLE")
 
-    def test_list_sessions_deferred_when_upstream_reachable(self):
-        with patch.object(adapter_main, "_probe_upstream", return_value={"reachable": True}):
+    def test_list_sessions_uses_upstream_client_when_available(self):
+        mock_client = MagicMock()
+        mock_client.list_sessions.return_value = [
+            {
+                "session_id": "sess-1",
+                "agent_id": "agent-test",
+                "session_type": "interactive",
+                "status": "running",
+            }
+        ]
+        with patch.object(adapter_main, "_client", return_value=mock_client):
             resp = client.get("/api/openclaw-adapter/sessions")
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
-        self.assertEqual(body["status"], "deferred")
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["sessions"][0]["session_id"], "sess-1")
 
-    def test_create_session_always_deferred(self):
-        resp = client.post(
-            "/api/openclaw-adapter/sessions",
-            json={"agent_id": "agent-test", "session_type": "interactive"},
-        )
-        self.assertEqual(resp.status_code, 503)
+    def test_get_session_uses_upstream_client_when_available(self):
+        mock_client = MagicMock()
+        mock_client.get_session.return_value = {
+            "session_id": "sess-1",
+            "agent_id": "agent-test",
+            "session_type": "interactive",
+            "status": "running",
+        }
+        with patch.object(adapter_main, "_client", return_value=mock_client):
+            resp = client.get("/api/openclaw-adapter/sessions/sess-1")
+        self.assertEqual(resp.status_code, 200)
         body = resp.json()
-        self.assertEqual(body["status"], "deferred")
-        self.assertEqual(body["error_code"], "CAPABILITY_DENIED")
-        self.assertFalse(body["retryable"])
+        self.assertEqual(body["session"]["session_id"], "sess-1")
+        mock_client.get_session.assert_called_once_with("sess-1")
+
+    def test_create_session_uses_upstream_client_when_available(self):
+        mock_client = MagicMock()
+        mock_client.create_session.return_value = {
+            "session_id": "sess-2",
+            "agent_id": "agent-test",
+            "session_type": "interactive",
+            "status": "created",
+        }
+        with patch.object(adapter_main, "_client", return_value=mock_client):
+            resp = client.post(
+                "/api/openclaw-adapter/sessions",
+                json={"agent_id": "agent-test", "session_type": "interactive"},
+            )
+        self.assertEqual(resp.status_code, 201)
+        body = resp.json()
+        self.assertEqual(body["session"]["session_id"], "sess-2")
+
+    def test_cancel_session_uses_upstream_client_when_available(self):
+        mock_client = MagicMock()
+        mock_client.cancel_session.return_value = {
+            "session_id": "sess-2",
+            "agent_id": "agent-test",
+            "session_type": "interactive",
+            "status": "cancel_requested",
+        }
+        with patch.object(adapter_main, "_client", return_value=mock_client):
+            resp = client.post("/api/openclaw-adapter/sessions/sess-2/cancel")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["session"]["status"], "cancel_requested")
+
+    def test_create_session_maps_upstream_timeout(self):
+        mock_client = MagicMock()
+        mock_client.create_session.side_effect = adapter_main.UpstreamClientError(
+            status_code=504,
+            error_code="UPSTREAM_TIMEOUT",
+            message="timeout",
+            retryable=True,
+        )
+        with patch.object(adapter_main, "_client", return_value=mock_client):
+            resp = client.post(
+                "/api/openclaw-adapter/sessions",
+                json={"agent_id": "agent-test", "session_type": "interactive"},
+            )
+        self.assertEqual(resp.status_code, 504)
+        body = resp.json()
+        self.assertEqual(body["error_code"], "UPSTREAM_TIMEOUT")
+        self.assertTrue(body["retryable"])
+
+
+class TestUpstreamClient(unittest.TestCase):
+    def test_http_session_list_is_normalized(self):
+        real_client = httpx.Client
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={"sessions": [{"id": "sess-1", "agent": "agent-test", "type": "interactive", "status": "running"}]},
+            )
+        )
+        with patch.object(adapter_main.httpx, "Client", side_effect=lambda *args, **kwargs: real_client(transport=transport)):
+            sessions = adapter_main.OpenClawUpstreamClient(
+                "http://openclaw.test",
+                timeout=1,
+                retries=0,
+            ).list_sessions()
+        self.assertEqual(sessions[0]["session_id"], "sess-1")
+        self.assertEqual(sessions[0]["agent_id"], "agent-test")
+
+    def test_http_500_retries_then_succeeds(self):
+        real_client = httpx.Client
+        calls = {"count": 0}
+
+        def handler(request):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return httpx.Response(500, json={"error": "not ready"})
+            return httpx.Response(200, json={"sessions": []})
+
+        transport = httpx.MockTransport(handler)
+        with patch.object(adapter_main.httpx, "Client", side_effect=lambda *args, **kwargs: real_client(transport=transport)):
+            sessions = adapter_main.OpenClawUpstreamClient(
+                "http://openclaw.test",
+                timeout=1,
+                retries=1,
+            ).list_sessions()
+        self.assertEqual(sessions, [])
+        self.assertEqual(calls["count"], 2)
+
+    def test_timeout_maps_to_retryable_gateway_timeout(self):
+        real_client = httpx.Client
+        transport = httpx.MockTransport(lambda request: (_ for _ in ()).throw(httpx.TimeoutException("slow")))
+        with patch.object(adapter_main.httpx, "Client", side_effect=lambda *args, **kwargs: real_client(transport=transport)):
+            with self.assertRaises(adapter_main.UpstreamClientError) as ctx:
+                adapter_main.OpenClawUpstreamClient(
+                    "http://openclaw.test",
+                    timeout=1,
+                    retries=0,
+                ).list_sessions()
+        self.assertEqual(ctx.exception.status_code, 504)
+        self.assertEqual(ctx.exception.error_code, "UPSTREAM_TIMEOUT")
+        self.assertTrue(ctx.exception.retryable)
 
 
 # ---------------------------------------------------------------------------

@@ -16,9 +16,11 @@ GET  /health                           — legacy compatibility alias for /healt
 GET  /metrics                          — minimal service metrics
 
 GET  /api/openclaw-adapter/upstream/status     — upstream gateway reachability
-GET  /api/openclaw-adapter/capabilities        — static capability metadata (no live upstream call)
-GET  /api/openclaw-adapter/sessions            — stub session list (deferred; upstream_unavailable when absent)
-POST /api/openclaw-adapter/sessions            — stub session create (deferred; not activated)
+GET  /api/openclaw-adapter/capabilities        — adapter capability metadata plus optional upstream capabilities
+GET  /api/openclaw-adapter/sessions            — typed upstream session list; degrades when absent
+GET  /api/openclaw-adapter/sessions/{id}       — typed upstream session read; degrades when absent
+POST /api/openclaw-adapter/sessions            — typed upstream session create; broker paths remain disabled
+POST /api/openclaw-adapter/sessions/{id}/cancel — typed upstream session cancel; broker paths remain disabled
 """
 
 from __future__ import annotations
@@ -27,8 +29,10 @@ import json
 import os
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+import httpx
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -42,6 +46,7 @@ from services.foundation.health import (
 
 OPENCLAW_GATEWAY_URL = os.getenv("OPENCLAW_GATEWAY_URL", "")
 _UPSTREAM_TIMEOUT = int(os.getenv("OPENCLAW_UPSTREAM_TIMEOUT", "3"))
+_UPSTREAM_RETRIES = int(os.getenv("OPENCLAW_UPSTREAM_RETRIES", "1"))
 
 # Explicit deferral guards: these env vars must be absent or falsy in all compose configs.
 # Production adapter activation is intentionally deferred (no EP5 human gate completed).
@@ -54,7 +59,7 @@ _CAPITAL_BINDING_ENABLED = os.getenv("OPENCLAW_CAPITAL_BINDING_ENABLED", "").low
 # Returned without a live upstream call so the adapter remains useful in degraded mode.
 _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
     "adapter_version": "0.1.0",
-    "activation_state": "facade_only",
+    "activation_state": "upstream_client_degraded",
     "broker_execution": "deferred",
     "paper_adapter": "deferred",
     "live_adapter": "deferred",
@@ -84,8 +89,9 @@ _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
         "capital_binding": "OPENCLAW_CAPITAL_BINDING_ENABLED",
     },
     "note": (
-        "This adapter exposes the Pantheon boundary facade only. "
-        "All live runtime contract methods are deferred until the EP5 human gate is passed."
+        "This adapter exposes the Pantheon boundary facade and typed OpenClaw upstream client. "
+        "Broker execution, paper/live adapter paths, and capital binding remain deferred until "
+        "their activation gates are passed."
     ),
 }
 
@@ -139,6 +145,233 @@ def _probe_upstream() -> Dict[str, Any]:
 def _upstream_health_dep() -> Dict[str, Any]:
     probe = _probe_upstream()
     return {"status": "ok" if probe.get("reachable") else "degraded", **probe}
+
+
+@dataclass
+class UpstreamClientError(Exception):
+    status_code: int
+    error_code: str
+    message: str
+    retryable: bool
+    owner_plane: str = "openclaw_runtime"
+    error_layer: str = "upstream"
+    upstream_status: Optional[int] = None
+    details: Optional[Dict[str, Any]] = None
+
+    def to_payload(self) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "status": "upstream_error",
+            "error_code": self.error_code,
+            "message": self.message,
+            "retryable": self.retryable,
+            "owner_plane": self.owner_plane,
+            "error_layer": self.error_layer,
+        }
+        if self.upstream_status is not None:
+            payload["upstream_status"] = self.upstream_status
+        if self.details:
+            payload["details"] = self.details
+        return payload
+
+
+class OpenClawUpstreamClient:
+    """Small typed client for the OpenClaw-compatible gateway HTTP contract."""
+
+    def __init__(self, base_url: str, *, timeout: int, retries: int) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+        self.retries = max(0, retries)
+
+    def get_capabilities(self) -> Dict[str, Any]:
+        return self._request("GET", "/api/capabilities")
+
+    def list_sessions(self) -> List[Dict[str, Any]]:
+        payload = self._request("GET", "/api/sessions")
+        if isinstance(payload, list):
+            return [self._normalize_session(item) for item in payload if isinstance(item, dict)]
+        if isinstance(payload, dict):
+            sessions = payload.get("sessions", [])
+            if isinstance(sessions, list):
+                return [self._normalize_session(item) for item in sessions if isinstance(item, dict)]
+        raise UpstreamClientError(
+            status_code=502,
+            error_code="UPSTREAM_SCHEMA_ERROR",
+            message="OpenClaw session list response did not match the expected schema.",
+            retryable=False,
+            error_layer="schema",
+            details={"payload_type": type(payload).__name__},
+        )
+
+    def get_session(self, session_id: str) -> Dict[str, Any]:
+        payload = self._request("GET", f"/api/sessions/{session_id}")
+        if not isinstance(payload, dict):
+            raise UpstreamClientError(
+                status_code=502,
+                error_code="UPSTREAM_SCHEMA_ERROR",
+                message="OpenClaw session response did not match the expected schema.",
+                retryable=False,
+                error_layer="schema",
+                details={"payload_type": type(payload).__name__},
+            )
+        return self._normalize_session(payload)
+
+    def create_session(self, req: "CreateSessionRequest") -> Dict[str, Any]:
+        payload = self._request(
+            "POST",
+            "/api/sessions",
+            json_payload={
+                "agent_id": req.agent_id,
+                "session_type": req.session_type,
+                "context_bundle": req.context_bundle or {},
+            },
+            expected_statuses={200, 201, 202},
+        )
+        if not isinstance(payload, dict):
+            raise UpstreamClientError(
+                status_code=502,
+                error_code="UPSTREAM_SCHEMA_ERROR",
+                message="OpenClaw session create response did not match the expected schema.",
+                retryable=False,
+                error_layer="schema",
+                details={"payload_type": type(payload).__name__},
+            )
+        return self._normalize_session(payload)
+
+    def cancel_session(self, session_id: str) -> Dict[str, Any]:
+        payload = self._request(
+            "POST",
+            f"/api/sessions/{session_id}/cancel",
+            expected_statuses={200, 202, 204},
+        )
+        if payload is None:
+            return {"session_id": session_id, "status": "cancel_requested"}
+        if not isinstance(payload, dict):
+            raise UpstreamClientError(
+                status_code=502,
+                error_code="UPSTREAM_SCHEMA_ERROR",
+                message="OpenClaw session cancel response did not match the expected schema.",
+                retryable=False,
+                error_layer="schema",
+                details={"payload_type": type(payload).__name__},
+            )
+        return self._normalize_session({"session_id": session_id, **payload})
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_payload: Optional[Dict[str, Any]] = None,
+        expected_statuses: Optional[set[int]] = None,
+    ) -> Any:
+        if not self.base_url:
+            raise UpstreamClientError(
+                status_code=503,
+                error_code="UPSTREAM_NOT_CONFIGURED",
+                message="OPENCLAW_GATEWAY_URL is not configured.",
+                retryable=False,
+                owner_plane="pantheon_adapter",
+                error_layer="configuration",
+            )
+        expected = expected_statuses or {200}
+        attempts = self.retries + 1
+        last_error: Optional[UpstreamClientError] = None
+        for attempt in range(attempts):
+            try:
+                with httpx.Client(timeout=self.timeout) as client:
+                    response = client.request(
+                        method,
+                        f"{self.base_url}{path}",
+                        json=json_payload,
+                        headers={"Accept": "application/json"},
+                    )
+                if response.status_code not in expected:
+                    raise self._map_http_status(response)
+                if response.status_code == 204 or not response.content:
+                    return None
+                return response.json()
+            except UpstreamClientError as exc:
+                last_error = exc
+                if not exc.retryable or attempt == attempts - 1:
+                    raise
+            except httpx.TimeoutException as exc:
+                last_error = UpstreamClientError(
+                    status_code=504,
+                    error_code="UPSTREAM_TIMEOUT",
+                    message="Timed out while calling the upstream OpenClaw gateway.",
+                    retryable=True,
+                    details={"reason": str(exc)},
+                )
+                if attempt == attempts - 1:
+                    raise last_error from exc
+            except (httpx.ConnectError, httpx.NetworkError) as exc:
+                last_error = UpstreamClientError(
+                    status_code=503,
+                    error_code="UPSTREAM_UNAVAILABLE",
+                    message="The upstream OpenClaw gateway is unavailable.",
+                    retryable=True,
+                    details={"reason": str(exc)},
+                )
+                if attempt == attempts - 1:
+                    raise last_error from exc
+            except (json.JSONDecodeError, ValueError) as exc:
+                raise UpstreamClientError(
+                    status_code=502,
+                    error_code="UPSTREAM_INVALID_JSON",
+                    message="The upstream OpenClaw gateway returned invalid JSON.",
+                    retryable=False,
+                    error_layer="schema",
+                    details={"reason": str(exc)},
+                ) from exc
+        raise last_error or UpstreamClientError(503, "UPSTREAM_UNAVAILABLE", "OpenClaw upstream unavailable.", True)
+
+    def _map_http_status(self, response: httpx.Response) -> UpstreamClientError:
+        status = response.status_code
+        retryable = status in {408, 409, 425, 429} or status >= 500
+        code = "UPSTREAM_HTTP_ERROR"
+        adapter_status = 502
+        if status in {401, 403}:
+            code = "UPSTREAM_AUTH_DENIED"
+            retryable = False
+        elif status == 404:
+            code = "UPSTREAM_NOT_FOUND"
+            adapter_status = 404
+            retryable = False
+        elif status == 409:
+            code = "UPSTREAM_CONFLICT"
+            adapter_status = 409
+            retryable = False
+        elif status == 429:
+            code = "UPSTREAM_RATE_LIMITED"
+            adapter_status = 503
+        elif status >= 500:
+            code = "UPSTREAM_BAD_RESPONSE"
+            adapter_status = 502
+        return UpstreamClientError(
+            status_code=adapter_status,
+            error_code=code,
+            message=f"OpenClaw upstream returned HTTP {status}.",
+            retryable=retryable,
+            upstream_status=status,
+        )
+
+    def _normalize_session(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "session_id": str(payload.get("session_id") or payload.get("id") or ""),
+            "agent_id": str(payload.get("agent_id") or payload.get("agent") or ""),
+            "session_type": str(payload.get("session_type") or payload.get("type") or "unknown"),
+            "status": str(payload.get("status") or "unknown"),
+            "note": payload.get("note"),
+            "upstream": payload,
+        }
+
+
+def _client() -> OpenClawUpstreamClient:
+    return OpenClawUpstreamClient(OPENCLAW_GATEWAY_URL, timeout=_UPSTREAM_TIMEOUT, retries=_UPSTREAM_RETRIES)
+
+
+def _error_response(exc: UpstreamClientError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
 
 
 app = FastAPI(
@@ -195,11 +428,19 @@ def upstream_status() -> Dict[str, Any]:
 
 @app.get("/api/openclaw-adapter/capabilities")
 def get_capabilities() -> Dict[str, Any]:
-    return _CAPABILITY_SNAPSHOT
+    payload = dict(_CAPABILITY_SNAPSHOT)
+    try:
+        payload["upstream"] = {
+            "status": "ok",
+            "capabilities": _client().get_capabilities(),
+        }
+    except UpstreamClientError as exc:
+        payload["upstream"] = {**exc.to_payload(), "status": "degraded"}
+    return payload
 
 
 # ---------------------------------------------------------------------------
-# Session metadata stubs (deferred; degrades when upstream absent)
+# Session metadata facade
 # ---------------------------------------------------------------------------
 
 
@@ -219,10 +460,11 @@ class CreateSessionRequest(BaseModel):
 
 @app.get("/api/openclaw-adapter/sessions")
 def list_sessions() -> JSONResponse:
-    probe = _probe_upstream()
-    if not probe.get("reachable"):
+    try:
+        return JSONResponse(status_code=200, content={"status": "ok", "sessions": _client().list_sessions()})
+    except UpstreamClientError as exc:
         return JSONResponse(
-            status_code=503,
+            status_code=exc.status_code,
             content={
                 "status": "upstream_unavailable",
                 "sessions": [],
@@ -230,37 +472,30 @@ def list_sessions() -> JSONResponse:
                     "Upstream OpenClaw gateway is absent or unhealthy. "
                     "Session listing is unavailable in degraded mode."
                 ),
-                "upstream": probe,
+                "upstream": exc.to_payload(),
             },
         )
-    # Upstream reachable but live session query is deferred — return empty stub.
-    return JSONResponse(
-        status_code=200,
-        content={
-            "status": "deferred",
-            "sessions": [],
-            "note": (
-                "Live session query against the upstream gateway is deferred. "
-                "No session state is tracked at this adapter boundary."
-            ),
-        },
-    )
 
 
-@app.post("/api/openclaw-adapter/sessions", status_code=503)
+@app.get("/api/openclaw-adapter/sessions/{session_id}")
+def get_session(session_id: str) -> JSONResponse:
+    try:
+        return JSONResponse(status_code=200, content={"status": "ok", "session": _client().get_session(session_id)})
+    except UpstreamClientError as exc:
+        return _error_response(exc)
+
+
+@app.post("/api/openclaw-adapter/sessions")
 def create_session(req: CreateSessionRequest) -> JSONResponse:
-    return JSONResponse(
-        status_code=503,
-        content={
-            "status": "deferred",
-            "error_code": "CAPABILITY_DENIED",
-            "message": (
-                "Session creation through this adapter boundary is explicitly deferred. "
-                "No live runtime contract methods are activated. "
-                "This path requires the EP5 human gate to be passed first."
-            ),
-            "retryable": False,
-            "owner_plane": "pantheon_adapter",
-            "error_layer": "known",
-        },
-    )
+    try:
+        return JSONResponse(status_code=201, content={"status": "ok", "session": _client().create_session(req)})
+    except UpstreamClientError as exc:
+        return _error_response(exc)
+
+
+@app.post("/api/openclaw-adapter/sessions/{session_id}/cancel")
+def cancel_session(session_id: str) -> JSONResponse:
+    try:
+        return JSONResponse(status_code=200, content={"status": "ok", "session": _client().cancel_session(session_id)})
+    except UpstreamClientError as exc:
+        return _error_response(exc)
