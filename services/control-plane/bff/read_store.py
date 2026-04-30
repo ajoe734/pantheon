@@ -807,6 +807,11 @@ class ServiceBackedReadAdapter:
             "base_env": ("PANTHEON_TRAINING_SESSION_API_URL", "PANTHEON_TRAINING_SESSION_URL"),
             "list_path": "/api/training/replays",
         },
+        "institutional_memory_entries": {
+            "base_env": ("PANTHEON_MEMORY_API_URL", "PANTHEON_MEMORY_SERVICE_URL"),
+            "list_path": "/api/memory/entries",
+            "list_key": "entries",
+        },
     }
 
     def __init__(
@@ -7679,18 +7684,60 @@ class ReadSurfaceStore:
         return self._project_research_ticket_detail(ticket)
 
     @staticmethod
+    def _institutional_memory_scope(entry: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
+        scope = entry.get("scope")
+        if isinstance(scope, dict):
+            return (
+                scope.get("type") or scope.get("scope_type") or scope.get("value"),
+                scope.get("filter") or scope.get("scope_filter") or scope.get("scope_ref"),
+            )
+        return scope, entry.get("scope_filter")
+
+    @staticmethod
+    def _institutional_memory_lifecycle(entry: Dict[str, Any]) -> Dict[str, Any]:
+        lifecycle = entry.get("lifecycle") if isinstance(entry.get("lifecycle"), dict) else {}
+        superseded_by = lifecycle.get("superseded_by") or entry.get("superseded_by")
+        status = lifecycle.get("status") or lifecycle.get("state")
+        if not status:
+            if superseded_by:
+                status = "superseded"
+            elif entry.get("archived_at"):
+                status = "archived"
+            else:
+                status = "active"
+        return {"status": status, "superseded_by": superseded_by}
+
+    @staticmethod
+    def _institutional_memory_usage(entry: Dict[str, Any]) -> Dict[str, Any]:
+        usage = entry.get("usage") if isinstance(entry.get("usage"), dict) else {}
+        return {
+            **usage,
+            "reuse_count": usage.get("reuse_count") if "reuse_count" in usage else entry.get("reuse_count", 0),
+        }
+
+    @staticmethod
+    def _institutional_memory_source_event(entry: Dict[str, Any]) -> Dict[str, Any]:
+        source_event = entry.get("source_event") if isinstance(entry.get("source_event"), dict) else {}
+        event_type = source_event.get("type") or entry.get("source_event_type")
+        event_id = source_event.get("id") or entry.get("source_event_id")
+        if not event_type and not event_id:
+            return json.loads(json.dumps(source_event))
+        projected = {**source_event, "type": event_type, "id": event_id}
+        return json.loads(json.dumps({key: value for key, value in projected.items() if value is not None}))
+
+    @staticmethod
     def _project_institutional_memory_summary(entry: Dict[str, Any]) -> Dict[str, Any]:
         entry_id = str(entry.get("entry_id") or entry.get("id") or "")
         content = entry.get("content") if isinstance(entry.get("content"), dict) else {}
-        scope = entry.get("scope") if isinstance(entry.get("scope"), dict) else {}
-        lifecycle = entry.get("lifecycle") if isinstance(entry.get("lifecycle"), dict) else {}
-        usage = entry.get("usage") if isinstance(entry.get("usage"), dict) else {}
+        scope, scope_filter = ReadSurfaceStore._institutional_memory_scope(entry)
+        lifecycle = ReadSurfaceStore._institutional_memory_lifecycle(entry)
+        usage = ReadSurfaceStore._institutional_memory_usage(entry)
         return {
             "entry_id": entry_id,
             "knowledge_type": entry.get("knowledge_type"),
             "headline": content.get("headline"),
-            "scope": scope.get("type"),
-            "scope_filter": scope.get("filter"),
+            "scope": scope,
+            "scope_filter": scope_filter,
             "written_at": entry.get("written_at"),
             "write_authority": entry.get("write_authority"),
             "tags": list(content.get("tags") or []),
@@ -7701,17 +7748,20 @@ class ReadSurfaceStore:
 
     @staticmethod
     def _project_institutional_memory_detail(entry: Dict[str, Any]) -> Dict[str, Any]:
+        scope, scope_filter = ReadSurfaceStore._institutional_memory_scope(entry)
+        lifecycle = ReadSurfaceStore._institutional_memory_lifecycle(entry)
+        usage = ReadSurfaceStore._institutional_memory_usage(entry)
         return {
             "entry_id": entry.get("entry_id") or entry.get("id"),
             "knowledge_type": entry.get("knowledge_type"),
             "content": json.loads(json.dumps(entry.get("content") or {})),
-            "source_event": json.loads(json.dumps(entry.get("source_event") or {})),
+            "source_event": ReadSurfaceStore._institutional_memory_source_event(entry),
             "contributing_persona_ids": list(entry.get("contributing_persona_ids") or []),
             "written_at": entry.get("written_at"),
             "write_authority": entry.get("write_authority"),
-            "scope": json.loads(json.dumps(entry.get("scope") or {})),
-            "lifecycle": json.loads(json.dumps(entry.get("lifecycle") or {})),
-            "usage": json.loads(json.dumps(entry.get("usage") or {})),
+            "scope": {"type": scope, "filter": scope_filter},
+            "lifecycle": lifecycle,
+            "usage": usage,
         }
 
     def list_institutional_memory_entries(self) -> List[Dict[str, Any]]:
@@ -7724,7 +7774,7 @@ class ReadSurfaceStore:
         entries.sort(
             key=lambda entry: (
                 _parse_rfc3339(entry.get("written_at")) or datetime.min,
-                int(((entry.get("usage") or {}).get("reuse_count") or 0)),
+                int(self._institutional_memory_usage(entry).get("reuse_count") or 0),
             ),
             reverse=True,
         )

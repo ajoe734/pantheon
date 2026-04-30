@@ -237,13 +237,10 @@ services:
     environment:
       BFF_DATA_DIR: /data/bff
       BFF_READ_SURFACE_STATE: ${BFF_READ_SURFACE_STATE:-fresh}
+      PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK: "false"
       PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-ai-system-front-staging-live.lovable.app}
       PANTHEON_ENV: ${PANTHEON_ENV:-staging-live}
       PANTHEON_LIVE_BROKER_ENABLED: ${PANTHEON_LIVE_BROKER_ENABLED:-true}
-      PANTHEON_GOVERNANCE_DATA_DIR: /data/governance
-      PANTHEON_RUNTIME_DATA_DIR: /data/runtime
-      INCIDENTS_DATA_DIR: /data/incidents
-      POSTMORTEMS_DATA_DIR: /data/incidents
       PANTHEON_INTERNAL_API_URL: ${PANTHEON_INTERNAL_API_URL:-}
       PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-}
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-}
@@ -255,13 +252,12 @@ services:
       PANTHEON_POSTMORTEMS_API_URL: http://postmortems:8091
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
       PANTHEON_LINEAGE_READ_URL: http://lineage-read:8094
+      PANTHEON_MEMORY_API_URL: http://memory:8086
+      PANTHEON_REGISTRY_URL: http://registry:8087
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
-    volumes:
+    volumes: !override
       - bff-data:/data/bff
-      - governance-data:/data/governance:ro
-      - runtime-data:/data/runtime:ro
-      - incident-data:/data/incidents:ro
     depends_on:
       telemetry:
         condition: service_healthy

@@ -266,6 +266,67 @@ def test_snapshot_payload_does_not_mask_missing_service_client_data_when_fallbac
             assert store.dataset_source("deployment_plans") == "missing"
 
 
+def test_memory_reads_use_http_service_client_when_url_configured() -> None:
+    responses = {
+        ("http://memory:8086", "/api/memory/entries"): {
+            "entries": [
+                {
+                    "entry_id": "mem-svc-001",
+                    "knowledge_type": "research_finding",
+                    "content": {"headline": "Service-backed memory entry", "tags": ["memory", "service"]},
+                    "source_event_type": "research_task_completed",
+                    "source_event_id": "research-task-svc-001",
+                    "scope": "strategy_family",
+                    "scope_filter": "momentum",
+                    "reuse_count": 4,
+                    "superseded_by": "mem-svc-002",
+                    "written_at": "2026-04-20T06:00:00Z",
+                    "write_authority": "memory-service",
+                    "contributing_persona_ids": ["persona-alpha"],
+                }
+            ],
+            "count": 1,
+        }
+    }
+
+    def fake_get(base_url: str, path: str, *, headers=None):
+        return True, responses[(base_url, path)]
+
+    with tempfile.TemporaryDirectory() as td:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "PANTHEON_MEMORY_API_URL": "http://memory:8086",
+                "PANTHEON_MEMORY_DATA_DIR": "",
+                "BFF_DATA_DIR": td,
+            },
+            clear=False,
+        ):
+            with mock.patch("read_store._http_json_get", side_effect=fake_get):
+                store = ReadSurfaceStore(
+                    os.path.join(td, "read_surfaces.json"),
+                    allow_local_snapshot_fallback=False,
+                )
+
+                entries = store.list_institutional_memory_entries()
+                assert [entry["entry_id"] for entry in entries] == ["mem-svc-001"]
+                assert entries[0]["headline"] == "Service-backed memory entry"
+                assert entries[0]["scope"] == "strategy_family"
+                assert entries[0]["scope_filter"] == "momentum"
+                assert entries[0]["reuse_count"] == 4
+                assert entries[0]["is_superseded"] is True
+
+                detail = store.get_institutional_memory_entry("mem-svc-001")
+                assert detail["source_event"] == {
+                    "type": "research_task_completed",
+                    "id": "research-task-svc-001",
+                }
+                assert detail["scope"] == {"type": "strategy_family", "filter": "momentum"}
+                assert detail["lifecycle"] == {"status": "superseded", "superseded_by": "mem-svc-002"}
+                assert detail["usage"]["reuse_count"] == 4
+                assert store.dataset_source("institutional_memory_entries") == "service_client"
+
+
 def test_consultation_reads_and_writes_use_http_service_client_when_url_configured() -> None:
     _FakeConsultationClient.instances = []
     with tempfile.TemporaryDirectory() as td:
