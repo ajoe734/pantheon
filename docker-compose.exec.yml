@@ -11,6 +11,11 @@
 
 name: pantheon-exec
 
+x-pantheon-compose-contract:
+  topology: staging-vm2-execution-plane
+  includes_execution_secrets: true
+  control_plane_boundary: no-bff-or-governance-services
+
 services:
   signal-store:
     image: redis:7-alpine

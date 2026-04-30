@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Pantheon single-VM bootstrap: start the control-plane stack, run DB
-# migrations, and verify every service is healthy.
+# Pantheon control-plane bootstrap: start the selected compose stack, run DB
+# migrations, and verify control-plane services are healthy.
 #
 # Usage:
 #   bash scripts/bootstrap.sh [--compose-file <file>] [--env-file <file>] [--skip-migration]
@@ -9,8 +9,11 @@
 #   Default env file     : .env (auto-loaded when present)
 #
 # Examples:
-#   # Production single-VM bring-up
+#   # Staging VM1 control-plane bring-up
 #   bash scripts/bootstrap.sh
+#
+#   # Dev single-VM baseline bring-up
+#   bash scripts/bootstrap.sh --compose-file docker-compose.yml
 #
 #   # Use a specific env file
 #   bash scripts/bootstrap.sh --env-file env/prod-control.env.example

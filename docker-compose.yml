@@ -1,3 +1,11 @@
+# Pantheon default compose contract:
+# - dev single-VM baseline for local and non-prod VM development
+# - co-locates control-plane, runtime-manager, telemetry, research, and BFF
+# - staging-live uses docker-compose.control.yml + docker-compose.exec.yml
+x-pantheon-compose-contract:
+  topology: dev-single-vm-baseline
+  execution_boundary: co-located-dev-only
+
 services:
   postgres:
     image: postgres:16-alpine
