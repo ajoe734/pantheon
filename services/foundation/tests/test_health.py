@@ -111,7 +111,16 @@ def test_flask_health_routes_expose_standard_contract() -> None:
 def test_compose_healthchecks_do_not_use_misspelled_readiness_paths() -> None:
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     serialized = yaml.safe_dump(compose)
+    services = compose["services"]
 
     assert "readyzz" not in serialized
     assert "http://127.0.0.1:8222/healthz" in serialized
-    assert "http://127.0.0.1:18789/readyz" in serialized
+
+    openclaw_gateway_healthcheck = " ".join(services["openclaw-gateway"]["healthcheck"]["test"])
+    assert "http://127.0.0.1:18789/readyz" in openclaw_gateway_healthcheck
+    assert "http://127.0.0.1:18789/healthz" not in openclaw_gateway_healthcheck
+
+    openclaw_adapter_healthcheck = " ".join(services["openclaw-gateway-adapter"]["healthcheck"]["test"])
+    assert "http://127.0.0.1:{port}/livez" in openclaw_adapter_healthcheck
+    assert "/readyz" not in openclaw_adapter_healthcheck
+    assert "/healthz" not in openclaw_adapter_healthcheck

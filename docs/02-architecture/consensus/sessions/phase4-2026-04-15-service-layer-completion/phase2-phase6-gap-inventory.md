@@ -339,7 +339,7 @@ Updated: 2026-04-29
 Current code truth:
 
 - Root compose builds `services/openclaw-gateway-adapter/Dockerfile` as `openclaw-gateway-adapter` on port `8104`, published as `${OPENCLAW_GATEWAY_ADAPTER_PORT:-18104}`.
-- The upstream `openclaw-gateway` image remains optional under the `openclaw` profile. The adapter healthcheck uses `/livez`, so the Pantheon adapter process can be healthy while upstream OpenClaw is absent.
+- The upstream `openclaw-gateway` image remains optional under the `openclaw` profile and its compose healthcheck uses `/readyz`. The adapter healthcheck uses `/livez`, so the Pantheon adapter process can be healthy while upstream OpenClaw is absent.
 - The adapter exposes `/healthz`, `/livez`, `/readyz`, `/metrics`, `/api/openclaw-adapter/upstream/status`, `/api/openclaw-adapter/capabilities`, and deferred session metadata routes under `/api/openclaw-adapter/sessions`.
 - `/readyz` degrades when the optional upstream gateway is absent or unhealthy. Capability metadata remains readable in degraded mode.
 - Session creation returns a non-retryable `CAPABILITY_DENIED` deferral. `OPENCLAW_PRODUCTION_BROKER_ENABLED=false` and `OPENCLAW_PAPER_ADAPTER_ENABLED=false` are locked in compose.

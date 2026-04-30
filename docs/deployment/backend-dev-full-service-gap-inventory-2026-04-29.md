@@ -98,6 +98,11 @@ the Pantheon-owned adapter and let it report degraded upstream status. If dev
 needs every optional profile service too, start the profile explicitly and run
 the OpenClaw smoke path separately.
 
+The optional upstream gateway compose healthcheck uses `/readyz`. The
+Pantheon-owned adapter remains a default service and uses `/livez` for its
+container healthcheck so the process can stay healthy while `/readyz` correctly
+returns degraded when upstream OpenClaw is absent.
+
 ### 3. BFF auth facade hardening
 
 Branch `HEAD` contains BFF auth/RBAC hardening after the deployed `c9ec7d5`.

@@ -24,8 +24,9 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
     assert adapter["ports"] == ["${OPENCLAW_GATEWAY_ADAPTER_PORT:-18104}:8104"]
 
     healthcheck = " ".join(adapter["healthcheck"]["test"])
-    assert "/livez" in healthcheck
+    assert "http://127.0.0.1:{port}/livez" in healthcheck
     assert "/readyz" not in healthcheck
+    assert "/healthz" not in healthcheck
 
     init = services["openclaw-data-init"]
     assert init["profiles"] == ["openclaw"]
@@ -34,7 +35,9 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
     upstream = services["openclaw-gateway"]
     assert upstream["profiles"] == ["openclaw"]
     assert upstream["depends_on"]["openclaw-data-init"]["condition"] == "service_completed_successfully"
-    assert "/healthz" in " ".join(upstream["healthcheck"]["test"])
+    upstream_healthcheck = " ".join(upstream["healthcheck"]["test"])
+    assert "/readyz" in upstream_healthcheck
+    assert "/healthz" not in upstream_healthcheck
     assert "profiles" not in adapter
     assert adapter["environment"]["OPENCLAW_BROKER_SIDECAR_URL"] == "http://broker:8102"
     assert adapter["environment"]["OPENCLAW_RUNTIME_MANAGER_URL"] == "http://runtime-manager:8081"

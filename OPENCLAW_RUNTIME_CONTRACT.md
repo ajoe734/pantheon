@@ -74,6 +74,9 @@ OpenClaw **不負責**：
 目前 adapter 的 upstream client surface：
 
 **Session / capability surfaces（SVC-OPENCLAW-UPSTREAM-CLIENT + SVC-OPENCLAW-SESSION-LIFECYCLE）：**
+- `GET /livez`：Pantheon adapter process liveness；不得因 optional upstream OpenClaw gateway absent 而失敗。
+- `GET /readyz`：Pantheon adapter readiness；upstream OpenClaw gateway absent / degraded 時回 degraded/503。
+- Root compose 的 `openclaw-gateway-adapter` healthcheck 使用 `/livez`；optional `openclaw-gateway` profile healthcheck 使用 upstream `/readyz`。
 - `GET /api/openclaw-adapter/capabilities`：回傳 Pantheon fail-closed capability snapshot，若 upstream 可達則附帶 upstream capabilities，否則維持 degraded。
 - `GET /api/openclaw-adapter/sessions`：呼叫 upstream session list 並正規化 session metadata。
 - `GET /api/openclaw-adapter/sessions/{session_id}`：呼叫 upstream session get。

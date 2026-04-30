@@ -176,7 +176,7 @@ def _probe_upstream() -> Dict[str, Any]:
     if not OPENCLAW_GATEWAY_URL:
         return {"reachable": False, "reason": "OPENCLAW_GATEWAY_URL not configured"}
     last_error: Dict[str, Any] = {}
-    for path in ("/healthz", "/readyz"):
+    for path in ("/readyz", "/healthz"):
         try:
             req = urllib.request.Request(
                 f"{OPENCLAW_GATEWAY_URL}{path}",

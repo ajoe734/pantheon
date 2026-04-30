@@ -110,6 +110,11 @@ class TestHealthEndpoints(unittest.TestCase):
         with self._patch_upstream(False):
             resp = client.get("/livez")
         self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertTrue(body["live"])
+        self.assertTrue(body["ready"])
+        self.assertNotIn("openclaw_gateway", body["dependencies"])
 
     def test_healthz_ok_when_upstream_reachable(self):
         with self._patch_upstream(True):
@@ -133,6 +138,11 @@ class TestHealthEndpoints(unittest.TestCase):
         with self._patch_upstream(False):
             resp = client.get("/readyz")
         self.assertEqual(resp.status_code, 503)
+        body = resp.json()
+        self.assertEqual(body["status"], "degraded")
+        self.assertTrue(body["live"])
+        self.assertFalse(body["ready"])
+        self.assertEqual(body["dependencies"]["openclaw_gateway"]["status"], "degraded")
 
     def test_health_compat_alias(self):
         with self._patch_upstream(True):
@@ -161,6 +171,74 @@ class TestUpstreamStatus(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertFalse(body["reachable"])
+
+
+class _FakeProbeResponse:
+    def __init__(self, status: int = 200, body: bytes = b'{"status":"ok"}') -> None:
+        self._status = status
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def getcode(self) -> int:
+        return self._status
+
+    def read(self) -> bytes:
+        return self._body
+
+
+class TestUpstreamProbe(unittest.TestCase):
+    def test_probe_prefers_readyz_for_upstream_readiness(self):
+        calls = []
+
+        def fake_urlopen(req, timeout):
+            calls.append(req.full_url)
+            return _FakeProbeResponse()
+
+        with (
+            patch.object(adapter_main, "OPENCLAW_GATEWAY_URL", "http://openclaw.test"),
+            patch.object(adapter_main.urllib.request, "urlopen", side_effect=fake_urlopen),
+        ):
+            result = adapter_main._probe_upstream()
+
+        self.assertTrue(result["reachable"])
+        self.assertEqual(result["probe"], "/readyz")
+        self.assertEqual(calls, ["http://openclaw.test/readyz"])
+
+    def test_probe_falls_back_to_healthz_for_legacy_upstream(self):
+        calls = []
+
+        def fake_urlopen(req, timeout):
+            calls.append(req.full_url)
+            if req.full_url.endswith("/readyz"):
+                raise adapter_main.urllib.error.HTTPError(
+                    req.full_url,
+                    404,
+                    "not found",
+                    hdrs=None,
+                    fp=None,
+                )
+            return _FakeProbeResponse()
+
+        with (
+            patch.object(adapter_main, "OPENCLAW_GATEWAY_URL", "http://openclaw.test"),
+            patch.object(adapter_main.urllib.request, "urlopen", side_effect=fake_urlopen),
+        ):
+            result = adapter_main._probe_upstream()
+
+        self.assertTrue(result["reachable"])
+        self.assertEqual(result["probe"], "/healthz")
+        self.assertEqual(
+            calls,
+            [
+                "http://openclaw.test/readyz",
+                "http://openclaw.test/healthz",
+            ],
+        )
 
 
 # ---------------------------------------------------------------------------
