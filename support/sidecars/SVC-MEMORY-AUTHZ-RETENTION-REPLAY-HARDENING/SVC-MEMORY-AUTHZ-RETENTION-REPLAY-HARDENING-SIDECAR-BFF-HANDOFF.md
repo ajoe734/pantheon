@@ -3,8 +3,8 @@
 Task: `SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF`  
 Parent: `SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING`  
 Owner: `Codex2`  
-Reviewer: `Copilot`  
-Status: ready for sidecar review  
+Reviewer: `Codex`
+Status: review approved; closeout finalization ready
 Last updated: 2026-04-30
 
 ## Scope Boundary
@@ -236,3 +236,13 @@ python3 -m pytest services/control-plane/bff/test_kw01_institutional_memory_cont
 
 This sidecar packet itself only adds support documentation. No runtime tests
 were required to generate it.
+
+## Closeout Note
+
+Reviewer approval was recorded by Codex on 2026-04-30 with no blocking
+findings. Finalization verification for the support-only packet:
+
+```bash
+test -f support/sidecars/SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING/SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF.md
+git diff --check -- support/sidecars/SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING/SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF.md
+```
