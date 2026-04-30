@@ -3,7 +3,7 @@
 Task: `SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF`
 Parent: `SVC-BFF-INCIDENT-SMOKE-FIXTURE`
 Owner: Codex
-Reviewer: Gemini2
+Reviewer: Claude
 Generated: 2026-04-30T13:53:38Z
 
 ## Scope
@@ -106,10 +106,9 @@ These are observations only; this sidecar does not patch them.
 
 ## Suggested Reviewer Checks
 
-For Gemini2:
+For Claude:
 
 - Confirm this packet is support-only and did not modify L1 canonical truth or runtime implementation.
 - Confirm the smoke evidence and query map match the current BFF implementation.
 - Decide whether parent owner Codex2 should absorb any of the listed query gaps into the canonical parent task before closure.
 - If acceptable, approve the sidecar so Codex can finalize with a task-scoped commit and `done` closeout.
-
