@@ -410,6 +410,7 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
 | `/api/v1/operator/alerts` | IN-01, governance review + approval queues, IN-05, RT-01, TL-02 | Operator alert rail with backend-owned severity, category, and target refs | `operator` |
 | `/api/v1/operator/home` | OC-02, OC-03, OC-04 summaries plus IN-05 safe-mode state | Operator home dashboard with card hierarchy and escalation shortcuts | `operator` |
 | `/api/v1/operator/paper-live-drift/{runtime_id}` | drift report, RT-01, TL-02, TL-03, approval decision, incidents, evolution evidence | Paper-vs-live drift review with backend-owned threshold evaluation and follow-up actions | `operator` |
+| `/api/v1/operator/research/oss-preactivation` | Research orchestrator, policy-learning, research-worker gateway, and OpenClaw adapter capability/activity metadata | Read-only dormant OSS pre-activation view; no activation, registry, governance, broker, or capital-binding write path | `operator` |
 | `/api/v1/workbench/consultation` | CW-008 packet-family truth only | Consultation Workbench overview surface; truthful module status without fake request or committee UI | `operator` |
 | `/api/v1/workbench/knowledge` | KW-006 packet-family truth only | Knowledge Workbench overview surface; truthful module status without fake registry or evidence UI | `operator` |
 | `/api/v1/operator/deployment-review/{plan_id}` | DP-02, CP-02, CP-04, RT-02, RT-04 | Pre-deployment approval review | `operator` |

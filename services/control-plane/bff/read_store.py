@@ -123,6 +123,77 @@ _SERVICE_TO_SESSION_STATUS = {
     ConsultRequestStatus.FAILED.value: "failed",
 }
 
+_DORMANT_OSS_BACKENDS = (
+    "openclaw",
+    "qlib",
+    "trl",
+    "finrl",
+    "rllib",
+    "ray_tune",
+    "wandb",
+)
+_DORMANT_SAFE_DISPATCHERS = {"stub", "handoff_only", "manual"}
+_DORMANT_FAIL_CLOSED_REASONS = {
+    "dispatch_mode_disabled",
+    "execution_path_disabled",
+    "governance_write_disabled",
+    "learning_activation_disabled",
+    "production_adapter_disabled",
+    "registry_write_disabled",
+    "unknown_adapter",
+    "unknown_worker",
+}
+_DORMANT_SERVICE_SPECS = {
+    "research_orchestrator": {
+        "base_env": (
+            "PANTHEON_RESEARCH_ORCHESTRATOR_API_URL",
+            "PANTHEON_RESEARCH_ORCHESTRATOR_URL",
+            "RESEARCH_ORCHESTRATOR_URL",
+        ),
+        "capabilities_path": "/api/research-orchestrator/capabilities",
+        "activity_path": "/api/research-orchestrator/runs",
+        "actor_field": "adapter",
+        "activity_kind": "run",
+        "id_fields": ("run_id", "id"),
+    },
+    "policy_learning": {
+        "base_env": (
+            "PANTHEON_POLICY_LEARNING_API_URL",
+            "PANTHEON_POLICY_LEARNING_URL",
+            "POLICY_LEARNING_URL",
+        ),
+        "capabilities_path": "/api/policy-learning/capabilities",
+        "activity_path": "/api/policy-learning/jobs",
+        "actor_field": "adapter",
+        "activity_kind": "job",
+        "id_fields": ("job_id", "id"),
+    },
+    "research_worker_gateway": {
+        "base_env": (
+            "PANTHEON_RESEARCH_WORKER_GATEWAY_API_URL",
+            "PANTHEON_RESEARCH_WORKER_GATEWAY_URL",
+            "RESEARCH_WORKER_GATEWAY_URL",
+        ),
+        "capabilities_path": "/api/research-worker-gateway/capabilities",
+        "activity_path": "/api/research-worker-gateway/jobs",
+        "actor_field": "worker",
+        "activity_kind": "job",
+        "id_fields": ("job_id", "id"),
+    },
+    "openclaw_gateway_adapter": {
+        "base_env": (
+            "PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL",
+            "PANTHEON_OPENCLAW_ADAPTER_URL",
+            "OPENCLAW_GATEWAY_ADAPTER_URL",
+        ),
+        "capabilities_path": "/api/openclaw-adapter/capabilities",
+        "upstream_status_path": "/api/openclaw-adapter/upstream/status",
+        "actor_field": "adapter",
+        "activity_kind": "openclaw_status",
+        "id_fields": ("session_id", "id"),
+    },
+}
+
 
 _TW04_DRAWDOWN_EVIDENCE_REF_ID = "tel-drawdown-2026-04-18"
 _TW04_DRAWDOWN_EVIDENCE_ROUTE = "/operator/paper-live-drift/runtime-042"
@@ -4677,6 +4748,276 @@ class ReadSurfaceStore:
 
     def _training_session_base_url(self) -> Optional[str]:
         return _base_url_from_env(("PANTHEON_TRAINING_SESSION_API_URL", "PANTHEON_TRAINING_SESSION_URL"))
+
+    @staticmethod
+    def _dormant_service_base_url(service: str) -> Optional[str]:
+        spec = _DORMANT_SERVICE_SPECS.get(service, {})
+        return _base_url_from_env(tuple(spec.get("base_env") or ()))
+
+    @staticmethod
+    def _dormant_empty_surface(reason: str, *, configured: bool = False) -> Dict[str, Any]:
+        return {
+            "status": "unavailable",
+            "source": "service_client" if configured else "missing",
+            "reason": reason,
+        }
+
+    @staticmethod
+    def _dormant_capability_backend(record: Dict[str, Any]) -> str:
+        return str(record.get("adapter") or record.get("worker") or record.get("backend") or "").strip().lower()
+
+    @staticmethod
+    def _dormant_activity_id(record: Dict[str, Any], id_fields: tuple[str, ...]) -> Optional[str]:
+        for field in id_fields:
+            value = record.get(field)
+            if value not in (None, ""):
+                return str(value)
+        return None
+
+    @staticmethod
+    def _dormant_activity_time(record: Dict[str, Any]) -> str:
+        for field in ("updated_at", "created_at", "requested_at", "proposed_at", "emitted_at"):
+            value = record.get(field)
+            if value not in (None, ""):
+                return str(value)
+        return ""
+
+    def _fetch_dormant_json(self, service: str, path_key: str) -> tuple[Dict[str, Any], Any]:
+        spec = _DORMANT_SERVICE_SPECS[service]
+        base_url = self._dormant_service_base_url(service)
+        path = str(spec.get(path_key) or "")
+        if not base_url or not path:
+            return self._dormant_empty_surface("service_url_not_configured"), None
+        available, payload = _http_json_get(base_url, path)
+        if not available:
+            return self._dormant_empty_surface("service_unavailable", configured=True), None
+        return {
+            "status": "ok",
+            "source": "service_client",
+            "path": path,
+        }, payload
+
+    def _project_dormant_openclaw_capabilities(self, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+        fail_closed = bool(payload.get("fail_closed"))
+        return [
+            {
+                "service": "openclaw_gateway_adapter",
+                "backend": "openclaw",
+                "status": "deferred",
+                "gate_state": "fail_closed" if fail_closed else "unknown",
+                "allowed_scope": "capability_metadata_read_only",
+                "activation_state": payload.get("activation_state"),
+                "broker_execution": payload.get("broker_execution"),
+                "paper_adapter": payload.get("paper_adapter"),
+                "live_adapter": payload.get("live_adapter"),
+                "capital_binding": payload.get("capital_binding"),
+                "fail_closed": fail_closed,
+            }
+        ]
+
+    def _project_dormant_capabilities(
+        self,
+        service: str,
+        payload: Any,
+    ) -> tuple[List[Dict[str, Any]], List[str]]:
+        if not isinstance(payload, dict):
+            return [], []
+        if service == "openclaw_gateway_adapter":
+            return self._project_dormant_openclaw_capabilities(payload), []
+
+        capabilities = payload.get("capabilities")
+        if not isinstance(capabilities, list):
+            capabilities = []
+
+        dormant: List[Dict[str, Any]] = []
+        safe_dispatchers: List[str] = []
+        for item in capabilities:
+            if not isinstance(item, dict):
+                continue
+            backend = self._dormant_capability_backend(item)
+            if not backend:
+                continue
+            if backend in _DORMANT_SAFE_DISPATCHERS and str(item.get("status") or "").lower() == "available":
+                safe_dispatchers.append(backend)
+            if backend not in _DORMANT_OSS_BACKENDS:
+                continue
+            dormant.append(
+                {
+                    "service": service,
+                    "backend": backend,
+                    "status": item.get("status"),
+                    "gate_state": item.get("gate_state") or "unknown",
+                    "allowed_scope": item.get("allowed_scope") or "unknown",
+                    "activation_gate": item.get("activation_gate"),
+                    "entrypoint": item.get("entrypoint"),
+                    "purpose": item.get("purpose"),
+                    "note": item.get("note"),
+                }
+            )
+        return dormant, sorted(set(safe_dispatchers))
+
+    def _project_dormant_activity(
+        self,
+        service: str,
+        payload: Any,
+    ) -> List[Dict[str, Any]]:
+        if isinstance(payload, dict):
+            records = payload.get("items") or payload.get("data") or payload.get("runs") or payload.get("jobs") or []
+        else:
+            records = payload
+        if not isinstance(records, list):
+            return []
+
+        spec = _DORMANT_SERVICE_SPECS[service]
+        actor_field = str(spec.get("actor_field") or "adapter")
+        id_fields = tuple(str(value) for value in spec.get("id_fields") or ("id",))
+        activity_kind = str(spec.get("activity_kind") or "activity")
+        projected: List[Dict[str, Any]] = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            actor = str(record.get(actor_field) or "").strip().lower()
+            rejection = record.get("rejection") if isinstance(record.get("rejection"), dict) else {}
+            reason = str(rejection.get("reason") or "").strip()
+            status = str(record.get("status") or "").strip().lower()
+            projected.append(
+                {
+                    "service": service,
+                    "object_type": activity_kind,
+                    "object_id": self._dormant_activity_id(record, id_fields),
+                    "backend": actor,
+                    "status": status,
+                    "requested_mode": record.get("requested_mode"),
+                    "dispatch_mode": record.get("dispatch_mode"),
+                    "production_activation": record.get("production_activation") or "disabled",
+                    "rejection_reason": reason or None,
+                    "fail_closed_rejection": (
+                        status == "rejected"
+                        and reason in _DORMANT_FAIL_CLOSED_REASONS
+                    ),
+                    "updated_at": self._dormant_activity_time(record),
+                }
+            )
+        return projected
+
+    def get_research_oss_preactivation_snapshot(
+        self,
+        *,
+        activity_limit: int = 20,
+    ) -> Dict[str, Any]:
+        service_status: Dict[str, Dict[str, Any]] = {}
+        capability_entries: List[Dict[str, Any]] = []
+        activity: List[Dict[str, Any]] = []
+        safe_dispatch: Dict[str, List[str]] = {}
+
+        for service, spec in _DORMANT_SERVICE_SPECS.items():
+            cap_surface, cap_payload = self._fetch_dormant_json(service, "capabilities_path")
+            service_status[service] = dict(cap_surface)
+            entries, dispatchers = self._project_dormant_capabilities(service, cap_payload)
+            capability_entries.extend(entries)
+            if dispatchers:
+                safe_dispatch[service] = dispatchers
+
+            activity_path = spec.get("activity_path")
+            if activity_path:
+                activity_surface, activity_payload = self._fetch_dormant_json(service, "activity_path")
+                service_status[service]["activity_status"] = activity_surface.get("status")
+                activity.extend(self._project_dormant_activity(service, activity_payload))
+
+            upstream_status_path = spec.get("upstream_status_path")
+            if upstream_status_path:
+                upstream_surface, upstream_payload = self._fetch_dormant_json(service, "upstream_status_path")
+                service_status[service]["upstream_status"] = upstream_surface.get("status")
+                if isinstance(upstream_payload, dict):
+                    service_status[service]["upstream_reachable"] = bool(upstream_payload.get("reachable"))
+
+        backend_inventory: List[Dict[str, Any]] = []
+        entries_by_backend: Dict[str, List[Dict[str, Any]]] = {
+            backend: [] for backend in _DORMANT_OSS_BACKENDS
+        }
+        for entry in capability_entries:
+            backend = str(entry.get("backend") or "").strip().lower()
+            if backend in entries_by_backend:
+                entries_by_backend[backend].append(entry)
+
+        for backend in _DORMANT_OSS_BACKENDS:
+            entries = entries_by_backend[backend]
+            observed_gate_states = {
+                str(entry.get("gate_state") or "unknown").strip().lower()
+                for entry in entries
+            }
+            observed_scopes = {
+                str(entry.get("allowed_scope") or "unknown").strip().lower()
+                for entry in entries
+            }
+            backend_inventory.append(
+                {
+                    "backend": backend,
+                    "activated": False,
+                    "activation_state": "preactivation_only",
+                    "production_activation": "disabled",
+                    "gate_state": (
+                        "fail_closed"
+                        if entries and observed_gate_states == {"fail_closed"}
+                        else "unknown"
+                    ),
+                    "allowed_scope": (
+                        "capability_metadata_read_only"
+                        if entries and observed_scopes == {"capability_metadata_read_only"}
+                        else "unknown"
+                    ),
+                    "service_count": len(entries),
+                    "services": {str(entry["service"]): entry for entry in entries},
+                }
+            )
+
+        activity.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
+        activity = activity[: max(min(activity_limit, 100), 1)]
+
+        rejected_activity = [
+            row for row in activity if str(row.get("status") or "").lower() == "rejected"
+        ]
+        observed_reasons = sorted(
+            {
+                str(row.get("rejection_reason") or "")
+                for row in rejected_activity
+                if str(row.get("rejection_reason") or "")
+            }
+        )
+        all_observed_fail_closed = all(
+            bool(row.get("fail_closed_rejection")) for row in rejected_activity
+        )
+
+        return {
+            "surface": "research_oss_preactivation",
+            "activation_state": "preactivation_only",
+            "production_activation": "disabled",
+            "activated": False,
+            "allowed_scope": "capability_metadata_read_only",
+            "write_paths": {
+                "training_dispatch": "disabled",
+                "paper_canary_live": "disabled",
+                "registry_writes": "disabled",
+                "governance_writes": "disabled",
+                "broker_execution": "disabled",
+                "capital_binding": "disabled",
+            },
+            "backend_inventory": backend_inventory,
+            "safe_dispatch": safe_dispatch,
+            "activity": activity,
+            "rejection_verification": {
+                "verification_state": (
+                    "evidence_observed"
+                    if rejected_activity
+                    else "no_rejection_activity_observed"
+                ),
+                "observed_rejection_count": len(rejected_activity),
+                "observed_reasons": observed_reasons,
+                "all_observed_rejections_fail_closed": all_observed_fail_closed,
+                "expected_fail_closed_reasons": sorted(_DORMANT_FAIL_CLOSED_REASONS),
+            },
+            "service_status": service_status,
+        }
 
     def _consultation_data_dir(self) -> Optional[Path]:
         for env_name in _CONSULTATION_DATA_DIR_ENVS:

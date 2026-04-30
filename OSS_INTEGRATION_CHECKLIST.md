@@ -82,6 +82,15 @@ Why this order:
 - `DSPy`, `imitation`, and `MLflow` are already governed and therefore no longer belong at the front of the remaining activation queue
 - RL stack should stay last until the supervised-alpha path is approved and stable, and until the explicit RL gate reopens
 
+## Pre-Activation Operator Surface
+
+The allowed pre-activation integration wiring is exposed through a read-only BFF aggregate:
+
+- `GET /api/v1/operator/research/oss-preactivation`
+- sources: research orchestrator capabilities/runs, policy-learning capabilities/jobs, research-worker gateway capabilities/jobs, and OpenClaw gateway-adapter capabilities/upstream status
+- allowed scope: capability and rejection metadata only
+- explicit non-scope: Qlib/TRL/RL/W&B/OpenClaw production activation, paper/canary/live execution, registry writes, governance writes, broker sessions, and capital binding
+
 ## Working Rule
 
 When adding a new task for any named OSS component, include these acceptance points unless there is a good reason not to:

@@ -507,6 +507,10 @@ services:
       PANTHEON_CONSULTATION_API_URL: http://consultation-svc:8096
       PANTHEON_SEARCH_API_URL: http://search-svc:8098
       PANTHEON_TRAINING_SESSION_API_URL: http://training-session-svc:8099
+      PANTHEON_POLICY_LEARNING_API_URL: http://policy-learning-svc:8100
+      PANTHEON_RESEARCH_ORCHESTRATOR_API_URL: http://research-orchestrator-svc:8101
+      PANTHEON_RESEARCH_WORKER_GATEWAY_API_URL: http://research-worker-gateway-svc:8103
+      PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
@@ -520,6 +524,14 @@ services:
       search-svc:
         condition: service_healthy
       training-session-svc:
+        condition: service_healthy
+      policy-learning-svc:
+        condition: service_healthy
+      research-orchestrator-svc:
+        condition: service_healthy
+      research-worker-gateway-svc:
+        condition: service_healthy
+      openclaw-gateway-adapter:
         condition: service_healthy
       governance:
         condition: service_healthy

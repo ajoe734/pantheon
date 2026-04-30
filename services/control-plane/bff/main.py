@@ -7974,6 +7974,47 @@ async def get_knowledge_workbench_overview(
     return _build_knowledge_workbench_overview(utc_now())
 
 
+@app.get("/api/v1/operator/research/oss-preactivation")
+async def get_research_oss_preactivation(
+    activity_limit: int = Query(default=20, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    data = read_store.get_research_oss_preactivation_snapshot(
+        activity_limit=activity_limit,
+    )
+    service_surfaces = {
+        service: {
+            key: value
+            for key, value in status.items()
+            if key in {"status", "source", "reason", "activity_status", "upstream_status", "upstream_reachable"}
+        }
+        for service, status in data.get("service_status", {}).items()
+        if isinstance(status, dict)
+    }
+    composite_status = "ok"
+    if any(surface.get("status") == "unavailable" for surface in service_surfaces.values()):
+        composite_status = "degraded"
+    if service_surfaces and all(surface.get("status") == "unavailable" for surface in service_surfaces.values()):
+        composite_status = "unavailable"
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "research_oss_preactivation": {
+            "status": composite_status,
+            "source": "service_client",
+        },
+        **service_surfaces,
+    }
+    return {
+        "data": data,
+        "meta": meta,
+    }
+
+
 @app.post("/api/v1/research/tickets")
 async def create_research_ticket(
     payload: Dict[str, Any] = Body(...),

@@ -191,7 +191,7 @@ offline-only, non-writing, draft/none, and not production activation evidence.
 
 Research Plane has six governed backends on the production path (DSPy, imitation, MLflow, vectorbt, statsmodels, QuantLib), plus one governed activation-gated runtime substrate (OpenClaw), two smoke-tested but activation-gated learning baselines (Qlib, TRL), and dormant explicit-gate FinRL/RLlib/Ray Tune scaffolds. The remaining research gap is no longer missing runnable baselines for OpenClaw/Qlib/TRL/FinRL/RLlib/Tune; it is the lack of production activation for Qlib/TRL, the still-closed production/broker/live/capital activation path for OpenClaw, the FinRL first active-lane proof after RL approval, and the broader deferred RL/W&B activation paths.
 
-The research service boundary now exposes a fail-closed dormant capability inventory for OpenClaw, Qlib, TRL, FinRL, RLlib, Ray Tune, and W&B from the research-worker gateway, research orchestrator, and policy-learning surfaces. That inventory is read-only operator metadata (`gate_state=fail_closed`, `allowed_scope=capability_metadata_read_only`) and does not authorize training dispatch, paper/canary/live execution, registry writes, or governance writes.
+The research service boundary now exposes a fail-closed dormant capability inventory for OpenClaw, Qlib, TRL, FinRL, RLlib, Ray Tune, and W&B from the research-worker gateway, research orchestrator, policy-learning, and BFF aggregate surfaces. That inventory is read-only operator metadata (`gate_state=fail_closed`, `allowed_scope=capability_metadata_read_only`) and does not authorize training dispatch, paper/canary/live execution, registry writes, governance writes, broker sessions, or capital binding.
 
 ### Existing Evidence
 
@@ -227,6 +227,7 @@ The research service boundary now exposes a fail-closed dormant capability inven
 - `services/research-worker-gateway/main.py`: fail-closed dormant backend inventory and dispatch denial policy
 - `services/research/main.py`: research-orchestrator dormant backend inventory and write-path denial policy
 - `services/policy-learning/main.py`: policy-learning dormant backend inventory and write-path denial policy
+- `services/control-plane/bff/main.py`: read-only `/api/v1/operator/research/oss-preactivation` aggregate for dormant capability and rejection evidence across the research orchestrator, policy-learning, worker gateway, and OpenClaw adapter surfaces
 
 ### Why It Is a Real Gap
 
