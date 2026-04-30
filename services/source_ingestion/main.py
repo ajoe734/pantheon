@@ -12,13 +12,19 @@ from __future__ import annotations
 import json
 import os
 import re
+import urllib.parse
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+try:
+    from pydantic import BaseModel, ConfigDict, Field
+except ImportError:  # pragma: no cover - compatibility with older pydantic.
+    from pydantic import BaseModel, Field
+
+    ConfigDict = None  # type: ignore[assignment]
 
 from services.foundation import ActorRef, ActorType, DeadLetterQueue, DeadLetterReplayProcessor, SchemaRegistry
 from services.foundation.health import register_fastapi_health_routes
@@ -34,6 +40,7 @@ from .connectors import (
     SourceRecord,
     SourceRecordStatus,
     SourceType,
+    example_provider_catalog,
 )
 from .configured import ConfiguredConnectorFetcher, JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
 from .ingest_manager import IngestManager
@@ -88,7 +95,16 @@ register_fastapi_health_routes(
 )
 
 
-class ConnectorBody(BaseModel):
+class StrictBaseModel(BaseModel):
+    if ConfigDict is not None:
+        model_config = ConfigDict(extra="forbid")
+    else:  # pragma: no cover - compatibility with older pydantic.
+
+        class Config:
+            extra = "forbid"
+
+
+class ConnectorBody(StrictBaseModel):
     connector_id: str
     source_type: SourceType
     provider: str
@@ -98,6 +114,10 @@ class ConnectorBody(BaseModel):
     supported_modes: list[ConnectorMode] = Field(default_factory=lambda: [ConnectorMode.BATCH])
     status: ConnectorStatus = ConnectorStatus.ENABLED
     rate_limit_policy_ref: str | None = None
+    auth_policy: dict[str, Any] | None = None
+    rate_limit_policy: dict[str, Any] | None = None
+    license_policy: dict[str, Any] | None = None
+    source_metadata: dict[str, Any] | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     def to_domain(self) -> SourceConnector:
@@ -111,11 +131,15 @@ class ConnectorBody(BaseModel):
             supported_modes=[mode.value for mode in self.supported_modes],
             status=self.status.value,
             rate_limit_policy_ref=self.rate_limit_policy_ref,
+            auth_policy=self.auth_policy,
+            rate_limit_policy=self.rate_limit_policy,
+            license_policy=self.license_policy,
+            source_metadata=self.source_metadata,
             metadata=self.metadata,
         )
 
 
-class SourceRecordBody(BaseModel):
+class SourceRecordBody(StrictBaseModel):
     source_id: str
     connector_id: str
     source_type: SourceType
@@ -138,7 +162,7 @@ class SourceRecordBody(BaseModel):
         )
 
 
-class ConfiguredFetchRecordBody(BaseModel):
+class ConfiguredFetchRecordBody(StrictBaseModel):
     source_id: str
     title: str
     content_ref: str
@@ -167,7 +191,7 @@ class ConfiguredFetchRecordBody(BaseModel):
         return payload
 
 
-class ConfiguredFetchBody(BaseModel):
+class ConfiguredFetchBody(StrictBaseModel):
     mode: Literal["static_records", "external_feed"] = "static_records"
     records: list[ConfiguredFetchRecordBody] = Field(default_factory=list)
     url: str | None = None
@@ -202,12 +226,12 @@ class ConfiguredFetchBody(BaseModel):
         return payload
 
 
-class ConfigureConnectorRequest(BaseModel):
+class ConfigureConnectorRequest(StrictBaseModel):
     connector: ConnectorBody
     fetch: ConfiguredFetchBody
 
 
-class TriggerIngestJobRequest(BaseModel):
+class TriggerIngestJobRequest(StrictBaseModel):
     connector: ConnectorBody | None = None
     connector_id: str | None = None
     trace_id: str
@@ -217,14 +241,14 @@ class TriggerIngestJobRequest(BaseModel):
     fetch: ConfiguredFetchBody | None = None
 
 
-class ReplayDlqRequest(BaseModel):
+class ReplayDlqRequest(StrictBaseModel):
     tag: str = "retry_exhausted"
     entry_ids: list[str] = Field(default_factory=list)
     reason: str = "operator-approved source ingest DLQ replay"
     actor_id: str = "source-ingest-operator"
 
 
-class SetScheduleRequest(BaseModel):
+class SetScheduleRequest(StrictBaseModel):
     interval_seconds: int = 0
     enabled: bool = False
 
@@ -258,6 +282,99 @@ def _configure_connector(request: ConfigureConnectorRequest) -> dict[str, Any]:
         "state": connector_store.get_fetch_state(connector.connector_id),
         "updated_at": config.updated_at,
     }
+
+
+def _fetch_policy_summary(fetch: dict[str, Any] | None) -> dict[str, Any]:
+    if not fetch:
+        return {
+            "configured": False,
+            "mode": None,
+        }
+    mode = str(fetch.get("mode") or "")
+    summary: dict[str, Any] = {
+        "configured": True,
+        "mode": mode,
+        "fail_until_attempt": int(fetch.get("fail_until_attempt") or 0),
+    }
+    if mode == "external_feed":
+        parsed = urllib.parse.urlparse(str(fetch.get("url") or ""))
+        summary.update(
+            {
+                "url_scheme": parsed.scheme or None,
+                "url_host": parsed.netloc or None,
+                "allowed_url_prefix_count": len(fetch.get("allowed_url_prefixes") or []),
+                "timeout_seconds": fetch.get("timeout_seconds"),
+                "max_bytes": fetch.get("max_bytes"),
+                "max_records": fetch.get("max_records"),
+                "default_access_scope": list(fetch.get("default_access_scope") or []),
+            }
+        )
+    elif mode == "static_records":
+        summary.update(
+            {
+                "records_count": len(fetch.get("records") or []),
+                "next_watermark": fetch.get("next_watermark"),
+            }
+        )
+    return summary
+
+
+def _schedule_summary(connector_id: str) -> dict[str, Any]:
+    schedule = schedule_config_store.get_schedule(connector_id)
+    if schedule is None:
+        return {
+            "configured": False,
+            "enabled": False,
+            "interval_seconds": 0,
+        }
+    return {
+        "configured": True,
+        "enabled": schedule.enabled,
+        "interval_seconds": schedule.interval_seconds,
+        "updated_at": schedule.updated_at,
+    }
+
+
+def _connector_registry_entry(
+    connector: SourceConnector,
+    *,
+    fetch: dict[str, Any] | None,
+    state: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "source_connector_registry_entry.v1",
+        "connector_id": connector.connector_id,
+        "provider": connector.provider,
+        "source_type": connector.source_type.value,
+        "status": connector.status.value,
+        "supported_modes": [mode.value for mode in connector.supported_modes],
+        "policy": connector.policy_summary(),
+        "metadata": dict(connector.metadata),
+        "fetch_policy": _fetch_policy_summary(fetch),
+        "schedule": _schedule_summary(connector.connector_id),
+        "state": state
+        or {
+            "connector_id": connector.connector_id,
+            "attempts": 0,
+            "successful_attempts": 0,
+            "failed_attempts": 0,
+            "last_error": None,
+            "updated_at": None,
+        },
+    }
+
+
+def _provider_example_payloads() -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for provider in example_provider_catalog():
+        connector = provider.connector()
+        payloads.append(
+            {
+                "connector": connector.to_dict(),
+                "fetch_policy": _fetch_policy_summary(dict(provider.fetch_config())),
+            }
+        )
+    return payloads
 
 
 def _connector_for_job(request: TriggerIngestJobRequest) -> SourceConnector:
@@ -490,6 +607,33 @@ def list_connectors() -> dict[str, Any]:
             }
             for config in connector_store.list_configs()
         ]
+    }
+
+
+@app.get("/api/source-ingest/registry")
+def source_connector_registry() -> dict[str, Any]:
+    configured_by_id = {config.connector.connector_id: config for config in connector_store.list_configs()}
+    connector_ids = set(configured_by_id)
+    connectors = list(manager.list_connectors())
+    connector_ids.update(connector.connector_id for connector in connectors)
+
+    entries: list[dict[str, Any]] = []
+    for connector_id in sorted(connector_ids):
+        config = configured_by_id.get(connector_id)
+        connector = config.connector if config else manager.get_connector(connector_id)
+        if connector is None:
+            continue
+        entries.append(
+            _connector_registry_entry(
+                connector,
+                fetch=dict(config.fetch) if config else None,
+                state=connector_store.get_fetch_state(connector_id) if config else None,
+            )
+        )
+    return {
+        "schema_version": "source_connector_registry.v1",
+        "connectors": entries,
+        "provider_examples": _provider_example_payloads(),
     }
 
 

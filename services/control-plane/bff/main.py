@@ -8270,6 +8270,29 @@ async def search_research_corpus(
     }
 
 
+@app.get("/api/v1/research/source-connectors")
+async def list_source_connectors(
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    registry = read_store.get_source_connector_registry()
+    source = str(registry.get("source") or "missing")
+    surface_state = "ok" if source == "service_client" else "unavailable"
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {
+        "source_connector_registry": surface_state,
+    }
+    meta["source"] = source
+    meta["provider_examples"] = list(registry.get("provider_examples") or [])
+    return {
+        "data": list(registry.get("connectors") or []),
+        "meta": meta,
+    }
+
+
 @app.get("/api/v1/research/analysis")
 async def list_research_analysis(
     ticket_id: Optional[str] = None,

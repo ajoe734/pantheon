@@ -198,6 +198,63 @@ def test_configured_connector_fetch_runs_without_inline_records_and_persists_evi
     assert replayed_item.status_code == 200
 
 
+def test_registry_exposes_connector_status_policy_and_provider_examples(client) -> None:
+    test_client, _, _ = client
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": _connector(
+                connector_id="conn-openalex-api",
+                auth_type="api_key",
+                secret_ref_id="env://OPENALEX_API_KEY",
+                rate_limit_policy={
+                    "requests_per_minute": 60,
+                    "burst": 10,
+                    "retry_after_seconds": 60,
+                    "policy_ref": "source-ingest://policy/openalex",
+                },
+                license_policy={
+                    "license_scope": "open",
+                    "allowed_use": ["research", "search_index"],
+                    "attribution_required": True,
+                },
+                source_metadata={
+                    "display_name": "OpenAlex works",
+                    "homepage_url": "https://openalex.org",
+                    "tags": ["paper", "external_feed"],
+                },
+            ),
+            "fetch": {
+                "mode": "external_feed",
+                "url": "https://api.openalex.org/works",
+                "allowed_url_prefixes": ["https://api.openalex.org/"],
+                "max_bytes": 4096,
+                "max_records": 3,
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+
+    response = test_client.get("/api/source-ingest/registry")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    entry = next(item for item in body["connectors"] if item["connector_id"] == "conn-openalex-api")
+    assert entry["status"] == "enabled"
+    assert entry["policy"]["auth"]["auth_type"] == "api_key"
+    assert entry["policy"]["auth"]["secret_ref"]["secret_ref_id"] == "env://OPENALEX_API_KEY"
+    assert entry["policy"]["rate_limit"]["requests_per_minute"] == 60
+    assert entry["policy"]["license"]["allowed_use"] == ["research", "search_index"]
+    assert entry["policy"]["source_metadata"]["display_name"] == "OpenAlex works"
+    assert entry["fetch_policy"]["mode"] == "external_feed"
+    assert entry["fetch_policy"]["url_host"] == "api.openalex.org"
+    assert body["provider_examples"]
+    assert {example["fetch_policy"]["mode"] for example in body["provider_examples"]} == {
+        "static_records",
+        "external_feed",
+    }
+
+
 def test_external_http_feed_is_allowlisted_bounded_and_preserves_license_access_scope(client) -> None:
     test_client, _, _ = client
     feed_payload = {

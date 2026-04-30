@@ -527,6 +527,7 @@ services:
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
       PANTHEON_LINEAGE_READ_URL: http://lineage-read:8094
       PANTHEON_CONSULTATION_API_URL: http://consultation-svc:8096
+      PANTHEON_SOURCE_INGEST_API_URL: http://source-ingest:8097
       PANTHEON_SEARCH_API_URL: http://search-svc:8098
       PANTHEON_TRAINING_SESSION_API_URL: http://training-session-svc:8099
       PANTHEON_POLICY_LEARNING_API_URL: http://policy-learning-svc:8100
@@ -542,6 +543,8 @@ services:
       - incident-data:/data/incidents:ro
     depends_on:
       consultation-svc:
+        condition: service_healthy
+      source-ingest:
         condition: service_healthy
       search-svc:
         condition: service_healthy

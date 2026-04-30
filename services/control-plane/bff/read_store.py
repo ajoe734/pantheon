@@ -8522,6 +8522,41 @@ class ReadSurfaceStore:
     def _search_service_url(self) -> Optional[str]:
         return _base_url_from_env(("PANTHEON_SEARCH_API_URL", "PANTHEON_SEARCH_SERVICE_URL"))
 
+    def _source_ingest_service_url(self) -> Optional[str]:
+        return _base_url_from_env(
+            (
+                "PANTHEON_SOURCE_INGEST_API_URL",
+                "PANTHEON_SOURCE_INGEST_URL",
+                "SOURCE_INGEST_URL",
+            )
+        )
+
+    def get_source_connector_registry(self) -> Dict[str, Any]:
+        base_url = self._source_ingest_service_url()
+        if not base_url:
+            return {
+                "source": "missing",
+                "connectors": [],
+                "provider_examples": [],
+            }
+        available, payload = _http_json_get(base_url, "/api/source-ingest/registry")
+        if not available or not isinstance(payload, dict):
+            return {
+                "source": "unavailable",
+                "connectors": [],
+                "provider_examples": [],
+            }
+        connectors = payload.get("connectors") if isinstance(payload.get("connectors"), list) else []
+        provider_examples = (
+            payload.get("provider_examples") if isinstance(payload.get("provider_examples"), list) else []
+        )
+        return {
+            "source": "service_client",
+            "schema_version": payload.get("schema_version"),
+            "connectors": json.loads(json.dumps(connectors)),
+            "provider_examples": json.loads(json.dumps(provider_examples)),
+        }
+
     def _build_research_search_repository(self, documents: List[Dict[str, Any]]):
         from services.knowledge.evidence import (
             EvidenceBundleBuilder,

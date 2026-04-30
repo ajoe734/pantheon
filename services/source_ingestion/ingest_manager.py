@@ -32,6 +32,9 @@ class IngestManager:
     def get_connector(self, connector_id: str) -> SourceConnector | None:
         return self._connectors.get(connector_id)
 
+    def list_connectors(self) -> list[SourceConnector]:
+        return list(self._connectors.values())
+
     def start_ingest_run(
         self,
         *,

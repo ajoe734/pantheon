@@ -14,6 +14,21 @@ from .connectors import SourceConnector, SourceEvidenceError, SourceRecord
 from .scheduler import IngestBatch
 
 
+SENSITIVE_CONFIG_KEYS = {
+    "api_key",
+    "apikey",
+    "access_token",
+    "authorization",
+    "bearer_token",
+    "client_secret",
+    "password",
+    "private_key",
+    "secret",
+    "secret_key",
+    "token",
+}
+
+
 @dataclass(frozen=True)
 class ConnectorScheduleConfig:
     """Autonomous schedule configuration for a configured connector."""
@@ -222,6 +237,7 @@ class JsonlConfiguredConnectorStore:
         return dict(state)
 
     def _validate_fetch_config(self, fetch: Mapping[str, Any]) -> dict[str, Any]:
+        _reject_inline_fetch_secrets(fetch)
         mode = str(fetch.get("mode") or "").strip()
         fail_until_attempt = int(fetch.get("fail_until_attempt") or 0)
         if fail_until_attempt < 0:
@@ -244,12 +260,12 @@ class JsonlConfiguredConnectorStore:
             url = str(fetch.get("url") or "").strip()
             if not url:
                 raise SourceEvidenceError("fetch.url is required for external_feed")
-            parsed = urllib.parse.urlparse(url)
-            if parsed.scheme not in {"http", "https", "file"}:
-                raise SourceEvidenceError("fetch.url must use http, https, or file scheme")
+            _validate_feed_url(url, "fetch.url")
             allowed_prefixes = _normalized_string_list(fetch.get("allowed_url_prefixes"))
             if not allowed_prefixes:
                 raise SourceEvidenceError("fetch.allowed_url_prefixes is required for external_feed")
+            for prefix in allowed_prefixes:
+                _validate_feed_url(prefix, "fetch.allowed_url_prefixes")
             if not _url_is_allowed(url, allowed_prefixes):
                 raise SourceEvidenceError("fetch.url is outside allowed_url_prefixes")
             timeout_seconds = float(fetch.get("timeout_seconds") or 5.0)
@@ -339,6 +355,9 @@ class ConfiguredConnectorFetcher:
     def _fetch_external_payload(self, fetch: Mapping[str, Any]) -> Mapping[str, Any]:
         url = str(fetch["url"])
         allowed_prefixes = _normalized_string_list(fetch.get("allowed_url_prefixes"))
+        _validate_feed_url(url, "fetch.url")
+        for prefix in allowed_prefixes:
+            _validate_feed_url(prefix, "fetch.allowed_url_prefixes")
         if not _url_is_allowed(url, allowed_prefixes):
             raise SourceEvidenceError("external feed URL is outside allowed_url_prefixes")
         max_bytes = int(fetch["max_bytes"])
@@ -354,6 +373,7 @@ class ConfiguredConnectorFetcher:
             )
             with urllib.request.urlopen(request, timeout=float(fetch["timeout_seconds"])) as response:
                 final_url = response.geturl()
+                _validate_feed_url(final_url, "external feed redirect")
                 if not _url_is_allowed(final_url, allowed_prefixes):
                     raise SourceEvidenceError("external feed redirect is outside allowed_url_prefixes")
                 raw = response.read(max_bytes + 1)
@@ -406,3 +426,33 @@ def _normalized_string_list(value: Any) -> list[str]:
 
 def _url_is_allowed(url: str, allowed_prefixes: list[str]) -> bool:
     return any(url.startswith(prefix) for prefix in allowed_prefixes)
+
+
+def _validate_feed_url(url: str, field_name: str) -> None:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https", "file"}:
+        raise SourceEvidenceError(f"{field_name} must use http, https, or file scheme")
+    if parsed.scheme in {"http", "https"} and not parsed.netloc:
+        raise SourceEvidenceError(f"{field_name} must include a host")
+    if parsed.username or parsed.password:
+        raise SourceEvidenceError(f"{field_name} must not include inline credentials")
+    query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+    sensitive_query_keys = sorted(key for key in query if key.strip().lower() in SENSITIVE_CONFIG_KEYS)
+    if sensitive_query_keys:
+        raise SourceEvidenceError(f"{field_name} must not include inline secret query parameters")
+
+
+def _reject_inline_fetch_secrets(fetch: Mapping[str, Any]) -> None:
+    for key, value in fetch.items():
+        normalized_key = str(key).strip().lower()
+        if normalized_key == "records":
+            continue
+        if normalized_key in SENSITIVE_CONFIG_KEYS and value not in (None, "", [], {}):
+            raise SourceEvidenceError(f"fetch.{key} must use connector.secret_ref_id instead of an inline secret")
+        if isinstance(value, Mapping):
+            for child_key, child_value in value.items():
+                child_normalized = str(child_key).strip().lower()
+                if child_normalized in SENSITIVE_CONFIG_KEYS and child_value not in (None, "", [], {}):
+                    raise SourceEvidenceError(
+                        f"fetch.{key}.{child_key} must use connector.secret_ref_id instead of an inline secret"
+                    )
