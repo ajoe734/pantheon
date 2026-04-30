@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；production、paper、canary、live gate 預設仍 fail-closed。",
-  "updated_at": "2026-04-30T07:23:53Z",
+  "updated_at": "2026-04-30T12:42:34Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,13 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "reviewing",
+      "status": "working",
       "current_task_ids": [
-        "SVC-SOURCE-SEARCH-OPS-BFF-SIDECAR-BFF-HANDOFF"
+        "SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "BFF/frontend handoff packet ready for review. Covers: source ingest service route inventory (§3.1 — 20 routes), search service route inventory (§3.2 — 11 routes), current BFF surface gap (§3.3 — no /api/v1/operator/source or /api/v1/operator/search routes exist), candidate composed read routes GET /api/v1/operator/source/ops and GET /api/v1/operator/search/ops with response envelopes (§4), 6 candidate command endpoints with auth/idempotency requirements (§4.3), operator journey for connector health, DLQ replay, and index reindex flows (§5), 16-gap BFF gap matrix (§6), frontend screen regions with allowedActions gating (§7), and parent+sidecar reviewer checklists (§8). No canonical truth modified. Verification: verified service routes against services/source_ingestion/main.py and services/search/main.py directly; verified BFF has no existing source/search ops surface by grepping main.py and BFF_API_CONTRACT.md.",
-      "last_update": "2026-04-30T07:23:53Z"
+      "next": "Schema fix applied: added order lifecycle event types and order/position top-level properties to telemetry_event.schema.json. All 64 tests pass, smoke test passes.",
+      "last_update": "2026-04-30T12:42:34Z"
     },
     {
       "name": "Gemini",
@@ -111,11 +111,11 @@
       ],
       "status": "working",
       "current_task_ids": [
-        "SVC-OPENCLAW-PAPER-BROKER-ADAPTER"
+        "TEST-FULLSUITE-HARNESS-ISOLATION"
       ],
       "branch": "feat/gemini-research-runtime",
-      "next": "Supervisor auto-started SVC-OPENCLAW-PAPER-BROKER-ADAPTER after successful dispatch.",
-      "last_update": "2026-04-30T07:23:29Z"
+      "next": "Supervisor auto-started TEST-FULLSUITE-HARNESS-ISOLATION after successful dispatch.",
+      "last_update": "2026-04-30T12:38:28Z"
     },
     {
       "name": "Codex",
@@ -125,13 +125,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "reviewing",
-      "current_task_ids": [
-        "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/codex-collab-system",
-      "next": "Refreshed sidecar BFF/frontend handoff packet for current repo truth: adapter bridge routes, BFF OpenClaw ops read/alias routes, BFF session create/cancel facades, and remaining invoke/trigger/frontend adoption gaps are now separated. Verification: python3 -m pytest services/control-plane/bff/test_openclaw_ops_surface.py -q => 4 passed.",
-      "last_update": "2026-04-30T07:23:39Z"
+      "next": "",
+      "last_update": "2026-04-30T09:31:08Z"
     },
     {
       "name": "Codex2",
@@ -141,13 +139,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "finalize",
+      "status": "reviewing",
       "current_task_ids": [
-        "SVC-OSS-ACTIVATION-READY-SMOKE-MATRIX"
+        "TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Review approved: default gate fail-closed verified for all OSS workers and paper/canary/live; enabled offline paths produce local draft artifacts with no forbidden writes; compose documents activation-ready but disabled posture; all 3 focused tests pass. Owner to finalize.",
-      "last_update": "2026-04-30T07:04:47Z"
+      "next": "Ready for review: portable bootstrap keeps non-Pantheon canonical files scoped to the bundle, repeated generic worker exits reassign at the configured threshold, and python3 -m pytest -q scripts/test_orchestrator_bundle.py scripts/test_supervisor.py passes (8 passed).",
+      "last_update": "2026-04-30T12:41:50Z"
     },
     {
       "name": "Copilot",
@@ -161,7 +159,7 @@
       "current_task_ids": [],
       "branch": "feat/grok-research-critique",
       "next": "",
-      "last_update": "2026-04-30T07:20:11Z"
+      "last_update": "2026-04-30T12:40:14Z"
     },
     {
       "name": "Claude2",
@@ -170,399 +168,308 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "waiting",
+      "status": "ready",
       "current_task_ids": [
-        "SVC-OPENCLAW-LIVE-GATE-HARNESS"
+        "SVC-BFF-INCIDENT-SMOKE-FIXTURE"
       ],
       "branch": "feat/claude2-execution-control",
       "next": "Assignment created",
-      "last_update": "2026-04-30T07:19:50Z"
+      "last_update": "2026-04-30T12:39:28Z"
     }
   ],
   "tasks": [
     {
-      "id": "SVC-OSS-ACTIVATION-READY-SMOKE-MATRIX",
-      "title": "Add activation-ready OSS smoke matrix",
-      "summary_zh": "建立整體 smoke/e2e matrix：證明預設 gate 關閉、測試 gate 開啟時 Qlib/TRL/RL/W&B offline path 可跑並產 artifact，且沒有 registry/governance/live 寫入。",
-      "phase": "OSS Activation-Ready Development",
-      "owner": "Codex2",
-      "reviewer": "Claude",
-      "status": "review_approved",
-      "depends_on": [
-        "SVC-OSS-ACTIVATION-READY-BFF-OPS"
-      ],
-      "artifacts": [
-        "scripts",
-        "services/research-worker-gateway",
-        "services/research",
-        "services/policy-learning",
-        "services/learning",
-        "services/registry/experiments",
-        "docker-compose.yml"
-      ],
-      "acceptance": [
-        "default matrix proves qlib trl rl wandb paper canary live fail closed",
-        "enabled offline matrix runs bounded jobs and emits artifacts",
-        "no registry governance broker or live writes occur",
-        "compose profiles document activation-ready but disabled posture",
-        "CI friendly focused tests pass"
-      ],
-      "next": "Review approved: default gate fail-closed verified for all OSS workers and paper/canary/live; enabled offline paths produce local draft artifacts with no forbidden writes; compose documents activation-ready but disabled posture; all 3 focused tests pass. Owner to finalize.",
-      "last_update": "2026-04-30T07:04:47Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-materialization-20260430",
-      "mutates_canonical": true,
-      "review_notes_zh": [
-        "審查通過：預設 gate fail-closed (dispatch_mode_disabled / production_adapter_disabled)；gate 開啟時 qlib/trl/finrl/rllib/W&B offline 路徑產 local artifact，無 registry/governance/live 寫入；compose profile 文件化 activation-ready 但預設停用；三個聚焦測試全過。",
-        "後續：owner 建立 task-scoped commit 後 done 收尾。"
-      ],
-      "review_file": ".orchestrator/reviews/SVC-OSS-ACTIVATION-READY-SMOKE-MATRIX-review-claude.md"
-    },
-    {
-      "id": "SVC-OPENCLAW-PAPER-BROKER-ADAPTER",
-      "title": "Add gated OpenClaw paper broker adapter",
-      "summary_zh": "新增 paper-only broker adapter harness：只在 explicit paper gate 下接 runtime/broker sidecar，支援 order simulation 與 audit；live 仍關。",
-      "phase": "OpenClaw Activation-Ready Development",
+      "id": "TEST-FULLSUITE-HARNESS-ISOLATION",
+      "title": "Full-suite pytest harness import isolation",
+      "summary_zh": "Root pytest collection currently fails because service-local main.py adapter.py smoke_test.py and test_main.py modules collide across import paths. Build a canonical harness so full pytest collection is usable without cross-service module pollution.",
+      "phase": "Full Test Stabilization",
       "owner": "Gemini",
-      "reviewer": "Codex2",
+      "reviewer": "Codex",
       "status": "in_progress",
-      "depends_on": [
-        "SVC-OPENCLAW-SESSION-LIFECYCLE",
-        "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE"
-      ],
+      "depends_on": [],
       "artifacts": [
-        "services/openclaw-gateway-adapter",
-        "services/runtime-manager",
-        "services/broker",
-        "docker-compose.yml",
-        "PAPER_CANARY_LIVE_POLICY.md"
+        "pytest.ini",
+        "conftest.py",
+        "services/**/conftest.py",
+        "scripts",
+        "docs/testing"
       ],
       "acceptance": [
-        "paper adapter is disabled by default and requires explicit gate",
-        "paper orders route through simulation path not live broker",
-        "capital and strategy binding checks are enforced",
-        "audit trail captures order intent and result",
-        "tests prove live remains rejected"
+        "python3 -m pytest -q --collect-only has no import mismatch or module shadowing failures",
+        "root python3 -m pytest -q reports real test failures only and not collection pollution",
+        "direct smoke files are not accidentally collected as pytest tests unless intended",
+        "canonical CI or runbook commands are updated"
       ],
-      "next": "Supervisor auto-started SVC-OPENCLAW-PAPER-BROKER-ADAPTER after successful dispatch.",
-      "last_update": "2026-04-30T07:23:29Z",
+      "next": "Supervisor auto-started TEST-FULLSUITE-HARNESS-ISOLATION after successful dispatch.",
+      "last_update": "2026-04-30T12:38:28Z",
       "task_class": "execution",
-      "auto_created_by": "codex-materialization-20260430",
+      "auto_created_by": "codex-fulltest-materialization-20260430",
+      "auto_generated": true,
       "mutates_canonical": true
     },
     {
-      "id": "SVC-OPENCLAW-LIVE-GATE-HARNESS",
-      "title": "Add OpenClaw live gate harness without activation",
-      "summary_zh": "開發 live gate harness 但不啟用 live：human approval、capital binding、kill switch、rollback/error policy 都要在程式上完整，預設仍拒絕。",
-      "phase": "OpenClaw Activation-Ready Development",
+      "id": "TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT",
+      "title": "Orchestrator bundle and supervisor regression closeout",
+      "summary_zh": "Two orchestrator tests still fail after the full rerun. Align bootstrap canonical-file expectations for TARGET_ARCHITECTURE.md and fix or document supervisor repeated generic-exit reassignment behavior.",
+      "phase": "Full Test Stabilization",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "review",
+      "depends_on": [],
+      "artifacts": [
+        "scripts/test_orchestrator_bundle.py",
+        "scripts/test_supervisor.py",
+        "scripts/orchestrator_bundle.py",
+        ".orchestrator/supervisor.py"
+      ],
+      "acceptance": [
+        "TARGET_ARCHITECTURE.md bootstrap inclusion is decided and test plus implementation agree",
+        "supervisor repeated generic exit lifecycle matches documented reassigned or failed semantics",
+        "python3 -m pytest -q scripts/test_orchestrator_bundle.py scripts/test_supervisor.py passes"
+      ],
+      "next": "Ready for review: portable bootstrap keeps non-Pantheon canonical files scoped to the bundle, repeated generic worker exits reassign at the configured threshold, and python3 -m pytest -q scripts/test_orchestrator_bundle.py scripts/test_supervisor.py passes (8 passed).",
+      "last_update": "2026-04-30T12:41:50Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-fulltest-materialization-20260430",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN",
+      "title": "OpenClaw health and compose contract alignment",
+      "summary_zh": "Foundation health test is stale around OpenClaw readiness URLs and adapter semantics. Align compose healthchecks tests and docs with current /livez /readyz contract while keeping typo detection.",
+      "phase": "Service Contract Hardening",
+      "owner": "Codex2",
+      "reviewer": "Gemini",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "services/foundation/tests/test_health.py",
+        "docker-compose.yml",
+        "services/openclaw-gateway-adapter",
+        "docs"
+      ],
+      "acceptance": [
+        "health test still rejects misspelled readiness paths",
+        "OpenClaw adapter health assertions reflect current livez readyz and degraded facade semantics",
+        "python3 -m pytest -q services/foundation/tests/test_health.py passes",
+        "docker compose -f docker-compose.yml config -q passes"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-30T12:38:34Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-fulltest-materialization-20260430",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "SVC-SOURCE-SEARCH-TEST-CLOSURE",
+      "title": "Source-search pipeline and SD-03 contract closure",
+      "summary_zh": "Source and search are deployable but two focused tests fail. Close the incremental index pipeline counting/watermark issue and align SD-03 connector schema with current connector model metadata.",
+      "phase": "Source/Search Production Baseline",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "services/search/index_pipeline.py",
+        "services/search/test_index_pipeline.py",
+        "services/search/tests/test_contracts.py",
+        "services/source_ingestion",
+        "docs/contracts"
+      ],
+      "acceptance": [
+        "incremental pipeline counts only new or updated objects according to documented watermark semantics",
+        "SD-03 schemas accept canonical SourceConnector payloads or serialization filters non-contract fields",
+        "python3 -m pytest -q services/search/test_index_pipeline.py services/search/tests/test_contracts.py passes",
+        "source-search production posture smoke remains green"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-30T12:38:46Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-fulltest-materialization-20260430",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE",
+      "title": "Telemetry order lifecycle canonical schema closure",
+      "summary_zh": "Telemetry capture tests show canonical schema mismatch for order lifecycle and position snapshot events. Make schema and payload agree without losing order evidence fields.",
+      "phase": "Telemetry Contract Hardening",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "depends_on": [],
+      "artifacts": [
+        "services/telemetry/capture.py",
+        "services/telemetry/test_capture.py",
+        "services/telemetry/test_feedback_adapter.py",
+        "services/**/telemetry*.schema.json",
+        "docs"
+      ],
+      "acceptance": [
+        "order lifecycle and position snapshot events validate against canonical schema",
+        "order_id order_status price quantity and symbol are preserved in the documented location",
+        "PYTHONPATH=services/telemetry python3 -m pytest -q services/telemetry/test_capture.py services/telemetry/test_feedback_adapter.py passes",
+        "PYTHONPATH=. python3 services/telemetry/smoke_test.py passes"
+      ],
+      "next": "Schema fix applied: added order lifecycle event types and order/position top-level properties to telemetry_event.schema.json. All 64 tests pass, smoke test passes.",
+      "last_update": "2026-04-30T12:42:34Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-fulltest-materialization-20260430",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "SVC-RESEARCH-REPLICATION-SMOKE-FIX",
+      "title": "Research replication smoke entrypoint fix",
+      "summary_zh": "Research replication unit tests pass but direct smoke fails because entrypoint imports mix bare module and package-relative imports. Make smoke runnable from repo root and keep package tests green.",
+      "phase": "Research Pre-activation Hardening",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "services/research/replication/smoke_test.py",
+        "services/research/replication/gate.py",
+        "services/research/replication/__init__.py",
+        "docs"
+      ],
+      "acceptance": [
+        "python3 services/research/replication/smoke_test.py passes from repo root",
+        "module invocation is supported or documented",
+        "PYTHONPATH=services/research python3 -m pytest -q services/research/replication/test_gate.py remains green"
+      ],
+      "next": "Auto-reassigned ownership from Copilot to Codex2 after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Codex2 starts a fresh run.",
+      "last_update": "2026-04-30T12:41:44Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-fulltest-materialization-20260430",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
+      "title": "W&B dormant OSS smoke matrix alignment",
+      "summary_zh": "Dormant OSS matrix has a stale W&B denial-string assertion while the code now permits offline local-store opt-in and keeps online SDK activation gated. Align smoke evidence with current gate policy.",
+      "phase": "OSS Pre-activation Hardening",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "scripts/smoke_dormant_oss_matrix.py",
+        "services/registry/experiments/config.py",
+        "services/registry/experiments/WANDB_ACTIVATION.md",
+        "docs"
+      ],
+      "acceptance": [
+        "python3 scripts/smoke_dormant_oss_matrix.py passes",
+        "W&B row verifies offline-store gate and deferred-prep compatibility alias",
+        "PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1 python3 services/registry/experiments/smoke_test.py --backend wandb passes",
+        "no W&B SDK-backed or online activation is introduced"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-04-30T12:39:18Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-fulltest-materialization-20260430",
+      "auto_generated": true,
+      "mutates_canonical": true
+    },
+    {
+      "id": "SVC-BFF-INCIDENT-SMOKE-FIXTURE",
+      "title": "BFF incident and postmortem smoke fixture honesty",
+      "summary_zh": "BFF incident smoke still fails under auth stub because expected incident postmortem and composed review records are missing or routed differently. Align fixtures read-store and honest degraded behavior.",
+      "phase": "BFF Service-backed Read Closure",
       "owner": "Claude2",
       "reviewer": "Codex",
       "status": "todo",
-      "depends_on": [
-        "SVC-OPENCLAW-PAPER-BROKER-ADAPTER"
-      ],
+      "depends_on": [],
       "artifacts": [
-        "services/openclaw-gateway-adapter",
-        "services/runtime-manager",
-        "services/control-plane/bff",
-        "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md",
-        "ROLLBACK_AND_POSITION_SEMANTICS.md"
+        "services/control-plane/bff/smoke_test_incident.py",
+        "services/control-plane/bff/read_store.py",
+        "services/incidents",
+        "services/postmortems",
+        "docs"
       ],
       "acceptance": [
-        "live path remains disabled without all gates",
-        "human approval capital binding kill switch and rollback checks are enforced before any live handoff",
-        "missing approval or unsafe capital state fails closed",
-        "tests cover denied live and mocked fully approved dry handoff",
-        "no real broker live execution occurs"
+        "PANTHEON_BFF_AUTH_STUB=true python3 services/control-plane/bff/smoke_test_incident.py passes",
+        "detail IDs used by smoke are seeded or created through service-backed paths",
+        "unavailable backend paths return honest degraded responses rather than fabricated records",
+        "RBAC strict-mode checks remain covered"
       ],
       "next": "Assignment created",
-      "last_update": "2026-04-30T04:17:51Z",
+      "last_update": "2026-04-30T12:39:28Z",
       "task_class": "execution",
-      "auto_created_by": "codex-materialization-20260430",
+      "auto_created_by": "codex-fulltest-materialization-20260430",
+      "auto_generated": true,
       "mutates_canonical": true
     },
     {
-      "id": "SVC-OPENCLAW-BFF-OPS-SURFACE",
-      "title": "Expose OpenClaw operations in BFF",
-      "summary_zh": "補 BFF OpenClaw operator surface：upstream status、session lifecycle、tool/workflow audit、paper/live gate state、degraded reason 都能看見。",
-      "phase": "OpenClaw Activation-Ready Development",
-      "owner": "Codex",
-      "reviewer": "Claude2",
-      "status": "review_approved",
-      "depends_on": [
-        "SVC-OPENCLAW-SESSION-LIFECYCLE",
-        "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE"
-      ],
-      "artifacts": [
-        "services/control-plane/bff",
-        "services/openclaw-gateway-adapter",
-        "docs/pantheon-handoffs"
-      ],
-      "acceptance": [
-        "BFF reads OpenClaw status and sessions through service client",
-        "BFF exposes tool workflow audit and degraded reason",
-        "BFF displays paper and live gate state without enabling them",
-        "operator commands require auth and idempotency",
-        "tests cover healthy degraded and denied states"
-      ],
-      "next": "Supervisor resumed SVC-OPENCLAW-BFF-OPS-SURFACE for finalize after successful dispatch.",
-      "last_update": "2026-04-30T07:23:35Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-materialization-20260430",
-      "mutates_canonical": true,
-      "review_notes_zh": [
-        "審查通過：五項驗收標準全部達標。openclaw_ops_client 封裝所有 adapter 呼叫；gate fail-closed 確認 (paper/live enabled 恆為 False)；auth 401/403、idempotency 400 測試涵蓋；BFF contract 和前端 handoff spec 更新。",
-        "後續：owner (Codex) 建立 task-scoped commit 後以 done 收尾。"
-      ],
-      "review_file": ".orchestrator/reviews/SVC-OPENCLAW-BFF-OPS-SURFACE-review-claude2.md"
-    },
-    {
-      "id": "SVC-OPENCLAW-ACTIVATION-READY-E2E",
-      "title": "Add OpenClaw activation-ready E2E profile",
-      "summary_zh": "建立 OpenClaw fake-upstream + compose/smoke profile：證明 facade、session、tool bridge、paper gate、live deny 全部可驗證。",
-      "phase": "OpenClaw Activation-Ready Development",
-      "owner": "Gemini",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "SVC-OPENCLAW-PAPER-BROKER-ADAPTER",
-        "SVC-OPENCLAW-LIVE-GATE-HARNESS",
-        "SVC-OPENCLAW-BFF-OPS-SURFACE"
-      ],
-      "artifacts": [
-        "services/openclaw-gateway-adapter",
-        "services/control-plane/bff",
-        "scripts",
-        "docker-compose.yml",
-        "docs/deployment"
-      ],
-      "acceptance": [
-        "fake upstream E2E covers capabilities sessions tools and paper adapter",
-        "default compose remains degraded safe when upstream absent",
-        "live path is explicitly denied in E2E",
-        "activation-ready profile documents required gates and env vars",
-        "focused tests and compose config pass"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-04-30T04:18:12Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-materialization-20260430",
-      "mutates_canonical": true
-    },
-    {
-      "id": "SVC-SEARCH-INDEXING-PIPELINE",
-      "title": "Build incremental search indexing pipeline",
-      "summary_zh": "把 search materialized index 推成正式 indexing pipeline：ingest completion trigger、incremental refresh、schema versioned snapshots、freshness SLA 與 retention。",
-      "phase": "Source / Search Platform",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [
-        "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER",
-        "SVC-SOURCE-EVIDENCE-NORMALIZATION"
-      ],
-      "artifacts": [
-        "services/search",
-        "services/source_ingestion",
-        "docker-compose.yml",
-        "scripts/smoke_honest_stack.py"
-      ],
-      "acceptance": [
-        "ingest completion can trigger incremental index refresh",
-        "index snapshots are schema versioned and retained",
-        "normal query path does not rebuild from request documents",
-        "index freshness status is queryable",
-        "tests cover incremental update delete or stale source handling"
-      ],
-      "next": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
-      "last_update": "2026-04-30T07:22:03Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-materialization-20260430",
-      "mutates_canonical": true
-    },
-    {
-      "id": "SVC-SEARCH-RETRIEVAL-AND-CUTOFF",
-      "title": "Harden search retrieval and cut off request document normal path",
-      "summary_zh": "補 retrieval rank/filter/access/citation contract，並把 request-document compatibility 移到 dev/test/deprecated 路徑；staging/prod 正常路徑只走 durable index。",
-      "phase": "Source / Search Platform",
-      "owner": "Codex",
-      "reviewer": "Claude2",
-      "status": "todo",
-      "depends_on": [
-        "SVC-SEARCH-INDEXING-PIPELINE"
-      ],
-      "artifacts": [
-        "services/search",
-        "services/control-plane/bff",
-        "docs/deployment",
-        "scripts"
-      ],
-      "acceptance": [
-        "durable index is the only normal staging production query path",
-        "request document compatibility is dev test or explicitly deprecated only",
-        "ranking filters access control and citations are deterministic",
-        "BFF uses service-backed search client only",
-        "tests cover cutoff and compatibility quarantine"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-04-30T04:19:02Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-materialization-20260430",
-      "mutates_canonical": true
-    },
-    {
-      "id": "SVC-SOURCE-SEARCH-OPS-BFF",
-      "title": "Expose source and search operations in BFF",
-      "summary_zh": "補 operator ops surface：connector health、crawl runs、DLQ、index freshness、reindex controls、audit/error summary 都透過 service-backed BFF 呈現。",
-      "phase": "Source / Search Platform",
+      "id": "SVC-OPENCLAW-HONEST-STACK-SEMANTICS",
+      "title": "OpenClaw honest-stack degraded semantics",
+      "summary_zh": "Full compose smoke fails only on OpenClaw capability semantics because the smoke expects facade_only while service reports upstream_client_degraded. Decide the canonical state and align smoke service and docs while keeping fail-closed gates.",
+      "phase": "OpenClaw Pre-activation Hardening",
       "owner": "Codex2",
       "reviewer": "Claude",
       "status": "todo",
-      "depends_on": [
-        "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER",
-        "SVC-SEARCH-INDEXING-PIPELINE"
-      ],
+      "depends_on": [],
       "artifacts": [
-        "services/control-plane/bff",
-        "services/source_ingestion",
-        "services/search",
-        "docs/pantheon-handoffs"
+        "scripts/smoke_honest_stack.py",
+        "services/openclaw-gateway-adapter/main.py",
+        "docs/openclaw",
+        "docs/deployment"
       ],
       "acceptance": [
-        "BFF exposes connector health crawl runs DLQ and replay state",
-        "BFF exposes index freshness snapshots and reindex controls",
-        "BFF commands are idempotent and auth guarded",
-        "BFF does not read source or search volumes directly",
-        "tests cover degraded source and stale index states"
+        "honest stack accepts upstream_client_degraded only when upstream is unavailable and fail-closed gates remain intact or service normalizes to documented facade_only",
+        "smoke fails if broker paper or live execution gates open unexpectedly",
+        "docker compose smoke-stack passes in an isolated project",
+        "python3 scripts/smoke_openclaw_activation_ready_e2e.py remains green"
       ],
       "next": "Assignment created",
-      "last_update": "2026-04-30T04:19:13Z",
+      "last_update": "2026-04-30T12:39:39Z",
       "task_class": "execution",
-      "auto_created_by": "codex-materialization-20260430",
+      "auto_created_by": "codex-fulltest-materialization-20260430",
+      "auto_generated": true,
       "mutates_canonical": true
     },
     {
-      "id": "SVC-SOURCE-SEARCH-PROD-HARDENING",
-      "title": "Harden source and search production posture",
-      "summary_zh": "收斂 source/search staging/prod posture：Postgres/object-store backend 強制、metrics/health/alerts、idempotency、compose profiles、end-to-end smoke。",
-      "phase": "Source / Search Platform",
+      "id": "TEST-FULLSUITE-RUNBOOK-CI-MATRIX",
+      "title": "Canonical full-suite runbook and CI matrix",
+      "summary_zh": "After the concrete failures are closed define one canonical full-suite matrix so future reruns are reproducible instead of ad hoc across pytest smoke direct entrypoints compose profiles and gated production-posture checks.",
+      "phase": "Full Test Stabilization",
       "owner": "Gemini",
       "reviewer": "Codex",
       "status": "todo",
       "depends_on": [
-        "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER",
-        "SVC-SOURCE-EVIDENCE-NORMALIZATION",
-        "SVC-SEARCH-INDEXING-PIPELINE",
-        "SVC-SEARCH-RETRIEVAL-AND-CUTOFF",
-        "SVC-SOURCE-SEARCH-OPS-BFF"
+        "TEST-FULLSUITE-HARNESS-ISOLATION",
+        "TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT",
+        "SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN",
+        "SVC-SOURCE-SEARCH-TEST-CLOSURE",
+        "SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE",
+        "SVC-RESEARCH-REPLICATION-SMOKE-FIX",
+        "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
+        "SVC-BFF-INCIDENT-SMOKE-FIXTURE",
+        "SVC-OPENCLAW-HONEST-STACK-SEMANTICS"
       ],
       "artifacts": [
-        "services/source_ingestion",
-        "services/search",
-        "docker-compose.yml",
-        "docker-compose.control.yml",
-        "docker-compose.exec.yml",
-        "env",
-        "docs/deployment",
-        "scripts"
+        "docs/testing",
+        "ci",
+        "scripts",
+        "ai-status.json",
+        "current-work.md"
       ],
       "acceptance": [
-        "staging production env rejects jsonl only source search backend",
-        "Postgres and object store ownership are documented and enforced",
-        "health live ready metrics expose consistent service state",
-        "idempotency keys protect ingest index and reindex commands",
-        "end-to-end smoke covers connector to evidence to index to BFF query"
+        "full-suite runbook lists root pytest per-service smoke compile compose config full compose smoke and gated production-posture commands",
+        "required PYTHONPATH and env flags are explicit",
+        "no command activates Qlib TRL RL W&B paper canary or live execution by default",
+        "runbook is linked from current work or CI documentation"
       ],
       "next": "Assignment created",
-      "last_update": "2026-04-30T04:19:23Z",
+      "last_update": "2026-04-30T12:39:49Z",
       "task_class": "execution",
-      "auto_created_by": "codex-materialization-20260430",
+      "auto_created_by": "codex-fulltest-materialization-20260430",
+      "auto_generated": true,
       "mutates_canonical": true
-    },
-    {
-      "id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE BFF and frontend handoff packet",
-      "summary_zh": "平行支援 SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-      "phase": "OpenClaw Activation-Ready Development",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "review",
-      "depends_on": [
-        "SVC-OPENCLAW-UPSTREAM-CLIENT"
-      ],
-      "artifacts": [
-        "support/sidecars/SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE/SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Refreshed sidecar BFF/frontend handoff packet for current repo truth: adapter bridge routes, BFF OpenClaw ops read/alias routes, BFF session create/cancel facades, and remaining invoke/trigger/frontend adoption gaps are now separated. Verification: python3 -m pytest services/control-plane/bff/test_openclaw_ops_surface.py -q => 4 passed.",
-      "last_update": "2026-04-30T07:23:39Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE",
-      "helper_kind": "bff_handoff_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
-    },
-    {
-      "id": "SVC-OPENCLAW-BFF-OPS-SURFACE-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare SVC-OPENCLAW-BFF-OPS-SURFACE BFF and frontend handoff packet",
-      "summary_zh": "平行支援 SVC-OPENCLAW-BFF-OPS-SURFACE，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-      "phase": "OpenClaw Activation-Ready Development",
-      "owner": "Gemini",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [
-        "SVC-OPENCLAW-SESSION-LIFECYCLE",
-        "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE"
-      ],
-      "artifacts": [
-        "support/sidecars/SVC-OPENCLAW-BFF-OPS-SURFACE/SVC-OPENCLAW-BFF-OPS-SURFACE-SIDECAR-BFF-HANDOFF.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
-      "last_update": "2026-04-30T07:23:23Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "SVC-OPENCLAW-BFF-OPS-SURFACE",
-      "helper_kind": "bff_handoff_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
-    },
-    {
-      "id": "SVC-SOURCE-SEARCH-OPS-BFF-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare SVC-SOURCE-SEARCH-OPS-BFF BFF and frontend handoff packet",
-      "summary_zh": "平行支援 SVC-SOURCE-SEARCH-OPS-BFF，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-      "phase": "Source / Search Platform",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "review",
-      "depends_on": [
-        "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER"
-      ],
-      "artifacts": [
-        "support/sidecars/SVC-SOURCE-SEARCH-OPS-BFF/SVC-SOURCE-SEARCH-OPS-BFF-SIDECAR-BFF-HANDOFF.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "BFF/frontend handoff packet ready for review. Covers: source ingest service route inventory (§3.1 — 20 routes), search service route inventory (§3.2 — 11 routes), current BFF surface gap (§3.3 — no /api/v1/operator/source or /api/v1/operator/search routes exist), candidate composed read routes GET /api/v1/operator/source/ops and GET /api/v1/operator/search/ops with response envelopes (§4), 6 candidate command endpoints with auth/idempotency requirements (§4.3), operator journey for connector health, DLQ replay, and index reindex flows (§5), 16-gap BFF gap matrix (§6), frontend screen regions with allowedActions gating (§7), and parent+sidecar reviewer checklists (§8). No canonical truth modified. Verification: verified service routes against services/source_ingestion/main.py and services/search/main.py directly; verified BFF has no existing source/search ops surface by grepping main.py and BFF_API_CONTRACT.md.",
-      "last_update": "2026-04-30T07:23:53Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "SVC-SOURCE-SEARCH-OPS-BFF",
-      "helper_kind": "bff_handoff_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
     }
   ],
   "handoffs": [
@@ -576,133 +483,12 @@
       "resolved_at": "2026-04-17T12:39:53Z"
     },
     {
-      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-30T06:22:39Z",
-      "resolved_at": "2026-04-30T06:24:14Z"
-    },
-    {
-      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-30T06:28:15Z",
-      "resolved_at": "2026-04-30T06:29:44Z"
-    },
-    {
-      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "BFF handoff packet ready for review. Covers: tool/workflow bridge BFF gap matrix (§6 — 8 gap areas), candidate composed route OC-10/OC-11/OC-12/OC-13 surface proposal (§4), operator journey and frontend screen regions (§5), command boundary rules (§4.2), and parent+sidecar reviewer checklists (§7). Ownership transferred from Codex2 draft to Claude; verification confirmed routes match main.py (671 lines), BFF read_store.py OpenClaw consumption (dormant capability projection only), and BFF_SURFACE_INVENTORY.md Appendix A gap (no OC-* tool/workflow surfaces exist). No canonical truth modified.",
-      "status": "done",
-      "created_at": "2026-04-30T06:33:03Z",
-      "resolved_at": "2026-04-30T06:51:44Z"
-    },
-    {
-      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Review changes requested: sidecar packet is stale against current adapter bridge routes. main.py is now 922 lines and exposes /tools/policy, /tools, /tools/invoke, /workflows/trigger, /workflows/jobs/{job_id}, and /audit/invocations. Refresh sections 3/4/6/8 to separate implemented adapter bridge routes from the still-missing BFF composed/frontend contract. See .orchestrator/reviews/SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF-review-codex2.md.",
-      "status": "done",
-      "created_at": "2026-04-30T06:51:44Z",
-      "resolved_at": "2026-04-30T06:51:44Z"
-    },
-    {
-      "task_id": "SVC-OSS-ACTIVATION-READY-SMOKE-MATRIX",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-30T06:52:54Z",
-      "resolved_at": "2026-04-30T06:54:08Z"
-    },
-    {
-      "task_id": "SVC-OSS-ACTIVATION-READY-SMOKE-MATRIX",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Implemented activation-ready OSS smoke matrix: default Qlib/TRL/RL/W&B and paper/canary/live fail closed; explicit offline Qlib/TRL/FinRL/RLlib/W&B local paths emit local artifacts only; focused tests and matrix run pass.",
-      "status": "done",
-      "created_at": "2026-04-30T06:59:53Z",
-      "resolved_at": "2026-04-30T07:04:47Z"
-    },
-    {
-      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Refreshed BFF/frontend handoff packet after Codex2 review request: adapter bridge routes now reflected; remaining gap scoped to BFF projection/frontend contract only.",
-      "status": "done",
-      "created_at": "2026-04-30T07:03:13Z",
-      "resolved_at": "2026-04-30T07:23:39Z"
-    },
-    {
-      "task_id": "SVC-OSS-ACTIVATION-READY-SMOKE-MATRIX",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Review approved: default gate fail-closed verified for all OSS workers and paper/canary/live; enabled offline paths produce local draft artifacts with no forbidden writes; compose documents activation-ready but disabled posture; all 3 focused tests pass. Owner to finalize.",
-      "status": "pending",
-      "created_at": "2026-04-30T07:04:47Z"
-    },
-    {
-      "task_id": "SVC-OPENCLAW-BFF-OPS-SURFACE",
-      "from": "Codex",
-      "to": "Claude2",
-      "message": "Implemented BFF OpenClaw ops surface: GET /api/v1/operator/openclaw/ops plus tool-workflow alias, service-client-backed upstream/session/policy/audit projection, paper/live gates visible but not enabled, idempotent authenticated session create/cancel facades, BFF API contract and handoff spec updated. Verification: pytest services/control-plane/bff/test_openclaw_ops_surface.py services/control-plane/bff/test_research_oss_preactivation_contract.py services/openclaw-gateway-adapter/test_session_lifecycle.py services/openclaw-gateway-adapter/test_tool_workflow_bridge.py => 88 passed; pytest services/control-plane/bff => 356 passed.",
-      "status": "done",
-      "created_at": "2026-04-30T07:19:38Z",
-      "resolved_at": "2026-04-30T07:22:46Z"
-    },
-    {
-      "task_id": "SVC-OPENCLAW-PAPER-BROKER-ADAPTER",
-      "from": "Codex2",
-      "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-04-30T07:21:56Z",
-      "resolved_at": "2026-04-30T07:23:29Z"
-    },
-    {
-      "task_id": "SVC-SEARCH-INDEXING-PIPELINE",
+      "task_id": "TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT",
       "from": "Codex2",
       "to": "Codex",
-      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "message": "Ready for review: portable bootstrap keeps non-Pantheon canonical files scoped to the bundle, repeated generic worker exits reassign at the configured threshold, and python3 -m pytest -q scripts/test_orchestrator_bundle.py scripts/test_supervisor.py passes (8 passed).",
       "status": "pending",
-      "created_at": "2026-04-30T07:22:03Z"
-    },
-    {
-      "task_id": "SVC-OPENCLAW-BFF-OPS-SURFACE",
-      "from": "Claude2",
-      "to": "Codex",
-      "message": "Review approved: all 5 acceptance criteria met — service-client-backed ops surface, fail-closed gate state, auth+idempotency enforced, healthy/degraded/denied states tested. Returned to Codex for closeout commit.",
-      "status": "pending",
-      "created_at": "2026-04-30T07:22:46Z"
-    },
-    {
-      "task_id": "SVC-OPENCLAW-BFF-OPS-SURFACE-SIDECAR-BFF-HANDOFF",
-      "from": "Codex2",
-      "to": "Gemini",
-      "message": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
-      "status": "pending",
-      "created_at": "2026-04-30T07:23:23Z"
-    },
-    {
-      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Refreshed sidecar BFF/frontend handoff packet for current repo truth: adapter bridge routes, BFF OpenClaw ops read/alias routes, BFF session create/cancel facades, and remaining invoke/trigger/frontend adoption gaps are now separated. Verification: python3 -m pytest services/control-plane/bff/test_openclaw_ops_surface.py -q => 4 passed.",
-      "status": "pending",
-      "created_at": "2026-04-30T07:23:39Z"
-    },
-    {
-      "task_id": "SVC-SOURCE-SEARCH-OPS-BFF-SIDECAR-BFF-HANDOFF",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "BFF/frontend handoff packet ready for review. Covers: source ingest service route inventory (§3.1 — 20 routes), search service route inventory (§3.2 — 11 routes), current BFF surface gap (§3.3 — no /api/v1/operator/source or /api/v1/operator/search routes exist), candidate composed read routes GET /api/v1/operator/source/ops and GET /api/v1/operator/search/ops with response envelopes (§4), 6 candidate command endpoints with auth/idempotency requirements (§4.3), operator journey for connector health, DLQ replay, and index reindex flows (§5), 16-gap BFF gap matrix (§6), frontend screen regions with allowedActions gating (§7), and parent+sidecar reviewer checklists (§8). No canonical truth modified. Verification: verified service routes against services/source_ingestion/main.py and services/search/main.py directly; verified BFF has no existing source/search ops surface by grepping main.py and BFF_API_CONTRACT.md.",
-      "status": "pending",
-      "created_at": "2026-04-30T07:23:53Z"
+      "created_at": "2026-04-30T12:41:50Z"
     }
   ],
   "blockers": [],
@@ -720,9 +506,9 @@
       "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 1,
+      "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Claude2": {
       "total": 1,
@@ -734,31 +520,31 @@
       "todo": 1
     },
     "Gemini": {
-      "total": 4,
+      "total": 2,
       "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 4
-    },
-    "Codex": {
-      "total": 4,
-      "active": 1,
-      "blocked": 0,
-      "done": 0,
-      "review": 1,
-      "review_approved": 1,
       "todo": 2
     },
-    "Codex2": {
-      "total": 2,
+    "Codex": {
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 1,
-      "todo": 1
+      "review_approved": 0,
+      "todo": 0
+    },
+    "Codex2": {
+      "total": 6,
+      "active": 1,
+      "blocked": 0,
+      "done": 0,
+      "review": 1,
+      "review_approved": 0,
+      "todo": 5
     },
     "Copilot": {
       "total": 0,

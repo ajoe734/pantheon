@@ -33,7 +33,17 @@
         "drawdown_snapshot",
         "slippage_observation",
         "fill_observation",
+        "fill_received",
+        "order_submitted",
+        "order_accepted",
+        "order_partially_filled",
+        "order_filled",
+        "order_canceled",
+        "order_cancelled",
         "order_rejection",
+        "position_snapshot",
+        "position_snapshot_received",
+        "broker_position_snapshot",
         "deploy_started",
         "deploy_completed",
         "rollback_started",
@@ -239,6 +249,34 @@
       },
       "additionalProperties": true,
       "description": "Event-specific metrics. additionalProperties allowed to support diverse event types."
+    },
+    "order_id": {
+      "type": "string",
+      "description": "Order identifier for order lifecycle and fill events (SD-09)."
+    },
+    "order_status": {
+      "type": "string",
+      "description": "Order status at the time of this event (e.g. submitted, accepted, canceled, filled)."
+    },
+    "fill_status": {
+      "type": "string",
+      "description": "Fill status alias populated for fill/partial-fill events alongside order_status."
+    },
+    "quantity": {
+      "type": "number",
+      "description": "Order or position quantity for order lifecycle and position snapshot events."
+    },
+    "price": {
+      "type": "number",
+      "description": "Order price or mark price for order lifecycle and position snapshot events."
+    },
+    "symbol": {
+      "type": "string",
+      "description": "Trading instrument symbol (e.g. SPY, AAPL) for order and position events."
+    },
+    "position_qty": {
+      "type": "number",
+      "description": "Current position quantity for position snapshot events."
     },
     "metadata": {
       "type": "object",
