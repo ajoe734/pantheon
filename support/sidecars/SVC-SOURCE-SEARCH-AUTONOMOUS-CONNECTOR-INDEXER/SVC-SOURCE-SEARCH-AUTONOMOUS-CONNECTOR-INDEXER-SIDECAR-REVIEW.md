@@ -5,7 +5,7 @@
 **Sidecar ID:** SVC-SOURCE-SEARCH-AUTONOMOUS-CONNECTOR-INDEXER-SIDECAR-REVIEW
 **Prepared By:** Claude2
 **Reviewer:** Claude
-**Status:** ready for review
+**Status:** done (review_approved → closeout finalized by Claude2)
 **Parent Task Status:** done (terminal_outcome: completed)
 **Prepared At:** 2026-04-30
 
