@@ -303,4 +303,5 @@ This sidecar does **not**:
 | Advisory file change list for BFF-OPS | Done |
 
 **Handoff target:** Codex2 (reviewer for this sidecar task)  
-**Expected next action:** Codex2 reviews this packet and approves or requests changes; parent owner (Codex2) decides whether to absorb into the main BFF-OPS task scope.
+**Review outcome:** Codex2 approved 2026-04-30T05:12:13Z — packet is scoped to support artifact only, documents required W&B offline BFF gaps and frontend rendering rules, does not alter canonical truth or runtime implementation.  
+**Closeout status:** Owner (Claude2) finalized 2026-04-30. Task closed as `done`.
