@@ -259,9 +259,15 @@ def _rejection_for(body: "DispatchJobBody", worker: str, requested_mode: str, di
             "rejected_at": timestamp,
             "rejected_by": "research-worker-gateway",
         }
-    # Offline gate path: when PANTHEON_OFFLINE_GATE_ENABLED is set and dispatch_mode is "offline",
-    # allow workers with declared local entrypoints to execute.
+    # Offline gate path requires an explicit offline request and offline dispatch.
     if OFFLINE_GATE_ENABLED and dispatch_mode == "offline":
+        if requested_mode != "offline":
+            return {
+                "reason": "offline_mode_required",
+                "detail": "Offline worker execution requires requested_mode=offline and dispatch_mode=offline.",
+                "rejected_at": timestamp,
+                "rejected_by": "research-worker-gateway",
+            }
         if worker in OFFLINE_WORKERS:
             return None
         return {

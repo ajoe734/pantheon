@@ -132,6 +132,32 @@ def test_open_gate_offline_worker_executes_and_persists_output() -> None:
     assert job["output_refs"][0]["output_type"] == "offline_execution_output"
 
 
+def test_open_gate_worker_execution_requires_requested_mode_offline() -> None:
+    """Open gate: dispatch_mode=offline alone is not enough to execute a worker."""
+    module = _load_gateway_module(offline_gate="true")
+    client = TestClient(module.app)
+
+    with mock.patch.object(module, "_execute_worker") as execute_worker:
+        result = client.post(
+            "/api/research-worker-gateway/jobs",
+            json={
+                "worker": "qlib",
+                "requested_mode": "stub",
+                "dispatch_mode": "offline",
+                "objective": "Invalid mixed-mode offline dispatch.",
+                "idempotency_key": "open-gate-qlib-stub-offline",
+                "requested_at": "2026-04-30T05:10:30Z",
+            },
+        )
+    assert result.status_code == 201
+    payload = result.json()
+    assert payload["status"] == "rejected"
+    assert payload["rejection"]["reason"] == "offline_mode_required"
+    assert payload["stdout"] is None
+    assert payload["exit_code"] is None
+    execute_worker.assert_not_called()
+
+
 def test_open_gate_failed_worker_records_failure() -> None:
     """Open gate: worker returning non-zero exit_code sets job status to failed."""
     module = _load_gateway_module(offline_gate="true")

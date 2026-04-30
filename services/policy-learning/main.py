@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json as _json
 import os
+import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -14,6 +16,9 @@ from store import PolicyLearningStore, build_policy_learning_store
 PRODUCTION_ADAPTERS = {"openclaw", "qlib", "trl", "finrl", "rllib", "ray_tune", "wandb"}
 STUB_ADAPTER = "stub"
 FAIL_CLOSED_SCOPE = "capability_metadata_read_only"
+OFFLINE_DISPATCH_ENABLED_SCOPE = "offline_worker_dispatch_enabled"
+# Adapters with declared gateway entrypoints that can be routed offline.
+OFFLINE_ADAPTERS = {"trl", "finrl", "rllib", "ray_tune", "qlib"}
 CAPABILITY_REGISTRY: Dict[str, Dict[str, Any]] = {
     "openclaw": {
         "status": "deferred",
@@ -71,6 +76,45 @@ def _data_dir() -> str:
 
 def _production_adapters_allowed() -> bool:
     return os.getenv("POLICY_LEARNING_ENABLE_PRODUCTION_ADAPTERS", "false").lower() == "true"
+
+
+def _offline_gate_enabled() -> bool:
+    return os.getenv("PANTHEON_OFFLINE_GATE_ENABLED", "false").lower() == "true"
+
+
+def _gateway_url() -> str:
+    return os.getenv("RESEARCH_WORKER_GATEWAY_URL", "http://research-worker-gateway-svc:8103")
+
+
+OFFLINE_GATE_ENABLED = _offline_gate_enabled()
+GATEWAY_URL = _gateway_url()
+
+
+def _route_to_gateway(adapter: str, objective: str, source_refs: List[Dict[str, Any]], constraints: Dict[str, Any], actor_id: str, job_id: str, timestamp: str) -> Optional[Dict[str, Any]]:
+    """POST an offline-capable adapter job to the research-worker-gateway."""
+    request_body = {
+        "worker": adapter,
+        "requested_mode": "offline",
+        "dispatch_mode": "offline",
+        "objective": objective,
+        "input_refs": source_refs,
+        "parameters": constraints,
+        "actor_id": actor_id,
+        "idempotency_key": f"pl-{job_id}",
+        "requested_at": timestamp,
+    }
+    payload = _json.dumps(request_body).encode("utf-8")
+    try:
+        req = urllib.request.Request(
+            f"{GATEWAY_URL}/api/research-worker-gateway/jobs",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return _json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
 
 
 def _next_job_id(timestamp: str, existing: set[str]) -> str:
@@ -153,10 +197,20 @@ def health() -> Dict[str, Any]:
 
 @app.get("/api/policy-learning/capabilities")
 def capabilities() -> Dict[str, Any]:
+    def _effective_metadata(adapter: str, meta: Dict[str, Any]) -> Dict[str, Any]:
+        if OFFLINE_GATE_ENABLED and adapter in OFFLINE_ADAPTERS:
+            updated = dict(meta)
+            updated["gate_state"] = "activation_ready"
+            updated["allowed_scope"] = OFFLINE_DISPATCH_ENABLED_SCOPE
+            updated["gateway_routing"] = "enabled"
+            return updated
+        return meta
+
     return {
         "service": "policy-learning",
         "default_mode": "stub",
         "production_activation": "disabled",
+        "offline_gate": "enabled" if OFFLINE_GATE_ENABLED else "disabled",
         "safety_boundary": {
             "training_dispatch": "disabled",
             "registry_writes": "disabled",
@@ -171,7 +225,7 @@ def capabilities() -> Dict[str, Any]:
             }
         ]
         + [
-            {"adapter": adapter, **metadata}
+            {"adapter": adapter, **_effective_metadata(adapter, metadata)}
             for adapter, metadata in sorted(CAPABILITY_REGISTRY.items())
         ],
     }
@@ -220,6 +274,47 @@ def propose_job(body: ProposalBody) -> Dict[str, Any]:
         rejection = {
             "reason": "unknown_adapter",
             "detail": f"Adapter family '{adapter}' is not registered for policy learning.",
+            "rejected_at": timestamp,
+            "rejected_by": "policy-learning-service",
+        }
+        events.append(_event(timestamp, "proposal_rejected", rejection["detail"], "system", events))
+    elif OFFLINE_GATE_ENABLED and adapter in OFFLINE_ADAPTERS and requested_mode == "offline":
+        # Offline gate open: route activation-ready adapters to the research-worker-gateway.
+        gateway_result = _route_to_gateway(adapter, body.objective, body.source_refs, body.constraints, body.actor_id, job_id, timestamp)
+        gateway_ref: Dict[str, Any]
+        if gateway_result:
+            gateway_ref = {"gateway_job_id": gateway_result.get("job_id"), "gateway": "research-worker-gateway"}
+            status = "dispatched"
+            events.append(_event(timestamp, "proposal_dispatched", f"Offline-gated adapter '{adapter}' routed to research-worker-gateway (gateway_job_id={gateway_result.get('job_id')}).", body.actor_id, events))
+        else:
+            gateway_ref = {"gateway_job_id": None, "error": "gateway_unavailable"}
+            status = "dispatched"
+            events.append(_event(timestamp, "proposal_dispatched", f"Offline-gated adapter '{adapter}' dispatch attempted; gateway unavailable.", body.actor_id, events))
+        job = {
+            "id": job_id,
+            "job_id": job_id,
+            "policy_id": body.policy_id,
+            "objective": body.objective,
+            "adapter": adapter,
+            "requested_mode": requested_mode,
+            "status": status,
+            "production_activation": "disabled",
+            "source_refs": body.source_refs,
+            "constraints": body.constraints,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": body.actor_id,
+            "rejection": None,
+            "gateway_ref": gateway_ref,
+            "events": events,
+        }
+        store.put_job(job)
+        return job
+    elif OFFLINE_GATE_ENABLED and adapter in OFFLINE_ADAPTERS and requested_mode not in {"production", "paper", "canary", "live"}:
+        status = "rejected"
+        rejection = {
+            "reason": "offline_mode_required",
+            "detail": "Offline-gated policy-learning dispatch requires requested_mode=offline.",
             "rejected_at": timestamp,
             "rejected_by": "policy-learning-service",
         }
@@ -276,6 +371,7 @@ def get_job_status(job_id: str) -> Dict[str, Any]:
         "requested_mode": job["requested_mode"],
         "production_activation": job["production_activation"],
         "rejection": job.get("rejection"),
+        "gateway_ref": job.get("gateway_ref"),
         "events": job.get("events", []),
         "updated_at": job.get("updated_at"),
     }

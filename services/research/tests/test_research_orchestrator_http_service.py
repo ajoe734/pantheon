@@ -12,13 +12,19 @@ from fastapi.testclient import TestClient
 SERVICE_DIR = Path(__file__).resolve().parents[1]
 
 
-def _load_service_module(max_active_runs: str = "8", production_adapters_enabled: str = "false"):
+def _load_service_module(
+    max_active_runs: str = "8",
+    production_adapters_enabled: str = "false",
+    offline_gate: str = "false",
+):
     with mock.patch.dict(
         "os.environ",
         {
             "RESEARCH_ORCHESTRATOR_DATA_DIR": tempfile.mkdtemp(),
             "RESEARCH_ORCHESTRATOR_MAX_ACTIVE_RUNS": max_active_runs,
             "RESEARCH_ORCHESTRATOR_ENABLE_PRODUCTION_ADAPTERS": production_adapters_enabled,
+            "PANTHEON_OFFLINE_GATE_ENABLED": offline_gate,
+            "RESEARCH_WORKER_GATEWAY_URL": "http://research-worker-gateway-svc:8103",
         },
     ):
         sys.modules.pop("store", None)
@@ -224,6 +230,97 @@ def test_research_orchestrator_blocks_production_adapters_and_bounds_dispatch() 
         assert payload["status"] == "rejected"
         assert payload["rejection"]["reason"] == "production_adapter_disabled"
         assert payload["production_activation"] == "disabled"
+
+
+def test_research_orchestrator_open_gate_routes_offline_adapter_to_gateway() -> None:
+    module = _load_service_module(offline_gate="true")
+    client = TestClient(module.app)
+    task = client.post(
+        "/api/research-orchestrator/tasks",
+        json={
+            "title": "Offline qlib route",
+            "objective": "Run qlib offline research through the gateway.",
+            "created_at": "2026-04-30T06:30:00Z",
+        },
+    ).json()
+
+    captured = {}
+
+    def fake_route(adapter, task_id, run_id, objective, input_refs, parameters, actor_id, timestamp):
+        captured.update(
+            {
+                "adapter": adapter,
+                "task_id": task_id,
+                "run_id": run_id,
+                "objective": objective,
+                "input_refs": input_refs,
+                "parameters": parameters,
+                "actor_id": actor_id,
+                "timestamp": timestamp,
+            }
+        )
+        return {"job_id": "wjob-20260430-010", "status": "completed"}
+
+    with mock.patch.object(module, "_route_to_gateway", side_effect=fake_route):
+        result = client.post(
+            f"/api/research-orchestrator/tasks/{task['task_id']}/runs",
+            json={
+                "adapter": "qlib",
+                "requested_mode": "offline",
+                "dispatch_mode": "offline",
+                "input_refs": [{"type": "dataset", "id": "ds-001"}],
+                "parameters": {"QLIB_BACKEND": "stub"},
+                "actor_id": "tester",
+                "requested_at": "2026-04-30T06:31:00Z",
+            },
+        )
+
+    assert result.status_code == 201
+    run = result.json()
+    assert run["status"] == "dispatched"
+    assert run["gateway_ref"] == {"gateway_job_id": "wjob-20260430-010", "gateway": "research-worker-gateway"}
+    assert run["production_activation"] == "disabled"
+    assert captured["objective"] == "Run qlib offline research through the gateway."
+    assert captured["input_refs"] == [{"type": "dataset", "id": "ds-001"}]
+    assert captured["parameters"] == {"QLIB_BACKEND": "stub"}
+
+    status = client.get(f"/api/research-orchestrator/runs/{run['run_id']}/status")
+    assert status.status_code == 200
+    assert status.json()["gateway_ref"]["gateway_job_id"] == "wjob-20260430-010"
+
+
+def test_research_orchestrator_open_gate_requires_explicit_offline_modes() -> None:
+    module = _load_service_module(offline_gate="true")
+    client = TestClient(module.app)
+    task = client.post(
+        "/api/research-orchestrator/tasks",
+        json={
+            "title": "Offline mode guard",
+            "objective": "Verify open gate remains offline-only.",
+            "created_at": "2026-04-30T06:40:00Z",
+        },
+    ).json()
+
+    cases = [
+        {"requested_mode": "offline", "dispatch_mode": "not_a_mode"},
+        {"requested_mode": "stub", "dispatch_mode": "offline"},
+    ]
+    with mock.patch.object(module, "_route_to_gateway") as route:
+        for index, body in enumerate(cases, start=1):
+            result = client.post(
+                f"/api/research-orchestrator/tasks/{task['task_id']}/runs",
+                json={
+                    "adapter": "qlib",
+                    **body,
+                    "requested_at": f"2026-04-30T06:4{index}:00Z",
+                },
+            )
+            assert result.status_code == 201
+            payload = result.json()
+            assert payload["status"] == "rejected"
+            assert payload["rejection"]["reason"] == "offline_mode_required"
+            assert "gateway_ref" not in payload
+        route.assert_not_called()
 
 
 def test_research_orchestrator_rejects_write_paths_and_unknown_adapters() -> None:

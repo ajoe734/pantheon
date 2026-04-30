@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json as _json
 import os
+import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -16,6 +18,9 @@ PRODUCTION_MODES = {"production", "paper", "canary", "live"}
 STUB_ADAPTERS = {"stub", "handoff_only", "manual"}
 ACTIVE_STATUSES = {"queued", "running", "dispatching"}
 FAIL_CLOSED_SCOPE = "capability_metadata_read_only"
+OFFLINE_DISPATCH_ENABLED_SCOPE = "offline_worker_dispatch_enabled"
+# Adapters with declared gateway entrypoints that can be routed offline.
+OFFLINE_ADAPTERS = {"qlib", "finrl", "rllib", "ray_tune", "trl"}
 CAPABILITY_REGISTRY: Dict[str, Dict[str, Any]] = {
     "openclaw": {
         "status": "deferred",
@@ -79,9 +84,48 @@ def _production_adapters_allowed() -> bool:
     return os.getenv("RESEARCH_ORCHESTRATOR_ENABLE_PRODUCTION_ADAPTERS", "false").lower() == "true"
 
 
+def _offline_gate_enabled() -> bool:
+    return os.getenv("PANTHEON_OFFLINE_GATE_ENABLED", "false").lower() == "true"
+
+
+def _gateway_url() -> str:
+    return os.getenv("RESEARCH_WORKER_GATEWAY_URL", "http://research-worker-gateway-svc:8103")
+
+
 DATA_DIR = _data_dir()
 MAX_ACTIVE_RUNS = _max_active_runs()
 PRODUCTION_ADAPTERS_ALLOWED = _production_adapters_allowed()
+OFFLINE_GATE_ENABLED = _offline_gate_enabled()
+GATEWAY_URL = _gateway_url()
+
+
+def _route_to_gateway(adapter: str, task_id: str, run_id: str, objective: str, input_refs: List[Dict[str, Any]], parameters: Dict[str, Any], actor_id: str, timestamp: str) -> Optional[Dict[str, Any]]:
+    """POST an offline-capable run to the research-worker-gateway."""
+    request_body = {
+        "worker": adapter,
+        "requested_mode": "offline",
+        "dispatch_mode": "offline",
+        "objective": objective,
+        "task_id": task_id,
+        "run_id": run_id,
+        "input_refs": input_refs,
+        "parameters": parameters,
+        "actor_id": actor_id,
+        "idempotency_key": f"ro-{run_id}",
+        "requested_at": timestamp,
+    }
+    payload = _json.dumps(request_body).encode("utf-8")
+    try:
+        req = urllib.request.Request(
+            f"{GATEWAY_URL}/api/research-worker-gateway/jobs",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return _json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
 
 
 def _next_id(prefix: str, timestamp: str, existing: set[str]) -> str:
@@ -211,10 +255,20 @@ def health() -> Dict[str, Any]:
 
 @app.get("/api/research-orchestrator/capabilities")
 def capabilities() -> Dict[str, Any]:
+    def _effective_metadata(adapter: str, meta: Dict[str, Any]) -> Dict[str, Any]:
+        if OFFLINE_GATE_ENABLED and adapter in OFFLINE_ADAPTERS:
+            updated = dict(meta)
+            updated["gate_state"] = "activation_ready"
+            updated["allowed_scope"] = OFFLINE_DISPATCH_ENABLED_SCOPE
+            updated["gateway_routing"] = "enabled"
+            return updated
+        return meta
+
     return {
         "service": "research-orchestrator",
         "default_dispatch_mode": "stub",
         "production_activation": "disabled",
+        "offline_gate": "enabled" if OFFLINE_GATE_ENABLED else "disabled",
         "bounded_dispatch": {"max_active_runs": MAX_ACTIVE_RUNS},
         "safety_boundary": {
             "training_dispatch": "disabled",
@@ -227,7 +281,7 @@ def capabilities() -> Dict[str, Any]:
             for adapter in sorted(STUB_ADAPTERS)
         ]
         + [
-            {"adapter": adapter, **metadata}
+            {"adapter": adapter, **_effective_metadata(adapter, metadata)}
             for adapter, metadata in sorted(CAPABILITY_REGISTRY.items())
         ],
     }
@@ -312,6 +366,17 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
             "rejected_at": timestamp,
             "rejected_by": "research-orchestrator-service",
         }
+    elif OFFLINE_GATE_ENABLED and adapter in OFFLINE_ADAPTERS and requested_mode == "offline" and dispatch_mode == "offline":
+        # Offline gate path: route to gateway and record the dispatch.
+        pass  # Handled below after run_id is assigned.
+    elif OFFLINE_GATE_ENABLED and adapter in OFFLINE_ADAPTERS and requested_mode not in PRODUCTION_MODES:
+        rejected = True
+        rejection = {
+            "reason": "offline_mode_required",
+            "detail": "Offline-gated adapter dispatch requires requested_mode=offline and dispatch_mode=offline.",
+            "rejected_at": timestamp,
+            "rejected_by": "research-orchestrator-service",
+        }
     elif adapter in PRODUCTION_ADAPTERS or requested_mode in PRODUCTION_MODES:
         rejected = True
         rejection = {
@@ -320,7 +385,7 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
             "rejected_at": timestamp,
             "rejected_by": "research-orchestrator-service",
         }
-    if dispatch_mode not in STUB_ADAPTERS:
+    if not rejected and dispatch_mode not in STUB_ADAPTERS and not (OFFLINE_GATE_ENABLED and adapter in OFFLINE_ADAPTERS and requested_mode == "offline" and dispatch_mode == "offline"):
         rejected = True
         rejection = {
             "reason": "dispatch_mode_disabled",
@@ -334,11 +399,41 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         raise HTTPException(status_code=429, detail=f"active research runs exceed RESEARCH_ORCHESTRATOR_MAX_ACTIVE_RUNS={MAX_ACTIVE_RUNS}")
 
     run_id = _next_id("rrun", timestamp, {str(run.get("run_id") or "") for run in store.list_runs()})
+
+    # Offline gate: route to gateway before recording the run.
+    is_offline_dispatch = not rejected and OFFLINE_GATE_ENABLED and adapter in OFFLINE_ADAPTERS and requested_mode == "offline" and dispatch_mode == "offline"
+    gateway_ref: Optional[Dict[str, Any]] = None
+    if is_offline_dispatch:
+        gw_result = _route_to_gateway(
+            adapter,
+            task_id,
+            run_id,
+            str(task.get("objective") or ""),
+            body.input_refs,
+            body.parameters,
+            body.actor_id,
+            timestamp,
+        )
+        if gw_result:
+            gateway_ref = {"gateway_job_id": gw_result.get("job_id"), "gateway": "research-worker-gateway"}
+        else:
+            gateway_ref = {"gateway_job_id": None, "error": "gateway_unavailable"}
+
     events: List[Dict[str, Any]] = []
-    status = "rejected" if rejected else "queued"
-    summary = rejection["detail"] if rejection else "Stub research orchestration run queued for bounded dispatch."
-    events.append(_event(timestamp, "run_rejected" if rejected else "run_queued", summary, body.actor_id, run_id, events))
-    run = {
+    if rejected:
+        status = "rejected"
+        summary = rejection["detail"] if rejection else "Rejected."
+        events.append(_event(timestamp, "run_rejected", summary, body.actor_id, run_id, events))
+    elif is_offline_dispatch:
+        status = "dispatched"
+        summary = f"Offline-gated adapter '{adapter}' dispatched to research-worker-gateway (gateway_job_id={gateway_ref.get('gateway_job_id') if gateway_ref else None})."
+        events.append(_event(timestamp, "run_dispatched", summary, body.actor_id, run_id, events))
+    else:
+        status = "queued"
+        summary = "Stub research orchestration run queued for bounded dispatch."
+        events.append(_event(timestamp, "run_queued", summary, body.actor_id, run_id, events))
+
+    run: Dict[str, Any] = {
         "id": run_id,
         "run_id": run_id,
         "task_id": task_id,
@@ -358,6 +453,8 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         "artifact_refs": [],
         "proposal_refs": [],
     }
+    if gateway_ref is not None:
+        run["gateway_ref"] = gateway_ref
     task["status"] = "rejected" if rejected else "running"
     task["updated_at"] = timestamp
     store.put_task(task)
@@ -397,6 +494,7 @@ def get_run_status(run_id: str) -> Dict[str, Any]:
         "dispatch_mode": run["dispatch_mode"],
         "production_activation": run["production_activation"],
         "rejection": run.get("rejection"),
+        "gateway_ref": run.get("gateway_ref"),
         "artifact_refs": run.get("artifact_refs", []),
         "proposal_refs": run.get("proposal_refs", []),
         "events": run.get("events", []),
