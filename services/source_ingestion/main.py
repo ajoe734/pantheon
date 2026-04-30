@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal
@@ -34,7 +35,7 @@ from .connectors import (
     SourceRecordStatus,
     SourceType,
 )
-from .configured import ConfiguredConnectorFetcher, JsonlConfiguredConnectorStore
+from .configured import ConfiguredConnectorFetcher, JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
 from .ingest_manager import IngestManager
 from .pg_store import build_source_evidence_repository
 from .scheduler import IngestBatch, IngestionScheduler, JsonlIngestScheduleStore
@@ -52,12 +53,14 @@ CONNECTOR_STORE_PATH = Path(os.getenv("SOURCE_INGEST_CONNECTOR_STORE_PATH", str(
 SOURCE_EVIDENCE_STORE_PATH = Path(os.getenv("SOURCE_INGEST_EVIDENCE_STORE_PATH", str(DATA_DIR / "source_evidence.jsonl")))
 DLQ_STORE_PATH = Path(os.getenv("SOURCE_INGEST_DLQ_PATH", str(DATA_DIR / "source_ingest_dlq.jsonl")))
 AUDIT_STORE_PATH = Path(os.getenv("SOURCE_INGEST_AUDIT_PATH", str(DATA_DIR / "source_ingest_audit.jsonl")))
+CONNECTOR_SCHEDULE_CONFIG_PATH = Path(os.getenv("SOURCE_INGEST_SCHEDULE_CONFIG_PATH", str(DATA_DIR / "connector_schedule.jsonl")))
 MAX_RECORDS_PER_JOB = int(os.getenv("SOURCE_INGEST_MAX_RECORDS", "100"))
 
 app = FastAPI(title="Pantheon Source Ingest Service", version="0.1.0")
 manager = IngestManager()
 store = JsonlIngestScheduleStore(SCHEDULE_STORE_PATH)
 connector_store = JsonlConfiguredConnectorStore(CONNECTOR_STORE_PATH)
+schedule_config_store = JsonlConnectorScheduleStore(CONNECTOR_SCHEDULE_CONFIG_PATH)
 configured_fetcher = ConfiguredConnectorFetcher(connector_store)
 evidence_repository = build_source_evidence_repository(SOURCE_EVIDENCE_STORE_PATH)
 evidence_builder = EvidenceBundleBuilder(evidence_repository)
@@ -219,6 +222,11 @@ class ReplayDlqRequest(BaseModel):
     entry_ids: list[str] = Field(default_factory=list)
     reason: str = "operator-approved source ingest DLQ replay"
     actor_id: str = "source-ingest-operator"
+
+
+class SetScheduleRequest(BaseModel):
+    interval_seconds: int = 0
+    enabled: bool = False
 
 
 def _register_or_validate_connector(connector: SourceConnector) -> SourceConnector:
@@ -623,6 +631,84 @@ def replay_dlq(request: ReplayDlqRequest) -> dict[str, Any]:
     )
     _append_audit_actions(tuple(result.audit_action for result in replay_result.results))
     return replay_result.to_dict()
+
+
+@app.put("/api/source-ingest/connectors/{connector_id}/schedule")
+def set_connector_schedule(connector_id: str, request: SetScheduleRequest) -> dict[str, Any]:
+    config = connector_store.get_config(connector_id)
+    if config is None:
+        raise HTTPException(status_code=404, detail="connector config not found")
+    try:
+        schedule = schedule_config_store.upsert_schedule(
+            connector_id,
+            interval_seconds=request.interval_seconds,
+            enabled=request.enabled,
+        )
+        return {"schedule": schedule.to_dict()}
+    except SourceEvidenceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/source-ingest/connectors/{connector_id}/schedule")
+def get_connector_schedule(connector_id: str) -> dict[str, Any]:
+    schedule = schedule_config_store.get_schedule(connector_id)
+    if schedule is None:
+        raise HTTPException(status_code=404, detail="connector schedule not configured")
+    return {"schedule": schedule.to_dict()}
+
+
+@app.post("/api/source-ingest/run-scheduled")
+def run_scheduled_connectors() -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    schedules = schedule_config_store.list_schedules()
+    ran: list[dict[str, Any]] = []
+    skipped: list[str] = []
+    failed: list[dict[str, Any]] = []
+
+    for sched in schedules:
+        if not sched.enabled or sched.interval_seconds <= 0:
+            skipped.append(sched.connector_id)
+            continue
+        watermark = store.get_watermark(sched.connector_id)
+        if watermark is not None:
+            try:
+                last_run = datetime.fromisoformat(watermark.updated_at.replace("Z", "+00:00"))
+                elapsed = (now - last_run).total_seconds()
+                if elapsed < sched.interval_seconds:
+                    skipped.append(sched.connector_id)
+                    continue
+            except ValueError:
+                pass
+        config = connector_store.get_config(sched.connector_id)
+        if config is None:
+            failed.append({"connector_id": sched.connector_id, "error": "connector config not found"})
+            continue
+        try:
+            connector = _register_or_validate_connector(config.connector)
+            result, evidence_refs = _run_job(
+                connector=connector,
+                trace_id=f"scheduled-{sched.connector_id}-{int(now.timestamp())}",
+                trigger_type="scheduled",
+                fetch_batch=_configured_fetch(sched.connector_id),
+            )
+            ran.append({
+                "connector_id": sched.connector_id,
+                "run": result.run.to_dict(),
+                "evidence_refs": evidence_refs,
+            })
+        except (EvidenceValidationError, SourceEvidenceError) as exc:
+            failed.append({"connector_id": sched.connector_id, "error": str(exc)})
+
+    return {
+        "ran": ran,
+        "skipped": skipped,
+        "failed": failed,
+        "summary": {
+            "total_ran": len(ran),
+            "total_skipped": len(skipped),
+            "total_failed": len(failed),
+        },
+    }
 
 
 @app.get("/api/source-ingest/audit")

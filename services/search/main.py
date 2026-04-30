@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -34,12 +36,53 @@ def _resolve_data_dir() -> Path:
 
 DATA_DIR = _resolve_data_dir()
 INDEX_STORE_PATH = Path(os.getenv("SEARCH_INDEX_STORE_PATH", str(DATA_DIR / "search-index.jsonl")))
+MATERIALIZE_STORE_PATH = Path(os.getenv("SEARCH_MATERIALIZE_STORE_PATH", str(DATA_DIR / "search-materialize.jsonl")))
 EVIDENCE_STORE_PATH = Path(
     os.getenv(
         "SEARCH_EVIDENCE_STORE_PATH",
         os.getenv("SOURCE_INGEST_EVIDENCE_STORE_PATH", str(DATA_DIR / "source_evidence.jsonl")),
     )
 )
+
+
+class JsonlMaterializedIndexStore:
+    """Append/replay store for materialized search index state snapshots."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._last: dict[str, Any] | None = None
+        self.reload()
+
+    def reload(self) -> None:
+        self._last = None
+        if not self.path.exists():
+            return
+        last_entry: dict[str, Any] | None = None
+        for line in self.path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped:
+                try:
+                    last_entry = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+        self._last = last_entry
+
+    def record_materialize(self, state: dict[str, Any]) -> dict[str, Any]:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        entry: dict[str, Any] = {
+            "schema_version": "search_materialize_store.v1",
+            "record_type": "materialized_index",
+            "payload": state,
+        }
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
+        self._last = entry
+        return state
+
+    def get_last(self) -> dict[str, Any] | None:
+        if self._last is None:
+            return None
+        return self._last.get("payload")
 
 
 class SearchDocumentBody(BaseModel):
@@ -211,10 +254,15 @@ def _source_watermarks(repository: InMemoryEvidenceRepository) -> dict[str, str 
     return watermarks
 
 
-def create_app(index_store_path: Path | None = None, evidence_store_path: Path | None = None) -> FastAPI:
+def create_app(
+    index_store_path: Path | None = None,
+    evidence_store_path: Path | None = None,
+    materialize_store_path: Path | None = None,
+) -> FastAPI:
     app = FastAPI(title="Pantheon Search Service", version="0.1.0")
     store = build_search_index_store(index_store_path or INDEX_STORE_PATH)
     durable_repository = build_search_evidence_repository(evidence_store_path or EVIDENCE_STORE_PATH)
+    materialize_store = JsonlMaterializedIndexStore(materialize_store_path or MATERIALIZE_STORE_PATH)
     register_fastapi_health_routes(
         app,
         "pantheon-search",
@@ -333,6 +381,34 @@ def create_app(index_store_path: Path | None = None, evidence_store_path: Path |
         if snapshot is None:
             raise HTTPException(status_code=404, detail="search snapshot not found")
         return {"snapshot": snapshot.to_dict()}
+
+    @app.post("/api/search/index/materialize")
+    def materialize_index() -> dict[str, Any]:
+        try:
+            durable_repository.reload()
+            adapter = KeywordIndexAdapter(
+                durable_repository,
+                source_watermarks=_source_watermarks(durable_repository),
+                adapter_state="materialized",
+            )
+            state: dict[str, Any] = {
+                "materialized_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                "indexed_object_count": len(durable_repository.list_knowledge_objects()),
+                "index": adapter.snapshot().to_dict(),
+                "evidence_store_path": str(durable_repository.path),
+            }
+            materialize_store.record_materialize(state)
+            return state
+        except EvidenceValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/search/index/materialize")
+    def get_materialized_index() -> dict[str, Any]:
+        materialize_store.reload()
+        state = materialize_store.get_last()
+        if state is None:
+            raise HTTPException(status_code=404, detail="no materialized index found")
+        return state
 
     return app
 

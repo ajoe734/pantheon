@@ -14,6 +14,108 @@ from .connectors import SourceConnector, SourceEvidenceError, SourceRecord
 from .scheduler import IngestBatch
 
 
+@dataclass(frozen=True)
+class ConnectorScheduleConfig:
+    """Autonomous schedule configuration for a configured connector."""
+
+    connector_id: str
+    interval_seconds: int
+    enabled: bool
+    updated_at: str
+    schema_version: str = "connector_schedule_config.v1"
+
+    def __post_init__(self) -> None:
+        if not str(self.connector_id).strip():
+            raise SourceEvidenceError("schedule connector_id is required")
+        if self.interval_seconds < 0:
+            raise SourceEvidenceError("schedule interval_seconds must be >= 0")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "connector_id": self.connector_id,
+            "interval_seconds": self.interval_seconds,
+            "enabled": self.enabled,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "ConnectorScheduleConfig":
+        return cls(
+            connector_id=str(data["connector_id"]),
+            interval_seconds=int(data.get("interval_seconds", 0)),
+            enabled=bool(data.get("enabled", False)),
+            updated_at=str(data["updated_at"]),
+            schema_version=str(data.get("schema_version", "connector_schedule_config.v1")),
+        )
+
+
+class JsonlConnectorScheduleStore:
+    """Append/replay store for connector autonomous schedule configuration."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self._schedules: dict[str, ConnectorScheduleConfig] = {}
+        self.reload()
+
+    def reload(self) -> None:
+        self._schedules = {}
+        if not self.path.exists():
+            return
+        for line_no, line in enumerate(self.path.read_text(encoding="utf-8").splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise SourceEvidenceError(f"Invalid connector schedule JSONL at {self.path}:{line_no}: {exc.msg}") from exc
+            record_type = str(entry.get("record_type") or "")
+            payload = entry.get("payload")
+            if not isinstance(payload, Mapping):
+                raise SourceEvidenceError(f"Invalid connector schedule payload at {self.path}:{line_no}")
+            if record_type == "connector_schedule":
+                config = ConnectorScheduleConfig.from_dict(payload)
+                self._schedules[config.connector_id] = config
+            else:
+                raise SourceEvidenceError(f"Unsupported connector schedule record: {record_type or '<missing>'}")
+
+    def upsert_schedule(
+        self,
+        connector_id: str,
+        *,
+        interval_seconds: int,
+        enabled: bool,
+    ) -> ConnectorScheduleConfig:
+        if not str(connector_id).strip():
+            raise SourceEvidenceError("schedule connector_id is required")
+        config = ConnectorScheduleConfig(
+            connector_id=connector_id,
+            interval_seconds=interval_seconds,
+            enabled=enabled,
+            updated_at=_utc_now(),
+        )
+        self._schedules[connector_id] = config
+        self._append("connector_schedule", connector_id, config.to_dict())
+        return config
+
+    def get_schedule(self, connector_id: str) -> ConnectorScheduleConfig | None:
+        return self._schedules.get(connector_id)
+
+    def list_schedules(self) -> list[ConnectorScheduleConfig]:
+        return list(self._schedules.values())
+
+    def _append(self, record_type: str, record_id: str, payload: Mapping[str, Any]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "schema_version": "connector_schedule_store.v1",
+            "record_type": record_type,
+            "record_id": record_id,
+            "payload": dict(payload),
+        }
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 

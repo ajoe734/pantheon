@@ -537,6 +537,58 @@ def main() -> int:
         raise RuntimeError(f"source-ingest did not persist replayed source record: {status} {replayed_source_record}")
     print("ok  source-ingest replayed a configured failure from DLQ")
 
+    # Configure a dedicated connector for the autonomous scheduled-run path.
+    sched_connector_body = {
+        "connector": {
+            "connector_id": "conn-smoke-scheduled",
+            "source_type": "internal_note",
+            "provider": "Pantheon smoke scheduler",
+            "license_scope": "internal",
+        },
+        "fetch": {
+            "mode": "static_records",
+            "next_watermark": future_timestamp,
+            "records": [
+                {
+                    "source_id": f"src-smoke-sched-{suffix}",
+                    "title": "Smoke scheduled note",
+                    "content_ref": f"memory://compose-smoke/sched/{suffix}",
+                    "metadata": {
+                        "body": f"Autonomous scheduled source evidence {source_search_token}",
+                        "access_scope": ["operator", "research"],
+                        "keywords": ["scheduled", "autonomous", source_search_token],
+                    },
+                }
+            ],
+        },
+    }
+    status, configured_sched = _request_json(
+        "POST",
+        f"{SOURCE_INGEST_URL}/api/source-ingest/connectors",
+        body=sched_connector_body,
+    )
+    if status != 201 or configured_sched.get("connector", {}).get("connector_id") != "conn-smoke-scheduled":
+        raise RuntimeError(f"source-ingest scheduled connector configuration failed: {status} {configured_sched}")
+    # Set schedule: interval_seconds=1 so the connector is immediately due.
+    status, sched_config = _request_json(
+        "PUT",
+        f"{SOURCE_INGEST_URL}/api/source-ingest/connectors/conn-smoke-scheduled/schedule",
+        body={"interval_seconds": 1, "enabled": True},
+    )
+    if status != 200 or not sched_config.get("schedule", {}).get("enabled"):
+        raise RuntimeError(f"source-ingest schedule set failed: {status} {sched_config}")
+    # Trigger autonomous run.
+    status, scheduled_run = _request_json("POST", f"{SOURCE_INGEST_URL}/api/source-ingest/run-scheduled")
+    if status != 200 or scheduled_run.get("summary", {}).get("total_ran", 0) < 1:
+        raise RuntimeError(f"source-ingest run-scheduled failed: {status} {scheduled_run}")
+    status, sched_source = _request_json(
+        "GET",
+        f"{SOURCE_INGEST_URL}/api/source-ingest/source-records/src-smoke-sched-{suffix}",
+    )
+    if status != 200 or sched_source.get("source_record", {}).get("source_id") != f"src-smoke-sched-{suffix}":
+        raise RuntimeError(f"source-ingest scheduled run did not persist source record: {status} {sched_source}")
+    print("ok  source-ingest autonomous scheduled connector ran and persisted evidence")
+
     status, search_index = _request_json("POST", f"{SEARCH_URL}/api/search/index/reload")
     if status != 200 or search_index.get("indexed_object_count", 0) < 2:
         raise RuntimeError(f"search-svc did not load persisted source evidence index: {status} {search_index}")
@@ -567,6 +619,15 @@ def main() -> int:
     if status != 200 or search_snapshot.get("snapshot", {}).get("request_id") != search_body["request_id"]:
         raise RuntimeError(f"search-svc did not replay index snapshot: {status} {search_snapshot}")
     print("ok  search-svc applied governed filters and replayed search refs")
+
+    # Materialize the search index from autonomous ingest evidence.
+    status, materialized = _request_json("POST", f"{SEARCH_URL}/api/search/index/materialize")
+    if status != 200 or materialized.get("indexed_object_count", 0) < 2:
+        raise RuntimeError(f"search-svc materialized index failed or has too few objects: {status} {materialized}")
+    status, replayed_materialize = _request_json("GET", f"{SEARCH_URL}/api/search/index/materialize")
+    if status != 200 or replayed_materialize.get("materialized_at") != materialized.get("materialized_at"):
+        raise RuntimeError(f"search-svc did not replay materialized index: {status} {replayed_materialize}")
+    print("ok  search-svc materialized index from autonomous ingest evidence and replayed state")
 
     trainer_body = {
         "persona_id": "persona-alpha",
