@@ -34,6 +34,10 @@ Production readiness requires `posture_alert_count=0`,
 
 ## Smoke
 
+Run the broader honest-stack smoke first when validating the full end-to-end
+source/search path. Then run this posture smoke as the post-deploy readiness
+check.
+
 After the production env is loaded and both services are running:
 
 ```bash
