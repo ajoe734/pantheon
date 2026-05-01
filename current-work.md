@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-01 15:47:25
+Last updated: 2026-05-01 16:00:56
 
 ## Objective
 
@@ -39,11 +39,11 @@ Last updated: 2026-05-01 15:47:25
 
 - `Claude`: execution, control-plane, governance-review; next: Assignment created
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Implemented paper telemetry runtime summary projection and BFF runtime-state read path. Key files: services/telemetry/runtime_summary.py, services/telemetry/ingest_svc.py, services/telemetry/main.py, services/control-plane/bff/read_store.py, services/control-plane/bff/main.py, docs/04/pantheon_sa/SA-17_telemetry_reconciliation_evolution_gap_analysis.md. Acceptance covered: heartbeat ingest updates telemetry-owned runtime summary; summary includes runtime_binding_id, deployment_stage, engine_bridge_repo, engine_bridge_commit; BFF runtime-state reads telemetry service summaries and shows last_heartbeat_at. Verification: py_compile with PYTHONPYCACHEPREFIX=/tmp/pantheon-p0-tel-proj-pycache; unittest services.telemetry.test_runtime_summary_projection services.telemetry.test_paper_runtime_ingest_contract services.telemetry.test_main_routes; pytest services/control-plane/bff/test_pkt010_runtime_state_board_contract.py -q; pytest services/control-plane/bff/test_pkt011_health_status_board_contract.py -q; pytest services/control-plane/bff/test_read_store_service_clients.py -q; git diff --check on touched files.
-- `Codex2`: integration, status-system, schema, acceptance; next: Approved: adapter CI runner exists and passes; bounded source/search compose smoke passes; research/OpenClaw production adapters remain fail-closed. Owner Codex2 should finalize with a task-scoped commit and done closeout.
+- `Codex`: integration, status-system, schema, acceptance; next: Auto-reassigned P0-LOOP-001 away from sidecar-only lane Gemini; reviewer Gemini -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.
+- `Codex2`: integration, status-system, schema, acceptance; next: Assignment created
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
 - `Claude2`: execution, control-plane, governance-review; next: No active assignment
-- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Acceptance packet prepared and handed off to reviewer Codex for review.
+- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 
 ## Delivery Layers
 
@@ -51,16 +51,14 @@ Last updated: 2026-05-01 15:47:25
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `P0-TEL-PROJ-001` | Pantheon P0 Paper Loop | Project paper telemetry into runtime status | Codex | review | `P0-TEL-001` | 讓 TelemetryEvent ingest 後更新 runtime summary，供 BFF 顯示非 mock heartbeat/status。 |
 | `P0-LOOP-001` | Pantheon P0 Paper Loop | Add minimum paper operating loop smoke | Codex | todo | `P0-TEL-PROJ-001` | 以 seed/approved artifact 跑通 DeploymentPlan -> RuntimeBinding -> paper heartbeat -> BFF runtime status。 |
 | `P0-REC-001` | Pantheon P0 Paper Loop | Write basic paper ReconciliationRecord | Codex2 | todo | `P0-LOOP-001` | 在 paper run 後產生最低限度 ReconciliationRecord，並允許 threshold breach 開 IncidentCase。 |
 | `P0-FE-SOURCE-001` | Pantheon P0 Paper Loop | Add source mode and runtime identity to critical frontend surfaces | Codex | todo | `P0-FE-DEMO-001`, `P0-TEL-PROJ-001` | 在 runtime/deployment/governance/evolution 等關鍵 UI 加 source_mode 與 bridge/binding/runtime identity。 |
-| `P0-CI-BOUNDED-001` | Pantheon P0 Paper Loop | Add source/search bounded and fail-closed adapter CI | Codex2 | review_approved | `P0-CI-BRIDGE-001` | 為 bounded source/search baseline 與 research/OpenClaw fail-closed posture 補 CI。 |
 | `P1-BRACKET-001` | P1 Wave 5 | Guarded paper/sim bracket order execution | Codex | todo | `P0-LIVE-GUARD-001` | 在 paper/sim broker 範圍內實作受治理 bracket order execution；live 仍 fail-closed。 |
 | `P1-LIVE-PLAN-001` | P1 Wave 5 | Canary/live activation criteria and runbook | Claude | todo | `P0-LOOP-001` | 定義 canary/live activation criteria 與 runbook；P1 只取得 activation readiness，不開 production live。 |
 | `P1-SEARCH-001` | P1 Wave 5 | OpenClaw governed SearchGateway integration | Codex2 | todo | `P0-CI-BOUNDED-001` | 把 OpenClaw search 接到 governed SearchGateway，只能回傳 evidence bundle/citation pack，不能越權碰 execution。 |
 | `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | Codex | todo | `P0-CI-BOUNDED-001` | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 |
-| `P1-BRACKET-001-SIDECAR-ACCEPTANCE` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-BRACKET-001] Prepare P1-BRACKET-001 acceptance packet and dependency map | Gemini2 | review | `P0-LIVE-GUARD-001` | 平行支援 P1-BRACKET-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
+| `P1-BRACKET-001-SIDECAR-ACCEPTANCE` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-BRACKET-001] Prepare P1-BRACKET-001 acceptance packet and dependency map | Codex2 | todo | `P0-LIVE-GUARD-001` | 平行支援 P1-BRACKET-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -72,16 +70,14 @@ Last updated: 2026-05-01 15:47:25
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `P0-TEL-PROJ-001` | Pantheon P0 Paper Loop | Project paper telemetry into runtime status | 讓 TelemetryEvent ingest 後更新 runtime summary，供 BFF 顯示非 mock heartbeat/status。 | Codex | Claude | review | `P0-TEL-001` | 2026-05-01 15:38:16 | Implemented paper telemetry runtime summary projection and BFF runtime-state read path. Key files: services/telemetry/runtime_summary.py, services/telemetry/ingest_svc.py, services/telemetry/main.py, services/control-plane/bff/read_store.py, services/control-plane/bff/main.py, docs/04/pantheon_sa/SA-17_telemetry_reconciliation_evolution_gap_analysis.md. Acceptance covered: heartbeat ingest updates telemetry-owned runtime summary; summary includes runtime_binding_id, deployment_stage, engine_bridge_repo, engine_bridge_commit; BFF runtime-state reads telemetry service summaries and shows last_heartbeat_at. Verification: py_compile with PYTHONPYCACHEPREFIX=/tmp/pantheon-p0-tel-proj-pycache; unittest services.telemetry.test_runtime_summary_projection services.telemetry.test_paper_runtime_ingest_contract services.telemetry.test_main_routes; pytest services/control-plane/bff/test_pkt010_runtime_state_board_contract.py -q; pytest services/control-plane/bff/test_pkt011_health_status_board_contract.py -q; pytest services/control-plane/bff/test_read_store_service_clients.py -q; git diff --check on touched files. |
 | `P0-LOOP-001` | Pantheon P0 Paper Loop | Add minimum paper operating loop smoke | 以 seed/approved artifact 跑通 DeploymentPlan -> RuntimeBinding -> paper heartbeat -> BFF runtime status。 | Codex | Claude | todo | `P0-TEL-PROJ-001` | 2026-05-01 11:58:57 | Auto-reassigned P0-LOOP-001 away from sidecar-only lane Gemini; reviewer Gemini -> Claude. Reserved sidecar-only agents no longer hold mainline tasks. |
 | `P0-REC-001` | Pantheon P0 Paper Loop | Write basic paper ReconciliationRecord | 在 paper run 後產生最低限度 ReconciliationRecord，並允許 threshold breach 開 IncidentCase。 | Codex2 | Codex | todo | `P0-LOOP-001` | 2026-05-01 11:58:17 | Assignment created from accepted planning session |
 | `P0-FE-SOURCE-001` | Pantheon P0 Paper Loop | Add source mode and runtime identity to critical frontend surfaces | 在 runtime/deployment/governance/evolution 等關鍵 UI 加 source_mode 與 bridge/binding/runtime identity。 | Codex | Claude | todo | `P0-FE-DEMO-001`, `P0-TEL-PROJ-001` | 2026-05-01 11:59:19 | Auto-reassigned P0-FE-SOURCE-001 away from sidecar-only lane Copilot; owner Copilot -> Codex. Reserved sidecar-only agents no longer hold mainline tasks. |
-| `P0-CI-BOUNDED-001` | Pantheon P0 Paper Loop | Add source/search bounded and fail-closed adapter CI | 為 bounded source/search baseline 與 research/OpenClaw fail-closed posture 補 CI。 | Codex2 | Codex | review_approved | `P0-CI-BRIDGE-001` | 2026-05-01 15:40:08 | Approved: adapter CI runner exists and passes; bounded source/search compose smoke passes; research/OpenClaw production adapters remain fail-closed. Owner Codex2 should finalize with a task-scoped commit and done closeout. |
-| `P1-BRACKET-001` | P1 Wave 5 | Guarded paper/sim bracket order execution | 在 paper/sim broker 範圍內實作受治理 bracket order execution；live 仍 fail-closed。 | Codex | Claude | todo | `P0-LIVE-GUARD-001` | 2026-05-01 15:16:27 | Assignment created |
+| `P1-BRACKET-001` | P1 Wave 5 | Guarded paper/sim bracket order execution | 在 paper/sim broker 範圍內實作受治理 bracket order execution；live 仍 fail-closed。 | Codex | Claude | todo | `P0-LIVE-GUARD-001` | 2026-05-01 15:57:10 | Supervisor preempted P1-BRACKET-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
 | `P1-LIVE-PLAN-001` | P1 Wave 5 | Canary/live activation criteria and runbook | 定義 canary/live activation criteria 與 runbook；P1 只取得 activation readiness，不開 production live。 | Claude | Codex | todo | `P0-LOOP-001` | 2026-05-01 15:16:37 | Assignment created |
 | `P1-SEARCH-001` | P1 Wave 5 | OpenClaw governed SearchGateway integration | 把 OpenClaw search 接到 governed SearchGateway，只能回傳 evidence bundle/citation pack，不能越權碰 execution。 | Codex2 | Codex | todo | `P0-CI-BOUNDED-001` | 2026-05-01 15:16:47 | Assignment created |
 | `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 | Codex | Claude | todo | `P0-CI-BOUNDED-001` | 2026-05-01 15:16:56 | Assignment created |
-| `P1-BRACKET-001-SIDECAR-ACCEPTANCE` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-BRACKET-001] Prepare P1-BRACKET-001 acceptance packet and dependency map | 平行支援 P1-BRACKET-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Gemini2 | Codex | review | `P0-LIVE-GUARD-001` | 2026-05-01 15:40:00 | Acceptance packet prepared and handed off to reviewer Codex for review. |
+| `P1-BRACKET-001-SIDECAR-ACCEPTANCE` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-BRACKET-001] Prepare P1-BRACKET-001 acceptance packet and dependency map | 平行支援 P1-BRACKET-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Codex2 | Codex | todo | `P0-LIVE-GUARD-001` | 2026-05-01 15:56:59 | Auto-reassigned ownership from Gemini2 to Codex2 after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex2 starts a fresh run. |
 
 ## Handoff Queue
 
@@ -89,9 +85,6 @@ Last updated: 2026-05-01 15:47:25
 |---|---|---|---|---|---|
 | `P0-LOOP-001` | Gemini | Claude | Auto-reassigned P0-LOOP-001 away from sidecar-only lane Gemini; reviewer Gemini -> Claude. Reserved sidecar-only agents no longer hold mainline tasks. | pending | 2026-05-01 11:58:57 |
 | `P0-FE-SOURCE-001` | Copilot | Codex | Auto-reassigned P0-FE-SOURCE-001 away from sidecar-only lane Copilot; owner Copilot -> Codex. Reserved sidecar-only agents no longer hold mainline tasks. | pending | 2026-05-01 11:59:19 |
-| `P1-BRACKET-001-SIDECAR-ACCEPTANCE` | Gemini2 | Codex | Acceptance packet prepared and handed off to reviewer Codex for review. | pending | 2026-05-01 15:40:00 |
-| `P0-TEL-PROJ-001` | Codex | Claude | Implemented paper telemetry runtime summary projection and BFF runtime-state read path. Key files: services/telemetry/runtime_summary.py, services/telemetry/ingest_svc.py, services/telemetry/main.py, services/control-plane/bff/read_store.py, services/control-plane/bff/main.py, docs/04/pantheon_sa/SA-17_telemetry_reconciliation_evolution_gap_analysis.md. Acceptance covered: heartbeat ingest updates telemetry-owned runtime summary; summary includes runtime_binding_id, deployment_stage, engine_bridge_repo, engine_bridge_commit; BFF runtime-state reads telemetry service summaries and shows last_heartbeat_at. Verification: py_compile with PYTHONPYCACHEPREFIX=/tmp/pantheon-p0-tel-proj-pycache; unittest services.telemetry.test_runtime_summary_projection services.telemetry.test_paper_runtime_ingest_contract services.telemetry.test_main_routes; pytest services/control-plane/bff/test_pkt010_runtime_state_board_contract.py -q; pytest services/control-plane/bff/test_pkt011_health_status_board_contract.py -q; pytest services/control-plane/bff/test_read_store_service_clients.py -q; git diff --check on touched files. | pending | 2026-05-01 15:38:16 |
-| `P0-CI-BOUNDED-001` | Codex | Codex2 | Approved: adapter CI runner exists and passes; bounded source/search compose smoke passes; research/OpenClaw production adapters remain fail-closed. Owner Codex2 should finalize with a task-scoped commit and done closeout. | pending | 2026-05-01 15:40:08 |
 
 ## Blockers
 
@@ -103,11 +96,11 @@ Last updated: 2026-05-01 15:47:25
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| `P0-CI-BOUNDED-001` | Codex | Approved after rerunning adapter runner, source/search bounded tests, focused posture slice, OSS matrix, OpenClaw smoke, and docker compose source-search-bounded smoke. Previous blockers are resolved; owner may finalize with task-scoped commit. | .orchestrator/reviews/P0-CI-BOUNDED-001-codex-review.md |
+| _(none)_ | - | - | - |
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-05-01 15:45:57
+- Last coordination scan: 2026-05-01 15:56:59
 - Tracked features: `46`
 - Lovable-ready packets: `45`
 - Waiting for Lovable/front-end: `0`
@@ -174,23 +167,23 @@ Last updated: 2026-05-01 15:47:25
 
 ## Latest Checkpoints
 
-- 2026-05-01 15:46:13 Orchestrator: PreToolUse: Read
-- 2026-05-01 15:46:13 Orchestrator: PreToolUse: Read
-- 2026-05-01 15:46:13 Orchestrator: PostToolUse: Read
-- 2026-05-01 15:46:13 Orchestrator: PostToolUse: Read
-- 2026-05-01 15:46:14 Orchestrator: PostToolUse: Read
-- 2026-05-01 15:46:15 Orchestrator: `P1-BRACKET-001-SIDECAR-ACCEPTANCE` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
-- 2026-05-01 15:46:25 Orchestrator: PreToolUse: Read
-- 2026-05-01 15:46:25 Orchestrator: PostToolUse: Read
-- 2026-05-01 15:46:25 Orchestrator: PreToolUse: Bash
-- 2026-05-01 15:46:26 Orchestrator: PostToolUse: Bash
-- 2026-05-01 15:46:47 Orchestrator: PreToolUse: Edit
-- 2026-05-01 15:46:47 Orchestrator: PostToolUse: Edit
-- 2026-05-01 15:47:02 Orchestrator: PreToolUse: Edit
-- 2026-05-01 15:47:03 Orchestrator: PostToolUse: Edit
-- 2026-05-01 15:47:09 Orchestrator: PreToolUse: Bash
-- 2026-05-01 15:47:09 Orchestrator: PostToolUse: Bash
-- 2026-05-01 15:47:15 Orchestrator: PreToolUse: Bash
-- 2026-05-01 15:47:16 Orchestrator: PostToolUse: Bash
-- 2026-05-01 15:47:24 Orchestrator: PreToolUse: Bash
-- 2026-05-01 15:47:25 Claude2: `P0-TEL-PROJ-001-SIDECAR-ACCEPTANCE` Finalized: acceptance packet accepted by Codex. Updated artifact status to accepted, added finalization note recording approval and post-creation context. Task-scoped commit 8e2a775 contains only the sidecar artifact. No canonical truth modified.
+- 2026-05-01 15:54:58 Orchestrator: PostToolUse: Bash
+- 2026-05-01 15:55:05 Orchestrator: Stop: Stop
+- 2026-05-01 15:55:05 Orchestrator: SessionEnd: SessionEnd
+- 2026-05-01 15:56:58 Orchestrator: Dispatch pause for codex2 expired at 2026-05-01 15:55:36; dispatch is enabled again.
+- 2026-05-01 15:56:59 Orchestrator: `P0-TEL-PROJ-001` Worker superseded after task responsibility moved to another agent.
+- 2026-05-01 15:57:10 Orchestrator: `P1-BRACKET-001-SIDECAR-ACCEPTANCE` Auto-reassigned ownership from Gemini2 to Codex2 after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex2 starts a fresh run.
+- 2026-05-01 15:57:20 Orchestrator: `P1-BRACKET-001` Supervisor preempted P1-BRACKET-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.
+- 2026-05-01 15:57:20 Orchestrator: `P1-BRACKET-001` Worker superseded to prioritize higher-priority review/finalize work.
+- 2026-05-01 15:57:20 Orchestrator: `P0-TEL-PROJ-001` Wake-up queued for supervisor: owned_finalize_dispatch
+- 2026-05-01 15:57:20 Orchestrator: `P0-CI-BOUNDED-001` Wake-up queued for supervisor: owned_finalize_dispatch
+- 2026-05-01 15:57:20 Orchestrator: `P0-TEL-PROJ-001` Worker started via codex: owned_finalize_dispatch
+- 2026-05-01 15:57:20 Codex: `P0-TEL-PROJ-001` Supervisor resumed P0-TEL-PROJ-001 for finalize after successful dispatch.
+- 2026-05-01 15:57:29 Orchestrator: `P0-TEL-PROJ-001` Supervisor resumed P0-TEL-PROJ-001 for finalize after successful dispatch.
+- 2026-05-01 15:57:29 Orchestrator: `P0-CI-BOUNDED-001` Worker started via codex: owned_finalize_dispatch
+- 2026-05-01 15:57:30 Codex2: `P0-CI-BOUNDED-001` Supervisor resumed P0-CI-BOUNDED-001 for finalize after successful dispatch.
+- 2026-05-01 15:57:39 Orchestrator: `P0-CI-BOUNDED-001` Supervisor resumed P0-CI-BOUNDED-001 for finalize after successful dispatch.
+- 2026-05-01 15:57:39 Orchestrator: `P1-BRACKET-001-SIDECAR-ACCEPTANCE` Worker superseded after task responsibility moved to another agent.
+- 2026-05-01 15:57:40 Orchestrator: `P1-BRACKET-001` Worker exited before the task reached a terminal status.
+- 2026-05-01 16:00:08 Codex: `P0-TEL-PROJ-001` Closeout complete: task-scoped commit 3dd55c5; verification passed: telemetry ingest 5, telemetry projection/routes 14, BFF runtime-state 4, health/status 3, read-store clients 4, cached diff check clean.
+- 2026-05-01 16:00:56 Codex2: `P0-CI-BOUNDED-001` Closed P0-CI-BOUNDED-001 after task-scoped commit 8a62430. Verified adapter runner, bounded source/search tests, posture/compose slice, OSS matrix, OpenClaw fail-closed smoke, and docker compose source-search-bounded smoke.

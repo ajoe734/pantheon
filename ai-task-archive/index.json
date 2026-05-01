@@ -1,12 +1,14 @@
 {
   "version": 1,
-  "updated_at": "2026-05-01T07:47:25Z",
+  "updated_at": "2026-05-01T08:00:56Z",
   "counts": {
-    "total": 852,
-    "completed": 836,
+    "total": 854,
+    "completed": 838,
     "superseded": 16
   },
   "recent_terminal_ids": [
+    "P0-CI-BOUNDED-001",
+    "P0-TEL-PROJ-001",
     "P0-TEL-PROJ-001-SIDECAR-ACCEPTANCE",
     "P0-TEL-001",
     "P0-LEAN-CTX-001-SIDECAR-REVIEW",
@@ -24,8 +26,6 @@
     "P0-BOOT-001",
     "P0-CI-BOUNDED-001-SIDECAR-ACCEPTANCE",
     "P0-BOOT-001-SIDECAR-REVIEW",
-    "P0-FE-SOURCE-001-SIDECAR-BFF-HANDOFF",
-    "P0-CI-BRIDGE-001-SIDECAR-ACCEPTANCE",
-    "P0-CI-BRIDGE-001"
+    "P0-FE-SOURCE-001-SIDECAR-BFF-HANDOFF"
   ]
 }
