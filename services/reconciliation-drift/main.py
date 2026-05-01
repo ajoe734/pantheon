@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from statistics import mean
 from typing import Any, Dict, List, Optional
@@ -43,6 +46,28 @@ def _worst_status(statuses: List[str]) -> str:
     if not statuses:
         return "ok"
     return max(statuses, key=_status_rank)
+
+
+def _incident_severity(status: str) -> str:
+    if status == "critical":
+        return "critical"
+    if status == "warning":
+        return "medium"
+    if status == "degraded":
+        return "low"
+    return "low"
+
+
+def _record_severity(status: str) -> str:
+    if status == "ok":
+        return "none"
+    if status == "critical":
+        return "critical"
+    if status == "warning":
+        return "medium"
+    if status == "degraded":
+        return "low"
+    return "low"
 
 
 def _numeric(value: Any) -> float | None:
@@ -289,6 +314,63 @@ def _build_alert_handoffs(evaluation: Dict[str, Any], timestamp: str) -> List[Di
     return alerts
 
 
+def _post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:  # noqa: S310 - service URL is operator configured.
+            body = response.read().decode("utf-8")
+            return json.loads(body) if body else {}
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise HTTPException(status_code=502, detail=f"incident service rejected request: {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise HTTPException(status_code=502, detail=f"incident service unavailable: {exc.reason}") from exc
+
+
+def _paper_reconciliation_checks(
+    *,
+    binding_id: str,
+    runtime_id: str,
+    deployment_plan_id: str,
+    artifact_id: str,
+    capital_pool_id: str,
+    telemetry_events: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    checks = _reconciliation_checks(
+        binding_id=binding_id,
+        runtime_id=runtime_id,
+        telemetry_events=telemetry_events,
+        lineage_projection={"target_id": binding_id},
+        runtime_evidence={"binding_id": binding_id, "runtime_id": runtime_id, "status": "active"},
+    )
+    for field_name, expected in (
+        ("deployment_plan_id", deployment_plan_id),
+        ("artifact_id", artifact_id),
+        ("capital_pool_id", capital_pool_id),
+    ):
+        mismatched = [
+            event.get("event_id") or event.get("id") or "<unknown>"
+            for event in telemetry_events
+            if event.get(field_name) and event.get(field_name) != expected
+        ]
+        checks.append(
+            {
+                "check": f"telemetry_{field_name}_alignment",
+                "status": "critical" if mismatched else "ok",
+                "detail": f"all telemetry events reference requested {field_name}"
+                if not mismatched
+                else f"telemetry events reference a different {field_name}",
+                "mismatched_event_ids": mismatched,
+            }
+        )
+    return checks
+
+
 class EvaluationBody(BaseModel):
     binding_id: str
     runtime_id: Optional[str] = None
@@ -307,6 +389,28 @@ class HandoffBody(BaseModel):
     handoff_state: str = "sent"
     target_service: Optional[str] = None
     note: Optional[str] = None
+
+
+class PaperRunReconciliationBody(BaseModel):
+    binding_id: str
+    runtime_id: str
+    deployment_plan_id: str
+    artifact_id: str
+    artifact_version: str
+    capital_pool_id: str
+    persona_capital_binding_id: str
+    trace_id: str
+    record_id: Optional[str] = None
+    paper_run_id: Optional[str] = None
+    baseline_ref: str = "paper_baseline"
+    actual_ref: str = "paper_runtime"
+    telemetry_events: List[Dict[str, Any]] = Field(default_factory=list)
+    baseline_metrics: Dict[str, Any] = Field(default_factory=dict)
+    thresholds: Dict[str, Any] = Field(default_factory=dict)
+    evidence_refs: List[Dict[str, Any]] = Field(default_factory=list)
+    create_incident_on_breach: bool = True
+    propose_evolution_on_breach: bool = True
+    generated_at: Optional[str] = None
 
 
 DATA_DIR = _data_dir()
@@ -333,6 +437,7 @@ register_fastapi_health_routes(
     metrics=lambda: {
         "evaluation_count": len(store.list_evaluations()),
         "alert_count": len(store.list_alert_handoffs()),
+        "reconciliation_record_count": len(store.list_reconciliation_records()),
     },
     details=lambda: {"data_dir": DATA_DIR, "store_backend": STORE_BACKEND},
 )
@@ -342,12 +447,14 @@ register_fastapi_health_routes(
 def health() -> Dict[str, Any]:
     evaluations = store.list_evaluations()
     alerts = store.list_alert_handoffs()
+    records = store.list_reconciliation_records()
     return {
         "status": "ok",
         "service": "reconciliation-drift",
         "data_dir": DATA_DIR,
         "evaluation_count": len(evaluations),
         "alert_handoff_count": len(alerts),
+        "reconciliation_record_count": len(records),
         "telemetry_api_url": os.getenv("PANTHEON_TELEMETRY_API_URL", ""),
         "lineage_read_url": os.getenv("PANTHEON_LINEAGE_READ_URL", ""),
         "runtime_manager_url": os.getenv("PANTHEON_RUNTIME_MANAGER_URL", ""),
@@ -407,6 +514,136 @@ def create_evaluation(body: EvaluationBody) -> Dict[str, Any]:
     return stored
 
 
+@app.post("/api/reconciliation-drift/paper-runs/reconcile", status_code=201)
+def create_paper_reconciliation_record(body: PaperRunReconciliationBody) -> Dict[str, Any]:
+    timestamp = body.generated_at or utc_now()
+    record_id = body.record_id or _next_id(
+        "recon",
+        timestamp,
+        {str(item.get("record_id") or "") for item in store.list_reconciliation_records()},
+    )
+    observed = _observed_metrics(body.telemetry_events)
+    drift_checks = _drift_checks(body.baseline_metrics, observed, body.thresholds)
+    reconciliation_checks = _paper_reconciliation_checks(
+        binding_id=body.binding_id,
+        runtime_id=body.runtime_id,
+        deployment_plan_id=body.deployment_plan_id,
+        artifact_id=body.artifact_id,
+        capital_pool_id=body.capital_pool_id,
+        telemetry_events=body.telemetry_events,
+    )
+    severity_signal = _worst_status([check["status"] for check in drift_checks + reconciliation_checks])
+    severity = _record_severity(severity_signal)
+    status = "open" if severity_signal in {"degraded", "warning", "critical"} else "resolved"
+    telemetry_event_ids = [
+        str(event.get("event_id") or event.get("id"))
+        for event in body.telemetry_events
+        if event.get("event_id") or event.get("id")
+    ]
+    evidence_refs = [
+        *body.evidence_refs,
+        {"type": "runtime_binding", "id": body.binding_id},
+        {"type": "artifact", "id": body.artifact_id, "version": body.artifact_version},
+        {"type": "capital_pool", "id": body.capital_pool_id},
+    ]
+    record = {
+        "id": record_id,
+        "record_id": record_id,
+        "recon_type": "paper_run",
+        "scope_ref": body.binding_id,
+        "runtime_binding_id": body.binding_id,
+        "binding_id": body.binding_id,
+        "runtime_id": body.runtime_id,
+        "deployment_stage": "paper",
+        "deployment_plan_id": body.deployment_plan_id,
+        "artifact_id": body.artifact_id,
+        "artifact_version": body.artifact_version,
+        "capital_pool_id": body.capital_pool_id,
+        "persona_capital_binding_id": body.persona_capital_binding_id,
+        "trace_id": body.trace_id,
+        "paper_run_id": body.paper_run_id,
+        "expected_ref": body.baseline_ref,
+        "actual_ref": body.actual_ref,
+        "delta_summary": {
+            "baseline_metrics": body.baseline_metrics,
+            "observed_metrics": observed,
+            "drift_checks": drift_checks,
+            "reconciliation_checks": reconciliation_checks,
+            "telemetry_event_count": len(body.telemetry_events),
+        },
+        "severity": severity,
+        "status": status,
+        "evidence_refs": evidence_refs,
+        "generated_at": timestamp,
+        "source_contract": {
+            "telemetry_truth_owner": "telemetry-ingest",
+            "incident_truth_owner": "incidents",
+            "evolution_truth_owner": "evolution",
+            "derived_only": False,
+            "emergency_control_chain_affected": False,
+        },
+    }
+    stored = store.put_reconciliation_record(record)
+
+    incident_case = None
+    incident_request = None
+    evolution_proposal = None
+    if status == "open" and body.create_incident_on_breach:
+        incident_id = f"{record_id}-incident-001"
+        incident_request = {
+            "incident_id": incident_id,
+            "title": f"Paper reconciliation threshold breach for {body.binding_id}",
+            "status": "open",
+            "severity": _incident_severity(severity),
+            "binding_id": body.binding_id,
+            "deployment_stage": "paper",
+            "deployment_plan_id": body.deployment_plan_id,
+            "capital_pool_id": body.capital_pool_id,
+            "persona_capital_binding_id": body.persona_capital_binding_id,
+            "artifact_id": body.artifact_id,
+            "artifact_version": body.artifact_version,
+            "runtime_id": body.runtime_id,
+            "trace_id": body.trace_id,
+            "telemetry_event_ids": telemetry_event_ids,
+            "evidence_summary": f"ReconciliationRecord {record_id} severity={severity}",
+            "lineage_ref": f"{body.artifact_id}@{body.artifact_version}",
+        }
+        incidents_api_url = os.getenv("PANTHEON_INCIDENTS_API_URL", "").rstrip("/")
+        if incidents_api_url:
+            incident_case = _post_json(f"{incidents_api_url}/api/incidents", incident_request)
+
+    if status == "open" and body.propose_evolution_on_breach:
+        evolution_proposal = {
+            "decision_id": f"{record_id}-evo-001",
+            "decision_state": "proposed",
+            "target_type": "candidate_artifact",
+            "target_id": body.artifact_id,
+            "target_version": body.artifact_version,
+            "target_stage": "paper",
+            "action_type": "flag_for_review",
+            "rationale": f"Paper reconciliation threshold breach from {record_id}; no automatic evolution execution.",
+            "capital_pool_id": body.capital_pool_id,
+            "linked_incident_id": (incident_case or incident_request or {}).get("incident_id"),
+            "evidence_refs": [
+                {"ref_type": "telemetry_event", "ref_id": event_id}
+                for event_id in telemetry_event_ids
+            ]
+            + [{"ref_type": "runtime_binding", "ref_id": body.binding_id}],
+            "metadata": {
+                "source_reconciliation_record_id": record_id,
+                "proposed_only": True,
+                "automatic_execution_allowed": False,
+            },
+        }
+
+    return {
+        "record": stored,
+        "incident_request": incident_request,
+        "incident_case": incident_case,
+        "evolution_proposal": evolution_proposal,
+    }
+
+
 @app.get("/api/reconciliation-drift/evaluations")
 def list_evaluations(binding_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
     evaluations = store.list_evaluations()
@@ -421,6 +658,22 @@ def get_evaluation(evaluation_id: str) -> Dict[str, Any]:
     if not evaluation:
         raise HTTPException(status_code=404, detail="drift evaluation not found")
     return evaluation
+
+
+@app.get("/api/reconciliation-drift/reconciliation-records")
+def list_reconciliation_records(binding_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+    records = store.list_reconciliation_records()
+    if binding_id:
+        records = [item for item in records if item.get("binding_id") == binding_id]
+    return records
+
+
+@app.get("/api/reconciliation-drift/reconciliation-records/{record_id}")
+def get_reconciliation_record(record_id: str) -> Dict[str, Any]:
+    record = store.get_reconciliation_record(record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="reconciliation record not found")
+    return record
 
 
 @app.get("/api/reconciliation-drift/summary")

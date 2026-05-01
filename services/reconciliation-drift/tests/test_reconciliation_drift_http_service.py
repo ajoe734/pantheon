@@ -144,3 +144,174 @@ def test_reconciliation_drift_marks_degraded_inputs_and_mismatch_alerts() -> Non
     assert alerts.status_code == 200
     assert alerts.json()[0]["alert_type"] == "reconciliation_mismatch"
     assert alerts.json()[0]["target_service"] == "incidents"
+
+
+def test_paper_run_creates_reconciliation_record_incident_request_and_proposed_evolution() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+
+    created = client.post(
+        "/api/reconciliation-drift/paper-runs/reconcile",
+        json={
+            "record_id": "recon-paper-001",
+            "binding_id": "binding-paper-1",
+            "runtime_id": "runtime-paper-1",
+            "deployment_plan_id": "plan-paper-1",
+            "artifact_id": "artifact-paper-1",
+            "artifact_version": "1.0.0",
+            "capital_pool_id": "pool-paper-1",
+            "persona_capital_binding_id": "pcb-paper-1",
+            "trace_id": "trace-paper-1",
+            "paper_run_id": "paper-run-001",
+            "baseline_ref": "backtest-baseline-001",
+            "actual_ref": "paper-runtime-001",
+            "baseline_metrics": {"pnl": 100.0},
+            "telemetry_events": [
+                {
+                    "event_id": "evt-paper-1",
+                    "binding_id": "binding-paper-1",
+                    "runtime_id": "runtime-paper-1",
+                    "deployment_plan_id": "plan-paper-1",
+                    "artifact_id": "artifact-paper-1",
+                    "capital_pool_id": "pool-paper-1",
+                    "metrics": {"pnl": 20.0},
+                }
+            ],
+            "thresholds": {"pnl": {"critical_relative_delta": 0.50}},
+            "generated_at": "2026-05-01T09:00:00Z",
+        },
+    )
+    assert created.status_code == 201, created.text
+    payload = created.json()
+
+    record = payload["record"]
+    assert record["record_id"] == "recon-paper-001"
+    assert record["runtime_binding_id"] == "binding-paper-1"
+    assert record["artifact_id"] == "artifact-paper-1"
+    assert record["capital_pool_id"] == "pool-paper-1"
+    assert record["deployment_stage"] == "paper"
+    assert record["severity"] == "critical"
+    assert record["status"] == "open"
+
+    incident_request = payload["incident_request"]
+    assert incident_request["incident_id"] == "recon-paper-001-incident-001"
+    assert incident_request["binding_id"] == "binding-paper-1"
+    assert incident_request["artifact_id"] == "artifact-paper-1"
+    assert incident_request["capital_pool_id"] == "pool-paper-1"
+    assert incident_request["telemetry_event_ids"] == ["evt-paper-1"]
+
+    proposal = payload["evolution_proposal"]
+    assert proposal["decision_state"] == "proposed"
+    assert proposal["metadata"]["proposed_only"] is True
+    assert proposal["metadata"]["automatic_execution_allowed"] is False
+
+    records = client.get("/api/reconciliation-drift/reconciliation-records", params={"binding_id": "binding-paper-1"})
+    assert records.status_code == 200
+    assert records.json()[0]["record_id"] == "recon-paper-001"
+
+
+def test_paper_run_normalizes_warning_severity_to_record_contract() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+
+    created = client.post(
+        "/api/reconciliation-drift/paper-runs/reconcile",
+        json={
+            "record_id": "recon-paper-warning",
+            "binding_id": "binding-paper-warning",
+            "runtime_id": "runtime-paper-warning",
+            "deployment_plan_id": "plan-paper-warning",
+            "artifact_id": "artifact-paper-warning",
+            "artifact_version": "1.0.0",
+            "capital_pool_id": "pool-paper-warning",
+            "persona_capital_binding_id": "pcb-paper-warning",
+            "trace_id": "trace-paper-warning",
+            "baseline_metrics": {"pnl": 100.0},
+            "telemetry_events": [
+                {
+                    "event_id": "evt-paper-warning",
+                    "binding_id": "binding-paper-warning",
+                    "runtime_id": "runtime-paper-warning",
+                    "deployment_plan_id": "plan-paper-warning",
+                    "artifact_id": "artifact-paper-warning",
+                    "capital_pool_id": "pool-paper-warning",
+                    "metrics": {"pnl": 75.0},
+                }
+            ],
+            "thresholds": {"pnl": {"warning_relative_delta": 0.20, "critical_relative_delta": 0.50}},
+        },
+    )
+
+    assert created.status_code == 201, created.text
+    record = created.json()["record"]
+    assert record["status"] == "open"
+    assert record["severity"] == "medium"
+    assert record["delta_summary"]["drift_checks"][0]["status"] == "warning"
+
+
+def test_paper_run_can_open_incident_case_via_incident_service() -> None:
+    with mock.patch.dict(
+        "os.environ",
+        {
+            "RECONCILIATION_DRIFT_DATA_DIR": tempfile.mkdtemp(),
+            "PANTHEON_INCIDENTS_API_URL": "http://incidents:8090",
+        },
+    ):
+        sys.modules.pop("store", None)
+        sys.path.insert(0, str(SERVICE_DIR))
+        try:
+            spec = importlib.util.spec_from_file_location("reconciliation_drift_incident_test_main", SERVICE_DIR / "main.py")
+            assert spec and spec.loader
+            module = importlib.util.module_from_spec(spec)
+            sys.modules["reconciliation_drift_incident_test_main"] = module
+            spec.loader.exec_module(module)
+        finally:
+            sys.modules.pop("store", None)
+            try:
+                sys.path.remove(str(SERVICE_DIR))
+            except ValueError:
+                pass
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"incident_id":"recon-paper-http-incident-001","status":"open"}'
+
+    with mock.patch.dict("os.environ", {"PANTHEON_INCIDENTS_API_URL": "http://incidents:8090"}), mock.patch.object(
+        module.urllib.request,
+        "urlopen",
+        return_value=_Response(),
+    ) as urlopen:
+        created = TestClient(module.app).post(
+            "/api/reconciliation-drift/paper-runs/reconcile",
+            json={
+                "record_id": "recon-paper-http",
+                "binding_id": "binding-paper-http",
+                "runtime_id": "runtime-paper-http",
+                "deployment_plan_id": "plan-paper-http",
+                "artifact_id": "artifact-paper-http",
+                "artifact_version": "1.0.0",
+                "capital_pool_id": "pool-paper-http",
+                "persona_capital_binding_id": "pcb-paper-http",
+                "trace_id": "trace-paper-http",
+                "baseline_metrics": {"pnl": 100.0},
+                "telemetry_events": [
+                    {
+                        "event_id": "evt-paper-http",
+                        "binding_id": "binding-paper-http",
+                        "runtime_id": "runtime-paper-http",
+                        "metrics": {"pnl": 20.0},
+                    }
+                ],
+                "thresholds": {"pnl": {"critical_relative_delta": 0.50}},
+            },
+        )
+
+    assert created.status_code == 201, created.text
+    assert created.json()["incident_case"]["incident_id"] == "recon-paper-http-incident-001"
+    assert urlopen.call_count == 1

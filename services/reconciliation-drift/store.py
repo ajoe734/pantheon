@@ -14,6 +14,7 @@ class ReconciliationDriftStore:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.evaluations_path = self.data_dir / "drift_evaluations.json"
         self.alerts_path = self.data_dir / "alert_handoffs.json"
+        self.reconciliation_records_path = self.data_dir / "reconciliation_records.json"
 
     def _read_map(self, path: Path) -> Dict[str, Dict[str, Any]]:
         if not path.exists():
@@ -67,6 +68,18 @@ class ReconciliationDriftStore:
         alert["alert_id"] = alert_id
         alert["id"] = alert_id
         return self._put_record(self.alerts_path, alert_id, alert)
+
+    def list_reconciliation_records(self) -> List[Dict[str, Any]]:
+        return self._list_records(self.reconciliation_records_path)
+
+    def get_reconciliation_record(self, record_id: str) -> Optional[Dict[str, Any]]:
+        return self._get_record(self.reconciliation_records_path, record_id)
+
+    def put_reconciliation_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        record_id = str(record.get("record_id") or record.get("id") or "").strip()
+        record["record_id"] = record_id
+        record["id"] = record_id
+        return self._put_record(self.reconciliation_records_path, record_id, record)
 
 
 class PostgresReconciliationDriftStore(ReconciliationDriftStore):
@@ -126,6 +139,18 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
         record["id"] = alert_id
         self._alert_records.put(alert_id, record)
         return record
+
+    def list_reconciliation_records(self) -> List[Dict[str, Any]]:
+        return self._list_records(self.reconciliation_records_path)
+
+    def get_reconciliation_record(self, record_id: str) -> Optional[Dict[str, Any]]:
+        return self._get_record(self.reconciliation_records_path, record_id)
+
+    def put_reconciliation_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        record_id = str(record.get("record_id") or record.get("id") or "").strip()
+        if not record_id:
+            raise ValueError("record_id is required")
+        return super().put_reconciliation_record(record)
 
 
 def build_reconciliation_drift_store(data_dir: str | Path) -> ReconciliationDriftStore:

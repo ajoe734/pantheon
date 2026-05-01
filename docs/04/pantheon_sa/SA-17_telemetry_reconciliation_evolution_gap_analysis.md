@@ -319,6 +319,38 @@ internal portfolio state
 | broker snapshot polling fallback 未驗證 | stream 遺漏時需補 |
 | cash / margin reconciliation 未驗證 | live 風險需要 |
 
+### 7.4 P0-REC-001 Implementation Note
+
+`P0-REC-001` closes the minimum paper-run reconciliation slice in
+`services/reconciliation-drift` without claiming full broker / live
+reconciliation:
+
+```text
+POST /api/reconciliation-drift/paper-runs/reconcile
+→ reconciliation_records.json
+→ optional IncidentCase create request to incidents service on threshold breach
+→ EvolutionDecision proposal envelope only; no review / approval / execute dispatch
+```
+
+Delivered P0 `ReconciliationRecord` identity links:
+
+```text
+runtime_binding_id / binding_id
+runtime_id
+deployment_plan_id
+deployment_stage = paper
+artifact_id
+artifact_version
+capital_pool_id
+persona_capital_binding_id
+trace_id
+telemetry_event_ids via evidence / delta summary
+```
+
+This is intentionally a paper-only threshold seed. Full order/fill/broker
+snapshot reconciliation, Postgres-owned `telemetry.reconciliation_records`, and
+automatic evolution lifecycle dispatch remain follow-on work.
+
 ---
 
 ## 8. Backtest / Paper / Canary / Live Reconciliation Gap
