@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；production、paper、canary、live gate 預設仍 fail-closed。",
-  "updated_at": "2026-05-01T09:15:05Z",
+  "updated_at": "2026-05-01T09:24:24Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -121,13 +121,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
+      "status": "ready",
       "current_task_ids": [
-        "P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE"
+        "P1-PERSIST-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Codex is tightening the sidecar acceptance packet against the parent runbook, dependency map, and review handoff; support artifact only.",
-      "last_update": "2026-05-01T09:13:41Z"
+      "next": "Assignment created",
+      "last_update": "2026-05-01T07:16:56Z"
     },
     {
       "name": "Codex2",
@@ -137,13 +137,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
+      "status": "reviewing",
       "current_task_ids": [
         "P0-FE-SOURCE-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Continuing frontend source_mode/runtime identity implementation; reading task artifact and existing UI surfaces.",
-      "last_update": "2026-05-01T09:12:27Z"
+      "next": "Ready for review. Frontend repo /home/edna/code/front-ai-trading-system commit a1dbf3d adds SourceModeBadge/sourceMode helpers, source_mode strips on runtime/deployment/governance/evolution/persona/knowledge critical surfaces, and runtime identity grids showing bridge repo/commit, runtime_binding_id, deployment_plan_id, artifact_id, capital_pool_id. Verification: npm run build; npm run check:prod-demo-routes; npx eslint targeted changed files.",
+      "last_update": "2026-05-01T09:18:03Z"
     },
     {
       "name": "Copilot",
@@ -226,16 +226,16 @@
         "human_gate_status": "approved",
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
       },
-      "status": "in_progress",
-      "next": "Continuing frontend source_mode/runtime identity implementation; reading task artifact and existing UI surfaces.",
-      "last_update": "2026-05-01T09:12:27Z"
+      "status": "review",
+      "next": "Ready for review. Frontend repo /home/edna/code/front-ai-trading-system commit a1dbf3d adds SourceModeBadge/sourceMode helpers, source_mode strips on runtime/deployment/governance/evolution/persona/knowledge critical surfaces, and runtime identity grids showing bridge repo/commit, runtime_binding_id, deployment_plan_id, artifact_id, capital_pool_id. Verification: npm run build; npm run check:prod-demo-routes; npx eslint targeted changed files.",
+      "last_update": "2026-05-01T09:18:03Z"
     },
     {
       "id": "P1-BRACKET-001",
       "title": "Guarded paper/sim bracket order execution",
       "summary_zh": "在 paper/sim broker 範圍內實作受治理 bracket order execution；live 仍 fail-closed。",
       "phase": "P1 Wave 5",
-      "owner": "Codex",
+      "owner": "Codex2",
       "reviewer": "Claude",
       "status": "todo",
       "depends_on": [
@@ -249,8 +249,8 @@
         "logged_only and submitted_to_broker semantics remain distinct",
         "live broker submission remains fail-closed without activation guard"
       ],
-      "next": "Supervisor preempted P1-BRACKET-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
-      "last_update": "2026-05-01T07:57:10Z",
+      "next": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex2 starts a fresh run.",
+      "last_update": "2026-05-01T09:23:26Z",
       "source_plane": "planning",
       "source_ref": {
         "type": "discussion_planning",
@@ -296,34 +296,6 @@
         "wave": "5",
         "source_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
       }
-    },
-    {
-      "id": "P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE",
-      "title": "Prepare P1-LIVE-PLAN-001 acceptance packet and dependency map",
-      "summary_zh": "平行支援 P1-LIVE-PLAN-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
-      "phase": "P1 Wave 5",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "in_progress",
-      "depends_on": [
-        "P0-LOOP-001"
-      ],
-      "artifacts": [
-        "support/sidecars/P1-LIVE-PLAN-001/P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Codex is tightening the sidecar acceptance packet against the parent runbook, dependency map, and review handoff; support artifact only.",
-      "last_update": "2026-05-01T09:13:41Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "P1-LIVE-PLAN-001",
-      "helper_kind": "acceptance_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
     },
     {
       "id": "P1-LIVE-PLAN-001-SIDECAR-REVIEW",
@@ -380,6 +352,14 @@
       "message": "Review packet complete. support/sidecars/P1-LIVE-PLAN-001/P1-LIVE-PLAN-001-SIDECAR-REVIEW.md contains: (1) evidence mapping for all three acceptance criteria against runbook sections, (2) policy alignment check for PAPER_CANARY_LIVE_POLICY.md / KILL_SWITCH / ROLLBACK / BINDING docs, (3) Codex review summary, (4) P1 boundary confirmation, (5) open items categorized as deferred. No canonical truth modified. Parent task P1-LIVE-PLAN-001 is review_approved by Codex; this packet is supplementary support for Claude's finalization.",
       "status": "pending",
       "created_at": "2026-05-01T09:15:05Z"
+    },
+    {
+      "task_id": "P0-FE-SOURCE-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review. Frontend repo /home/edna/code/front-ai-trading-system commit a1dbf3d adds SourceModeBadge/sourceMode helpers, source_mode strips on runtime/deployment/governance/evolution/persona/knowledge critical surfaces, and runtime identity grids showing bridge repo/commit, runtime_binding_id, deployment_plan_id, artifact_id, capital_pool_id. Verification: npm run build; npm run check:prod-demo-routes; npx eslint targeted changed files.",
+      "status": "pending",
+      "created_at": "2026-05-01T09:18:03Z"
     }
   ],
   "blockers": [],
@@ -430,20 +410,20 @@
       "todo": 0
     },
     "Codex": {
-      "total": 3,
-      "active": 1,
+      "total": 1,
+      "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 3
+      "todo": 1
     },
     "Codex2": {
-      "total": 1,
+      "total": 2,
       "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
       "todo": 1
     },
