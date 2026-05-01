@@ -1,8 +1,8 @@
-import unittest
 import uuid
+import unittest
 from datetime import datetime, timezone
 
-from services.execution.lean_runtime.paper_runtime import PaperRuntimeService
+from services.execution.lean_runtime.paper_runtime import PaperRuntimeService, RuntimeTelemetryEmitter
 from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 
@@ -13,6 +13,14 @@ class _FakeRuntimeManagerClient:
 
     def list_all(self):
         return list(self._bindings)
+
+
+class _FakeBindingResolver:
+    def __init__(self, binding):
+        self._binding = binding
+
+    def resolve(self):
+        return dict(self._binding)
 
 
 class _FakeTelemetryEmitter:
@@ -29,6 +37,18 @@ class _FakeTelemetryEmitter:
             }
         )
         return True
+
+    def emit_deploy_started(self):
+        return self.emit("deploy_started", {"action": "deploy_started"})
+
+    def emit_deploy_completed(self):
+        return self.emit("deploy_completed", {"action": "deploy_completed"})
+
+    def emit_heartbeat(self, metadata=None):
+        return self.emit("heartbeat", {"heartbeat": 1}, metadata=metadata)
+
+    def emit_pnl_snapshot(self, pnl, metadata=None):
+        return self.emit("pnl_snapshot", {"pnl": float(pnl)}, metadata=metadata)
 
     def snapshot(self):
         return {
@@ -109,9 +129,10 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(snapshot["paper_state"]["processed_signal_count"], 1)
         self.assertEqual(snapshot["paper_state"]["execution_event_count"], 1)
         self.assertEqual(snapshot["paper_state"]["positions"][0]["symbol"], "AAPL")
-        self.assertEqual(len(telemetry.events), 2)
-        self.assertEqual(telemetry.events[0]["event_type"], "fill_observation")
+        self.assertEqual(len(telemetry.events), 3)
+        self.assertEqual(telemetry.events[0]["event_type"], "paper_fill_simulated")
         self.assertEqual(telemetry.events[1]["event_type"], "heartbeat")
+        self.assertEqual(telemetry.events[2]["event_type"], "pnl_snapshot")
 
     def test_snapshot_without_drain_reports_truthful_ready_state(self):
         service = PaperRuntimeService(
@@ -166,7 +187,54 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             telemetry_bracket_events[0]["metadata"]["broker_submission_status"],
             "logged_only",
         )
+        self.assertEqual(
+            telemetry_bracket_events[0]["metrics"]["action"],
+            "bracket_logged_only",
+        )
         self.assertFalse(telemetry_bracket_events[0]["metadata"]["submitted_to_broker"])
+
+    def test_runtime_telemetry_emitter_builds_canonical_paper_heartbeat(self):
+        binding = self._binding()
+        binding.update(
+            {
+                "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+                "engine_bridge_path": "pantheon/lean",
+                "engine_bridge_commit": "abc1234",
+                "runtime_adapter_version": "0.1.0",
+                "context_source": "launch_manifest",
+            }
+        )
+        emitter = RuntimeTelemetryEmitter(self._identity(), _FakeBindingResolver(binding))
+
+        event = emitter.build_event(
+            "heartbeat",
+            {"heartbeat": 1},
+            metadata={"runtime_package": "paper_execution_runtime"},
+            event_id=str(uuid.uuid4()),
+            created_at="2026-05-01T00:00:00Z",
+        )
+
+        self.assertIsNotNone(event)
+        self.assertEqual(event["event_type"], "heartbeat")
+        self.assertEqual(event["execution_mode"], "paper")
+        self.assertEqual(event["deployment_stage"], "paper")
+        self.assertEqual(event["binding_id"], binding["binding_id"])
+        self.assertEqual(event["plan_id"], "plan-paper")
+        self.assertEqual(event["target"]["artifact_type"], "execution_bundle")
+        self.assertEqual(event["metadata"]["engine_bridge_repo"], "ajoe734/pantheon-lean.git")
+        self.assertEqual(event["metadata"]["engine_bridge_commit"], "abc1234")
+        self.assertEqual(event["metadata"]["context_source"], "launch_manifest")
+
+    def test_runtime_telemetry_emitter_rejects_non_paper_stage(self):
+        binding = self._binding()
+        binding["deployment_mode"] = "live"
+        emitter = RuntimeTelemetryEmitter(self._identity(), _FakeBindingResolver(binding))
+
+        event = emitter.build_event("heartbeat", {"heartbeat": 1})
+
+        self.assertIsNone(event)
+        self.assertEqual(emitter.snapshot()["failed"], 1)
+        self.assertIn("deployment_stage='paper'", emitter.snapshot()["last_error"])
 
 
 if __name__ == "__main__":

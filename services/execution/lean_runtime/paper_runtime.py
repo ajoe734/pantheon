@@ -92,6 +92,11 @@ def _binding_from_runtime_context(context: PantheonRuntimeContext) -> dict[str, 
         "artifact_id": context.artifact.artifact_id,
         "artifact_version": context.artifact.artifact_version,
         "persona_capital_binding_id": context.capital.persona_capital_binding_id,
+        "engine_bridge_repo": context.bridge.repo,
+        "engine_bridge_path": context.bridge.path,
+        "engine_bridge_commit": context.bridge.commit,
+        "runtime_adapter_version": context.bridge.runtime_adapter_version,
+        "context_source": context.context_source.value,
     }
 
 
@@ -174,6 +179,7 @@ class PaperExecutionAlgorithm:
         event_sink: Callable[[OrderEvent], None] | None = None,
     ) -> None:
         self._initial_cash = initial_cash
+        self._cash = initial_cash
         self._default_price = default_price
         self._event_sink = event_sink
         self.Portfolio: dict[str, _Holding] = {}
@@ -217,23 +223,28 @@ class PaperExecutionAlgorithm:
         target_quantity = (self._initial_cash * float(target_percent)) / max(float(security.Price), 0.01)
         delta = target_quantity - self._holding(symbol).Quantity
         self._holding(symbol).Quantity = target_quantity
-        self._publish("fill_observation", symbol, delta, "set_holdings")
+        self._cash -= delta * float(security.Price)
+        self._publish("paper_fill_simulated", symbol, delta, "set_holdings")
 
     def MarketOrder(self, symbol: str, quantity: float) -> None:  # noqa: N802
-        self._security(symbol)
+        security = self._security(symbol)
         self._holding(symbol).Quantity += float(quantity)
-        self._publish("fill_observation", symbol, quantity, "market_order")
+        self._cash -= float(quantity) * float(security.Price)
+        self._publish("paper_fill_simulated", symbol, quantity, "market_order")
 
     def LimitOrder(self, symbol: str, quantity: float, limit_price: float) -> None:  # noqa: N802
         security = self._security(symbol)
         security.Price = float(limit_price)
         self._holding(symbol).Quantity += float(quantity)
-        self._publish("fill_observation", symbol, quantity, "limit_order")
+        self._cash -= float(quantity) * float(security.Price)
+        self._publish("paper_fill_simulated", symbol, quantity, "limit_order")
 
     def Liquidate(self, symbol: str) -> None:  # noqa: N802
+        security = self._security(symbol)
         quantity = self._holding(symbol).Quantity
         self._holding(symbol).Quantity = 0.0
-        self._publish("fill_observation", symbol, -quantity, "liquidate")
+        self._cash += quantity * float(security.Price)
+        self._publish("paper_fill_simulated", symbol, -quantity, "liquidate")
 
     def RecordBracketOrderLogged(  # noqa: N802
         self,
@@ -249,7 +260,7 @@ class PaperExecutionAlgorithm:
             "bracket_order_logged",
             str(symbol),
             0.0,
-            "bracket_order_logged",
+            "bracket_logged_only",
             broker_submission_status=broker_submission_status,
             submitted_to_broker=submitted_to_broker,
             metadata={
@@ -272,6 +283,12 @@ class PaperExecutionAlgorithm:
                 }
             )
         return positions
+
+    def pnl(self) -> float:
+        portfolio_value = self._cash
+        for symbol, holding in self.Portfolio.items():
+            portfolio_value += holding.Quantity * self._security(symbol).Price
+        return float(portfolio_value - self._initial_cash)
 
 
 class RuntimeBindingResolver:
@@ -344,12 +361,18 @@ class RuntimeBindingResolver:
 
 
 class RuntimeTelemetryEmitter:
-    """Emit canonical telemetry envelopes to the configured ingest surface."""
+    """Emit paper-only canonical telemetry envelopes to the ingest surface."""
 
-    def __init__(self, identity: RuntimeIdentity, binding_resolver: RuntimeBindingResolver) -> None:
+    def __init__(
+        self,
+        identity: RuntimeIdentity,
+        binding_resolver: RuntimeBindingResolver,
+        runtime_context: PantheonRuntimeContext | None = None,
+    ) -> None:
         self._identity = identity
         self._binding_resolver = binding_resolver
-        self._url = str(os.getenv("PANTHEON_TELEMETRY_URL", "")).strip().rstrip("/")
+        self._runtime_context = runtime_context
+        self._url = str(self._identity.telemetry_url or os.getenv("PANTHEON_TELEMETRY_URL", "")).strip().rstrip("/")
         self._timeout = int(os.getenv("PANTHEON_TELEMETRY_TIMEOUT_SECONDS", "5"))
         self._enabled = bool(self._url)
         self._sent = 0
@@ -360,49 +383,105 @@ class RuntimeTelemetryEmitter:
     def enabled(self) -> bool:
         return self._enabled
 
-    def emit(self, event_type: str, metrics: dict[str, Any], metadata: dict[str, Any] | None = None) -> bool:
-        if not self._enabled:
-            return False
-
+    def build_event(
+        self,
+        event_type: str,
+        metrics: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
+        *,
+        event_id: str | None = None,
+        created_at: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Build a schema-valid paper TelemetryEvent or return None on invariant failure."""
         binding = self._binding_resolver.resolve()
         if not binding:
-            self._failed += 1
-            self._last_error = "binding context unresolved"
-            return False
+            return self._fail_build("binding context unresolved")
 
-        deployment_stage = str(binding.get("deployment_mode") or self._identity.runtime_mode or "paper")
-        execution_mode = "paper" if deployment_stage == "paper" else "live"
-        artifact_version = str(binding.get("artifact_version") or "0.0.0")
+        deployment_stage = str(
+            binding.get("deployment_stage")
+            or binding.get("deployment_mode")
+            or self._identity.deployment_stage
+            or self._identity.runtime_mode
+            or "paper"
+        ).strip().lower()
+        if deployment_stage != "paper":
+            return self._fail_build(
+                f"paper runtime telemetry must use deployment_stage='paper', got {deployment_stage!r}"
+            )
+
+        binding_id = str(binding.get("binding_id") or binding.get("runtime_binding_id") or "")
+        runtime_id = str(binding.get("runtime_id") or self._identity.runtime_id or "")
+        capital_pool_id = str(binding.get("capital_pool_id") or "")
         artifact_id = str(binding.get("artifact_id") or "")
-        strategy_id = str(os.getenv("PANTHEON_STRATEGY_ID", artifact_id or "paper-runtime"))
-        artifact_type = str(os.getenv("PANTHEON_ARTIFACT_TYPE", "model_artifact"))
-        payload = {
-            "event_id": str(uuid.uuid4()),
-            "event_type": event_type,
-            "created_at": _iso_now(),
-            "execution_mode": execution_mode,
-            "environment": deployment_stage,
-            "deployment_stage": deployment_stage,
-            "binding_id": str(binding.get("binding_id") or ""),
-            "runtime_id": str(binding.get("runtime_id") or self._identity.runtime_id or ""),
-            "capital_pool_id": str(binding.get("capital_pool_id") or ""),
+        artifact_version = str(binding.get("artifact_version") or "")
+        plan_id = str(binding.get("plan_id") or binding.get("deployment_plan_id") or "")
+        persona_capital_binding_id = str(binding.get("persona_capital_binding_id") or "")
+        required = {
+            "binding_id": binding_id,
+            "runtime_id": runtime_id,
+            "capital_pool_id": capital_pool_id,
             "artifact_id": artifact_id,
             "artifact_version": artifact_version,
-            "plan_id": str(binding.get("plan_id") or ""),
-            "persona_capital_binding_id": str(binding.get("persona_capital_binding_id") or ""),
+            "plan_id": plan_id,
+            "persona_capital_binding_id": persona_capital_binding_id,
+        }
+        missing = [key for key, value in required.items() if not value]
+        if missing:
+            return self._fail_build(f"binding context missing required fields: {missing}")
+
+        strategy_id = str(
+            os.getenv("PANTHEON_STRATEGY_ID")
+            or (self._runtime_context.artifact.strategy_id if self._runtime_context else "")
+            or artifact_id
+            or "paper-runtime"
+        )
+        artifact_type = str(os.getenv("PANTHEON_ARTIFACT_TYPE", "execution_bundle"))
+        event_metadata = self._base_metadata(binding)
+        event_metadata.update(metadata or {})
+        payload = {
+            "event_id": event_id or str(uuid.uuid4()),
+            "event_type": event_type,
+            "created_at": created_at or _iso_now(),
+            "execution_mode": "paper",
+            "environment": deployment_stage,
+            "deployment_stage": deployment_stage,
+            "binding_id": binding_id,
+            "runtime_id": runtime_id,
+            "capital_pool_id": capital_pool_id,
+            "artifact_id": artifact_id,
+            "artifact_version": artifact_version,
+            "plan_id": plan_id,
+            "persona_capital_binding_id": persona_capital_binding_id,
             "authority_refs": self._identity.authority_refs(),
             "target": {
                 "registry_id": artifact_id,
                 "strategy_id": strategy_id,
                 "artifact_version": artifact_version,
                 "artifact_type": artifact_type,
-                "promotion_state": "paper" if deployment_stage == "paper" else "live",
+                "promotion_state": "paper",
             },
             "metrics": metrics,
-            "metadata": metadata or {},
+            "metadata": event_metadata,
         }
+        lineage_ref = os.getenv("PANTHEON_LINEAGE_REF", "").strip()
+        if lineage_ref:
+            payload["target"]["lineage_ref"] = lineage_ref
         if self._identity.trace_id:
             payload["trace_id"] = self._identity.trace_id
+        return payload
+
+    def emit(
+        self,
+        event_type: str,
+        metrics: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
+        if not self._enabled:
+            return False
+
+        payload = self.build_event(event_type, metrics, metadata)
+        if payload is None:
+            return False
 
         body = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
@@ -428,6 +507,64 @@ class RuntimeTelemetryEmitter:
         self._sent += 1
         self._last_error = None
         return True
+
+    def emit_deploy_started(self) -> bool:
+        return self.emit(
+            "deploy_started",
+            {"action": "deploy_started"},
+            metadata={"runtime_package": "paper_execution_runtime"},
+        )
+
+    def emit_deploy_completed(self) -> bool:
+        return self.emit(
+            "deploy_completed",
+            {"action": "deploy_completed"},
+            metadata={"runtime_package": "paper_execution_runtime"},
+        )
+
+    def emit_heartbeat(self, metadata: dict[str, Any] | None = None) -> bool:
+        return self.emit("heartbeat", {"heartbeat": 1}, metadata=metadata)
+
+    def emit_pnl_snapshot(self, pnl: float, metadata: dict[str, Any] | None = None) -> bool:
+        return self.emit("pnl_snapshot", {"pnl": float(pnl)}, metadata=metadata)
+
+    def _base_metadata(self, binding: dict[str, Any]) -> dict[str, Any]:
+        metadata: dict[str, Any] = {
+            "runtime_role": self._identity.runtime_role,
+        }
+        if self._runtime_context is not None:
+            metadata.update(
+                {
+                    "engine_bridge_repo": self._runtime_context.bridge.repo,
+                    "engine_bridge_path": self._runtime_context.bridge.path,
+                    "engine_bridge_commit": self._runtime_context.bridge.commit,
+                    "runtime_adapter_version": self._runtime_context.bridge.runtime_adapter_version,
+                    "context_source": self._runtime_context.context_source.value,
+                }
+            )
+        else:
+            candidates = {
+                "engine_bridge_repo": binding.get("engine_bridge_repo")
+                or os.getenv("PANTHEON_ENGINE_BRIDGE_REMOTE")
+                or os.getenv("PANTHEON_ENGINE_BRIDGE_REPO"),
+                "engine_bridge_path": binding.get("engine_bridge_path")
+                or os.getenv("PANTHEON_ENGINE_BRIDGE_SOURCE_PATH")
+                or os.getenv("PANTHEON_ENGINE_BRIDGE_PATH"),
+                "engine_bridge_commit": binding.get("engine_bridge_commit")
+                or os.getenv("PANTHEON_ENGINE_BRIDGE_COMMIT"),
+                "runtime_adapter_version": binding.get("runtime_adapter_version")
+                or os.getenv("PANTHEON_RUNTIME_ADAPTER_VERSION"),
+                "context_source": binding.get("context_source")
+                or os.getenv("PANTHEON_CONTEXT_SOURCE")
+                or "env_vars",
+            }
+            metadata.update({key: str(value) for key, value in candidates.items() if value})
+        return metadata
+
+    def _fail_build(self, message: str) -> None:
+        self._failed += 1
+        self._last_error = message
+        return None
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -474,7 +611,11 @@ class PaperRuntimeService:
             self._identity.runtime_id,
             runtime_context=runtime_context,
         )
-        self._telemetry = telemetry_emitter or RuntimeTelemetryEmitter(self._identity, self._binding_resolver)
+        self._telemetry = telemetry_emitter or RuntimeTelemetryEmitter(
+            self._identity,
+            self._binding_resolver,
+            runtime_context=runtime_context,
+        )
         self._algo = PaperExecutionAlgorithm(event_sink=self._handle_order_event)
         self._consumer = SignalConsumer(store_client=self._store)
         self._poll_interval_seconds = poll_interval_seconds or _as_float(
@@ -498,8 +639,10 @@ class PaperRuntimeService:
     def start(self) -> None:
         if self._thread is not None:
             return
+        self._emit_deploy_started()
         self._thread = threading.Thread(target=self._run_loop, daemon=True, name="paper-runtime-loop")
         self._thread.start()
+        self._emit_deploy_completed()
 
     def stop(self) -> None:
         self._shutdown.set()
@@ -522,6 +665,7 @@ class PaperRuntimeService:
             self._processed_signal_count += max(after - before, 0)
             self._poll_count += 1
             self._maybe_emit_heartbeat()
+            self._maybe_emit_pnl_snapshot()
             return self.snapshot()
 
     def snapshot(self) -> dict[str, Any]:
@@ -569,7 +713,7 @@ class PaperRuntimeService:
         telemetry_metadata = {
             "runtime_package": "paper_execution_runtime",
             "symbol": event.symbol,
-            "sim_fill_flag": event.event_type == "fill_observation",
+            "sim_fill_flag": event.event_type == "paper_fill_simulated",
             "is_real_order": False,
             "is_real_capital": False,
             "submitted_to_broker": event.submitted_to_broker,
@@ -578,16 +722,16 @@ class PaperRuntimeService:
         if event.broker_submission_status:
             telemetry_metadata["broker_submission_status"] = event.broker_submission_status
         telemetry_metadata.update(event.metadata)
-        self._telemetry.emit(
-            event.event_type,
-            {
+        if event.event_type == "bracket_order_logged":
+            metrics: dict[str, Any] = {"action": "bracket_logged_only"}
+        else:
+            metrics = {
                 "fill_quantity": event.quantity,
                 "fill_price": event.fill_price,
                 "action": event.action,
                 "submitted_to_broker": event.submitted_to_broker,
-            },
-            metadata=telemetry_metadata,
-        )
+            }
+        self._telemetry.emit(event.event_type, metrics, metadata=telemetry_metadata)
 
     def _maybe_emit_heartbeat(self) -> None:
         if not self._telemetry.enabled:
@@ -595,20 +739,40 @@ class PaperRuntimeService:
         now = _iso_now()
         if self._last_heartbeat_at == now:
             return
-        emitted = self._telemetry.emit(
-            "heartbeat",
-            {"heartbeat": 1},
+        emitted = self._telemetry.emit_heartbeat(
             metadata={
                 "runtime_package": "paper_execution_runtime",
                 "queue_depth": self._safe_queue_depth(),
                 "is_real_order": False,
                 "is_real_capital": False,
-                "sim_fill_flag": True,
+                "sim_fill_flag": False,
                 "capital_scale_pct": 0,
             },
         )
         if emitted:
             self._last_heartbeat_at = now
+
+    def _maybe_emit_pnl_snapshot(self) -> None:
+        if not self._telemetry.enabled:
+            return
+        self._telemetry.emit_pnl_snapshot(
+            self._algo.pnl(),
+            metadata={
+                "runtime_package": "paper_execution_runtime",
+                "queue_depth": self._safe_queue_depth(),
+                "is_real_order": False,
+                "is_real_capital": False,
+                "capital_scale_pct": 0,
+            },
+        )
+
+    def _emit_deploy_started(self) -> None:
+        if self._telemetry.enabled:
+            self._telemetry.emit_deploy_started()
+
+    def _emit_deploy_completed(self) -> None:
+        if self._telemetry.enabled:
+            self._telemetry.emit_deploy_completed()
 
     def _safe_queue_depth(self) -> int | None:
         try:
