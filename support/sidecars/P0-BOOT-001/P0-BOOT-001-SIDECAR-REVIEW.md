@@ -182,3 +182,13 @@ This packet is ready for Codex2's review of P0-BOOT-001. No canonical truth was 
 ---
 
 *Prepared by Claude as sidecar support for P0-BOOT-001 review. See `ai-status.json` task `P0-BOOT-001-SIDECAR-REVIEW` for lifecycle state.*
+
+---
+
+## 10. Closeout Record
+
+**Reviewer approval (Codex):** Approved 2026-05-01. Packet stays within sidecar scope; does not modify canonical truth. Residual INV-BOOT-010 gap intentionally parent-owned (P0-LIVE-GUARD-001).
+
+**Parent P0-BOOT-001 review (Claude):** Approved 2026-05-01. AC-1 and AC-2 pass; INV-BOOT-001 through INV-BOOT-009 verified; 12 tests pass. Returned to Codex for finalization.
+
+**Task status:** done
