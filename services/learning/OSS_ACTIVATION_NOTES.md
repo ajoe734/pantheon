@@ -62,6 +62,9 @@ window, and label definition.
 For TRL, the first concrete runtime-data packet must also include the FB-002
 event snapshot, preference-pair construction summary, approved imitation
 artifact refs, baseline-model metrics, and selected downstream consumer.
+The bounded task packet for `P2-TRL-RUNTIME-DATA-ACTIVATION-001` now lives in
+`support/evidence/P2-TRL-RUNTIME-DATA-ACTIVATION-001/`; production FB-002 store
+volume and production registry refs remain separate runtime gates.
 
 ## Disposition
 
