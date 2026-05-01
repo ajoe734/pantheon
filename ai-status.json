@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；production、paper、canary、live gate 預設仍 fail-closed。",
-  "updated_at": "2026-05-01T09:46:49Z",
+  "updated_at": "2026-05-01T09:57:18Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,13 +93,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
-      "current_task_ids": [
-        "P1-BRACKET-001-SIDECAR-REVIEW"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude-execution-control",
-      "next": "Reading P1-BRACKET-001 implementation (executor.py, paper_runtime.py, tests) and existing review artifacts to build review packet",
-      "last_update": "2026-05-01T09:46:49Z"
+      "next": "",
+      "last_update": "2026-05-01T09:56:08Z"
     },
     {
       "name": "Gemini",
@@ -123,13 +121,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "reviewing",
+      "status": "finalize",
       "current_task_ids": [
         "P1-PERSIST-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Ready for review. Added shared services.foundation.persistence_posture guard; wired Postgres/object-store staging-prod fail-fast and /healthz posture metadata across Postgres-backed services; preserved source/search posture; updated compose/env and SA artifacts. Verification: 95 targeted tests passed; py_compile passed; platform posture script on env/prod-control passed; root/control docker compose config passed; git diff --check passed. Review packet: support/reviews/P1-PERSIST-001-codex-review-handoff.md",
-      "last_update": "2026-05-01T09:45:42Z"
+      "next": "Supervisor resumed P1-PERSIST-001 for finalize after successful dispatch.",
+      "last_update": "2026-05-01T09:56:17Z"
     },
     {
       "name": "Codex2",
@@ -195,7 +193,7 @@
       "phase": "P1 Wave 5",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "review",
+      "status": "review_approved",
       "depends_on": [
         "P0-CI-BOUNDED-001"
       ],
@@ -208,8 +206,8 @@
         "dev fallback clearly dev-only",
         "environment posture visible in health/runtime metadata"
       ],
-      "next": "Ready for review. Added shared services.foundation.persistence_posture guard; wired Postgres/object-store staging-prod fail-fast and /healthz posture metadata across Postgres-backed services; preserved source/search posture; updated compose/env and SA artifacts. Verification: 95 targeted tests passed; py_compile passed; platform posture script on env/prod-control passed; root/control docker compose config passed; git diff --check passed. Review packet: support/reviews/P1-PERSIST-001-codex-review-handoff.md",
-      "last_update": "2026-05-01T09:45:42Z",
+      "next": "Supervisor resumed P1-PERSIST-001 for finalize after successful dispatch.",
+      "last_update": "2026-05-01T09:56:17Z",
       "source_plane": "planning",
       "source_ref": {
         "type": "discussion_planning",
@@ -220,35 +218,11 @@
         "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
         "wave": "5",
         "source_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
-      }
-    },
-    {
-      "id": "P1-BRACKET-001-SIDECAR-REVIEW",
-      "title": "Prepare P1-BRACKET-001 review packet and evidence summary",
-      "summary_zh": "平行支援 P1-BRACKET-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
-      "phase": "P1 Wave 5",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "in_progress",
-      "depends_on": [
-        "P0-LIVE-GUARD-001"
+      },
+      "review_notes_zh": [
+        "審查通過｜三項 AC 全部滿足：staging/prod fail-fast、dev fallback 僅在 dev 模式、posture 可見於 /healthz 依賴與 detail｜非阻塞：capital 三個 pre-existing 失敗與本 task 無關；bracket-order dirty files 屬相鄰工作，不入此 task commit"
       ],
-      "artifacts": [
-        "support/sidecars/P1-BRACKET-001/P1-BRACKET-001-SIDECAR-REVIEW.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Reading P1-BRACKET-001 implementation (executor.py, paper_runtime.py, tests) and existing review artifacts to build review packet",
-      "last_update": "2026-05-01T09:46:49Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "P1-BRACKET-001",
-      "helper_kind": "review_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
+      "review_file": "support/reviews/P1-PERSIST-001-claude-review.md"
     }
   ],
   "handoffs": [
@@ -266,8 +240,17 @@
       "from": "Codex",
       "to": "Claude",
       "message": "Ready for review. Added shared services.foundation.persistence_posture guard; wired Postgres/object-store staging-prod fail-fast and /healthz posture metadata across Postgres-backed services; preserved source/search posture; updated compose/env and SA artifacts. Verification: 95 targeted tests passed; py_compile passed; platform posture script on env/prod-control passed; root/control docker compose config passed; git diff --check passed. Review packet: support/reviews/P1-PERSIST-001-codex-review-handoff.md",
+      "status": "done",
+      "created_at": "2026-05-01T09:45:42Z",
+      "resolved_at": "2026-05-01T09:52:51Z"
+    },
+    {
+      "task_id": "P1-PERSIST-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all acceptance criteria met. Returning to Codex for closeout commit and push.",
       "status": "pending",
-      "created_at": "2026-05-01T09:45:42Z"
+      "created_at": "2026-05-01T09:52:51Z"
     }
   ],
   "blockers": [],
@@ -282,13 +265,13 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 1,
-      "active": 1,
+      "total": 0,
+      "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Claude2": {
       "total": 0,
@@ -319,11 +302,11 @@
     },
     "Codex": {
       "total": 1,
-      "active": 1,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 1,
-      "review_approved": 0,
+      "review": 0,
+      "review_approved": 1,
       "todo": 0
     },
     "Codex2": {

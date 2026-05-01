@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-01 17:46:49
+Last updated: 2026-05-01 17:57:18
 
 ## Objective
 
@@ -37,9 +37,9 @@ Last updated: 2026-05-01 17:46:49
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Reading P1-BRACKET-001 implementation (executor.py, paper_runtime.py, tests) and existing review artifacts to build review packet
+- `Claude`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Ready for review. Added shared services.foundation.persistence_posture guard; wired Postgres/object-store staging-prod fail-fast and /healthz posture metadata across Postgres-backed services; preserved source/search posture; updated compose/env and SA artifacts. Verification: 95 targeted tests passed; py_compile passed; platform posture script on env/prod-control passed; root/control docker compose config passed; git diff --check passed. Review packet: support/reviews/P1-PERSIST-001-codex-review-handoff.md
+- `Codex`: integration, status-system, schema, acceptance; next: Supervisor resumed P1-PERSIST-001 for finalize after successful dispatch.
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
 - `Claude2`: execution, control-plane, governance-review; next: No active assignment
@@ -51,8 +51,7 @@ Last updated: 2026-05-01 17:46:49
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | Codex | review | `P0-CI-BOUNDED-001` | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 |
-| `P1-BRACKET-001-SIDECAR-REVIEW` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-BRACKET-001] Prepare P1-BRACKET-001 review packet and evidence summary | Claude | in_progress | `P0-LIVE-GUARD-001` | 平行支援 P1-BRACKET-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
+| `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | Codex | review_approved | `P0-CI-BOUNDED-001` | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 |
 
 ### External / Upstream Integration Work
 
@@ -64,14 +63,13 @@ Last updated: 2026-05-01 17:46:49
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 | Codex | Claude | review | `P0-CI-BOUNDED-001` | 2026-05-01 17:45:42 | Ready for review. Added shared services.foundation.persistence_posture guard; wired Postgres/object-store staging-prod fail-fast and /healthz posture metadata across Postgres-backed services; preserved source/search posture; updated compose/env and SA artifacts. Verification: 95 targeted tests passed; py_compile passed; platform posture script on env/prod-control passed; root/control docker compose config passed; git diff --check passed. Review packet: support/reviews/P1-PERSIST-001-codex-review-handoff.md |
-| `P1-BRACKET-001-SIDECAR-REVIEW` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-BRACKET-001] Prepare P1-BRACKET-001 review packet and evidence summary | 平行支援 P1-BRACKET-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Claude | Codex2 | in_progress | `P0-LIVE-GUARD-001` | 2026-05-01 17:46:49 | Reading P1-BRACKET-001 implementation (executor.py, paper_runtime.py, tests) and existing review artifacts to build review packet |
+| `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 | Codex | Claude | review_approved | `P0-CI-BOUNDED-001` | 2026-05-01 17:56:17 | Supervisor resumed P1-PERSIST-001 for finalize after successful dispatch. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| `P1-PERSIST-001` | Codex | Claude | Ready for review. Added shared services.foundation.persistence_posture guard; wired Postgres/object-store staging-prod fail-fast and /healthz posture metadata across Postgres-backed services; preserved source/search posture; updated compose/env and SA artifacts. Verification: 95 targeted tests passed; py_compile passed; platform posture script on env/prod-control passed; root/control docker compose config passed; git diff --check passed. Review packet: support/reviews/P1-PERSIST-001-codex-review-handoff.md | pending | 2026-05-01 17:45:42 |
+| `P1-PERSIST-001` | Claude | Codex | Review approved: all acceptance criteria met. Returning to Codex for closeout commit and push. | pending | 2026-05-01 17:52:51 |
 
 ## Blockers
 
@@ -83,11 +81,11 @@ Last updated: 2026-05-01 17:46:49
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| _(none)_ | - | - | - |
+| `P1-PERSIST-001` | Claude | 審查通過｜三項 AC 全部滿足：staging/prod fail-fast、dev fallback 僅在 dev 模式、posture 可見於 /healthz 依賴與 detail｜非阻塞：capital 三個 pre-existing 失敗與本 task 無關；bracket-order dirty files 屬相鄰工作，不入此 task commit | support/reviews/P1-PERSIST-001-claude-review.md |
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-05-01 17:45:09
+- Last coordination scan: 2026-05-01 17:56:07
 - Tracked features: `46`
 - Lovable-ready packets: `45`
 - Waiting for Lovable/front-end: `0`
@@ -154,23 +152,23 @@ Last updated: 2026-05-01 17:46:49
 
 ## Latest Checkpoints
 
-- 2026-05-01 17:46:02 Orchestrator: PostToolUse: Read
-- 2026-05-01 17:46:02 Orchestrator: PreToolUse: Read
-- 2026-05-01 17:46:03 Orchestrator: PostToolUse: Read
-- 2026-05-01 17:46:07 Orchestrator: PreToolUse: Read
-- 2026-05-01 17:46:07 Orchestrator: PostToolUse: Read
-- 2026-05-01 17:46:08 Orchestrator: PreToolUse: Read
-- 2026-05-01 17:46:08 Orchestrator: PostToolUse: Read
-- 2026-05-01 17:46:13 Orchestrator: PreToolUse: Bash
-- 2026-05-01 17:46:13 Orchestrator: PostToolUse: Bash
-- 2026-05-01 17:46:18 Orchestrator: PreToolUse: Read
-- 2026-05-01 17:46:18 Orchestrator: PostToolUse: Read
-- 2026-05-01 17:46:19 Orchestrator: PreToolUse: Read
-- 2026-05-01 17:46:19 Orchestrator: PostToolUse: Read
-- 2026-05-01 17:46:23 Orchestrator: PreToolUse: Grep
-- 2026-05-01 17:46:23 Orchestrator: PostToolUse: Grep
-- 2026-05-01 17:46:29 Codex2: `P1-BRACKET-001` Finalized guarded paper/sim bracket execution after Claude review approval. Task commit 854c5a7. Verification: python3 -m pytest services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_paper_runtime.py (13 passed).
-- 2026-05-01 17:46:34 Orchestrator: PreToolUse: Read
-- 2026-05-01 17:46:34 Orchestrator: PostToolUse: Read
-- 2026-05-01 17:46:49 Orchestrator: PreToolUse: Bash
-- 2026-05-01 17:46:49 Claude: `P1-BRACKET-001-SIDECAR-REVIEW` Reading P1-BRACKET-001 implementation (executor.py, paper_runtime.py, tests) and existing review artifacts to build review packet
+- 2026-05-01 17:56:17 Orchestrator: `P1-BRACKET-001-SIDECAR-REVIEW` Supervisor resumed P1-BRACKET-001-SIDECAR-REVIEW for finalize after successful dispatch.
+- 2026-05-01 17:56:17 Orchestrator: `P1-PERSIST-001` Worker started via codex: owned_finalize_dispatch
+- 2026-05-01 17:56:17 Codex: `P1-PERSIST-001` Supervisor resumed P1-PERSIST-001 for finalize after successful dispatch.
+- 2026-05-01 17:56:23 Orchestrator: PreToolUse: Read
+- 2026-05-01 17:56:23 Orchestrator: PostToolUse: Read
+- 2026-05-01 17:56:23 Orchestrator: PreToolUse: Read
+- 2026-05-01 17:56:23 Orchestrator: PostToolUse: Read
+- 2026-05-01 17:56:27 Orchestrator: `P1-PERSIST-001` Supervisor resumed P1-PERSIST-001 for finalize after successful dispatch.
+- 2026-05-01 17:56:28 Orchestrator: PreToolUse: Read
+- 2026-05-01 17:56:28 Orchestrator: PreToolUse: Read
+- 2026-05-01 17:56:28 Orchestrator: PostToolUse: Read
+- 2026-05-01 17:56:28 Orchestrator: PostToolUse: Read
+- 2026-05-01 17:56:33 Orchestrator: PreToolUse: Read
+- 2026-05-01 17:56:33 Orchestrator: PostToolUse: Read
+- 2026-05-01 17:56:34 Orchestrator: PreToolUse: Bash
+- 2026-05-01 17:56:35 Orchestrator: PostToolUse: Bash
+- 2026-05-01 17:57:01 Orchestrator: PreToolUse: Bash
+- 2026-05-01 17:57:05 Orchestrator: PostToolUse: Bash
+- 2026-05-01 17:57:18 Orchestrator: PreToolUse: Bash
+- 2026-05-01 17:57:18 Claude: `P1-BRACKET-001-SIDECAR-REVIEW` Closeout: review_approved by Codex2. Artifact support/sidecars/P1-BRACKET-001/P1-BRACKET-001-SIDECAR-REVIEW.md committed in 112295e. Verification: python3 -m pytest services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_paper_runtime.py → 13 passed, 0 failures. Support-only scope confirmed; no L1 canonical truth modified.
