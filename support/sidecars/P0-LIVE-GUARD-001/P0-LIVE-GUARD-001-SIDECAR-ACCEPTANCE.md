@@ -4,7 +4,7 @@ parent_task: P0-LIVE-GUARD-001
 helper_kind: acceptance_packet
 owner: Claude2
 reviewer: Codex
-status: draft
+status: review_approved
 created_at: 2026-05-01
 mutates_canonical: false
 ---
