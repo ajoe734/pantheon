@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-01T09:36:30Z",
+  "updated_at": "2026-05-01T09:46:29Z",
   "counts": {
-    "total": 865,
-    "completed": 849,
+    "total": 866,
+    "completed": 850,
     "superseded": 16
   },
   "recent_terminal_ids": [
+    "P1-BRACKET-001",
     "P1-LIVE-PLAN-001-SIDECAR-REVIEW",
     "P0-FE-SOURCE-001",
     "P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE",
@@ -25,7 +26,6 @@
     "P0-LEAN-CTX-001-SIDECAR-REVIEW",
     "P0-CTX-002-SIDECAR-REVIEW",
     "P0-CTX-002",
-    "P0-HEALTH-001",
-    "P0-FE-DEMO-001-SIDECAR-ACCEPTANCE"
+    "P0-HEALTH-001"
   ]
 }

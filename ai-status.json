@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；production、paper、canary、live gate 預設仍 fail-closed。",
-  "updated_at": "2026-05-01T09:37:14Z",
+  "updated_at": "2026-05-01T09:46:49Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,11 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "working",
+      "current_task_ids": [
+        "P1-BRACKET-001-SIDECAR-REVIEW"
+      ],
       "branch": "feat/claude-execution-control",
-      "next": "",
-      "last_update": "2026-05-01T09:11:46Z"
+      "next": "Reading P1-BRACKET-001 implementation (executor.py, paper_runtime.py, tests) and existing review artifacts to build review packet",
+      "last_update": "2026-05-01T09:46:49Z"
     },
     {
       "name": "Gemini",
@@ -121,13 +123,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
+      "status": "reviewing",
       "current_task_ids": [
         "P1-PERSIST-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Supervisor auto-started P1-PERSIST-001 after successful dispatch.",
-      "last_update": "2026-05-01T09:28:53Z"
+      "next": "Ready for review. Added shared services.foundation.persistence_posture guard; wired Postgres/object-store staging-prod fail-fast and /healthz posture metadata across Postgres-backed services; preserved source/search posture; updated compose/env and SA artifacts. Verification: 95 targeted tests passed; py_compile passed; platform posture script on env/prod-control passed; root/control docker compose config passed; git diff --check passed. Review packet: support/reviews/P1-PERSIST-001-codex-review-handoff.md",
+      "last_update": "2026-05-01T09:45:42Z"
     },
     {
       "name": "Codex2",
@@ -137,13 +139,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "reviewing",
-      "current_task_ids": [
-        "P1-BRACKET-001"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/codex-collab-system",
-      "next": "Guarded paper/sim bracket execution implemented in services/execution/lean_runtime with explicit logged_only vs submitted_to_broker semantics; live remains fail-closed. Verification: python3 -m pytest services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_paper_runtime.py (13 passed).",
-      "last_update": "2026-05-01T09:37:14Z"
+      "next": "",
+      "last_update": "2026-05-01T09:45:19Z"
     },
     {
       "name": "Copilot",
@@ -189,26 +189,27 @@
   ],
   "tasks": [
     {
-      "id": "P1-BRACKET-001",
-      "title": "Guarded paper/sim bracket order execution",
-      "summary_zh": "在 paper/sim broker 範圍內實作受治理 bracket order execution；live 仍 fail-closed。",
+      "id": "P1-PERSIST-001",
+      "title": "Staging/prod Postgres and object store posture guard",
+      "summary_zh": "補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。",
       "phase": "P1 Wave 5",
-      "owner": "Codex2",
+      "owner": "Codex",
       "reviewer": "Claude",
       "status": "review",
       "depends_on": [
-        "P0-LIVE-GUARD-001"
+        "P0-CI-BOUNDED-001"
       ],
       "artifacts": [
+        "docs/04/pantheon_sa/SA-13_contract_schema_gap_analysis.md",
         "docs/04/pantheon_sa/SA-20_v2_risk_register_corrected.md"
       ],
       "acceptance": [
-        "paper/sim bracket order path guarded",
-        "logged_only and submitted_to_broker semantics remain distinct",
-        "live broker submission remains fail-closed without activation guard"
+        "staging/prod fail fast without Postgres/object store",
+        "dev fallback clearly dev-only",
+        "environment posture visible in health/runtime metadata"
       ],
-      "next": "Guarded paper/sim bracket execution implemented in services/execution/lean_runtime with explicit logged_only vs submitted_to_broker semantics; live remains fail-closed. Verification: python3 -m pytest services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_paper_runtime.py (13 passed).",
-      "last_update": "2026-05-01T09:37:14Z",
+      "next": "Ready for review. Added shared services.foundation.persistence_posture guard; wired Postgres/object-store staging-prod fail-fast and /healthz posture metadata across Postgres-backed services; preserved source/search posture; updated compose/env and SA artifacts. Verification: 95 targeted tests passed; py_compile passed; platform posture script on env/prod-control passed; root/control docker compose config passed; git diff --check passed. Review packet: support/reviews/P1-PERSIST-001-codex-review-handoff.md",
+      "last_update": "2026-05-01T09:45:42Z",
       "source_plane": "planning",
       "source_ref": {
         "type": "discussion_planning",
@@ -222,38 +223,32 @@
       }
     },
     {
-      "id": "P1-PERSIST-001",
-      "title": "Staging/prod Postgres and object store posture guard",
-      "summary_zh": "補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。",
+      "id": "P1-BRACKET-001-SIDECAR-REVIEW",
+      "title": "Prepare P1-BRACKET-001 review packet and evidence summary",
+      "summary_zh": "平行支援 P1-BRACKET-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
       "phase": "P1 Wave 5",
-      "owner": "Codex",
-      "reviewer": "Claude",
+      "owner": "Claude",
+      "reviewer": "Codex2",
       "status": "in_progress",
       "depends_on": [
-        "P0-CI-BOUNDED-001"
+        "P0-LIVE-GUARD-001"
       ],
       "artifacts": [
-        "docs/04/pantheon_sa/SA-13_contract_schema_gap_analysis.md",
-        "docs/04/pantheon_sa/SA-20_v2_risk_register_corrected.md"
+        "support/sidecars/P1-BRACKET-001/P1-BRACKET-001-SIDECAR-REVIEW.md"
       ],
       "acceptance": [
-        "staging/prod fail fast without Postgres/object store",
-        "dev fallback clearly dev-only",
-        "environment posture visible in health/runtime metadata"
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Supervisor auto-started P1-PERSIST-001 after successful dispatch.",
-      "last_update": "2026-05-01T09:28:53Z",
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
-        "wave": "5",
-        "source_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
-      }
+      "next": "Reading P1-BRACKET-001 implementation (executor.py, paper_runtime.py, tests) and existing review artifacts to build review packet",
+      "last_update": "2026-05-01T09:46:49Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "P1-BRACKET-001",
+      "helper_kind": "review_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
     }
   ],
   "handoffs": [
@@ -267,12 +262,12 @@
       "resolved_at": "2026-04-17T12:39:53Z"
     },
     {
-      "task_id": "P1-BRACKET-001",
-      "from": "Codex2",
+      "task_id": "P1-PERSIST-001",
+      "from": "Codex",
       "to": "Claude",
-      "message": "Guarded paper/sim bracket execution implemented in services/execution/lean_runtime with explicit logged_only vs submitted_to_broker semantics; live remains fail-closed. Verification: python3 -m pytest services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_paper_runtime.py (13 passed).",
+      "message": "Ready for review. Added shared services.foundation.persistence_posture guard; wired Postgres/object-store staging-prod fail-fast and /healthz posture metadata across Postgres-backed services; preserved source/search posture; updated compose/env and SA artifacts. Verification: 95 targeted tests passed; py_compile passed; platform posture script on env/prod-control passed; root/control docker compose config passed; git diff --check passed. Review packet: support/reviews/P1-PERSIST-001-codex-review-handoff.md",
       "status": "pending",
-      "created_at": "2026-05-01T09:37:14Z"
+      "created_at": "2026-05-01T09:45:42Z"
     }
   ],
   "blockers": [],
@@ -287,13 +282,13 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 0,
-      "active": 0,
+      "total": 1,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Claude2": {
       "total": 0,
@@ -327,16 +322,16 @@
       "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Codex2": {
-      "total": 1,
-      "active": 1,
+      "total": 0,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 1,
+      "review": 0,
       "review_approved": 0,
       "todo": 0
     },

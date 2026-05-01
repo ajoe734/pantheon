@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-01 17:37:14
+Last updated: 2026-05-01 17:46:49
 
 ## Objective
 
@@ -37,10 +37,10 @@ Last updated: 2026-05-01 17:37:14
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: No active assignment
+- `Claude`: execution, control-plane, governance-review; next: Reading P1-BRACKET-001 implementation (executor.py, paper_runtime.py, tests) and existing review artifacts to build review packet
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Supervisor auto-started P1-PERSIST-001 after successful dispatch.
-- `Codex2`: integration, status-system, schema, acceptance; next: Guarded paper/sim bracket execution implemented in services/execution/lean_runtime with explicit logged_only vs submitted_to_broker semantics; live remains fail-closed. Verification: python3 -m pytest services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_paper_runtime.py (13 passed).
+- `Codex`: integration, status-system, schema, acceptance; next: Ready for review. Added shared services.foundation.persistence_posture guard; wired Postgres/object-store staging-prod fail-fast and /healthz posture metadata across Postgres-backed services; preserved source/search posture; updated compose/env and SA artifacts. Verification: 95 targeted tests passed; py_compile passed; platform posture script on env/prod-control passed; root/control docker compose config passed; git diff --check passed. Review packet: support/reviews/P1-PERSIST-001-codex-review-handoff.md
+- `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
 - `Claude2`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
@@ -51,8 +51,8 @@ Last updated: 2026-05-01 17:37:14
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `P1-BRACKET-001` | P1 Wave 5 | Guarded paper/sim bracket order execution | Codex2 | review | `P0-LIVE-GUARD-001` | 在 paper/sim broker 範圍內實作受治理 bracket order execution；live 仍 fail-closed。 |
-| `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | Codex | in_progress | `P0-CI-BOUNDED-001` | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 |
+| `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | Codex | review | `P0-CI-BOUNDED-001` | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 |
+| `P1-BRACKET-001-SIDECAR-REVIEW` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-BRACKET-001] Prepare P1-BRACKET-001 review packet and evidence summary | Claude | in_progress | `P0-LIVE-GUARD-001` | 平行支援 P1-BRACKET-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -64,14 +64,14 @@ Last updated: 2026-05-01 17:37:14
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `P1-BRACKET-001` | P1 Wave 5 | Guarded paper/sim bracket order execution | 在 paper/sim broker 範圍內實作受治理 bracket order execution；live 仍 fail-closed。 | Codex2 | Claude | review | `P0-LIVE-GUARD-001` | 2026-05-01 17:37:14 | Guarded paper/sim bracket execution implemented in services/execution/lean_runtime with explicit logged_only vs submitted_to_broker semantics; live remains fail-closed. Verification: python3 -m pytest services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_paper_runtime.py (13 passed). |
-| `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 | Codex | Claude | in_progress | `P0-CI-BOUNDED-001` | 2026-05-01 17:28:53 | Supervisor auto-started P1-PERSIST-001 after successful dispatch. |
+| `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 | Codex | Claude | review | `P0-CI-BOUNDED-001` | 2026-05-01 17:45:42 | Ready for review. Added shared services.foundation.persistence_posture guard; wired Postgres/object-store staging-prod fail-fast and /healthz posture metadata across Postgres-backed services; preserved source/search posture; updated compose/env and SA artifacts. Verification: 95 targeted tests passed; py_compile passed; platform posture script on env/prod-control passed; root/control docker compose config passed; git diff --check passed. Review packet: support/reviews/P1-PERSIST-001-codex-review-handoff.md |
+| `P1-BRACKET-001-SIDECAR-REVIEW` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-BRACKET-001] Prepare P1-BRACKET-001 review packet and evidence summary | 平行支援 P1-BRACKET-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Claude | Codex2 | in_progress | `P0-LIVE-GUARD-001` | 2026-05-01 17:46:49 | Reading P1-BRACKET-001 implementation (executor.py, paper_runtime.py, tests) and existing review artifacts to build review packet |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| `P1-BRACKET-001` | Codex2 | Claude | Guarded paper/sim bracket execution implemented in services/execution/lean_runtime with explicit logged_only vs submitted_to_broker semantics; live remains fail-closed. Verification: python3 -m pytest services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_paper_runtime.py (13 passed). | pending | 2026-05-01 17:37:14 |
+| `P1-PERSIST-001` | Codex | Claude | Ready for review. Added shared services.foundation.persistence_posture guard; wired Postgres/object-store staging-prod fail-fast and /healthz posture metadata across Postgres-backed services; preserved source/search posture; updated compose/env and SA artifacts. Verification: 95 targeted tests passed; py_compile passed; platform posture script on env/prod-control passed; root/control docker compose config passed; git diff --check passed. Review packet: support/reviews/P1-PERSIST-001-codex-review-handoff.md | pending | 2026-05-01 17:45:42 |
 
 ## Blockers
 
@@ -87,7 +87,7 @@ Last updated: 2026-05-01 17:37:14
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-05-01 17:34:25
+- Last coordination scan: 2026-05-01 17:45:09
 - Tracked features: `46`
 - Lovable-ready packets: `45`
 - Waiting for Lovable/front-end: `0`
@@ -154,23 +154,23 @@ Last updated: 2026-05-01 17:37:14
 
 ## Latest Checkpoints
 
-- 2026-05-01 17:36:05 Orchestrator: PreToolUse: Edit
-- 2026-05-01 17:36:05 Orchestrator: PostToolUse: Edit
-- 2026-05-01 17:36:14 Orchestrator: PreToolUse: Edit
-- 2026-05-01 17:36:14 Orchestrator: PostToolUse: Edit
-- 2026-05-01 17:36:22 Orchestrator: PreToolUse: Bash
-- 2026-05-01 17:36:22 Orchestrator: PostToolUse: Bash
-- 2026-05-01 17:36:29 Orchestrator: PreToolUse: Bash
-- 2026-05-01 17:36:30 Claude2: `P1-LIVE-PLAN-001-SIDECAR-REVIEW` Closeout complete: artifact committed and finalization record updated (5325a16). All three acceptance criteria verified with runbook evidence (criterion 1→§2.1-2.7, criterion 2→§4-§5, criterion 3→§6.1-6.3). Four L1 policy docs confirmed aligned with no semantic conflicts. P1 boundary preserved (canary/live remain fail-closed). Claude review approved 2026-05-01 17:29:49. Sidecar scope compliance confirmed: no canonical truth modified.
-- 2026-05-01 17:36:40 Orchestrator: PostToolUse: Bash
-- 2026-05-01 17:36:43 Orchestrator: PreToolUse: Bash
-- 2026-05-01 17:36:44 Orchestrator: PostToolUse: Bash
-- 2026-05-01 17:36:50 Orchestrator: PreToolUse: Bash
-- 2026-05-01 17:36:50 Orchestrator: PostToolUse: Bash
-- 2026-05-01 17:36:57 Orchestrator: PreToolUse: Bash
-- 2026-05-01 17:36:58 Orchestrator: PostToolUse: Bash
-- 2026-05-01 17:37:03 Orchestrator: PreToolUse: Bash
-- 2026-05-01 17:37:03 Orchestrator: PostToolUse: Bash
-- 2026-05-01 17:37:06 Orchestrator: PreToolUse: Bash
-- 2026-05-01 17:37:07 Orchestrator: PostToolUse: Bash
-- 2026-05-01 17:37:14 Codex2: `P1-BRACKET-001` Handoff to Claude: Guarded paper/sim bracket execution implemented in services/execution/lean_runtime with explicit logged_only vs submitted_to_broker semantics; live remains fail-closed. Verification: python3 -m pytest services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_paper_runtime.py (13 passed).
+- 2026-05-01 17:46:02 Orchestrator: PostToolUse: Read
+- 2026-05-01 17:46:02 Orchestrator: PreToolUse: Read
+- 2026-05-01 17:46:03 Orchestrator: PostToolUse: Read
+- 2026-05-01 17:46:07 Orchestrator: PreToolUse: Read
+- 2026-05-01 17:46:07 Orchestrator: PostToolUse: Read
+- 2026-05-01 17:46:08 Orchestrator: PreToolUse: Read
+- 2026-05-01 17:46:08 Orchestrator: PostToolUse: Read
+- 2026-05-01 17:46:13 Orchestrator: PreToolUse: Bash
+- 2026-05-01 17:46:13 Orchestrator: PostToolUse: Bash
+- 2026-05-01 17:46:18 Orchestrator: PreToolUse: Read
+- 2026-05-01 17:46:18 Orchestrator: PostToolUse: Read
+- 2026-05-01 17:46:19 Orchestrator: PreToolUse: Read
+- 2026-05-01 17:46:19 Orchestrator: PostToolUse: Read
+- 2026-05-01 17:46:23 Orchestrator: PreToolUse: Grep
+- 2026-05-01 17:46:23 Orchestrator: PostToolUse: Grep
+- 2026-05-01 17:46:29 Codex2: `P1-BRACKET-001` Finalized guarded paper/sim bracket execution after Claude review approval. Task commit 854c5a7. Verification: python3 -m pytest services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_paper_runtime.py (13 passed).
+- 2026-05-01 17:46:34 Orchestrator: PreToolUse: Read
+- 2026-05-01 17:46:34 Orchestrator: PostToolUse: Read
+- 2026-05-01 17:46:49 Orchestrator: PreToolUse: Bash
+- 2026-05-01 17:46:49 Claude: `P1-BRACKET-001-SIDECAR-REVIEW` Reading P1-BRACKET-001 implementation (executor.py, paper_runtime.py, tests) and existing review artifacts to build review packet
