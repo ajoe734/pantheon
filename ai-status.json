@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；production、paper、canary、live gate 預設仍 fail-closed。",
-  "updated_at": "2026-05-01T07:12:01Z",
+  "updated_at": "2026-05-01T07:47:25Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,10 +93,12 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "P1-LIVE-PLAN-001"
+      ],
       "branch": "feat/claude-execution-control",
-      "next": "",
+      "next": "Assignment created",
       "last_update": "2026-05-01T07:10:37Z"
     },
     {
@@ -121,13 +123,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
+      "status": "reviewing",
       "current_task_ids": [
-        "P0-TEL-001"
+        "P0-TEL-PROJ-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Supervisor auto-started P0-TEL-001 after successful dispatch.",
-      "last_update": "2026-05-01T07:10:48Z"
+      "next": "Implemented paper telemetry runtime summary projection and BFF runtime-state read path. Key files: services/telemetry/runtime_summary.py, services/telemetry/ingest_svc.py, services/telemetry/main.py, services/control-plane/bff/read_store.py, services/control-plane/bff/main.py, docs/04/pantheon_sa/SA-17_telemetry_reconciliation_evolution_gap_analysis.md. Acceptance covered: heartbeat ingest updates telemetry-owned runtime summary; summary includes runtime_binding_id, deployment_stage, engine_bridge_repo, engine_bridge_commit; BFF runtime-state reads telemetry service summaries and shows last_heartbeat_at. Verification: py_compile with PYTHONPYCACHEPREFIX=/tmp/pantheon-p0-tel-proj-pycache; unittest services.telemetry.test_runtime_summary_projection services.telemetry.test_paper_runtime_ingest_contract services.telemetry.test_main_routes; pytest services/control-plane/bff/test_pkt010_runtime_state_board_contract.py -q; pytest services/control-plane/bff/test_pkt011_health_status_board_contract.py -q; pytest services/control-plane/bff/test_read_store_service_clients.py -q; git diff --check on touched files.",
+      "last_update": "2026-05-01T07:38:16Z"
     },
     {
       "name": "Codex2",
@@ -137,13 +139,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
+      "status": "finalize",
       "current_task_ids": [
         "P0-CI-BOUNDED-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Supervisor auto-started P0-CI-BOUNDED-001 after successful dispatch.",
-      "last_update": "2026-05-01T07:06:57Z"
+      "next": "Approved: adapter CI runner exists and passes; bounded source/search compose smoke passes; research/OpenClaw production adapters remain fail-closed. Owner Codex2 should finalize with a task-scoped commit and done closeout.",
+      "last_update": "2026-05-01T07:40:08Z"
     },
     {
       "name": "Copilot",
@@ -170,7 +172,7 @@
       "current_task_ids": [],
       "branch": "feat/claude2-execution-control",
       "next": "",
-      "last_update": "2026-05-01T07:06:46Z"
+      "last_update": "2026-05-01T07:45:58Z"
     },
     {
       "name": "Gemini2",
@@ -180,54 +182,16 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "reviewing",
+      "current_task_ids": [
+        "P1-BRACKET-001-SIDECAR-ACCEPTANCE"
+      ],
       "branch": "feat/gemini2-research-runtime",
-      "next": "",
-      "last_update": "2026-05-01T06:37:50Z"
+      "next": "Acceptance packet prepared and handed off to reviewer Codex for review.",
+      "last_update": "2026-05-01T07:40:00Z"
     }
   ],
   "tasks": [
-    {
-      "id": "P0-TEL-001",
-      "title": "Add paper runtime telemetry emitter and ingest validation",
-      "summary_zh": "新增 paper heartbeat/deploy/pnl/bracket_logged telemetry producer 與 ingest validation tests。",
-      "phase": "Pantheon P0 Paper Loop",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "depends_on": [
-        "P0-CTX-002",
-        "P0-LEAN-CTX-001"
-      ],
-      "artifacts": [
-        "docs/04/pantheon_p0_sd/SD-P0-04_Paper_Runtime_TelemetryEvent_Contract.md"
-      ],
-      "acceptance": [
-        "paper heartbeat validates as TelemetryEvent and dedupes by event_id",
-        "stage mismatch and missing binding are rejected where required"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
-        "phase": "phase6",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
-        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-05-01T03:58:17Z",
-        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
-      },
-      "status": "in_progress",
-      "next": "Supervisor auto-started P0-TEL-001 after successful dispatch.",
-      "last_update": "2026-05-01T07:10:48Z"
-    },
     {
       "id": "P0-TEL-PROJ-001",
       "title": "Project paper telemetry into runtime status",
@@ -263,9 +227,9 @@
         "human_gate_status": "approved",
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
       },
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-05-01T03:58:17Z"
+      "status": "review",
+      "next": "Implemented paper telemetry runtime summary projection and BFF runtime-state read path. Key files: services/telemetry/runtime_summary.py, services/telemetry/ingest_svc.py, services/telemetry/main.py, services/control-plane/bff/read_store.py, services/control-plane/bff/main.py, docs/04/pantheon_sa/SA-17_telemetry_reconciliation_evolution_gap_analysis.md. Acceptance covered: heartbeat ingest updates telemetry-owned runtime summary; summary includes runtime_binding_id, deployment_stage, engine_bridge_repo, engine_bridge_commit; BFF runtime-state reads telemetry service summaries and shows last_heartbeat_at. Verification: py_compile with PYTHONPYCACHEPREFIX=/tmp/pantheon-p0-tel-proj-pycache; unittest services.telemetry.test_runtime_summary_projection services.telemetry.test_paper_runtime_ingest_contract services.telemetry.test_main_routes; pytest services/control-plane/bff/test_pkt010_runtime_state_board_contract.py -q; pytest services/control-plane/bff/test_pkt011_health_status_board_contract.py -q; pytest services/control-plane/bff/test_read_store_service_clients.py -q; git diff --check on touched files.",
+      "last_update": "2026-05-01T07:38:16Z"
     },
     {
       "id": "P0-LOOP-001",
@@ -421,9 +385,176 @@
         "human_gate_status": "approved",
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
       },
-      "status": "in_progress",
-      "next": "Supervisor auto-started P0-CI-BOUNDED-001 after successful dispatch.",
-      "last_update": "2026-05-01T07:06:57Z"
+      "status": "review_approved",
+      "next": "Approved: adapter CI runner exists and passes; bounded source/search compose smoke passes; research/OpenClaw production adapters remain fail-closed. Owner Codex2 should finalize with a task-scoped commit and done closeout.",
+      "last_update": "2026-05-01T07:40:08Z",
+      "review_notes_zh": [
+        "Approved after rerunning adapter runner, source/search bounded tests, focused posture slice, OSS matrix, OpenClaw smoke, and docker compose source-search-bounded smoke. Previous blockers are resolved; owner may finalize with task-scoped commit."
+      ],
+      "review_file": ".orchestrator/reviews/P0-CI-BOUNDED-001-codex-review.md"
+    },
+    {
+      "id": "P1-BRACKET-001",
+      "title": "Guarded paper/sim bracket order execution",
+      "summary_zh": "在 paper/sim broker 範圍內實作受治理 bracket order execution；live 仍 fail-closed。",
+      "phase": "P1 Wave 5",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "P0-LIVE-GUARD-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_sa/SA-20_v2_risk_register_corrected.md"
+      ],
+      "acceptance": [
+        "paper/sim bracket order path guarded",
+        "logged_only and submitted_to_broker semantics remain distinct",
+        "live broker submission remains fail-closed without activation guard"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-05-01T07:16:27Z",
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "wave": "5",
+        "source_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      }
+    },
+    {
+      "id": "P1-LIVE-PLAN-001",
+      "title": "Canary/live activation criteria and runbook",
+      "summary_zh": "定義 canary/live activation criteria 與 runbook；P1 只取得 activation readiness，不開 production live。",
+      "phase": "P1 Wave 5",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "P0-LOOP-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_sa/SA-20_v2_risk_register_corrected.md",
+        "docs/04/SUPERVISOR_PLANNING_P0_NEXT_DEV_WORK.md"
+      ],
+      "acceptance": [
+        "canary/live prerequisites documented",
+        "rollback and kill switch criteria named",
+        "human approval and risk pass gates required before live activation"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-05-01T07:16:37Z",
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "wave": "5",
+        "source_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      }
+    },
+    {
+      "id": "P1-SEARCH-001",
+      "title": "OpenClaw governed SearchGateway integration",
+      "summary_zh": "把 OpenClaw search 接到 governed SearchGateway，只能回傳 evidence bundle/citation pack，不能越權碰 execution。",
+      "phase": "P1 Wave 5",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "P0-CI-BOUNDED-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_sa/SA-15_governance_boundary_gap_analysis.md",
+        "docs/04/pantheon_sa/SA-20_v2_risk_register_corrected.md"
+      ],
+      "acceptance": [
+        "OpenClaw search goes through SearchGateway",
+        "ACL/license/available_time checked before retrieval",
+        "no broker/runtime/capital direct tool access"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-05-01T07:16:47Z",
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "wave": "5",
+        "source_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      }
+    },
+    {
+      "id": "P1-PERSIST-001",
+      "title": "Staging/prod Postgres and object store posture guard",
+      "summary_zh": "補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。",
+      "phase": "P1 Wave 5",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "P0-CI-BOUNDED-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_sa/SA-13_contract_schema_gap_analysis.md",
+        "docs/04/pantheon_sa/SA-20_v2_risk_register_corrected.md"
+      ],
+      "acceptance": [
+        "staging/prod fail fast without Postgres/object store",
+        "dev fallback clearly dev-only",
+        "environment posture visible in health/runtime metadata"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-05-01T07:16:56Z",
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "wave": "5",
+        "source_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      }
+    },
+    {
+      "id": "P1-BRACKET-001-SIDECAR-ACCEPTANCE",
+      "title": "Prepare P1-BRACKET-001 acceptance packet and dependency map",
+      "summary_zh": "平行支援 P1-BRACKET-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "P1 Wave 5",
+      "owner": "Gemini2",
+      "reviewer": "Codex",
+      "status": "review",
+      "depends_on": [
+        "P0-LIVE-GUARD-001"
+      ],
+      "artifacts": [
+        "support/sidecars/P1-BRACKET-001/P1-BRACKET-001-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Acceptance packet prepared and handed off to reviewer Codex for review.",
+      "last_update": "2026-05-01T07:40:00Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "P1-BRACKET-001",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
     }
   ],
   "handoffs": [
@@ -469,6 +600,66 @@
       "status": "done",
       "created_at": "2026-05-01T06:32:13Z",
       "resolved_at": "2026-05-01T06:37:50Z"
+    },
+    {
+      "task_id": "P0-CI-BOUNDED-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented P0 bounded source/search and fail-closed adapter CI. Verification: py_compile smoke scripts; pytest services/test_source_search_posture.py services/source_ingestion/test_compose_activation.py services/search/tests/test_service_activation_contract.py -q (9 passed); python3 scripts/test_smoke_oss_activation_ready_matrix.py (16/16 matrix passed); run_research_activation_gates --as-of 2026-05-01 exits 2 with activation_gates_blocked; smoke_openclaw_activation_ready_e2e.py 13/13 passed; docker compose --profile source-search-bounded run --rm --use-aliases source-search-bounded-smoke passed.",
+      "status": "done",
+      "created_at": "2026-05-01T07:19:22Z",
+      "resolved_at": "2026-05-01T07:23:49Z"
+    },
+    {
+      "task_id": "P0-CI-BOUNDED-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Changes requested by Codex review: cloudbuild.yaml references missing scripts/ci/run_adapter_checks.py; services/search/tests/test_search_refresh.py has SyntaxError; services/source_ingestion/tests/test_bounded_ingestion.py fails against nonexistent modules/attributes. Review artifact: .orchestrator/reviews/P0-CI-BOUNDED-001-codex-review.md",
+      "status": "done",
+      "created_at": "2026-05-01T07:23:49Z",
+      "resolved_at": "2026-05-01T07:23:49Z"
+    },
+    {
+      "task_id": "P0-CI-BOUNDED-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Addressed review blockers: added scripts/ci/run_adapter_checks.py; replaced placeholder source/search tests with runnable bounded tests; verified py_compile, new tests, adapter checks, and focused source/search posture slice.",
+      "status": "done",
+      "created_at": "2026-05-01T07:31:22Z",
+      "resolved_at": "2026-05-01T07:32:33Z"
+    },
+    {
+      "task_id": "P0-CI-BOUNDED-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review blockers fixed: added scripts/ci/run_adapter_checks.py for Cloud Build adapter CI; verified py_compile for adapter runner/search refresh/bounded ingestion; pytest search refresh + bounded ingestion 7 passed; focused source/search posture slice 9 passed; OSS matrix 16/16; OpenClaw smoke 13/13; source-search-bounded compose smoke passed.",
+      "status": "done",
+      "created_at": "2026-05-01T07:32:33Z",
+      "resolved_at": "2026-05-01T07:40:08Z"
+    },
+    {
+      "task_id": "P1-BRACKET-001-SIDECAR-ACCEPTANCE",
+      "from": "Gemini2",
+      "to": "Codex",
+      "message": "Acceptance packet prepared and handed off to reviewer Codex for review.",
+      "status": "pending",
+      "created_at": "2026-05-01T07:40:00Z"
+    },
+    {
+      "task_id": "P0-TEL-PROJ-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented paper telemetry runtime summary projection and BFF runtime-state read path. Key files: services/telemetry/runtime_summary.py, services/telemetry/ingest_svc.py, services/telemetry/main.py, services/control-plane/bff/read_store.py, services/control-plane/bff/main.py, docs/04/pantheon_sa/SA-17_telemetry_reconciliation_evolution_gap_analysis.md. Acceptance covered: heartbeat ingest updates telemetry-owned runtime summary; summary includes runtime_binding_id, deployment_stage, engine_bridge_repo, engine_bridge_commit; BFF runtime-state reads telemetry service summaries and shows last_heartbeat_at. Verification: py_compile with PYTHONPYCACHEPREFIX=/tmp/pantheon-p0-tel-proj-pycache; unittest services.telemetry.test_runtime_summary_projection services.telemetry.test_paper_runtime_ingest_contract services.telemetry.test_main_routes; pytest services/control-plane/bff/test_pkt010_runtime_state_board_contract.py -q; pytest services/control-plane/bff/test_pkt011_health_status_board_contract.py -q; pytest services/control-plane/bff/test_read_store_service_clients.py -q; git diff --check on touched files.",
+      "status": "pending",
+      "created_at": "2026-05-01T07:38:16Z"
+    },
+    {
+      "task_id": "P0-CI-BOUNDED-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved: adapter CI runner exists and passes; bounded source/search compose smoke passes; research/OpenClaw production adapters remain fail-closed. Owner Codex2 should finalize with a task-scoped commit and done closeout.",
+      "status": "pending",
+      "created_at": "2026-05-01T07:40:08Z"
     }
   ],
   "blockers": [],
@@ -483,13 +674,13 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 0,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Claude2": {
       "total": 0,
@@ -510,30 +701,30 @@
       "todo": 0
     },
     "Gemini2": {
-      "total": 0,
-      "active": 0,
+      "total": 1,
+      "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
       "todo": 0
     },
     "Codex": {
-      "total": 4,
+      "total": 5,
       "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
       "todo": 4
     },
     "Codex2": {
-      "total": 2,
-      "active": 1,
+      "total": 3,
+      "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 0,
+      "review_approved": 1,
       "todo": 2
     },
     "Copilot": {
