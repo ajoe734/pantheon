@@ -1,8 +1,8 @@
 {
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
-  "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；只有下單、取消單、改倉、資金調度等 order-capable live execution path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-01T15:08:35Z",
+  "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
+  "updated_at": "2026-05-01T15:35:00Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,11 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "reviewing",
+      "current_task_ids": [
+        "P2-OSS-ACTIVATE-001-SIDECAR-REVIEW"
+      ],
       "branch": "feat/claude-execution-control",
-      "next": "",
-      "last_update": "2026-05-01T15:00:17Z"
+      "next": "Review packet ready for sidecar review. Artifact: support/sidecars/P2-OSS-ACTIVATE-001/P2-OSS-ACTIVATE-001-SIDECAR-REVIEW.md. Package contains: Codex review findings summary, 111-test evidence, control surface inventory (6 controls), SIDECAR-ACCEPTANCE 14-item checklist mapped to post-review state, and 4 non-blocking open items for closeout tracking. Does not modify canonical truth.",
+      "last_update": "2026-05-01T15:35:00Z"
     },
     {
       "name": "Gemini",
@@ -121,13 +123,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "finalize",
-      "current_task_ids": [
-        "P2-LIVE-KERNEL-001"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/codex-collab-system",
-      "next": "Review approved: all three acceptance criteria pass. Fail-closed posture confirmed. Readiness plan documented without enabling live. Broker entitlement/subaccount/capital gaps explicitly blocked. Promotion gates require acknowledged kill-switch drill evidence. Returned to Codex for closeout.",
-      "last_update": "2026-05-01T15:05:36Z"
+      "next": "",
+      "last_update": "2026-05-01T15:31:28Z"
     },
     {
       "name": "Codex2",
@@ -139,11 +139,11 @@
       ],
       "status": "ready",
       "current_task_ids": [
-        "P2-OSS-ACTIVATE-001"
+        "P2-BROKER-SANDBOX-ORDER-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Auto-reassigned ownership from Gemini2 to Codex2 after repeated Gemini2 capacity/429: status: 429,. Task returned to todo until Codex2 starts a fresh run.",
-      "last_update": "2026-05-01T15:04:02Z"
+      "next": "Create or wire provider-specific smoke runners/evidence packets for IBKR first, then Shioaji/Kraken where sandbox/test lanes are available.",
+      "last_update": "2026-05-01T15:09:24Z"
     },
     {
       "name": "Copilot",
@@ -189,84 +189,70 @@
   ],
   "tasks": [
     {
-      "id": "P2-LIVE-KERNEL-001",
-      "title": "Full Lean Launcher + broker SDK production readiness plan",
-      "summary_zh": null,
-      "phase": "P2 Wave 7",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "review_approved",
-      "depends_on": [
-        "P1-LIVE-PLAN-001",
-        "P1-KILL-001"
-      ],
-      "artifacts": [
-        "docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md",
-        "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md",
-        "OPENCLAW_RUNTIME_CONTRACT.md"
-      ],
-      "acceptance": [
-        "Lean Launcher plus broker SDK production readiness plan is documented without enabling live by default",
-        "broker entitlement subaccount isolation and capital authorization gaps are resolved or explicitly fail-closed",
-        "paper/canary/live promotion gates reference kill-switch ack and drill prerequisites before any live activation"
-      ],
-      "next": "Review approved: all three acceptance criteria pass. Fail-closed posture confirmed. Readiness plan documented without enabling live. Broker entitlement/subaccount/capital gaps explicitly blocked. Promotion gates require acknowledged kill-switch drill evidence. Returned to Codex for closeout.",
-      "last_update": "2026-05-01T15:05:36Z",
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
-        "wave": "7",
-        "source_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
-      },
-      "priority": "P2",
-      "wave": 7,
-      "review_notes_zh": [
-        "審查通過：三項驗收標準全部通過。readiness plan 無預設啟用 live；broker entitlement、subaccount 隔離、capital authorization 均為明確 fail-closed；canary/live 晉升門控已引用 kill-switch drill 與 telemetry_ack.ack_status=acknowledged 先決條件。三份 artifact 互相一致且與來源 L1 政策文件對齊。"
-      ],
-      "review_file": "support/reviews/P2-LIVE-KERNEL-001-claude-review.md"
-    },
-    {
-      "id": "P2-OSS-ACTIVATE-001",
-      "title": "Research OSS production data posture and activation",
-      "summary_zh": null,
+      "id": "P2-BROKER-SANDBOX-ORDER-001",
+      "title": "Broker sandbox/test-key order API smoke",
+      "summary_zh": "先用 broker paper/sandbox/test key 串接下單 API 並留存 place/cancel/readback/reconcile 證據；production live 真實資金路徑仍需 explicit activation。",
       "phase": "P2 Wave 7",
       "owner": "Codex2",
       "reviewer": "Codex",
       "status": "todo",
       "depends_on": [
-        "P0-CI-BOUNDED-001"
+        "P2-LIVE-KERNEL-001"
       ],
       "artifacts": [
-        "OSS_INTEGRATION_CHECKLIST.md",
-        "services/source_ingestion",
-        "services/search",
-        "services/openclaw-gateway-adapter"
+        "services/execution/ibkr_adapter.py",
+        "services/execution/shioaji_adapter.py",
+        "services/execution/kraken_adapter.py",
+        "scripts/probe_ibkr_session.py",
+        "scripts/probe_ibkr_open_orders.py",
+        "scripts/probe_ibkr_executions.py",
+        "scripts/run_ibkr_live_order_cancel.py",
+        "scripts/validate_ep5_live_order_cancel.py",
+        "docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md",
+        "docs/deployment/ep5-canary-ready/broker-venue-config-boundary.md"
       ],
       "acceptance": [
-        "Research OSS production activation is gated by production data posture and bounded adapter CI, not by a blanket live-data ban",
-        "no OSS/source path can bypass SourceRecord EvidenceBundle SearchGateway ACL license available_time controls or route directly to order-capable execution",
-        "activation notes identify remaining production credentials, durable storage, entitlement, or external service prerequisites without silently enabling order-capable execution"
+        "Broker order API smoke runs with paper/sandbox/test credentials, simulation mode, or validate-only mode before any production-live side effect",
+        "smoke captures auth, account readiness, place, cancel/replace, status/readback, execution/no-fill or fill disposition, telemetry, and reconciliation evidence",
+        "production-live order/cancel/position/capital routes remain disabled unless explicit activation gate passes and no raw broker secrets enter repo artifacts"
       ],
-      "next": "Auto-reassigned ownership from Gemini2 to Codex2 after repeated Gemini2 capacity/429: status: 429,. Task returned to todo until Codex2 starts a fresh run.",
-      "last_update": "2026-05-01T15:04:02Z",
+      "next": "Create or wire provider-specific smoke runners/evidence packets for IBKR first, then Shioaji/Kraken where sandbox/test lanes are available.",
+      "last_update": "2026-05-01T15:09:24Z",
       "source_plane": "planning",
       "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
-        "wave": "7",
-        "source_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+        "type": "human_correction",
+        "session_id": "2026-05-01-broker-api-integration-posture"
       },
       "priority": "P2",
       "wave": 7
+    },
+    {
+      "id": "P2-OSS-ACTIVATE-001-SIDECAR-REVIEW",
+      "title": "Prepare P2-OSS-ACTIVATE-001 review packet and evidence summary",
+      "summary_zh": "平行支援 P2-OSS-ACTIVATE-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "phase": "P2 Wave 7",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "status": "review",
+      "depends_on": [
+        "P0-CI-BOUNDED-001"
+      ],
+      "artifacts": [
+        "support/sidecars/P2-OSS-ACTIVATE-001/P2-OSS-ACTIVATE-001-SIDECAR-REVIEW.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Review packet ready for sidecar review. Artifact: support/sidecars/P2-OSS-ACTIVATE-001/P2-OSS-ACTIVATE-001-SIDECAR-REVIEW.md. Package contains: Codex review findings summary, 111-test evidence, control surface inventory (6 controls), SIDECAR-ACCEPTANCE 14-item checklist mapped to post-review state, and 4 non-blocking open items for closeout tracking. Does not modify canonical truth.",
+      "last_update": "2026-05-01T15:35:00Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "P2-OSS-ACTIVATE-001",
+      "helper_kind": "review_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
     }
   ],
   "handoffs": [
@@ -280,39 +266,12 @@
       "resolved_at": "2026-04-17T12:39:53Z"
     },
     {
-      "task_id": "P2-LIVE-KERNEL-001",
-      "from": "Gemini",
-      "to": "Codex",
-      "message": "Auto-reassigned P2-LIVE-KERNEL-001 away from sidecar-only lane Gemini; owner Gemini -> Codex. Reserved sidecar-only agents no longer hold mainline tasks.",
-      "status": "done",
-      "created_at": "2026-05-01T14:52:17Z",
-      "resolved_at": "2026-05-01T14:52:51Z"
-    },
-    {
-      "task_id": "P2-OSS-ACTIVATE-001",
-      "from": "Copilot",
-      "to": "Claude",
-      "message": "Auto-reassigned P2-OSS-ACTIVATE-001 away from sidecar-only lane Copilot; reviewer Copilot -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
-      "status": "done",
-      "created_at": "2026-05-01T14:52:52Z",
-      "resolved_at": "2026-05-01T14:54:59Z"
-    },
-    {
-      "task_id": "P2-LIVE-KERNEL-001",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "P2 live-kernel readiness plan is ready for review. Updated docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md with fail-closed Full Lean Launcher + broker SDK readiness gates, broker entitlement/subaccount isolation, capital authorization procedure, launch input/evidence requirements, and gap register. Updated KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md to require stage-appropriate kill-switch drills with telemetry_ack.ack_status=acknowledged before promotion. Updated OPENCLAW_RUNTIME_CONTRACT.md to keep OpenClaw outside Lean Launcher/broker SDK/capital paths. Verification: git diff --check on touched docs; rg checks for P2-LIVE-KERNEL-001, broker SDK, capital authorization, telemetry_ack, OpenClaw, and fail-closed posture.",
-      "status": "done",
-      "created_at": "2026-05-01T15:00:46Z",
-      "resolved_at": "2026-05-01T15:05:36Z"
-    },
-    {
-      "task_id": "P2-LIVE-KERNEL-001",
+      "task_id": "P2-OSS-ACTIVATE-001-SIDECAR-REVIEW",
       "from": "Claude",
-      "to": "Codex",
-      "message": "Review approved: all three acceptance criteria pass. Fail-closed posture confirmed. Readiness plan documented without enabling live. Broker entitlement/subaccount/capital gaps explicitly blocked. Promotion gates require acknowledged kill-switch drill evidence. Returned to Codex for closeout.",
+      "to": "Codex2",
+      "message": "Review packet ready for sidecar review. Artifact: support/sidecars/P2-OSS-ACTIVATE-001/P2-OSS-ACTIVATE-001-SIDECAR-REVIEW.md. Package contains: Codex review findings summary, 111-test evidence, control surface inventory (6 controls), SIDECAR-ACCEPTANCE 14-item checklist mapped to post-review state, and 4 non-blocking open items for closeout tracking. Does not modify canonical truth.",
       "status": "pending",
-      "created_at": "2026-05-01T15:05:36Z"
+      "created_at": "2026-05-01T15:35:00Z"
     }
   ],
   "blockers": [],
@@ -327,11 +286,11 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 0,
-      "active": 0,
+      "total": 1,
+      "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
       "todo": 0
     },
@@ -363,12 +322,12 @@
       "todo": 0
     },
     "Codex": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 1,
+      "review_approved": 0,
       "todo": 0
     },
     "Codex2": {

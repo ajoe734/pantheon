@@ -4,11 +4,11 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-01 23:08:35
+Last updated: 2026-05-01 23:35:00
 
 ## Objective
 
-把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；只有下單、取消單、改倉、資金調度等 order-capable live execution path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。
+把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。
 
 ## Current Sprint
 
@@ -37,10 +37,10 @@ Last updated: 2026-05-01 23:08:35
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: No active assignment
+- `Claude`: execution, control-plane, governance-review; next: Review packet ready for sidecar review. Artifact: support/sidecars/P2-OSS-ACTIVATE-001/P2-OSS-ACTIVATE-001-SIDECAR-REVIEW.md. Package contains: Codex review findings summary, 111-test evidence, control surface inventory (6 controls), SIDECAR-ACCEPTANCE 14-item checklist mapped to post-review state, and 4 non-blocking open items for closeout tracking. Does not modify canonical truth.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Review approved: all three acceptance criteria pass. Fail-closed posture confirmed. Readiness plan documented without enabling live. Broker entitlement/subaccount/capital gaps explicitly blocked. Promotion gates require acknowledged kill-switch drill evidence. Returned to Codex for closeout.
-- `Codex2`: integration, status-system, schema, acceptance; next: Auto-reassigned ownership from Gemini2 to Codex2 after repeated Gemini2 capacity/429: status: 429,. Task returned to todo until Codex2 starts a fresh run.
+- `Codex`: integration, status-system, schema, acceptance; next: No active assignment
+- `Codex2`: integration, status-system, schema, acceptance; next: Create or wire provider-specific smoke runners/evidence packets for IBKR first, then Shioaji/Kraken where sandbox/test lanes are available.
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
 - `Claude2`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
@@ -51,21 +51,23 @@ Last updated: 2026-05-01 23:08:35
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `P2-LIVE-KERNEL-001` | P2 Wave 7 | Full Lean Launcher + broker SDK production readiness plan | Codex | review_approved | `P1-LIVE-PLAN-001`, `P1-KILL-001` | - |
+| `P2-BROKER-SANDBOX-ORDER-001` | P2 Wave 7 | Broker sandbox/test-key order API smoke | Codex2 | todo | `P2-LIVE-KERNEL-001` | 先用 broker paper/sandbox/test key 串接下單 API 並留存 place/cancel/readback/reconcile 證據；production live 真實資金路徑仍需 explicit activation。 |
 
 ### External / Upstream Integration Work
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `P2-OSS-ACTIVATE-001` | P2 Wave 7 | Research OSS production data posture and activation | Codex2 | todo | `P0-CI-BOUNDED-001` | - |
+| `P2-OSS-ACTIVATE-001-SIDECAR-REVIEW` | P2 Wave 7 | [Sidecar] [Auto] [Parent P2-OSS-ACTIVATE-001] Prepare P2-OSS-ACTIVATE-001 review packet and evidence summary | Claude | review | `P0-CI-BOUNDED-001` | 平行支援 P2-OSS-ACTIVATE-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-01 23:08:35
-- Terminal tasks archived: `874` total, `858` completed, `16` superseded
+- Archive updated: 2026-05-01 23:34:04
+- Terminal tasks archived: `876` total, `860` completed, `16` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `P2-LIVE-KERNEL-001` | P2 Wave 7 | Full Lean Launcher + broker SDK production readiness plan | Codex | completed | 2026-05-01 23:34:04 | `ai-task-archive/tasks/P2-LIVE-KERNEL-001.json` |
+| `P2-OSS-ACTIVATE-001` | P2 Wave 7 | Research OSS production data posture and activation | Codex2 | completed | 2026-05-01 23:33:19 | `ai-task-archive/tasks/P2-OSS-ACTIVATE-001.json` |
 | `P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE` | P2 Wave 7 | Prepare P2-OSS-ACTIVATE-001 acceptance packet and dependency map | Claude | completed | 2026-05-01 23:08:35 | `ai-task-archive/tasks/P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE.json` |
 | `P2-LIVE-KERNEL-001-SIDECAR-ACCEPTANCE` | P2 Wave 7 | Prepare P2-LIVE-KERNEL-001 acceptance packet and dependency map | Codex2 | completed | 2026-05-01 22:59:55 | `ai-task-archive/tasks/P2-LIVE-KERNEL-001-SIDECAR-ACCEPTANCE.json` |
 | `P1-EVO-001-SIDECAR-REVIEW` | P1 Wave 6 | Prepare P1-EVO-001 review packet and evidence summary | Codex2 | completed | 2026-05-01 22:11:48 | `ai-task-archive/tasks/P1-EVO-001-SIDECAR-REVIEW.json` |
@@ -84,21 +86,19 @@ Last updated: 2026-05-01 23:08:35
 | `P0-LOOP-001` | Pantheon P0 Paper Loop | Add minimum paper operating loop smoke | Codex | completed | 2026-05-01 16:52:03 | `ai-task-archive/tasks/P0-LOOP-001.json` |
 | `P1-PERSIST-001-SIDECAR-ACCEPTANCE` | P1 Wave 5 | Prepare P1-PERSIST-001 acceptance packet and dependency map | Claude2 | completed | 2026-05-01 16:34:13 | `ai-task-archive/tasks/P1-PERSIST-001-SIDECAR-ACCEPTANCE.json` |
 | `P0-LOOP-001-SIDECAR-ACCEPTANCE` | Pantheon P0 Paper Loop | Prepare P0-LOOP-001 acceptance packet and dependency map | Claude | completed | 2026-05-01 16:27:41 | `ai-task-archive/tasks/P0-LOOP-001-SIDECAR-ACCEPTANCE.json` |
-| `P1-BRACKET-001-SIDECAR-ACCEPTANCE` | P1 Wave 5 | Prepare P1-BRACKET-001 acceptance packet and dependency map | Codex2 | completed | 2026-05-01 16:22:48 | `ai-task-archive/tasks/P1-BRACKET-001-SIDECAR-ACCEPTANCE.json` |
-| `P1-SEARCH-001` | P1 Wave 5 | OpenClaw governed SearchGateway integration | Codex2 | completed | 2026-05-01 16:17:37 | `ai-task-archive/tasks/P1-SEARCH-001.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `P2-LIVE-KERNEL-001` | P2 Wave 7 | Full Lean Launcher + broker SDK production readiness plan | - | Codex | Claude | review_approved | `P1-LIVE-PLAN-001`, `P1-KILL-001` | 2026-05-01 23:05:36 | Review approved: all three acceptance criteria pass. Fail-closed posture confirmed. Readiness plan documented without enabling live. Broker entitlement/subaccount/capital gaps explicitly blocked. Promotion gates require acknowledged kill-switch drill evidence. Returned to Codex for closeout. |
-| `P2-OSS-ACTIVATE-001` | P2 Wave 7 | Research OSS production data posture and activation | - | Codex2 | Codex | todo | `P0-CI-BOUNDED-001` | 2026-05-01 23:04:02 | Auto-reassigned ownership from Gemini2 to Codex2 after repeated Gemini2 capacity/429: status: 429,. Task returned to todo until Codex2 starts a fresh run. |
+| `P2-BROKER-SANDBOX-ORDER-001` | P2 Wave 7 | Broker sandbox/test-key order API smoke | 先用 broker paper/sandbox/test key 串接下單 API 並留存 place/cancel/readback/reconcile 證據；production live 真實資金路徑仍需 explicit activation。 | Codex2 | Codex | todo | `P2-LIVE-KERNEL-001` | 2026-05-01 23:09:24 | Create or wire provider-specific smoke runners/evidence packets for IBKR first, then Shioaji/Kraken where sandbox/test lanes are available. |
+| `P2-OSS-ACTIVATE-001-SIDECAR-REVIEW` | P2 Wave 7 | [Sidecar] [Auto] [Parent P2-OSS-ACTIVATE-001] Prepare P2-OSS-ACTIVATE-001 review packet and evidence summary | 平行支援 P2-OSS-ACTIVATE-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Claude | Codex2 | review | `P0-CI-BOUNDED-001` | 2026-05-01 23:35:00 | Review packet ready for sidecar review. Artifact: support/sidecars/P2-OSS-ACTIVATE-001/P2-OSS-ACTIVATE-001-SIDECAR-REVIEW.md. Package contains: Codex review findings summary, 111-test evidence, control surface inventory (6 controls), SIDECAR-ACCEPTANCE 14-item checklist mapped to post-review state, and 4 non-blocking open items for closeout tracking. Does not modify canonical truth. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| `P2-LIVE-KERNEL-001` | Claude | Codex | Review approved: all three acceptance criteria pass. Fail-closed posture confirmed. Readiness plan documented without enabling live. Broker entitlement/subaccount/capital gaps explicitly blocked. Promotion gates require acknowledged kill-switch drill evidence. Returned to Codex for closeout. | pending | 2026-05-01 23:05:36 |
+| `P2-OSS-ACTIVATE-001-SIDECAR-REVIEW` | Claude | Codex2 | Review packet ready for sidecar review. Artifact: support/sidecars/P2-OSS-ACTIVATE-001/P2-OSS-ACTIVATE-001-SIDECAR-REVIEW.md. Package contains: Codex review findings summary, 111-test evidence, control surface inventory (6 controls), SIDECAR-ACCEPTANCE 14-item checklist mapped to post-review state, and 4 non-blocking open items for closeout tracking. Does not modify canonical truth. | pending | 2026-05-01 23:35:00 |
 
 ## Blockers
 
@@ -110,11 +110,11 @@ Last updated: 2026-05-01 23:08:35
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| `P2-LIVE-KERNEL-001` | Claude | 審查通過：三項驗收標準全部通過。readiness plan 無預設啟用 live；broker entitlement、subaccount 隔離、capital authorization 均為明確 fail-closed；canary/live 晉升門控已引用 kill-switch drill 與 telemetry_ack.ack_status=acknowledged 先決條件。三份 artifact 互相一致且與來源 L1 政策文件對齊。 | support/reviews/P2-LIVE-KERNEL-001-claude-review.md |
+| _(none)_ | - | - | - |
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-05-01 23:04:01
+- Last coordination scan: 2026-05-01 23:31:17
 - Tracked features: `46`
 - Lovable-ready packets: `45`
 - Waiting for Lovable/front-end: `0`
@@ -181,23 +181,23 @@ Last updated: 2026-05-01 23:08:35
 
 ## Latest Checkpoints
 
-- 2026-05-01 23:06:08 Orchestrator: PreToolUse: Read
-- 2026-05-01 23:06:09 Orchestrator: PostToolUse: Read
-- 2026-05-01 23:06:09 Orchestrator: PreToolUse: Bash
-- 2026-05-01 23:06:09 Orchestrator: PostToolUse: Bash
-- 2026-05-01 23:06:44 Orchestrator: PreToolUse: Bash
-- 2026-05-01 23:06:44 Orchestrator: PostToolUse: Bash
-- 2026-05-01 23:06:44 Orchestrator: PreToolUse: Read
-- 2026-05-01 23:06:44 Orchestrator: PostToolUse: Read
-- 2026-05-01 23:07:32 Orchestrator: PreToolUse: Bash
-- 2026-05-01 23:07:33 Orchestrator: PostToolUse: Bash
-- 2026-05-01 23:07:39 Orchestrator: PreToolUse: Bash
-- 2026-05-01 23:07:40 Orchestrator: PostToolUse: Bash
-- 2026-05-01 23:07:44 Orchestrator: PreToolUse: Bash
-- 2026-05-01 23:08:07 Orchestrator: PreToolUse: Bash
-- 2026-05-01 23:08:08 Orchestrator: PostToolUse: Bash
-- 2026-05-01 23:08:11 Orchestrator: PreToolUse: Bash
-- 2026-05-01 23:08:30 Orchestrator: PreToolUse: Bash
-- 2026-05-01 23:08:31 Orchestrator: PostToolUse: Bash
-- 2026-05-01 23:08:34 Orchestrator: PreToolUse: Bash
-- 2026-05-01 23:08:35 Claude: `P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE` Closeout complete: sidecar acceptance packet finalized with Codex-reviewed corrections. A3-A6 verified; A1-A2 and A7-A14 remain open for parent task. Task-scoped commit ff4a610. Support-only scope maintained; no canonical truth modified.
+- 2026-05-01 23:32:27 Orchestrator: PreToolUse: Read
+- 2026-05-01 23:32:27 Orchestrator: PostToolUse: Read
+- 2026-05-01 23:32:28 Orchestrator: PostToolUse: Read
+- 2026-05-01 23:32:54 Orchestrator: PreToolUse: Read
+- 2026-05-01 23:32:54 Orchestrator: PreToolUse: Glob
+- 2026-05-01 23:32:55 Orchestrator: PostToolUse: Read
+- 2026-05-01 23:32:55 Orchestrator: PostToolUse: Glob
+- 2026-05-01 23:32:58 Orchestrator: PreToolUse: Read
+- 2026-05-01 23:32:58 Orchestrator: PostToolUse: Read
+- 2026-05-01 23:33:13 Orchestrator: PreToolUse: Bash
+- 2026-05-01 23:33:14 Orchestrator: PostToolUse: Bash
+- 2026-05-01 23:33:19 Codex2: `P2-OSS-ACTIVATE-001` Done: production research data activation posture finalized with task-scoped commit 05d52eb. Evidence packet services/learning/OSS_ACTIVATION_NOTES.md and OSS_INTEGRATION_CHECKLIST.md document gated production data use, Qlib/TRL draft-none posture, OpenClaw evidence/citation-only search handoff, and no direct broker/Lean/paper/canary/live/capital/order path. Verification: focused pytest suite 111 passed; git diff --check on task artifacts passed.
+- 2026-05-01 23:34:04 Codex: `P2-LIVE-KERNEL-001` Closed after Claude approval. Artifact commit 4e36777 documents P2 live-kernel readiness; closeout checkpoint 1ba9a12 preserves task-specific HEAD metadata after a concurrent same-branch commit. Scope verified: broker sandbox/test-key smoke is required before canary/live readiness, entitlement/subaccount/capital gaps block production live only, and kill-switch drill ack gates remain required. Verification: git diff --check on task files; rg acceptance scan across three artifacts; secret pattern scan returned no matches.
+- 2026-05-01 23:34:36 Orchestrator: PreToolUse: Write
+- 2026-05-01 23:34:37 Orchestrator: PostToolUse: Write
+- 2026-05-01 23:34:44 Orchestrator: PreToolUse: Bash
+- 2026-05-01 23:34:44 Claude: `P2-OSS-ACTIVATE-001-SIDECAR-REVIEW` Review packet created at support/sidecars/P2-OSS-ACTIVATE-001/P2-OSS-ACTIVATE-001-SIDECAR-REVIEW.md. Summarizes Codex review findings, test evidence (111 pytest passed), control surface inventory, cross-references SIDECAR-ACCEPTANCE 14-item checklist against post-review state, and flags 4 non-blocking open items for closeout tracking.
+- 2026-05-01 23:34:54 Orchestrator: PostToolUse: Bash
+- 2026-05-01 23:34:59 Orchestrator: PreToolUse: Bash
+- 2026-05-01 23:35:00 Claude: `P2-OSS-ACTIVATE-001-SIDECAR-REVIEW` Handoff to Codex2: Review packet ready for sidecar review. Artifact: support/sidecars/P2-OSS-ACTIVATE-001/P2-OSS-ACTIVATE-001-SIDECAR-REVIEW.md. Package contains: Codex review findings summary, 111-test evidence, control surface inventory (6 controls), SIDECAR-ACCEPTANCE 14-item checklist mapped to post-review state, and 4 non-blocking open items for closeout tracking. Does not modify canonical truth.
