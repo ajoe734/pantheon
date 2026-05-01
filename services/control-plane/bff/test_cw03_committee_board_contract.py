@@ -125,7 +125,10 @@ def test_cw03_record_sponsor_decision_executes_and_updates_projection() -> None:
     with _seeded_client() as client:
         response = client.post(
             "/api/v1/operator/commands",
-            headers={"Authorization": OPERATOR_AUTH},
+            headers={
+                "Authorization": OPERATOR_AUTH,
+                "X-Idempotency-Key": "idmp-cw03-record-sponsor-decision",
+            },
             json={
                 "command_type": "RecordSponsorDecision",
                 "committee_id": "committee-regime-risk-20260419-081",

@@ -927,6 +927,23 @@ def _validate_audit_context(cmd: OperatorCommand) -> None:
     )
 
 
+def _require_operator_command_idempotency_key(value: Optional[str]) -> str:
+    idempotency_key = str(value or "").strip()
+    if idempotency_key:
+        return idempotency_key
+    raise _bff_error(
+        400,
+        ErrorCode.INVALID_PARAMS,
+        "X-Idempotency-Key is required for operator commands",
+        (
+            "Runtime, deployment, approval, and incident command admission "
+            "requires a non-empty X-Idempotency-Key header"
+        ),
+        precondition_failed="idempotency_key",
+        suggestion="Retry with X-Idempotency-Key set to a stable client retry key",
+    )
+
+
 def _normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorCommand:
     command_type = payload.get("command_type")
     if command_type:
@@ -12017,6 +12034,7 @@ async def submit_command(
 
     # 2. Command-specific precondition validation (role + params shape)
     try:
+        x_idempotency_key = _require_operator_command_idempotency_key(x_idempotency_key)
         _validate_audit_context(cmd)
         _ensure_live_broker_scope_allowed(cmd, payload)
         _validate_drawer_runtime_target(cmd)

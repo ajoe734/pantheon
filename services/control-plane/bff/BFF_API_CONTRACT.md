@@ -1,21 +1,22 @@
 # BFF API Contract (v1)
 
-Last updated: 2026-04-30
-Status: canonical — governed BFF API contract for APP-001
+Last updated: 2026-05-01
+Status: canonical — governed BFF read API contract for APP-001
 Tier: L2 Planning & Execution (formal API contract derived from L1 policy)
-Scope: API routes, request/response shapes, error contract, staleness model, RBAC matrix, composed views, and real-time feed contract for the governed BFF
+Scope: read API routes, request/response shapes, error contract, staleness model, RBAC matrix, composed views, and real-time feed contract for the governed BFF
 Owner: Qwen
 Reviewer: Codex
 Derived from: PERSONA_RUNTIME_MODEL.md, BINDING_AND_DEPLOYMENT_SEMANTICS.md, BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md, TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md, LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md, EVOLUTION_REVIEW_AND_THRESHOLDS.md, ROLLBACK_AND_POSITION_SEMANTICS.md, KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md, TARGET_ARCHITECTURE.md
+Companion command contract: BFF_COMMAND_API_CONTRACT.md
 
 ---
 
 ## 1. Purpose
 
-This document defines the **formal API contract** for the governed BFF (Backend-for-Frontend) in APP-001.
+This document defines the **formal read API contract** for the governed BFF (Backend-for-Frontend) in APP-001.
 
 It establishes:
-- All API routes with request/response shapes
+- All read API routes with request/response shapes
 - RBAC matrix mapping each surface to required roles
 - Error contract and staleness model
 - Composed view specifications for operator journeys
@@ -23,6 +24,10 @@ It establishes:
 - Versioning and deprecation policy
 
 **Design rule**: The BFF is **read-oriented**. It must never create, modify, or delete canonical state. Every field returned by the BFF traces back to a canonical L1 object or a documented derived read-model. The BFF does not invent parallel truth sources.
+
+Runtime, deployment, approval, incident, rollback, kill-switch, and evolution
+commands are governed separately by `BFF_COMMAND_API_CONTRACT.md`. They must not
+be folded into the GET read surfaces defined here.
 
 ---
 
@@ -35,6 +40,7 @@ These principles come directly from L1 canonical policy and are non-negotiable:
 3. **Partial degradation** — If a downstream service is unavailable, only the affected surface degrades (BFF_HA §5.1).
 4. **Secondary control path** — High-privilege operators have a non-BFF path for safety-critical operations (BFF_HA §6).
 5. **Stateless operation** — The BFF must not store canonical state locally (BFF_HA §3.1).
+6. **Read/command split** — Read surfaces are GET-only; command admission uses the separate governed command facade and requires actor, trace, idempotency, policy/RBAC, and audit controls.
 
 ---
 
@@ -530,10 +536,10 @@ The BFF exposes `GET /api/v1/kill-switch/status` (IN-05) as a read-only status c
 
 ## 13. BFF Design Rule: Read-Only Guarantee
 
-The BFF API contract enforces a strict **read-only guarantee**:
+The BFF read API contract enforces a strict **read-only guarantee**:
 
-1. All BFF endpoints are **GET** only (no POST/PUT/PATCH/DELETE on the BFF API surface)
-2. This contract covers the **read-oriented APP-001 surface only**. Any downstream write or admin command path must be documented separately and must not reuse these GET surfaces as a pseudo-write channel.
+1. All endpoints listed in this read contract are **GET** only (no POST/PUT/PATCH/DELETE on the read API surface)
+2. This contract covers the **read-oriented APP-001 surface only**. Runtime/deployment/approval/incident command paths are documented separately in `BFF_COMMAND_API_CONTRACT.md` and must not reuse these GET surfaces as a pseudo-write channel.
 3. The BFF does not maintain its own canonical state
 4. Every response field traces back to a canonical L1 object or a documented derived read-model
 
@@ -564,7 +570,8 @@ This ensures the BFF remains on the control/UI plane and never becomes a source 
 
 | APP-001 Acceptance Criterion | Status | Evidence |
 |---|---|---|
-| BFF is read-oriented | ✅ | §1 Purpose, §13 Read-Only Guarantee — all endpoints are GET-only, no canonical state writes |
+| BFF read contract is read-oriented | ✅ | §1 Purpose, §13 Read-Only Guarantee — all read-contract endpoints are GET-only, no canonical state writes |
+| Runtime/deployment/approval/incident commands are split from read surfaces | ✅ | Companion `BFF_COMMAND_API_CONTRACT.md` defines the governed command facade with actor, trace, idempotency, RBAC/policy, and audit requirements |
 | Consultation surfaces cite canonical objects | ✅ | See CONSULTATION_SURFACE_CONTRACT.md — all consultation surfaces reference L1 canonical objects with explicit object lineage |
 | Degraded operator path is documented | ✅ | §7 Staleness and Degradation Model, §12 Secondary Control Path, BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md §5-§6 |
 
