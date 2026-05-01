@@ -2,8 +2,8 @@
 project: Pantheon
 document_type: P0 System Design / Architecture Decision / Codex Implementation Packet
 language: zh-TW
-status: draft-for-implementation
-revision: v1
+status: implemented
+revision: v2
 baseline: >
   Based on Pantheon consolidated blueprint and latest implementation correction:
   current actual LEAN bridge is `pantheon/lean` submodule, remote `ajoe734/pantheon-lean.git`;
@@ -399,7 +399,31 @@ AC-CTX-007:
 
 ---
 
-## 15. Codex Task Packets
+## 15. Implementation Evidence
+
+### P0-CTX-002 — Wire runtime_bootstrap.py to manifest/env runtime context
+
+**Status:** implemented (Task-ID: P0-CTX-002, Owner: Claude, Reviewer: Codex)
+
+**Delivered files:**
+- `services/execution/lean_runtime/runtime_bootstrap.py` — wired to `PantheonRuntimeContext`; paper role loads context from `--launch-manifest` or env vars; staging/canary/live missing-context fails closed with `SystemExit(2)`; live/sidecar roles remain health-only
+- `services/execution/lean_runtime/paper_runtime.py` — `RuntimeBindingResolver` accepts `PantheonRuntimeContext` as pre-loaded binding fallback; `_runtime_context_snapshot()` exposes loaded context in health payload
+- `services/execution/lean_runtime/test_runtime_bootstrap.py` — 6 tests covering manifest load, env load, staging fail-closed, live sidecar fail-closed, live broker guard
+
+**Verification:**
+```
+pytest services/execution/lean_runtime/test_runtime_bootstrap.py -v
+# 6 passed
+```
+
+**Acceptance satisfied:**
+- AC-CTX-002: runtime_bootstrap paper role receives PantheonRuntimeContext ✓
+- AC-CTX-005: missing context fails closed for staging/canary/live managed runtime ✓
+- AC-CTX-007: tests cover env var and manifest source modes ✓
+
+---
+
+## 16. Codex Task Packets
 
 ### TP-CTX-001 — Add PantheonRuntimeContext model
 

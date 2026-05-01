@@ -8,6 +8,7 @@ adapters and legacy live placeholders.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -20,13 +21,23 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from services.execution.lean_runtime.paper_runtime import main
+from services.execution.lean_runtime.runtime_context import (
+    PantheonRuntimeContext,
+    RuntimeContextError,
+)
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 
-
-def _as_bool(value: str | None) -> bool:
-    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
-
-
+_PAPER_RUNTIME_ROLES = {"pantheon-paper-execution-runtime", "pantheon-lean-paper-runtime"}
+_CONTEXT_REQUIRED_STAGES = {"staging", "canary", "live", "prod", "production"}
+_RUNTIME_CONTEXT_ENV_HINTS = {
+    "PANTHEON_RUNTIME_BINDING_ID",
+    "PANTHEON_DEPLOYMENT_PLAN_ID",
+    "PANTHEON_ARTIFACT_ID",
+    "PANTHEON_ARTIFACT_VERSION",
+    "PANTHEON_ARTIFACT_CHECKSUM",
+    "PANTHEON_CAPITAL_POOL_ID",
+    "PANTHEON_ENGINE_BRIDGE_COMMIT",
+}
 _HEALTH_PATHS = {"/", "/__health__", "/health", "/healthz", "/livez", "/readyz"}
 _BROKER_ACTION_PATHS = {
     "/api/broker/connect": "broker_connect",
@@ -34,6 +45,64 @@ _BROKER_ACTION_PATHS = {
     "/api/runtime/orders": "order_placement",
     "/api/bracket-orders": "bracket_order_submission",
 }
+
+
+def _as_bool(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Pantheon execution runtime bootstrap")
+    parser.add_argument(
+        "--launch-manifest",
+        default=os.getenv("PANTHEON_LAUNCH_MANIFEST")
+        or os.getenv("PANTHEON_RUNTIME_LAUNCH_MANIFEST"),
+        help="Path to the auditable runtime launch manifest.",
+    )
+    return parser.parse_args(argv)
+
+
+def _expected_stage_for_role(role: str) -> str | None:
+    stage = os.getenv("PANTHEON_DEPLOYMENT_STAGE") or os.getenv("PANTHEON_RUNTIME_MODE")
+    if not stage and role in _PAPER_RUNTIME_ROLES:
+        return "paper"
+    stage = str(stage or "").strip().lower()
+    return stage or None
+
+
+def _env_has_runtime_context() -> bool:
+    return any(os.getenv(key, "").strip() for key in _RUNTIME_CONTEXT_ENV_HINTS)
+
+
+def _runtime_context_required(role: str, expected_stage: str | None) -> bool:
+    if _as_bool(os.getenv("PANTHEON_REQUIRE_RUNTIME_CONTEXT")):
+        return True
+    return role in _PAPER_RUNTIME_ROLES and str(expected_stage or "").lower() in _CONTEXT_REQUIRED_STAGES
+
+
+def _load_runtime_context(
+    *,
+    launch_manifest: str | None,
+    role: str,
+) -> PantheonRuntimeContext | None:
+    expected_stage = _expected_stage_for_role(role)
+    if launch_manifest:
+        return PantheonRuntimeContext.from_manifest(
+            launch_manifest,
+            expected_stage=expected_stage,
+            managed_runtime=True,
+        )
+    if _env_has_runtime_context():
+        return PantheonRuntimeContext.from_env(
+            os.environ,
+            expected_stage=expected_stage,
+            managed_runtime=True,
+        )
+    if _runtime_context_required(role, expected_stage):
+        raise RuntimeContextError(
+            f"runtime context is required for {expected_stage} deployment-managed runtime"
+        )
+    return None
 
 
 def _masked_secret_status(env_key: str) -> dict[str, Any]:
@@ -123,10 +192,31 @@ class _SidecarHandler(BaseHTTPRequestHandler):
             return
         self._write_json(404, {"status": "not_found", "path": self.path})
 
-if __name__ == "__main__":
+
+def run(argv: list[str] | None = None) -> None:
+    args = _parse_args(argv)
     role = os.getenv("PANTHEON_RUNTIME_ROLE", "pantheon-paper-execution-runtime")
-    if role in {"pantheon-paper-execution-runtime", "pantheon-lean-paper-runtime"}:
-        main()
+    if role in _PAPER_RUNTIME_ROLES:
+        try:
+            runtime_context = _load_runtime_context(
+                launch_manifest=args.launch_manifest,
+                role=role,
+            )
+        except RuntimeContextError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "error": "runtime_context_invalid",
+                        "message": str(exc),
+                        "role": role,
+                    }
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            raise SystemExit(2) from exc
+        main(runtime_context=runtime_context)
     else:
         host = os.getenv("HOST", "0.0.0.0")
         port = int(os.getenv("PORT", "8010"))
@@ -143,3 +233,7 @@ if __name__ == "__main__":
             flush=True,
         )
         server.serve_forever()
+
+
+if __name__ == "__main__":
+    run(sys.argv[1:])

@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 _THIS_DIR = Path(__file__).resolve().parent
 if str(_THIS_DIR) not in sys.path:
@@ -31,6 +31,7 @@ from services.execution.lean_runtime.pending_signal_store import (
     PendingSignalStore,
     build_pending_signal_store,
 )
+from services.execution.lean_runtime.runtime_context import PantheonRuntimeContext
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 from services.execution.lean_runtime.signal_consumer import SignalConsumer
 
@@ -46,6 +47,81 @@ def _as_float(value: str | None, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _runtime_context_identity_env(
+    context: PantheonRuntimeContext,
+    base_env: Mapping[str, str],
+) -> dict[str, str]:
+    env = dict(base_env)
+    updates = {
+        "PANTHEON_RUNTIME_BINDING_ID": context.runtime_binding_id,
+        "PANTHEON_RUNTIME_ID": context.runtime_id,
+        "PANTHEON_DEPLOYMENT_PLAN_ID": context.deployment_plan_id,
+        "PANTHEON_DEPLOYMENT_STAGE": context.deployment_stage,
+        "PANTHEON_RUNTIME_MODE": context.deployment_stage,
+        "PANTHEON_RUNTIME_ROLE": context.runtime_role,
+        "PANTHEON_ARTIFACT_ID": context.artifact.artifact_id,
+        "PANTHEON_ARTIFACT_VERSION": context.artifact.artifact_version,
+        "PANTHEON_ARTIFACT_CHECKSUM": context.artifact.artifact_checksum,
+        "PANTHEON_STRATEGY_ID": context.artifact.strategy_id,
+        "PANTHEON_CAPITAL_POOL_ID": context.capital.capital_pool_id,
+        "PANTHEON_PERSONA_CAPITAL_BINDING_ID": context.capital.persona_capital_binding_id,
+        "PANTHEON_ENGINE_BRIDGE_REMOTE": context.bridge.repo,
+        "PANTHEON_ENGINE_BRIDGE_SOURCE_PATH": context.bridge.path,
+        "PANTHEON_ENGINE_BRIDGE_COMMIT": context.bridge.commit,
+        "PANTHEON_RUNTIME_ADAPTER_VERSION": context.bridge.runtime_adapter_version,
+        "PANTHEON_TRACE_ID": context.trace.trace_id,
+        "PANTHEON_REQUEST_ID": context.trace.correlation_id,
+    }
+    env.update({key: value for key, value in updates.items() if value})
+    return env
+
+
+def _binding_from_runtime_context(context: PantheonRuntimeContext) -> dict[str, Any]:
+    return {
+        "binding_id": context.runtime_binding_id,
+        "runtime_binding_id": context.runtime_binding_id,
+        "runtime_id": context.runtime_id,
+        "status": "context_loaded",
+        "deployment_mode": context.deployment_stage,
+        "deployment_stage": context.deployment_stage,
+        "capital_pool_id": context.capital.capital_pool_id,
+        "plan_id": context.deployment_plan_id,
+        "deployment_plan_id": context.deployment_plan_id,
+        "artifact_id": context.artifact.artifact_id,
+        "artifact_version": context.artifact.artifact_version,
+        "persona_capital_binding_id": context.capital.persona_capital_binding_id,
+    }
+
+
+def _runtime_context_snapshot(context: PantheonRuntimeContext | None) -> dict[str, Any]:
+    if context is None:
+        return {
+            "loaded": False,
+            "context_source": "unavailable",
+            "runtime_binding_id": None,
+            "deployment_stage": None,
+        }
+    return {
+        "loaded": True,
+        "context_source": context.context_source.value,
+        "runtime_binding_id": context.runtime_binding_id,
+        "runtime_id": context.runtime_id,
+        "deployment_plan_id": context.deployment_plan_id,
+        "deployment_stage": context.deployment_stage,
+        "runtime_role": context.runtime_role,
+        "artifact_id": context.artifact.artifact_id,
+        "artifact_version": context.artifact.artifact_version,
+        "capital_pool_id": context.capital.capital_pool_id,
+        "persona_capital_binding_id": context.capital.persona_capital_binding_id,
+        "bridge_repo": context.bridge.repo,
+        "bridge_path": context.bridge.path,
+        "bridge_commit": context.bridge.commit,
+        "runtime_adapter_version": context.bridge.runtime_adapter_version,
+        "trace_id": context.trace.trace_id,
+        "correlation_id": context.trace.correlation_id,
+    }
 
 
 class _Holding:
@@ -201,10 +277,21 @@ class PaperExecutionAlgorithm:
 class RuntimeBindingResolver:
     """Resolve the current binding context for this runtime id."""
 
-    def __init__(self, client: RuntimeManagerClient, runtime_id: str | None) -> None:
+    def __init__(
+        self,
+        client: RuntimeManagerClient,
+        runtime_id: str | None,
+        runtime_context: PantheonRuntimeContext | None = None,
+    ) -> None:
         self._client = client
         self._runtime_id = runtime_id
-        self._cached_binding: dict[str, Any] | None = None
+        self._context_binding = (
+            _binding_from_runtime_context(runtime_context) if runtime_context is not None else None
+        )
+        self._cached_binding: dict[str, Any] | None = (
+            dict(self._context_binding) if self._context_binding is not None else None
+        )
+        self._binding_source: str | None = "runtime_context" if self._cached_binding else None
         self._last_sync_at: str | None = None
         self._last_error: str | None = None
 
@@ -225,13 +312,15 @@ class RuntimeBindingResolver:
             if binding.get("runtime_id") == self._runtime_id
         ]
         if not matches:
-            self._cached_binding = None
+            self._cached_binding = dict(self._context_binding) if self._context_binding else None
+            self._binding_source = "runtime_context" if self._context_binding else None
             self._last_sync_at = _iso_now()
             self._last_error = None
-            return None
+            return self._cached_binding
 
         matches.sort(key=lambda item: statuses.get(str(item.get("status")), 99))
         self._cached_binding = matches[0]
+        self._binding_source = "runtime_manager"
         self._last_sync_at = _iso_now()
         self._last_error = None
         return self._cached_binding
@@ -248,6 +337,7 @@ class RuntimeBindingResolver:
             "artifact_id": binding.get("artifact_id"),
             "artifact_version": binding.get("artifact_version"),
             "persona_capital_binding_id": binding.get("persona_capital_binding_id"),
+            "source": self._binding_source,
             "last_sync_at": self._last_sync_at,
             "last_error": self._last_error,
         }
@@ -359,10 +449,17 @@ class PaperRuntimeService:
         identity: RuntimeIdentity | None = None,
         runtime_manager_client: RuntimeManagerClient | None = None,
         telemetry_emitter: RuntimeTelemetryEmitter | None = None,
+        runtime_context: PantheonRuntimeContext | None = None,
         poll_interval_seconds: float | None = None,
         max_batch_size: int | None = None,
     ) -> None:
-        self._identity = identity or RuntimeIdentity.from_env()
+        self._runtime_context = runtime_context
+        identity_env = (
+            _runtime_context_identity_env(runtime_context, os.environ)
+            if runtime_context is not None
+            else None
+        )
+        self._identity = identity or RuntimeIdentity.from_env(identity_env)
         self._store = store or build_pending_signal_store(
             os.getenv("SIGNAL_STORE_URL", "redis://signal-store:6379"),
             queue_key=os.getenv("PANTHEON_SIGNAL_QUEUE_KEY", "pantheon:signals:pending"),
@@ -372,7 +469,11 @@ class PaperRuntimeService:
             base_url=self._identity.runtime_manager_url,
             bearer_token=self._identity.runtime_manager_auth.token,
         )
-        self._binding_resolver = RuntimeBindingResolver(self._runtime_manager_client, self._identity.runtime_id)
+        self._binding_resolver = RuntimeBindingResolver(
+            self._runtime_manager_client,
+            self._identity.runtime_id,
+            runtime_context=runtime_context,
+        )
         self._telemetry = telemetry_emitter or RuntimeTelemetryEmitter(self._identity, self._binding_resolver)
         self._algo = PaperExecutionAlgorithm(event_sink=self._handle_order_event)
         self._consumer = SignalConsumer(store_client=self._store)
@@ -437,6 +538,7 @@ class PaperRuntimeService:
                     "queue_depth": self._safe_queue_depth(),
                     "batch_size": self._max_batch_size,
                 },
+                "runtime_context": _runtime_context_snapshot(self._runtime_context),
                 "binding_lookup": self._binding_resolver.snapshot(),
                 "telemetry": self._telemetry.snapshot(),
                 "paper_state": {
@@ -518,10 +620,10 @@ class PaperRuntimeService:
 _SERVICE: PaperRuntimeService | None = None
 
 
-def get_service() -> PaperRuntimeService:
+def get_service(runtime_context: PantheonRuntimeContext | None = None) -> PaperRuntimeService:
     global _SERVICE
     if _SERVICE is None:
-        _SERVICE = PaperRuntimeService()
+        _SERVICE = PaperRuntimeService(runtime_context=runtime_context)
     return _SERVICE
 
 
@@ -559,9 +661,9 @@ class _Handler(BaseHTTPRequestHandler):
         self._write_json(404, {"status": "not_found", "path": self.path})
 
 
-def main() -> None:
+def main(runtime_context: PantheonRuntimeContext | None = None) -> None:
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-    service = get_service()
+    service = get_service(runtime_context=runtime_context)
     service.start()
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "8010"))
