@@ -1,9 +1,9 @@
 # Qlib Integration — Governance Overlay
 
-Last updated: 2026-04-17
-Owner: OSS-NEXT-001 (Claude)
-Reviewer: Codex
-Status: governed runtime boundary documented
+Last updated: 2026-05-01
+Owner: P2-QLIB-PROD-DATA-ACTIVATION-001 (Codex2)
+Reviewer: Claude
+Status: governed runtime and production-data packet boundary documented
 Related task: `LP-003`
 
 ## 1. Governance Principle
@@ -27,6 +27,21 @@ Mandatory constraints:
 
 Records that fail validation raise `QlibWorkflowError` and halt the workflow — no partial processing.
 
+Production-data activation adds a separate proof gate before a review packet can
+be built. The proof must name:
+
+- provider/source class and provider dataset ID
+- entitlement ref or tags, license scope, and allowed-use terms for research and model training
+- freshness status and SLA
+- point-in-time fields (`event_time`, `available_time`, source watermark)
+- durable storage dataset/snapshot refs, path, and `sha256:` checksum
+- ingest, normalization, evidence bundle, and rate-limit/audit refs
+- explicit `no_order_route=true` with no broker/LEAN/order/paper/canary/live/capital targets
+
+This proof is validated by
+`services/research/qlib/adapter/production_activation.py` and is attached to the
+candidate handoff only after the production data floors pass.
+
 ## 3. Output Governance
 
 The Qlib workflow emits a governed artifact bundle and a registry-ready model entry.
@@ -40,6 +55,7 @@ Governed output rules:
 - the registry entry remains descriptive until later promotion review
 - `governance.direct_live_influence` is `false`
 - `governance.lean_consumption` is `scoring_only_not_direct_action`
+- production activation packets attach governed data proof without writing registry truth
 
 That keeps LP-003 aligned with the registry gate instead of allowing direct live rollout.
 
@@ -76,7 +92,8 @@ The Qlib integration never receives authority over:
 - LEAN execution decisions
 - rollback semantics
 
-Its responsibility ends at packaging a governed `draft` alpha artifact and evaluation summary.
+Its responsibility ends at packaging a governed `draft` alpha artifact,
+evaluation summary, and review-only production activation packet.
 
 ## 7. Upgrade Rules
 
@@ -87,5 +104,6 @@ When changing the version pin, backend behavior, or feature-engineering scope:
 3. rerun `python3 -m unittest discover -s services/research/qlib -p 'test_*.py'`
 4. update `integration.md`, this governance file, and `OSS_INTEGRATION_CHECKLIST.md`
 
-Any future upstream backend run must preserve the same data-validation, draft-only lifecycle,
-and registry-first authority boundary.
+Any future upstream backend run must preserve the same data-validation,
+production proof validation, draft-only lifecycle, and registry-first authority
+boundary.

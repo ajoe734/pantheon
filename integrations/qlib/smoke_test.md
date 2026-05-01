@@ -1,9 +1,9 @@
 # Qlib Integration — Smoke Test
 
-Last updated: 2026-04-30
-Owner: SVC-QLIB-ACTIVATION-READY-ADAPTER (Codex)
-Reviewer: Claude2
-Status: smoke and activation-ready offline path revalidated
+Last updated: 2026-05-01
+Owner: P2-QLIB-PROD-DATA-ACTIVATION-001 (Codex2)
+Reviewer: Claude
+Status: smoke, activation-ready offline path, and production packet path revalidated
 Primary entrypoint: `python3 services/research/qlib/smoke_test.py`
 
 ## 1. Objective
@@ -33,7 +33,7 @@ python3 services/research/qlib/smoke_test.py
 Optional upstream Qlib smoke:
 
 ```bash
-python3 services/research/qlib/smoke_test.py --backend qlib
+python3 services/research/qlib/smoke_test.py --backend real
 ```
 
 Unit coverage:
@@ -47,6 +47,20 @@ Gateway activation-ready offline path:
 ```bash
 pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py
 ```
+
+Production-data activation packet smoke:
+
+```bash
+python3 services/research/qlib/production_activation_smoke.py \
+  --dataset /path/to/governed_ohlcv_dataset.json \
+  --proof /path/to/production_dataset_proof.json \
+  --backend stub \
+  --output-dir /tmp/pantheon/research/qlib/prod-activation
+```
+
+Use `--backend real` for the upstream Qlib LightGBM path. Missing upstream
+dependencies return an explicit install/config error instead of falling back to
+the stub.
 
 ## 4. What the Smoke Path Verifies
 
@@ -63,6 +77,8 @@ The smoke script loads `examples/equity_dataset_sample.json` and proves that:
    `registry_service_only` as write authority
 9. activation-ready data floors fail closed for insufficient datasets
 10. worker execution requires `PANTHEON_QLIB_ACTIVATION_READY_ENABLED=1`
+11. production activation packet smoke requires provider, entitlement,
+    freshness, PIT, durable storage, rate-limit/audit, and no-order-route proof
 
 ## 5. Verified Result
 
@@ -83,11 +99,19 @@ Revalidated on 2026-04-24 with the default stub backend:
 - `mse = 3.5745e-05`
 - assertions: OK
 
-Unit coverage result on 2026-04-30:
+Unit coverage result on 2026-05-01:
 
 - `python3 -m unittest discover -s services/research/qlib -p 'test_*.py'`
-- `Ran 28 tests`
+- `Ran 32 tests`
 - `OK`
+
+Production packet result on 2026-05-01:
+
+- covered by `services/research/qlib/test_production_activation.py`
+- confirms `production_activation_smoke.py --backend stub` writes
+  `production_activation_packet.json` plus the existing artifact, registry,
+  candidate, and manifest handoff files
+- confirms complete proof fields are attached and order routing remains `none`
 
 Gateway path result on 2026-04-30:
 
@@ -111,5 +135,7 @@ Treat the Qlib row as smoke-proven when:
 - `artifact_state=draft` and `deployment_stage=none` are confirmed
 - `direct_live_influence=false` is confirmed
 - candidate packet and artifact manifest are emitted without registry writes
-- unit coverage still passes (28 tests)
+- production activation packet is emitted only with governed data proof and
+  without registry/order writes
+- unit coverage still passes (32 tests)
 - gateway Qlib activation test still proves closed-gate rejection and explicit-gate offline success

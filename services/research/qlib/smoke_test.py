@@ -27,9 +27,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the LP-003 governed Qlib smoke test.")
     parser.add_argument(
         "--backend",
-        choices=("stub", "qlib"),
+        choices=("stub", "qlib", "real"),
         default="stub",
-        help="Select stub (default) or upstream Qlib backend.",
+        help="Select stub (default) or upstream Qlib backend. 'real' is an alias for qlib.",
     )
     args = parser.parse_args(argv)
 

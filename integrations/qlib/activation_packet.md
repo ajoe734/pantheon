@@ -1,14 +1,15 @@
 # Qlib Production Activation Packet
 
-Last updated: 2026-04-30
-Owner: SVC-QLIB-ACTIVATION-READY-ADAPTER (Codex)
-Reviewer: Claude2
-Status: activation-ready behind explicit offline gates; production remains data-gated
+Last updated: 2026-05-01
+Owner: P2-QLIB-PROD-DATA-ACTIVATION-001 (Codex2)
+Reviewer: Claude
+Status: production-data activation packet implemented; candidate handoff remains review-only
 
 ## 1. Purpose
 
 This packet is the reviewable activation surface for the `Qlib` row after the
-adapter moved from smoke-only packaging to an activation-ready offline worker.
+adapter moved from smoke-only packaging to an activation-ready offline worker
+and then gained production-data proof validation.
 
 It does two things:
 
@@ -16,23 +17,37 @@ It does two things:
 2. defines the exact evidence bundle required before the first governed
    production LightGBM alpha run may start
 
-This packet does **not** claim that Qlib is production-activated today. It
-formalizes that the repo-local adapter, worker, artifact handoff, and gateway
-offline execution path are ready, while production remains blocked on RS-003,
-governed market-data, and StrategySpec evidence gates.
+This packet does **not** authorize registry writes, paper/canary/live
+deployment, broker sessions, capital binding, or order routing. It formalizes
+that Qlib can now produce a reviewable `draft -> candidate` handoff from a
+governed production-data proof when the caller supplies the required RS-003,
+dataset, StrategySpec, entitlement, PIT, freshness, storage, and audit evidence.
 
 ## 2. Current Disposition
 
 Current checklist row status remains `smoke-tested` because the checklist has no
-separate `activation-ready` state and production activation is not open.
+separate `production-data-packet-ready` state and production registry admission
+is not open.
 
-Repo-local truth as of 2026-04-30:
+Repo-local truth as of 2026-05-01:
 
 - the governed Qlib adapter exists at `services/research/qlib/adapter/qlib_adapter.py`
+- the production-data proof validator and packet builder exist at
+  `services/research/qlib/adapter/production_activation.py`
+- `services/research/qlib/production_activation_smoke.py` runs a real/stub-selectable
+  activation packet smoke against caller-supplied dataset/proof JSON
 - the offline pre-activation preflight scaffold exists at `services/research/qlib/preflight.py`
 - `validate_activation_ready_dataset()` enforces the >=50 instrument, >=2 year,
   >=504 daily-period production data floors before training when
   `enforce_activation_ready=True`
+- `validate_production_dataset_proof()` requires provider/source-class,
+  entitlement/license/allowed-use, freshness, point-in-time fields, durable
+  storage refs/checksum, rate-limit/audit evidence, and explicit no-order-route
+  controls before the production activation packet can be built
+- `build_production_activation_packet()` attaches that proof to the candidate
+  handoff, keeps `artifact_state=draft`, requests only `candidate`, preserves
+  `deployment_summary.current_stage=none`, and declares
+  `registry_service_only` as write authority
 - `persist_qlib_run_artifacts()` writes `artifact_bundle.json`, `registry_entry.json`,
   `candidate_packet.json`, and `manifest.json` without writing registry truth
 - `services/research/qlib/worker.py` is fail-closed unless
@@ -46,8 +61,8 @@ Repo-local truth as of 2026-04-30:
 - the default smoke path still passes via `python3 services/research/qlib/smoke_test.py`
 - unit coverage still passes via
   `python3 -m unittest discover -s services/research/qlib -p 'test_*.py'`
-- production activation is still blocked on entry gates from
-  `services/learning/qlib/ACTIVATION_CRITERIA.md §1`
+- registry admission and any later production use remain blocked on review and
+  the entry gates from `services/learning/qlib/ACTIVATION_CRITERIA.md §1`
 
 The gate is therefore cleared only in the truthful sense:
 
@@ -61,7 +76,7 @@ The gate is therefore cleared only in the truthful sense:
 | Activation criterion | Current read | Evidence | Gap to close |
 |---|---|---|---|
 | RS-003 baseline StrategySpec candidate exists in registry | blocked | `services/learning/qlib/ACTIVATION_CRITERIA.md §1.1` and `§3.2` require a replication-gate-passed `candidate` artifact before Qlib training; this repo snapshot contains the RS-003 gate implementation but no task-local evidence naming the target candidate registry artifact for this activation | attach the governed StrategySpec / candidate artifact ID, the target strategy family, and the RS-003 pass evidence bundle |
-| Governed dataset of ≥50 instruments with ≥2 years OHLCV history is available | blocked | `services/learning/qlib/ACTIVATION_CRITERIA.md §1.3` sets the threshold; `services/research/qlib/examples/equity_dataset_sample.json` is only a smoke sample (`dataset:equity-universe-top10-2024-daily`) and does not prove the production bar | attach a governed dataset manifest with universe size, date window, frequency, and dataset refs for the target run |
+| Governed dataset of ≥50 instruments with ≥2 years OHLCV history is available | packet validator implemented | `validate_activation_ready_dataset()` enforces the numerical floors, while `validate_production_dataset_proof()` now requires provider entitlement, freshness, PIT, storage, audit, and no-order-route evidence. The repo sample remains smoke-only and does not claim production data. | supply the target run's actual governed dataset/proof JSON and run `production_activation_smoke.py --backend stub` or `--backend real` |
 | Supervised alpha framing is documented for the target strategy | blocked | the gate doc defines the correct problem shape, and the sample dataset uses `strategy_id: equity-cross-sectional-alpha`, but no task-local packet yet cites the concrete governed StrategySpec that binds the target alpha statement, label definition, and universe | cite the target StrategySpec version and summarize why LightGBM supervised ranking/prediction is still the right fit |
 | No upstream dependency conflicts | satisfied | `services/research/qlib/requirements.txt`, `integrations/qlib/integration.md`, and the passing smoke/unit baselines show the pinned package path is compatible with the current governed research stack | keep this revalidated when dependency pins change |
 
@@ -78,6 +93,36 @@ the three production activation blockers above:
 The preflight is deliberately non-writing and fail-closed. Missing probes return
 `activation_allowed=false`; they do not query or update registry/governance, and
 they do not execute `QlibLightGBMBackend` or the production LightGBM path.
+
+## 3.2 Production Dataset Proof Contract
+
+The production activation smoke requires a separate proof JSON with these
+fields before it will build a candidate handoff:
+
+| Proof area | Required evidence |
+|---|---|
+| Provider | provider name, source class (`research_grade` or `internal_can`), provider dataset ID |
+| Entitlement/license | entitlement ref or tags, license scope, allowed use including `research` and `model_training`, and no order-capable allowed-use target |
+| Freshness | `status=fresh`, `as_of`, `last_ingested_at`, and a positive freshness SLA |
+| PIT | `point_in_time=true`, event-time field, available-time field, and source watermark |
+| Storage | durable backend, dataset ref matching the Qlib workflow source refs, snapshot ref, path, and `sha256:` checksum |
+| Audit | ingest run, normalization run, evidence bundle ref, and rate-limit policy ref |
+| Controls | `no_order_route=true` and no broker/Lean/order/paper/canary/live/capital execution targets |
+
+Canonical command shape:
+
+```bash
+python3 services/research/qlib/production_activation_smoke.py \
+  --dataset /path/to/governed_ohlcv_dataset.json \
+  --proof /path/to/production_dataset_proof.json \
+  --backend stub \
+  --output-dir /tmp/pantheon/research/qlib/prod-activation
+```
+
+To exercise the upstream backend, use `--backend real`. If `pyqlib==0.9.6` or
+its runtime dependencies are unavailable, the command returns the explicit
+`Qlib backend unavailable. Install services/research/qlib/requirements.txt first.`
+error instead of silently falling back to the stub.
 
 ## 4. First Governed LightGBM Activation Bundle
 
@@ -98,7 +143,8 @@ following evidence to the execution/review lane:
    - why supervised alpha is appropriate for this target
    - why RL / TRL are not the correct first lane
 4. LightGBM run bundle
-   - backend used (`QlibLightGBMBackend`)
+   - backend used (`StubLightGBMBackend` for deterministic packet smoke or
+     `QlibLightGBMBackend` for upstream real-backend smoke)
    - config version and key hyperparameters
    - artifact checksum and storage path
    - holdout metrics / backtest summary
@@ -108,6 +154,7 @@ following evidence to the execution/review lane:
    - lineage refs back to source dataset and source strategy spec
    - non-writing `candidate_packet` requesting only `draft -> candidate`
    - artifact manifest with checksum and paths for the persisted handoff files
+   - `production_activation_packet.json` when the production dataset proof is attached
 
 The governed output target remains unchanged:
 
@@ -120,7 +167,7 @@ The governed output target remains unchanged:
 
 ## 5. Verification Snapshot
 
-Revalidated in this session on 2026-04-30:
+Revalidated in this session on 2026-05-01:
 
 1. `python3 services/research/qlib/smoke_test.py`
    - Result: passed
@@ -128,25 +175,34 @@ Revalidated in this session on 2026-04-30:
    - Output confirms `artifact_state=draft`, `deployment_stage=none`, and
      governed storage under `research/qlib/`
 2. `python3 -m unittest discover -s services/research/qlib -p 'test_*.py'`
-   - Result: 28 tests passed, including preflight, activation-ready data floors,
-     candidate packet, persistence, explicit backend error, and fail-closed worker checks
-3. `pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py`
+   - Result: 32 tests passed, including preflight, activation-ready data floors,
+     production dataset proof validation, candidate packet, persistence, explicit
+     backend error, and fail-closed worker checks
+3. `production_activation_smoke.py --backend stub` is covered by
+   `services/research/qlib/test_production_activation.py`
+   - Result: writes `artifact_bundle.json`, `registry_entry.json`,
+     `candidate_packet.json`, `manifest.json`, and
+     `production_activation_packet.json`
+   - Confirms provider/entitlement/freshness/PIT/storage/audit proof is attached
+   - Confirms `artifact_state=draft`, requested state `candidate`,
+     `deployment_stage=none`, `registry_service_only`, and `order_route=none`
+4. `pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py`
    - Result: 2 tests passed
    - Closed gate: Qlib offline dispatch is rejected
    - Open gate: Qlib worker runs with explicit env gate, enforces data floors,
      persists handoff artifacts, and leaves production activation disabled
-4. `python3 -m pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py services/research-worker-gateway/tests/test_research_worker_gateway_gate_dispatch.py`
+5. `python3 -m pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py services/research-worker-gateway/tests/test_research_worker_gateway_gate_dispatch.py`
    - Result: 11 tests passed
    - Confirms closed-gate rejection, open-gate offline subprocess execution,
      stdout/stderr/exit-code persistence, capability gate metadata, and
      paper/canary/live fail-closed behavior
-5. `python3 -m pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_rejection_policy.py services/research-worker-gateway/tests/test_research_worker_gateway_http_service.py`
+6. `python3 -m pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_rejection_policy.py services/research-worker-gateway/tests/test_research_worker_gateway_http_service.py`
    - Result: 9 tests passed
    - Confirms the pre-existing rejection and HTTP contract still fail closed
 
-These checks prove the adapter is activation-ready for offline gated research
-handoff and governance-safe. They do not satisfy the production activation
-thresholds by themselves.
+These checks prove the adapter can produce a production-data activation packet
+when supplied complete governed evidence. They do not write registry truth or
+open an order-capable path.
 
 ## 6. Disposition
 
@@ -155,10 +211,12 @@ thresholds by themselves.
 The truthful next action is:
 
 1. cite the exact RS-003 candidate artifact for the target alpha lane
-2. attach the governed ≥50-instrument, ≥2-year OHLCV dataset manifest
+2. attach the governed ≥50-instrument, ≥2-year OHLCV dataset manifest and
+   production dataset proof JSON
 3. bind the target StrategySpec and supervised label definition to that run
-4. execute the first governed LightGBM activation through `QlibLightGBMBackend`
-5. submit the resulting `qlib_alpha` artifact for registry admission
+4. execute the first governed LightGBM activation through `--backend real`, or
+   record the explicit install/config error if the upstream backend is not available
+5. submit the resulting `qlib_alpha` artifact packet for registry admission review
 
-Until those five items exist, the row is activation-ready behind offline gates
-but still blocked from production use.
+Until review admits the packet, the row is production-data packet-ready behind
+explicit gates but still blocked from production registry use.
