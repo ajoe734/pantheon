@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-01T16:58:28Z",
+  "updated_at": "2026-05-01T17:08:59Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,13 +93,14 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "reviewing",
+      "status": "working",
       "current_task_ids": [
-        "P2-RL-UPSTREAM-RUNTIME-SMOKE-001"
+        "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
+        "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Implementation ready for review: created activation_smoke.py for FinRL, RLlib, and Ray Tune; all three ran with --enable-activation-ready --backend real and recorded explicit dependency/config errors (ModuleNotFoundError: finrl / ray) with silent_stub_fallback=false; stub-backed handoff artifacts (artifact_bundle, registry_entry, candidate_packet, evaluator_packet) produced and persisted at support/evidence/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/; all acceptance gates pass (bounded smoke or explicit error, checksums, evaluator packet, no broker/order/promotion/capital); OSS_INTEGRATION_CHECKLIST.md updated: FinRL/RLlib/Ray Tune smoke-tested; tests: finrl 16 passed, rllib 33 passed; commit: 2a6a705",
-      "last_update": "2026-05-01T16:55:37Z"
+      "next": "Changes requested by Codex2: support/reviews/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-codex2-review.md. Main blocker: schema/checksum adapter support behind the evidence is still uncommitted and absent from task commit 2a6a705; also fix per-framework evaluator_packet checksum omission and remove premature 'closed' wording from OSS_INTEGRATION_CHECKLIST.md before re-handoff.",
+      "last_update": "2026-05-01T17:08:59Z"
     },
     {
       "name": "Gemini",
@@ -123,11 +124,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "finalize",
+      "current_task_ids": [
+        "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW"
+      ],
       "branch": "feat/codex-collab-system",
-      "next": "",
-      "last_update": "2026-05-01T16:37:04Z"
+      "next": "Sidecar review packet approved: evidence bundle accurately summarized, all three acceptance criteria met, no canonical files modified. Four attention items correctly flagged as parent-review concerns. Returning to Codex for closeout.",
+      "last_update": "2026-05-01T17:08:23Z"
     },
     {
       "name": "Codex2",
@@ -195,7 +198,7 @@
       "phase": "P2 Wave 8 External Activation",
       "owner": "Claude",
       "reviewer": "Codex2",
-      "status": "review",
+      "status": "in_progress",
       "depends_on": [
         "P2-OSS-ACTIVATE-001"
       ],
@@ -213,8 +216,8 @@
         "Reward environment dataset and artifact schemas are enforced with persisted checksums and evaluator packet",
         "Outputs remain research artifacts only with no broker session order routing paper canary live promotion or capital binding"
       ],
-      "next": "Implementation ready for review: created activation_smoke.py for FinRL, RLlib, and Ray Tune; all three ran with --enable-activation-ready --backend real and recorded explicit dependency/config errors (ModuleNotFoundError: finrl / ray) with silent_stub_fallback=false; stub-backed handoff artifacts (artifact_bundle, registry_entry, candidate_packet, evaluator_packet) produced and persisted at support/evidence/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/; all acceptance gates pass (bounded smoke or explicit error, checksums, evaluator packet, no broker/order/promotion/capital); OSS_INTEGRATION_CHECKLIST.md updated: FinRL/RLlib/Ray Tune smoke-tested; tests: finrl 16 passed, rllib 33 passed; commit: 2a6a705",
-      "last_update": "2026-05-01T16:55:37Z",
+      "next": "Changes requested by Codex2: support/reviews/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-codex2-review.md. Main blocker: schema/checksum adapter support behind the evidence is still uncommitted and absent from task commit 2a6a705; also fix per-framework evaluator_packet checksum omission and remove premature 'closed' wording from OSS_INTEGRATION_CHECKLIST.md before re-handoff.",
+      "last_update": "2026-05-01T17:08:59Z",
       "task_class": "execution",
       "mutates_canonical": true
     },
@@ -278,6 +281,69 @@
       "last_update": "2026-05-01T16:19:24Z",
       "task_class": "execution",
       "mutates_canonical": true
+    },
+    {
+      "id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW",
+      "title": "Prepare P2-RL-UPSTREAM-RUNTIME-SMOKE-001 review packet and evidence summary",
+      "summary_zh": "平行支援 P2-RL-UPSTREAM-RUNTIME-SMOKE-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "phase": "P2 Wave 8 External Activation",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "review_approved",
+      "depends_on": [
+        "P2-OSS-ACTIVATE-001"
+      ],
+      "artifacts": [
+        "support/sidecars/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Sidecar review packet approved: evidence bundle accurately summarized, all three acceptance criteria met, no canonical files modified. Four attention items correctly flagged as parent-review concerns. Returning to Codex for closeout.",
+      "last_update": "2026-05-01T17:08:23Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
+      "helper_kind": "review_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "審查通過：evidence bundle 準確，sidecar scope 邊界正確，三框架 governance boundary flags 驗證通過，四項 attention items 均已正確歸類為 parent review 範疇，不構成 sidecar 缺陷",
+        "後續追蹤：OSS_INTEGRATION_CHECKLIST.md lifecycle wording 需在 parent closeout 前由 Codex2 與 Claude 對齊；PYTHONHASHSEED nondeterminism 為 parent-scope reproducibility note"
+      ],
+      "review_file": "support/reviews/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW-claude-review.md"
+    },
+    {
+      "id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF",
+      "title": "Prepare P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001 BFF and frontend handoff packet",
+      "summary_zh": "平行支援 P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+      "phase": "P2 Wave 8 External Activation",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "status": "review",
+      "depends_on": [
+        "P1-SOURCE-001",
+        "P1-SEARCH-001",
+        "P2-OSS-ACTIVATE-001"
+      ],
+      "artifacts": [
+        "support/sidecars/P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001/P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "BFF handoff packet complete. Explored BFF_API_CONTRACT.md, source_ingestion connectors/base.py, search/gateway.py, openclaw-gateway-adapter/main.py, source-search-prod-hardening.md. Identified 6 query gaps (GAP-01 through GAP-06): missing auth-requirements endpoint, no ingest-job to index readback link, no lineage refs in search results, no DLQ preview GET, no composed source-search health view, OpenClaw audit not proxied in BFF. Documented operator journey (9 steps: connector discovery -> credential provisioning -> ingest job -> poll completion -> source record verification -> index confirmation -> search readback -> health sign-off -> evidence recording). Frontend handoff items in Section 7. No canonical files modified.",
+      "last_update": "2026-05-01T17:06:28Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001",
+      "helper_kind": "bff_handoff_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
     }
   ],
   "handoffs": [
@@ -331,8 +397,52 @@
       "from": "Claude",
       "to": "Codex2",
       "message": "Implementation ready for review: created activation_smoke.py for FinRL, RLlib, and Ray Tune; all three ran with --enable-activation-ready --backend real and recorded explicit dependency/config errors (ModuleNotFoundError: finrl / ray) with silent_stub_fallback=false; stub-backed handoff artifacts (artifact_bundle, registry_entry, candidate_packet, evaluator_packet) produced and persisted at support/evidence/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/; all acceptance gates pass (bounded smoke or explicit error, checksums, evaluator packet, no broker/order/promotion/capital); OSS_INTEGRATION_CHECKLIST.md updated: FinRL/RLlib/Ray Tune smoke-tested; tests: finrl 16 passed, rllib 33 passed; commit: 2a6a705",
+      "status": "done",
+      "created_at": "2026-05-01T16:55:37Z",
+      "resolved_at": "2026-05-01T17:08:59Z"
+    },
+    {
+      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Sidecar review packet ready at support/sidecars/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW.md. Verification passed (finrl 16 passed, rllib 33 passed, three real-backend smokes produced explicit dependency/config evidence); packet flags reviewer attention items on premature checklist closed wording, per-run evaluator checksum omission, and nondeterministic Python hash fixture seeds.",
+      "status": "done",
+      "created_at": "2026-05-01T17:03:55Z",
+      "resolved_at": "2026-05-01T17:04:25Z"
+    },
+    {
+      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Sidecar review packet ready: support/sidecars/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW.md summarizes parent evidence, checksum/test verification, and reviewer attention items; support-only, no canonical/runtime changes.",
+      "status": "done",
+      "created_at": "2026-05-01T17:04:25Z",
+      "resolved_at": "2026-05-01T17:08:23Z"
+    },
+    {
+      "task_id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "BFF handoff packet complete. Explored BFF_API_CONTRACT.md, source_ingestion connectors/base.py, search/gateway.py, openclaw-gateway-adapter/main.py, source-search-prod-hardening.md. Identified 6 query gaps (GAP-01 through GAP-06): missing auth-requirements endpoint, no ingest-job to index readback link, no lineage refs in search results, no DLQ preview GET, no composed source-search health view, OpenClaw audit not proxied in BFF. Documented operator journey (9 steps: connector discovery -> credential provisioning -> ingest job -> poll completion -> source record verification -> index confirmation -> search readback -> health sign-off -> evidence recording). Frontend handoff items in Section 7. No canonical files modified.",
       "status": "pending",
-      "created_at": "2026-05-01T16:55:37Z"
+      "created_at": "2026-05-01T17:06:28Z"
+    },
+    {
+      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar review packet approved: evidence bundle accurately summarized, all three acceptance criteria met, no canonical files modified. Four attention items correctly flagged as parent-review concerns. Returning to Codex for closeout.",
+      "status": "pending",
+      "created_at": "2026-05-01T17:08:23Z"
+    },
+    {
+      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Changes requested by Codex2: support/reviews/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-codex2-review.md. Main blocker: schema/checksum adapter support behind the evidence is still uncommitted and absent from task commit 2a6a705; also fix per-framework evaluator_packet checksum omission and remove premature 'closed' wording from OSS_INTEGRATION_CHECKLIST.md before re-handoff.",
+      "status": "done",
+      "created_at": "2026-05-01T17:08:59Z",
+      "resolved_at": "2026-05-01T17:08:59Z"
     }
   ],
   "blockers": [],
@@ -347,13 +457,13 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 1,
-      "active": 1,
+      "total": 2,
+      "active": 2,
       "blocked": 0,
       "done": 0,
       "review": 1,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Claude2": {
       "total": 0,
@@ -383,12 +493,12 @@
       "todo": 0
     },
     "Codex": {
-      "total": 0,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 0,
+      "review_approved": 1,
       "todo": 0
     },
     "Codex2": {
