@@ -32,7 +32,7 @@ Actual current bridge = pantheon/lean submodule / ajoe734/pantheon-lean.git
 active task board empty
 paper runtime baseline exists
 live health-only sidecar
-bracket order log-only
+bracket order guarded paper/sim execution
 source/search bounded baseline
 research/learning fail-closed
 OpenClaw facade not broker kernel
@@ -52,7 +52,7 @@ env-gated Postgres adoption
 | 3 | RuntimeBinding context propagation unverified | Critical | bridge exists but contract needs proof |
 | 4 | TelemetryEvent exporter from paper runtime unverified | High | schema can be tested first in paper |
 | 5 | Full Lean Launcher + broker SDK kernel not active | Critical | production execution gap |
-| 6 | Bracket order is log-only | High | risk execution gap |
+| 6 | Bracket order is guarded outside paper/sim | High | paper/sim bracket execution now has explicit guard; live remains fail-closed |
 | 7 | Frontend auth still demo/local-token | High | production adoption gap |
 | 8 | Frontend demo islands remain | High | operator console adoption gap |
 | 9 | lean-platform stale but still in blueprint | High | Codex patch wrong repo |
@@ -159,21 +159,25 @@ Acceptance:
   docs label current execution maturity as paper baseline.
 ```
 
-### R-EXE-003 — Bracket order log-only
+### R-EXE-003 — Bracket order guarded outside paper/sim
 
 ```text
 Category: Execution / Risk Controls
 Description:
-  風控 bracket order 仍 log-only，若 UI 或 operator 以為已執行，會造成錯誤安全感。
+  風控 bracket order 已在 paper/sim runtime 內以顯式 guard 建立 simulated child legs；
+  缺少 paper/sim guard、非 entry signal、無法建立 child legs，或 live/canary scope 仍必須 log-only / fail-closed。
 Likelihood: High
 Impact: High
 Severity: High
 Mitigation:
-  - explicit UI / logs / docs marker
-  - guarded execution task
+  - paper/sim-only bracket execution guard
+  - explicit logged_only vs submitted_to_broker marker
   - broker simulation tests
+  - live/canary fail-closed tests
 Acceptance:
-  bracket_order_logged status distinguishes logged_only from submitted_to_broker and records submitted_to_broker=false.
+  paper/sim bracket_order_logged distinguishes logged_only from submitted_to_broker;
+  guarded paper/sim submissions record submitted_to_broker=true and open simulated child legs;
+  live broker submission remains fail-closed without activation guard.
 ```
 
 ### R-EXE-004 — RuntimeBinding propagation unclear

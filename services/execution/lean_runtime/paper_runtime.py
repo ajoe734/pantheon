@@ -49,6 +49,12 @@ def _as_float(value: str | None, default: float) -> float:
         return default
 
 
+def _as_bool(value: str | None, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _runtime_context_identity_env(
     context: PantheonRuntimeContext,
     base_env: Mapping[str, str],
@@ -177,13 +183,18 @@ class PaperExecutionAlgorithm:
         initial_cash: float = 100_000.0,
         default_price: float = 100.0,
         event_sink: Callable[[OrderEvent], None] | None = None,
+        deployment_stage: str = "paper",
+        bracket_order_execution_enabled: bool = True,
     ) -> None:
         self._initial_cash = initial_cash
         self._cash = initial_cash
         self._default_price = default_price
         self._event_sink = event_sink
+        self.DeploymentStage = str(deployment_stage or "paper").strip().lower()
+        self.BracketOrderExecutionEnabled = bool(bracket_order_execution_enabled)
         self.Portfolio: dict[str, _Holding] = {}
         self.Securities: dict[str, _Security] = {}
+        self._open_bracket_orders: list[dict[str, Any]] = []
 
     def _holding(self, symbol: str) -> _Holding:
         return self.Portfolio.setdefault(symbol, _Holding())
@@ -246,6 +257,40 @@ class PaperExecutionAlgorithm:
         self._cash += quantity * float(security.Price)
         self._publish("paper_fill_simulated", symbol, -quantity, "liquidate")
 
+    def SubmitBracketOrder(  # noqa: N802
+        self,
+        symbol: str,
+        *,
+        signal_id: str,
+        legs: list[dict[str, Any]],
+        guard_stage: str,
+        broker_submission_status: str,
+        submitted_to_broker: bool,
+    ) -> dict[str, Any]:
+        bracket_order_id = uuid.uuid4().hex
+        stored_legs: list[dict[str, Any]] = []
+        for index, leg in enumerate(legs, start=1):
+            stored_legs.append(
+                {
+                    "bracket_order_id": bracket_order_id,
+                    "leg_id": f"{bracket_order_id}-{index}",
+                    "symbol": str(symbol),
+                    "signal_id": signal_id,
+                    "deployment_stage": guard_stage,
+                    "submitted_to_broker": bool(submitted_to_broker),
+                    "broker_submission_status": broker_submission_status,
+                    "status": "open",
+                    "created_at": _iso_now(),
+                    **dict(leg),
+                }
+            )
+        self._open_bracket_orders.extend(stored_legs)
+        return {
+            "bracket_order_id": bracket_order_id,
+            "leg_count": len(stored_legs),
+            "legs": stored_legs,
+        }
+
     def RecordBracketOrderLogged(  # noqa: N802
         self,
         symbol: str,
@@ -255,19 +300,23 @@ class PaperExecutionAlgorithm:
         take_profit_pct: float,
         broker_submission_status: str,
         submitted_to_broker: bool,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
+        event_metadata = {
+            "signal_id": signal_id,
+            "stop_loss_pct": stop_loss_pct,
+            "take_profit_pct": take_profit_pct,
+        }
+        if metadata:
+            event_metadata.update(metadata)
         self._publish(
             "bracket_order_logged",
             str(symbol),
             0.0,
-            "bracket_logged_only",
+            "bracket_submitted_to_broker" if submitted_to_broker else "bracket_logged_only",
             broker_submission_status=broker_submission_status,
             submitted_to_broker=submitted_to_broker,
-            metadata={
-                "signal_id": signal_id,
-                "stop_loss_pct": stop_loss_pct,
-                "take_profit_pct": take_profit_pct,
-            },
+            metadata=event_metadata,
         )
 
     def positions(self) -> list[dict[str, Any]]:
@@ -283,6 +332,9 @@ class PaperExecutionAlgorithm:
                 }
             )
         return positions
+
+    def open_bracket_orders(self) -> list[dict[str, Any]]:
+        return [dict(order) for order in self._open_bracket_orders]
 
     def pnl(self) -> float:
         portfolio_value = self._cash
@@ -616,7 +668,14 @@ class PaperRuntimeService:
             self._binding_resolver,
             runtime_context=runtime_context,
         )
-        self._algo = PaperExecutionAlgorithm(event_sink=self._handle_order_event)
+        self._algo = PaperExecutionAlgorithm(
+            event_sink=self._handle_order_event,
+            deployment_stage=self._identity.deployment_stage or self._identity.runtime_mode or "paper",
+            bracket_order_execution_enabled=_as_bool(
+                os.getenv("PANTHEON_BRACKET_ORDER_EXECUTION_ENABLED"),
+                default=True,
+            ),
+        )
         self._consumer = SignalConsumer(store_client=self._store)
         self._poll_interval_seconds = poll_interval_seconds or _as_float(
             os.getenv("PANTHEON_RUNTIME_POLL_INTERVAL_SECONDS"),
@@ -693,7 +752,12 @@ class PaperRuntimeService:
                     "poll_count": self._poll_count,
                     "processed_signal_count": self._processed_signal_count,
                     "execution_event_count": self._execution_event_count,
+                    "bracket_order_execution_enabled": bool(
+                        getattr(self._algo, "BracketOrderExecutionEnabled", False)
+                    ),
+                    "bracket_order_execution_stage": getattr(self._algo, "DeploymentStage", "unknown"),
                     "positions": self._algo.positions(),
+                    "open_bracket_orders": self._algo.open_bracket_orders(),
                     "recent_order_events": list(self._recent_order_events),
                     "last_error": self._last_error,
                 },
@@ -723,7 +787,14 @@ class PaperRuntimeService:
             telemetry_metadata["broker_submission_status"] = event.broker_submission_status
         telemetry_metadata.update(event.metadata)
         if event.event_type == "bracket_order_logged":
-            metrics: dict[str, Any] = {"action": "bracket_logged_only"}
+            metrics: dict[str, Any] = {
+                "action": (
+                    "bracket_submitted_to_broker"
+                    if event.submitted_to_broker
+                    else "bracket_logged_only"
+                ),
+                "submitted_to_broker": event.submitted_to_broker,
+            }
         else:
             metrics = {
                 "fill_quantity": event.quantity,
