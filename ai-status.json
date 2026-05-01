@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；production、paper、canary、live gate 預設仍 fail-closed。",
-  "updated_at": "2026-05-01T09:30:59Z",
+  "updated_at": "2026-05-01T09:37:14Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -137,13 +137,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "ready",
+      "status": "reviewing",
       "current_task_ids": [
         "P1-BRACKET-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex2 starts a fresh run.",
-      "last_update": "2026-05-01T09:23:26Z"
+      "next": "Guarded paper/sim bracket execution implemented in services/execution/lean_runtime with explicit logged_only vs submitted_to_broker semantics; live remains fail-closed. Verification: python3 -m pytest services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_paper_runtime.py (13 passed).",
+      "last_update": "2026-05-01T09:37:14Z"
     },
     {
       "name": "Copilot",
@@ -166,13 +166,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "finalize",
-      "current_task_ids": [
-        "P1-LIVE-PLAN-001-SIDECAR-REVIEW"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude2-execution-control",
-      "next": "Sidecar review packet verified and approved: evidence mapping accurate across all three acceptance criteria, policy alignment clean against PAPER_CANARY_LIVE_POLICY/KILL_SWITCH/ROLLBACK/BINDING docs, P1 boundary preserved. Returning to Claude2 for closeout.",
-      "last_update": "2026-05-01T09:29:49Z"
+      "next": "",
+      "last_update": "2026-05-01T09:34:26Z"
     },
     {
       "name": "Gemini2",
@@ -197,7 +195,7 @@
       "phase": "P1 Wave 5",
       "owner": "Codex2",
       "reviewer": "Claude",
-      "status": "todo",
+      "status": "review",
       "depends_on": [
         "P0-LIVE-GUARD-001"
       ],
@@ -209,8 +207,8 @@
         "logged_only and submitted_to_broker semantics remain distinct",
         "live broker submission remains fail-closed without activation guard"
       ],
-      "next": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex2 starts a fresh run.",
-      "last_update": "2026-05-01T09:23:26Z",
+      "next": "Guarded paper/sim bracket execution implemented in services/execution/lean_runtime with explicit logged_only vs submitted_to_broker semantics; live remains fail-closed. Verification: python3 -m pytest services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_paper_runtime.py (13 passed).",
+      "last_update": "2026-05-01T09:37:14Z",
       "source_plane": "planning",
       "source_ref": {
         "type": "discussion_planning",
@@ -256,38 +254,6 @@
         "wave": "5",
         "source_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
       }
-    },
-    {
-      "id": "P1-LIVE-PLAN-001-SIDECAR-REVIEW",
-      "title": "Prepare P1-LIVE-PLAN-001 review packet and evidence summary",
-      "summary_zh": "平行支援 P1-LIVE-PLAN-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
-      "phase": "P1 Wave 5",
-      "owner": "Claude2",
-      "reviewer": "Claude",
-      "status": "review_approved",
-      "depends_on": [
-        "P0-LOOP-001"
-      ],
-      "artifacts": [
-        "support/sidecars/P1-LIVE-PLAN-001/P1-LIVE-PLAN-001-SIDECAR-REVIEW.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Sidecar review packet verified and approved: evidence mapping accurate across all three acceptance criteria, policy alignment clean against PAPER_CANARY_LIVE_POLICY/KILL_SWITCH/ROLLBACK/BINDING docs, P1 boundary preserved. Returning to Claude2 for closeout.",
-      "last_update": "2026-05-01T09:29:49Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "P1-LIVE-PLAN-001",
-      "helper_kind": "review_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization",
-      "review_notes_zh": [
-        "審查通過：三項驗收標準均有對應 runbook 章節佐證（criterion 1→§2.1-2.7；criterion 2→§4-§5；criterion 3→§6.1-6.3）；四份 L1 政策文件對齊確認無語意衝突；P1 邊界正確保留（canary/live 仍 fail-closed，§7.4 延期清單清晰）；開放項目均屬已計劃延期，不阻擋 P1。Sidecar scope compliance 確認：無修改 canonical truth。"
-      ],
-      "review_file": "support/sidecars/P1-LIVE-PLAN-001/P1-LIVE-PLAN-001-SIDECAR-REVIEW.md"
     }
   ],
   "handoffs": [
@@ -301,21 +267,12 @@
       "resolved_at": "2026-04-17T12:39:53Z"
     },
     {
-      "task_id": "P1-LIVE-PLAN-001-SIDECAR-REVIEW",
-      "from": "Claude2",
+      "task_id": "P1-BRACKET-001",
+      "from": "Codex2",
       "to": "Claude",
-      "message": "Review packet complete. support/sidecars/P1-LIVE-PLAN-001/P1-LIVE-PLAN-001-SIDECAR-REVIEW.md contains: (1) evidence mapping for all three acceptance criteria against runbook sections, (2) policy alignment check for PAPER_CANARY_LIVE_POLICY.md / KILL_SWITCH / ROLLBACK / BINDING docs, (3) Codex review summary, (4) P1 boundary confirmation, (5) open items categorized as deferred. No canonical truth modified. Parent task P1-LIVE-PLAN-001 is review_approved by Codex; this packet is supplementary support for Claude's finalization.",
-      "status": "done",
-      "created_at": "2026-05-01T09:15:05Z",
-      "resolved_at": "2026-05-01T09:29:49Z"
-    },
-    {
-      "task_id": "P1-LIVE-PLAN-001-SIDECAR-REVIEW",
-      "from": "Claude",
-      "to": "Claude2",
-      "message": "Sidecar review packet verified and approved: evidence mapping accurate across all three acceptance criteria, policy alignment clean against PAPER_CANARY_LIVE_POLICY/KILL_SWITCH/ROLLBACK/BINDING docs, P1 boundary preserved. Returning to Claude2 for closeout.",
+      "message": "Guarded paper/sim bracket execution implemented in services/execution/lean_runtime with explicit logged_only vs submitted_to_broker semantics; live remains fail-closed. Verification: python3 -m pytest services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_paper_runtime.py (13 passed).",
       "status": "pending",
-      "created_at": "2026-05-01T09:29:49Z"
+      "created_at": "2026-05-01T09:37:14Z"
     }
   ],
   "blockers": [],
@@ -339,12 +296,12 @@
       "todo": 0
     },
     "Claude2": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 1,
+      "review_approved": 0,
       "todo": 0
     },
     "Gemini": {
@@ -376,12 +333,12 @@
     },
     "Codex2": {
       "total": 1,
-      "active": 0,
+      "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Copilot": {
       "total": 0,
