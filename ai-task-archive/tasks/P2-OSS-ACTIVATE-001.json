@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "task_id": "P2-OSS-ACTIVATE-001",
+  "archived_at": "2026-05-01T15:33:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P2-OSS-ACTIVATE-001",
+    "title": "Research OSS production data posture and activation",
+    "summary_zh": null,
+    "phase": "P2 Wave 7",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "P0-CI-BOUNDED-001"
+    ],
+    "artifacts": [
+      "OSS_INTEGRATION_CHECKLIST.md",
+      "services/source_ingestion",
+      "services/search",
+      "services/openclaw-gateway-adapter"
+    ],
+    "acceptance": [
+      "Research OSS production activation is gated by production data posture and bounded adapter CI, not by a blanket live-data ban",
+      "no OSS/source path can bypass SourceRecord EvidenceBundle SearchGateway ACL license available_time controls or route directly to order-capable execution",
+      "activation notes identify remaining production credentials, durable storage, entitlement, or external service prerequisites without silently enabling order-capable execution"
+    ],
+    "next": "Done: production research data activation posture finalized with task-scoped commit 05d52eb. Evidence packet services/learning/OSS_ACTIVATION_NOTES.md and OSS_INTEGRATION_CHECKLIST.md document gated production data use, Qlib/TRL draft-none posture, OpenClaw evidence/citation-only search handoff, and no direct broker/Lean/paper/canary/live/capital/order path. Verification: focused pytest suite 111 passed; git diff --check on task artifacts passed.",
+    "last_update": "2026-05-01T15:33:19Z",
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "wave": "7",
+      "source_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "priority": "P2",
+    "wave": 7,
+    "review_notes_zh": [
+      "審查通過：三項驗收標準均通過。production research data 不是 blanket live-data ban，而是受 durable storage、entitlement、license/PIT、rate-limit、freshness、audit 與 source/search production posture gate 約束；SourceRecord/EvidenceBundle/SearchGateway ACL/license/available_time 與 OpenClaw evidence/citation-only facade 維持 fail-closed 邊界；Qlib/TRL 仍為 smoke-tested、draft/none，OpenClaw/source/search 無 broker、Lean、paper/canary/live、capital binding 或 order-capable execution 直通路徑。驗證：111 個 focused pytest passed；git diff --check on tracked checklist change passed。"
+    ],
+    "review_file": "support/reviews/P2-OSS-ACTIVATE-001-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T15:33:19Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "05d52ebd9871e7b7700ea7465b2b5cc45cb7599a",
+      "commit_subject": "P2-OSS-ACTIVATE-001 document OSS activation posture",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "P2-OSS-ACTIVATE-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 154,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P2-OSS-ACTIVATE-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned P2-OSS-ACTIVATE-001 away from sidecar-only lane Copilot; reviewer Copilot -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-05-01T14:52:52Z",
+      "resolved_at": "2026-05-01T14:54:59Z"
+    },
+    {
+      "task_id": "P2-OSS-ACTIVATE-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review. Added P2 OSS production data activation posture evidence in services/learning/OSS_ACTIVATION_NOTES.md and updated OSS_INTEGRATION_CHECKLIST.md to point at it. Acceptance read: production research data is gated by durable storage, entitlement, license/PIT, rate limit, freshness, audit, and source/search production posture; Qlib/TRL remain smoke-tested and draft/none behind explicit gates; OpenClaw search receives evidence/citation refs only through SearchGateway controls; source/search/OpenClaw paths remain blocked from direct broker, Lean, paper/canary/live deployment, capital binding, or order-capable execution. Verification: python3 -m pytest services/source_ingestion/tests/test_external_source_connectors.py services/source_ingestion/tests/test_bounded_ingestion.py services/search/tests/test_governed_search.py services/openclaw-gateway-adapter/test_tool_workflow_bridge.py services/openclaw-gateway-adapter/test_live_gate_adapter.py -q => 111 passed; git diff --check on task artifacts passed.",
+      "status": "done",
+      "created_at": "2026-05-01T15:22:36Z",
+      "resolved_at": "2026-05-01T15:29:06Z"
+    },
+    {
+      "task_id": "P2-OSS-ACTIVATE-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: all three acceptance criteria pass. Production research data is gated by durable storage, entitlement, license/PIT, rate-limit, freshness, audit, and source/search production posture, not a blanket live-data ban. Source/search/OpenClaw paths remain evidence/citation-scoped and blocked from direct broker, Lean, paper/canary/live, capital binding, or order-capable execution. Verification: focused pytest suite 111 passed; git diff --check on tracked checklist change passed. Returned to Codex2 for owner closeout.",
+      "status": "done",
+      "created_at": "2026-05-01T15:29:06Z",
+      "resolved_at": "2026-05-01T15:33:20Z"
+    }
+  ],
+  "blockers": []
+}

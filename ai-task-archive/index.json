@@ -1,12 +1,14 @@
 {
   "version": 1,
-  "updated_at": "2026-05-01T15:08:35Z",
+  "updated_at": "2026-05-01T15:34:04Z",
   "counts": {
-    "total": 874,
-    "completed": 858,
+    "total": 876,
+    "completed": 860,
     "superseded": 16
   },
   "recent_terminal_ids": [
+    "P2-LIVE-KERNEL-001",
+    "P2-OSS-ACTIVATE-001",
     "P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE",
     "P2-LIVE-KERNEL-001-SIDECAR-ACCEPTANCE",
     "P1-EVO-001-SIDECAR-REVIEW",
@@ -24,8 +26,6 @@
     "P0-REC-001",
     "P0-LOOP-001",
     "P1-PERSIST-001-SIDECAR-ACCEPTANCE",
-    "P0-LOOP-001-SIDECAR-ACCEPTANCE",
-    "P1-BRACKET-001-SIDECAR-ACCEPTANCE",
-    "P1-SEARCH-001"
+    "P0-LOOP-001-SIDECAR-ACCEPTANCE"
   ]
 }
