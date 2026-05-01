@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-02 00:56:25
+Last updated: 2026-05-02 00:58:28
 
 ## Objective
 
@@ -57,18 +57,18 @@ Last updated: 2026-05-02 00:56:25
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `P2-TRL-RUNTIME-DATA-ACTIVATION-001` | P2 Wave 8 External Activation | TRL runtime-data activation and real DPO smoke | Codex2 | review_approved | `P2-OSS-ACTIVATE-001` | 把 TRL 從 runtime-data gated 推進到實作完成：接 FB-002 preference pairs，跑 real TRL DPO 或明確 install/config error，產生 model artifact 與 evaluator/registry candidate handoff。 |
 | `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` | P2 Wave 8 External Activation | FinRL RLlib Ray Tune governed runtime activation smoke | Claude | review | `P2-OSS-ACTIVATE-001` | 把 FinRL/RLlib/Ray Tune 從 dormant/deferred prep 推進到 governed runtime smoke：真實 backend 可用時跑 bounded train/search，否則留下明確 dependency/config error；仍禁止 broker/order/live 路由。 |
 | `P2-MARKETDATA-CREDENTIAL-SMOKE-001` | P2 Wave 8 External Activation | Market-data provider credentialed read smoke | Codex2 | in_progress | `APP-003-DATASOURCE-OPS-001`, `P2-OSS-ACTIVATE-001` | 對非下單外部市場資料源做 credentialed read/runtime smoke：Massive/Polygon、TWSE/TPEx/MOPS/TEJ、CoinGecko/Kraken market data、IBKR/Shioaji quote/read-only lane；不得觸發 broker order/capital side effect。 |
 | `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001` | P2 Wave 8 External Activation | Source/search live connector credentialed smoke | Codex2 | todo | `P1-SOURCE-001`, `P1-SEARCH-001`, `P2-OSS-ACTIVATE-001` | 對 source/search 非下單外部資料源做 bounded live/test credential smoke：news/social/alpha DB 或 allowlisted HTTP/feed connector -> SourceRecord/EvidenceBundle -> durable index -> BFF/SearchGateway query；禁止 broker/Lean/order 路由。 |
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-02 00:56:24
-- Terminal tasks archived: `883` total, `867` completed, `16` superseded
+- Archive updated: 2026-05-02 00:58:28
+- Terminal tasks archived: `884` total, `868` completed, `16` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `P2-TRL-RUNTIME-DATA-ACTIVATION-001` | P2 Wave 8 External Activation | TRL runtime-data activation and real DPO smoke | Codex2 | completed | 2026-05-02 00:58:28 | `ai-task-archive/tasks/P2-TRL-RUNTIME-DATA-ACTIVATION-001.json` |
 | `P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-ACCEPTANCE` | P2 Wave 8 External Activation | Prepare P2-MARKETDATA-CREDENTIAL-SMOKE-001 acceptance packet and dependency map | Claude2 | completed | 2026-05-02 00:56:24 | `ai-task-archive/tasks/P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-ACCEPTANCE.json` |
 | `P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE` | P2 Wave 8 External Activation | Prepare P2-TRL-RUNTIME-DATA-ACTIVATION-001 acceptance packet and dependency map | Claude | completed | 2026-05-02 00:37:32 | `ai-task-archive/tasks/P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE.json` |
 | `P2-WANDB-ONLINE-SYNC-001` | P2 Wave 8 External Activation | W&B SDK-backed online sync activation smoke | Codex | completed | 2026-05-02 00:30:39 | `ai-task-archive/tasks/P2-WANDB-ONLINE-SYNC-001.json` |
@@ -88,13 +88,11 @@ Last updated: 2026-05-02 00:56:25
 | `P1-BRACKET-001-SIDECAR-REVIEW` | P1 Wave 5 | Prepare P1-BRACKET-001 review packet and evidence summary | Claude | completed | 2026-05-01 17:57:18 | `ai-task-archive/tasks/P1-BRACKET-001-SIDECAR-REVIEW.json` |
 | `P1-BRACKET-001` | P1 Wave 5 | Guarded paper/sim bracket order execution | Codex2 | completed | 2026-05-01 17:46:29 | `ai-task-archive/tasks/P1-BRACKET-001.json` |
 | `P1-LIVE-PLAN-001-SIDECAR-REVIEW` | P1 Wave 5 | Prepare P1-LIVE-PLAN-001 review packet and evidence summary | Claude2 | completed | 2026-05-01 17:36:30 | `ai-task-archive/tasks/P1-LIVE-PLAN-001-SIDECAR-REVIEW.json` |
-| `P0-FE-SOURCE-001` | Pantheon P0 Paper Loop | Add source mode and runtime identity to critical frontend surfaces | Codex2 | completed | 2026-05-01 17:30:58 | `ai-task-archive/tasks/P0-FE-SOURCE-001.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `P2-TRL-RUNTIME-DATA-ACTIVATION-001` | P2 Wave 8 External Activation | TRL runtime-data activation and real DPO smoke | 把 TRL 從 runtime-data gated 推進到實作完成：接 FB-002 preference pairs，跑 real TRL DPO 或明確 install/config error，產生 model artifact 與 evaluator/registry candidate handoff。 | Codex2 | Codex | review_approved | `P2-OSS-ACTIVATE-001` | 2026-05-02 00:54:37 | Supervisor resumed P2-TRL-RUNTIME-DATA-ACTIVATION-001 for finalize after successful dispatch. |
 | `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` | P2 Wave 8 External Activation | FinRL RLlib Ray Tune governed runtime activation smoke | 把 FinRL/RLlib/Ray Tune 從 dormant/deferred prep 推進到 governed runtime smoke：真實 backend 可用時跑 bounded train/search，否則留下明確 dependency/config error；仍禁止 broker/order/live 路由。 | Claude | Codex2 | review | `P2-OSS-ACTIVATE-001` | 2026-05-02 00:55:37 | Implementation ready for review: created activation_smoke.py for FinRL, RLlib, and Ray Tune; all three ran with --enable-activation-ready --backend real and recorded explicit dependency/config errors (ModuleNotFoundError: finrl / ray) with silent_stub_fallback=false; stub-backed handoff artifacts (artifact_bundle, registry_entry, candidate_packet, evaluator_packet) produced and persisted at support/evidence/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/; all acceptance gates pass (bounded smoke or explicit error, checksums, evaluator packet, no broker/order/promotion/capital); OSS_INTEGRATION_CHECKLIST.md updated: FinRL/RLlib/Ray Tune smoke-tested; tests: finrl 16 passed, rllib 33 passed; commit: 2a6a705 |
 | `P2-MARKETDATA-CREDENTIAL-SMOKE-001` | P2 Wave 8 External Activation | Market-data provider credentialed read smoke | 對非下單外部市場資料源做 credentialed read/runtime smoke：Massive/Polygon、TWSE/TPEx/MOPS/TEJ、CoinGecko/Kraken market data、IBKR/Shioaji quote/read-only lane；不得觸發 broker order/capital side effect。 | Codex2 | Codex | in_progress | `APP-003-DATASOURCE-OPS-001`, `P2-OSS-ACTIVATE-001` | 2026-05-02 00:51:47 | Codex review requested changes: add explicit non-secret rate-limit/quota and session/provenance evidence fields to every provider packet, including HTTP success/unavailable paths and IBKR/Shioaji supplied quote-readback paths; add tests and regenerate evidence. See support/reviews/P2-MARKETDATA-CREDENTIAL-SMOKE-001-codex-review.md. |
 | `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001` | P2 Wave 8 External Activation | Source/search live connector credentialed smoke | 對 source/search 非下單外部資料源做 bounded live/test credential smoke：news/social/alpha DB 或 allowlisted HTTP/feed connector -> SourceRecord/EvidenceBundle -> durable index -> BFF/SearchGateway query；禁止 broker/Lean/order 路由。 | Codex2 | Codex | todo | `P1-SOURCE-001`, `P1-SEARCH-001`, `P2-OSS-ACTIVATE-001` | 2026-05-02 00:19:24 | Auto-reassigned ownership from Gemini2 to Codex2 after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex2 starts a fresh run. |
@@ -103,7 +101,6 @@ Last updated: 2026-05-02 00:56:25
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| `P2-TRL-RUNTIME-DATA-ACTIVATION-001` | Codex | Codex2 | Review approved by Codex. Evidence bundle and focused verification satisfy acceptance; owner Codex2 should perform task-scoped closeout, commit, and done finalization. | pending | 2026-05-02 00:46:42 |
 | `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` | Claude | Codex2 | Implementation ready for review: created activation_smoke.py for FinRL, RLlib, and Ray Tune; all three ran with --enable-activation-ready --backend real and recorded explicit dependency/config errors (ModuleNotFoundError: finrl / ray) with silent_stub_fallback=false; stub-backed handoff artifacts (artifact_bundle, registry_entry, candidate_packet, evaluator_packet) produced and persisted at support/evidence/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/; all acceptance gates pass (bounded smoke or explicit error, checksums, evaluator packet, no broker/order/promotion/capital); OSS_INTEGRATION_CHECKLIST.md updated: FinRL/RLlib/Ray Tune smoke-tested; tests: finrl 16 passed, rllib 33 passed; commit: 2a6a705 | pending | 2026-05-02 00:55:37 |
 
 ## Blockers
@@ -116,7 +113,7 @@ Last updated: 2026-05-02 00:56:25
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| `P2-TRL-RUNTIME-DATA-ACTIVATION-001` | Codex | 審查通過：TRL unit tests 42 項 OK、stub smoke OK、real-backend activation smoke 重現 explicit dependency/config evidence。<br>確認 FB-002 bounded evidence、evaluator/registry/candidate packets 與 no governance write/no order routing boundary 符合 acceptance。<br>Owner closeout 時請刷新仍寫 review handoff pending 的 task inventory/status wording。 | support/reviews/P2-TRL-RUNTIME-DATA-ACTIVATION-001-codex-review.md |
+| _(none)_ | - | - | - |
 
 ## Lovable Coordination
 
@@ -187,23 +184,23 @@ Last updated: 2026-05-02 00:56:25
 
 ## Latest Checkpoints
 
-- 2026-05-02 00:55:37 Claude: `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` Handoff to Codex2: Implementation ready for review: created activation_smoke.py for FinRL, RLlib, and Ray Tune; all three ran with --enable-activation-ready --backend real and recorded explicit dependency/config errors (ModuleNotFoundError: finrl / ray) with silent_stub_fallback=false; stub-backed handoff artifacts (artifact_bundle, registry_entry, candidate_packet, evaluator_packet) produced and persisted at support/evidence/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/; all acceptance gates pass (bounded smoke or explicit error, checksums, evaluator packet, no broker/order/promotion/capital); OSS_INTEGRATION_CHECKLIST.md updated: FinRL/RLlib/Ray Tune smoke-tested; tests: finrl 16 passed, rllib 33 passed; commit: 2a6a705
-- 2026-05-02 00:55:43 Orchestrator: PreToolUse: Bash
-- 2026-05-02 00:55:44 Orchestrator: PostToolUse: Bash
-- 2026-05-02 00:55:45 Orchestrator: PreToolUse: Bash
-- 2026-05-02 00:55:45 Orchestrator: PostToolUse: Bash
-- 2026-05-02 00:55:50 Orchestrator: PostToolUse: Bash
-- 2026-05-02 00:55:57 Orchestrator: PreToolUse: Bash
-- 2026-05-02 00:55:58 Orchestrator: PostToolUse: Bash
-- 2026-05-02 00:56:04 Orchestrator: PreToolUse: Read
-- 2026-05-02 00:56:04 Orchestrator: PostToolUse: Read
-- 2026-05-02 00:56:07 Orchestrator: PreToolUse: Bash
-- 2026-05-02 00:56:07 Orchestrator: PostToolUse: Bash
-- 2026-05-02 00:56:10 Orchestrator: PreToolUse: Edit
-- 2026-05-02 00:56:10 Orchestrator: PostToolUse: Edit
-- 2026-05-02 00:56:13 Orchestrator: PreToolUse: Bash
-- 2026-05-02 00:56:15 Orchestrator: PreToolUse: Bash
-- 2026-05-02 00:56:16 Orchestrator: PostToolUse: Bash
-- 2026-05-02 00:56:16 Orchestrator: PostToolUse: Bash
-- 2026-05-02 00:56:24 Orchestrator: PreToolUse: Bash
-- 2026-05-02 00:56:24 Claude2: `P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-ACCEPTANCE` Owner closeout: acceptance packet committed in 2b2c396, closeout record added in d6ab2be, reviewed+approved by Codex2. Dependency map confirmed (APP-003-DATASOURCE-OPS-001 + P2-OSS-ACTIVATE-001 both done), 9-provider scope table, 5 cross-cutting gates, 28 per-provider checklist items, evidence naming convention, 5 risk areas. No canonical truth modified. Support-only sidecar finalized.
+- 2026-05-02 00:56:43 Orchestrator: PreToolUse: Bash
+- 2026-05-02 00:56:43 Orchestrator: PostToolUse: Bash
+- 2026-05-02 00:56:47 Orchestrator: PreToolUse: Bash
+- 2026-05-02 00:56:47 Orchestrator: PostToolUse: Bash
+- 2026-05-02 00:56:51 Orchestrator: PreToolUse: Bash
+- 2026-05-02 00:56:51 Orchestrator: PostToolUse: Bash
+- 2026-05-02 00:56:55 Orchestrator: PreToolUse: Bash
+- 2026-05-02 00:56:55 Orchestrator: PostToolUse: Bash
+- 2026-05-02 00:57:00 Orchestrator: PreToolUse: Bash
+- 2026-05-02 00:57:01 Orchestrator: PostToolUse: Bash
+- 2026-05-02 00:57:06 Orchestrator: PreToolUse: Bash
+- 2026-05-02 00:57:06 Orchestrator: PostToolUse: Bash
+- 2026-05-02 00:57:11 Orchestrator: PreToolUse: Bash
+- 2026-05-02 00:57:11 Orchestrator: PostToolUse: Bash
+- 2026-05-02 00:57:18 Orchestrator: PreToolUse: Bash
+- 2026-05-02 00:57:19 Orchestrator: PostToolUse: Bash
+- 2026-05-02 00:57:21 Orchestrator: PreToolUse: Bash
+- 2026-05-02 00:57:35 Orchestrator: Stop: Stop
+- 2026-05-02 00:57:35 Orchestrator: SessionEnd: SessionEnd
+- 2026-05-02 00:58:28 Codex2: `P2-TRL-RUNTIME-DATA-ACTIVATION-001` Done: task-scoped closeout committed in a9c7bf1. TRL runtime-data activation evidence is durable: 240 governed FB-002 events/pairs, evaluator/registry/candidate packets, explicit real backend dependency/config evidence (ModuleNotFoundError: No module named 'trl', silent_stub_fallback=false), no governance write or order routing. Verification: python3 -m unittest discover -s services/learning/trl -p 'test_*.py' => 42 OK; python3 services/learning/trl/smoke_test.py => assertions OK; python3 services/learning/trl/activation_smoke.py --enable-activation-ready --backend real --output-dir /tmp/pantheon/learning/trl/finalize-runtime-data-activation-real => explicit dependency/config evidence.
