@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；production、paper、canary、live gate 預設仍 fail-closed。",
-  "updated_at": "2026-04-30T14:48:42Z",
+  "updated_at": "2026-05-01T04:34:57Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,11 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "reviewing",
+      "current_task_ids": [
+        "P0-FE-DEMO-001-SIDECAR-REVIEW"
+      ],
       "branch": "feat/claude-execution-control",
-      "next": "",
-      "last_update": "2026-04-30T13:59:42Z"
+      "next": "Review packet ready for sidecar review. Packet covers: two-round implementation history (d321a9b → ea284a1), Round 1 blocking finding on auth lifecycle regression, Round 2 fix summary (preserve existing token on refresh without replacement), structured reviewer checklist for Codex's Round 2 review, evidence table, and pre-existing issue scope. No canonical truth modified.",
+      "last_update": "2026-05-01T04:34:41Z"
     },
     {
       "name": "Gemini",
@@ -121,11 +123,15 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "ready",
+      "current_task_ids": [
+        "P0-CI-BRIDGE-001",
+        "P0-BFF-CMD-001",
+        "P0-FE-DEMO-001-SIDECAR-ACCEPTANCE"
+      ],
       "branch": "feat/codex-collab-system",
-      "next": "",
-      "last_update": "2026-04-30T14:46:52Z"
+      "next": "Supervisor preempted P0-CI-BRIDGE-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
+      "last_update": "2026-05-01T04:31:29Z"
     },
     {
       "name": "Codex2",
@@ -135,11 +141,14 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "reviewing",
+      "current_task_ids": [
+        "P0-FE-DEMO-001",
+        "P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF"
+      ],
       "branch": "feat/codex-collab-system",
-      "next": "",
-      "last_update": "2026-04-30T14:48:22Z"
+      "next": "Sidecar BFF handoff packet ready for review: support/sidecars/P0-BFF-CMD-001/P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF.md. It summarizes existing BFF command facade material, read/command contract gaps, operator journey handoff, and frontend acceptance notes without modifying canonical truth or runtime code.",
+      "last_update": "2026-05-01T04:34:25Z"
     },
     {
       "name": "Copilot",
@@ -153,7 +162,7 @@
       "current_task_ids": [],
       "branch": "feat/grok-research-critique",
       "next": "",
-      "last_update": "2026-04-30T13:23:34Z"
+      "last_update": "2026-05-01T03:58:17Z"
     },
     {
       "name": "Claude2",
@@ -180,10 +189,679 @@
       "current_task_ids": [],
       "branch": "feat/gemini2-research-runtime",
       "next": "",
-      "last_update": "2026-04-30T13:08:53Z"
+      "last_update": "2026-05-01T04:20:06Z"
     }
   ],
-  "tasks": [],
+  "tasks": [
+    {
+      "id": "P0-CI-BRIDGE-001",
+      "title": "Add submodule authority and no-wrong-repo CI",
+      "summary_zh": "新增 CI 檢查 pantheon/lean submodule、bridge remote、PantheonAlgoBase、compose path，並阻擋 P0 錯打 lean-platform。",
+      "phase": "Pantheon P0 Paper Loop",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "depends_on": [
+        "P0-EXEC-ADR-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_p0_sd/SD-P0-06_Submodule_Compose_Health_CI_Verification.md"
+      ],
+      "acceptance": [
+        "CI reports bridge path, remote, commit, and PantheonAlgoBase presence",
+        "P0 lean-platform target fails without migration_only and ADR override"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-05-01T03:58:17Z",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "status": "todo",
+      "next": "Supervisor preempted P0-CI-BRIDGE-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
+      "last_update": "2026-05-01T04:31:29Z"
+    },
+    {
+      "id": "P0-BOOT-001",
+      "title": "Materialize RuntimeBootstrapRequest from DeploymentPlan and RuntimeBinding",
+      "summary_zh": "建立 DeploymentPlan + RuntimeBinding 到 RuntimeBootstrapRequest 的 contract/materializer。",
+      "phase": "Pantheon P0 Paper Loop",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "depends_on": [
+        "P0-CI-BRIDGE-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_p0_sd/SD-P0-02_DeploymentPlan_to_RuntimeBootstrap_Contract.md"
+      ],
+      "acceptance": [
+        "request includes deployment plan, runtime binding, artifact, capital, and bridge identity",
+        "request rejects secrets and lean-platform target"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-05-01T03:58:17Z",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "status": "todo",
+      "next": "Assignment created from accepted planning session",
+      "last_update": "2026-05-01T03:58:17Z"
+    },
+    {
+      "id": "P0-CTX-001",
+      "title": "Add PantheonRuntimeContext model and validation",
+      "summary_zh": "新增 runtime context model，支援 manifest/env source modes，並驗證必要欄位與 secret rejection。",
+      "phase": "Pantheon P0 Paper Loop",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "depends_on": [
+        "P0-BOOT-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_p0_sd/SD-P0-03_RuntimeBinding_Context_Propagation.md"
+      ],
+      "acceptance": [
+        "manifest and dev env source modes load context",
+        "stage mismatch, missing binding in managed runtime, and raw secrets are rejected"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-05-01T03:58:17Z",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "status": "todo",
+      "next": "Assignment created from accepted planning session",
+      "last_update": "2026-05-01T03:58:17Z"
+    },
+    {
+      "id": "P0-CTX-002",
+      "title": "Wire runtime_bootstrap.py to manifest/env runtime context",
+      "summary_zh": "讓 runtime_bootstrap.py 能讀 launch manifest/env，paper role 帶 context 啟動，live role 仍 fail-closed。",
+      "phase": "Pantheon P0 Paper Loop",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "depends_on": [
+        "P0-CTX-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_p0_sd/SD-P0-03_RuntimeBinding_Context_Propagation.md"
+      ],
+      "acceptance": [
+        "paper role receives runtime context",
+        "staging/prod missing binding fails closed and live remains health-only"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-05-01T03:58:17Z",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "status": "todo",
+      "next": "Assignment created from accepted planning session",
+      "last_update": "2026-05-01T03:58:17Z"
+    },
+    {
+      "id": "P0-LEAN-CTX-001",
+      "title": "Attach Pantheon runtime context in PantheonAlgoBase events",
+      "summary_zh": "在 pantheon/lean 的 PantheonAlgoBase 增加 context access/event attach 行為。",
+      "phase": "Pantheon P0 Paper Loop",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "depends_on": [
+        "P0-CTX-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_p0_sd/SD-P0-03_RuntimeBinding_Context_Propagation.md"
+      ],
+      "acceptance": [
+        "PantheonAlgoBase exposes context access",
+        "emitted events include binding, plan, artifact, stage, and bridge metadata"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-05-01T03:58:17Z",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "status": "todo",
+      "next": "Assignment created from accepted planning session",
+      "last_update": "2026-05-01T03:58:17Z"
+    },
+    {
+      "id": "P0-TEL-001",
+      "title": "Add paper runtime telemetry emitter and ingest validation",
+      "summary_zh": "新增 paper heartbeat/deploy/pnl/bracket_logged telemetry producer 與 ingest validation tests。",
+      "phase": "Pantheon P0 Paper Loop",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "depends_on": [
+        "P0-CTX-002",
+        "P0-LEAN-CTX-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_p0_sd/SD-P0-04_Paper_Runtime_TelemetryEvent_Contract.md"
+      ],
+      "acceptance": [
+        "paper heartbeat validates as TelemetryEvent and dedupes by event_id",
+        "stage mismatch and missing binding are rejected where required"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-05-01T03:58:17Z",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "status": "todo",
+      "next": "Assignment created from accepted planning session",
+      "last_update": "2026-05-01T03:58:17Z"
+    },
+    {
+      "id": "P0-TEL-PROJ-001",
+      "title": "Project paper telemetry into runtime status",
+      "summary_zh": "讓 TelemetryEvent ingest 後更新 runtime summary，供 BFF 顯示非 mock heartbeat/status。",
+      "phase": "Pantheon P0 Paper Loop",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "depends_on": [
+        "P0-TEL-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_sa/SA-17_telemetry_reconciliation_evolution_gap_analysis.md"
+      ],
+      "acceptance": [
+        "BFF/runtime summary shows non-mock last heartbeat",
+        "projection includes bridge repo, bridge commit, runtime_binding_id, and deployment_stage"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-05-01T03:58:17Z",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "status": "todo",
+      "next": "Assignment created from accepted planning session",
+      "last_update": "2026-05-01T03:58:17Z"
+    },
+    {
+      "id": "P0-LOOP-001",
+      "title": "Add minimum paper operating loop smoke",
+      "summary_zh": "以 seed/approved artifact 跑通 DeploymentPlan -> RuntimeBinding -> paper heartbeat -> BFF runtime status。",
+      "phase": "Pantheon P0 Paper Loop",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "depends_on": [
+        "P0-TEL-PROJ-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_sa/SA-11_operating_loop_gap_analysis.md"
+      ],
+      "acceptance": [
+        "smoke uses pantheon/lean, not lean-platform",
+        "no live broker action or preview mock is used"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-05-01T03:58:17Z",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "status": "todo",
+      "next": "Auto-reassigned P0-LOOP-001 away from sidecar-only lane Gemini; reviewer Gemini -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "last_update": "2026-05-01T03:58:57Z"
+    },
+    {
+      "id": "P0-REC-001",
+      "title": "Write basic paper ReconciliationRecord",
+      "summary_zh": "在 paper run 後產生最低限度 ReconciliationRecord，並允許 threshold breach 開 IncidentCase。",
+      "phase": "Pantheon P0 Paper Loop",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "depends_on": [
+        "P0-LOOP-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_sa/SA-17_telemetry_reconciliation_evolution_gap_analysis.md"
+      ],
+      "acceptance": [
+        "one paper run creates a ReconciliationRecord linked to runtime binding, artifact, and capital pool",
+        "threshold breach can create IncidentCase; EvolutionDecision remains proposed only"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-05-01T03:58:17Z",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "status": "todo",
+      "next": "Assignment created from accepted planning session",
+      "last_update": "2026-05-01T03:58:17Z"
+    },
+    {
+      "id": "P0-BFF-CMD-001",
+      "title": "Split BFF read and command contracts",
+      "summary_zh": "把 BFF read API 與 command API 正式分層，命令必須有 actor/trace/idempotency/RBAC/audit。",
+      "phase": "Pantheon P0 Paper Loop",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "depends_on": [
+        "P0-STATE-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_sa/SA-13_contract_schema_gap_analysis.md",
+        "docs/04/pantheon_sa/SA-15_governance_boundary_gap_analysis.md"
+      ],
+      "acceptance": [
+        "read contract remains GET-only",
+        "runtime/deployment/approval/incident commands require actor_ref, trace_id, idempotency_key, RBAC/policy, and audit"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-05-01T03:58:17Z",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "status": "todo",
+      "next": "Assignment created from accepted planning session",
+      "last_update": "2026-05-01T03:58:17Z"
+    },
+    {
+      "id": "P0-FE-DEMO-001",
+      "title": "Cut demo auth and demo islands from staging/prod frontend",
+      "summary_zh": "移除 staging/prod AuthProvider demo import/demo token 路徑，並新增 production route demo import guard。",
+      "phase": "Pantheon P0 Paper Loop",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "depends_on": [],
+      "artifacts": [
+        "docs/04/pantheon_p0_sd/SD-P0-05_Frontend_Production_Adoption_Demo_Cleanup.md"
+      ],
+      "acceptance": [
+        "staging/prod bundle has no @/demo/api auth import and no demo token path",
+        "production operator/governance/runtime routes fail CI on forbidden demo imports"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-05-01T03:58:17Z",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "status": "review",
+      "next": "Auth lifecycle fix ready for review: frontend commit ea284a1 preserves existing pantheon_operator_token on successful session refresh when BFF returns session metadata without replacement token; still clears on missing local token, failed refresh, and sign-out. Verification passed: npx eslint src/auth/AuthProvider.tsx src/pages/auth/Login.tsx src/lib/bffClient.ts src/pages/settings/sections/SecuritySettings.tsx scripts/check_no_demo_prod_routes.mjs (existing react-refresh warning only); npm run check:prod-demo-routes; npm run build.",
+      "last_update": "2026-05-01T04:28:18Z"
+    },
+    {
+      "id": "P0-FE-SOURCE-001",
+      "title": "Add source mode and runtime identity to critical frontend surfaces",
+      "summary_zh": "在 runtime/deployment/governance/evolution 等關鍵 UI 加 source_mode 與 bridge/binding/runtime identity。",
+      "phase": "Pantheon P0 Paper Loop",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "depends_on": [
+        "P0-FE-DEMO-001",
+        "P0-TEL-PROJ-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_p0_sd/SD-P0-05_Frontend_Production_Adoption_Demo_Cleanup.md"
+      ],
+      "acceptance": [
+        "critical pages show authoritative_bff, derived_projection, stale_cache, preview_mock_only, demo_only, or unavailable",
+        "runtime detail shows bridge repo/commit, runtime_binding_id, deployment_plan_id, artifact_id, and capital_pool_id"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-05-01T03:58:17Z",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "status": "todo",
+      "next": "Auto-reassigned P0-FE-SOURCE-001 away from sidecar-only lane Copilot; owner Copilot -> Codex. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "last_update": "2026-05-01T03:59:19Z"
+    },
+    {
+      "id": "P0-LIVE-GUARD-001",
+      "title": "Assert live fail-closed and bracket logged-only honesty",
+      "summary_zh": "新增 live role health-only/not_activated 測試，並明確 bracket order 目前是 logged_only。",
+      "phase": "Pantheon P0 Paper Loop",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "depends_on": [
+        "P0-BOOT-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_p0_sd/SD-P0-02_DeploymentPlan_to_RuntimeBootstrap_Contract.md",
+        "docs/04/pantheon_sa/SA-20_v2_risk_register_corrected.md"
+      ],
+      "acceptance": [
+        "live role cannot broker connect or place order without activation",
+        "bracket_order_logged is not treated as broker submitted order"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-05-01T03:58:17Z",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "status": "todo",
+      "next": "Auto-reassigned P0-LIVE-GUARD-001 away from sidecar-only lane Gemini; reviewer Gemini -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "last_update": "2026-05-01T03:59:30Z"
+    },
+    {
+      "id": "P0-CI-BOUNDED-001",
+      "title": "Add source/search bounded and fail-closed adapter CI",
+      "summary_zh": "為 bounded source/search baseline 與 research/OpenClaw fail-closed posture 補 CI。",
+      "phase": "Pantheon P0 Paper Loop",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "depends_on": [
+        "P0-CI-BRIDGE-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_sa/SA-16_data_search_external_source_gap_analysis.md",
+        "docs/04/pantheon_p0_sd/SD-P0-06_Submodule_Compose_Health_CI_Verification.md"
+      ],
+      "acceptance": [
+        "static_records, guarded external_feed, DLQ/frontier/audit replay/incremental refresh smoke pass",
+        "no unrestricted crawler and OpenClaw/research production adapters fail closed by default"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-05-01T03:58:17Z",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "status": "todo",
+      "next": "Auto-reassigned P0-CI-BOUNDED-001 away from sidecar-only lane Copilot; reviewer Copilot -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "last_update": "2026-05-01T03:59:41Z"
+    },
+    {
+      "id": "P0-HEALTH-001",
+      "title": "Add health endpoint cleanup scan",
+      "summary_zh": "掃描 control/exec compose legacy __health__，推進到 /healthz /livez /readyz /metrics 一致性。",
+      "phase": "Pantheon P0 Paper Loop",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "depends_on": [
+        "P0-CI-BRIDGE-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_p0_sd/SD-P0-06_Submodule_Compose_Health_CI_Verification.md"
+      ],
+      "acceptance": [
+        "legacy __health__ occurrences are reported",
+        "cleanup mode can fail CI after migration to /healthz, /livez, /readyz, and /metrics"
+      ],
+      "source_plane": "planning",
+      "source_ref": {
+        "type": "discussion_planning",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "phase": "phase6",
+        "profile": "generic",
+        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "materialization_ref": {
+        "materialized_at": "2026-05-01T03:58:17Z",
+        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+        "consensus_status": "accepted",
+        "human_gate_status": "approved",
+        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+      },
+      "status": "todo",
+      "next": "Assignment created from accepted planning session",
+      "last_update": "2026-05-01T03:58:17Z"
+    },
+    {
+      "id": "P0-FE-DEMO-001-SIDECAR-ACCEPTANCE",
+      "title": "Prepare P0-FE-DEMO-001 acceptance packet and dependency map",
+      "summary_zh": "平行支援 P0-FE-DEMO-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Pantheon P0 Paper Loop",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/P0-FE-DEMO-001/P0-FE-DEMO-001-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Auto-reassigned ownership from Gemini2 to Codex after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex starts a fresh run.",
+      "last_update": "2026-05-01T04:25:44Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "P0-FE-DEMO-001",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "P0-FE-DEMO-001-SIDECAR-REVIEW",
+      "title": "Prepare P0-FE-DEMO-001 review packet and evidence summary",
+      "summary_zh": "平行支援 P0-FE-DEMO-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "phase": "Pantheon P0 Paper Loop",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "status": "review",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/P0-FE-DEMO-001/P0-FE-DEMO-001-SIDECAR-REVIEW.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Review packet ready for sidecar review. Packet covers: two-round implementation history (d321a9b → ea284a1), Round 1 blocking finding on auth lifecycle regression, Round 2 fix summary (preserve existing token on refresh without replacement), structured reviewer checklist for Codex's Round 2 review, evidence table, and pre-existing issue scope. No canonical truth modified.",
+      "last_update": "2026-05-01T04:34:41Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "P0-FE-DEMO-001",
+      "helper_kind": "review_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF",
+      "title": "Prepare P0-BFF-CMD-001 BFF and frontend handoff packet",
+      "summary_zh": "平行支援 P0-BFF-CMD-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+      "phase": "Pantheon P0 Paper Loop",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "review",
+      "depends_on": [
+        "P0-STATE-001"
+      ],
+      "artifacts": [
+        "support/sidecars/P0-BFF-CMD-001/P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Sidecar BFF handoff packet ready for review: support/sidecars/P0-BFF-CMD-001/P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF.md. It summarizes existing BFF command facade material, read/command contract gaps, operator journey handoff, and frontend acceptance notes without modifying canonical truth or runtime code.",
+      "last_update": "2026-05-01T04:34:25Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "P0-BFF-CMD-001",
+      "helper_kind": "bff_handoff_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    }
+  ],
   "handoffs": [
     {
       "task_id": "LUV-REVIEW-007",
@@ -193,6 +871,89 @@
       "status": "done",
       "created_at": "2026-04-17T11:50:38Z",
       "resolved_at": "2026-04-17T12:39:53Z"
+    },
+    {
+      "task_id": "P0-LOOP-001",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Auto-reassigned P0-LOOP-001 away from sidecar-only lane Gemini; reviewer Gemini -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "pending",
+      "created_at": "2026-05-01T03:58:57Z"
+    },
+    {
+      "task_id": "P0-FE-DEMO-001",
+      "from": "Copilot",
+      "to": "Codex2",
+      "message": "Auto-reassigned P0-FE-DEMO-001 away from sidecar-only lane Copilot; owner Copilot -> Codex2. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-05-01T03:59:08Z",
+      "resolved_at": "2026-05-01T04:08:32Z"
+    },
+    {
+      "task_id": "P0-FE-SOURCE-001",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Auto-reassigned P0-FE-SOURCE-001 away from sidecar-only lane Copilot; owner Copilot -> Codex. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "pending",
+      "created_at": "2026-05-01T03:59:19Z"
+    },
+    {
+      "task_id": "P0-LIVE-GUARD-001",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Auto-reassigned P0-LIVE-GUARD-001 away from sidecar-only lane Gemini; reviewer Gemini -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "pending",
+      "created_at": "2026-05-01T03:59:30Z"
+    },
+    {
+      "task_id": "P0-CI-BOUNDED-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned P0-CI-BOUNDED-001 away from sidecar-only lane Copilot; reviewer Copilot -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "pending",
+      "created_at": "2026-05-01T03:59:41Z"
+    },
+    {
+      "task_id": "P0-FE-DEMO-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: removed staging/prod AuthProvider demo imports and demo token fallback, gated dev-local auth behind dev env flags, cleaned Login demo copy/quick-login path for staging/prod, moved settings security token actions to BFF settingsApi, added production demo-route guard + GitHub workflow, and recorded demo island inventory. Frontend commit d321a9b. Verification: npm run check:prod-demo-routes; npm run build; targeted eslint on touched files passes with one fast-refresh warning. Full npm run lint still fails on pre-existing repo lint debt outside this task.",
+      "status": "done",
+      "created_at": "2026-05-01T04:15:59Z",
+      "resolved_at": "2026-05-01T04:25:09Z"
+    },
+    {
+      "task_id": "P0-FE-DEMO-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review not approved. Blocking auth lifecycle issue: refreshSession validates an existing pantheon_operator_token but persistApprovedToken(session) clears it when /api/v1/auth/session returns user metadata without a replacement token, making subsequent BFF client requests anonymous. See support/reviews/P0-FE-DEMO-001-codex-review.md. Required fix: preserve the existing approved token during successful session refresh unless BFF returns an explicit replacement; still clear on failed refresh, missing local token, and sign-out. Verification run by reviewer: npm run check:prod-demo-routes; npm run build; targeted eslint passed with one existing fast-refresh warning.",
+      "status": "done",
+      "created_at": "2026-05-01T04:25:09Z",
+      "resolved_at": "2026-05-01T04:25:09Z"
+    },
+    {
+      "task_id": "P0-FE-DEMO-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auth lifecycle fix ready for review: frontend commit ea284a1 preserves existing pantheon_operator_token on successful session refresh when BFF returns session metadata without replacement token; still clears on missing local token, failed refresh, and sign-out. Verification passed: npx eslint src/auth/AuthProvider.tsx src/pages/auth/Login.tsx src/lib/bffClient.ts src/pages/settings/sections/SecuritySettings.tsx scripts/check_no_demo_prod_routes.mjs (existing react-refresh warning only); npm run check:prod-demo-routes; npm run build.",
+      "status": "pending",
+      "created_at": "2026-05-01T04:28:18Z"
+    },
+    {
+      "task_id": "P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Sidecar BFF handoff packet ready for review: support/sidecars/P0-BFF-CMD-001/P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF.md. It summarizes existing BFF command facade material, read/command contract gaps, operator journey handoff, and frontend acceptance notes without modifying canonical truth or runtime code.",
+      "status": "pending",
+      "created_at": "2026-05-01T04:34:25Z"
+    },
+    {
+      "task_id": "P0-FE-DEMO-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review packet ready for sidecar review. Packet covers: two-round implementation history (d321a9b → ea284a1), Round 1 blocking finding on auth lifecycle regression, Round 2 fix summary (preserve existing token on refresh without replacement), structured reviewer checklist for Codex's Round 2 review, evidence table, and pre-existing issue scope. No canonical truth modified.",
+      "status": "pending",
+      "created_at": "2026-05-01T04:34:41Z"
     }
   ],
   "blockers": [],
@@ -207,11 +968,11 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 0,
-      "active": 0,
+      "total": 1,
+      "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
       "todo": 0
     },
@@ -243,22 +1004,22 @@
       "todo": 0
     },
     "Codex": {
-      "total": 0,
+      "total": 12,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 12
     },
     "Codex2": {
-      "total": 0,
-      "active": 0,
+      "total": 5,
+      "active": 2,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 2,
       "review_approved": 0,
-      "todo": 0
+      "todo": 3
     },
     "Copilot": {
       "total": 0,
