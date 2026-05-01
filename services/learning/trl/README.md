@@ -198,6 +198,35 @@ See `WORKFLOW_DEFINITION.md` for step-by-step implementation details.
 
 ---
 
+## Runtime-Data Activation Evidence
+
+`activation_smoke.py` is the task-scoped evidence harness for bounded FB-002
+runtime-data activation. It requires an explicit flag, reads a supplied FB-002
+event export or generates a governed bounded fixture, enforces the activation
+data floors, attempts the real upstream TRL DPO backend, and persists:
+
+- `artifact_bundle.json`
+- `registry_entry.json`
+- `evaluator_packet.json`
+- `candidate_packet.json`
+- `activation_evidence_summary.json`
+
+Example:
+
+```bash
+python3 services/learning/trl/activation_smoke.py \
+  --enable-activation-ready \
+  --backend real \
+  --output-dir /tmp/pantheon/learning/trl/runtime-data-activation-real
+```
+
+If the upstream TRL package or model configuration is unavailable, the harness
+records an explicit dependency/config error with `silent_stub_fallback=false`.
+Any stub-produced handoff remains labeled `training_backend=stub_dpo` and is
+only an offline evaluator/registry packet shape proof.
+
+---
+
 ## References
 
 - `TARGET_ARCHITECTURE.md`: Learning objects and feedback governance principles

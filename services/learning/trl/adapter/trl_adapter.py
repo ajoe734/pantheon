@@ -174,6 +174,7 @@ class TRLRunResult:
     training_result: DPOTrainingResult
     artifact_bundle: dict[str, Any]
     registry_entry: dict[str, Any]
+    evaluator_packet: dict[str, Any]
     candidate_packet: dict[str, Any]
 
 
@@ -620,12 +621,14 @@ def run_trl_dpo_workflow(
     registry_entry = _build_registry_entry(
         preference_dataset, training_result, artifact_bundle, training_config
     )
+    evaluator_packet = build_evaluator_packet(registry_entry, preference_dataset, training_result)
     candidate_packet = _build_candidate_packet(registry_entry, preference_dataset, training_result)
     return TRLRunResult(
         preference_dataset=preference_dataset,
         training_result=training_result,
         artifact_bundle=artifact_bundle,
         registry_entry=registry_entry,
+        evaluator_packet=evaluator_packet,
         candidate_packet=candidate_packet,
     )
 
@@ -655,12 +658,14 @@ def run_trl_dpo_workflow_from_feedback_store(
     training_result = trainer.train(dataset, training_config)
     artifact_bundle = _build_artifact_bundle(dataset, training_result, training_config)
     registry_entry = _build_registry_entry(dataset, training_result, artifact_bundle, training_config)
+    evaluator_packet = build_evaluator_packet(registry_entry, dataset, training_result)
     candidate_packet = _build_candidate_packet(registry_entry, dataset, training_result)
     return TRLRunResult(
         preference_dataset=dataset,
         training_result=training_result,
         artifact_bundle=artifact_bundle,
         registry_entry=registry_entry,
+        evaluator_packet=evaluator_packet,
         candidate_packet=candidate_packet,
     )
 
@@ -696,11 +701,13 @@ def persist_trl_run_artifacts(result: TRLRunResult, output_dir: str | Path) -> d
     files = {
         "artifact_bundle": base / "artifact_bundle.json",
         "registry_entry": base / "registry_entry.json",
+        "evaluator_packet": base / "evaluator_packet.json",
         "candidate_packet": base / "candidate_packet.json",
     }
     payloads = {
         "artifact_bundle": result.artifact_bundle,
         "registry_entry": result.registry_entry,
+        "evaluator_packet": result.evaluator_packet,
         "candidate_packet": result.candidate_packet,
     }
     for key, path in files.items():
@@ -714,6 +721,98 @@ def persist_trl_run_artifacts(result: TRLRunResult, output_dir: str | Path) -> d
     manifest_path = base / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return manifest
+
+
+def build_evaluator_packet(
+    registry_entry: Mapping[str, Any],
+    dataset: PreferencePairDataset,
+    result: DPOTrainingResult,
+) -> dict[str, Any]:
+    """Build an EV-001 advisory evaluator packet for the produced preference model.
+
+    This returns a packet for registry/evaluator handoff only. It does not submit
+    to the evaluator service, write registry state, or promote the artifact.
+    """
+    from services.evaluation.evaluator import evaluate_artifact
+    from services.evaluation.models import ScoreComponent
+
+    metrics = result.metrics
+    volume_score = min(dataset.num_pairs / ACTIVATION_READY_MIN_PREFERENCE_PAIRS, 1.0)
+    family_score = min(
+        len(dataset.strategy_families) / ACTIVATION_READY_MIN_STRATEGY_FAMILIES,
+        1.0,
+    )
+    action_score = (
+        len([action for action, count in dataset.action_distribution.items() if count > 0])
+        / len(ALLOWED_ACTIONS)
+    )
+    metric_score = float(metrics.get("accuracy", metrics.get("eval_accuracy", 0.0)) or 0.0)
+    if not 0.0 <= metric_score <= 1.0:
+        metric_score = 0.0
+
+    evaluator_result = evaluate_artifact(
+        artifact=registry_entry,
+        target_promotion_state=registry_entry["artifact_state"],
+        score_components={
+            "fb002_volume": ScoreComponent(
+                value=dataset.num_pairs,
+                weight=0.30,
+                dimension_score=round(volume_score, 6),
+                interpretation="Preference-pair volume against activation-ready floor.",
+                confidence=0.90,
+            ),
+            "strategy_family_coverage": ScoreComponent(
+                value=list(dataset.strategy_families),
+                weight=0.20,
+                dimension_score=round(family_score, 6),
+                interpretation="Strategy-family diversity against activation-ready floor.",
+                confidence=0.90,
+            ),
+            "action_coverage": ScoreComponent(
+                value=dataset.action_distribution,
+                weight=0.20,
+                dimension_score=round(action_score, 6),
+                interpretation="FB-002 approve/edit/reject coverage.",
+                confidence=0.90,
+            ),
+            "backend_metric": ScoreComponent(
+                value=metrics,
+                weight=0.30,
+                dimension_score=round(metric_score, 6),
+                interpretation="Training backend metric when supplied by the backend.",
+                confidence=0.70 if result.backend == STUB_BACKEND else 0.85,
+                model_id=registry_entry["registry_id"],
+            ),
+        },
+        feedback_events_considered={
+            "source_feedback_event_count": len(dataset.source_feedback_event_ids),
+            "preference_pair_count": dataset.num_pairs,
+            "action_distribution": dataset.action_distribution,
+            "strategy_families": list(dataset.strategy_families),
+        },
+        rationale=(
+            "Advisory EV-001 packet for offline preference-model review. "
+            "It does not promote registry state or enable order routing."
+        ),
+        auditable_fields={
+            "producer_run_id": result.run_id,
+            "training_backend": result.backend,
+            "governance_boundary": {
+                "direct_governance_write": False,
+                "order_routing_enabled": False,
+                "deployment_stage": registry_entry["deployment_summary"]["current_stage"],
+            },
+        },
+    )
+    packet = evaluator_result.to_dict()
+    packet["handoff_boundary"] = {
+        "consumer": "EV-001",
+        "minimum_artifact_state_for_scoring": "approved",
+        "candidate_use": "offline_review_only",
+        "direct_governance_write": False,
+        "order_routing_enabled": False,
+    }
+    return packet
 
 
 def _build_artifact_bundle(

@@ -319,6 +319,21 @@ class TestRunTRLDPOWorkflow(unittest.TestCase):
         self.assertEqual(packet["candidate_registry_projection"]["artifact_state"], "candidate")
         self.assertEqual(packet["evaluator_handoff"]["minimum_artifact_state_for_scoring"], "approved")
 
+    def test_evaluator_packet_references_model_artifact_without_routing(self) -> None:
+        result = run_trl_dpo_workflow(
+            self._events(),
+            dataset_id="ds-eval",
+            strategy_id="strat-eval",
+            source_dataset_refs=["ref-eval"],
+        )
+        packet = result.evaluator_packet
+        self.assertEqual(packet["artifact_type"], "evaluation_result")
+        self.assertEqual(packet["target_artifact_id"], result.registry_entry["registry_id"])
+        self.assertEqual(packet["target_artifact_type"], "model_artifact")
+        self.assertEqual(packet["target_promotion_state"], "draft")
+        self.assertFalse(packet["handoff_boundary"]["direct_governance_write"])
+        self.assertFalse(packet["handoff_boundary"]["order_routing_enabled"])
+
     def test_activation_ready_data_floors_reject_small_dataset(self) -> None:
         result = run_trl_dpo_workflow(
             self._events(),
@@ -388,6 +403,7 @@ class TestRunTRLDPOWorkflow(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             manifest = persist_trl_run_artifacts(result, tmp)
             self.assertIn("candidate_packet", manifest["files"])
+            self.assertIn("evaluator_packet", manifest["files"])
             for path in manifest["files"].values():
                 self.assertTrue(os.path.exists(path))
 

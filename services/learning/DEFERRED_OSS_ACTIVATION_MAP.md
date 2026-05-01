@@ -119,6 +119,14 @@ and strategy gates in `ACTIVATION_CRITERIA.md §1` are satisfied.
   `services/learning/trl/preflight.py`; it reports FB-002 event volume,
   preference-pair volume, imitation-artifact readiness, and downstream-consumer readiness
   without running active DPO.
+- `services/learning/trl/activation_smoke.py` is the explicit-gated runtime-data evidence harness.
+  On 2026-05-01 it produced a bounded FB-002 evidence packet with 240 governed events,
+  240 preference pairs, 3 strategy families, all approve/edit/reject actions, evaluator packet,
+  registry entry, candidate packet, and checksum-bearing artifact bundle under
+  `support/evidence/P2-TRL-RUNTIME-DATA-ACTIVATION-001/`.
+- The 2026-05-01 real backend attempt failed explicitly because the local environment does not
+  have the upstream `trl` module installed (`ModuleNotFoundError: No module named 'trl'`);
+  the evidence records `silent_stub_fallback=false`.
 - Smoke test passes: 29 unit tests + assertions OK (revalidated 2026-04-29). Evidence in `integrations/trl/`.
 - `services/learning/trl/PREFERENCE_LEARNING_CONTRACT.md` and `WORKFLOW_DEFINITION.md` remain
   authoritative for pair-construction contract and workflow design.
@@ -134,9 +142,9 @@ and strategy gates in `ACTIVATION_CRITERIA.md §1` are satisfied.
 | Pair-construction pipeline feeding FB-002 events | Done — `GovernedPreferencePairAdapter` |
 | Minimal DPO smoke test on synthetic preference pairs | Done — 29 unit tests + smoke assertions OK |
 | Dependency compatibility confirmed | Done — verified in `requirements.txt` header comment |
-| FB-002 event volume at runtime (≥200 events, ≥100 pairs) | Runtime gate — cannot be pre-staged |
-| LP-002 imitation baseline active with approved artifacts | Runtime gate — LP-002 is governed |
-| Downstream consumer ready (EV-001, LP-005, or LP-001) | Runtime gate — requires downstream activation |
+| FB-002 event volume at runtime (≥200 events, ≥100 pairs) | Bounded evidence produced — 240 governed fixture events and 240 pairs in `support/evidence/P2-TRL-RUNTIME-DATA-ACTIVATION-001/`; production store volume still remains a runtime gate |
+| LP-002 imitation baseline active with approved artifacts | Bounded readiness probe recorded; production registry proof remains a runtime gate |
+| Downstream consumer ready (EV-001, LP-005, or LP-001) | EV-001 contract-readiness probe recorded; production consumer enablement remains a runtime gate |
 
 **Activation prerequisite chain**:
 1. LP-002 imitation baseline must be active and producing governed `artifact_state=approved` artifacts

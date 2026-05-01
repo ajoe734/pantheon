@@ -1,0 +1,11 @@
+{
+  "checksum": "sha256:ae799feaba0a023b79cdd14aa8cfa9b2df4cf86baef61db94c461ed1fdc43d31",
+  "created_at": "2026-05-01T16:29:31Z",
+  "files": {
+    "artifact_bundle": "/tmp/pantheon/learning/trl/runtime-data-activation-real/artifact_bundle.json",
+    "candidate_packet": "/tmp/pantheon/learning/trl/runtime-data-activation-real/candidate_packet.json",
+    "evaluator_packet": "/tmp/pantheon/learning/trl/runtime-data-activation-real/evaluator_packet.json",
+    "registry_entry": "/tmp/pantheon/learning/trl/runtime-data-activation-real/registry_entry.json"
+  },
+  "registry_id": "trl-preference-model-preference-learning-runtime-data-2026.05.01"
+}

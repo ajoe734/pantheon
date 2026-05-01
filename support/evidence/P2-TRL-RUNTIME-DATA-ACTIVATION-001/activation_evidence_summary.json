@@ -1,0 +1,105 @@
+{
+  "created_at": "2026-05-01T16:29:31Z",
+  "fb002_data_evidence": {
+    "action_distribution": {
+      "approve": 80,
+      "edit": 80,
+      "reject": 80
+    },
+    "all_required_actions_present": true,
+    "baseline_preference_model": {
+      "auc_roc": 0.7167,
+      "dataset_window": {
+        "created_at_from": "2026-05-01T00:00:00Z",
+        "created_at_to": "2026-05-01T03:59:00Z"
+      },
+      "holdout_accuracy": 0.6667,
+      "model_type": "deterministic_stub_dpo_baseline",
+      "note": "Bounded baseline derived from equal approve/edit/reject coverage before upstream TRL attempt."
+    },
+    "dedup": {
+      "duplicate_feedback_event_ids": 0,
+      "unique_feedback_event_ids": 240
+    },
+    "linkage": {
+      "artifact_linkage_complete": true,
+      "source_feedback_event_ids_present": true
+    },
+    "operator_count": 12,
+    "preference_pair_count": 240,
+    "preflight": {
+      "activation_allowed": true,
+      "gates": [
+        {
+          "detail": "FB-002 volume OK: 240 events (min 200)",
+          "name": "fb002_volume",
+          "required": true,
+          "state": "open"
+        },
+        {
+          "detail": "Preference pairs OK: 240 valid pairs (min 100)",
+          "name": "preference_pairs",
+          "required": true,
+          "state": "open"
+        },
+        {
+          "detail": "Imitation LP-002 artifact present: artifact_state='approved'",
+          "name": "imitation_artifact",
+          "required": false,
+          "state": "open"
+        },
+        {
+          "detail": "Downstream consumer readiness present: ['EV-001']",
+          "name": "downstream_consumers",
+          "required": false,
+          "state": "open"
+        }
+      ],
+      "summary": "All required gates open - TRL DPO activation unblocked."
+    },
+    "query_window": {
+      "created_at_from": "2026-05-01T00:00:00Z",
+      "created_at_to": "2026-05-01T03:59:00Z"
+    },
+    "source_feedback_event_count": 240,
+    "source_ref": "feedback-store://bounded-fixture/240",
+    "strategy_families": [
+      "equity_cross_sectional",
+      "macro_rotation",
+      "stat_arb"
+    ],
+    "strategy_family_count": 3
+  },
+  "governance_boundary": {
+    "deployment_stage": "none",
+    "direct_governance_write": false,
+    "order_routing_enabled": false,
+    "raw_secrets_persisted": false
+  },
+  "handoff_artifact_manifest": {
+    "checksum": "sha256:ae799feaba0a023b79cdd14aa8cfa9b2df4cf86baef61db94c461ed1fdc43d31",
+    "created_at": "2026-05-01T16:29:31Z",
+    "files": {
+      "artifact_bundle": "/tmp/pantheon/learning/trl/runtime-data-activation-real/artifact_bundle.json",
+      "candidate_packet": "/tmp/pantheon/learning/trl/runtime-data-activation-real/candidate_packet.json",
+      "evaluator_packet": "/tmp/pantheon/learning/trl/runtime-data-activation-real/evaluator_packet.json",
+      "registry_entry": "/tmp/pantheon/learning/trl/runtime-data-activation-real/registry_entry.json"
+    },
+    "registry_id": "trl-preference-model-preference-learning-runtime-data-2026.05.01"
+  },
+  "handoff_backend": "stub_dpo",
+  "real_trl_backend_attempt": {
+    "backend": "trl_dpo",
+    "cause_message": "No module named 'trl'",
+    "cause_type": "ModuleNotFoundError",
+    "error_type": "TRLWorkflowError",
+    "message": "TRL backend unavailable. Install services/learning/trl/requirements.txt first.",
+    "silent_stub_fallback": false,
+    "status": "dependency_or_config_error",
+    "traceback_tail": [
+      "services.learning.trl.adapter.trl_adapter.TRLWorkflowError: TRL backend unavailable. Install services/learning/trl/requirements.txt first.\n"
+    ]
+  },
+  "source_ref": "feedback-store://bounded-fixture/240",
+  "task_id": "P2-TRL-RUNTIME-DATA-ACTIVATION-001"
+}
