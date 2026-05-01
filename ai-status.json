@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-01T16:10:15Z",
+  "updated_at": "2026-05-01T16:21:00Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,13 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "reviewing",
+      "status": "finalize",
       "current_task_ids": [
         "P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Acceptance packet prepared at support/sidecars/P2-TRL-RUNTIME-DATA-ACTIVATION-001/P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE.md. Contains: full acceptance checklist for parent task, dependency map (satisfied vs open runtime gates), pre-flight checklist for parent owner Codex2, reviewer gate summary, and evidence file references. Ready for review.",
-      "last_update": "2026-05-01T16:10:15Z"
+      "next": "Codex2 review approved. Sidecar packet is support-only, complete for acceptance/dependency mapping, and ready for owner closeout; parent runtime gates remain to be proven by P2-TRL-RUNTIME-DATA-ACTIVATION-001.",
+      "last_update": "2026-05-01T16:13:56Z"
     },
     {
       "name": "Gemini",
@@ -125,11 +125,12 @@
       ],
       "status": "working",
       "current_task_ids": [
-        "P2-WANDB-ONLINE-SYNC-001"
+        "P2-WANDB-ONLINE-SYNC-001",
+        "P2-RL-UPSTREAM-RUNTIME-SMOKE-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Implementing explicit-gated SDK-backed W&B online backend and smoke/readback harness; local env has no WANDB_API_KEY and wandb package is not installed, so verification will include config-skip plus unit fakes.",
-      "last_update": "2026-05-01T16:04:03Z"
+      "next": "Supervisor auto-started P2-RL-UPSTREAM-RUNTIME-SMOKE-001 after successful dispatch.",
+      "last_update": "2026-05-01T16:18:55Z"
     },
     {
       "name": "Codex2",
@@ -139,13 +140,15 @@
         "schema",
         "acceptance"
       ],
-      "status": "reviewing",
+      "status": "ready",
       "current_task_ids": [
-        "P2-QLIB-PROD-DATA-ACTIVATION-001"
+        "P2-TRL-RUNTIME-DATA-ACTIVATION-001",
+        "P2-MARKETDATA-CREDENTIAL-SMOKE-001",
+        "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Production-data activation packet implemented: added Qlib production dataset proof validation, real/stub-selectable production_activation_smoke.py, candidate handoff packet persistence, docs/checklist updates. Verification: python3 -m unittest discover -s services/research/qlib -p 'test_*.py' (32 OK); python3 services/research/qlib/smoke_test.py (OK); python3 -m pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py (2 passed); python3 -m py_compile qlib activation scripts (OK).",
-      "last_update": "2026-05-01T16:09:30Z"
+      "next": "Auto-reassigned ownership from Claude to Codex2 after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1777661400,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_dis. Task returned to todo until Codex2 starts a fresh run.",
+      "last_update": "2026-05-01T15:55:49Z"
     },
     {
       "name": "Copilot",
@@ -182,13 +185,11 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "working",
-      "current_task_ids": [
-        "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/gemini2-research-runtime",
-      "next": "Supervisor re-dispatched P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001; task remains in progress.",
-      "last_update": "2026-05-01T15:55:21Z"
+      "next": "",
+      "last_update": "2026-05-01T16:18:32Z"
     }
   ],
   "tasks": [
@@ -199,7 +200,7 @@
       "phase": "P2 Wave 8 External Activation",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "in_progress",
+      "status": "review",
       "depends_on": [
         "P2-OSS-ACTIVATE-001"
       ],
@@ -216,39 +217,8 @@
         "W&B test project smoke uploads metrics and artifact then reads back run or artifact references without persisting raw secrets",
         "BFF registry and evaluator can resolve W&B run refs while no source path can route to broker order execution"
       ],
-      "next": "Implementing explicit-gated SDK-backed W&B online backend and smoke/readback harness; local env has no WANDB_API_KEY and wandb package is not installed, so verification will include config-skip plus unit fakes.",
-      "last_update": "2026-05-01T16:04:03Z",
-      "task_class": "execution",
-      "mutates_canonical": true
-    },
-    {
-      "id": "P2-QLIB-PROD-DATA-ACTIVATION-001",
-      "title": "Qlib production data activation packet and real-backend smoke",
-      "summary_zh": "把 Qlib 從 activation-ready offline handoff 推進到 production-data activation packet：使用 governed market dataset proof 與 real/stub-selectable backend smoke 產生可審查 candidate handoff，不連到下單路徑。",
-      "phase": "P2 Wave 8 External Activation",
-      "owner": "Codex2",
-      "reviewer": "Claude",
-      "status": "review",
-      "depends_on": [
-        "P2-OSS-ACTIVATE-001",
-        "P1-SOURCE-001"
-      ],
-      "artifacts": [
-        "services/research/qlib",
-        "services/learning/qlib/ACTIVATION_CRITERIA.md",
-        "integrations/qlib",
-        "services/source_ingestion",
-        "services/search",
-        "OSS_INTEGRATION_CHECKLIST.md",
-        "docs/deployment/external-data-integration-execution-task-inventory.md"
-      ],
-      "acceptance": [
-        "Governed Qlib production dataset proof names provider entitlement freshness PIT and storage evidence",
-        "Qlib real backend path runs or returns explicit install/config error while stub CI remains deterministic",
-        "Qlib candidate handoff is produced with artifact_state draft or candidate and no registry write or order-capable route"
-      ],
-      "next": "Production-data activation packet implemented: added Qlib production dataset proof validation, real/stub-selectable production_activation_smoke.py, candidate handoff packet persistence, docs/checklist updates. Verification: python3 -m unittest discover -s services/research/qlib -p 'test_*.py' (32 OK); python3 services/research/qlib/smoke_test.py (OK); python3 -m pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py (2 passed); python3 -m py_compile qlib activation scripts (OK).",
-      "last_update": "2026-05-01T16:09:30Z",
+      "next": "Implementation ready for review: added explicit-gated WandbOnlineBackend with SDK requirement and wandb-online smoke/readback harness; offline default preserved; BFF/evaluator preserve W&B experiment_refs/readback_refs; research-worker-gateway keeps W&B non-dispatchable/no broker-order-capital route; deployment task inventory now marks this row review. Verification: pytest targeted set 61 passed; BFF OSS preactivation 3 passed; memory and offline W&B smokes passed; wandb-online smoke returned structured missing-config skip because local PANTHEON_WANDB_ONLINE_SYNC_ENABLED/PANTHEON_WANDB_PROJECT/WANDB_API_KEY and SDK install are absent.",
+      "last_update": "2026-05-01T16:15:47Z",
       "task_class": "execution",
       "mutates_canonical": true
     },
@@ -289,7 +259,7 @@
       "phase": "P2 Wave 8 External Activation",
       "owner": "Codex",
       "reviewer": "Codex2",
-      "status": "todo",
+      "status": "in_progress",
       "depends_on": [
         "P2-OSS-ACTIVATE-001"
       ],
@@ -307,8 +277,8 @@
         "Reward environment dataset and artifact schemas are enforced with persisted checksums and evaluator packet",
         "Outputs remain research artifacts only with no broker session order routing paper canary live promotion or capital binding"
       ],
-      "next": "Auto-reassigned P2-RL-UPSTREAM-RUNTIME-SMOKE-001 away from sidecar-only lane Copilot; owner Copilot -> Codex. Reserved sidecar-only agents no longer hold mainline tasks.",
-      "last_update": "2026-05-01T15:42:34Z",
+      "next": "Supervisor auto-started P2-RL-UPSTREAM-RUNTIME-SMOKE-001 after successful dispatch.",
+      "last_update": "2026-05-01T16:18:55Z",
       "task_class": "execution",
       "mutates_canonical": true
     },
@@ -347,9 +317,9 @@
       "title": "Source/search live connector credentialed smoke",
       "summary_zh": "對 source/search 非下單外部資料源做 bounded live/test credential smoke：news/social/alpha DB 或 allowlisted HTTP/feed connector -> SourceRecord/EvidenceBundle -> durable index -> BFF/SearchGateway query；禁止 broker/Lean/order 路由。",
       "phase": "P2 Wave 8 External Activation",
-      "owner": "Gemini2",
+      "owner": "Codex2",
       "reviewer": "Codex",
-      "status": "in_progress",
+      "status": "todo",
       "depends_on": [
         "P1-SOURCE-001",
         "P1-SEARCH-001",
@@ -368,8 +338,8 @@
         "Search index and BFF/SearchGateway readback prove durable citation/evidence refs without caller-supplied document normal path",
         "No connector can route directly to Lean broker order-capable execution paper/canary/live deployment or capital binding"
       ],
-      "next": "Supervisor re-dispatched P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001; task remains in progress.",
-      "last_update": "2026-05-01T15:55:21Z",
+      "next": "Auto-reassigned ownership from Gemini2 to Codex2 after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex2 starts a fresh run.",
+      "last_update": "2026-05-01T16:19:24Z",
       "task_class": "execution",
       "mutates_canonical": true
     },
@@ -380,7 +350,7 @@
       "phase": "P2 Wave 8 External Activation",
       "owner": "Claude",
       "reviewer": "Codex2",
-      "status": "review",
+      "status": "review_approved",
       "depends_on": [
         "P2-OSS-ACTIVATE-001"
       ],
@@ -392,14 +362,20 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Acceptance packet prepared at support/sidecars/P2-TRL-RUNTIME-DATA-ACTIVATION-001/P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE.md. Contains: full acceptance checklist for parent task, dependency map (satisfied vs open runtime gates), pre-flight checklist for parent owner Codex2, reviewer gate summary, and evidence file references. Ready for review.",
-      "last_update": "2026-05-01T16:10:15Z",
+      "next": "Codex2 review approved. Sidecar packet is support-only, complete for acceptance/dependency mapping, and ready for owner closeout; parent runtime gates remain to be proven by P2-TRL-RUNTIME-DATA-ACTIVATION-001.",
+      "last_update": "2026-05-01T16:13:56Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "P2-TRL-RUNTIME-DATA-ACTIVATION-001",
       "helper_kind": "acceptance_packet",
       "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "通過：acceptance packet 僅新增/使用 sidecar support artifact，未要求修改 canonical truth 或 runtime implementation。",
+        "通過：parent acceptance criteria、open runtime-data gates、preflight steps、reviewer gate、evidence references 皆已明確列出，可供 P2-TRL-RUNTIME-DATA-ACTIVATION-001 owner/reviewer 使用。",
+        "剩餘風險：此 packet 不證明 parent runtime data gates 已滿足；parent task 仍需另行產生 FB-002 evidence、real TRL DPO/install-config evidence、artifact/evaluator/registry handoff。"
+      ],
+      "review_file": "support/sidecars/P2-TRL-RUNTIME-DATA-ACTIVATION-001/P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE.md"
     }
   ],
   "handoffs": [
@@ -413,21 +389,13 @@
       "resolved_at": "2026-04-17T12:39:53Z"
     },
     {
-      "task_id": "P2-QLIB-PROD-DATA-ACTIVATION-001",
-      "from": "Copilot",
-      "to": "Claude",
-      "message": "Auto-reassigned P2-QLIB-PROD-DATA-ACTIVATION-001 away from sidecar-only lane Copilot; reviewer Copilot -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
-      "status": "done",
-      "created_at": "2026-05-01T15:42:23Z",
-      "resolved_at": "2026-05-01T16:01:51Z"
-    },
-    {
       "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
       "from": "Copilot",
       "to": "Codex",
       "message": "Auto-reassigned P2-RL-UPSTREAM-RUNTIME-SMOKE-001 away from sidecar-only lane Copilot; owner Copilot -> Codex. Reserved sidecar-only agents no longer hold mainline tasks.",
-      "status": "pending",
-      "created_at": "2026-05-01T15:42:34Z"
+      "status": "done",
+      "created_at": "2026-05-01T15:42:34Z",
+      "resolved_at": "2026-05-01T16:18:55Z"
     },
     {
       "task_id": "P2-MARKETDATA-CREDENTIAL-SMOKE-001",
@@ -438,20 +406,38 @@
       "created_at": "2026-05-01T15:48:40Z"
     },
     {
-      "task_id": "P2-QLIB-PROD-DATA-ACTIVATION-001",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Production-data activation packet implemented: added Qlib production dataset proof validation, real/stub-selectable production_activation_smoke.py, candidate handoff packet persistence, docs/checklist updates. Verification: python3 -m unittest discover -s services/research/qlib -p 'test_*.py' (32 OK); python3 services/research/qlib/smoke_test.py (OK); python3 -m pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py (2 passed); python3 -m py_compile qlib activation scripts (OK).",
-      "status": "pending",
-      "created_at": "2026-05-01T16:09:30Z"
-    },
-    {
       "task_id": "P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE",
       "from": "Claude",
       "to": "Codex2",
       "message": "Acceptance packet prepared at support/sidecars/P2-TRL-RUNTIME-DATA-ACTIVATION-001/P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE.md. Contains: full acceptance checklist for parent task, dependency map (satisfied vs open runtime gates), pre-flight checklist for parent owner Codex2, reviewer gate summary, and evidence file references. Ready for review.",
+      "status": "done",
+      "created_at": "2026-05-01T16:10:15Z",
+      "resolved_at": "2026-05-01T16:13:56Z"
+    },
+    {
+      "task_id": "P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Codex2 review approved. Sidecar packet is support-only, complete for acceptance/dependency mapping, and ready for owner closeout; parent runtime gates remain to be proven by P2-TRL-RUNTIME-DATA-ACTIVATION-001.",
       "status": "pending",
-      "created_at": "2026-05-01T16:10:15Z"
+      "created_at": "2026-05-01T16:13:56Z"
+    },
+    {
+      "task_id": "P2-WANDB-ONLINE-SYNC-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation ready for review: added explicit-gated WandbOnlineBackend with SDK requirement and wandb-online smoke/readback harness; offline default preserved; BFF/evaluator preserve W&B experiment_refs/readback_refs; research-worker-gateway keeps W&B non-dispatchable/no broker-order-capital route. Verification: pytest targeted set 61 passed; BFF OSS preactivation 3 passed; memory and offline W&B smokes passed; wandb-online smoke returned structured missing-config skip because local PANTHEON_WANDB_ONLINE_SYNC_ENABLED/PANTHEON_WANDB_PROJECT/WANDB_API_KEY and SDK install are absent.",
+      "status": "done",
+      "created_at": "2026-05-01T16:14:56Z",
+      "resolved_at": "2026-05-01T16:15:47Z"
+    },
+    {
+      "task_id": "P2-WANDB-ONLINE-SYNC-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation ready for review: added explicit-gated WandbOnlineBackend with SDK requirement and wandb-online smoke/readback harness; offline default preserved; BFF/evaluator preserve W&B experiment_refs/readback_refs; research-worker-gateway keeps W&B non-dispatchable/no broker-order-capital route; deployment task inventory now marks this row review. Verification: pytest targeted set 61 passed; BFF OSS preactivation 3 passed; memory and offline W&B smokes passed; wandb-online smoke returned structured missing-config skip because local PANTHEON_WANDB_ONLINE_SYNC_ENABLED/PANTHEON_WANDB_PROJECT/WANDB_API_KEY and SDK install are absent.",
+      "status": "pending",
+      "created_at": "2026-05-01T16:15:47Z"
     }
   ],
   "blockers": [],
@@ -467,11 +453,11 @@
   "workload_summary": {
     "Claude": {
       "total": 1,
-      "active": 1,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 1,
-      "review_approved": 0,
+      "review": 0,
+      "review_approved": 1,
       "todo": 0
     },
     "Claude2": {
@@ -493,31 +479,31 @@
       "todo": 0
     },
     "Gemini2": {
-      "total": 1,
-      "active": 1,
+      "total": 0,
+      "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Codex": {
       "total": 2,
-      "active": 1,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 2
-    },
-    "Codex2": {
-      "total": 3,
-      "active": 1,
+      "active": 2,
       "blocked": 0,
       "done": 0,
       "review": 1,
       "review_approved": 0,
-      "todo": 2
+      "todo": 1
+    },
+    "Codex2": {
+      "total": 3,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 3
     },
     "Copilot": {
       "total": 0,

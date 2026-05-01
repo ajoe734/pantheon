@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-01T16:04:51Z",
+  "updated_at": "2026-05-01T16:21:00Z",
   "counts": {
-    "total": 879,
-    "completed": 863,
+    "total": 880,
+    "completed": 864,
     "superseded": 16
   },
   "recent_terminal_ids": [
+    "P2-QLIB-PROD-DATA-ACTIVATION-001",
     "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE",
     "P2-BROKER-SANDBOX-ORDER-001",
     "P2-OSS-ACTIVATE-001-SIDECAR-REVIEW",
@@ -25,7 +26,6 @@
     "P0-FE-SOURCE-001",
     "P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE",
     "P1-LIVE-PLAN-001",
-    "P0-REC-001-SIDECAR-ACCEPTANCE",
-    "P0-REC-001"
+    "P0-REC-001-SIDECAR-ACCEPTANCE"
   ]
 }
