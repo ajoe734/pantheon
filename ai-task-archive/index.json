@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-01T09:09:35Z",
+  "updated_at": "2026-05-01T09:14:00Z",
   "counts": {
-    "total": 861,
-    "completed": 845,
+    "total": 862,
+    "completed": 846,
     "superseded": 16
   },
   "recent_terminal_ids": [
+    "P1-LIVE-PLAN-001",
     "P0-REC-001-SIDECAR-ACCEPTANCE",
     "P0-REC-001",
     "P0-LOOP-001",
@@ -25,7 +26,6 @@
     "P0-FE-DEMO-001-SIDECAR-ACCEPTANCE",
     "P0-LEAN-CTX-001",
     "P0-LIVE-GUARD-001",
-    "P0-BFF-CMD-001",
-    "P0-CTX-001"
+    "P0-BFF-CMD-001"
   ]
 }

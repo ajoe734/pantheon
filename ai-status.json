@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；production、paper、canary、live gate 預設仍 fail-closed。",
-  "updated_at": "2026-05-01T09:14:00Z",
+  "updated_at": "2026-05-01T09:15:05Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -166,13 +166,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
+      "status": "reviewing",
       "current_task_ids": [
         "P1-LIVE-PLAN-001-SIDECAR-REVIEW"
       ],
       "branch": "feat/claude2-execution-control",
-      "next": "Reviewing runbook at docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md and Codex review at support/reviews/P1-LIVE-PLAN-001-codex-review.md; preparing evidence mapping for three acceptance criteria.",
-      "last_update": "2026-05-01T09:13:48Z"
+      "next": "Review packet complete. support/sidecars/P1-LIVE-PLAN-001/P1-LIVE-PLAN-001-SIDECAR-REVIEW.md contains: (1) evidence mapping for all three acceptance criteria against runbook sections, (2) policy alignment check for PAPER_CANARY_LIVE_POLICY.md / KILL_SWITCH / ROLLBACK / BINDING docs, (3) Codex review summary, (4) P1 boundary confirmation, (5) open items categorized as deferred. No canonical truth modified. Parent task P1-LIVE-PLAN-001 is review_approved by Codex; this packet is supplementary support for Claude's finalization.",
+      "last_update": "2026-05-01T09:15:05Z"
     },
     {
       "name": "Gemini2",
@@ -332,7 +332,7 @@
       "phase": "P1 Wave 5",
       "owner": "Claude2",
       "reviewer": "Claude",
-      "status": "in_progress",
+      "status": "review",
       "depends_on": [
         "P0-LOOP-001"
       ],
@@ -344,8 +344,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Reviewing runbook at docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md and Codex review at support/reviews/P1-LIVE-PLAN-001-codex-review.md; preparing evidence mapping for three acceptance criteria.",
-      "last_update": "2026-05-01T09:13:48Z",
+      "next": "Review packet complete. support/sidecars/P1-LIVE-PLAN-001/P1-LIVE-PLAN-001-SIDECAR-REVIEW.md contains: (1) evidence mapping for all three acceptance criteria against runbook sections, (2) policy alignment check for PAPER_CANARY_LIVE_POLICY.md / KILL_SWITCH / ROLLBACK / BINDING docs, (3) Codex review summary, (4) P1 boundary confirmation, (5) open items categorized as deferred. No canonical truth modified. Parent task P1-LIVE-PLAN-001 is review_approved by Codex; this packet is supplementary support for Claude's finalization.",
+      "last_update": "2026-05-01T09:15:05Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "P1-LIVE-PLAN-001",
@@ -372,6 +372,14 @@
       "status": "done",
       "created_at": "2026-05-01T03:59:19Z",
       "resolved_at": "2026-05-01T08:42:49Z"
+    },
+    {
+      "task_id": "P1-LIVE-PLAN-001-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review packet complete. support/sidecars/P1-LIVE-PLAN-001/P1-LIVE-PLAN-001-SIDECAR-REVIEW.md contains: (1) evidence mapping for all three acceptance criteria against runbook sections, (2) policy alignment check for PAPER_CANARY_LIVE_POLICY.md / KILL_SWITCH / ROLLBACK / BINDING docs, (3) Codex review summary, (4) P1 boundary confirmation, (5) open items categorized as deferred. No canonical truth modified. Parent task P1-LIVE-PLAN-001 is review_approved by Codex; this packet is supplementary support for Claude's finalization.",
+      "status": "pending",
+      "created_at": "2026-05-01T09:15:05Z"
     }
   ],
   "blockers": [],
@@ -399,9 +407,9 @@
       "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Gemini": {
       "total": 0,

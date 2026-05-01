@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-01 17:14:00
+Last updated: 2026-05-01 17:15:05
 
 ## Objective
 
@@ -42,7 +42,7 @@ Last updated: 2026-05-01 17:14:00
 - `Codex`: integration, status-system, schema, acceptance; next: Codex is tightening the sidecar acceptance packet against the parent runbook, dependency map, and review handoff; support artifact only.
 - `Codex2`: integration, status-system, schema, acceptance; next: Continuing frontend source_mode/runtime identity implementation; reading task artifact and existing UI surfaces.
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: Reviewing runbook at docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md and Codex review at support/reviews/P1-LIVE-PLAN-001-codex-review.md; preparing evidence mapping for three acceptance criteria.
+- `Claude2`: execution, control-plane, governance-review; next: Review packet complete. support/sidecars/P1-LIVE-PLAN-001/P1-LIVE-PLAN-001-SIDECAR-REVIEW.md contains: (1) evidence mapping for all three acceptance criteria against runbook sections, (2) policy alignment check for PAPER_CANARY_LIVE_POLICY.md / KILL_SWITCH / ROLLBACK / BINDING docs, (3) Codex review summary, (4) P1 boundary confirmation, (5) open items categorized as deferred. No canonical truth modified. Parent task P1-LIVE-PLAN-001 is review_approved by Codex; this packet is supplementary support for Claude's finalization.
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 
 ## Delivery Layers
@@ -55,7 +55,7 @@ Last updated: 2026-05-01 17:14:00
 | `P1-BRACKET-001` | P1 Wave 5 | Guarded paper/sim bracket order execution | Codex | todo | `P0-LIVE-GUARD-001` | 在 paper/sim broker 範圍內實作受治理 bracket order execution；live 仍 fail-closed。 |
 | `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | Codex | todo | `P0-CI-BOUNDED-001` | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 |
 | `P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-LIVE-PLAN-001] Prepare P1-LIVE-PLAN-001 acceptance packet and dependency map | Codex | in_progress | `P0-LOOP-001` | 平行支援 P1-LIVE-PLAN-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
-| `P1-LIVE-PLAN-001-SIDECAR-REVIEW` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-LIVE-PLAN-001] Prepare P1-LIVE-PLAN-001 review packet and evidence summary | Claude2 | in_progress | `P0-LOOP-001` | 平行支援 P1-LIVE-PLAN-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
+| `P1-LIVE-PLAN-001-SIDECAR-REVIEW` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-LIVE-PLAN-001] Prepare P1-LIVE-PLAN-001 review packet and evidence summary | Claude2 | review | `P0-LOOP-001` | 平行支援 P1-LIVE-PLAN-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -71,13 +71,13 @@ Last updated: 2026-05-01 17:14:00
 | `P1-BRACKET-001` | P1 Wave 5 | Guarded paper/sim bracket order execution | 在 paper/sim broker 範圍內實作受治理 bracket order execution；live 仍 fail-closed。 | Codex | Claude | todo | `P0-LIVE-GUARD-001` | 2026-05-01 15:57:10 | Supervisor preempted P1-BRACKET-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
 | `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 | Codex | Claude | todo | `P0-CI-BOUNDED-001` | 2026-05-01 15:16:56 | Assignment created |
 | `P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-LIVE-PLAN-001] Prepare P1-LIVE-PLAN-001 acceptance packet and dependency map | 平行支援 P1-LIVE-PLAN-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Codex | Claude | in_progress | `P0-LOOP-001` | 2026-05-01 17:13:41 | Codex is tightening the sidecar acceptance packet against the parent runbook, dependency map, and review handoff; support artifact only. |
-| `P1-LIVE-PLAN-001-SIDECAR-REVIEW` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-LIVE-PLAN-001] Prepare P1-LIVE-PLAN-001 review packet and evidence summary | 平行支援 P1-LIVE-PLAN-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Claude2 | Claude | in_progress | `P0-LOOP-001` | 2026-05-01 17:13:48 | Reviewing runbook at docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md and Codex review at support/reviews/P1-LIVE-PLAN-001-codex-review.md; preparing evidence mapping for three acceptance criteria. |
+| `P1-LIVE-PLAN-001-SIDECAR-REVIEW` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-LIVE-PLAN-001] Prepare P1-LIVE-PLAN-001 review packet and evidence summary | 平行支援 P1-LIVE-PLAN-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Claude2 | Claude | review | `P0-LOOP-001` | 2026-05-01 17:15:05 | Review packet complete. support/sidecars/P1-LIVE-PLAN-001/P1-LIVE-PLAN-001-SIDECAR-REVIEW.md contains: (1) evidence mapping for all three acceptance criteria against runbook sections, (2) policy alignment check for PAPER_CANARY_LIVE_POLICY.md / KILL_SWITCH / ROLLBACK / BINDING docs, (3) Codex review summary, (4) P1 boundary confirmation, (5) open items categorized as deferred. No canonical truth modified. Parent task P1-LIVE-PLAN-001 is review_approved by Codex; this packet is supplementary support for Claude's finalization. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - |
+| `P1-LIVE-PLAN-001-SIDECAR-REVIEW` | Claude2 | Claude | Review packet complete. support/sidecars/P1-LIVE-PLAN-001/P1-LIVE-PLAN-001-SIDECAR-REVIEW.md contains: (1) evidence mapping for all three acceptance criteria against runbook sections, (2) policy alignment check for PAPER_CANARY_LIVE_POLICY.md / KILL_SWITCH / ROLLBACK / BINDING docs, (3) Codex review summary, (4) P1 boundary confirmation, (5) open items categorized as deferred. No canonical truth modified. Parent task P1-LIVE-PLAN-001 is review_approved by Codex; this packet is supplementary support for Claude's finalization. | pending | 2026-05-01 17:15:05 |
 
 ## Blockers
 
@@ -160,23 +160,23 @@ Last updated: 2026-05-01 17:14:00
 
 ## Latest Checkpoints
 
-- 2026-05-01 17:13:25 Orchestrator: PostToolUse: Bash
-- 2026-05-01 17:13:25 Orchestrator: PreToolUse: Bash
-- 2026-05-01 17:13:26 Orchestrator: PostToolUse: Bash
-- 2026-05-01 17:13:30 Orchestrator: PreToolUse: Bash
-- 2026-05-01 17:13:30 Claude2: `P1-LIVE-PLAN-001-SIDECAR-REVIEW` Starting review packet preparation: assembling evidence summary for P1-LIVE-PLAN-001 acceptance criteria, referencing runbook, Codex review findings, and canonical policy alignment.
-- 2026-05-01 17:13:32 Orchestrator: PreToolUse: Bash
-- 2026-05-01 17:13:32 Orchestrator: PreToolUse: Bash
-- 2026-05-01 17:13:33 Orchestrator: PostToolUse: Bash
-- 2026-05-01 17:13:33 Orchestrator: PostToolUse: Bash
-- 2026-05-01 17:13:41 Codex: `P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE` Codex is tightening the sidecar acceptance packet against the parent runbook, dependency map, and review handoff; support artifact only.
-- 2026-05-01 17:13:43 Orchestrator: PostToolUse: Bash
-- 2026-05-01 17:13:47 Orchestrator: PreToolUse: Bash
-- 2026-05-01 17:13:48 Claude2: `P1-LIVE-PLAN-001-SIDECAR-REVIEW` Reviewing runbook at docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md and Codex review at support/reviews/P1-LIVE-PLAN-001-codex-review.md; preparing evidence mapping for three acceptance criteria.
-- 2026-05-01 17:13:48 Orchestrator: PreToolUse: Write
-- 2026-05-01 17:13:49 Orchestrator: PostToolUse: Write
-- 2026-05-01 17:13:54 Orchestrator: PreToolUse: Bash
-- 2026-05-01 17:13:55 Orchestrator: PostToolUse: Bash
-- 2026-05-01 17:13:59 Orchestrator: PreToolUse: Bash
 - 2026-05-01 17:13:59 Orchestrator: PostToolUse: Bash
 - 2026-05-01 17:14:00 Claude: `P1-LIVE-PLAN-001` Closeout complete: runbook committed 211b49a, Codex review committed 88a35ac, finalization record committed 5f19c31. All three acceptance criteria verified — canary/live prerequisites documented, rollback and kill-switch criteria named, human approval and risk pass gates required before live activation. P1 scope is activation readiness only; production live remains fail-closed.
+- 2026-05-01 17:14:09 Orchestrator: PostToolUse: Bash
+- 2026-05-01 17:14:12 Orchestrator: PreToolUse: Bash
+- 2026-05-01 17:14:17 Orchestrator: PreToolUse: Bash
+- 2026-05-01 17:14:17 Orchestrator: PostToolUse: Bash
+- 2026-05-01 17:14:20 Orchestrator: PreToolUse: Bash
+- 2026-05-01 17:14:20 Orchestrator: PostToolUse: Bash
+- 2026-05-01 17:14:24 Orchestrator: PreToolUse: Bash
+- 2026-05-01 17:14:24 Orchestrator: PostToolUse: Bash
+- 2026-05-01 17:14:29 Orchestrator: PreToolUse: Bash
+- 2026-05-01 17:14:30 Orchestrator: PostToolUse: Bash
+- 2026-05-01 17:14:33 Orchestrator: PreToolUse: Bash
+- 2026-05-01 17:14:35 Orchestrator: PostToolUse: Bash
+- 2026-05-01 17:14:40 Orchestrator: Stop: Stop
+- 2026-05-01 17:14:40 Orchestrator: SessionEnd: SessionEnd
+- 2026-05-01 17:14:57 Orchestrator: PreToolUse: Write
+- 2026-05-01 17:14:57 Orchestrator: PostToolUse: Write
+- 2026-05-01 17:15:05 Orchestrator: PreToolUse: Bash
+- 2026-05-01 17:15:05 Claude2: `P1-LIVE-PLAN-001-SIDECAR-REVIEW` Handoff to Claude: Review packet complete. support/sidecars/P1-LIVE-PLAN-001/P1-LIVE-PLAN-001-SIDECAR-REVIEW.md contains: (1) evidence mapping for all three acceptance criteria against runbook sections, (2) policy alignment check for PAPER_CANARY_LIVE_POLICY.md / KILL_SWITCH / ROLLBACK / BINDING docs, (3) Codex review summary, (4) P1 boundary confirmation, (5) open items categorized as deferred. No canonical truth modified. Parent task P1-LIVE-PLAN-001 is review_approved by Codex; this packet is supplementary support for Claude's finalization.
