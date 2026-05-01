@@ -88,6 +88,24 @@ class RuntimeManagerServiceTests(unittest.TestCase):
         plan_bindings = self.service.list_by_plan("plan-001")
         self.assertEqual([item.binding_id for item in plan_bindings], [binding.binding_id])
 
+    def test_deploy_requires_deployment_plan_reference(self):
+        with self.assertRaisesRegex(RuntimeManagerError, "DeploymentPlan"):
+            self.service.deploy(_valid_deploy_request(plan_id=""))
+
+    def test_runtime_binding_stage_matches_deployment_plan_target(self):
+        binding = self.service.deploy(
+            _valid_deploy_request(
+                plan_id="plan-canary-001",
+                target_stage="canary",
+                allowed_deployment_scope="live",
+                runtime_id="rt-canary-001",
+            )
+        )
+
+        self.assertEqual(binding.plan_id, "plan-canary-001")
+        self.assertEqual(binding.deployment_mode, "canary")
+        self.assertEqual(binding.to_dict()["deployment_mode"], "canary")
+
     def test_deploy_preserves_strategy_id_in_metadata_for_runtime_readers(self):
         binding = self.service.deploy(_valid_deploy_request(strategy_id="strat-001"))
 

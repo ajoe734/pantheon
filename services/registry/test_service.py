@@ -57,6 +57,22 @@ def _make_create_payload(
 # -- Model unit tests -----------------------------------------------------
 
 class TestArtifactStateTransitions:
+    def test_artifact_state_rejects_deployment_stage_values(self):
+        for deployment_stage in ["paper", "canary", "live"]:
+            with pytest.raises(ValueError, match=deployment_stage):
+                RegistryEntryCreate(
+                    artifact_type="model_artifact",
+                    strategy_id="test-alpha",
+                    version="1.0.0",
+                    artifact_state=deployment_stage,
+                    lineage=Lineage(source_run_ids=["run-001"]),
+                    storage_ref=StorageRef(
+                        backend=StorageBackend.OBJECT_STORE,
+                        path="s3://bucket/artifact.bin",
+                    ),
+                    checksum="sha256:abc123",
+                )
+
     def test_draft_to_candidate(self):
         store = RegistryStore()
         svc = RegistryService(store)
@@ -291,6 +307,20 @@ class TestFastAPIEndpoints:
         assert data["entry"]["artifact_state"] == "draft"
         assert data["deployment_stage"] == "none"
         assert data["entry"]["strategy_id"] == "api-test"
+
+    def test_register_rejects_deployment_stage_as_artifact_state(self):
+        for deployment_stage in ["paper", "canary", "live"]:
+            resp = self.client.post("/api/registry/entries", json={
+                "artifact_type": "model_artifact",
+                "strategy_id": f"api-test-{deployment_stage}",
+                "version": "1.0.0",
+                "artifact_state": deployment_stage,
+                "storage_ref": {"backend": "object_store", "path": "s3://bucket/art.bin"},
+                "checksum": "sha256:xyz",
+                "lineage": {"source_run_ids": ["run-001"]},
+            })
+            assert resp.status_code == 422
+            assert deployment_stage in resp.text
 
     def test_get_entry(self):
         # First create

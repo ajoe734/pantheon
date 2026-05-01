@@ -219,6 +219,55 @@ class TestDeploymentPlanCreation(unittest.TestCase):
                 rollback=rollback_ref(),
             )
 
+    def test_deployment_stage_values_are_not_artifact_state(self):
+        for artifact_state in ("paper", "canary", "live"):
+            with self.subTest(artifact_state=artifact_state):
+                entry = approved_registry_entry()
+                entry["artifact_state"] = artifact_state
+                with self.assertRaisesRegex(
+                    DeploymentPlanError,
+                    "requires artifact_state=approved",
+                ):
+                    self.planner.create_plan(
+                        plan_id=f"plan-invalid-artifact-state-{artifact_state}",
+                        approval_decision_id="approval-001",
+                        approval_decision=approved_decision(),
+                        registry_entry=entry,
+                        capital_pool_id="pool-001",
+                        sponsor_persona_id="persona-ops",
+                        target_stage=DeploymentStage.PAPER,
+                        rollback=rollback_ref(),
+                    )
+
+    def test_deployment_plan_requires_approved_artifact_and_matching_approval(self):
+        candidate = approved_registry_entry()
+        candidate["artifact_state"] = "candidate"
+        with self.assertRaisesRegex(DeploymentPlanError, "requires artifact_state=approved"):
+            self.planner.create_plan(
+                plan_id="plan-candidate-blocked",
+                approval_decision_id="approval-001",
+                approval_decision=approved_decision(),
+                registry_entry=candidate,
+                capital_pool_id="pool-001",
+                sponsor_persona_id="persona-ops",
+                target_stage=DeploymentStage.PAPER,
+                rollback=rollback_ref(),
+            )
+
+        mismatched_decision = approved_decision()
+        mismatched_decision["target_id"] = "reg-other"
+        with self.assertRaisesRegex(DeploymentPlanError, "target_id must match"):
+            self.planner.create_plan(
+                plan_id="plan-approval-mismatch",
+                approval_decision_id="approval-001",
+                approval_decision=mismatched_decision,
+                registry_entry=approved_registry_entry(),
+                capital_pool_id="pool-001",
+                sponsor_persona_id="persona-ops",
+                target_stage=DeploymentStage.PAPER,
+                rollback=rollback_ref(),
+            )
+
     def test_requires_matching_approval_decision(self):
         decision = approved_decision()
         decision["target_version"] = "9.9.9"

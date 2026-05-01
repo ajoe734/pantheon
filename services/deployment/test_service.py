@@ -145,6 +145,27 @@ def test_create_plan_from_snapshots(client):
     assert "plan-paper-001" in store_payload
 
 
+def test_create_plan_rejects_deployment_stage_as_artifact_state(client):
+    test_client, _ = client
+    for artifact_state in ["paper", "canary", "live"]:
+        payload = _plan_payload(plan_id=f"plan-invalid-artifact-state-{artifact_state}")
+        payload["registry_entry"] = {
+            "registry_id": "reg-strat-001-1.2.0",
+            "artifact_type": "model_artifact",
+            "strategy_id": "strat-001",
+            "version": "1.2.0",
+            "artifact_state": artifact_state,
+            "checksum": "sha256:abc123def4567890",
+            "approval_decision_id": "approval-001",
+            "approved_at": "2026-04-09T12:00:00Z",
+            "lineage": {"source_run_ids": ["replication-run-001"]},
+            "deployment_summary": {"current_stage": "none"},
+        }
+        response = test_client.post("/api/deployment/plans", json=payload)
+        assert response.status_code == 422
+        assert "requires artifact_state=approved" in response.json()["detail"]
+
+
 def test_validate_rejects_skipped_stage_transition(client):
     test_client, _ = client
     response = test_client.post(
