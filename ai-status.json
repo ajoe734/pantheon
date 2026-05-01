@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；production、paper、canary、live gate 預設仍 fail-closed。",
-  "updated_at": "2026-05-01T08:56:54Z",
+  "updated_at": "2026-05-01T08:59:59Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -123,13 +123,15 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
+      "status": "ready",
       "current_task_ids": [
-        "P0-FE-SOURCE-001"
+        "P0-FE-SOURCE-001",
+        "P1-BRACKET-001",
+        "P1-PERSIST-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Continuing frontend source_mode/runtime identity implementation in front-ai-trading-system; preserving existing handoff edits.",
-      "last_update": "2026-05-01T08:55:10Z"
+      "next": "Supervisor preempted P0-FE-SOURCE-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
+      "last_update": "2026-05-01T08:59:59Z"
     },
     {
       "name": "Codex2",
@@ -139,13 +141,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
+      "status": "reviewing",
       "current_task_ids": [
         "P0-REC-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Supervisor auto-started P0-REC-001 after successful dispatch.",
-      "last_update": "2026-05-01T08:54:20Z"
+      "next": "P0 paper reconciliation ready for review: added ReconciliationRecord writer in reconciliation-drift, optional incident service create request on threshold breach, and proposed-only evolution envelope. Verification: python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py -q => 6 passed.",
+      "last_update": "2026-05-01T08:58:58Z"
     },
     {
       "name": "Copilot",
@@ -168,13 +170,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
+      "status": "reviewing",
       "current_task_ids": [
         "P0-REC-001-SIDECAR-ACCEPTANCE"
       ],
       "branch": "feat/claude2-execution-control",
-      "next": "Owner picked up task; reading SA-17, planning-session, and runtime code to draft acceptance packet and dependency map.",
-      "last_update": "2026-05-01T08:55:46Z"
+      "next": "Acceptance packet created at support/sidecars/P0-REC-001/P0-REC-001-SIDECAR-ACCEPTANCE.md; handed off to Codex2 for review.",
+      "last_update": "2026-05-01T08:59:31Z"
     },
     {
       "name": "Gemini2",
@@ -229,9 +231,9 @@
         "human_gate_status": "approved",
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
       },
-      "status": "in_progress",
-      "next": "Supervisor auto-started P0-REC-001 after successful dispatch.",
-      "last_update": "2026-05-01T08:54:20Z"
+      "status": "review",
+      "next": "P0 paper reconciliation ready for review: added ReconciliationRecord writer in reconciliation-drift, optional incident service create request on threshold breach, and proposed-only evolution envelope. Verification: python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py -q => 6 passed.",
+      "last_update": "2026-05-01T08:58:58Z"
     },
     {
       "id": "P0-FE-SOURCE-001",
@@ -269,9 +271,9 @@
         "human_gate_status": "approved",
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
       },
-      "status": "in_progress",
-      "next": "Continuing frontend source_mode/runtime identity implementation in front-ai-trading-system; preserving existing handoff edits.",
-      "last_update": "2026-05-01T08:55:10Z"
+      "status": "todo",
+      "next": "Supervisor preempted P0-FE-SOURCE-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
+      "last_update": "2026-05-01T08:59:59Z"
     },
     {
       "id": "P1-BRACKET-001",
@@ -381,7 +383,7 @@
       "phase": "Pantheon P0 Paper Loop",
       "owner": "Claude2",
       "reviewer": "Codex2",
-      "status": "in_progress",
+      "status": "review",
       "depends_on": [
         "P0-LOOP-001"
       ],
@@ -393,8 +395,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Owner picked up task; reading SA-17, planning-session, and runtime code to draft acceptance packet and dependency map.",
-      "last_update": "2026-05-01T08:55:46Z",
+      "next": "Acceptance packet created at support/sidecars/P0-REC-001/P0-REC-001-SIDECAR-ACCEPTANCE.md; handed off to Codex2 for review.",
+      "last_update": "2026-05-01T08:59:31Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "P0-REC-001",
@@ -457,6 +459,22 @@
       "message": "Runbook ready for review. docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md covers all three acceptance criteria: canary/live prerequisites documented, rollback and kill switch criteria named, human approval gates enumerated. Derived from PAPER_CANARY_LIVE_POLICY.md, KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md, and ROLLBACK_AND_POSITION_SEMANTICS.md. P1 scope is activation readiness only; production live remains fail-closed.",
       "status": "pending",
       "created_at": "2026-05-01T08:56:54Z"
+    },
+    {
+      "task_id": "P0-REC-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "P0 paper reconciliation ready for review: added ReconciliationRecord writer in reconciliation-drift, optional incident service create request on threshold breach, and proposed-only evolution envelope. Verification: python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py -q => 6 passed.",
+      "status": "pending",
+      "created_at": "2026-05-01T08:58:58Z"
+    },
+    {
+      "task_id": "P0-REC-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Acceptance packet ready for review. Packet covers: dependency map (P0-LOOP-001 done), existing asset map (reconciliation-drift store, telemetry ingest), ReconciliationRecord contract extension (artifact_id + deployment_stage:paper), 10-item acceptance checklist for Codex (parent reviewer), suggested deliverables (paper_reconciliation.py + tests + integration note). Sidecar does not touch canonical truth. Ready for Codex2 review.",
+      "status": "pending",
+      "created_at": "2026-05-01T08:59:16Z"
     }
   ],
   "blockers": [],
@@ -484,9 +502,9 @@
       "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Gemini": {
       "total": 0,
@@ -508,7 +526,7 @@
     },
     "Codex": {
       "total": 3,
-      "active": 1,
+      "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
@@ -520,9 +538,9 @@
       "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Copilot": {
       "total": 0,
