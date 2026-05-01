@@ -1,6 +1,6 @@
 # OPENCLAW_RUNTIME_CONTRACT.md
 
-Last updated: 2026-04-30
+Last updated: 2026-05-01
 Status: canonical runtime-boundary contract for upstream OpenClaw-compatible runtimes
 Tier: L1 Platform Architecture & Policy
 Scope: upstream runtime dependency, adapter boundary, and ownership split between Pantheon and runtime substrate
@@ -56,6 +56,21 @@ OpenClaw **不負責**：
 - LEAN deployment
 - canonical telemetry / lineage
 - paper / canary / live execution kernel
+
+P2 live-kernel boundary:
+
+- Full Lean Launcher and broker SDK production readiness belongs to the
+  execution plane, Runtime Manager, and the `pantheon/lean` bridge.
+- OpenClaw-compatible runtimes may prepare research, review notes, and support
+  packets, but they must not create `RuntimeBootstrapRequest`, mutate
+  `RuntimeBinding`, invoke the Lean Launcher, invoke broker SDK order routes, or
+  approve capital authorization.
+- Any OpenClaw tool/workflow that targets broker execution, paper/canary/live
+  runtime control, or capital binding remains denied by adapter policy even if a
+  future Lean Launcher readiness packet exists.
+- `OPENCLAW_PRODUCTION_BROKER_ENABLED` and broker/live/capital gates remain
+  false/deny-by-default until a separate activation task explicitly changes
+  policy and evidence.
 
 ### 2.2 Pantheon Adapter 的角色
 

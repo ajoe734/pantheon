@@ -56,3 +56,31 @@ Status: **APPROVED**
 ## Verdict
 
 All three acceptance criteria pass. The three artifacts are internally consistent and aligned with their source policy files. The work is approved and returned to Codex for closeout.
+
+---
+
+## Correction Verification — 2026-05-01 (second review cycle)
+
+After Claude's initial approval, Codex applied a post-review correction to clarify the broker integration posture. The updated acceptance criteria are:
+
+1. Lean Launcher plus broker SDK production readiness plan **requires broker paper/sandbox/test-key order API smoke** without enabling production live by default.
+2. Broker entitlement subaccount isolation and capital authorization gaps block production live but **do not block sandbox/test broker API integration**.
+3. Paper/canary/live promotion gates reference kill-switch ack and drill prerequisites before any live activation.
+
+### Correction verification findings
+
+**AC1 — Broker sandbox/test-key smoke required (not deferred): PASS**
+
+The correction is woven throughout the runbook. §1.2 explicitly states the broker order API must be connected and tested "as early as possible" using paper accounts, sandbox endpoints, or test credentials, and that this evidence belongs before production live activation, not after. §1.3 invariant 13 makes the posture canonical: "Live fail-closed is not a broker API integration freeze." §6.1 gate table adds a dedicated "Broker sandbox/test-key order API smoke" row as a hard canary gate. §6.6 readiness packet table requires sandbox/test evidence before any canary/live readiness packet is accepted. §7.3 operational checklist includes sandbox/test smoke as an unchecked item (correctly: not yet done). §9.4 lists the full broker SDK evidence requirements with paper/sandbox/test as the first item. §9.5 gap register classifies the missing smoke packet as "Required before canary/live readiness; missing packet is a work item, not a reason to avoid broker integration."
+
+**AC2 — Entitlement/capital gaps block production live, not sandbox/test integration: PASS**
+
+§1.2 narrows the fail-closed scope precisely to "the production live side-effect path for real order placement, cancel/replace, position changes, and capital movement." §6.4 entitlement table for paper stage states that the absence of sandbox/test broker smoke "blocks canary/live readiness claims" — not sandbox/test integration itself. §9.5 gap register separates the sandbox/test smoke gap (work item) from entitlement and capital gaps (production live blocked). The document does not block sandbox/test integration; it requires it as pre-production evidence.
+
+**AC3 — Kill-switch ack prerequisites: PASS (unchanged from initial review)**
+
+`KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md` §8.2 and §10 v1 decision item 7 remain correct. The runbook §6.1 and §6.2 gate tables and the §8 flow diagram all require `telemetry_ack.ack_status = acknowledged` before canary and live promotion respectively.
+
+### Second review verdict
+
+All three updated acceptance criteria pass. The correction is correctly reflected across all three artifacts. Artifacts are mutually consistent. No raw secrets. Fail-closed posture is maintained for production live; sandbox/test integration is explicitly required, not frozen. Approved for closeout.
