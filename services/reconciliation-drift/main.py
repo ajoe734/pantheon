@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from services.foundation.health import register_fastapi_health_routes
+from services.foundation.persistence_posture import require_persistence_posture
 from store import ReconciliationDriftStore, build_reconciliation_drift_store
 
 
@@ -415,12 +416,14 @@ class PaperRunReconciliationBody(BaseModel):
 
 DATA_DIR = _data_dir()
 STORE_BACKEND = os.getenv("RECONCILIATION_DRIFT_STORE_BACKEND", "json").strip().lower() or "json"
+PERSISTENCE_POSTURE = require_persistence_posture("reconciliation-drift")
 store = build_reconciliation_drift_store(DATA_DIR)
 app = FastAPI(title="Pantheon Reconciliation Drift Service", version="0.1.0")
 register_fastapi_health_routes(
     app,
     "reconciliation-drift",
     dependencies=lambda: {
+        "persistence": PERSISTENCE_POSTURE.to_dict(),
         "telemetry": {
             "status": "ok" if os.getenv("PANTHEON_TELEMETRY_API_URL", "") else "degraded",
             "url": os.getenv("PANTHEON_TELEMETRY_API_URL", ""),
@@ -439,7 +442,11 @@ register_fastapi_health_routes(
         "alert_count": len(store.list_alert_handoffs()),
         "reconciliation_record_count": len(store.list_reconciliation_records()),
     },
-    details=lambda: {"data_dir": DATA_DIR, "store_backend": STORE_BACKEND},
+    details=lambda: {
+        "data_dir": DATA_DIR,
+        "store_backend": STORE_BACKEND,
+        "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
+    },
 )
 
 

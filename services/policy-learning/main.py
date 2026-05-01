@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from services.foundation.health import register_fastapi_health_routes
+from services.foundation.persistence_posture import require_persistence_posture
 from store import PolicyLearningStore, build_policy_learning_store
 
 
@@ -88,6 +89,8 @@ def _gateway_url() -> str:
 
 OFFLINE_GATE_ENABLED = _offline_gate_enabled()
 GATEWAY_URL = _gateway_url()
+STORE_BACKEND = os.getenv("POLICY_LEARNING_STORE_BACKEND", "json").strip().lower() or "json"
+PERSISTENCE_POSTURE = require_persistence_posture("policy-learning")
 
 
 def _route_to_gateway(adapter: str, objective: str, source_refs: List[Dict[str, Any]], constraints: Dict[str, Any], actor_id: str, job_id: str, timestamp: str) -> Optional[Dict[str, Any]]:
@@ -176,10 +179,13 @@ store = build_policy_learning_store(_data_dir())
 register_fastapi_health_routes(
     app,
     "policy-learning",
+    dependencies=lambda: {"persistence": PERSISTENCE_POSTURE.to_dict()},
     metrics=lambda: {"job_count": len(store.list_jobs())},
     details=lambda: {
         "data_dir": _data_dir(),
+        "store_backend": STORE_BACKEND,
         "production_adapters_enabled": _production_adapters_allowed(),
+        "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
     },
 )
 

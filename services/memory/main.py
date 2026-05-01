@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Query
 
 from services.foundation.health import register_fastapi_health_routes
+from services.foundation.persistence_posture import require_persistence_posture
 
 from .institutional_memory_store import (
     InstitutionalMemoryEntry,
@@ -28,10 +29,16 @@ def _split_csv_values(values: Optional[List[str]]) -> List[str]:
 
 app = FastAPI(title="Pantheon Memory Service", version="0.1.0")
 STORE_BACKEND = os.getenv("PANTHEON_MEMORY_STORE_BACKEND", "json").strip().lower() or "json"
+PERSISTENCE_POSTURE = require_persistence_posture("memory")
 register_fastapi_health_routes(
     app,
     "memory",
-    details=lambda: {"store_path": str(_store_path()), "store_backend": STORE_BACKEND},
+    dependencies=lambda: {"persistence": PERSISTENCE_POSTURE.to_dict()},
+    details=lambda: {
+        "store_path": str(_store_path()),
+        "store_backend": STORE_BACKEND,
+        "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
+    },
 )
 
 

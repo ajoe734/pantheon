@@ -65,6 +65,7 @@ from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from services.foundation.health import register_fastapi_health_routes
+from services.foundation.persistence_posture import require_persistence_posture
 
 # ---------------------------------------------------------------------------
 # Bootstrap domain layer from sibling services/incident/ directory
@@ -129,6 +130,7 @@ DATA_DIR = os.getenv("INCIDENTS_DATA_DIR", "/tmp/pantheon/incidents")
 os.makedirs(DATA_DIR, exist_ok=True)
 STORE_PATH = Path(DATA_DIR) / "incidents.json"
 STORE_BACKEND = (os.getenv("INCIDENT_STORE_BACKEND") or os.getenv("POSTMORTEM_STORE_BACKEND", "json")).strip().lower() or "json"
+PERSISTENCE_POSTURE = require_persistence_posture("incidents")
 
 store: IncidentStore = build_incident_store(STORE_PATH)
 reference_validator = CanonicalReferenceValidator()
@@ -149,8 +151,14 @@ app = FastAPI(
 register_fastapi_health_routes(
     app,
     "incidents",
+    dependencies=lambda: {"persistence": PERSISTENCE_POSTURE.to_dict()},
     metrics=lambda: {"incident_count": len(store.list_incidents())},
-    details=lambda: {"data_dir": DATA_DIR, "store_path": str(STORE_PATH), "store_backend": STORE_BACKEND},
+    details=lambda: {
+        "data_dir": DATA_DIR,
+        "store_path": str(STORE_PATH),
+        "store_backend": STORE_BACKEND,
+        "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
+    },
 )
 
 # ---------------------------------------------------------------------------

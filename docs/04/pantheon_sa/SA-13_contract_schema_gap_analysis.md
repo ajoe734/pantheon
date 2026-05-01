@@ -622,6 +622,40 @@ preview fallback
 
 如果 BFF read_store / front mock 與 canonical store 混用，會造成 truth ambiguity。
 
+### 12.3 P1-PERSIST-001 disposition
+
+`P1-PERSIST-001` adds a shared staging/prod persistence posture guard:
+
+```text
+services.foundation.persistence_posture
+```
+
+In `PANTHEON_PERSISTENCE_POSTURE` / `PANTHEON_ENV` staging-prod modes, the
+Postgres owner-store services now fail fast unless their service backend env is
+`postgres`, `DATABASE_URL` is a Postgres DSN, and the shared object-store env
+vars are present. JSON/JSONL fallback remains a dev posture only and is surfaced
+as `dev_fallback_allowed=true` only outside enforced modes.
+
+The guard is wired into `/healthz` dependencies and legacy health payloads for:
+
+```text
+consultation
+training-session
+policy-learning
+research-orchestrator
+research-worker-gateway
+governance
+capital
+incidents
+postmortems
+promotion
+memory
+reconciliation-drift
+```
+
+Source-ingest and search keep their existing source/search-specific posture
+guard; the platform check script includes both posture families.
+
 ---
 
 ## 13. Contract-to-Repo Mapping

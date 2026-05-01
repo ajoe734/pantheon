@@ -68,6 +68,7 @@ from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from services.foundation.health import register_fastapi_health_routes
+from services.foundation.persistence_posture import require_persistence_posture
 
 # ---------------------------------------------------------------------------
 # Bootstrap domain layer
@@ -136,6 +137,7 @@ DATA_DIR = os.getenv("POSTMORTEMS_DATA_DIR", os.getenv("INCIDENTS_DATA_DIR", "/t
 os.makedirs(DATA_DIR, exist_ok=True)
 STORE_PATH = Path(DATA_DIR) / "incidents.json"
 STORE_BACKEND = (os.getenv("POSTMORTEM_STORE_BACKEND") or os.getenv("INCIDENT_STORE_BACKEND", "json")).strip().lower() or "json"
+PERSISTENCE_POSTURE = require_persistence_posture("postmortems")
 
 # Shared IncidentStore — postmortem service uses the same backing store so that
 # referential integrity (postmortem references incident) is enforced in-process.
@@ -160,9 +162,17 @@ app = FastAPI(
 register_fastapi_health_routes(
     app,
     "postmortems",
-    dependencies=lambda: {"incidents": {"status": "ok", "store_path": str(STORE_PATH)}},
+    dependencies=lambda: {
+        "persistence": PERSISTENCE_POSTURE.to_dict(),
+        "incidents": {"status": "ok", "store_path": str(STORE_PATH)},
+    },
     metrics=lambda: {"postmortem_count": len(store.list_postmortems())},
-    details=lambda: {"data_dir": DATA_DIR, "store_path": str(STORE_PATH), "store_backend": STORE_BACKEND},
+    details=lambda: {
+        "data_dir": DATA_DIR,
+        "store_path": str(STORE_PATH),
+        "store_backend": STORE_BACKEND,
+        "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
+    },
 )
 
 # ---------------------------------------------------------------------------

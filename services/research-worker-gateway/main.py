@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from services.foundation.health import register_fastapi_health_routes
+from services.foundation.persistence_posture import require_persistence_posture
 from store import ResearchWorkerGatewayStore, build_research_worker_gateway_store
 
 
@@ -149,6 +150,8 @@ MAX_ACTIVE_JOBS = _max_active_jobs()
 PRODUCTION_ADAPTERS_ALLOWED = _production_adapters_allowed()
 OFFLINE_GATE_ENABLED = _offline_gate_enabled()
 ORCHESTRATOR_URL = _orchestrator_url()
+STORE_BACKEND = os.getenv("RESEARCH_WORKER_GATEWAY_EVENT_STORE_BACKEND", "jsonl").strip().lower() or "jsonl"
+PERSISTENCE_POSTURE = require_persistence_posture("research-worker-gateway")
 
 
 def _execute_worker(entrypoint: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
@@ -327,6 +330,7 @@ register_fastapi_health_routes(
     app,
     "research-worker-gateway",
     dependencies=lambda: {
+        "persistence": PERSISTENCE_POSTURE.to_dict(),
         "research_orchestrator": {"status": "ok" if ORCHESTRATOR_URL else "degraded", "url": ORCHESTRATOR_URL}
     },
     metrics=lambda: {
@@ -335,8 +339,10 @@ register_fastapi_health_routes(
     },
     details=lambda: {
         "data_dir": DATA_DIR,
+        "store_backend": STORE_BACKEND,
         "max_active_jobs": MAX_ACTIVE_JOBS,
         "production_adapters_enabled": PRODUCTION_ADAPTERS_ALLOWED,
+        "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
     },
 )
 

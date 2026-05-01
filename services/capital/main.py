@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from services.foundation.health import register_fastapi_health_routes
+from services.foundation.persistence_posture import require_persistence_posture
 
 _CP_GOV = Path(__file__).resolve().parent.parent / "control-plane" / "governance"
 if str(_CP_GOV) not in sys.path:
@@ -78,6 +79,7 @@ POOL_STORE_PATH = DATA_DIR / "capital_pools.json"
 BINDING_STORE_PATH = DATA_DIR / "persona_capital_bindings.json"
 AUDIT_LOG_PATH = DATA_DIR / "capital_audit.jsonl"
 STORE_BACKEND = os.getenv("CAPITAL_STORE_BACKEND", "json").strip().lower() or "json"
+PERSISTENCE_POSTURE = require_persistence_posture("capital")
 
 
 class CapitalServiceError(ValueError):
@@ -372,11 +374,16 @@ app = FastAPI(
 register_fastapi_health_routes(
     app,
     "pantheon-capital",
+    dependencies=lambda: {"persistence": PERSISTENCE_POSTURE.to_dict()},
     metrics=lambda: {
         "capital_pool_count": len(get_capital_service().list_pools()),
         "binding_count": len(get_capital_service().list_bindings()),
     },
-    details=lambda: {"data_dir": str(DATA_DIR), "store_backend": STORE_BACKEND},
+    details=lambda: {
+        "data_dir": str(DATA_DIR),
+        "store_backend": STORE_BACKEND,
+        "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
+    },
 )
 
 

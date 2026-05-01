@@ -278,10 +278,11 @@ Likelihood: Medium
 Impact: Medium
 Severity: Medium
 Mitigation:
-  - environment posture labels
-  - staging/prod guard tests
+  - services.foundation.persistence_posture shared guard
+  - environment posture labels in health/runtime metadata
+  - staging/prod guard tests and platform posture script
 Acceptance:
-  staging/prod fail without Postgres/object store when required.
+  staging/prod fail without Postgres/object store when required; dev JSON/JSONL fallback is explicitly dev-only.
 ```
 
 ---

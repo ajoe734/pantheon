@@ -35,6 +35,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from services.foundation.health import register_fastapi_health_routes
+from services.foundation.persistence_posture import require_persistence_posture
 
 # ---------------------------------------------------------------------------
 # Platform objects — resolve relative to repo layout
@@ -103,6 +104,7 @@ AUDIT_LOG_PATH = os.path.join(DATA_DIR, "audit.jsonl")
 STORE_PATH     = os.path.join(DATA_DIR, "approval_decisions.json")
 
 STORE_BACKEND = os.getenv("GOVERNANCE_STORE_BACKEND", "json").strip().lower() or "json"
+PERSISTENCE_POSTURE = require_persistence_posture("governance")
 store = build_approval_decision_store(STORE_PATH)
 audit_store = build_governance_audit_store(AUDIT_LOG_PATH)
 
@@ -122,8 +124,14 @@ app = FastAPI(
 register_fastapi_health_routes(
     app,
     "governance",
+    dependencies=lambda: {"persistence": PERSISTENCE_POSTURE.to_dict()},
     metrics=lambda: {"approval_count": len(store.list_all())},
-    details=lambda: {"data_dir": DATA_DIR, "store_path": STORE_PATH, "store_backend": STORE_BACKEND},
+    details=lambda: {
+        "data_dir": DATA_DIR,
+        "store_path": STORE_PATH,
+        "store_backend": STORE_BACKEND,
+        "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
+    },
 )
 
 # ---------------------------------------------------------------------------

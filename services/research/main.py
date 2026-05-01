@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from services.foundation.health import register_fastapi_health_routes
+from services.foundation.persistence_posture import require_persistence_posture
 from store import ResearchOrchestratorStore, build_research_orchestrator_store
 
 
@@ -97,6 +98,8 @@ MAX_ACTIVE_RUNS = _max_active_runs()
 PRODUCTION_ADAPTERS_ALLOWED = _production_adapters_allowed()
 OFFLINE_GATE_ENABLED = _offline_gate_enabled()
 GATEWAY_URL = _gateway_url()
+STORE_BACKEND = os.getenv("RESEARCH_ORCHESTRATOR_EVENT_STORE_BACKEND", "jsonl").strip().lower() or "jsonl"
+PERSISTENCE_POSTURE = require_persistence_posture("research-orchestrator")
 
 
 def _route_to_gateway(adapter: str, task_id: str, run_id: str, objective: str, input_refs: List[Dict[str, Any]], parameters: Dict[str, Any], actor_id: str, timestamp: str) -> Optional[Dict[str, Any]]:
@@ -226,14 +229,17 @@ store = build_research_orchestrator_store(DATA_DIR)
 register_fastapi_health_routes(
     app,
     "research-orchestrator",
+    dependencies=lambda: {"persistence": PERSISTENCE_POSTURE.to_dict()},
     metrics=lambda: {
         "run_count": len(store.list_runs()),
         "active_run_count": len([run for run in store.list_runs() if str(run.get("status") or "").lower() in ACTIVE_STATUSES]),
     },
     details=lambda: {
         "data_dir": DATA_DIR,
+        "store_backend": STORE_BACKEND,
         "max_active_runs": MAX_ACTIVE_RUNS,
         "production_adapters_enabled": PRODUCTION_ADAPTERS_ALLOWED,
+        "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
     },
 )
 

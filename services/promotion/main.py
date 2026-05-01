@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
 from services.foundation.health import register_fastapi_health_routes
+from services.foundation.persistence_posture import require_persistence_posture
 from services.promotion.pg_store import (
     build_promotion_approval_store,
     build_promotion_deployment_store,
@@ -49,6 +50,7 @@ APPROVAL_STORE_PATH = DATA_DIR / "approval_decisions.json"
 DEPLOYMENT_STORE_PATH = DATA_DIR / "deployment_plans.json"
 DEPLOYMENT_EXT_PATH = DATA_DIR / "deployment_plan_extensions.json"
 STORE_BACKEND = os.getenv("PROMOTION_STORE_BACKEND", "json").strip().lower() or "json"
+PERSISTENCE_POSTURE = require_persistence_posture("promotion")
 
 
 class ApprovalCreateRequest(BaseModel):
@@ -231,11 +233,17 @@ def create_app() -> FastAPI:
     register_fastapi_health_routes(
         app,
         "promotion-svc",
+        dependencies=lambda: {"persistence": PERSISTENCE_POSTURE.to_dict()},
         metrics=lambda: {
             "approval_count": len(approval_store.list_all()),
             "deployment_count": len(deployment_store.list_all()),
         },
-        details=lambda: {"port": PORT, "data_dir": str(DATA_DIR), "store_backend": STORE_BACKEND},
+        details=lambda: {
+            "port": PORT,
+            "data_dir": str(DATA_DIR),
+            "store_backend": STORE_BACKEND,
+            "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
+        },
     )
 
     @app.get("/__health__")

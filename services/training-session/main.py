@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from services.foundation.health import register_fastapi_health_routes
+from services.foundation.persistence_posture import require_persistence_posture
 from store import TrainingSessionStore, build_training_session_store
 
 
@@ -106,15 +107,22 @@ class ReplayDecisionBody(BaseModel):
 
 
 app = FastAPI(title="Pantheon Training Session Service", version="0.1.0")
+STORE_BACKEND = os.getenv("TRAINING_SESSION_EVENT_STORE_BACKEND", "jsonl").strip().lower() or "jsonl"
+PERSISTENCE_POSTURE = require_persistence_posture("training-session")
 store = build_training_session_store(_data_dir())
 register_fastapi_health_routes(
     app,
     "training-session",
+    dependencies=lambda: {"persistence": PERSISTENCE_POSTURE.to_dict()},
     metrics=lambda: {
         "session_count": len(store.list_sessions()),
         "event_log_count": len(store.list_event_log()),
     },
-    details=lambda: {"data_dir": _data_dir()},
+    details=lambda: {
+        "data_dir": _data_dir(),
+        "store_backend": STORE_BACKEND,
+        "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
+    },
 )
 
 
