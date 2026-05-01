@@ -679,7 +679,59 @@ claimed by this task.
 
 ---
 
-## 20. Final Statement
+## 20. P0-HEALTH-001 Implementation Note
+
+`P0-HEALTH-001` lands the staged health endpoint cleanup scan from this SD:
+
+```text
+TP-CI-004:
+  implemented by scripts/check_health_endpoints.py
+  covered by scripts/test_check_health_endpoints.py
+
+workflow:
+  .github/workflows/p0-bridge-guards.yml
+```
+
+The health endpoint report verifies that the shared helper exposes:
+
+```text
+/healthz
+/livez
+/readyz
+/metrics
+```
+
+It also verifies that default compose uses `/readyz` and reports staged
+`docker-compose.control.yml` / `docker-compose.exec.yml` legacy `__health__`
+occurrences. The workflow runs in `warn` mode while cleanup is still pending.
+After compose cleanup, the same script can be switched to `--mode fail` to make
+any remaining staged legacy endpoint a CI failure.
+
+Current scan result at implementation time:
+
+```text
+docker-compose.control.yml legacy __health__: 10
+docker-compose.exec.yml legacy __health__: 5
+```
+
+Verification run for this implementation:
+
+```bash
+python3 scripts/check_health_endpoints.py --mode warn
+python3 scripts/check_health_endpoints.py --mode fail
+python3 -m unittest scripts/test_check_health_endpoints.py
+python3 -m py_compile scripts/check_health_endpoints.py scripts/test_check_health_endpoints.py
+```
+
+Expected result: `warn` exits 0 with the legacy occurrence report; `fail`
+exits 1 until the staged compose healthchecks migrate away from `__health__`.
+
+TP-CI-003, TP-CI-005, and TP-CI-006 remain separate implementation packets and
+are not claimed by this task.
+
+---
+
+## 21. Final Statement
 
 This SD establishes CI as the enforcement layer for the current P0 truth:
 
