@@ -16,9 +16,12 @@ The default backend is:
 - pinned to `mlflow==3.10.1`
 - self-hosted first, not SaaS-first
 
-The repo also now includes a feature-flagged offline `W&B` local run store. It records
-W&B-compatible run and artifact refs into repo-local JSON files, does not import the W&B SDK,
-does not connect to the network, and is not an online activation claim.
+The repo also includes two explicit-gated `W&B` lanes:
+
+- an offline local run store that records W&B-compatible run and artifact refs into repo-local
+  JSON files without importing the W&B SDK or connecting to the network
+- an SDK-backed online sync backend that activates only when `PANTHEON_WANDB_ONLINE_SYNC_ENABLED=1`
+  plus a test W&B project and `WANDB_API_KEY` are present
 
 The experiment backend is not authoritative for promotion. It mirrors metadata so operators,
 research workers, and downstream evaluation tooling can inspect run lineage without bypassing
@@ -26,8 +29,11 @@ the local registry or promotion gate.
 
 ## Files
 
-- `adapter.py` — experiment-backend adapter surface, MLflow backend, and offline W&B local store
-- `config.py` — feature-flagged backend selector (`mlflow` default; `wandb` offline local only)
+- `adapter.py` — experiment-backend adapter surface, MLflow backend, offline W&B local store, and
+  explicit-gated SDK-backed W&B online backend
+- `config.py` — feature-flagged backend selector (`mlflow` default; `wandb` requires offline or
+  online env gates)
+- `requirements.txt` — W&B SDK dependency for the online sync smoke container
 - `test_adapter.py` — unit tests for registry-to-experiment mapping
 - `smoke_test.py` — local smoke path that proves one governed entry can round-trip into an
   experiment record and back into promoted metadata
@@ -72,8 +78,10 @@ The adapter writes these core tags into the selected experiment backend:
 - `pantheon.experiment_backend_version`
 
 The MLflow path also emits `pantheon.mlflow.version_pin` as a backend-specific compatibility tag.
-The W&B offline path emits `pantheon.wandb.offline_local`, `pantheon.wandb.mode`, and
-`pantheon.wandb.online_sync_gate` as backend-specific tags.
+The W&B paths emit `pantheon.wandb.offline_local`, `pantheon.wandb.mode`, and
+`pantheon.wandb.online_sync_gate` as backend-specific tags. The online path also records
+`pantheon.wandb.project` and, when configured, `pantheon.wandb.entity`; it never mirrors
+`WANDB_API_KEY` into tags, params, artifacts, promoted metadata, or smoke output.
 
 Optional tags include:
 
@@ -157,6 +165,19 @@ Offline W&B local-store smoke:
 python3 services/registry/experiments/smoke_test.py --backend wandb
 ```
 
+SDK-backed W&B online sync smoke:
+
+```bash
+PANTHEON_WANDB_ONLINE_SYNC_ENABLED=1 \
+PANTHEON_WANDB_PROJECT=<test-project> \
+WANDB_API_KEY=<test-api-key> \
+python3 services/registry/experiments/smoke_test.py --backend wandb-online
+```
+
+If the explicit gate, project, API key, or SDK install is missing, the online smoke exits
+successfully with a structured `skipped` payload that names the missing config without printing
+or persisting secrets.
+
 ## Live Rollback Rule
 
 Entries with `deployment_stage=live` need richer rollback metadata than the earlier `REG-001`
@@ -174,9 +195,10 @@ If neither is present, the adapter rejects syncing a `live` entry because the re
 
 ## W&B Status
 
-`W&B` remains deferred for SDK-backed or online sync. The repo now includes a feature-flagged,
-offline-only local run store so reviewers can verify metadata-shape parity, local run/artifact
-refs, and selector wiring without changing the default backend. Online sync is guarded by
-`PANTHEON_WANDB_ONLINE_SYNC_ENABLED`, and even with that flag set this adapter raises until a
-separate approved SDK-backed implementation lands. `MLflow` remains the default backend and the
-only governed production path.
+`W&B` online sync is implemented only as an explicit-gated experiment-backend smoke path.
+`MLflow` remains the default backend and the only governed production path. The W&B online backend
+uses the SDK to upload metrics and an artifact bundle, then reads back run/artifact references via
+the W&B API; missing local credentials produce a structured skip instead of a silent pass.
+
+The W&B path remains non-ordering: it cannot write canonical registry truth, approve governance,
+route to broker/order/capital systems, or promote paper/canary/live deployment state.

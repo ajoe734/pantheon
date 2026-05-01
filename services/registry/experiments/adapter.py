@@ -4,6 +4,8 @@ import copy
 import hashlib
 import json
 import os
+import re
+import tempfile
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -13,9 +15,14 @@ from typing import Any, Mapping, Protocol
 PRIMARY_BACKEND = "mlflow"
 MLFLOW_VERSION_PIN = "3.10.1"
 WANDB_LOCAL_STORE_VERSION = "offline-local-store-v1"
+WANDB_SDK_MIN_VERSION = "wandb>=0.16.0"
 TRACKING_URI_ENV = "MLFLOW_TRACKING_URI"
 WANDB_LOCAL_STORE_DIR_ENV = "PANTHEON_WANDB_LOCAL_STORE_DIR"
 WANDB_ONLINE_SYNC_FLAG = "PANTHEON_WANDB_ONLINE_SYNC_ENABLED"
+WANDB_API_KEY_ENV = "WANDB_API_KEY"
+WANDB_PROJECT_ENV = "PANTHEON_WANDB_PROJECT"
+WANDB_ENTITY_ENV = "PANTHEON_WANDB_ENTITY"
+WANDB_BASE_URL_ENV = "PANTHEON_WANDB_BASE_URL"
 _LINEAGE_KEYS = (
     "parent_registry_ids",
     "source_run_ids",
@@ -95,6 +102,7 @@ class ExperimentRef:
     aliases: tuple[str, ...] = field(default_factory=tuple)
     run_uri: str | None = None
     artifact_refs: dict[str, Any] = field(default_factory=dict)
+    readback_refs: dict[str, Any] = field(default_factory=dict)
     sync_status: str | None = None
 
     def to_metadata_ref(self) -> dict[str, Any]:
@@ -107,6 +115,7 @@ class ExperimentRef:
             "project": self.project,
             "aliases": list(self.aliases),
             "experiment_name": self.experiment_name,
+            "readback_refs": self.readback_refs,
             "sync_status": self.sync_status,
         }
         return {key: value for key, value in payload.items() if value not in (None, [], (), {})}
@@ -331,11 +340,230 @@ class OfflineWandbLocalBackend:
                 f"W&B online sync is disabled. Set {WANDB_ONLINE_SYNC_FLAG}=1 only after the online gate is approved."
             )
         raise ExperimentSyncError(
-            "W&B online sync gate is enabled, but SDK-backed/network sync is not implemented in this offline adapter."
+            "W&B online sync gate is enabled, but offline local runs are not network-synced in place. "
+            "Use WandbOnlineBackend for SDK-backed online sync."
         )
 
 
 OfflineWandbPrepBackend = OfflineWandbLocalBackend
+
+
+def _truthy_env(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _redact_wandb_secret(message: str) -> str:
+    secret = os.getenv(WANDB_API_KEY_ENV, "")
+    if secret:
+        message = message.replace(secret, "<redacted>")
+    return message
+
+
+def _safe_wandb_artifact_name(record: ExperimentRecord) -> str:
+    source = f"{record.experiment_name}-{record.run_name}"
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", source).strip("-._")
+    return (safe or f"pantheon-registry-{uuid.uuid4().hex[:8]}")[:128]
+
+
+def _wandb_ref_prefix(entity: str | None, project: str) -> str:
+    return f"{entity}/{project}" if entity else project
+
+
+class WandbOnlineBackend:
+    """SDK-backed W&B backend for explicit-gated online upload/readback smoke."""
+
+    backend_name = "wandb"
+
+    def __init__(
+        self,
+        *,
+        project: str | None = None,
+        entity: str | None = None,
+        base_url: str | None = None,
+        readback: bool = True,
+    ):
+        if not _truthy_env(WANDB_ONLINE_SYNC_FLAG):
+            raise ExperimentSyncError(
+                f"W&B online sync requires {WANDB_ONLINE_SYNC_FLAG}=1. "
+                "Offline local W&B remains the default non-network path."
+            )
+        self.project = (project or os.getenv(WANDB_PROJECT_ENV) or os.getenv("WANDB_PROJECT") or "").strip()
+        if not self.project:
+            raise ExperimentSyncError(
+                f"W&B online sync requires a test project via {WANDB_PROJECT_ENV} or WANDB_PROJECT."
+            )
+        self.entity = (entity or os.getenv(WANDB_ENTITY_ENV) or os.getenv("WANDB_ENTITY") or "").strip() or None
+        self.base_url = (base_url or os.getenv(WANDB_BASE_URL_ENV) or os.getenv("WANDB_BASE_URL") or "").strip() or None
+        if not os.getenv(WANDB_API_KEY_ENV):
+            raise ExperimentSyncError(
+                f"W&B online sync requires {WANDB_API_KEY_ENV} in the process environment; "
+                "the value is consumed by the SDK and is not persisted by Pantheon."
+            )
+        try:
+            import wandb  # type: ignore
+        except ImportError as exc:  # pragma: no cover - exercised with optional dependency absent
+            raise ExperimentSyncError(
+                f"wandb SDK is not installed. Install services/registry/experiments/requirements.txt "
+                f"({WANDB_SDK_MIN_VERSION}) before running online sync."
+            ) from exc
+
+        self.wandb = wandb
+        self.tracking_version = f"wandb-sdk-{getattr(wandb, '__version__', 'unknown')}"
+        self.readback = readback
+        self.runs: dict[str, dict[str, Any]] = {}
+
+    def _settings(self) -> Any:
+        settings_type = getattr(self.wandb, "Settings", None)
+        if settings_type is None:
+            return None
+        kwargs: dict[str, Any] = {"silent": True}
+        if self.base_url:
+            kwargs["base_url"] = self.base_url
+        try:
+            return settings_type(**kwargs)
+        except TypeError:
+            return settings_type()
+
+    def _readback(
+        self,
+        *,
+        run_id: str,
+        entity: str | None,
+        project: str,
+        artifact_name: str,
+        artifact_alias: str,
+    ) -> dict[str, Any]:
+        if not self.readback:
+            return {"enabled": False}
+        api_factory = getattr(self.wandb, "Api", None)
+        if api_factory is None:
+            return {"enabled": True, "verified": False, "reason": "wandb_api_unavailable"}
+
+        api = api_factory()
+        prefix = _wandb_ref_prefix(entity, project)
+        run_path = f"{prefix}/{run_id}"
+        artifact_path = f"{prefix}/{artifact_name}:{artifact_alias}"
+        run_obj = api.run(run_path)
+        artifact_obj = api.artifact(artifact_path)
+        return {
+            "enabled": True,
+            "verified": True,
+            "run_path": run_path,
+            "artifact_path": artifact_path,
+            "run_id": str(getattr(run_obj, "id", run_id) or run_id),
+            "artifact_name": str(getattr(artifact_obj, "name", artifact_name) or artifact_name),
+            "artifact_version": str(getattr(artifact_obj, "version", artifact_alias) or artifact_alias),
+        }
+
+    def record(self, record: ExperimentRecord) -> ExperimentRef:
+        run = None
+        artifact_name = _safe_wandb_artifact_name(record)
+        artifact_alias = record.aliases[0] if record.aliases else "latest"
+        try:
+            run = self.wandb.init(
+                project=self.project,
+                entity=self.entity,
+                name=record.run_name,
+                job_type="pantheon_registry_sync",
+                mode="online",
+                config=copy.deepcopy(record.params),
+                tags=sorted({"pantheon", "registry-sync", *record.aliases}),
+                settings=self._settings(),
+            )
+            if hasattr(run, "config") and hasattr(run.config, "update"):
+                run.config.update({"pantheon_tags": copy.deepcopy(record.tags)}, allow_val_change=True)
+            if record.metrics:
+                run.log(copy.deepcopy(record.metrics))
+
+            artifact_type = getattr(self.wandb, "Artifact")
+            artifact = artifact_type(
+                artifact_name,
+                type="pantheon_registry_handoff",
+                metadata={
+                    "pantheon_tags": copy.deepcopy(record.tags),
+                    "aliases": list(record.aliases),
+                    "artifact_names": list(record.artifacts.keys()),
+                },
+            )
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                for artifact_path, payload in record.artifacts.items():
+                    local_name = artifact_path.replace("/", "__")
+                    local_path = root / local_name
+                    local_path.write_bytes(_stable_json_bytes(payload))
+                    artifact.add_file(str(local_path), name=artifact_path)
+                logged_artifact = run.log_artifact(artifact, aliases=[artifact_alias])
+                wait_target = logged_artifact or artifact
+                if hasattr(wait_target, "wait"):
+                    wait_target.wait()
+
+            run_id = str(getattr(run, "id", "") or "")
+            project = str(getattr(run, "project", "") or self.project)
+            entity = str(getattr(run, "entity", "") or self.entity or "") or None
+            run_path_parts = getattr(run, "path", None)
+            if isinstance(run_path_parts, (list, tuple)) and len(run_path_parts) >= 3:
+                entity = str(run_path_parts[0] or entity or "") or entity
+                project = str(run_path_parts[1] or project)
+                run_id = str(run_path_parts[2] or run_id)
+            if not run_id:
+                raise ExperimentSyncError("W&B SDK did not return a run id after online sync.")
+
+            prefix = _wandb_ref_prefix(entity, project)
+            artifact_uri = f"wandb://{prefix}/{artifact_name}:{artifact_alias}"
+            readback_refs = self._readback(
+                run_id=run_id,
+                entity=entity,
+                project=project,
+                artifact_name=artifact_name,
+                artifact_alias=artifact_alias,
+            )
+            artifact_refs = {
+                artifact_path: {
+                    "artifact_ref": f"{artifact_uri}/{artifact_path}",
+                    "wandb_artifact": f"{prefix}/{artifact_name}:{artifact_alias}",
+                    "checksum": _sha256(payload),
+                }
+                for artifact_path, payload in record.artifacts.items()
+            }
+            run_uri = str(getattr(run, "url", "") or f"https://wandb.ai/{prefix}/runs/{run_id}")
+            self.runs[run_id] = {
+                "backend": "wandb",
+                "sync_status": "online_synced",
+                "run_id": run_id,
+                "run_uri": run_uri,
+                "artifact_uri": artifact_uri,
+                "artifact_refs": copy.deepcopy(artifact_refs),
+                "readback_refs": copy.deepcopy(readback_refs),
+                "project": project,
+                "entity": entity,
+                "tags": copy.deepcopy(record.tags),
+                "params": copy.deepcopy(record.params),
+                "metrics": copy.deepcopy(record.metrics),
+                "artifacts": copy.deepcopy(record.artifacts),
+                "aliases": list(record.aliases),
+            }
+            return ExperimentRef(
+                backend=self.backend_name,
+                run_id=run_id,
+                run_uri=run_uri,
+                artifact_uri=artifact_uri,
+                project=project,
+                experiment_name=record.experiment_name,
+                aliases=record.aliases,
+                artifact_refs=artifact_refs,
+                readback_refs=readback_refs,
+                sync_status="online_synced",
+            )
+        except ExperimentSyncError:
+            raise
+        except Exception as exc:
+            raise ExperimentSyncError(
+                "W&B online sync failed before upload/readback completed: "
+                f"{type(exc).__name__}: {_redact_wandb_secret(str(exc))}"
+            ) from exc
+        finally:
+            if run is not None and hasattr(run, "finish"):
+                run.finish()
 
 
 def build_backend(
@@ -348,6 +576,8 @@ def build_backend(
     if normalized == PRIMARY_BACKEND:
         return MlflowTrackingBackend(tracking_uri=tracking_uri)
     if normalized == "wandb":
+        if wandb_mode.strip().lower() == "online":
+            return WandbOnlineBackend()
         return OfflineWandbLocalBackend(mode=wandb_mode)
     raise ExperimentSyncError(f"Unsupported experiment backend: {backend_name!r}")
 
@@ -507,9 +737,15 @@ class RegistryExperimentAdapter:
         if self.backend.backend_name == PRIMARY_BACKEND:
             base_tags["pantheon.mlflow.version_pin"] = MLFLOW_VERSION_PIN
         if self.backend.backend_name == "wandb":
-            base_tags["pantheon.wandb.offline_local"] = True
+            is_online = isinstance(self.backend, WandbOnlineBackend)
+            base_tags["pantheon.wandb.offline_local"] = not is_online
             base_tags["pantheon.wandb.mode"] = getattr(self.backend, "mode", "offline")
             base_tags["pantheon.wandb.online_sync_gate"] = WANDB_ONLINE_SYNC_FLAG
+            if is_online:
+                base_tags["pantheon.wandb.mode"] = "online"
+                base_tags["pantheon.wandb.project"] = self.backend.project
+                if self.backend.entity:
+                    base_tags["pantheon.wandb.entity"] = self.backend.entity
         if entry.get("legacy_lifecycle_state"):
             base_tags["pantheon.compat.lifecycle_state"] = entry["legacy_lifecycle_state"]
 

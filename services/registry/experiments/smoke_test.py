@@ -1,17 +1,31 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 
-from adapter import InMemoryMlflowBackend, OfflineWandbLocalBackend, RegistryExperimentAdapter
+from adapter import (
+    ExperimentSyncError,
+    InMemoryMlflowBackend,
+    OfflineWandbLocalBackend,
+    RegistryExperimentAdapter,
+    WANDB_API_KEY_ENV,
+    WANDB_ONLINE_SYNC_FLAG,
+    WANDB_PROJECT_ENV,
+    WandbOnlineBackend,
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="LP-003 registry-to-experiment smoke test")
     parser.add_argument(
         "--backend",
-        choices=("memory", "mlflow", "wandb"),
+        choices=("memory", "mlflow", "wandb", "wandb-online"),
         default="memory",
-        help="Use the in-memory MLflow test backend, a real MLflow tracking server, or the offline W&B local store.",
+        help=(
+            "Use the in-memory MLflow test backend, a real MLflow tracking server, "
+            "the offline W&B local store, or explicit-gated SDK-backed W&B online sync."
+        ),
     )
     parser.add_argument(
         "--tracking-uri",
@@ -21,6 +35,17 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _online_env_ready() -> tuple[bool, list[str]]:
+    missing: list[str] = []
+    if os.getenv(WANDB_ONLINE_SYNC_FLAG, "").strip().lower() not in {"1", "true", "yes", "on"}:
+        missing.append(WANDB_ONLINE_SYNC_FLAG)
+    if not os.getenv(WANDB_PROJECT_ENV) and not os.getenv("WANDB_PROJECT"):
+        missing.append(WANDB_PROJECT_ENV)
+    if not os.getenv(WANDB_API_KEY_ENV):
+        missing.append(WANDB_API_KEY_ENV)
+    return not missing, missing
+
+
 def main() -> None:
     args = parse_args()
     if args.backend == "mlflow":
@@ -28,6 +53,39 @@ def main() -> None:
         backend = None
     elif args.backend == "wandb":
         backend = OfflineWandbLocalBackend()
+        adapter = RegistryExperimentAdapter(backend=backend)
+    elif args.backend == "wandb-online":
+        ready, missing = _online_env_ready()
+        if not ready:
+            print(
+                json.dumps(
+                    {
+                        "status": "skipped",
+                        "backend": "wandb-online",
+                        "reason": "missing_explicit_online_sync_config",
+                        "missing_env": missing,
+                        "secrets_persisted": False,
+                    },
+                    sort_keys=True,
+                )
+            )
+            return
+        try:
+            backend = WandbOnlineBackend()
+        except ExperimentSyncError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "skipped",
+                        "backend": "wandb-online",
+                        "reason": "online_backend_unavailable",
+                        "detail": str(exc),
+                        "secrets_persisted": False,
+                    },
+                    sort_keys=True,
+                )
+            )
+            return
         adapter = RegistryExperimentAdapter(backend=backend)
     else:
         backend = InMemoryMlflowBackend()
@@ -82,13 +140,25 @@ def main() -> None:
             assert result.experiment_ref.artifact_refs["artifact_handoff.json"]["artifact_ref"].startswith(
                 "wandb-local://artifacts/"
             )
+        elif args.backend == "wandb-online":
+            assert recorded_run["sync_status"] == "online_synced"
+            assert result.experiment_ref.sync_status == "online_synced"
+            assert result.experiment_ref.readback_refs["verified"] is True
+            assert recorded_run["tags"]["pantheon.experiment_backend"] == "wandb"
+            assert recorded_run["tags"]["pantheon.wandb.offline_local"] == "false"
+            assert result.experiment_ref.artifact_refs["artifact_handoff.json"]["artifact_ref"].startswith(
+                "wandb://"
+            )
         else:
             assert recorded_run["tags"]["pantheon.experiment_backend"] == "mlflow"
 
-    expected_backend = "wandb" if args.backend == "wandb" else "mlflow"
+    expected_backend = "wandb" if args.backend in {"wandb", "wandb-online"} else "mlflow"
     assert result.promoted_metadata["artifact_state"] == "approved"
     assert result.promoted_metadata["deployment_stage"] == "live"
     assert result.promoted_metadata["experiment_refs"][0]["backend"] == expected_backend
+    if args.backend == "wandb-online":
+        assert result.promoted_metadata["experiment_refs"][0]["sync_status"] == "online_synced"
+        assert result.promoted_metadata["experiment_refs"][0]["readback_refs"]["verified"] is True
     assert result.promoted_metadata["rollback"]["target_version"] == "1.9.0"
 
     print(f"LP-003 smoke test passed with backend={args.backend}: registry metadata mapped into experiment metadata.")

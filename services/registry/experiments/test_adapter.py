@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -12,6 +13,7 @@ from adapter import (
     OfflineWandbLocalBackend,
     OfflineWandbPrepBackend,
     RegistryExperimentAdapter,
+    WandbOnlineBackend,
 )
 from config import selected_backend, selected_wandb_mode
 
@@ -53,6 +55,89 @@ def build_registry_entry(artifact_state: str = "approved", deployment_stage: str
         entry.pop("rollback_target")
         entry["metadata"] = {}
     return entry
+
+
+class _FakeWandbConfig(dict):
+    def update(self, payload, allow_val_change=False):  # noqa: ANN001 - fake SDK signature
+        super().update(payload)
+
+
+class _FakeWandbRun:
+    def __init__(self, *, project: str, entity: str | None, name: str):
+        self.id = "fake-run-001"
+        self.project = project
+        self.entity = entity
+        self.name = name
+        self.url = f"https://wandb.ai/{entity or 'test-entity'}/{project}/runs/{self.id}"
+        self.path = [entity or "test-entity", project, self.id]
+        self.config = _FakeWandbConfig()
+        self.logged_metrics = []
+        self.logged_artifacts = []
+        self.finished = False
+
+    def log(self, metrics):
+        self.logged_metrics.append(metrics)
+
+    def log_artifact(self, artifact, aliases=None):
+        self.logged_artifacts.append({"artifact": artifact, "aliases": aliases or []})
+        return artifact
+
+    def finish(self):
+        self.finished = True
+
+
+class _FakeWandbArtifact:
+    def __init__(self, name, type, metadata=None):  # noqa: A002, ANN001 - fake SDK signature
+        self.name = name
+        self.type = type
+        self.metadata = metadata or {}
+        self.files = []
+
+    def add_file(self, path, name=None):
+        self.files.append({"path": path, "name": name})
+
+    def wait(self):
+        return self
+
+
+class _FakeApiRun:
+    id = "fake-run-001"
+
+
+class _FakeApiArtifact:
+    name = "fake-artifact"
+    version = "approved"
+
+
+class _FakeWandbApi:
+    def run(self, path):
+        self.run_path = path
+        return _FakeApiRun()
+
+    def artifact(self, path):
+        self.artifact_path = path
+        return _FakeApiArtifact()
+
+
+class _FakeWandbModule:
+    __version__ = "0.16.0-test"
+    last_run = None
+
+    class Settings:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    Artifact = _FakeWandbArtifact
+    Api = _FakeWandbApi
+
+    @staticmethod
+    def init(**kwargs):
+        _FakeWandbModule.last_run = _FakeWandbRun(
+            project=kwargs["project"],
+            entity=kwargs.get("entity"),
+            name=kwargs["name"],
+        )
+        return _FakeWandbModule.last_run
 
 
 class TestRegistryExperimentAdapter(unittest.TestCase):
@@ -218,8 +303,38 @@ class TestRegistryExperimentAdapter(unittest.TestCase):
             backend.sync_online(result.experiment_ref.run_id)
 
         with patch.dict(os.environ, {"PANTHEON_WANDB_ONLINE_SYNC_ENABLED": "1"}, clear=False):
-            with self.assertRaisesRegex(ExperimentSyncError, "SDK-backed/network sync is not implemented"):
+            with self.assertRaisesRegex(ExperimentSyncError, "Use WandbOnlineBackend"):
                 backend.sync_online(result.experiment_ref.run_id)
+
+    def test_wandb_online_backend_uploads_and_readbacks_refs_without_persisting_secrets(self):
+        fake_wandb = _FakeWandbModule()
+        env = {
+            "PANTHEON_WANDB_ONLINE_SYNC_ENABLED": "1",
+            "PANTHEON_WANDB_PROJECT": "pantheon-test",
+            "PANTHEON_WANDB_ENTITY": "pantheon-ci",
+            "WANDB_API_KEY": "secret-test-key",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            with patch.dict(sys.modules, {"wandb": fake_wandb}, clear=False):
+                backend = WandbOnlineBackend()
+                adapter = RegistryExperimentAdapter(backend=backend)
+                result = adapter.sync_registry_entry(build_registry_entry())
+
+        self.assertEqual(result.experiment_ref.backend, "wandb")
+        self.assertEqual(result.experiment_ref.sync_status, "online_synced")
+        self.assertEqual(result.experiment_ref.readback_refs["verified"], True)
+        self.assertEqual(result.experiment_ref.readback_refs["run_path"], "pantheon-ci/pantheon-test/fake-run-001")
+        self.assertIn("artifact_handoff.json", result.experiment_ref.artifact_refs)
+        self.assertTrue(
+            result.experiment_ref.artifact_refs["artifact_handoff.json"]["artifact_ref"].startswith("wandb://")
+        )
+        self.assertEqual(result.promoted_metadata["experiment_refs"][0]["backend"], "wandb")
+        self.assertEqual(result.promoted_metadata["experiment_refs"][0]["sync_status"], "online_synced")
+        self.assertEqual(result.record.tags["pantheon.wandb.offline_local"], "false")
+        self.assertEqual(result.record.tags["pantheon.wandb.mode"], "online")
+        self.assertNotIn("secret-test-key", str(result.promoted_metadata))
+        self.assertNotIn("secret-test-key", str(backend.runs))
+        self.assertTrue(fake_wandb.last_run.finished)
 
     def test_wandb_prep_backend_alias_remains_compatible(self):
         self.assertIs(OfflineWandbPrepBackend, OfflineWandbLocalBackend)
@@ -254,6 +369,16 @@ class TestRegistryExperimentAdapter(unittest.TestCase):
         with patch.dict(os.environ, env, clear=False):
             with self.assertRaises(EnvironmentError):
                 selected_backend()
+
+    def test_selected_backend_accepts_explicit_online_wandb_gate_without_offline_store(self):
+        env = {
+            "EXPERIMENT_BACKEND": "wandb",
+            "PANTHEON_WANDB_ONLINE_SYNC_ENABLED": "1",
+            "PANTHEON_WANDB_MODE": "online",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            self.assertEqual(selected_backend(), "wandb")
+            self.assertEqual(selected_wandb_mode(), "online")
 
 
 if __name__ == "__main__":

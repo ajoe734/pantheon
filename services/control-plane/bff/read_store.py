@@ -8867,11 +8867,27 @@ class ReadSurfaceStore:
             "linked_ticket_id": artifact.get("linked_ticket_id"),
             "created_at": artifact.get("created_at"),
             "metric_summary": self._rw05_metric_summary(artifact),
+            "experiment_refs": self._rw05_experiment_refs(artifact),
             "is_current_version": self._rw05_is_current_version(artifact),
             "allowedActions": {
                 "canCompare": self._rw05_can_compare(artifact.get("status")),
             },
         }
+
+    @staticmethod
+    def _rw05_experiment_refs(artifact: Dict[str, Any]) -> List[Dict[str, Any]]:
+        refs = artifact.get("experiment_refs")
+        metadata = artifact.get("metadata") if isinstance(artifact.get("metadata"), dict) else {}
+        provenance = artifact.get("provenance") if isinstance(artifact.get("provenance"), dict) else {}
+        if refs is None:
+            refs = metadata.get("experiment_refs")
+        if refs is None:
+            refs = provenance.get("experiment_refs")
+        if refs is None and artifact.get("experiment_ref") is not None:
+            refs = [artifact["experiment_ref"]]
+        if not isinstance(refs, list):
+            return []
+        return [json.loads(json.dumps(ref)) for ref in refs if isinstance(ref, dict)]
 
     def _project_research_artifact_detail(self, artifact: Dict[str, Any]) -> Dict[str, Any]:
         lineage_chain = self._rw05_lineage_versions(artifact.get("lineage_id"))
@@ -8902,6 +8918,7 @@ class ReadSurfaceStore:
             "metrics": json.loads(json.dumps(artifact.get("metrics") or {})),
             "parameters": json.loads(json.dumps(artifact.get("parameters") or {})),
             "provenance": json.loads(json.dumps(artifact.get("provenance") or {})),
+            "experiment_refs": self._rw05_experiment_refs(artifact),
             "allowedActions": {
                 "canCompare": self._rw05_can_compare(artifact.get("status")),
                 "canViewDetail": True,
@@ -9101,6 +9118,7 @@ class ReadSurfaceStore:
                     "linked_ticket": json.loads(
                         json.dumps((artifact.get("provenance") or {}).get("linked_ticket") or {})
                     ),
+                    "experiment_refs": self._rw05_experiment_refs(artifact),
                 }
                 for artifact in artifacts
             ],

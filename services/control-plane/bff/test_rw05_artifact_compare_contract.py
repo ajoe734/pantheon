@@ -87,6 +87,39 @@ def test_rw05_detail_contract_returns_version_chain_and_allowed_actions() -> Non
         assert payload["meta"]["surfaces"]["artifact_detail"] in {"ok", "degraded"}
 
 
+def test_rw05_detail_exposes_wandb_experiment_refs_from_registry_metadata() -> None:
+    with _seeded_client() as client:
+        bff_main.read_store._data["research_artifacts"]["art_2024_abc123"]["metadata"] = {
+            "experiment_refs": [
+                {
+                    "backend": "wandb",
+                    "run_id": "fake-run-001",
+                    "run_uri": "https://wandb.ai/pantheon-ci/pantheon-test/runs/fake-run-001",
+                    "artifact_uri": "wandb://pantheon-ci/pantheon-test/pantheon-artifact:approved",
+                    "sync_status": "online_synced",
+                    "readback_refs": {
+                        "verified": True,
+                        "run_path": "pantheon-ci/pantheon-test/fake-run-001",
+                        "artifact_path": "pantheon-ci/pantheon-test/pantheon-artifact:approved",
+                    },
+                }
+            ]
+        }
+        bff_main.read_store._save()
+
+        response = client.get(
+            "/api/v1/artifacts/art_2024_abc123",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+
+        assert response.status_code == 200, response.text
+        refs = response.json()["experiment_refs"]
+        assert refs[0]["backend"] == "wandb"
+        assert refs[0]["sync_status"] == "online_synced"
+        assert refs[0]["readback_refs"]["verified"] is True
+        assert refs[0]["readback_refs"]["run_path"] == "pantheon-ci/pantheon-test/fake-run-001"
+
+
 def test_rw05_compare_contract_returns_backend_composed_diff() -> None:
     with _seeded_client() as client:
         response = client.get(

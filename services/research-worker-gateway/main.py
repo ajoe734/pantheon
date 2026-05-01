@@ -108,8 +108,13 @@ WORKER_REGISTRY: Dict[str, Dict[str, Any]] = {
         "status": "deferred",
         "purpose": "optional experiment registry backend",
         "activation_gate": "services/registry/experiments/WANDB_ACTIVATION.md",
+        "online_sync_gate": "PANTHEON_WANDB_ONLINE_SYNC_ENABLED",
         "gate_state": "fail_closed",
         "allowed_scope": FAIL_CLOSED_SCOPE,
+        "note": (
+            "SDK-backed W&B online sync is a registry experiment-backend path only. "
+            "This gateway does not dispatch W&B workers and exposes no broker/order/capital route."
+        ),
     },
 }
 

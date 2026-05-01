@@ -281,6 +281,8 @@ def test_capabilities_reflect_activation_ready_when_gate_open() -> None:
     # Workers without entrypoints stay fail_closed even when gate is open.
     assert open_workers["openclaw"]["gate_state"] == "fail_closed"
     assert open_workers["wandb"]["gate_state"] == "fail_closed"
+    assert open_workers["wandb"]["online_sync_gate"] == "PANTHEON_WANDB_ONLINE_SYNC_ENABLED"
+    assert "broker/order/capital" in open_workers["wandb"]["note"]
 
 
 def test_open_gate_job_status_endpoint_includes_stdout_stderr() -> None:

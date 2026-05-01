@@ -290,15 +290,21 @@ def test_evaluate_artifact_preserves_experiment_refs_for_audit_lookup():
         "experiment_refs": [
             {
                 "backend": "wandb",
-                "run_id": "wandb-local-123",
-                "run_uri": "wandb-local://runs/wandb-local-123",
+                "run_id": "fake-run-001",
+                "run_uri": "https://wandb.ai/pantheon-ci/pantheon-test/runs/fake-run-001",
+                "artifact_uri": "wandb://pantheon-ci/pantheon-test/pantheon-artifact:approved",
                 "artifact_refs": {
                     "artifact_handoff.json": {
-                        "artifact_ref": "wandb-local://artifacts/wandb-local-123/artifact_handoff.json",
+                        "artifact_ref": "wandb://pantheon-ci/pantheon-test/pantheon-artifact:approved/artifact_handoff.json",
                         "checksum": "sha256:abc",
                     }
                 },
-                "sync_status": "offline_local",
+                "readback_refs": {
+                    "verified": True,
+                    "run_path": "pantheon-ci/pantheon-test/fake-run-001",
+                    "artifact_path": "pantheon-ci/pantheon-test/pantheon-artifact:approved",
+                },
+                "sync_status": "online_synced",
             }
         ]
     }
@@ -311,7 +317,8 @@ def test_evaluate_artifact_preserves_experiment_refs_for_audit_lookup():
     assert result.auditable_fields["target_metadata"] == artifact["metadata"]
     assert result.auditable_fields["experiment_refs"] == artifact["metadata"]["experiment_refs"]
     assert result.auditable_fields["experiment_refs"][0]["backend"] == "wandb"
-    assert result.auditable_fields["experiment_refs"][0]["sync_status"] == "offline_local"
+    assert result.auditable_fields["experiment_refs"][0]["sync_status"] == "online_synced"
+    assert result.auditable_fields["experiment_refs"][0]["readback_refs"]["verified"] is True
 
 
 def test_evaluate_artifact_accepts_field_overrides():
