@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；production、paper、canary、live gate 預設仍 fail-closed。",
-  "updated_at": "2026-05-01T08:00:56Z",
+  "updated_at": "2026-05-01T08:07:49Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,13 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "waiting",
+      "status": "reviewing",
       "current_task_ids": [
-        "P1-LIVE-PLAN-001"
+        "P0-LOOP-001-SIDECAR-ACCEPTANCE"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Assignment created",
-      "last_update": "2026-05-01T07:10:37Z"
+      "next": "Acceptance packet ready for review. Covers: dependency map (P0-TEL-PROJ-001 deliverables confirmed), 14-item acceptance checklist expanding the two formal criteria, suggested in-process smoke test structure, 5 open questions flagged. Does not modify canonical truth.",
+      "last_update": "2026-05-01T08:07:49Z"
     },
     {
       "name": "Gemini",
@@ -123,16 +123,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "ready",
+      "status": "working",
       "current_task_ids": [
-        "P0-LOOP-001",
-        "P0-FE-SOURCE-001",
-        "P1-BRACKET-001",
-        "P1-PERSIST-001"
+        "P0-LOOP-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Auto-reassigned P0-LOOP-001 away from sidecar-only lane Gemini; reviewer Gemini -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
-      "last_update": "2026-05-01T03:58:57Z"
+      "next": "Supervisor auto-started P0-LOOP-001 after successful dispatch.",
+      "last_update": "2026-05-01T08:03:30Z"
     },
     {
       "name": "Codex2",
@@ -142,14 +139,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "ready",
+      "status": "working",
       "current_task_ids": [
-        "P1-SEARCH-001",
-        "P1-BRACKET-001-SIDECAR-ACCEPTANCE"
+        "P1-SEARCH-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Assignment created",
-      "last_update": "2026-05-01T07:16:47Z"
+      "next": "Supervisor auto-started P1-SEARCH-001 after successful dispatch.",
+      "last_update": "2026-05-01T08:03:49Z"
     },
     {
       "name": "Copilot",
@@ -172,11 +168,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "working",
+      "current_task_ids": [
+        "P1-PERSIST-001-SIDECAR-ACCEPTANCE"
+      ],
       "branch": "feat/claude2-execution-control",
-      "next": "",
-      "last_update": "2026-05-01T07:45:58Z"
+      "next": "Reading canonical docs and inventorying persistence posture state. Building acceptance packet for P1-PERSIST-001.",
+      "last_update": "2026-05-01T08:07:20Z"
     },
     {
       "name": "Gemini2",
@@ -229,9 +227,9 @@
         "human_gate_status": "approved",
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
       },
-      "status": "todo",
-      "next": "Auto-reassigned P0-LOOP-001 away from sidecar-only lane Gemini; reviewer Gemini -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
-      "last_update": "2026-05-01T03:58:57Z"
+      "status": "in_progress",
+      "next": "Supervisor auto-started P0-LOOP-001 after successful dispatch.",
+      "last_update": "2026-05-01T08:03:30Z"
     },
     {
       "id": "P0-REC-001",
@@ -386,7 +384,7 @@
       "phase": "P1 Wave 5",
       "owner": "Codex2",
       "reviewer": "Codex",
-      "status": "todo",
+      "status": "in_progress",
       "depends_on": [
         "P0-CI-BOUNDED-001"
       ],
@@ -399,8 +397,8 @@
         "ACL/license/available_time checked before retrieval",
         "no broker/runtime/capital direct tool access"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-05-01T07:16:47Z",
+      "next": "Supervisor auto-started P1-SEARCH-001 after successful dispatch.",
+      "last_update": "2026-05-01T08:03:49Z",
       "source_plane": "planning",
       "source_ref": {
         "type": "discussion_planning",
@@ -474,6 +472,62 @@
       "helper_kind": "acceptance_packet",
       "mutates_canonical": false,
       "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "P0-LOOP-001-SIDECAR-ACCEPTANCE",
+      "title": "Prepare P0-LOOP-001 acceptance packet and dependency map",
+      "summary_zh": "平行支援 P0-LOOP-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Pantheon P0 Paper Loop",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "review",
+      "depends_on": [
+        "P0-TEL-PROJ-001"
+      ],
+      "artifacts": [
+        "support/sidecars/P0-LOOP-001/P0-LOOP-001-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Acceptance packet ready for review. Covers: dependency map (P0-TEL-PROJ-001 deliverables confirmed), 14-item acceptance checklist expanding the two formal criteria, suggested in-process smoke test structure, 5 open questions flagged. Does not modify canonical truth.",
+      "last_update": "2026-05-01T08:07:49Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "P0-LOOP-001",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "P1-PERSIST-001-SIDECAR-ACCEPTANCE",
+      "title": "Prepare P1-PERSIST-001 acceptance packet and dependency map",
+      "summary_zh": "平行支援 P1-PERSIST-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "P1 Wave 5",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "depends_on": [
+        "P0-CI-BOUNDED-001"
+      ],
+      "artifacts": [
+        "support/sidecars/P1-PERSIST-001/P1-PERSIST-001-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Reading canonical docs and inventorying persistence posture state. Building acceptance packet for P1-PERSIST-001.",
+      "last_update": "2026-05-01T08:07:20Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "P1-PERSIST-001",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
     }
   ],
   "handoffs": [
@@ -491,8 +545,9 @@
       "from": "Gemini",
       "to": "Claude",
       "message": "Auto-reassigned P0-LOOP-001 away from sidecar-only lane Gemini; reviewer Gemini -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
-      "status": "pending",
-      "created_at": "2026-05-01T03:58:57Z"
+      "status": "done",
+      "created_at": "2026-05-01T03:58:57Z",
+      "resolved_at": "2026-05-01T08:03:30Z"
     },
     {
       "task_id": "P0-FE-SOURCE-001",
@@ -519,6 +574,14 @@
       "status": "done",
       "created_at": "2026-05-01T07:48:10Z",
       "resolved_at": "2026-05-01T07:48:10Z"
+    },
+    {
+      "task_id": "P0-LOOP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet ready for review. Covers: dependency map (P0-TEL-PROJ-001 deliverables confirmed), 14-item acceptance checklist expanding the two formal criteria, suggested in-process smoke test structure, 5 open questions flagged. Does not modify canonical truth.",
+      "status": "pending",
+      "created_at": "2026-05-01T08:07:49Z"
     }
   ],
   "blockers": [],
@@ -533,22 +596,22 @@
   },
   "workload_summary": {
     "Claude": {
+      "total": 2,
+      "active": 1,
+      "blocked": 0,
+      "done": 0,
+      "review": 1,
+      "review_approved": 0,
+      "todo": 1
+    },
+    "Claude2": {
       "total": 1,
-      "active": 0,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
       "todo": 1
-    },
-    "Claude2": {
-      "total": 0,
-      "active": 0,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 0
     },
     "Gemini": {
       "total": 0,
@@ -570,7 +633,7 @@
     },
     "Codex": {
       "total": 4,
-      "active": 0,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
@@ -579,7 +642,7 @@
     },
     "Codex2": {
       "total": 3,
-      "active": 0,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
