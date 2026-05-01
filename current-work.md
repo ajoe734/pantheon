@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-01 16:52:04
+Last updated: 2026-05-01 16:56:54
 
 ## Objective
 
@@ -37,13 +37,13 @@ Last updated: 2026-05-01 16:52:04
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Assignment created
+- `Claude`: execution, control-plane, governance-review; next: Runbook ready for review. docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md covers all three acceptance criteria: canary/live prerequisites documented, rollback and kill switch criteria named, human approval gates enumerated. Derived from PAPER_CANARY_LIVE_POLICY.md, KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md, and ROLLBACK_AND_POSITION_SEMANTICS.md. P1 scope is activation readiness only; production live remains fail-closed.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Supervisor preempted P0-FE-SOURCE-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.
-- `Codex2`: integration, status-system, schema, acceptance; next: Assignment created from accepted planning session
+- `Codex`: integration, status-system, schema, acceptance; next: Continuing frontend source_mode/runtime identity implementation in front-ai-trading-system; preserving existing handoff edits.
+- `Codex2`: integration, status-system, schema, acceptance; next: Supervisor auto-started P0-REC-001 after successful dispatch.
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: No active assignment
-- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
+- `Claude2`: execution, control-plane, governance-review; next: Owner picked up task; reading SA-17, planning-session, and runtime code to draft acceptance packet and dependency map.
+- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Supervisor auto-started P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE after successful dispatch.
 
 ## Delivery Layers
 
@@ -51,11 +51,13 @@ Last updated: 2026-05-01 16:52:04
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `P0-REC-001` | Pantheon P0 Paper Loop | Write basic paper ReconciliationRecord | Codex2 | todo | `P0-LOOP-001` | 在 paper run 後產生最低限度 ReconciliationRecord，並允許 threshold breach 開 IncidentCase。 |
-| `P0-FE-SOURCE-001` | Pantheon P0 Paper Loop | Add source mode and runtime identity to critical frontend surfaces | Codex | todo | `P0-FE-DEMO-001`, `P0-TEL-PROJ-001` | 在 runtime/deployment/governance/evolution 等關鍵 UI 加 source_mode 與 bridge/binding/runtime identity。 |
+| `P0-REC-001` | Pantheon P0 Paper Loop | Write basic paper ReconciliationRecord | Codex2 | in_progress | `P0-LOOP-001` | 在 paper run 後產生最低限度 ReconciliationRecord，並允許 threshold breach 開 IncidentCase。 |
+| `P0-FE-SOURCE-001` | Pantheon P0 Paper Loop | Add source mode and runtime identity to critical frontend surfaces | Codex | in_progress | `P0-FE-DEMO-001`, `P0-TEL-PROJ-001` | 在 runtime/deployment/governance/evolution 等關鍵 UI 加 source_mode 與 bridge/binding/runtime identity。 |
 | `P1-BRACKET-001` | P1 Wave 5 | Guarded paper/sim bracket order execution | Codex | todo | `P0-LIVE-GUARD-001` | 在 paper/sim broker 範圍內實作受治理 bracket order execution；live 仍 fail-closed。 |
-| `P1-LIVE-PLAN-001` | P1 Wave 5 | Canary/live activation criteria and runbook | Claude | todo | `P0-LOOP-001` | 定義 canary/live activation criteria 與 runbook；P1 只取得 activation readiness，不開 production live。 |
+| `P1-LIVE-PLAN-001` | P1 Wave 5 | Canary/live activation criteria and runbook | Claude | review | `P0-LOOP-001` | 定義 canary/live activation criteria 與 runbook；P1 只取得 activation readiness，不開 production live。 |
 | `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | Codex | todo | `P0-CI-BOUNDED-001` | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 |
+| `P0-REC-001-SIDECAR-ACCEPTANCE` | Pantheon P0 Paper Loop | [Sidecar] [Auto] [Parent P0-REC-001] Prepare P0-REC-001 acceptance packet and dependency map | Claude2 | in_progress | `P0-LOOP-001` | 平行支援 P0-REC-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
+| `P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-LIVE-PLAN-001] Prepare P1-LIVE-PLAN-001 acceptance packet and dependency map | Gemini2 | in_progress | `P0-LOOP-001` | 平行支援 P1-LIVE-PLAN-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -67,17 +69,19 @@ Last updated: 2026-05-01 16:52:04
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `P0-REC-001` | Pantheon P0 Paper Loop | Write basic paper ReconciliationRecord | 在 paper run 後產生最低限度 ReconciliationRecord，並允許 threshold breach 開 IncidentCase。 | Codex2 | Codex | todo | `P0-LOOP-001` | 2026-05-01 11:58:17 | Assignment created from accepted planning session |
-| `P0-FE-SOURCE-001` | Pantheon P0 Paper Loop | Add source mode and runtime identity to critical frontend surfaces | 在 runtime/deployment/governance/evolution 等關鍵 UI 加 source_mode 與 bridge/binding/runtime identity。 | Codex | Claude | todo | `P0-FE-DEMO-001`, `P0-TEL-PROJ-001` | 2026-05-01 16:48:11 | Supervisor preempted P0-FE-SOURCE-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
+| `P0-REC-001` | Pantheon P0 Paper Loop | Write basic paper ReconciliationRecord | 在 paper run 後產生最低限度 ReconciliationRecord，並允許 threshold breach 開 IncidentCase。 | Codex2 | Codex | in_progress | `P0-LOOP-001` | 2026-05-01 16:54:20 | Supervisor auto-started P0-REC-001 after successful dispatch. |
+| `P0-FE-SOURCE-001` | Pantheon P0 Paper Loop | Add source mode and runtime identity to critical frontend surfaces | 在 runtime/deployment/governance/evolution 等關鍵 UI 加 source_mode 與 bridge/binding/runtime identity。 | Codex | Claude | in_progress | `P0-FE-DEMO-001`, `P0-TEL-PROJ-001` | 2026-05-01 16:55:10 | Continuing frontend source_mode/runtime identity implementation in front-ai-trading-system; preserving existing handoff edits. |
 | `P1-BRACKET-001` | P1 Wave 5 | Guarded paper/sim bracket order execution | 在 paper/sim broker 範圍內實作受治理 bracket order execution；live 仍 fail-closed。 | Codex | Claude | todo | `P0-LIVE-GUARD-001` | 2026-05-01 15:57:10 | Supervisor preempted P1-BRACKET-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
-| `P1-LIVE-PLAN-001` | P1 Wave 5 | Canary/live activation criteria and runbook | 定義 canary/live activation criteria 與 runbook；P1 只取得 activation readiness，不開 production live。 | Claude | Codex | todo | `P0-LOOP-001` | 2026-05-01 15:16:37 | Assignment created |
+| `P1-LIVE-PLAN-001` | P1 Wave 5 | Canary/live activation criteria and runbook | 定義 canary/live activation criteria 與 runbook；P1 只取得 activation readiness，不開 production live。 | Claude | Codex | review | `P0-LOOP-001` | 2026-05-01 16:56:54 | Runbook ready for review. docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md covers all three acceptance criteria: canary/live prerequisites documented, rollback and kill switch criteria named, human approval gates enumerated. Derived from PAPER_CANARY_LIVE_POLICY.md, KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md, and ROLLBACK_AND_POSITION_SEMANTICS.md. P1 scope is activation readiness only; production live remains fail-closed. |
 | `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 | Codex | Claude | todo | `P0-CI-BOUNDED-001` | 2026-05-01 15:16:56 | Assignment created |
+| `P0-REC-001-SIDECAR-ACCEPTANCE` | Pantheon P0 Paper Loop | [Sidecar] [Auto] [Parent P0-REC-001] Prepare P0-REC-001 acceptance packet and dependency map | 平行支援 P0-REC-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Claude2 | Codex2 | in_progress | `P0-LOOP-001` | 2026-05-01 16:55:46 | Owner picked up task; reading SA-17, planning-session, and runtime code to draft acceptance packet and dependency map. |
+| `P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-LIVE-PLAN-001] Prepare P1-LIVE-PLAN-001 acceptance packet and dependency map | 平行支援 P1-LIVE-PLAN-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Gemini2 | Claude | in_progress | `P0-LOOP-001` | 2026-05-01 16:54:39 | Supervisor auto-started P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE after successful dispatch. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - |
+| `P1-LIVE-PLAN-001` | Claude | Codex | Runbook ready for review. docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md covers all three acceptance criteria: canary/live prerequisites documented, rollback and kill switch criteria named, human approval gates enumerated. Derived from PAPER_CANARY_LIVE_POLICY.md, KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md, and ROLLBACK_AND_POSITION_SEMANTICS.md. P1 scope is activation readiness only; production live remains fail-closed. | pending | 2026-05-01 16:56:54 |
 
 ## Blockers
 
@@ -93,7 +97,7 @@ Last updated: 2026-05-01 16:52:04
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-05-01 16:48:11
+- Last coordination scan: 2026-05-01 16:53:40
 - Tracked features: `46`
 - Lovable-ready packets: `45`
 - Waiting for Lovable/front-end: `0`
@@ -160,23 +164,23 @@ Last updated: 2026-05-01 16:52:04
 
 ## Latest Checkpoints
 
-- 2026-05-01 16:45:31 Orchestrator: Stop: Stop
-- 2026-05-01 16:45:31 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-01 16:45:36 Codex: `P0-FE-SOURCE-001` Implementing shared frontend source-mode/runtime-identity surfaces in front-ai-trading-system.
-- 2026-05-01 16:45:54 Orchestrator: PreToolUse: Write
-- 2026-05-01 16:45:54 Orchestrator: PostToolUse: Write
-- 2026-05-01 16:46:03 Orchestrator: PreToolUse: Write
-- 2026-05-01 16:46:04 Orchestrator: PostToolUse: Write
-- 2026-05-01 16:46:16 Orchestrator: Stop: Stop
-- 2026-05-01 16:46:16 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-01 16:48:11 Orchestrator: `P0-LOOP-001` Worker superseded after task responsibility moved to another agent.
-- 2026-05-01 16:48:20 Orchestrator: `P0-FE-SOURCE-001` Supervisor preempted P0-FE-SOURCE-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.
-- 2026-05-01 16:48:20 Orchestrator: `P0-FE-SOURCE-001` Worker superseded to prioritize higher-priority review/finalize work.
-- 2026-05-01 16:48:21 Orchestrator: {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1777627200,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_dis
-- 2026-05-01 16:48:21 Orchestrator: `OPS-CHAIR-REVIEW` Underutilization 0.1429 with 3 fully idle agents (Gemini, Gemini2, Copilot); no global blocker; P0-FE-SOURCE-001 BFF alignment and P1-LIVE-PLAN-001 preparatory work are safely parallelizable. Prior sidecar failure was an archived task-ID reuse error, not a structural block.
-- 2026-05-01 16:48:21 Orchestrator: `P0-LOOP-001` Wake-up queued for supervisor: owned_finalize_dispatch
-- 2026-05-01 16:48:21 Orchestrator: `P0-LOOP-001` Worker started via codex: owned_finalize_dispatch
-- 2026-05-01 16:48:21 Codex: `P0-LOOP-001` Supervisor resumed P0-LOOP-001 for finalize after successful dispatch.
-- 2026-05-01 16:48:30 Orchestrator: `P0-LOOP-001` Supervisor resumed P0-LOOP-001 for finalize after successful dispatch.
-- 2026-05-01 16:48:31 Orchestrator: `P0-FE-SOURCE-001` Worker exited before the task reached a terminal status.
-- 2026-05-01 16:52:03 Codex: `P0-LOOP-001` Owner finalized reviewed P0-LOOP-001 with task commit dbee6fe; verification: 29-test paper loop packet passed; scope remains paper-only with pantheon/lean identity and no live broker action.
+- 2026-05-01 16:56:31 Orchestrator: PostToolUse: Write
+- 2026-05-01 16:56:32 Orchestrator: PreToolUse: Read
+- 2026-05-01 16:56:32 Orchestrator: PreToolUse: Glob
+- 2026-05-01 16:56:33 Orchestrator: PostToolUse: Read
+- 2026-05-01 16:56:33 Orchestrator: PostToolUse: Glob
+- 2026-05-01 16:56:38 Orchestrator: PreToolUse: Glob
+- 2026-05-01 16:56:38 Orchestrator: PreToolUse: Glob
+- 2026-05-01 16:56:38 Orchestrator: PostToolUse: Glob
+- 2026-05-01 16:56:38 Orchestrator: PostToolUse: Glob
+- 2026-05-01 16:56:38 Orchestrator: PreToolUse: Bash
+- 2026-05-01 16:56:39 Claude: `P1-LIVE-PLAN-001` Drafted canary/live activation criteria and runbook at docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md. Covers paper→canary prerequisites (observation period, stability, performance, governance gates), canary→live prerequisites, rollback strategy matrix, kill switch hard/soft trigger matrix, human approval gates, and P1 activation readiness checklist. Ready for Codex review.
+- 2026-05-01 16:56:43 Orchestrator: PreToolUse: Bash
+- 2026-05-01 16:56:43 Orchestrator: PostToolUse: Bash
+- 2026-05-01 16:56:47 Orchestrator: PreToolUse: Bash
+- 2026-05-01 16:56:48 Orchestrator: PostToolUse: Bash
+- 2026-05-01 16:56:48 Orchestrator: PostToolUse: Bash
+- 2026-05-01 16:56:51 Orchestrator: PreToolUse: Bash
+- 2026-05-01 16:56:51 Orchestrator: PostToolUse: Bash
+- 2026-05-01 16:56:54 Orchestrator: PreToolUse: Bash
+- 2026-05-01 16:56:54 Claude: `P1-LIVE-PLAN-001` Handoff to Codex: Runbook ready for review. docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md covers all three acceptance criteria: canary/live prerequisites documented, rollback and kill switch criteria named, human approval gates enumerated. Derived from PAPER_CANARY_LIVE_POLICY.md, KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md, and ROLLBACK_AND_POSITION_SEMANTICS.md. P1 scope is activation readiness only; production live remains fail-closed.

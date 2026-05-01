@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；production、paper、canary、live gate 預設仍 fail-closed。",
-  "updated_at": "2026-05-01T08:52:04Z",
+  "updated_at": "2026-05-01T08:56:54Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,13 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "ready",
+      "status": "reviewing",
       "current_task_ids": [
         "P1-LIVE-PLAN-001"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Assignment created",
-      "last_update": "2026-05-01T07:16:37Z"
+      "next": "Runbook ready for review. docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md covers all three acceptance criteria: canary/live prerequisites documented, rollback and kill switch criteria named, human approval gates enumerated. Derived from PAPER_CANARY_LIVE_POLICY.md, KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md, and ROLLBACK_AND_POSITION_SEMANTICS.md. P1 scope is activation readiness only; production live remains fail-closed.",
+      "last_update": "2026-05-01T08:56:54Z"
     },
     {
       "name": "Gemini",
@@ -123,15 +123,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "ready",
+      "status": "working",
       "current_task_ids": [
-        "P0-FE-SOURCE-001",
-        "P1-BRACKET-001",
-        "P1-PERSIST-001"
+        "P0-FE-SOURCE-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Supervisor preempted P0-FE-SOURCE-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
-      "last_update": "2026-05-01T08:48:11Z"
+      "next": "Continuing frontend source_mode/runtime identity implementation in front-ai-trading-system; preserving existing handoff edits.",
+      "last_update": "2026-05-01T08:55:10Z"
     },
     {
       "name": "Codex2",
@@ -141,13 +139,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "ready",
+      "status": "working",
       "current_task_ids": [
         "P0-REC-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-05-01T03:58:17Z"
+      "next": "Supervisor auto-started P0-REC-001 after successful dispatch.",
+      "last_update": "2026-05-01T08:54:20Z"
     },
     {
       "name": "Copilot",
@@ -170,11 +168,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "working",
+      "current_task_ids": [
+        "P0-REC-001-SIDECAR-ACCEPTANCE"
+      ],
       "branch": "feat/claude2-execution-control",
-      "next": "",
-      "last_update": "2026-05-01T08:32:11Z"
+      "next": "Owner picked up task; reading SA-17, planning-session, and runtime code to draft acceptance packet and dependency map.",
+      "last_update": "2026-05-01T08:55:46Z"
     },
     {
       "name": "Gemini2",
@@ -184,11 +184,13 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "working",
+      "current_task_ids": [
+        "P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE"
+      ],
       "branch": "feat/gemini2-research-runtime",
-      "next": "",
-      "last_update": "2026-05-01T07:51:25Z"
+      "next": "Supervisor auto-started P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE after successful dispatch.",
+      "last_update": "2026-05-01T08:54:39Z"
     }
   ],
   "tasks": [
@@ -227,9 +229,9 @@
         "human_gate_status": "approved",
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
       },
-      "status": "todo",
-      "next": "Assignment created from accepted planning session",
-      "last_update": "2026-05-01T03:58:17Z"
+      "status": "in_progress",
+      "next": "Supervisor auto-started P0-REC-001 after successful dispatch.",
+      "last_update": "2026-05-01T08:54:20Z"
     },
     {
       "id": "P0-FE-SOURCE-001",
@@ -267,9 +269,9 @@
         "human_gate_status": "approved",
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
       },
-      "status": "todo",
-      "next": "Supervisor preempted P0-FE-SOURCE-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
-      "last_update": "2026-05-01T08:48:11Z"
+      "status": "in_progress",
+      "next": "Continuing frontend source_mode/runtime identity implementation in front-ai-trading-system; preserving existing handoff edits.",
+      "last_update": "2026-05-01T08:55:10Z"
     },
     {
       "id": "P1-BRACKET-001",
@@ -311,7 +313,7 @@
       "phase": "P1 Wave 5",
       "owner": "Claude",
       "reviewer": "Codex",
-      "status": "todo",
+      "status": "review",
       "depends_on": [
         "P0-LOOP-001"
       ],
@@ -324,8 +326,8 @@
         "rollback and kill switch criteria named",
         "human approval and risk pass gates required before live activation"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-05-01T07:16:37Z",
+      "next": "Runbook ready for review. docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md covers all three acceptance criteria: canary/live prerequisites documented, rollback and kill switch criteria named, human approval gates enumerated. Derived from PAPER_CANARY_LIVE_POLICY.md, KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md, and ROLLBACK_AND_POSITION_SEMANTICS.md. P1 scope is activation readiness only; production live remains fail-closed.",
+      "last_update": "2026-05-01T08:56:54Z",
       "source_plane": "planning",
       "source_ref": {
         "type": "discussion_planning",
@@ -371,6 +373,62 @@
         "wave": "5",
         "source_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
       }
+    },
+    {
+      "id": "P0-REC-001-SIDECAR-ACCEPTANCE",
+      "title": "Prepare P0-REC-001 acceptance packet and dependency map",
+      "summary_zh": "平行支援 P0-REC-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Pantheon P0 Paper Loop",
+      "owner": "Claude2",
+      "reviewer": "Codex2",
+      "status": "in_progress",
+      "depends_on": [
+        "P0-LOOP-001"
+      ],
+      "artifacts": [
+        "support/sidecars/P0-REC-001/P0-REC-001-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Owner picked up task; reading SA-17, planning-session, and runtime code to draft acceptance packet and dependency map.",
+      "last_update": "2026-05-01T08:55:46Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "P0-REC-001",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE",
+      "title": "Prepare P1-LIVE-PLAN-001 acceptance packet and dependency map",
+      "summary_zh": "平行支援 P1-LIVE-PLAN-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "P1 Wave 5",
+      "owner": "Gemini2",
+      "reviewer": "Claude",
+      "status": "in_progress",
+      "depends_on": [
+        "P0-LOOP-001"
+      ],
+      "artifacts": [
+        "support/sidecars/P1-LIVE-PLAN-001/P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Supervisor auto-started P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE after successful dispatch.",
+      "last_update": "2026-05-01T08:54:39Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "P1-LIVE-PLAN-001",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
     }
   ],
   "handoffs": [
@@ -391,6 +449,14 @@
       "status": "done",
       "created_at": "2026-05-01T03:59:19Z",
       "resolved_at": "2026-05-01T08:42:49Z"
+    },
+    {
+      "task_id": "P1-LIVE-PLAN-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Runbook ready for review. docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md covers all three acceptance criteria: canary/live prerequisites documented, rollback and kill switch criteria named, human approval gates enumerated. Derived from PAPER_CANARY_LIVE_POLICY.md, KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md, and ROLLBACK_AND_POSITION_SEMANTICS.md. P1 scope is activation readiness only; production live remains fail-closed.",
+      "status": "pending",
+      "created_at": "2026-05-01T08:56:54Z"
     }
   ],
   "blockers": [],
@@ -406,21 +472,21 @@
   "workload_summary": {
     "Claude": {
       "total": 1,
-      "active": 0,
+      "active": 1,
+      "blocked": 0,
+      "done": 0,
+      "review": 1,
+      "review_approved": 0,
+      "todo": 0
+    },
+    "Claude2": {
+      "total": 1,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
       "todo": 1
-    },
-    "Claude2": {
-      "total": 0,
-      "active": 0,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 0
     },
     "Gemini": {
       "total": 0,
@@ -432,17 +498,17 @@
       "todo": 0
     },
     "Gemini2": {
-      "total": 0,
-      "active": 0,
+      "total": 1,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Codex": {
       "total": 3,
-      "active": 0,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
@@ -451,7 +517,7 @@
     },
     "Codex2": {
       "total": 1,
-      "active": 0,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
