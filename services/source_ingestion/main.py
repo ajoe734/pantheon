@@ -45,6 +45,11 @@ from .connectors import (
     example_provider_catalog,
 )
 from .configured import ConfiguredConnectorFetcher, JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
+from .external_sources import (
+    external_source_bundle_metadata,
+    validate_external_source_connector,
+    validate_external_source_record,
+)
 from .ingest_manager import IngestManager
 from .pg_store import build_source_evidence_repository
 from .scheduler import IngestBatch, IngestionScheduler, JsonlIngestScheduleStore
@@ -281,6 +286,7 @@ class ReplayFrontierRequest(StrictBaseModel):
 
 
 def _register_or_validate_connector(connector: SourceConnector) -> SourceConnector:
+    connector = validate_external_source_connector(connector)
     existing = manager.get_connector(connector.connector_id)
     if existing is None:
         return manager.register_connector(connector)
@@ -501,11 +507,15 @@ def _persist_source_evidence_refs(result: Any) -> dict[str, Any]:
             "knowledge_object_ids": [],
         }
 
+    connector = manager.get_connector(result.run.connector_id)
+    source_records = [
+        validate_external_source_record(record, connector=connector)
+        for record in source_records
+    ]
     normalized_source_records_by_id: dict[str, SourceRecord] = {}
     source_by_evidence_item_id: dict[str, SourceRecord] = {}
     evidence_items_by_id: dict[str, EvidenceItem] = {}
     source_owner_by_dedupe_key: dict[str, SourceRecord] = {}
-    connector = manager.get_connector(result.run.connector_id)
     connector_license_scope = connector.license_scope if connector else None
     for record in source_records:
         candidate_source = normalize_source_record(record, connector_license_scope=connector_license_scope)
@@ -527,18 +537,23 @@ def _persist_source_evidence_refs(result: Any) -> dict[str, Any]:
         source_by_evidence_item_id[normalized.evidence_item.evidence_item_id] = normalized_source
         evidence_items_by_id[normalized.evidence_item.evidence_item_id] = normalized.evidence_item
     evidence_items = list(evidence_items_by_id.values())
+    bundle_metadata = {
+        "connector_id": result.run.connector_id,
+        "ingest_run_id": result.run.ingest_run_id,
+        "trigger_type": result.run.trigger_type,
+        "normalization_schema": "source_evidence_normalization.v1",
+        **external_source_bundle_metadata(
+            list(normalized_source_records_by_id.values()),
+            evidence_items,
+        ),
+    }
     bundle = evidence_builder.build_bundle(
         source_records=list(normalized_source_records_by_id.values()),
         evidence_items=evidence_items,
         summary=f"Source ingest run {result.run.ingest_run_id} persisted {len(source_records)} source record(s).",
         created_by="source-ingest",
         evidence_bundle_id=_stable_ref("evbundle", result.run.ingest_run_id),
-        metadata={
-            "connector_id": result.run.connector_id,
-            "ingest_run_id": result.run.ingest_run_id,
-            "trigger_type": result.run.trigger_type,
-            "normalization_schema": "source_evidence_normalization.v1",
-        },
+        metadata=bundle_metadata,
     )
     knowledge_object_ids: list[str] = []
     for item in evidence_items:
@@ -560,6 +575,10 @@ def _persist_source_evidence_refs(result: Any) -> dict[str, Any]:
                 "source_dedupe_key": metadata.get("source_dedupe_key"),
                 "evidence_dedupe_key": item.metadata.get("evidence_dedupe_key"),
                 "evidence_owner_id": item.metadata.get("evidence_owner_id"),
+                "available_time": metadata.get("available_time"),
+                "entitlement_tags": metadata.get("entitlement_tags"),
+                "pit": metadata.get("pit"),
+                "governance": metadata.get("governance"),
             },
         )
         knowledge_object_ids.append(knowledge_object.knowledge_object_id)
@@ -801,7 +820,10 @@ def trigger_job(request: TriggerIngestJobRequest) -> dict[str, Any]:
     try:
         connector = _connector_for_job(request)
         if request.records:
-            records = tuple(record.to_domain() for record in request.records)
+            records = tuple(
+                validate_external_source_record(record.to_domain(), connector=connector)
+                for record in request.records
+            )
             for record in records:
                 if record.connector_id != connector.connector_id:
                     raise SourceEvidenceError("record connector_id must match job connector")

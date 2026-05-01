@@ -113,6 +113,8 @@ class EvidenceBundle:
     access_scope: Sequence[str]
     created_by: str
     created_at: datetime | str = field(default_factory=utc_now)
+    available_time: datetime | str | None = None
+    entitlement_tags: Sequence[str] = field(default_factory=tuple)
     trace_refs: Sequence[str] = field(default_factory=tuple)
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
@@ -132,6 +134,7 @@ class EvidenceBundle:
         object.__setattr__(self, "license_scope", require_text(self.license_scope, "license_scope"))
         object.__setattr__(self, "access_scope", normalize_strings(self.access_scope) or ("public",))
         object.__setattr__(self, "created_by", require_text(self.created_by, "created_by"))
+        object.__setattr__(self, "entitlement_tags", normalize_strings(self.entitlement_tags))
         object.__setattr__(self, "trace_refs", normalize_strings(self.trace_refs))
         object.__setattr__(self, "metadata", dict(self.metadata))
 
@@ -147,6 +150,8 @@ class EvidenceBundle:
             "access_scope": list(self.access_scope),
             "created_by": self.created_by,
             "created_at": iso(self.created_at),
+            "available_time": iso(self.available_time),
+            "entitlement_tags": list(self.entitlement_tags),
             "trace_refs": list(self.trace_refs),
             "metadata": dict(self.metadata),
         }
@@ -164,6 +169,8 @@ class EvidenceBundle:
             access_scope=list(data.get("access_scope") or ("public",)),
             created_by=str(data["created_by"]),
             created_at=data.get("created_at") or utc_now(),
+            available_time=data.get("available_time"),
+            entitlement_tags=list(data.get("entitlement_tags") or ()),
             trace_refs=list(data.get("trace_refs") or ()),
             metadata=dict(data.get("metadata", {})),
         )

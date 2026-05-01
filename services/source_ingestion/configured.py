@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .connectors import SourceConnector, SourceEvidenceError, SourceRecord
+from .external_sources import validate_external_source_connector, validate_external_source_record
 from .scheduler import IngestBatch
 
 
@@ -180,7 +181,7 @@ class JsonlConfiguredConnectorStore:
                 fetch_payload = payload.get("fetch")
                 if not isinstance(connector_payload, Mapping) or not isinstance(fetch_payload, Mapping):
                     raise SourceEvidenceError(f"Invalid connector config record at {self.path}:{line_no}")
-                connector = SourceConnector.from_dict(connector_payload)
+                connector = validate_external_source_connector(SourceConnector.from_dict(connector_payload))
                 self._configs[connector.connector_id] = ConfiguredConnector(
                     connector=connector,
                     fetch=dict(fetch_payload),
@@ -195,6 +196,7 @@ class JsonlConfiguredConnectorStore:
                 raise SourceEvidenceError(f"Unsupported connector config record: {record_type or '<missing>'}")
 
     def upsert_config(self, connector: SourceConnector, fetch: Mapping[str, Any]) -> ConfiguredConnector:
+        connector = validate_external_source_connector(connector)
         normalized_fetch = self._validate_fetch_config(fetch)
         config = ConfiguredConnector(connector=connector, fetch=normalized_fetch, updated_at=_utc_now())
         self._configs[connector.connector_id] = config
@@ -409,7 +411,7 @@ class ConfiguredConnectorFetcher:
         if fetch.get("mode") == "external_feed":
             metadata.setdefault("source_feed_url", fetch.get("url"))
             metadata.setdefault("source_fetch_mode", "external_feed")
-        return SourceRecord(
+        record = SourceRecord(
             source_id=str(payload["source_id"]),
             connector_id=str(payload.get("connector_id") or connector.connector_id),
             source_type=str(payload.get("source_type") or connector.source_type.value),
@@ -420,6 +422,7 @@ class ConfiguredConnectorFetcher:
             trace_id=str(payload.get("trace_id") or ""),
             created_at=payload.get("created_at") or _utc_now(),
         )
+        return validate_external_source_record(record, connector=connector)
 
 
 def _normalized_string_list(value: Any) -> list[str]:

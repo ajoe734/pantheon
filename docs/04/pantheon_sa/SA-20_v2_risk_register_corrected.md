@@ -307,6 +307,31 @@ Acceptance:
   staging/prod fail without Postgres/object store when required; dev JSON/JSONL fallback is explicitly dev-only.
 ```
 
+### R-DATA-004 — News/social/alpha DB connectors bypass source/evidence governance
+
+```text
+Category: Data Governance
+Description:
+  news / social / external alpha DB 若只作為 vendor feed、research script、Lean feed 或 broker-side signal，
+  會繞過 SourceRecord / EvidenceBundle、ACL、license、entitlement、available_time 與 PIT 語意。
+Likelihood: Medium
+Impact: High
+Severity: High
+Mitigation:
+  - P1-SOURCE-001 external source policy validator
+  - connector-level entitlement_tags / entitlement_ref requirement
+  - source-family required metadata for news, social, alpha_db
+  - EvidenceBundle available_time and entitlement_tags preservation
+  - direct Lean / broker / runtime / execution route rejection
+Acceptance:
+  news/social/alpha_db connector ingest emits governed SourceRecord and EvidenceBundle refs;
+  missing entitlement, missing available_time/PIT fields, unsafe social trust metadata,
+  unsafe alpha allowed_use, or direct Lean/broker target is rejected before search or runtime use.
+Status:
+  Mitigated for bounded source-ingest baseline by P1-SOURCE-001; production vendor credential
+  activation and provider procurement remain separate rollout work.
+```
+
 ---
 
 ## 7. Research / OpenClaw risks

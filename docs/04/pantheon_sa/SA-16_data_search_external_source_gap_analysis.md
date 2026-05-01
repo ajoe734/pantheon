@@ -596,6 +596,56 @@ test_market_data_version_is_replayable
 test_broker_event_links_to_runtime_binding
 ```
 
+### 13.1 P1-SOURCE-001 implementation update — 2026-05-01
+
+P1-SOURCE-001 將 bounded source-ingest baseline 擴充到 news / social / alpha DB connector family：
+
+```text
+services/source_ingestion/external_sources.py
+  - validates news, social, and alpha_db connector policy
+  - requires connector-level entitlement_tags or entitlement_ref
+  - rejects direct Lean / broker / runtime / execution targets
+  - normalizes SourceRecord metadata for license_scope, access_scope, entitlement_tags,
+    event_time, available_time, PIT validation, content_hash/body_hash, and governance sink
+
+services/knowledge/evidence/EvidenceBundle
+  - now preserves bundle-level available_time
+  - now preserves bundle-level entitlement_tags
+```
+
+Implemented source-family rules:
+
+```text
+News:
+  publisher, published_at/event_time, available_time, source URI, license, ACL, entitlement
+
+Social:
+  platform, author_id_hash, post_id, platform_policy_ref, trust_score, available_time,
+  license, ACL, entitlement
+
+Alpha DB:
+  alpha_vendor_id, signal_id, signal_version, field_schema, universe, as_of_time/as_of_date,
+  available_time, allowed_use, license, ACL, entitlement
+```
+
+Boundary remains unchanged:
+
+```text
+news / social / alpha_db
+→ SourceRecord
+→ EvidenceItem / EvidenceBundle
+→ governed search / research / review
+
+No connector may target Lean, broker, runtime-manager, order router, or execution directly.
+```
+
+Focused verification:
+
+```bash
+python3 -m pytest services/source_ingestion -q
+python3 -m pytest services/knowledge/evidence services/search/tests/test_governed_search.py services/search/test_index_pipeline.py services/search/tests/test_retrieval_rank_filter_cutoff_contract.py -q
+```
+
 ---
 
 ## 14. 本章結論

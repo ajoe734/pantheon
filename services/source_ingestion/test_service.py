@@ -380,6 +380,65 @@ def test_external_http_feed_is_allowlisted_bounded_and_preserves_license_access_
     assert body["evidence_refs"]["knowledge_object_ids"]
 
 
+def test_news_connector_ingest_preserves_entitlement_pit_on_bundle(client) -> None:
+    test_client, _, _ = client
+    response = test_client.post(
+        "/api/source-ingest/jobs",
+        json={
+            "connector": _connector(
+                connector_id="conn-news-vendor",
+                source_type="news",
+                license_scope="vendor",
+                license_policy={
+                    "license_scope": "vendor",
+                    "allowed_use": ["research", "search_index"],
+                    "policy_ref": "source-ingest://license/news-vendor",
+                },
+                metadata={
+                    "entitlement_tags": ["news-vendor-research"],
+                    "access_scope": ["research"],
+                },
+            ),
+            "trace_id": "trace-source-ingest-news",
+            "trigger_type": "manual",
+            "records": [
+                _record(
+                    source_id="src-news-vendor-1",
+                    connector_id="conn-news-vendor",
+                    source_type="news",
+                    title="ACME earnings surprise",
+                    content_ref="https://news.example.test/acme-earnings",
+                    metadata={
+                        "publisher": "Example News",
+                        "published_at": "2026-05-01T12:00:00Z",
+                        "event_time": "2026-05-01T12:00:00Z",
+                        "available_time": "2026-05-01T12:01:00Z",
+                        "body": "ACME reported an earnings surprise.",
+                        "keywords": ["ACME", "earnings"],
+                    },
+                )
+            ],
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    source = test_client.get("/api/source-ingest/source-records/src-news-vendor-1")
+    assert source.status_code == 200
+    source_metadata = source.json()["source_record"]["metadata"]
+    assert source_metadata["entitlement_tags"] == ["news-vendor-research"]
+    assert source_metadata["available_time"] == "2026-05-01T12:01:00Z"
+    assert source_metadata["pit"]["validated"] is True
+    assert source_metadata["governance"]["direct_execution_allowed"] is False
+
+    bundle = test_client.get(f"/api/source-ingest/evidence/bundles/{body['evidence_refs']['evidence_bundle_id']}")
+    assert bundle.status_code == 200
+    bundle_payload = bundle.json()["bundle"]
+    assert bundle_payload["available_time"] == "2026-05-01T12:01:00Z"
+    assert bundle_payload["entitlement_tags"] == ["news-vendor-research"]
+    assert bundle_payload["license_scope"] == "vendor"
+
+
 def test_external_file_feed_runs_under_same_allowlist_contract(client) -> None:
     test_client, data_dir, _ = client
     feed_path = data_dir / "allowlisted-feed.json"
