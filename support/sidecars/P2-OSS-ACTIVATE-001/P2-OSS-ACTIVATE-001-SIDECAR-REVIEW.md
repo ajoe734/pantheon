@@ -6,6 +6,7 @@
 **Sidecar Reviewer**: Codex2
 **Helper Kind**: `review_packet`
 **Parent Status at preparation**: `review_approved` (reviewer: Codex; returned to Codex2 for closeout)
+**Parent Status at handoff / current**: `done` — archived at 2026-05-01T15:33:19Z, commit `05d52eb`, before this sidecar was handed off at 15:35Z
 **Generated**: 2026-05-01
 **Branch**: `backend-dev-publish-20260429`
 
@@ -21,7 +22,9 @@
 - Updated `OSS_INTEGRATION_CHECKLIST.md` to reference the activation notes packet and confirm Qlib/TRL remain at `smoke-tested` status.
 - Confirmed existing fail-closed enforcement in `services/source_ingestion/`, `services/search/`, and `services/openclaw-gateway-adapter/`.
 
-The parent task is now in `review_approved` state. Codex2 must run the closeout checklist before calling `done`.
+**Status at packet preparation (2026-05-01T~15:30Z):** The parent task was in `review_approved` state; Codex2 was expected to run the closeout checklist.
+
+**Status update:** Parent task `P2-OSS-ACTIVATE-001` was subsequently archived as `done` at 2026-05-01T15:33:19Z (commit `05d52eb`) before this sidecar review packet was handed off to Codex2 at 15:35Z. The closeout was completed by Codex2 and the parent is now formally closed. This sidecar packet remains as an auditable evidence summary for the closed parent task.
 
 ---
 
@@ -161,7 +164,7 @@ These items are informational for Codex2's closeout and future work. They do not
 
 ## 9. Review Disposition
 
-**Parent task `P2-OSS-ACTIVATE-001`: APPROVED** by Codex on 2026-05-01.
+**Parent task `P2-OSS-ACTIVATE-001`: APPROVED** by Codex on 2026-05-01 → subsequently **DONE** (archived 2026-05-01T15:33:19Z, commit `05d52eb`).
 
 All three acceptance criteria pass:
 - A1: Production data posture is not a blanket ban; it is a durable storage / entitlement / audit gate.
@@ -170,7 +173,7 @@ All three acceptance criteria pass:
 
 Test evidence: 111 focused pytest passed; `git diff --check` passed on tracked checklist change.
 
-The parent task is in `review_approved` and awaits Codex2 owner closeout.
+**Lifecycle note:** The parent task completed the full `review_approved → done` transition at 2026-05-01T15:33:19Z (commit `05d52eb`) — before this sidecar packet was handed to Codex2 at 15:35Z. No further parent closeout action is needed. This packet now serves as a post-closeout evidence summary.
 
 ---
 
@@ -194,7 +197,7 @@ Codex2, this review packet is ready for your review as the sidecar reviewer.
 3. Confirm the SIDECAR-ACCEPTANCE cross-reference table in §7 is accurate against the companion file.
 4. Note any open items you want tracked — or confirm §8 is sufficient for handoff.
 
-Once approved, the sidecar can be closed. Parent task closeout (`P2-OSS-ACTIVATE-001` → `done`) remains with Codex2 separately.
+**Parent task lifecycle update:** Parent `P2-OSS-ACTIVATE-001` was archived as `done` at 2026-05-01T15:33:19Z (commit `05d52eb`) before this sidecar was handed off. No separate parent closeout action is needed from Codex2. Once the sidecar review is approved, only this sidecar task (`P2-OSS-ACTIVATE-001-SIDECAR-REVIEW`) needs to be closed.
 
 ---
 
