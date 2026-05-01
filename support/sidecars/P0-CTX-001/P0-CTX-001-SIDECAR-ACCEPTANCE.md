@@ -5,10 +5,11 @@
 - **Sidecar:** P0-CTX-001-SIDECAR-ACCEPTANCE
 - **Sidecar Owner:** Claude
 - **Parent Owner:** Codex2
-- **Reviewer:** Codex
+- **Sidecar Reviewer:** Codex2
+- **Parent Reviewer:** Codex
 - **Phase:** Pantheon P0 Paper Loop
 - **Prepared:** 2026-05-01
-- **Status:** Support artifact — do not merge to canonical truth
+- **Status:** Sidecar finalized (review_approved → done) — do not merge to canonical truth
 
 ---
 
@@ -34,7 +35,7 @@ P0-CTX-002 (bootstrap wiring), P0-LEAN-CTX-001 (PantheonAlgoBase), and P0-TEL-00
 
 ```
 P0-BOOT-001 (done)
-  └─ P0-CTX-001 (in_progress — this task)
+  └─ P0-CTX-001 (in_progress — parent review blocker open)
        ├─ P0-CTX-002 (todo) — Wire runtime_bootstrap.py to manifest/env context
        └─ P0-LEAN-CTX-001 (todo) — Attach context in PantheonAlgoBase events
             └─ P0-TEL-001 (todo) — Add paper runtime telemetry emitter
@@ -132,7 +133,7 @@ allowlist so patterns like `api_keys` or `PANTHEON_API_KEYS` are not exempt.
 
 ---
 
-## 6. Open Review Issue
+## 6. Review Gap Status
 
 **Codex review (2026-05-01T05:37:37Z):**
 
@@ -145,25 +146,27 @@ allowlist so patterns like `api_keys` or `PANTHEON_API_KEYS` are not exempt.
 means the allowlist is already narrower than `bootstrap_contract.py`. The key-based exemption
 for `api_keys`-style patterns is not present.
 
-**Gap remaining:**
-The test `test_runtime_context_rejects_raw_secrets` tests only `broker_secret` pattern. It does
-not include a regression test for the `api_keys` / `PANTHEON_API_KEYS` case that Codex
-specifically flagged. Codex2 must add this regression test before the task can be approved.
+**Status at sidecar review (2026-05-01T06:00Z):**
+The parent task worktree now includes regression coverage for the originally flagged gap:
 
-**Required addition** (example):
-```python
-def test_runtime_context_rejects_api_key_style_secrets(self):
-    # api_key contains the marker "api_key" and _keys suffix is not exempted
-    with self.assertRaisesRegex(RuntimeContextError, "api_key"):
-        PantheonRuntimeContext.from_mapping(
-            _manifest(api_key="plain-api-key-value"),
-            source=RuntimeContextSource.LAUNCH_MANIFEST,
-        )
+| Regression | Current coverage |
+|------------|------------------|
+| wrapper-level raw manifest secret | `test_runtime_context_rejects_wrapper_manifest_raw_secrets` |
+| `api_keys` manifest payload | `test_runtime_context_rejects_raw_secret_plural_keys` |
+| `PANTHEON_API_KEYS` env payload | `test_runtime_context_rejects_raw_secret_plural_keys` |
+| `private_key_path` manifest payload | `test_runtime_context_rejects_secret_like_path_inputs` |
+| `PANTHEON_PRIVATE_KEY_PATH` env payload | `test_runtime_context_rejects_secret_like_path_inputs` |
+| explicit secret references remain allowed | `test_runtime_context_allows_explicit_secret_references` |
 
-    # PANTHEON_API_KEY env var must be rejected
-    with self.assertRaisesRegex(RuntimeContextError, "PANTHEON_API_KEY"):
-        PantheonRuntimeContext.from_env(_env(PANTHEON_API_KEY="plain-api-key-value"))
-```
+The sidecar packet is therefore suitable as support material for parent review. Parent
+approval remains with the parent reviewer (Codex); this packet does not itself approve
+P0-CTX-001.
+
+**Additional parent blocker after sidecar review (2026-05-01T06:00Z):**
+Codex reported a separate interop blocker: `PantheonRuntimeContext.from_mapping()` rejects the
+actual `RuntimeBootstrapRequest.to_dict()` launch manifest from P0-BOOT-001 because
+`bridge.path` is `/workspace/lean` and is selected before `bridge.source_path=pantheon/lean`.
+This is parent-task implementation work, not sidecar packet scope.
 
 ---
 
@@ -186,7 +189,16 @@ grep -n "api_key" services/execution/lean_runtime/test_runtime_context.py
 ```
 
 Expected: all tests pass, `_keys` and `_path` are absent from `_SECRET_REFERENCE_SUFFIXES`,
-and a regression test for `api_key`-style secrets exists.
+and regression tests for wrapper-level raw secrets, `api_keys` / `PANTHEON_API_KEYS`,
+and secret-like path payloads exist.
+
+Sidecar review spot-check:
+
+```bash
+pytest -q services/execution/lean_runtime/test_runtime_context.py
+```
+
+Observed on 2026-05-01: `10 passed`.
 
 ---
 
@@ -199,7 +211,8 @@ For Codex (reviewer) to mark approved, all of the following must be true:
 - [ ] Stage mismatch raises `RuntimeContextError`
 - [ ] Missing `runtime_binding_id` in managed runtime raises `RuntimeContextError`
 - [ ] Raw broker secrets in payload raise `RuntimeContextError`
-- [ ] Raw `api_key`-style secrets in payload raise `RuntimeContextError` (regression test present)
+- [ ] Raw `api_key` / `api_keys`-style secrets in payload raise `RuntimeContextError` (regression test present)
+- [ ] Wrapper-level raw secrets in launch manifest raise `RuntimeContextError` before normalization
 - [ ] Wrong bridge repo raises `RuntimeContextError`
 - [ ] `_SECRET_REFERENCE_SUFFIXES` does not include `_keys` or `_path`
 - [ ] `python3 -m pytest services/execution/lean_runtime -q` passes (no failures)
