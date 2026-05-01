@@ -5,7 +5,7 @@
 **Packet Owner**: Claude2
 **Reviewer**: Codex
 **Date**: 2026-05-01
-**Status**: Ready for review
+**Status**: Review approved — finalized 2026-05-01
 
 ---
 
@@ -109,7 +109,7 @@ The following items map to the parent task's three acceptance criteria and the h
 | AC-3.3 `direct_live_influence=false` in governance block | `artifact_bundle.governance.direct_live_influence` must be `False` | Present in all adapters. |
 | AC-3.4 `lean_consumption=scoring_only_not_direct_action` | Governance block must restrict Lean usage to scoring-only | Present in all adapters. |
 | AC-3.5 No broker session, order routing, or capital binding path reachable from smoke | Adapter outputs remain in-memory envelopes only; no broker/paper/canary/live dispatch path | Confirmed: adapters return `FinRLRunResult` / `RLlibRunResult` / `RayTuneRunResult` in-memory only; no network call, registry write, or broker dispatch is present in deferred-prep paths. |
-| AC-3.6 Candidate packet allowed_next_action is offline review only | `candidate_packet.allowed_next_action` must be `offline_registry_review_only` | Hardcoded in both FinRL and RLlib `_build_candidate_packet()`. |
+| AC-3.6 Candidate packet allowed_next_action is offline review only | `candidate_packet.allowed_next_action` must be `offline_registry_review_only` (FinRL/RLlib) or `offline_search_review_only` (Ray Tune) | Hardcoded in all three adapters. FinRL and RLlib use `offline_registry_review_only`; Ray Tune uses `offline_search_review_only`. Both values preserve the research-only/no-broker boundary. Reviewer caveat: parent owner (Codex) should preserve this naming difference in mainline implementation — see NB-002. |
 
 ---
 
@@ -169,7 +169,7 @@ assert result.artifact_bundle['governance']['gate_state'] == 'closed'
 | ID | Item | Priority | Owner |
 |---|---|---|---|
 | NB-001 | `RayTuneSearchResult` has no `.metrics` attribute — `search_result.summary` or `.best_trial` should be used instead in any tooling that mirrors the FinRL/RLlib pattern. This is not a blocker; it is a naming divergence to note. | Non-blocking | Parent task owner (Codex) at implementation time |
-| NB-002 | Ray Tune `_build_candidate_packet()` status not verified in this sidecar (only `registry_entry` and `artifact_bundle` governance block confirmed). Parent task should verify candidate packet shape mirrors FinRL/RLlib pattern. | Non-blocking | Parent task owner (Codex) |
+| NB-002 | **Reviewer caveat (Codex, 2026-05-01):** Ray Tune `_build_candidate_packet()` uses `allowed_next_action=offline_search_review_only` rather than `offline_registry_review_only` used by FinRL/RLlib. This does not break the research-only/no-broker boundary, but the naming difference should be preserved in the mainline implementation. Parent task should verify the full candidate packet shape and document this naming divergence explicitly. | Non-blocking | Parent task owner (Codex) at mainline implementation time |
 | NB-003 | Production package install not verified in this sidecar — `FinRLPPOBackend` and `RLlibPPOBackend` import-path smoke requires packages installed in Docker containers. If packages fail to import, explicit `FinRLDeferredPrepError`/`RLlibDeferredPrepError` is raised (constitutes `dependency/config evidence` per AC-1). | Non-blocking | Docker smoke environment (Gemini/Gemini2 lane) |
 | NB-004 | RL gate is `closed`; this sidecar does not recommend opening it. Re-entry packet assembly remains Copilot's lane per `RL_PATH_APPROVAL_GATE.md`. | Informational | Copilot (LP-005/RL path owner) |
 
