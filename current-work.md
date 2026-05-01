@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-01 12:34:57
+Last updated: 2026-05-01 13:52:40
 
 ## Objective
 
@@ -37,12 +37,12 @@ Last updated: 2026-05-01 12:34:57
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Review packet ready for sidecar review. Packet covers: two-round implementation history (d321a9b → ea284a1), Round 1 blocking finding on auth lifecycle regression, Round 2 fix summary (preserve existing token on refresh without replacement), structured reviewer checklist for Codex's Round 2 review, evidence table, and pre-existing issue scope. No canonical truth modified.
+- `Claude`: execution, control-plane, governance-review; next: Building acceptance packet: reading implementation artifacts and mapping acceptance criteria.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Supervisor preempted P0-CI-BRIDGE-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.
-- `Codex2`: integration, status-system, schema, acceptance; next: Sidecar BFF handoff packet ready for review: support/sidecars/P0-BFF-CMD-001/P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF.md. It summarizes existing BFF command facade material, read/command contract gaps, operator journey handoff, and frontend acceptance notes without modifying canonical truth or runtime code.
+- `Codex`: integration, status-system, schema, acceptance; next: Auto-reassigned P0-LIVE-GUARD-001 away from sidecar-only lane Gemini; reviewer Gemini -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.
+- `Codex2`: integration, status-system, schema, acceptance; next: Supervisor re-dispatched P0-CTX-001; task remains in progress.
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: No active assignment
+- `Claude2`: execution, control-plane, governance-review; next: Acceptance packet ready for review. Artifact: support/sidecars/P0-LIVE-GUARD-001/P0-LIVE-GUARD-001-SIDECAR-ACCEPTANCE.md. Covers: live fail-closed checklist (bootstrap_contract.py, runtime_bootstrap.py), bracket logged-only checklist (executor.py), dependency map, gap analysis, and suggested test cases LIVE-TEST-001 to LIVE-TEST-005. Verification: 2 unittest cases (test_live_role_defaults_to_health_only, test_live_broker_activation_flag_is_rejected) pass. Commit: 9ef5037.
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 
 ## Delivery Layers
@@ -51,24 +51,21 @@ Last updated: 2026-05-01 12:34:57
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `P0-CI-BRIDGE-001` | Pantheon P0 Paper Loop | Add submodule authority and no-wrong-repo CI | Codex | todo | `P0-EXEC-ADR-001` | 新增 CI 檢查 pantheon/lean submodule、bridge remote、PantheonAlgoBase、compose path，並阻擋 P0 錯打 lean-platform。 |
-| `P0-BOOT-001` | Pantheon P0 Paper Loop | Materialize RuntimeBootstrapRequest from DeploymentPlan and RuntimeBinding | Codex | todo | `P0-CI-BRIDGE-001` | 建立 DeploymentPlan + RuntimeBinding 到 RuntimeBootstrapRequest 的 contract/materializer。 |
-| `P0-CTX-001` | Pantheon P0 Paper Loop | Add PantheonRuntimeContext model and validation | Codex2 | todo | `P0-BOOT-001` | 新增 runtime context model，支援 manifest/env source modes，並驗證必要欄位與 secret rejection。 |
+| `P0-CTX-001` | Pantheon P0 Paper Loop | Add PantheonRuntimeContext model and validation | Codex2 | in_progress | `P0-BOOT-001` | 新增 runtime context model，支援 manifest/env source modes，並驗證必要欄位與 secret rejection。 |
 | `P0-CTX-002` | Pantheon P0 Paper Loop | Wire runtime_bootstrap.py to manifest/env runtime context | Codex | todo | `P0-CTX-001` | 讓 runtime_bootstrap.py 能讀 launch manifest/env，paper role 帶 context 啟動，live role 仍 fail-closed。 |
 | `P0-LEAN-CTX-001` | Pantheon P0 Paper Loop | Attach Pantheon runtime context in PantheonAlgoBase events | Codex2 | todo | `P0-CTX-001` | 在 pantheon/lean 的 PantheonAlgoBase 增加 context access/event attach 行為。 |
 | `P0-TEL-001` | Pantheon P0 Paper Loop | Add paper runtime telemetry emitter and ingest validation | Codex | todo | `P0-CTX-002`, `P0-LEAN-CTX-001` | 新增 paper heartbeat/deploy/pnl/bracket_logged telemetry producer 與 ingest validation tests。 |
 | `P0-TEL-PROJ-001` | Pantheon P0 Paper Loop | Project paper telemetry into runtime status | Codex | todo | `P0-TEL-001` | 讓 TelemetryEvent ingest 後更新 runtime summary，供 BFF 顯示非 mock heartbeat/status。 |
 | `P0-LOOP-001` | Pantheon P0 Paper Loop | Add minimum paper operating loop smoke | Codex | todo | `P0-TEL-PROJ-001` | 以 seed/approved artifact 跑通 DeploymentPlan -> RuntimeBinding -> paper heartbeat -> BFF runtime status。 |
 | `P0-REC-001` | Pantheon P0 Paper Loop | Write basic paper ReconciliationRecord | Codex2 | todo | `P0-LOOP-001` | 在 paper run 後產生最低限度 ReconciliationRecord，並允許 threshold breach 開 IncidentCase。 |
-| `P0-BFF-CMD-001` | Pantheon P0 Paper Loop | Split BFF read and command contracts | Codex | todo | `P0-STATE-001` | 把 BFF read API 與 command API 正式分層，命令必須有 actor/trace/idempotency/RBAC/audit。 |
-| `P0-FE-DEMO-001` | Pantheon P0 Paper Loop | Cut demo auth and demo islands from staging/prod frontend | Codex2 | review | - | 移除 staging/prod AuthProvider demo import/demo token 路徑，並新增 production route demo import guard。 |
+| `P0-BFF-CMD-001` | Pantheon P0 Paper Loop | Split BFF read and command contracts | Codex2 | todo | `P0-STATE-001` | 把 BFF read API 與 command API 正式分層，命令必須有 actor/trace/idempotency/RBAC/audit。 |
 | `P0-FE-SOURCE-001` | Pantheon P0 Paper Loop | Add source mode and runtime identity to critical frontend surfaces | Codex | todo | `P0-FE-DEMO-001`, `P0-TEL-PROJ-001` | 在 runtime/deployment/governance/evolution 等關鍵 UI 加 source_mode 與 bridge/binding/runtime identity。 |
 | `P0-LIVE-GUARD-001` | Pantheon P0 Paper Loop | Assert live fail-closed and bracket logged-only honesty | Codex | todo | `P0-BOOT-001` | 新增 live role health-only/not_activated 測試，並明確 bracket order 目前是 logged_only。 |
 | `P0-CI-BOUNDED-001` | Pantheon P0 Paper Loop | Add source/search bounded and fail-closed adapter CI | Codex | todo | `P0-CI-BRIDGE-001` | 為 bounded source/search baseline 與 research/OpenClaw fail-closed posture 補 CI。 |
 | `P0-HEALTH-001` | Pantheon P0 Paper Loop | Add health endpoint cleanup scan | Codex | todo | `P0-CI-BRIDGE-001` | 掃描 control/exec compose legacy __health__，推進到 /healthz /livez /readyz /metrics 一致性。 |
 | `P0-FE-DEMO-001-SIDECAR-ACCEPTANCE` | Pantheon P0 Paper Loop | [Sidecar] [Auto] [Parent P0-FE-DEMO-001] Prepare P0-FE-DEMO-001 acceptance packet and dependency map | Codex | todo | - | 平行支援 P0-FE-DEMO-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
-| `P0-FE-DEMO-001-SIDECAR-REVIEW` | Pantheon P0 Paper Loop | [Sidecar] [Auto] [Parent P0-FE-DEMO-001] Prepare P0-FE-DEMO-001 review packet and evidence summary | Claude | review | - | 平行支援 P0-FE-DEMO-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
-| `P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF` | Pantheon P0 Paper Loop | [Sidecar] [Auto] [Parent P0-BFF-CMD-001] Prepare P0-BFF-CMD-001 BFF and frontend handoff packet | Codex2 | review | `P0-STATE-001` | 平行支援 P0-BFF-CMD-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
+| `P0-CTX-001-SIDECAR-ACCEPTANCE` | Pantheon P0 Paper Loop | [Sidecar] [Auto] [Parent P0-CTX-001] Prepare P0-CTX-001 acceptance packet and dependency map | Claude | in_progress | `P0-BOOT-001` | 平行支援 P0-CTX-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
+| `P0-LIVE-GUARD-001-SIDECAR-ACCEPTANCE` | Pantheon P0 Paper Loop | [Sidecar] [Auto] [Parent P0-LIVE-GUARD-001] Prepare P0-LIVE-GUARD-001 acceptance packet and dependency map | Claude2 | review | `P0-BOOT-001` | 平行支援 P0-LIVE-GUARD-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -80,24 +77,21 @@ Last updated: 2026-05-01 12:34:57
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `P0-CI-BRIDGE-001` | Pantheon P0 Paper Loop | Add submodule authority and no-wrong-repo CI | 新增 CI 檢查 pantheon/lean submodule、bridge remote、PantheonAlgoBase、compose path，並阻擋 P0 錯打 lean-platform。 | Codex | Codex2 | todo | `P0-EXEC-ADR-001` | 2026-05-01 12:31:29 | Supervisor preempted P0-CI-BRIDGE-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
-| `P0-BOOT-001` | Pantheon P0 Paper Loop | Materialize RuntimeBootstrapRequest from DeploymentPlan and RuntimeBinding | 建立 DeploymentPlan + RuntimeBinding 到 RuntimeBootstrapRequest 的 contract/materializer。 | Codex | Codex2 | todo | `P0-CI-BRIDGE-001` | 2026-05-01 11:58:17 | Assignment created from accepted planning session |
-| `P0-CTX-001` | Pantheon P0 Paper Loop | Add PantheonRuntimeContext model and validation | 新增 runtime context model，支援 manifest/env source modes，並驗證必要欄位與 secret rejection。 | Codex2 | Codex | todo | `P0-BOOT-001` | 2026-05-01 11:58:17 | Assignment created from accepted planning session |
+| `P0-CTX-001` | Pantheon P0 Paper Loop | Add PantheonRuntimeContext model and validation | 新增 runtime context model，支援 manifest/env source modes，並驗證必要欄位與 secret rejection。 | Codex2 | Codex | in_progress | `P0-BOOT-001` | 2026-05-01 13:52:40 | Supervisor re-dispatched P0-CTX-001; task remains in progress. |
 | `P0-CTX-002` | Pantheon P0 Paper Loop | Wire runtime_bootstrap.py to manifest/env runtime context | 讓 runtime_bootstrap.py 能讀 launch manifest/env，paper role 帶 context 啟動，live role 仍 fail-closed。 | Codex | Codex2 | todo | `P0-CTX-001` | 2026-05-01 11:58:17 | Assignment created from accepted planning session |
 | `P0-LEAN-CTX-001` | Pantheon P0 Paper Loop | Attach Pantheon runtime context in PantheonAlgoBase events | 在 pantheon/lean 的 PantheonAlgoBase 增加 context access/event attach 行為。 | Codex2 | Claude | todo | `P0-CTX-001` | 2026-05-01 11:58:17 | Assignment created from accepted planning session |
 | `P0-TEL-001` | Pantheon P0 Paper Loop | Add paper runtime telemetry emitter and ingest validation | 新增 paper heartbeat/deploy/pnl/bracket_logged telemetry producer 與 ingest validation tests。 | Codex | Codex2 | todo | `P0-CTX-002`, `P0-LEAN-CTX-001` | 2026-05-01 11:58:17 | Assignment created from accepted planning session |
 | `P0-TEL-PROJ-001` | Pantheon P0 Paper Loop | Project paper telemetry into runtime status | 讓 TelemetryEvent ingest 後更新 runtime summary，供 BFF 顯示非 mock heartbeat/status。 | Codex | Claude | todo | `P0-TEL-001` | 2026-05-01 11:58:17 | Assignment created from accepted planning session |
 | `P0-LOOP-001` | Pantheon P0 Paper Loop | Add minimum paper operating loop smoke | 以 seed/approved artifact 跑通 DeploymentPlan -> RuntimeBinding -> paper heartbeat -> BFF runtime status。 | Codex | Claude | todo | `P0-TEL-PROJ-001` | 2026-05-01 11:58:57 | Auto-reassigned P0-LOOP-001 away from sidecar-only lane Gemini; reviewer Gemini -> Claude. Reserved sidecar-only agents no longer hold mainline tasks. |
 | `P0-REC-001` | Pantheon P0 Paper Loop | Write basic paper ReconciliationRecord | 在 paper run 後產生最低限度 ReconciliationRecord，並允許 threshold breach 開 IncidentCase。 | Codex2 | Codex | todo | `P0-LOOP-001` | 2026-05-01 11:58:17 | Assignment created from accepted planning session |
-| `P0-BFF-CMD-001` | Pantheon P0 Paper Loop | Split BFF read and command contracts | 把 BFF read API 與 command API 正式分層，命令必須有 actor/trace/idempotency/RBAC/audit。 | Codex | Claude | todo | `P0-STATE-001` | 2026-05-01 11:58:17 | Assignment created from accepted planning session |
-| `P0-FE-DEMO-001` | Pantheon P0 Paper Loop | Cut demo auth and demo islands from staging/prod frontend | 移除 staging/prod AuthProvider demo import/demo token 路徑，並新增 production route demo import guard。 | Codex2 | Codex | review | - | 2026-05-01 12:28:18 | Auth lifecycle fix ready for review: frontend commit ea284a1 preserves existing pantheon_operator_token on successful session refresh when BFF returns session metadata without replacement token; still clears on missing local token, failed refresh, and sign-out. Verification passed: npx eslint src/auth/AuthProvider.tsx src/pages/auth/Login.tsx src/lib/bffClient.ts src/pages/settings/sections/SecuritySettings.tsx scripts/check_no_demo_prod_routes.mjs (existing react-refresh warning only); npm run check:prod-demo-routes; npm run build. |
+| `P0-BFF-CMD-001` | Pantheon P0 Paper Loop | Split BFF read and command contracts | 把 BFF read API 與 command API 正式分層，命令必須有 actor/trace/idempotency/RBAC/audit。 | Codex2 | Claude | todo | `P0-STATE-001` | 2026-05-01 13:47:10 | Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: error: BFFError. Task returned to todo until Codex2 starts a fresh run. |
 | `P0-FE-SOURCE-001` | Pantheon P0 Paper Loop | Add source mode and runtime identity to critical frontend surfaces | 在 runtime/deployment/governance/evolution 等關鍵 UI 加 source_mode 與 bridge/binding/runtime identity。 | Codex | Claude | todo | `P0-FE-DEMO-001`, `P0-TEL-PROJ-001` | 2026-05-01 11:59:19 | Auto-reassigned P0-FE-SOURCE-001 away from sidecar-only lane Copilot; owner Copilot -> Codex. Reserved sidecar-only agents no longer hold mainline tasks. |
 | `P0-LIVE-GUARD-001` | Pantheon P0 Paper Loop | Assert live fail-closed and bracket logged-only honesty | 新增 live role health-only/not_activated 測試，並明確 bracket order 目前是 logged_only。 | Codex | Claude | todo | `P0-BOOT-001` | 2026-05-01 11:59:30 | Auto-reassigned P0-LIVE-GUARD-001 away from sidecar-only lane Gemini; reviewer Gemini -> Claude. Reserved sidecar-only agents no longer hold mainline tasks. |
 | `P0-CI-BOUNDED-001` | Pantheon P0 Paper Loop | Add source/search bounded and fail-closed adapter CI | 為 bounded source/search baseline 與 research/OpenClaw fail-closed posture 補 CI。 | Codex | Claude | todo | `P0-CI-BRIDGE-001` | 2026-05-01 11:59:41 | Auto-reassigned P0-CI-BOUNDED-001 away from sidecar-only lane Copilot; reviewer Copilot -> Claude. Reserved sidecar-only agents no longer hold mainline tasks. |
 | `P0-HEALTH-001` | Pantheon P0 Paper Loop | Add health endpoint cleanup scan | 掃描 control/exec compose legacy __health__，推進到 /healthz /livez /readyz /metrics 一致性。 | Codex | Claude | todo | `P0-CI-BRIDGE-001` | 2026-05-01 11:58:17 | Assignment created from accepted planning session |
 | `P0-FE-DEMO-001-SIDECAR-ACCEPTANCE` | Pantheon P0 Paper Loop | [Sidecar] [Auto] [Parent P0-FE-DEMO-001] Prepare P0-FE-DEMO-001 acceptance packet and dependency map | 平行支援 P0-FE-DEMO-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Codex | Codex2 | todo | - | 2026-05-01 12:25:44 | Auto-reassigned ownership from Gemini2 to Codex after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex starts a fresh run. |
-| `P0-FE-DEMO-001-SIDECAR-REVIEW` | Pantheon P0 Paper Loop | [Sidecar] [Auto] [Parent P0-FE-DEMO-001] Prepare P0-FE-DEMO-001 review packet and evidence summary | 平行支援 P0-FE-DEMO-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Claude | Codex2 | review | - | 2026-05-01 12:34:41 | Review packet ready for sidecar review. Packet covers: two-round implementation history (d321a9b → ea284a1), Round 1 blocking finding on auth lifecycle regression, Round 2 fix summary (preserve existing token on refresh without replacement), structured reviewer checklist for Codex's Round 2 review, evidence table, and pre-existing issue scope. No canonical truth modified. |
-| `P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF` | Pantheon P0 Paper Loop | [Sidecar] [Auto] [Parent P0-BFF-CMD-001] Prepare P0-BFF-CMD-001 BFF and frontend handoff packet | 平行支援 P0-BFF-CMD-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Codex2 | Codex | review | `P0-STATE-001` | 2026-05-01 12:34:25 | Sidecar BFF handoff packet ready for review: support/sidecars/P0-BFF-CMD-001/P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF.md. It summarizes existing BFF command facade material, read/command contract gaps, operator journey handoff, and frontend acceptance notes without modifying canonical truth or runtime code. |
+| `P0-CTX-001-SIDECAR-ACCEPTANCE` | Pantheon P0 Paper Loop | [Sidecar] [Auto] [Parent P0-CTX-001] Prepare P0-CTX-001 acceptance packet and dependency map | 平行支援 P0-CTX-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Claude | Codex2 | in_progress | `P0-BOOT-001` | 2026-05-01 13:42:36 | Building acceptance packet: reading implementation artifacts and mapping acceptance criteria. |
+| `P0-LIVE-GUARD-001-SIDECAR-ACCEPTANCE` | Pantheon P0 Paper Loop | [Sidecar] [Auto] [Parent P0-LIVE-GUARD-001] Prepare P0-LIVE-GUARD-001 acceptance packet and dependency map | 平行支援 P0-LIVE-GUARD-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Claude2 | Codex | review | `P0-BOOT-001` | 2026-05-01 13:45:24 | Acceptance packet ready for review. Artifact: support/sidecars/P0-LIVE-GUARD-001/P0-LIVE-GUARD-001-SIDECAR-ACCEPTANCE.md. Covers: live fail-closed checklist (bootstrap_contract.py, runtime_bootstrap.py), bracket logged-only checklist (executor.py), dependency map, gap analysis, and suggested test cases LIVE-TEST-001 to LIVE-TEST-005. Verification: 2 unittest cases (test_live_role_defaults_to_health_only, test_live_broker_activation_flag_is_rejected) pass. Commit: 9ef5037. |
 
 ## Handoff Queue
 
@@ -107,9 +101,7 @@ Last updated: 2026-05-01 12:34:57
 | `P0-FE-SOURCE-001` | Copilot | Codex | Auto-reassigned P0-FE-SOURCE-001 away from sidecar-only lane Copilot; owner Copilot -> Codex. Reserved sidecar-only agents no longer hold mainline tasks. | pending | 2026-05-01 11:59:19 |
 | `P0-LIVE-GUARD-001` | Gemini | Claude | Auto-reassigned P0-LIVE-GUARD-001 away from sidecar-only lane Gemini; reviewer Gemini -> Claude. Reserved sidecar-only agents no longer hold mainline tasks. | pending | 2026-05-01 11:59:30 |
 | `P0-CI-BOUNDED-001` | Copilot | Claude | Auto-reassigned P0-CI-BOUNDED-001 away from sidecar-only lane Copilot; reviewer Copilot -> Claude. Reserved sidecar-only agents no longer hold mainline tasks. | pending | 2026-05-01 11:59:41 |
-| `P0-FE-DEMO-001` | Codex2 | Codex | Auth lifecycle fix ready for review: frontend commit ea284a1 preserves existing pantheon_operator_token on successful session refresh when BFF returns session metadata without replacement token; still clears on missing local token, failed refresh, and sign-out. Verification passed: npx eslint src/auth/AuthProvider.tsx src/pages/auth/Login.tsx src/lib/bffClient.ts src/pages/settings/sections/SecuritySettings.tsx scripts/check_no_demo_prod_routes.mjs (existing react-refresh warning only); npm run check:prod-demo-routes; npm run build. | pending | 2026-05-01 12:28:18 |
-| `P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF` | Codex2 | Codex | Sidecar BFF handoff packet ready for review: support/sidecars/P0-BFF-CMD-001/P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF.md. It summarizes existing BFF command facade material, read/command contract gaps, operator journey handoff, and frontend acceptance notes without modifying canonical truth or runtime code. | pending | 2026-05-01 12:34:25 |
-| `P0-FE-DEMO-001-SIDECAR-REVIEW` | Claude | Codex2 | Review packet ready for sidecar review. Packet covers: two-round implementation history (d321a9b → ea284a1), Round 1 blocking finding on auth lifecycle regression, Round 2 fix summary (preserve existing token on refresh without replacement), structured reviewer checklist for Codex's Round 2 review, evidence table, and pre-existing issue scope. No canonical truth modified. | pending | 2026-05-01 12:34:41 |
+| `P0-LIVE-GUARD-001-SIDECAR-ACCEPTANCE` | Claude2 | Codex | Acceptance packet ready for review. Artifact: support/sidecars/P0-LIVE-GUARD-001/P0-LIVE-GUARD-001-SIDECAR-ACCEPTANCE.md. Covers: live fail-closed checklist (bootstrap_contract.py, runtime_bootstrap.py), bracket logged-only checklist (executor.py), dependency map, gap analysis, and suggested test cases LIVE-TEST-001 to LIVE-TEST-005. Verification: 2 unittest cases (test_live_role_defaults_to_health_only, test_live_broker_activation_flag_is_rejected) pass. Commit: 9ef5037. | pending | 2026-05-01 13:45:24 |
 
 ## Blockers
 
@@ -125,7 +117,7 @@ Last updated: 2026-05-01 12:34:57
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-05-01 12:31:29
+- Last coordination scan: 2026-05-01 13:46:58
 - Tracked features: `46`
 - Lovable-ready packets: `45`
 - Waiting for Lovable/front-end: `0`
@@ -192,23 +184,23 @@ Last updated: 2026-05-01 12:34:57
 
 ## Latest Checkpoints
 
-- 2026-05-01 12:32:50 Orchestrator: PostToolUse: Bash
-- 2026-05-01 12:32:50 Orchestrator: PostToolUse: Bash
-- 2026-05-01 12:33:09 Orchestrator: PreToolUse: Bash
-- 2026-05-01 12:33:09 Orchestrator: PreToolUse: Bash
-- 2026-05-01 12:33:09 Orchestrator: PostToolUse: Bash
-- 2026-05-01 12:33:09 Orchestrator: PostToolUse: Bash
-- 2026-05-01 12:33:12 Orchestrator: PreToolUse: Read
-- 2026-05-01 12:33:12 Orchestrator: PostToolUse: Read
-- 2026-05-01 12:33:26 Orchestrator: PreToolUse: Bash
-- 2026-05-01 12:33:26 Orchestrator: PostToolUse: Bash
-- 2026-05-01 12:34:17 Orchestrator: PreToolUse: Write
-- 2026-05-01 12:34:17 Orchestrator: PostToolUse: Write
-- 2026-05-01 12:34:22 Orchestrator: PreToolUse: Bash
-- 2026-05-01 12:34:23 Claude: `P0-FE-DEMO-001-SIDECAR-REVIEW` Review packet complete: created support/sidecars/P0-FE-DEMO-001/P0-FE-DEMO-001-SIDECAR-REVIEW.md with two-round implementation history, structured reviewer checklist for Round 2 auth fix (ea284a1), evidence summary, and scope boundary notes. No canonical files modified.
-- 2026-05-01 12:34:25 Codex2: `P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF` Handoff to Codex: Sidecar BFF handoff packet ready for review: support/sidecars/P0-BFF-CMD-001/P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF.md. It summarizes existing BFF command facade material, read/command contract gaps, operator journey handoff, and frontend acceptance notes without modifying canonical truth or runtime code.
-- 2026-05-01 12:34:35 Orchestrator: PostToolUse: Bash
-- 2026-05-01 12:34:40 Orchestrator: PreToolUse: Bash
-- 2026-05-01 12:34:41 Claude: `P0-FE-DEMO-001-SIDECAR-REVIEW` Handoff to Codex2: Review packet ready for sidecar review. Packet covers: two-round implementation history (d321a9b → ea284a1), Round 1 blocking finding on auth lifecycle regression, Round 2 fix summary (preserve existing token on refresh without replacement), structured reviewer checklist for Codex's Round 2 review, evidence table, and pre-existing issue scope. No canonical truth modified.
-- 2026-05-01 12:34:54 Orchestrator: PostToolUse: Bash
-- 2026-05-01 12:34:57 Orchestrator: PreToolUse: Bash
+- 2026-05-01 13:47:09 Orchestrator: `P0-CTX-001` Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-01 13:47:09 Orchestrator: `OPS-CHAIR-REVIEW` Chair review queued for Codex2: chair_review:approval_triage
+- 2026-05-01 13:47:09 Orchestrator: `P0-CTX-001` Worker started via codex: review_ready_dispatch
+- 2026-05-01 13:47:09 Orchestrator: Worker started via codex: chair_review:approval_triage
+- 2026-05-01 13:47:21 Orchestrator: `P0-BFF-CMD-001` Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: error: BFFError. Task returned to todo until Codex2 starts a fresh run.
+- 2026-05-01 13:47:21 Orchestrator: `P0-CTX-001-SIDECAR-ACCEPTANCE` Worker suspended for approval apr-20260501T054347Z-1a374941
+- 2026-05-01 13:47:24 Orchestrator: `P0-CTX-001` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
+- 2026-05-01 13:47:28 Orchestrator: `P0-LIVE-GUARD-001-SIDECAR-ACCEPTANCE` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
+- 2026-05-01 13:49:01 Codex: `P0-CTX-001` Review blocked: from_mapping/from_manifest normalizes runtime_context before secret validation, so a launch manifest with {'runtime_context': <valid context>, 'broker_secret': 'plain-secret'} is accepted. This violates SD-P0-03 raw broker secret failure behavior and README_P0_SD_INDEX hard invariant that no broker secret may appear in launch manifest. Focused pytest passes (pytest -q services/execution/lean_runtime/test_runtime_context.py: 9 passed), but add a regression test for wrapper-level raw secret rejection and validate the original manifest payload before dropping wrapper fields.
+- 2026-05-01 13:52:39 Orchestrator: `P0-CTX-001-SIDECAR-ACCEPTANCE` Worker suspended for approval apr-20260501T054347Z-1a374941
+- 2026-05-01 13:52:39 Orchestrator: `P0-CTX-001` Worker superseded after task responsibility moved to another agent.
+- 2026-05-01 13:52:39 Orchestrator: Chair review worker exited; supervisor will validate the review artifacts.
+- 2026-05-01 13:52:39 Orchestrator: `OPS-CHAIR-REVIEW` Idle workers and runnable support backlog exist, with no global provider or queue blocker.
+- 2026-05-01 13:52:40 Orchestrator: Temporarily added Claude allow rule: Bash(git add ai-status.json current-work.md ai-task-archive/index.json .orchestrator/planning-session-pointer.json && git status --short | head -10)
+- 2026-05-01 13:52:40 Orchestrator: `P0-CTX-001-SIDECAR-ACCEPTANCE` Approval allow for Bash (apr-20260501T054347Z-1a374941)
+- 2026-05-01 13:52:40 Orchestrator: `P0-LIVE-GUARD-001-SIDECAR-ACCEPTANCE` Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-01 13:52:40 Orchestrator: `P0-CTX-001` Wake-up queued for supervisor: owned_in_progress_dispatch
+- 2026-05-01 13:52:40 Orchestrator: `P0-LIVE-GUARD-001-SIDECAR-ACCEPTANCE` Worker started via codex: review_ready_dispatch
+- 2026-05-01 13:52:40 Orchestrator: `P0-CTX-001` Worker started via codex: owned_in_progress_dispatch
+- 2026-05-01 13:52:40 Codex2: `P0-CTX-001` Supervisor re-dispatched P0-CTX-001; task remains in progress.
