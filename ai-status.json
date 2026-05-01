@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；production、paper、canary、live gate 預設仍 fail-closed。",
-  "updated_at": "2026-05-01T08:22:48Z",
+  "updated_at": "2026-05-01T08:27:42Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,13 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "reviewing",
+      "status": "waiting",
       "current_task_ids": [
-        "P0-LOOP-001-SIDECAR-ACCEPTANCE"
+        "P1-LIVE-PLAN-001"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Acceptance packet ready for review. Covers: dependency map (P0-TEL-PROJ-001 deliverables confirmed), 14-item acceptance checklist expanding the two formal criteria, suggested in-process smoke test structure, 5 open questions flagged. Does not modify canonical truth.",
-      "last_update": "2026-05-01T08:07:49Z"
+      "next": "Assignment created",
+      "last_update": "2026-05-01T08:26:49Z"
     },
     {
       "name": "Gemini",
@@ -415,34 +415,6 @@
       }
     },
     {
-      "id": "P0-LOOP-001-SIDECAR-ACCEPTANCE",
-      "title": "Prepare P0-LOOP-001 acceptance packet and dependency map",
-      "summary_zh": "平行支援 P0-LOOP-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
-      "phase": "Pantheon P0 Paper Loop",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "review",
-      "depends_on": [
-        "P0-TEL-PROJ-001"
-      ],
-      "artifacts": [
-        "support/sidecars/P0-LOOP-001/P0-LOOP-001-SIDECAR-ACCEPTANCE.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Acceptance packet ready for review. Covers: dependency map (P0-TEL-PROJ-001 deliverables confirmed), 14-item acceptance checklist expanding the two formal criteria, suggested in-process smoke test structure, 5 open questions flagged. Does not modify canonical truth.",
-      "last_update": "2026-05-01T08:07:49Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "P0-LOOP-001",
-      "helper_kind": "acceptance_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
-    },
-    {
       "id": "P1-PERSIST-001-SIDECAR-ACCEPTANCE",
       "title": "Prepare P1-PERSIST-001 acceptance packet and dependency map",
       "summary_zh": "平行支援 P1-PERSIST-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
@@ -499,14 +471,6 @@
       "created_at": "2026-05-01T03:59:19Z"
     },
     {
-      "task_id": "P0-LOOP-001-SIDECAR-ACCEPTANCE",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Acceptance packet ready for review. Covers: dependency map (P0-TEL-PROJ-001 deliverables confirmed), 14-item acceptance checklist expanding the two formal criteria, suggested in-process smoke test structure, 5 open questions flagged. Does not modify canonical truth.",
-      "status": "pending",
-      "created_at": "2026-05-01T08:07:49Z"
-    },
-    {
       "task_id": "P1-PERSIST-001-SIDECAR-ACCEPTANCE",
       "from": "Claude2",
       "to": "Codex",
@@ -527,11 +491,11 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 2,
-      "active": 1,
+      "total": 1,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 1,
+      "review": 0,
       "review_approved": 0,
       "todo": 1
     },

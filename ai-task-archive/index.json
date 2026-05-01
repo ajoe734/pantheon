@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-01T08:22:48Z",
+  "updated_at": "2026-05-01T08:27:41Z",
   "counts": {
-    "total": 856,
-    "completed": 840,
+    "total": 857,
+    "completed": 841,
     "superseded": 16
   },
   "recent_terminal_ids": [
+    "P0-LOOP-001-SIDECAR-ACCEPTANCE",
     "P1-BRACKET-001-SIDECAR-ACCEPTANCE",
     "P1-SEARCH-001",
     "P0-CI-BOUNDED-001",
@@ -25,7 +26,6 @@
     "P0-CTX-001-SIDECAR-ACCEPTANCE",
     "P0-LIVE-GUARD-001-SIDECAR-ACCEPTANCE",
     "P0-HEALTH-001-SIDECAR-ACCEPTANCE",
-    "P0-BOOT-001",
-    "P0-CI-BOUNDED-001-SIDECAR-ACCEPTANCE"
+    "P0-BOOT-001"
   ]
 }

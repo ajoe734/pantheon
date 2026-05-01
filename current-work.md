@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-01 16:22:48
+Last updated: 2026-05-01 16:27:42
 
 ## Objective
 
@@ -37,7 +37,7 @@ Last updated: 2026-05-01 16:22:48
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Acceptance packet ready for review. Covers: dependency map (P0-TEL-PROJ-001 deliverables confirmed), 14-item acceptance checklist expanding the two formal criteria, suggested in-process smoke test structure, 5 open questions flagged. Does not modify canonical truth.
+- `Claude`: execution, control-plane, governance-review; next: Assignment created
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 - `Codex`: integration, status-system, schema, acceptance; next: Supervisor preempted P0-LOOP-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.
 - `Codex2`: integration, status-system, schema, acceptance; next: Assignment created from accepted planning session
@@ -57,7 +57,6 @@ Last updated: 2026-05-01 16:22:48
 | `P1-BRACKET-001` | P1 Wave 5 | Guarded paper/sim bracket order execution | Codex | todo | `P0-LIVE-GUARD-001` | 在 paper/sim broker 範圍內實作受治理 bracket order execution；live 仍 fail-closed。 |
 | `P1-LIVE-PLAN-001` | P1 Wave 5 | Canary/live activation criteria and runbook | Claude | todo | `P0-LOOP-001` | 定義 canary/live activation criteria 與 runbook；P1 只取得 activation readiness，不開 production live。 |
 | `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | Codex | todo | `P0-CI-BOUNDED-001` | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 |
-| `P0-LOOP-001-SIDECAR-ACCEPTANCE` | Pantheon P0 Paper Loop | [Sidecar] [Auto] [Parent P0-LOOP-001] Prepare P0-LOOP-001 acceptance packet and dependency map | Claude | review | `P0-TEL-PROJ-001` | 平行支援 P0-LOOP-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
 | `P1-PERSIST-001-SIDECAR-ACCEPTANCE` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-PERSIST-001] Prepare P1-PERSIST-001 acceptance packet and dependency map | Claude2 | review | `P0-CI-BOUNDED-001` | 平行支援 P1-PERSIST-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
@@ -76,7 +75,6 @@ Last updated: 2026-05-01 16:22:48
 | `P1-BRACKET-001` | P1 Wave 5 | Guarded paper/sim bracket order execution | 在 paper/sim broker 範圍內實作受治理 bracket order execution；live 仍 fail-closed。 | Codex | Claude | todo | `P0-LIVE-GUARD-001` | 2026-05-01 15:57:10 | Supervisor preempted P1-BRACKET-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
 | `P1-LIVE-PLAN-001` | P1 Wave 5 | Canary/live activation criteria and runbook | 定義 canary/live activation criteria 與 runbook；P1 只取得 activation readiness，不開 production live。 | Claude | Codex | todo | `P0-LOOP-001` | 2026-05-01 15:16:37 | Assignment created |
 | `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 | Codex | Claude | todo | `P0-CI-BOUNDED-001` | 2026-05-01 15:16:56 | Assignment created |
-| `P0-LOOP-001-SIDECAR-ACCEPTANCE` | Pantheon P0 Paper Loop | [Sidecar] [Auto] [Parent P0-LOOP-001] Prepare P0-LOOP-001 acceptance packet and dependency map | 平行支援 P0-LOOP-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Claude | Codex | review | `P0-TEL-PROJ-001` | 2026-05-01 16:07:49 | Acceptance packet ready for review. Covers: dependency map (P0-TEL-PROJ-001 deliverables confirmed), 14-item acceptance checklist expanding the two formal criteria, suggested in-process smoke test structure, 5 open questions flagged. Does not modify canonical truth. |
 | `P1-PERSIST-001-SIDECAR-ACCEPTANCE` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-PERSIST-001] Prepare P1-PERSIST-001 acceptance packet and dependency map | 平行支援 P1-PERSIST-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Claude2 | Codex | review | `P0-CI-BOUNDED-001` | 2026-05-01 16:10:03 | Acceptance packet prepared for P1-PERSIST-001. Packet maps all 3 ACs to current code state, identifies gaps (no generalized persistence posture module, no startup fail-fast for governance/capital/incident/promotion services, health endpoints not wired), lists required deliverables with file-level specificity, defines 6 hard invariants, and inventories existing coverage to preserve. Ready for Codex review. |
 
 ## Handoff Queue
@@ -84,7 +82,6 @@ Last updated: 2026-05-01 16:22:48
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
 | `P0-FE-SOURCE-001` | Copilot | Codex | Auto-reassigned P0-FE-SOURCE-001 away from sidecar-only lane Copilot; owner Copilot -> Codex. Reserved sidecar-only agents no longer hold mainline tasks. | pending | 2026-05-01 11:59:19 |
-| `P0-LOOP-001-SIDECAR-ACCEPTANCE` | Claude | Codex | Acceptance packet ready for review. Covers: dependency map (P0-TEL-PROJ-001 deliverables confirmed), 14-item acceptance checklist expanding the two formal criteria, suggested in-process smoke test structure, 5 open questions flagged. Does not modify canonical truth. | pending | 2026-05-01 16:07:49 |
 | `P1-PERSIST-001-SIDECAR-ACCEPTANCE` | Claude2 | Codex | Acceptance packet prepared for P1-PERSIST-001. Packet maps all 3 ACs to current code state, identifies gaps (no generalized persistence posture module, no startup fail-fast for governance/capital/incident/promotion services, health endpoints not wired), lists required deliverables with file-level specificity, defines 6 hard invariants, and inventories existing coverage to preserve. Ready for Codex review. | pending | 2026-05-01 16:10:03 |
 
 ## Blockers
@@ -101,7 +98,7 @@ Last updated: 2026-05-01 16:22:48
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-05-01 16:21:19
+- Last coordination scan: 2026-05-01 16:26:49
 - Tracked features: `46`
 - Lovable-ready packets: `45`
 - Waiting for Lovable/front-end: `0`
@@ -168,23 +165,23 @@ Last updated: 2026-05-01 16:22:48
 
 ## Latest Checkpoints
 
-- 2026-05-01 16:15:50 Codex2: `P1-SEARCH-001` Supervisor resumed P1-SEARCH-001 for finalize after successful dispatch.
-- 2026-05-01 16:16:00 Orchestrator: `P1-SEARCH-001` Supervisor resumed P1-SEARCH-001 for finalize after successful dispatch.
-- 2026-05-01 16:16:03 Orchestrator: `P1-BRACKET-001-SIDECAR-ACCEPTANCE` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
-- 2026-05-01 16:16:07 Orchestrator: `P0-LOOP-001-SIDECAR-ACCEPTANCE` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
-- 2026-05-01 16:16:10 Orchestrator: `P1-PERSIST-001-SIDECAR-ACCEPTANCE` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
-- 2026-05-01 16:17:37 Codex2: `P1-SEARCH-001` Closed out P1-SEARCH-001 after task-scoped commit 208978b. Verified governed OpenClaw SearchGateway integration: pytest services/search/tests -q (46 passed); focused OpenClaw/search/tool-bridge suite (103 passed); scoped git diff --check passed. Execution runtime dirty files remain unrelated and were excluded.
-- 2026-05-01 16:17:52 Codex: `P1-BRACKET-001-SIDECAR-ACCEPTANCE` Review approved: sidecar acceptance packet is support-only, dependency map and concrete parent checklist are sufficient; owner to finalize task-scoped support artifacts.
-- 2026-05-01 16:21:19 Orchestrator: `P1-BRACKET-001-SIDECAR-ACCEPTANCE` Worker superseded after task responsibility moved to another agent.
-- 2026-05-01 16:21:19 Orchestrator: `P1-SEARCH-001` Worker superseded after task responsibility moved to another agent.
-- 2026-05-01 16:21:19 Orchestrator: `P0-LOOP-001-SIDECAR-ACCEPTANCE` Wake-up queued for supervisor: review_ready_dispatch
-- 2026-05-01 16:21:20 Orchestrator: `P1-BRACKET-001-SIDECAR-ACCEPTANCE` Wake-up queued for supervisor: owned_finalize_dispatch
-- 2026-05-01 16:21:20 Orchestrator: `P0-FE-SOURCE-001-SIDECAR-BFF-HANDOFF` Failed to create sidecar for P0-FE-SOURCE-001: Task P0-FE-SOURCE-001-SIDECAR-BFF-HANDOFF is archived. Create a new follow-up task instead of reusing the archived task id.
-- 2026-05-01 16:21:20 Orchestrator: underutilized but no sidecar candidate could be assigned safely
-- 2026-05-01 16:21:20 Orchestrator: `P0-LOOP-001-SIDECAR-ACCEPTANCE` Worker started via codex: review_ready_dispatch
-- 2026-05-01 16:21:20 Orchestrator: `P1-BRACKET-001-SIDECAR-ACCEPTANCE` Worker started via codex: owned_finalize_dispatch
-- 2026-05-01 16:21:21 Codex2: `P1-BRACKET-001-SIDECAR-ACCEPTANCE` Supervisor resumed P1-BRACKET-001-SIDECAR-ACCEPTANCE for finalize after successful dispatch.
-- 2026-05-01 16:21:32 Orchestrator: `P1-BRACKET-001-SIDECAR-ACCEPTANCE` Supervisor resumed P1-BRACKET-001-SIDECAR-ACCEPTANCE for finalize after successful dispatch.
-- 2026-05-01 16:21:36 Orchestrator: `P0-LOOP-001-SIDECAR-ACCEPTANCE` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
-- 2026-05-01 16:21:39 Orchestrator: `P1-PERSIST-001-SIDECAR-ACCEPTANCE` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
-- 2026-05-01 16:22:48 Codex2: `P1-BRACKET-001-SIDECAR-ACCEPTANCE` Sidecar acceptance packet finalized in commit ab5b658; support artifact and Codex review note are durable; verification used sed/jq/rg plus scoped git status; no canonical truth, core contract, runtime, registry, or governance implementation changed.
+- 2026-05-01 16:27:02 Orchestrator: `P1-PERSIST-001-SIDECAR-ACCEPTANCE` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
+- 2026-05-01 16:27:02 Orchestrator: PreToolUse: Read
+- 2026-05-01 16:27:02 Orchestrator: PostToolUse: Read
+- 2026-05-01 16:27:02 Orchestrator: PostToolUse: Read
+- 2026-05-01 16:27:05 Orchestrator: PreToolUse: Read
+- 2026-05-01 16:27:05 Orchestrator: PostToolUse: Read
+- 2026-05-01 16:27:06 Orchestrator: PreToolUse: Read
+- 2026-05-01 16:27:06 Orchestrator: PostToolUse: Read
+- 2026-05-01 16:27:10 Orchestrator: PreToolUse: Read
+- 2026-05-01 16:27:10 Orchestrator: PostToolUse: Read
+- 2026-05-01 16:27:11 Orchestrator: PreToolUse: Glob
+- 2026-05-01 16:27:11 Orchestrator: PostToolUse: Glob
+- 2026-05-01 16:27:14 Orchestrator: PreToolUse: Read
+- 2026-05-01 16:27:14 Orchestrator: PostToolUse: Read
+- 2026-05-01 16:27:20 Orchestrator: PreToolUse: Bash
+- 2026-05-01 16:27:20 Orchestrator: PostToolUse: Bash
+- 2026-05-01 16:27:37 Orchestrator: PreToolUse: Bash
+- 2026-05-01 16:27:37 Orchestrator: PostToolUse: Bash
+- 2026-05-01 16:27:41 Orchestrator: PreToolUse: Bash
+- 2026-05-01 16:27:41 Claude: `P0-LOOP-001-SIDECAR-ACCEPTANCE` Owner closeout: acceptance packet (d0e66e6) and Codex review artifact (d6d31fb) are both committed and durable. Packet verified support-only — no L1 canonical truth modified. Ready for parent P0-LOOP-001 reuse.
