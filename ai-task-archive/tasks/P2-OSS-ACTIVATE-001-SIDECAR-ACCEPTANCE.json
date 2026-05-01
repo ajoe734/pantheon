@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-05-01T15:08:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare P2-OSS-ACTIVATE-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 P2-OSS-ACTIVATE-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "P2 Wave 7",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "P0-CI-BOUNDED-001"
+    ],
+    "artifacts": [
+      "support/sidecars/P2-OSS-ACTIVATE-001/P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: sidecar acceptance packet finalized with Codex-reviewed corrections. A3-A6 verified; A1-A2 and A7-A14 remain open for parent task. Task-scoped commit ff4a610. Support-only scope maintained; no canonical truth modified.",
+    "last_update": "2026-05-01T15:08:35Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "P2-OSS-ACTIVATE-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar packet 維持 support-only；已修正 parent metadata，A1-A14 checklist 可供 parent owner/reviewer 吸收。"
+    ],
+    "review_file": "support/reviews/P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T15:08:35Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "20261e048ff145d1cf35190f0d4173bb4a41d4f0",
+      "commit_subject": "P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE finalize state",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Verification": "artifact at ff4a610; review approved by Codex; support-only"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 150,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 4,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "P2-OSS-ACTIVATE-001 acceptance packet is complete. Packet covers: dependency map anchored to P0-CI-BOUNDED-001 (done, commit 8a624309), 5-control surface inventory (SourceRecord / EvidenceBundle / SearchGateway ACL / license / available_time), 14-item acceptance checklist (A1-A14), and 4 flagged open questions (source_ingestion scope, EvidenceBundle enforcement presence, TRL gate flag name, W&B re-entry window). Artifact: support/sidecars/P2-OSS-ACTIVATE-001/P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE.md",
+      "status": "done",
+      "created_at": "2026-05-01T14:56:23Z",
+      "resolved_at": "2026-05-01T15:00:17Z"
+    },
+    {
+      "task_id": "P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Sidecar acceptance packet approved; support-only checklist ready for parent owner/reviewer use.",
+      "status": "done",
+      "created_at": "2026-05-01T15:00:17Z",
+      "resolved_at": "2026-05-01T15:08:35Z"
+    }
+  ],
+  "blockers": []
+}

@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；只有下單、取消單、改倉、資金調度等 order-capable live execution path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-01T15:05:36Z",
+  "updated_at": "2026-05-01T15:08:35Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,12 +93,10 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "finalize",
-      "current_task_ids": [
-        "P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude-execution-control",
-      "next": "Sidecar acceptance packet approved; support-only checklist ready for parent owner/reviewer use.",
+      "next": "",
       "last_update": "2026-05-01T15:00:17Z"
     },
     {
@@ -269,38 +267,6 @@
       },
       "priority": "P2",
       "wave": 7
-    },
-    {
-      "id": "P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE",
-      "title": "Prepare P2-OSS-ACTIVATE-001 acceptance packet and dependency map",
-      "summary_zh": "平行支援 P2-OSS-ACTIVATE-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
-      "phase": "P2 Wave 7",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "review_approved",
-      "depends_on": [
-        "P0-CI-BOUNDED-001"
-      ],
-      "artifacts": [
-        "support/sidecars/P2-OSS-ACTIVATE-001/P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Sidecar acceptance packet approved; support-only checklist ready for parent owner/reviewer use.",
-      "last_update": "2026-05-01T15:00:17Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "P2-OSS-ACTIVATE-001",
-      "helper_kind": "acceptance_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization",
-      "review_notes_zh": [
-        "審查通過：sidecar packet 維持 support-only；已修正 parent metadata，A1-A14 checklist 可供 parent owner/reviewer 吸收。"
-      ],
-      "review_file": "support/reviews/P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE-codex-review.md"
     }
   ],
   "handoffs": [
@@ -332,23 +298,6 @@
       "resolved_at": "2026-05-01T14:54:59Z"
     },
     {
-      "task_id": "P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "P2-OSS-ACTIVATE-001 acceptance packet is complete. Packet covers: dependency map anchored to P0-CI-BOUNDED-001 (done, commit 8a624309), 5-control surface inventory (SourceRecord / EvidenceBundle / SearchGateway ACL / license / available_time), 14-item acceptance checklist (A1-A14), and 4 flagged open questions (source_ingestion scope, EvidenceBundle enforcement presence, TRL gate flag name, W&B re-entry window). Artifact: support/sidecars/P2-OSS-ACTIVATE-001/P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE.md",
-      "status": "done",
-      "created_at": "2026-05-01T14:56:23Z",
-      "resolved_at": "2026-05-01T15:00:17Z"
-    },
-    {
-      "task_id": "P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Sidecar acceptance packet approved; support-only checklist ready for parent owner/reviewer use.",
-      "status": "pending",
-      "created_at": "2026-05-01T15:00:17Z"
-    },
-    {
       "task_id": "P2-LIVE-KERNEL-001",
       "from": "Codex",
       "to": "Claude",
@@ -378,12 +327,12 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 1,
+      "review_approved": 0,
       "todo": 0
     },
     "Claude2": {
