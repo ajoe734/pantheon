@@ -38,6 +38,11 @@ if str(_ROOT) not in sys.path:
 def _stub_foundation() -> None:
     if "services.foundation.health" in sys.modules:
         return
+    try:
+        import services.foundation.health  # noqa: F401
+        return
+    except ImportError:
+        pass
     for pkg in ("services", "services.foundation"):
         if pkg not in sys.modules:
             sys.modules[pkg] = types.ModuleType(pkg)
