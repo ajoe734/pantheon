@@ -1,6 +1,6 @@
 # KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY
 
-Last updated: 2026-04-09
+Last updated: 2026-05-01
 Status: canonical kill switch and safe mode execution policy for Pantheon
 Tier: L1 Platform Architecture & Policy
 Scope: emergency fast-path execution, kill switch routing, safe mode transitions, risk-off and liquidate command authority
@@ -189,6 +189,27 @@ flowchart LR
 
     A --> B --> C --> D --> E --> F
 ```
+
+### 8.1 Runtime-manager secondary path and telemetry ack
+
+Runtime-manager dispatch must not stop at a UI or controller state change.
+The authorised kill-switch path is complete only after runtime-manager attempts
+the RuntimeBinding follow-through and returns a telemetry acknowledgement:
+
+```text
+kill-switch command
+  -> RuntimeBinding write path
+  -> KillSwitchAuditEntry / AuditAction
+  -> telemetry_ack
+```
+
+Ack rules:
+
+- `telemetry_ack.ack_status = acknowledged` only when runtime-manager records the runtime/capital follow-through, such as pause/risk_off to `paused`, liquidate/terminate to terminal state, or replace to a fallback RuntimeBinding.
+- `telemetry_ack.ack_status = fail_closed` when no target binding can be resolved or runtime follow-through is missing.
+- A `fail_closed` ack is still an ack record, but it means the command must be treated as not runtime-confirmed and the pool/environment remains in the safest available safe-mode state.
+- The ack must carry `command_id`, `audit_id`, `capital_pool_id`, action type, safe-mode state, and any resolved RuntimeBinding/runtime identity.
+- Audit persistence and idempotency state must be durable before the command is returned as acknowledged.
 
 ---
 

@@ -205,12 +205,17 @@ class RuntimeManagerServiceTests(unittest.TestCase):
         self.assertEqual(result["foundation"]["idempotency_record"]["status"], "succeeded")
         self.assertEqual(result["foundation"]["policy_decision"]["decision"], "allow")
         self.assertEqual(result["foundation"]["audit_action"]["trace_id"], "trace-runtime-upstream-001")
+        self.assertEqual(result["telemetry_ack"]["ack_status"], "fail_closed")
+        self.assertTrue(result["telemetry_ack"]["ack_required"])
+        self.assertFalse(result["telemetry_ack"]["ack_received"])
+        self.assertEqual(result["telemetry_ack"]["event_type"], "kill_switch_action")
         self.assertEqual(len(self.service.get_kill_switch_audit_log()), 1)
 
         replayed = self.service.execute_kill_switch(request)
 
         self.assertTrue(replayed["idempotent_replay"])
         self.assertEqual(replayed["command"]["command_id"], result["command"]["command_id"])
+        self.assertEqual(replayed["telemetry_ack"]["ack_status"], "fail_closed")
         self.assertEqual(len(self.service.get_kill_switch_audit_log()), 1)
 
 
@@ -445,6 +450,16 @@ class KillSwitchServiceTests(unittest.TestCase):
         self.assertEqual(result["command"]["bypass_review_queue"], True)
         ba = result["binding_action"]
         self.assertEqual(ba["binding"]["status"], "paused")
+        ack = result["telemetry_ack"]
+        self.assertEqual(ack["ack_status"], "acknowledged")
+        self.assertTrue(ack["ack_received"])
+        self.assertFalse(ack["fail_closed"])
+        self.assertEqual(ack["command_id"], result["command"]["command_id"])
+        self.assertEqual(ack["audit_id"], result["audit_entry"]["audit_id"])
+        self.assertEqual(ack["binding_id"], binding.binding_id)
+        self.assertEqual(ack["runtime_binding_id"], binding.binding_id)
+        self.assertEqual(ack["runtime_status_after"], "paused")
+        self.assertEqual(ack["telemetry_event_type"], "kill_switch_action")
 
     def test_execute_kill_switch_populates_audit_trail(self):
         self._deploy_active_binding()
@@ -468,6 +483,23 @@ class KillSwitchServiceTests(unittest.TestCase):
         })
         self.assertEqual(result["command"]["action_type"], "risk_off")
         self.assertEqual(result["safe_mode_after"], SafeModeState.RISK_OFF.value)
+        self.assertEqual(result["binding_action"]["binding"]["status"], "paused")
+        self.assertEqual(result["telemetry_ack"]["ack_status"], "acknowledged")
+        self.assertEqual(result["telemetry_ack"]["action_type"], "risk_off")
+
+    def test_execute_kill_switch_without_runtime_ack_fails_closed(self):
+        result = self.service.execute_kill_switch({
+            "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+            "capital_pool_id": "pool-without-active-runtime",
+            "actor_id": "operator-1",
+        })
+
+        self.assertIsNone(result["binding_action"])
+        self.assertEqual(result["safe_mode_after"], SafeModeState.PAUSED.value)
+        self.assertEqual(result["telemetry_ack"]["ack_status"], "fail_closed")
+        self.assertTrue(result["telemetry_ack"]["fail_closed"])
+        self.assertFalse(result["telemetry_ack"]["runtime_state_recorded"])
+        self.assertFalse(result["telemetry_ack"]["capital_state_recorded"])
 
     def test_get_safe_mode_returns_normal_for_unknown_pool(self):
         state = self.service.get_safe_mode("pool-unknown")

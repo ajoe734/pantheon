@@ -509,9 +509,14 @@ environment-wide safe mode
 runtime pause / replace
 ```
 
-### 11.2 Current Gap
+### 11.2 Current Status
 
-BFF contract includes kill-switch status surfaces, but execution command path to Lean must be verified. A read-only kill-switch status is not enough.
+BFF contract includes kill-switch status surfaces, but a read-only kill-switch
+status is not enough. As of P1-KILL-001, runtime-manager has the authoritative
+secondary command path: it writes KillSwitchAuditEntry / AuditAction evidence,
+mutates RuntimeBinding state for pause / risk_off / liquidate / replace, and
+returns a `telemetry_ack`. Missing runtime follow-through is represented as
+`telemetry_ack.ack_status = fail_closed`, not as a successful command.
 
 ### 11.3 Required Controls
 
@@ -533,7 +538,7 @@ Kill switch activation:
   - writes AuditAction
   - changes CapitalPool state
   - sends command to Lean runtime
-  - telemetry confirms pause / liquidation / risk-off
+  - telemetry ack confirms pause / liquidation / risk-off or fail-closes when missing
 ```
 
 ---
@@ -651,7 +656,7 @@ Search result must include:
 | Broker Secrets | Lean config may hold secrets directly | High | CredentialRefAlias + secret resolver |
 | Risk Veto | risk may not block Lean runtime | Critical | RuntimeLaunchAuthorization |
 | Human Approval | approval may not gate downstream action | High | ApprovalDecision guard |
-| Kill Switch | status visible but command bridge unproven | Critical | LeanKillSwitchBridge |
+| Kill Switch | secondary runtime-manager command path exists; Lean bridge proof remains stage-specific | High | RuntimeManager KillSwitchBridge + telemetry ack |
 | Telemetry → Evolution | decision may not dispatch or may bypass review | High | EvolutionActionDispatcher |
 | Search / Data | OpenClaw may retrieve ungated info | Medium-High | SearchGateway |
 
@@ -682,7 +687,7 @@ INV-GOV-007:
   EvolutionDecision cannot mutate live target without approval.
 
 INV-GOV-008:
-  KillSwitchAction must have secondary path and audit.
+  KillSwitchAction must have secondary path, audit, and telemetry ack; missing runtime ack is fail-closed.
 
 INV-GOV-009:
   BFF cannot be canonical truth source.

@@ -113,6 +113,7 @@ _STAGE_ORDER = {
 }
 _FOUNDATION_POLICY_VERSION = "2026-04-27"
 _KILL_SWITCH_FOUNDATION_OPERATION = "runtime_manager.kill_switch.dispatch"
+_KILL_SWITCH_TELEMETRY_ACK_VERSION = "2026-05-01"
 
 
 def _scope_allows_stage(allowed_deployment_scope: str, target_stage: str) -> bool:
@@ -988,6 +989,13 @@ class RuntimeManagerService:
                 recovered = existing_result
                 recovered["foundation"] = _serialize_foundation_context(foundation_context)
                 recovered["binding_action"] = binding_action
+                recovered["telemetry_ack"] = self._build_kill_switch_telemetry_ack(
+                    command=recovered["command"],
+                    audit_entry=recovered["audit_entry"],
+                    safe_mode_after=recovered["safe_mode_after"],
+                    binding_action=binding_action,
+                    foundation_context=foundation_context,
+                )
                 recovered["idempotent_replay"] = True
                 self._store_ks_idempotency_record(succeeded, result=recovered)
                 return recovered
@@ -1065,10 +1073,88 @@ class RuntimeManagerService:
         result = outcome.to_dict()
         result["foundation"] = _serialize_foundation_context(foundation_context)
         result["binding_action"] = binding_action
+        result["telemetry_ack"] = self._build_kill_switch_telemetry_ack(
+            command=result["command"],
+            audit_entry=result["audit_entry"],
+            safe_mode_after=result["safe_mode_after"],
+            binding_action=binding_action,
+            foundation_context=foundation_context,
+        )
         # Persist audit entry, safe-mode, and idempotency before acknowledging
         # the command (contract §11.2: durable write must precede ack).
         self._store_ks_idempotency_record(idempotency_record, result=result)
         return result
+
+    def _build_kill_switch_telemetry_ack(
+        self,
+        *,
+        command: Dict[str, Any],
+        audit_entry: Dict[str, Any],
+        safe_mode_after: str,
+        binding_action: Optional[Dict[str, Any]],
+        foundation_context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Build the telemetry acknowledgement for kill-switch runtime follow-through.
+
+        The ack is intentionally produced only after runtime-manager writes the
+        RuntimeBinding side effect. If that side effect is missing, the ack is
+        present but fail-closed so callers cannot mistake a UI/audit-only
+        kill-switch dispatch for runtime risk-off.
+        """
+        binding = (binding_action or {}).get("binding") if binding_action else None
+        replacement = (binding_action or {}).get("replacement_binding") if binding_action else None
+        final_binding = replacement or binding
+        runtime_state_recorded = bool(final_binding and final_binding.get("status"))
+        capital_state_recorded = bool(
+            binding_action
+            and (
+                binding_action.get("action")
+                in {
+                    KillSwitchActionType.PAUSE.value,
+                    KillSwitchActionType.RISK_OFF.value,
+                    KillSwitchActionType.LIQUIDATE.value,
+                    KillSwitchActionType.REPLACE.value,
+                    KillSwitchActionType.TERMINATE.value,
+                }
+            )
+        )
+        ack_received = bool(runtime_state_recorded and capital_state_recorded)
+        command_id = str(command.get("command_id") or "")
+        audit_id = str(audit_entry.get("audit_id") or "")
+        foundation_trace: TraceContext = foundation_context["trace_context"]
+        return {
+            "ack_id": f"ks-telemetry-ack:{command_id}",
+            "ack_status": "acknowledged" if ack_received else "fail_closed",
+            "ack_received": ack_received,
+            "ack_required": True,
+            "fail_closed": not ack_received,
+            "event_type": "kill_switch_action",
+            "telemetry_event_type": "kill_switch_action",
+            "ack_version": _KILL_SWITCH_TELEMETRY_ACK_VERSION,
+            "command_id": command_id,
+            "audit_id": audit_id,
+            "trace_id": foundation_trace.trace_id,
+            "correlation_id": foundation_trace.correlation_id,
+            "capital_pool_id": command.get("capital_pool_id"),
+            "binding_id": (binding or {}).get("binding_id") or command.get("binding_id"),
+            "runtime_binding_id": (final_binding or {}).get("binding_id"),
+            "runtime_id": (final_binding or {}).get("runtime_id"),
+            "action_type": command.get("action_type"),
+            "safe_mode_after": safe_mode_after,
+            "runtime_status_after": (final_binding or {}).get("status"),
+            "runtime_state_recorded": runtime_state_recorded,
+            "capital_state_recorded": capital_state_recorded,
+            "audit_action_ref": (
+                foundation_context["audit_action"].action_id
+                if foundation_context.get("audit_action") is not None
+                else None
+            ),
+            "reason": (
+                "runtime binding follow-through recorded before ack"
+                if ack_received
+                else "runtime binding follow-through missing; command remains fail-closed"
+            ),
+        }
 
     def _execute_kill_switch_binding_action(
         self, command: Any

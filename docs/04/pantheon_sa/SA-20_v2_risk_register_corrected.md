@@ -50,7 +50,7 @@ env-gated Postgres adoption
 | 1 | Blueprint says lean-platform but actual bridge is pantheon/lean | Critical | repo mapping drift |
 | 2 | Production live runtime not implemented | Critical | paper baseline exists, live is health-only |
 | 3 | RuntimeBinding context propagation unverified | Critical | bridge exists but contract needs proof |
-| 4 | TelemetryEvent exporter from paper runtime unverified | High | schema can be tested first in paper |
+| 4 | TelemetryEvent exporter from paper runtime unverified | High | schema can be tested first in paper; kill-switch ack now fail-closes when runtime follow-through is missing |
 | 5 | Full Lean Launcher + broker SDK kernel not active | Critical | production execution gap |
 | 6 | Bracket order is guarded outside paper/sim | High | paper/sim bracket execution now has explicit guard; live remains fail-closed |
 | 7 | Frontend auth still demo/local-token | High | production adoption gap |
@@ -194,6 +194,28 @@ Mitigation:
   - launch contract
 Acceptance:
   runtime heartbeat includes runtime_binding_id or explicitly records why unavailable in dev.
+```
+
+### R-EXE-005 — Kill switch treated as UI/audit-only action
+
+```text
+Category: Execution / Emergency Control
+Description:
+  Kill switch 若只更新 UI/status 或只留下 audit，而未確認 RuntimeBinding follow-through，
+  operator 可能誤以為 runtime 已 pause / risk_off / liquidate。
+Current status:
+  P1-KILL-001 已在 runtime-manager 補 secondary path 與 telemetry_ack：
+  有 RuntimeBinding follow-through 才 acknowledged；缺少 runtime ack 則 fail_closed。
+Likelihood: Low-Medium
+Impact: Critical
+Severity: High
+Mitigation:
+  - RuntimeManager KillSwitchBridge
+  - KillSwitchAuditEntry / AuditAction
+  - telemetry_ack fail-closed semantics
+Acceptance:
+  kill switch result includes AuditAction evidence, RuntimeBinding state mutation,
+  and telemetry_ack acknowledged/fail_closed status.
 ```
 
 ---
