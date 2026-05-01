@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；production、paper、canary、live gate 預設仍 fail-closed。",
-  "updated_at": "2026-05-01T09:07:27Z",
+  "updated_at": "2026-05-01T09:08:42Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,13 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "reviewing",
+      "status": "finalize",
       "current_task_ids": [
         "P1-LIVE-PLAN-001"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Runbook ready for review. docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md covers all three acceptance criteria: canary/live prerequisites documented, rollback and kill switch criteria named, human approval gates enumerated. Derived from PAPER_CANARY_LIVE_POLICY.md, KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md, and ROLLBACK_AND_POSITION_SEMANTICS.md. P1 scope is activation readiness only; production live remains fail-closed.",
-      "last_update": "2026-05-01T08:56:54Z"
+      "next": "Review approved by Codex. Owner Claude should finalize per task-closeout-finalization: confirm artifacts, create task-scoped commit if needed, then mark done.",
+      "last_update": "2026-05-01T09:08:24Z"
     },
     {
       "name": "Gemini",
@@ -170,13 +170,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
+      "status": "finalize",
       "current_task_ids": [
         "P0-REC-001-SIDECAR-ACCEPTANCE"
       ],
       "branch": "feat/claude2-execution-control",
-      "next": "Owner picked up review_approved task for closeout: verifying acceptance packet, staging task-scoped commit, then marking done.",
-      "last_update": "2026-05-01T09:06:49Z"
+      "next": "Re-approval for finalization: commit 27cc893 stages only the acceptance packet with §8 reviewer note already added during original approval. No scope deviation from approved state. Sidecar boundary confirmed. Owner may proceed to done.",
+      "last_update": "2026-05-01T09:08:42Z"
     },
     {
       "name": "Gemini2",
@@ -274,7 +274,7 @@
       "phase": "P1 Wave 5",
       "owner": "Claude",
       "reviewer": "Codex",
-      "status": "review",
+      "status": "review_approved",
       "depends_on": [
         "P0-LOOP-001"
       ],
@@ -287,8 +287,8 @@
         "rollback and kill switch criteria named",
         "human approval and risk pass gates required before live activation"
       ],
-      "next": "Runbook ready for review. docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md covers all three acceptance criteria: canary/live prerequisites documented, rollback and kill switch criteria named, human approval gates enumerated. Derived from PAPER_CANARY_LIVE_POLICY.md, KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md, and ROLLBACK_AND_POSITION_SEMANTICS.md. P1 scope is activation readiness only; production live remains fail-closed.",
-      "last_update": "2026-05-01T08:56:54Z",
+      "next": "Review approved by Codex. Owner Claude should finalize per task-closeout-finalization: confirm artifacts, create task-scoped commit if needed, then mark done.",
+      "last_update": "2026-05-01T09:08:24Z",
       "source_plane": "planning",
       "source_ref": {
         "type": "discussion_planning",
@@ -299,7 +299,11 @@
         "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
         "wave": "5",
         "source_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
-      }
+      },
+      "review_notes_zh": [
+        "審查通過。已檢查 canary/live activation runbook 對齊 PAPER_CANARY_LIVE_POLICY.md、KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md、ROLLBACK_AND_POSITION_SEMANTICS.md、BINDING_AND_DEPLOYMENT_SEMANTICS.md，並確認三項 acceptance 已覆蓋：canary/live prerequisites、rollback 與 kill switch criteria、live activation 前的人工作業與 risk pass gates。P1 範圍維持 activation readiness；production live 仍 fail-closed。驗證：文件審查與 ai-status task 查詢。"
+      ],
+      "review_file": "support/reviews/P1-LIVE-PLAN-001-codex-review.md"
     },
     {
       "id": "P1-PERSIST-001",
@@ -342,7 +346,7 @@
       "phase": "Pantheon P0 Paper Loop",
       "owner": "Claude2",
       "reviewer": "Codex2",
-      "status": "in_progress",
+      "status": "review_approved",
       "depends_on": [
         "P0-LOOP-001"
       ],
@@ -354,8 +358,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Owner picked up review_approved task for closeout: verifying acceptance packet, staging task-scoped commit, then marking done.",
-      "last_update": "2026-05-01T09:06:49Z",
+      "next": "Re-approval for finalization: commit 27cc893 stages only the acceptance packet with §8 reviewer note already added during original approval. No scope deviation from approved state. Sidecar boundary confirmed. Owner may proceed to done.",
+      "last_update": "2026-05-01T09:08:42Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "P0-REC-001",
@@ -422,8 +426,9 @@
       "from": "Claude",
       "to": "Codex",
       "message": "Runbook ready for review. docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md covers all three acceptance criteria: canary/live prerequisites documented, rollback and kill switch criteria named, human approval gates enumerated. Derived from PAPER_CANARY_LIVE_POLICY.md, KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md, and ROLLBACK_AND_POSITION_SEMANTICS.md. P1 scope is activation readiness only; production live remains fail-closed.",
-      "status": "pending",
-      "created_at": "2026-05-01T08:56:54Z"
+      "status": "done",
+      "created_at": "2026-05-01T08:56:54Z",
+      "resolved_at": "2026-05-01T09:08:24Z"
     },
     {
       "task_id": "P0-REC-001-SIDECAR-ACCEPTANCE",
@@ -442,6 +447,31 @@
       "status": "done",
       "created_at": "2026-05-01T09:01:55Z",
       "resolved_at": "2026-05-01T09:06:49Z"
+    },
+    {
+      "task_id": "P1-LIVE-PLAN-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved by Codex. Owner Claude should finalize per task-closeout-finalization: confirm artifacts, create task-scoped commit if needed, then mark done.",
+      "status": "pending",
+      "created_at": "2026-05-01T09:08:24Z"
+    },
+    {
+      "task_id": "P0-REC-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Finalization commit 27cc893 created (task-scoped, only stages acceptance packet). Packet is complete with §8 reviewer note. No scope changes from approved state. Please re-approve so owner can run done.",
+      "status": "done",
+      "created_at": "2026-05-01T09:08:27Z",
+      "resolved_at": "2026-05-01T09:08:42Z"
+    },
+    {
+      "task_id": "P0-REC-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Re-approval for finalization: commit 27cc893 stages only the acceptance packet with §8 reviewer note already added during original approval. No scope deviation from approved state. Sidecar boundary confirmed. Owner may proceed to done.",
+      "status": "pending",
+      "created_at": "2026-05-01T09:08:42Z"
     }
   ],
   "blockers": [],
@@ -457,21 +487,21 @@
   "workload_summary": {
     "Claude": {
       "total": 1,
-      "active": 1,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 1,
-      "review_approved": 0,
+      "review": 0,
+      "review_approved": 1,
       "todo": 0
     },
     "Claude2": {
       "total": 1,
-      "active": 1,
+      "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 0,
-      "todo": 1
+      "review_approved": 1,
+      "todo": 0
     },
     "Gemini": {
       "total": 0,
