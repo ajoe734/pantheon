@@ -42,7 +42,7 @@ entrypoint:
 
 runtime behavior:
   paper role starts Python paper runtime
-  live role is health-only sidecar placeholder
+  live role is health-only sidecar placeholder and reports activation_status=not_activated
 
 compose:
   docker-compose.exec.yml points to /workspace/lean/Launcher/config.json
@@ -53,7 +53,7 @@ bridge:
   contains PantheonAlgoBase bridge
 
 known gap:
-  bracket order is log-only
+  bracket order is logged_only audit evidence only and is not submitted_to_broker
   full Lean Launcher + broker SDK production execution kernel is not complete
 ```
 
@@ -279,7 +279,7 @@ INV-BOOT-003:
   runtime_role=paper may start Python paper runtime without broker SDK.
 
 INV-BOOT-004:
-  runtime_role=live currently starts health-only sidecar unless production activation flag is approved.
+  runtime_role=live currently starts health-only / not_activated sidecar unless production activation flag is approved.
 
 INV-BOOT-005:
   RuntimeBootstrapRequest MUST reference RuntimeBinding.
@@ -297,7 +297,7 @@ INV-BOOT-009:
   Broker secret MUST NOT be included in RuntimeBootstrapRequest.
 
 INV-BOOT-010:
-  bracket order behavior MUST remain logged_only until guarded broker execution is implemented.
+  bracket order behavior MUST remain logged_only with submitted_to_broker=false until guarded broker execution is implemented.
 ```
 
 ---
@@ -351,6 +351,7 @@ Required future:
 ```text
 Current P0:
   health-only sidecar
+  activation_status=not_activated
   fail-closed for any broker action
 
 Allowed:
@@ -400,9 +401,11 @@ test_paper_role_does_not_require_broker_secret
 ```text
 test_runtime_bootstrap_paper_role_starts
 test_runtime_bootstrap_live_role_health_only
+test_live_sidecar_blocks_broker_connect_and_order_posts
 test_runtime_bootstrap_emits_started_event
 test_runtime_bootstrap_blocks_missing_binding
 test_runtime_bootstrap_reports_bridge_commit
+test_bracket_order_is_logged_only_not_broker_submitted
 ```
 
 ### 12.3 E2E paper baseline test
@@ -443,7 +446,7 @@ AC-BOOT-002:
   runtime_bootstrap paper role starts and reports health.
 
 AC-BOOT-003:
-  live role is health-only and cannot place broker orders.
+  live role is health-only / not_activated and cannot connect broker or place broker orders.
 
 AC-BOOT-004:
   request references pantheon/lean bridge identity.
@@ -455,7 +458,7 @@ AC-BOOT-006:
   bootstrap result can be correlated to RuntimeBinding.
 
 AC-BOOT-007:
-  tests prove bracket order remains logged_only until activation.
+  tests prove bracket_order_logged remains logged_only and submitted_to_broker=false until activation.
 ```
 
 ---

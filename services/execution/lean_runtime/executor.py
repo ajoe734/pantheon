@@ -36,6 +36,7 @@ log = logging.getLogger(__name__)
 
 # Maximum confidence-scaled position floor (avoid sub-penny orders)
 _CONFIDENCE_FLOOR = 0.5
+BRACKET_ORDER_STATUS_LOGGED_ONLY = "logged_only"
 
 
 class ExecutionError(RuntimeError):
@@ -152,13 +153,34 @@ def execute(signal: dict[str, Any], algo: Any) -> None:
     if risk.get("stop_loss_pct") or risk.get("take_profit_pct"):
         log.info(
             "[%s] Risk parameters present (stop=%.2f%%, tp=%.2f%%) — "
-            "bracket order not yet implemented; log only",
+            "bracket order not yet implemented; status=%s",
             signal_id,
             risk.get("stop_loss_pct", 0) * 100,
             risk.get("take_profit_pct", 0) * 100,
+            BRACKET_ORDER_STATUS_LOGGED_ONLY,
         )
+        _record_bracket_order_logged(algo, lean_symbol, signal_id, risk)
         # TODO (P3-001 follow-up): implement StopMarketOrder + LimitOrder bracket
         # after verifying broker support via algo.BrokerageModel
+
+
+def _record_bracket_order_logged(
+    algo: Any,
+    lean_symbol: Any,
+    signal_id: str,
+    risk: dict[str, Any],
+) -> None:
+    recorder = getattr(algo, "RecordBracketOrderLogged", None)
+    if not callable(recorder):
+        return
+    recorder(
+        lean_symbol,
+        signal_id=signal_id,
+        stop_loss_pct=float(risk.get("stop_loss_pct") or 0),
+        take_profit_pct=float(risk.get("take_profit_pct") or 0),
+        broker_submission_status=BRACKET_ORDER_STATUS_LOGGED_ONLY,
+        submitted_to_broker=False,
+    )
 
 
 def _place_order(

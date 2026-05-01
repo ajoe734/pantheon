@@ -130,6 +130,44 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(snapshot["paper_state"]["processed_signal_count"], 0)
         self.assertEqual(snapshot["paper_state"]["execution_event_count"], 0)
 
+    def test_bracket_order_event_is_logged_only_not_broker_submitted(self):
+        signal = self._signal()
+        signal["metadata"] = {
+            "risk_parameters": {
+                "stop_loss_pct": 0.02,
+                "take_profit_pct": 0.05,
+            }
+        }
+        store = InMemoryPendingSignalStore([signal])
+        telemetry = _FakeTelemetryEmitter()
+        service = PaperRuntimeService(
+            store=store,
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=telemetry,
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+
+        snapshot = service.drain_once()
+
+        events = snapshot["paper_state"]["recent_order_events"]
+        bracket_events = [event for event in events if event["event_type"] == "bracket_order_logged"]
+        self.assertEqual(len(bracket_events), 1)
+        self.assertEqual(bracket_events[0]["broker_submission_status"], "logged_only")
+        self.assertFalse(bracket_events[0]["submitted_to_broker"])
+        self.assertEqual(bracket_events[0]["metadata"]["signal_id"], "signal-001")
+
+        telemetry_bracket_events = [
+            event for event in telemetry.events if event["event_type"] == "bracket_order_logged"
+        ]
+        self.assertEqual(len(telemetry_bracket_events), 1)
+        self.assertEqual(
+            telemetry_bracket_events[0]["metadata"]["broker_submission_status"],
+            "logged_only",
+        )
+        self.assertFalse(telemetry_bracket_events[0]["metadata"]["submitted_to_broker"])
+
 
 if __name__ == "__main__":
     unittest.main()

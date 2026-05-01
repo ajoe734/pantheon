@@ -65,17 +65,26 @@ class OrderEvent:
     quantity: float
     fill_price: float
     action: str
+    submitted_to_broker: bool = False
+    broker_submission_status: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=_iso_now)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "event_type": self.event_type,
             "symbol": self.symbol,
             "quantity": self.quantity,
             "fill_price": self.fill_price,
             "action": self.action,
+            "submitted_to_broker": self.submitted_to_broker,
             "created_at": self.created_at,
         }
+        if self.broker_submission_status:
+            payload["broker_submission_status"] = self.broker_submission_status
+        if self.metadata:
+            payload["metadata"] = dict(self.metadata)
+        return payload
 
 
 class PaperExecutionAlgorithm:
@@ -100,7 +109,17 @@ class PaperExecutionAlgorithm:
     def _security(self, symbol: str) -> _Security:
         return self.Securities.setdefault(symbol, _Security(price=self._default_price))
 
-    def _publish(self, event_type: str, symbol: str, quantity: float, action: str) -> None:
+    def _publish(
+        self,
+        event_type: str,
+        symbol: str,
+        quantity: float,
+        action: str,
+        *,
+        broker_submission_status: str | None = None,
+        submitted_to_broker: bool = False,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         if self._event_sink is None:
             return
         security = self._security(symbol)
@@ -111,6 +130,9 @@ class PaperExecutionAlgorithm:
                 quantity=float(quantity),
                 fill_price=float(security.Price),
                 action=action,
+                submitted_to_broker=submitted_to_broker,
+                broker_submission_status=broker_submission_status,
+                metadata=metadata or {},
             )
         )
 
@@ -136,6 +158,30 @@ class PaperExecutionAlgorithm:
         quantity = self._holding(symbol).Quantity
         self._holding(symbol).Quantity = 0.0
         self._publish("fill_observation", symbol, -quantity, "liquidate")
+
+    def RecordBracketOrderLogged(  # noqa: N802
+        self,
+        symbol: str,
+        *,
+        signal_id: str,
+        stop_loss_pct: float,
+        take_profit_pct: float,
+        broker_submission_status: str,
+        submitted_to_broker: bool,
+    ) -> None:
+        self._publish(
+            "bracket_order_logged",
+            str(symbol),
+            0.0,
+            "bracket_order_logged",
+            broker_submission_status=broker_submission_status,
+            submitted_to_broker=submitted_to_broker,
+            metadata={
+                "signal_id": signal_id,
+                "stop_loss_pct": stop_loss_pct,
+                "take_profit_pct": take_profit_pct,
+            },
+        )
 
     def positions(self) -> list[dict[str, Any]]:
         positions: list[dict[str, Any]] = []
@@ -418,21 +464,27 @@ class PaperRuntimeService:
         self._execution_event_count += 1
         self._recent_order_events.append(event_payload)
         self._recent_order_events = self._recent_order_events[-20:]
+        telemetry_metadata = {
+            "runtime_package": "paper_execution_runtime",
+            "symbol": event.symbol,
+            "sim_fill_flag": event.event_type == "fill_observation",
+            "is_real_order": False,
+            "is_real_capital": False,
+            "submitted_to_broker": event.submitted_to_broker,
+            "capital_scale_pct": 0,
+        }
+        if event.broker_submission_status:
+            telemetry_metadata["broker_submission_status"] = event.broker_submission_status
+        telemetry_metadata.update(event.metadata)
         self._telemetry.emit(
             event.event_type,
             {
                 "fill_quantity": event.quantity,
                 "fill_price": event.fill_price,
                 "action": event.action,
+                "submitted_to_broker": event.submitted_to_broker,
             },
-            metadata={
-                "runtime_package": "paper_execution_runtime",
-                "symbol": event.symbol,
-                "sim_fill_flag": True,
-                "is_real_order": False,
-                "is_real_capital": False,
-                "capital_scale_pct": 0,
-            },
+            metadata=telemetry_metadata,
         )
 
     def _maybe_emit_heartbeat(self) -> None:
