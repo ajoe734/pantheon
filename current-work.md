@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-02 01:08:59
+Last updated: 2026-05-02 01:14:29
 
 ## Objective
 
@@ -37,9 +37,9 @@ Last updated: 2026-05-02 01:08:59
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Changes requested by Codex2: support/reviews/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-codex2-review.md. Main blocker: schema/checksum adapter support behind the evidence is still uncommitted and absent from task commit 2a6a705; also fix per-framework evaluator_packet checksum omission and remove premature 'closed' wording from OSS_INTEGRATION_CHECKLIST.md before re-handoff.
+- `Claude`: execution, control-plane, governance-review; next: Supervisor re-dispatched P2-RL-UPSTREAM-RUNTIME-SMOKE-001; task remains in progress.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Sidecar review packet approved: evidence bundle accurately summarized, all three acceptance criteria met, no canonical files modified. Four attention items correctly flagged as parent-review concerns. Returning to Codex for closeout.
+- `Codex`: integration, status-system, schema, acceptance; next: No active assignment
 - `Codex2`: integration, status-system, schema, acceptance; next: Codex review requested changes: add explicit non-secret rate-limit/quota and session/provenance evidence fields to every provider packet, including HTTP success/unavailable paths and IBKR/Shioaji supplied quote-readback paths; add tests and regenerate evidence. See support/reviews/P2-MARKETDATA-CREDENTIAL-SMOKE-001-codex-review.md.
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
 - `Claude2`: execution, control-plane, governance-review; next: No active assignment
@@ -60,16 +60,16 @@ Last updated: 2026-05-02 01:08:59
 | `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` | P2 Wave 8 External Activation | FinRL RLlib Ray Tune governed runtime activation smoke | Claude | in_progress | `P2-OSS-ACTIVATE-001` | 把 FinRL/RLlib/Ray Tune 從 dormant/deferred prep 推進到 governed runtime smoke：真實 backend 可用時跑 bounded train/search，否則留下明確 dependency/config error；仍禁止 broker/order/live 路由。 |
 | `P2-MARKETDATA-CREDENTIAL-SMOKE-001` | P2 Wave 8 External Activation | Market-data provider credentialed read smoke | Codex2 | in_progress | `APP-003-DATASOURCE-OPS-001`, `P2-OSS-ACTIVATE-001` | 對非下單外部市場資料源做 credentialed read/runtime smoke：Massive/Polygon、TWSE/TPEx/MOPS/TEJ、CoinGecko/Kraken market data、IBKR/Shioaji quote/read-only lane；不得觸發 broker order/capital side effect。 |
 | `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001` | P2 Wave 8 External Activation | Source/search live connector credentialed smoke | Codex2 | todo | `P1-SOURCE-001`, `P1-SEARCH-001`, `P2-OSS-ACTIVATE-001` | 對 source/search 非下單外部資料源做 bounded live/test credential smoke：news/social/alpha DB 或 allowlisted HTTP/feed connector -> SourceRecord/EvidenceBundle -> durable index -> BFF/SearchGateway query；禁止 broker/Lean/order 路由。 |
-| `P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW` | P2 Wave 8 External Activation | [Sidecar] [Auto] [Parent P2-RL-UPSTREAM-RUNTIME-SMOKE-001] Prepare P2-RL-UPSTREAM-RUNTIME-SMOKE-001 review packet and evidence summary | Codex | review_approved | `P2-OSS-ACTIVATE-001` | 平行支援 P2-RL-UPSTREAM-RUNTIME-SMOKE-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
-| `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF` | P2 Wave 8 External Activation | [Sidecar] [Auto] [Parent P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001] Prepare P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001 BFF and frontend handoff packet | Claude | review | `P1-SOURCE-001`, `P1-SEARCH-001`, `P2-OSS-ACTIVATE-001` | 平行支援 P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
+| `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF` | P2 Wave 8 External Activation | [Sidecar] [Auto] [Parent P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001] Prepare P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001 BFF and frontend handoff packet | Claude | review_approved | `P1-SOURCE-001`, `P1-SEARCH-001`, `P2-OSS-ACTIVATE-001` | 平行支援 P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-02 00:58:28
-- Terminal tasks archived: `884` total, `868` completed, `16` superseded
+- Archive updated: 2026-05-02 01:14:29
+- Terminal tasks archived: `885` total, `869` completed, `16` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW` | P2 Wave 8 External Activation | Prepare P2-RL-UPSTREAM-RUNTIME-SMOKE-001 review packet and evidence summary | Codex | completed | 2026-05-02 01:14:29 | `ai-task-archive/tasks/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW.json` |
 | `P2-TRL-RUNTIME-DATA-ACTIVATION-001` | P2 Wave 8 External Activation | TRL runtime-data activation and real DPO smoke | Codex2 | completed | 2026-05-02 00:58:28 | `ai-task-archive/tasks/P2-TRL-RUNTIME-DATA-ACTIVATION-001.json` |
 | `P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-ACCEPTANCE` | P2 Wave 8 External Activation | Prepare P2-MARKETDATA-CREDENTIAL-SMOKE-001 acceptance packet and dependency map | Claude2 | completed | 2026-05-02 00:56:24 | `ai-task-archive/tasks/P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-ACCEPTANCE.json` |
 | `P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE` | P2 Wave 8 External Activation | Prepare P2-TRL-RUNTIME-DATA-ACTIVATION-001 acceptance packet and dependency map | Claude | completed | 2026-05-02 00:37:32 | `ai-task-archive/tasks/P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE.json` |
@@ -89,24 +89,21 @@ Last updated: 2026-05-02 01:08:59
 | `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | Codex | completed | 2026-05-01 17:59:28 | `ai-task-archive/tasks/P1-PERSIST-001.json` |
 | `P1-BRACKET-001-SIDECAR-REVIEW` | P1 Wave 5 | Prepare P1-BRACKET-001 review packet and evidence summary | Claude | completed | 2026-05-01 17:57:18 | `ai-task-archive/tasks/P1-BRACKET-001-SIDECAR-REVIEW.json` |
 | `P1-BRACKET-001` | P1 Wave 5 | Guarded paper/sim bracket order execution | Codex2 | completed | 2026-05-01 17:46:29 | `ai-task-archive/tasks/P1-BRACKET-001.json` |
-| `P1-LIVE-PLAN-001-SIDECAR-REVIEW` | P1 Wave 5 | Prepare P1-LIVE-PLAN-001 review packet and evidence summary | Claude2 | completed | 2026-05-01 17:36:30 | `ai-task-archive/tasks/P1-LIVE-PLAN-001-SIDECAR-REVIEW.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` | P2 Wave 8 External Activation | FinRL RLlib Ray Tune governed runtime activation smoke | 把 FinRL/RLlib/Ray Tune 從 dormant/deferred prep 推進到 governed runtime smoke：真實 backend 可用時跑 bounded train/search，否則留下明確 dependency/config error；仍禁止 broker/order/live 路由。 | Claude | Codex2 | in_progress | `P2-OSS-ACTIVATE-001` | 2026-05-02 01:08:59 | Changes requested by Codex2: support/reviews/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-codex2-review.md. Main blocker: schema/checksum adapter support behind the evidence is still uncommitted and absent from task commit 2a6a705; also fix per-framework evaluator_packet checksum omission and remove premature 'closed' wording from OSS_INTEGRATION_CHECKLIST.md before re-handoff. |
+| `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` | P2 Wave 8 External Activation | FinRL RLlib Ray Tune governed runtime activation smoke | 把 FinRL/RLlib/Ray Tune 從 dormant/deferred prep 推進到 governed runtime smoke：真實 backend 可用時跑 bounded train/search，否則留下明確 dependency/config error；仍禁止 broker/order/live 路由。 | Claude | Codex2 | in_progress | `P2-OSS-ACTIVATE-001` | 2026-05-02 01:12:08 | Supervisor re-dispatched P2-RL-UPSTREAM-RUNTIME-SMOKE-001; task remains in progress. |
 | `P2-MARKETDATA-CREDENTIAL-SMOKE-001` | P2 Wave 8 External Activation | Market-data provider credentialed read smoke | 對非下單外部市場資料源做 credentialed read/runtime smoke：Massive/Polygon、TWSE/TPEx/MOPS/TEJ、CoinGecko/Kraken market data、IBKR/Shioaji quote/read-only lane；不得觸發 broker order/capital side effect。 | Codex2 | Codex | in_progress | `APP-003-DATASOURCE-OPS-001`, `P2-OSS-ACTIVATE-001` | 2026-05-02 00:51:47 | Codex review requested changes: add explicit non-secret rate-limit/quota and session/provenance evidence fields to every provider packet, including HTTP success/unavailable paths and IBKR/Shioaji supplied quote-readback paths; add tests and regenerate evidence. See support/reviews/P2-MARKETDATA-CREDENTIAL-SMOKE-001-codex-review.md. |
 | `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001` | P2 Wave 8 External Activation | Source/search live connector credentialed smoke | 對 source/search 非下單外部資料源做 bounded live/test credential smoke：news/social/alpha DB 或 allowlisted HTTP/feed connector -> SourceRecord/EvidenceBundle -> durable index -> BFF/SearchGateway query；禁止 broker/Lean/order 路由。 | Codex2 | Codex | todo | `P1-SOURCE-001`, `P1-SEARCH-001`, `P2-OSS-ACTIVATE-001` | 2026-05-02 00:19:24 | Auto-reassigned ownership from Gemini2 to Codex2 after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex2 starts a fresh run. |
-| `P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW` | P2 Wave 8 External Activation | [Sidecar] [Auto] [Parent P2-RL-UPSTREAM-RUNTIME-SMOKE-001] Prepare P2-RL-UPSTREAM-RUNTIME-SMOKE-001 review packet and evidence summary | 平行支援 P2-RL-UPSTREAM-RUNTIME-SMOKE-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Codex | Claude | review_approved | `P2-OSS-ACTIVATE-001` | 2026-05-02 01:08:23 | Sidecar review packet approved: evidence bundle accurately summarized, all three acceptance criteria met, no canonical files modified. Four attention items correctly flagged as parent-review concerns. Returning to Codex for closeout. |
-| `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF` | P2 Wave 8 External Activation | [Sidecar] [Auto] [Parent P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001] Prepare P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001 BFF and frontend handoff packet | 平行支援 P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Claude | Codex2 | review | `P1-SOURCE-001`, `P1-SEARCH-001`, `P2-OSS-ACTIVATE-001` | 2026-05-02 01:06:28 | BFF handoff packet complete. Explored BFF_API_CONTRACT.md, source_ingestion connectors/base.py, search/gateway.py, openclaw-gateway-adapter/main.py, source-search-prod-hardening.md. Identified 6 query gaps (GAP-01 through GAP-06): missing auth-requirements endpoint, no ingest-job to index readback link, no lineage refs in search results, no DLQ preview GET, no composed source-search health view, OpenClaw audit not proxied in BFF. Documented operator journey (9 steps: connector discovery -> credential provisioning -> ingest job -> poll completion -> source record verification -> index confirmation -> search readback -> health sign-off -> evidence recording). Frontend handoff items in Section 7. No canonical files modified. |
+| `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF` | P2 Wave 8 External Activation | [Sidecar] [Auto] [Parent P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001] Prepare P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001 BFF and frontend handoff packet | 平行支援 P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Claude | Codex2 | review_approved | `P1-SOURCE-001`, `P1-SEARCH-001`, `P2-OSS-ACTIVATE-001` | 2026-05-02 01:14:18 | Codex2 review approved the BFF handoff packet with two parent-task caveats recorded in support/reviews/P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF-codex2-review.md; owner Claude should finalize the sidecar closeout. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF` | Claude | Codex2 | BFF handoff packet complete. Explored BFF_API_CONTRACT.md, source_ingestion connectors/base.py, search/gateway.py, openclaw-gateway-adapter/main.py, source-search-prod-hardening.md. Identified 6 query gaps (GAP-01 through GAP-06): missing auth-requirements endpoint, no ingest-job to index readback link, no lineage refs in search results, no DLQ preview GET, no composed source-search health view, OpenClaw audit not proxied in BFF. Documented operator journey (9 steps: connector discovery -> credential provisioning -> ingest job -> poll completion -> source record verification -> index confirmation -> search readback -> health sign-off -> evidence recording). Frontend handoff items in Section 7. No canonical files modified. | pending | 2026-05-02 01:06:28 |
-| `P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW` | Claude | Codex | Sidecar review packet approved: evidence bundle accurately summarized, all three acceptance criteria met, no canonical files modified. Four attention items correctly flagged as parent-review concerns. Returning to Codex for closeout. | pending | 2026-05-02 01:08:23 |
+| `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF` | Codex2 | Claude | Codex2 review approved the BFF handoff packet with two parent-task caveats recorded in support/reviews/P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF-codex2-review.md; owner Claude should finalize the sidecar closeout. | pending | 2026-05-02 01:14:18 |
 
 ## Blockers
 
@@ -118,11 +115,11 @@ Last updated: 2026-05-02 01:08:59
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| `P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW` | Claude | 審查通過：evidence bundle 準確，sidecar scope 邊界正確，三框架 governance boundary flags 驗證通過，四項 attention items 均已正確歸類為 parent review 範疇，不構成 sidecar 缺陷<br>後續追蹤：OSS_INTEGRATION_CHECKLIST.md lifecycle wording 需在 parent closeout 前由 Codex2 與 Claude 對齊；PYTHONHASHSEED nondeterminism 為 parent-scope reproducibility note | support/reviews/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW-claude-review.md |
+| `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF` | Codex2 | 審查通過：handoff packet 維持 sidecar scope，未改 canonical truth，BFF/source/search endpoint inventory 與 operator journey 足以支援 parent owner 判斷吸收範圍。\|注意事項：GAP-04 應精確表述為缺少專用 BFF DLQ preview endpoint，因 /api/v1/operator/source/ops 已可組合 DLQ entries；Step 5 的 source-records connector_id query 目前不是服務端 filter，parent 若要 operator UX 應補 filter 或明示 client-side filtering。 | support/reviews/P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF-codex2-review.md |
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-05-02 01:06:40
+- Last coordination scan: 2026-05-02 01:12:08
 - Tracked features: `46`
 - Lovable-ready packets: `45`
 - Waiting for Lovable/front-end: `0`
@@ -189,23 +186,23 @@ Last updated: 2026-05-02 01:08:59
 
 ## Latest Checkpoints
 
-- 2026-05-02 01:07:12 Orchestrator: PostToolUse: Read
-- 2026-05-02 01:07:32 Orchestrator: PreToolUse: Glob
-- 2026-05-02 01:07:33 Orchestrator: PreToolUse: Glob
-- 2026-05-02 01:07:33 Orchestrator: PostToolUse: Glob
-- 2026-05-02 01:07:33 Orchestrator: PostToolUse: Glob
-- 2026-05-02 01:07:36 Orchestrator: PreToolUse: Read
-- 2026-05-02 01:07:36 Orchestrator: PostToolUse: Read
-- 2026-05-02 01:07:36 Orchestrator: PreToolUse: Read
-- 2026-05-02 01:07:36 Orchestrator: PostToolUse: Read
-- 2026-05-02 01:07:47 Orchestrator: PreToolUse: Bash
-- 2026-05-02 01:07:48 Orchestrator: PostToolUse: Bash
-- 2026-05-02 01:08:10 Orchestrator: PreToolUse: Write
-- 2026-05-02 01:08:11 Orchestrator: PostToolUse: Write
-- 2026-05-02 01:08:22 Orchestrator: PreToolUse: Bash
-- 2026-05-02 01:08:23 Claude: `P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW` Sidecar review packet approved: evidence bundle accurately summarized, all three acceptance criteria met, no canonical files modified. Four attention items correctly flagged as parent-review concerns. Returning to Codex for closeout.
-- 2026-05-02 01:08:33 Orchestrator: PostToolUse: Bash
-- 2026-05-02 01:08:37 Orchestrator: PreToolUse: Bash
-- 2026-05-02 01:08:52 Orchestrator: PreToolUse: Bash
-- 2026-05-02 01:08:52 Orchestrator: PostToolUse: Bash
-- 2026-05-02 01:08:59 Codex2: `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` Changes requested by Codex2: support/reviews/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-codex2-review.md. Main blocker: schema/checksum adapter support behind the evidence is still uncommitted and absent from task commit 2a6a705; also fix per-framework evaluator_packet checksum omission and remove premature 'closed' wording from OSS_INTEGRATION_CHECKLIST.md before re-handoff.
+- 2026-05-02 01:13:10 Orchestrator: PreToolUse: Bash
+- 2026-05-02 01:13:10 Orchestrator: PostToolUse: Bash
+- 2026-05-02 01:13:14 Orchestrator: PreToolUse: Read
+- 2026-05-02 01:13:14 Orchestrator: PostToolUse: Read
+- 2026-05-02 01:13:17 Orchestrator: PreToolUse: Read
+- 2026-05-02 01:13:17 Orchestrator: PostToolUse: Read
+- 2026-05-02 01:13:18 Orchestrator: PreToolUse: Read
+- 2026-05-02 01:13:18 Orchestrator: PreToolUse: Bash
+- 2026-05-02 01:13:18 Orchestrator: PostToolUse: Read
+- 2026-05-02 01:13:19 Orchestrator: PostToolUse: Bash
+- 2026-05-02 01:13:24 Orchestrator: PreToolUse: Read
+- 2026-05-02 01:13:24 Orchestrator: PostToolUse: Read
+- 2026-05-02 01:13:58 Orchestrator: PreToolUse: Bash
+- 2026-05-02 01:13:58 Orchestrator: PostToolUse: Bash
+- 2026-05-02 01:14:01 Orchestrator: PreToolUse: Read
+- 2026-05-02 01:14:01 Orchestrator: PostToolUse: Read
+- 2026-05-02 01:14:09 Orchestrator: PreToolUse: Read
+- 2026-05-02 01:14:09 Orchestrator: PostToolUse: Read
+- 2026-05-02 01:14:18 Codex2: `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF` Codex2 review approved the BFF handoff packet with two parent-task caveats recorded in support/reviews/P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF-codex2-review.md; owner Claude should finalize the sidecar closeout.
+- 2026-05-02 01:14:29 Codex: `P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW` Review-approved sidecar packet committed in a309438; verification: manifest checksum OK, FinRL 16 tests OK, RLlib 33 tests OK. Scope remained support-only; no L1/runtime/registry/governance files changed.
