@@ -8,7 +8,7 @@
 **Parent Owner**: Codex2
 **Parent Reviewer**: Codex
 **Date Prepared**: 2026-05-01
-**Status**: ready for reviewer handoff
+**Status**: review approved — closed (2026-05-01; reviewer: Codex2)
 
 ---
 
@@ -170,10 +170,13 @@ All of the following were read and are current as of 2026-05-01:
 
 ## 7. Disposition
 
-This packet is complete and ready for Codex2 review.
+**Closeout status**: Sidecar task closed `done` on 2026-05-01.
 
-The parent task P2-TRL-RUNTIME-DATA-ACTIVATION-001 remains in `todo` status until Codex2 starts a fresh implementation run. When the parent task produces its evidence bundle, the checklist in §4 and the reviewer gate in §5 above provide the structured surface for review and acceptance.
+Codex2 review approved (2026-05-01T16:13:56Z). Review notes confirmed:
+- Acceptance packet uses only sidecar support artifacts; no canonical truth modified.
+- Parent acceptance criteria, open runtime-data gates, preflight steps, reviewer gate, and evidence references are all documented for parent task use.
+- Remaining risk: this packet does not prove parent runtime-data gates are satisfied; parent task (P2-TRL-RUNTIME-DATA-ACTIVATION-001) must separately produce FB-002 evidence, real TRL DPO/install-config evidence, and artifact/evaluator/registry handoff.
 
-The sidecar task (P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE) will proceed to `review` → `review_approved` → `done` independently of the parent task timeline.
+The parent task P2-TRL-RUNTIME-DATA-ACTIVATION-001 remains in `todo` status assigned to Codex2. When the parent task produces its evidence bundle, the checklist in §4 and the reviewer gate in §5 above provide the structured surface for review and acceptance by Codex.
 
-**Handoff instruction**: After this packet is reviewed and approved by Codex2, the sidecar closes. The acceptance packet remains as a support artifact for the parent task. Absorption into the main line is at the parent owner's (Codex2's) discretion.
+**Absorption**: The acceptance packet remains as a support artifact. Absorption into the main line is at the parent owner's (Codex2's) discretion.
