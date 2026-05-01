@@ -58,7 +58,7 @@ def _claude_local_settings() -> dict[str, Any]:
 
 def _gemini_home(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> Path:
     provider = ((config or {}).get("providers", {}).get(provider_id, {}) or {}).get("gemini", {}) or {}
-    home = str(provider.get("home") or "").strip()
+    home = str(provider.get("config_home") or provider.get("home") or "").strip()
     return Path(os.path.expanduser(home)) if home else Path.home()
 
 
@@ -457,6 +457,10 @@ def desired_claude_local_settings(config: dict[str, Any], current: dict[str, Any
 
 def desired_gemini_settings(config: dict[str, Any], provider_id: str = "gemini") -> dict[str, Any]:
     approval = config.get("providers", {}).get(provider_id, {}).get("approval", {})
+    gemini_runtime = config.get("providers", {}).get(provider_id, {}).get("gemini", {}) or {}
+    model = str(gemini_runtime.get("model") or "").strip()
+    approval_mode = str(approval.get("default_approval_mode", "auto_edit") or "auto_edit")
+    settings_approval_mode = "auto_edit" if approval_mode == "yolo" else approval_mode
     auth_type = _gemini_selected_auth_type(
         _gemini_settings(config, provider_id),
         oauth_creds_path=_gemini_oauth_creds_path(config, provider_id),
@@ -470,12 +474,15 @@ def desired_gemini_settings(config: dict[str, Any], provider_id: str = "gemini")
     }
     if auth_type:
         security["auth"] = {"selectedType": auth_type}
-    return {
+    desired = {
         "general": {
-            "defaultApprovalMode": approval.get("default_approval_mode", "auto_edit"),
+            "defaultApprovalMode": settings_approval_mode,
         },
         "security": security,
     }
+    if model:
+        desired["model"] = {"name": model}
+    return desired
 
 
 def _claude_provider_report(
@@ -561,6 +568,7 @@ def _gemini_provider_report(
 ) -> dict[str, Any]:
     provider_config = (config.get("providers", {}).get(provider_id, {}) or {})
     gemini_runtime = provider_config.get("gemini", {}) or {}
+    runtime_approval_mode = (provider_config.get("approval", {}) or {}).get("default_approval_mode")
     selected_model = str(gemini_runtime.get("model") or "").strip() or None
     provider_binary = _configured_provider_binary(config, provider_id, "gemini", "gemini")
     provider_settings = _gemini_settings(config, provider_id)
@@ -580,7 +588,9 @@ def _gemini_provider_report(
         "installed": installed,
         "host_layer": "VS Code extension + CLI" if gemini_path and provider_binary else ("CLI" if provider_binary else "VS Code extension"),
         "delivery_mode": (config.get("providers", {}).get(provider_id, {}) or {}).get("delivery_mode", "gemini"),
-        "approval_mode": provider_settings.get("general", {}).get("defaultApprovalMode") or "default",
+        "approval_mode": runtime_approval_mode
+        or provider_settings.get("general", {}).get("defaultApprovalMode")
+        or "default",
         "persistent_allow_supported": True,
         "default_auto_approve_supported": True,
         "full_access_supported": True,
@@ -607,6 +617,7 @@ def _gemini_provider_report(
         "settings": {
             "geminicodeassist.agentYoloMode": _workspace_setting(workspace_settings, "geminicodeassist.agentYoloMode"),
             "general.defaultApprovalMode": provider_settings.get("general", {}).get("defaultApprovalMode"),
+            "runtime.defaultApprovalMode": runtime_approval_mode,
             "security.enablePermanentToolApproval": provider_settings.get("security", {}).get("enablePermanentToolApproval"),
             "security.autoAddToPolicyByDefault": provider_settings.get("security", {}).get("autoAddToPolicyByDefault"),
             "security.disableYoloMode": provider_settings.get("security", {}).get("disableYoloMode"),
@@ -922,6 +933,8 @@ def apply_gemini_settings(config: dict[str, Any]) -> dict[str, Any]:
         "general": {**current.get("general", {}), **desired.get("general", {})},
         "security": merged_security,
     }
+    if desired.get("model"):
+        updated["model"] = {**current.get("model", {}), **desired["model"]}
     GEMINI_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     write_json(GEMINI_SETTINGS_PATH, updated)
     return updated

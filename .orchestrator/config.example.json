@@ -394,16 +394,21 @@
       },
       "gemini": {
         "cli": ".orchestrator/bin/gemini2",
+        "config_home": "~/.gemini2",
         "home": "~/.gemini2",
         "include_directories": true,
         "model": "gemini-2.5-flash-lite",
+        "output_format": "json",
         "env": {
+          "GEMINI_CLI_TRUST_WORKSPACE": "true",
+          "GOOGLE_GENAI_USE_GCA": "true",
           "GOOGLE_CLOUD_PROJECT": "YOUR_GEMINI_CODE_ASSIST_PROJECT",
-          "GOOGLE_CLOUD_PROJECT_ID": "YOUR_GEMINI_CODE_ASSIST_PROJECT"
+          "GOOGLE_CLOUD_PROJECT_ID": "YOUR_GEMINI_CODE_ASSIST_PROJECT",
+          "GOOGLE_CLOUD_LOCATION": "us-central1"
         }
       },
       "approval": {
-        "default_approval_mode": "auto_edit",
+        "default_approval_mode": "yolo",
         "workspace_agent_yolo_mode": false,
         "enable_permanent_tool_approval": true,
         "auto_add_to_policy_by_default": true,

@@ -358,7 +358,7 @@ EOF
                     "delivery_mode": "gemini",
                     "gemini": {
                         "cli": "gemini",
-                        "home": "~/.gemini2",
+                        "config_home": "~/.gemini2",
                         "model": "gemini-2.5-flash-lite",
                         "env": {"GOOGLE_CLOUD_PROJECT": "gemini2-project"},
                     },

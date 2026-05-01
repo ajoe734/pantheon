@@ -50,7 +50,7 @@ def _provider_env(config: dict | None = None, provider_id: str | None = None) ->
 def _gemini_home(config: dict | None = None, provider_id: str | None = None) -> Path:
     provider = _provider_settings(config, provider_id)
     runtime = provider.get("gemini", {})
-    home = str(runtime.get("home") or "").strip()
+    home = str(runtime.get("config_home") or runtime.get("home") or "").strip()
     return Path(os.path.expanduser(home)) if home else Path.home()
 
 
@@ -198,12 +198,22 @@ class GeminiAdapter(BaseAdapter):
         model = str(gemini_settings.get("model") or "").strip()
         if model:
             command.extend(["--model", model])
+        output_format = str(gemini_settings.get("output_format") or "").strip()
+        if output_format:
+            command.extend(["--output-format", output_format])
         command.extend(["--prompt", request.message])
         approval_mode = approval.get("default_approval_mode")
         if approval_mode:
             command.extend(["--approval-mode", approval_mode])
-        if gemini_settings.get("include_directories"):
-            command.extend(["--include-directories", str(config_path(self.config, "status_file").parents[0])])
+        include_directories = gemini_settings.get("include_directories")
+        if include_directories:
+            root = config_path(self.config, "status_file").parents[0]
+            paths = [str(root)] if include_directories is True else include_directories
+            if isinstance(paths, (str, os.PathLike)):
+                paths = [paths]
+            for path in paths:
+                expanded = Path(os.path.expanduser(str(path)))
+                command.extend(["--include-directories", str(expanded if expanded.is_absolute() else root / expanded)])
 
         spawn_env: dict[str, str] = dict(os.environ)
         spawn_env.update(_provider_env(self.config, provider_id))

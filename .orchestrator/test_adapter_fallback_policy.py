@@ -200,12 +200,13 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
                         "allow_inbox_fallback": False,
                         "gemini": {
                             "cli": "gemini",
-                            "home": str(root / "gemini2-home"),
+                            "config_home": str(root / "gemini2-home"),
                             "include_directories": True,
                             "model": "gemini-2.5-flash-lite",
+                            "output_format": "json",
                             "env": {"GOOGLE_CLOUD_PROJECT": "gemini2-project"},
                         },
-                        "approval": {"default_approval_mode": "auto_edit"},
+                        "approval": {"default_approval_mode": "yolo"},
                     }
                 },
             }
@@ -231,7 +232,10 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertIn("-gemini2-gemini2-", Path(str(result.log_path)).name)
         self.assertIn("--model", result.command)
         self.assertEqual(result.command[result.command.index("--model") + 1], "gemini-2.5-flash-lite")
+        self.assertIn("--output-format", result.command)
+        self.assertEqual(result.command[result.command.index("--output-format") + 1], "json")
         self.assertIn("--approval-mode", result.command)
+        self.assertEqual(result.command[result.command.index("--approval-mode") + 1], "yolo")
         self.assertIn("--include-directories", result.command)
         env = spawn.call_args.kwargs["env"]
         self.assertEqual(env["AI_NAME"], "Gemini2")
