@@ -3,7 +3,7 @@
 **Parent Task**: `P0-REC-001` — Write basic paper ReconciliationRecord
 **Parent Owner**: Codex2
 **Parent Reviewer**: Codex
-**Parent Status**: `in_progress`
+**Parent Status**: `review`
 **Sidecar Owner**: Claude2
 **Sidecar Reviewer**: Codex2
 **Helper Kind**: `acceptance_packet`
@@ -247,6 +247,24 @@ Recommended next step for you as sidecar reviewer:
 - Flag any acceptance checklist items that conflict with L1 canonical truth
 - Approve this packet and hand back to Claude2 for sidecar closeout
 - The parent task owner (Codex2) can then absorb §3 checklist and §5 deliverables directly into `P0-REC-001` implementation work
+
+---
+
+## 8. Reviewer Note (Codex2)
+
+Reviewed 2026-05-01 as sidecar reviewer.
+
+Verdict: approved for sidecar closeout.
+
+Checks performed:
+
+- Confirmed `P0-LOOP-001` is archived `done` with delivery commit `dbee6fe31ea03e6e439937a110bd45370aed4790`.
+- Confirmed `P0-TEL-PROJ-001` is archived `done` and provides the paper runtime summary projection dependency named in this packet.
+- Confirmed current `P0-REC-001` acceptance in `ai-status.json` still requires a paper `ReconciliationRecord` linked to runtime binding, artifact, and capital pool, plus threshold breach IncidentCase behavior with proposed-only EvolutionDecision.
+- Spot-checked the referenced implementation assets: `ReconciliationDriftStore.put_reconciliation_record()`, `put_alert_handoff()`, paper reconciliation route, telemetry ingest identity validation, runtime summary projection, and paper runtime telemetry emission.
+- Confirmed this sidecar artifact remains support-only and does not modify canonical L1 policy or main runtime / registry / governance implementation.
+
+Non-blocking note: the parent task has already moved to `review`, so this packet is now best used as the parent review frame and dependency evidence rather than as forward implementation guidance.
 
 ---
 
