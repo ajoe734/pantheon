@@ -1,0 +1,12 @@
+{
+  "backend": "rllib_ppo",
+  "cause_message": "No module named 'ray'",
+  "cause_type": "ModuleNotFoundError",
+  "error_type": "RLlibDeferredPrepError",
+  "message": "RLlib backend requested but package import failed; install services/research/rllib requirements first",
+  "silent_stub_fallback": false,
+  "status": "dependency_or_config_error",
+  "traceback_tail": [
+    "services.research.rllib.adapter.rllib_adapter.RLlibDeferredPrepError: RLlib backend requested but package import failed; install services/research/rllib requirements first\n"
+  ]
+}

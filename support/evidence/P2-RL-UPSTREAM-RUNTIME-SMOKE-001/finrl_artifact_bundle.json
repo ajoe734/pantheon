@@ -1,0 +1,139 @@
+{
+  "artifact_family": "rl_policy",
+  "created_at": "2026-05-01T16:51:51Z",
+  "created_by": "Claude",
+  "dataset_checksum": "sha256:7df00f08f611af7bd8501b3918bac42fc90e19f1f6b5d6dd509664de61d7fb4e",
+  "dataset_schema": {
+    "min_instruments": 2,
+    "min_lookback": 3,
+    "min_periods": 6,
+    "observed_lookback_window": 3,
+    "required_ohlcv_fields": [
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume"
+    ]
+  },
+  "dataset_summary": {
+    "action_labels": [
+      "hold",
+      "buy_small",
+      "sell_small",
+      "buy_large",
+      "sell_large"
+    ],
+    "cash_ratio": 0.65,
+    "data_frequency": "daily",
+    "dataset_id": "finrl-activation-smoke-20260501",
+    "decision_focus": "exit_timing",
+    "instruments": [
+      "EQ_AAA",
+      "EQ_BBB",
+      "EQ_CCC"
+    ],
+    "lookback_window": 3,
+    "num_instruments": 3,
+    "num_steps": 27,
+    "observation_dim": 7,
+    "position_ratio": 0.35,
+    "source_dataset_refs": [
+      "synthetic-ohlcv://bounded-fixture/30-periods"
+    ],
+    "source_strategy_spec_id": "strategy-spec:rl-exit-timing-v1",
+    "strategy_id": "rl-exit-timing-activation"
+  },
+  "environment_schema": {
+    "action_labels": [
+      "hold",
+      "buy_small",
+      "sell_small",
+      "buy_large",
+      "sell_large"
+    ],
+    "decision_focus": "exit_timing",
+    "observation_dim": 7,
+    "reward_inputs": [
+      "momentum_window",
+      "momentum_1",
+      "volatility",
+      "volume_change",
+      "position_ratio",
+      "cash_ratio",
+      "dispersion"
+    ],
+    "reward_scale": 1.0,
+    "risk_aversion": 0.25
+  },
+  "evaluation_summary": {
+    "buy_bias_total": 0.15673276,
+    "max_action_prior": 0.951331,
+    "mean_reward_proxy": -0.00126244,
+    "num_instruments": 3,
+    "num_steps": 27,
+    "reward_proxy_stddev": 0.01126367,
+    "sell_bias_total": 0.81621802
+  },
+  "framework": "finrl",
+  "framework_version": "0.3.6",
+  "governance": {
+    "allowed_scope": "offline_deferred_prep_only",
+    "direct_live_influence": false,
+    "gate_state": "closed",
+    "lean_consumption": "scoring_only_not_direct_action",
+    "notes": [
+      "Stub backend is deterministic and offline-only for FinRL deferred prep.",
+      "RL gate remains closed; this output is draft-only and non-executable."
+    ],
+    "output_type": "rl_policy",
+    "required_ohlcv_fields": [
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume"
+    ]
+  },
+  "model_family": "rl_policy",
+  "policy": {
+    "action_labels": [
+      "hold",
+      "buy_small",
+      "sell_small",
+      "buy_large",
+      "sell_large"
+    ],
+    "action_priors": {
+      "buy_large": 0.003644,
+      "buy_small": 0.005607,
+      "hold": 0.951331,
+      "sell_large": 0.010219,
+      "sell_small": 0.029198
+    },
+    "algorithm": "ppo",
+    "decision_focus": "exit_timing",
+    "lookback_window": 3,
+    "observation_dim": 7
+  },
+  "registry_hints": {
+    "artifact_state": "draft",
+    "artifact_type": "model_artifact",
+    "deployment_stage": "none",
+    "model_family": "rl_policy",
+    "source_dataset_refs": [
+      "synthetic-ohlcv://bounded-fixture/30-periods"
+    ]
+  },
+  "schema_version": "1.0",
+  "training_config": {
+    "algorithm": "ppo",
+    "gamma": 0.99,
+    "learning_rate": 0.0003,
+    "requested_by": "Claude",
+    "reward_scale": 1.0,
+    "risk_aversion": 0.25,
+    "seed": 42,
+    "version": "2026.05.01"
+  }
+}

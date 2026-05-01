@@ -1,0 +1,64 @@
+{
+  "approved_at": null,
+  "approver": null,
+  "artifact_state": "draft",
+  "artifact_type": "optimizer_result",
+  "checksum": "sha256:6a8ece2139486704f8b65a71538b455aac0a0b03ef1f7aaedd4d675d5bffa137",
+  "created_at": "2026-05-01T16:52:01Z",
+  "deployment_summary": {
+    "current_stage": "none"
+  },
+  "evaluation_summary": {
+    "best_trial_id": "trial-003",
+    "best_trial_score": 1.03700316,
+    "median_trial_score": 0.97579425,
+    "num_trials": 8,
+    "objective_metric": "validation_sharpe_proxy",
+    "recommended_candidate_registry_ids": [
+      "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-003",
+      "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-004",
+      "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-006"
+    ],
+    "search_space_dimensions": 6,
+    "search_strategy": "pbt",
+    "top_k": 3
+  },
+  "lineage": {
+    "source_dataset_refs": [
+      "synthetic-ohlcv://bounded-fixture/30-periods"
+    ],
+    "source_run_ids": [
+      "raytune-stub-5c0de7168013"
+    ],
+    "source_strategy_spec_id": "strategy-spec:rl-hparam-search-v1"
+  },
+  "metadata": {
+    "best_trial_id": "trial-003",
+    "best_trial_score": 1.03700316,
+    "candidate_registry_ids": [
+      "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-003",
+      "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-004",
+      "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-006"
+    ],
+    "dataset_checksum": "sha256:92dbad1b2d157fe91acfc96fbd66b388ec95dd26b48c65ef394c303640fcf0b2",
+    "framework": "ray_tune",
+    "framework_package": "ray[tune]",
+    "framework_version": ">=2.9.0,<3.0.0",
+    "num_trials": 8,
+    "objective_metric": "validation_sharpe_proxy",
+    "optimizer_id": "ray_tune_rllib_search_v1",
+    "optimizer_method": "rllib_ppo",
+    "search_strategy": "pbt",
+    "top_k": 3,
+    "training_backend": "stub_ray_tune"
+  },
+  "producer_run_id": "raytune-stub-5c0de7168013",
+  "registry_id": "raytune-search-rl-hparam-search-activation-2026.05.01",
+  "rollback_target": null,
+  "storage_ref": {
+    "backend": "object_store",
+    "path": "research/ray_tune/rl-hparam-search-activation/2026.05.01/optimizer_result.json"
+  },
+  "strategy_id": "rl-hparam-search-activation",
+  "version": "2026.05.01"
+}

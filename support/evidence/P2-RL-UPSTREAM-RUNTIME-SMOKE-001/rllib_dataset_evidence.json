@@ -1,0 +1,30 @@
+{
+  "data_frequency": "daily",
+  "decision_focus": "rebalance",
+  "instruments": [
+    "EQ_AAA",
+    "EQ_BBB",
+    "EQ_CCC"
+  ],
+  "num_instruments": 3,
+  "ohlcv_fields_present": true,
+  "periods_per_instrument": 30,
+  "prepared_dataset": {
+    "activation_floor_check": {
+      "eval_passes": true,
+      "min_eval_steps_required": 3,
+      "min_train_steps_required": 10,
+      "train_passes": true
+    },
+    "flattened_observation_dim": 72,
+    "joint_action_cardinality": 125,
+    "num_eval_steps": 9,
+    "num_train_steps": 18,
+    "observation_shape": [
+      9,
+      8
+    ]
+  },
+  "source_ref": "synthetic-ohlcv://bounded-fixture/30-periods",
+  "total_records": 90
+}

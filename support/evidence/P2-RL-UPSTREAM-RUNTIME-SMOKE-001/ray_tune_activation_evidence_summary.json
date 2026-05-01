@@ -1,0 +1,73 @@
+{
+  "created_at": "2026-05-01T16:52:01Z",
+  "dataset_evidence": {
+    "data_frequency": "daily",
+    "decision_focus": "portfolio_optimization",
+    "instruments": [
+      "EQ_AAA",
+      "EQ_BBB",
+      "EQ_CCC"
+    ],
+    "num_instruments": 3,
+    "ohlcv_fields_present": true,
+    "periods_per_instrument": 30,
+    "search_result": {
+      "activation_floor_check": {
+        "actual_trials": 8,
+        "min_trials_required": 3,
+        "passes": true
+      },
+      "backend": "stub_ray_tune",
+      "best_trial_id": "trial-003",
+      "best_trial_score": 1.03700316,
+      "num_trials": 8,
+      "run_id": "raytune-stub-5c0de7168013"
+    },
+    "source_ref": "synthetic-ohlcv://bounded-fixture/30-periods",
+    "total_records": 90
+  },
+  "framework": "ray_tune",
+  "governance_boundary": {
+    "broker_session_enabled": false,
+    "capital_binding": false,
+    "deployment_stage": "none",
+    "direct_governance_write": false,
+    "gate_state": "closed",
+    "order_routing_enabled": false,
+    "paper_canary_live_promotion": false,
+    "raw_secrets_persisted": false
+  },
+  "handoff_artifact_manifest": {
+    "artifacts": {
+      "artifact_bundle": "/tmp/pantheon/research/ray_tune/activation/artifact_bundle.json",
+      "candidate_packet": "/tmp/pantheon/research/ray_tune/activation/candidate_packet.json",
+      "evaluator_packet": "/tmp/pantheon/research/ray_tune/activation/evaluator_packet.json",
+      "manifest": "/tmp/pantheon/research/ray_tune/activation/manifest.json",
+      "registry_entry": "/tmp/pantheon/research/ray_tune/activation/registry_entry.json"
+    },
+    "backend": "stub_ray_tune",
+    "checksums": {
+      "artifact_bundle": "sha256:006941044a54f9366c243f5747f115c5843351d3c80b685b320d5af425e7a764",
+      "candidate_packet": "sha256:dcce37d6e88f2641b6e40887a10cea7ac5dc47254667ae22fd3ee91122d04b71",
+      "registry_entry": "sha256:a221822ad5fa3832eeeb3d4d5584819c264dd8eec0b4a0bc87b53a273e5e827f"
+    },
+    "created_at": "2026-05-01T16:52:01Z",
+    "output_dir": "/tmp/pantheon/research/ray_tune/activation",
+    "run_id": "raytune-stub-5c0de7168013"
+  },
+  "handoff_backend": "stub_ray_tune",
+  "real_backend_attempt": {
+    "backend": "ray_tune_search",
+    "cause_message": "No module named 'ray'",
+    "cause_type": "ModuleNotFoundError",
+    "error_type": "RayTuneDeferredPrepError",
+    "message": "Ray Tune backend requested but package import failed; install services/research/rllib requirements first",
+    "silent_stub_fallback": false,
+    "status": "dependency_or_config_error",
+    "traceback_tail": [
+      "services.research.rllib.adapter.ray_tune_adapter.RayTuneDeferredPrepError: Ray Tune backend requested but package import failed; install services/research/rllib requirements first\n"
+    ]
+  },
+  "source_ref": "synthetic-ohlcv://bounded-fixture/30-periods",
+  "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001"
+}

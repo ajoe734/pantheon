@@ -1,0 +1,72 @@
+{
+  "allowed_next_action": "offline_registry_review_only",
+  "candidate_registry_projection": {
+    "approved_at": null,
+    "approver": null,
+    "artifact_state": "candidate",
+    "artifact_type": "model_artifact",
+    "checksum": "sha256:149c3462348779cdeae224a4c76c904cafc6360004ae8ff9bd14e81fd0d48881",
+    "created_at": "2026-05-01T16:51:51Z",
+    "deployment_summary": {
+      "current_stage": "none"
+    },
+    "evaluation_summary": {
+      "buy_bias_total": 0.15673276,
+      "max_action_prior": 0.951331,
+      "mean_reward_proxy": -0.00126244,
+      "num_instruments": 3,
+      "num_steps": 27,
+      "reward_proxy_stddev": 0.01126367,
+      "sell_bias_total": 0.81621802
+    },
+    "lineage": {
+      "source_dataset_refs": [
+        "synthetic-ohlcv://bounded-fixture/30-periods"
+      ],
+      "source_run_ids": [
+        "finrl-stub-2f60bdbc27ea"
+      ],
+      "source_strategy_spec_id": "strategy-spec:rl-exit-timing-v1"
+    },
+    "metadata": {
+      "action_labels": [
+        "hold",
+        "buy_small",
+        "sell_small",
+        "buy_large",
+        "sell_large"
+      ],
+      "algorithm": "ppo",
+      "candidate_promotion_scope": "offline_only",
+      "data_frequency": "daily",
+      "dataset_checksum": "sha256:7df00f08f611af7bd8501b3918bac42fc90e19f1f6b5d6dd509664de61d7fb4e",
+      "decision_focus": "exit_timing",
+      "framework": "finrl",
+      "framework_version": "0.3.6",
+      "model_family": "rl_policy",
+      "num_steps": 27,
+      "observation_dim": 7,
+      "training_backend": "stub_finrl"
+    },
+    "producer_run_id": "finrl-stub-2f60bdbc27ea",
+    "registry_id": "finrl-policy-rl-exit-timing-activation-2026.05.01",
+    "rollback_target": null,
+    "storage_ref": {
+      "backend": "object_store",
+      "path": "research/finrl/rl-exit-timing-activation/2026.05.01/artifact.json"
+    },
+    "strategy_id": "rl-exit-timing-activation",
+    "version": "2026.05.01"
+  },
+  "current_artifact_state": "draft",
+  "deployment_stage": "none",
+  "gate_state": "closed",
+  "packet_id": "finrl-candidate-rl-exit-timing-activation",
+  "requested_artifact_state": "candidate",
+  "required_checks": [
+    "RL gate remains closed until Qlib approved + 3 months stable evidence.",
+    "Draft artifact must stay non-executable and non-default.",
+    "Promotion to candidate requires offline review of policy I/O and lineage only."
+  ],
+  "source_run_id": "finrl-stub-2f60bdbc27ea"
+}

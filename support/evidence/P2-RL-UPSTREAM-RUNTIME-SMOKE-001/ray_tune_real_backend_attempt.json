@@ -1,0 +1,12 @@
+{
+  "backend": "ray_tune_search",
+  "cause_message": "No module named 'ray'",
+  "cause_type": "ModuleNotFoundError",
+  "error_type": "RayTuneDeferredPrepError",
+  "message": "Ray Tune backend requested but package import failed; install services/research/rllib requirements first",
+  "silent_stub_fallback": false,
+  "status": "dependency_or_config_error",
+  "traceback_tail": [
+    "services.research.rllib.adapter.ray_tune_adapter.RayTuneDeferredPrepError: Ray Tune backend requested but package import failed; install services/research/rllib requirements first\n"
+  ]
+}

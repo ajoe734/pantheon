@@ -1,0 +1,69 @@
+{
+  "approved_at": null,
+  "approver": null,
+  "artifact_state": "draft",
+  "artifact_type": "model_artifact",
+  "checksum": "sha256:832e86de49e784a286fd47fce98dcd312dfdf8867fa32eb1962105b4bab3c339",
+  "created_at": "2026-05-01T16:52:00Z",
+  "deployment_summary": {
+    "current_stage": "none"
+  },
+  "evaluation_summary": {
+    "best_trial_reward_proxy": 0.01130051,
+    "eval_reward_mean": -0.00284076,
+    "eval_steps": 9,
+    "joint_action_cardinality": 125,
+    "search_space_dimensions": 4,
+    "train_reward_mean": -0.00166353,
+    "train_steps": 18,
+    "validation_max_drawdown_proxy": 0.05323377,
+    "validation_sharpe_proxy": -0.19691744
+  },
+  "lineage": {
+    "source_dataset_refs": [
+      "synthetic-ohlcv://bounded-fixture/30-periods"
+    ],
+    "source_run_ids": [
+      "rllib-stub-0645a34388b2"
+    ],
+    "source_strategy_spec_id": "strategy-spec:rl-rebalance-v1"
+  },
+  "metadata": {
+    "action_labels": [
+      "sell_large",
+      "sell_small",
+      "hold",
+      "buy_small",
+      "buy_large"
+    ],
+    "algorithm": "ppo",
+    "dataset_checksum": "sha256:a1e3d41a72ce49bf6f5526352f87ef55efd99d67c9c6753eaf2f9a5aedf7b0e1",
+    "decision_focus": "rebalance",
+    "flattened_observation_dim": 72,
+    "framework": "rllib",
+    "framework_package": "ray[rllib]",
+    "framework_version": ">=2.9.0,<3.0.0",
+    "joint_action_cardinality": 125,
+    "model_family": "rl_policy",
+    "num_eval_steps": 9,
+    "num_train_steps": 18,
+    "objective_metric": "validation_sharpe_proxy",
+    "observation_shape": [
+      9,
+      8
+    ],
+    "ray_tune_package": "ray[tune]",
+    "ray_tune_version": ">=2.9.0,<3.0.0",
+    "search_strategy": "pbt",
+    "training_backend": "stub_rllib"
+  },
+  "producer_run_id": "rllib-stub-0645a34388b2",
+  "registry_id": "rllib-policy-rl-portfolio-rebalance-activation-2026.05.01",
+  "rollback_target": null,
+  "storage_ref": {
+    "backend": "object_store",
+    "path": "research/rllib/rl-portfolio-rebalance-activation/2026.05.01/artifact.json"
+  },
+  "strategy_id": "rl-portfolio-rebalance-activation",
+  "version": "2026.05.01"
+}

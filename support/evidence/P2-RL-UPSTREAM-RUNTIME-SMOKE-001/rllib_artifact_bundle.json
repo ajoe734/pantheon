@@ -1,0 +1,225 @@
+{
+  "artifact_family": "rl_policy",
+  "created_at": "2026-05-01T16:52:00Z",
+  "created_by": "Claude",
+  "dataset_checksum": "sha256:a1e3d41a72ce49bf6f5526352f87ef55efd99d67c9c6753eaf2f9a5aedf7b0e1",
+  "dataset_schema": {
+    "min_instruments": 2,
+    "min_lookback": 3,
+    "min_periods": 8,
+    "observed_lookback_window": 3,
+    "required_ohlcv_fields": [
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume"
+    ]
+  },
+  "dataset_summary": {
+    "action_labels": [
+      "sell_large",
+      "sell_small",
+      "hold",
+      "buy_small",
+      "buy_large"
+    ],
+    "data_frequency": "daily",
+    "dataset_id": "rllib-activation-smoke-20260501",
+    "decision_focus": "rebalance",
+    "eval_steps": 9,
+    "flattened_observation_dim": 72,
+    "instruments": [
+      "EQ_AAA",
+      "EQ_BBB",
+      "EQ_CCC"
+    ],
+    "joint_action_cardinality": 125,
+    "lookback_window": 3,
+    "max_position_size": 0.3,
+    "num_instruments": 3,
+    "observation_shape": [
+      9,
+      8
+    ],
+    "reward_spec": {
+      "cost_penalty": 0.1,
+      "dd_penalty": 0.5,
+      "sharpe_weight": 1.0
+    },
+    "slippage_bps": 5.0,
+    "source_dataset_refs": [
+      "synthetic-ohlcv://bounded-fixture/30-periods"
+    ],
+    "source_strategy_spec_id": "strategy-spec:rl-rebalance-v1",
+    "strategy_id": "rl-portfolio-rebalance-activation",
+    "train_steps": 18,
+    "transaction_cost_pct": 0.001
+  },
+  "environment_schema": {
+    "action_vector_length": 3,
+    "flattened_observation_dim": 72,
+    "joint_action_cardinality": 125,
+    "max_position_size": 0.3,
+    "observation_features": 8,
+    "observation_rows": 9,
+    "reward_spec": {
+      "cost_penalty": 0.1,
+      "dd_penalty": 0.5,
+      "sharpe_weight": 1.0
+    },
+    "slippage_bps": 5.0,
+    "transaction_cost_pct": 0.001
+  },
+  "evaluation_summary": {
+    "best_trial_reward_proxy": 0.01130051,
+    "eval_reward_mean": -0.00284076,
+    "eval_steps": 9,
+    "joint_action_cardinality": 125,
+    "search_space_dimensions": 4,
+    "train_reward_mean": -0.00166353,
+    "train_steps": 18,
+    "validation_max_drawdown_proxy": 0.05323377,
+    "validation_sharpe_proxy": -0.19691744
+  },
+  "framework": "rllib",
+  "framework_package": "ray[rllib]",
+  "framework_version": ">=2.9.0,<3.0.0",
+  "governance": {
+    "allowed_scope": "offline_deferred_prep_only",
+    "direct_live_influence": false,
+    "gate_state": "closed",
+    "lean_consumption": "scoring_only_not_direct_action",
+    "non_default_backend": true,
+    "notes": [
+      "Stub backend is deterministic and offline-only for RLlib deferred prep.",
+      "RL gate remains closed; this output is draft-only and non-executable."
+    ],
+    "output_type": "rl_policy",
+    "required_ohlcv_fields": [
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume"
+    ]
+  },
+  "model_family": "rl_policy",
+  "policy": {
+    "action_labels": [
+      "sell_large",
+      "sell_small",
+      "hold",
+      "buy_small",
+      "buy_large"
+    ],
+    "action_priors": {
+      "buy_large": 0.001019,
+      "buy_small": 0.000904,
+      "hold": 0.983632,
+      "sell_large": 0.008701,
+      "sell_small": 0.005744
+    },
+    "algorithm": "ppo",
+    "decision_focus": "rebalance",
+    "flattened_observation_dim": 72,
+    "num_trials": 8,
+    "objective_metric": "validation_sharpe_proxy",
+    "observation_shape": [
+      9,
+      8
+    ],
+    "search_strategy": "pbt"
+  },
+  "ray_tune_package": "ray[tune]",
+  "ray_tune_version": ">=2.9.0,<3.0.0",
+  "registry_hints": {
+    "artifact_state": "draft",
+    "artifact_type": "model_artifact",
+    "deployment_stage": "none",
+    "model_family": "rl_policy",
+    "optimizer_method": "rllib_ppo",
+    "source_dataset_refs": [
+      "synthetic-ohlcv://bounded-fixture/30-periods"
+    ]
+  },
+  "rollout_summary": {
+    "eval": {
+      "max_drawdown_proxy": 0.05323377,
+      "portfolio_value_end": 0.95387607,
+      "reward_mean": -0.00284076,
+      "reward_sharpe_proxy": -0.19691744,
+      "reward_stddev": 0.01442617,
+      "steps": 9
+    },
+    "train": {
+      "max_drawdown_proxy": 0.03573415,
+      "portfolio_value_end": 0.96913364,
+      "reward_mean": -0.00166353,
+      "reward_sharpe_proxy": -0.21133743,
+      "reward_stddev": 0.00787142,
+      "steps": 18
+    }
+  },
+  "schema_version": "1.0",
+  "train_eval_schema": {
+    "action_labels": [
+      "sell_large",
+      "sell_small",
+      "hold",
+      "buy_small",
+      "buy_large"
+    ],
+    "action_vector_length": 3,
+    "flattened_observation_dim": 72,
+    "joint_action_cardinality": 125,
+    "observation_shape": [
+      9,
+      8
+    ],
+    "optimizer_method": "rllib_ppo",
+    "runtime_boundary": "rllib_plus_ray_tune_prep_only",
+    "schema_version": "1.0",
+    "search_space": {
+      "num_trials": 8,
+      "objective_metric": "validation_sharpe_proxy",
+      "parameters": {
+        "entropy_coeff": [
+          0.0,
+          0.01
+        ],
+        "gae_lambda": [
+          0.95,
+          0.99
+        ],
+        "gamma": [
+          0.99,
+          0.999
+        ],
+        "lr": [
+          1e-05,
+          0.001
+        ]
+      },
+      "strategy": "pbt"
+    },
+    "split_steps": {
+      "eval": 9,
+      "train": 18
+    }
+  },
+  "training_config": {
+    "algorithm": "ppo",
+    "clip_param": 0.2,
+    "entropy_coeff": 0.002,
+    "gae_lambda": 0.95,
+    "gamma": 0.99,
+    "learning_rate": 0.0003,
+    "num_trials": 8,
+    "objective_metric": "validation_sharpe_proxy",
+    "requested_by": "Claude",
+    "search_strategy": "pbt",
+    "seed": 42,
+    "version": "2026.05.01"
+  }
+}
