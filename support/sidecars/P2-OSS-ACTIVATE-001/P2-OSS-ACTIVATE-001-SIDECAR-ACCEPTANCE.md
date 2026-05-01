@@ -1,13 +1,14 @@
 # P2-OSS-ACTIVATE-001 Acceptance Packet (Sidecar)
 
 **Parent Task**: `P2-OSS-ACTIVATE-001` — Research OSS production activation after fail-closed gates
-**Parent Owner**: Codex
-**Parent Reviewer**: Claude
-**Parent Status**: `todo`
+**Parent Owner**: Gemini2
+**Parent Reviewer**: Codex
+**Parent Status**: `in_progress`
 **Sidecar Owner**: Claude
 **Sidecar Reviewer**: Codex
 **Helper Kind**: `acceptance_packet`
 **Generated**: 2026-05-01T15:00:00Z
+**Verified**: 2026-05-01 (branch `backend-dev-publish-20260429`)
 
 > This is a support artifact only. It does not modify canonical truth, L1 policy documents, or core runtime / registry / governance implementations. It packages the dependency state, acceptance checklist, and implementation readiness map for `P2-OSS-ACTIVATE-001`.
 
@@ -53,7 +54,7 @@ These are the starting CI baseline that P2-OSS-ACTIVATE-001 must treat as its fl
 
 | Consumer | Waiting on P2-OSS-ACTIVATE-001 for |
 |---|---|
-| Parent `P2-OSS-ACTIVATE-001` owner (Codex) | Research activation notes identifying remaining production credentials, external service prerequisites, and the explicit activation path for each `smoke-tested` component |
+| Parent `P2-OSS-ACTIVATE-001` owner (Gemini2) | Research activation notes identifying remaining production credentials, external service prerequisites, and the explicit activation path for each `smoke-tested` component |
 | Platform operators | A documented and reproducible checklist to gate any future OSS component from `smoke-tested` → production without silently enabling it |
 
 ---
@@ -115,10 +116,10 @@ The research must verify and document that the following paths remain blocked in
 |---|---|---|---|
 | A1 | Fail-closed gate confirmed for Qlib | OPEN | Run Qlib activation matrix or targeted test without `PANTHEON_QLIB_ACTIVATION_READY_ENABLED=1`; confirm worker returns no-op or blocked exit |
 | A2 | Fail-closed gate confirmed for TRL | OPEN | Run TRL adapter or preflight without activation env var; confirm `artifact_state=draft`, `current_stage=none`, no live model submission |
-| A3 | `SourceRecord` control path verified | OPEN | Confirm bounded source ingestion test passes and raw feed injection is denied; reference test file in delivery notes |
-| A4 | `EvidenceBundle` path not bypassed | OPEN | Confirm no OSS research output feeds directly into a trade signal without a governed `EvidenceBundle` wrapper |
-| A5 | `SearchGateway` ACL enforced | OPEN | Confirm all search queries in `services/search/gateway.py` pass ACL; no direct index path exists that skips gateway |
-| A6 | `available_time` / session-time control verified for OpenClaw | OPEN | Confirm `live_gate_adapter.py` enforces session time window; test or code reference included |
+| A3 | `SourceRecord` control path verified | **VERIFIED** | `services/source_ingestion/tests/` — 28 passed (2026-05-01). `external_sources.py:validate_external_source_record` enforces `entitlement_tags`, `license_scope`, `access_scope`, `event_time`, `available_time` on all external source types (news/social/alpha_db). Forbidden execution routes blocked by explicit deny-lists. Governance envelope sets `direct_execution_allowed: false`, `lean_consumption: research_only_not_direct_action`. |
+| A4 | `EvidenceBundle` path not bypassed | **VERIFIED (contract level)** | `services/search/gateway.py:SearchGateway.search` requires a governed `EvidenceBundle` reference for all search results; raises `SearchPolicyError` if bundle is missing. Runtime search flow cannot surface results without a valid `evidence_bundle_id`. Full service-layer enforcement depends on parent task verifying no direct knowledge-object writes bypass the bundle contract. |
+| A5 | `SearchGateway` ACL enforced | **VERIFIED** | `services/search/tests/` — 45 passed, 1 schema-drift failure. `SearchGateway.search` applies `context.permits()` (ACL / license scope) before ranking; `available_time` enforced via `_available_at_or_before_now`; `require_citations` defaults True. 1 failure: `test_sd03_contract_schemas_accept_model_payloads` — SD-03 schema missing `available_time` + `entitlement_tags` fields now present in runtime output. **Not a bypass; schema needs updating.** |
+| A6 | `available_time` / session-time control verified for OpenClaw | **VERIFIED** | `live_gate_adapter.py:LiveGateAdapter` is fail-closed by default (`OPENCLAW_LIVE_ADAPTER_ENABLED` absent → `LIVE_GATE_DISABLED`). All 5 gate checks (adapter-enabled, human-approval-token, active-live-RuntimeBinding, kill-switch-safe-mode, binding-not-in-rollback) must pass explicitly. `services/openclaw-gateway-adapter/` — 158 tests pass (excluding `test_main.py` collection error; pre-existing `ActorRef` import issue in foundation wiring). |
 | A7 | Remaining credentials for Qlib documented | OPEN | Explicit list: which data-provider API key, dataset source, or network endpoint remains unavailable; does not enable them |
 | A8 | Remaining credentials for TRL documented | OPEN | Explicit list: what production model source, preference-pair corpus, or downstream consumer is still missing; does not enable them |
 | A9 | OpenClaw live broker path confirmed always-rejected | OPEN | Reference test `test_live_gate_adapter.py` or equivalent; confirm `POST /broker/live/orders` returns 403/disabled regardless of env |
@@ -132,17 +133,17 @@ The research must verify and document that the following paths remain blocked in
 
 ## 4. Risk Areas and Open Questions
 
-### 4.1 services/source_ingestion Does Not Exist as a Full Service Yet
+### 4.1 services/source_ingestion — Service Exists; Scope Clarification Still Needed
 
-`P2-OSS-ACTIVATE-001` lists `services/source_ingestion` as an artifact. A bounded compose smoke exists (from P0-CI-BOUNDED-001), but there is no standalone `services/source_ingestion/` directory with a Python service package in the current repo state.
+`P2-OSS-ACTIVATE-001` lists `services/source_ingestion` as an artifact. The service directory **does exist** with a full Python package: `connectors/`, `external_sources.py`, `ingest_manager.py`, `pg_store.py`, `scheduler.py`, `scheduler_worker.py`, and tests (28 passing). The service is governed at the connector-level (bounded ingestion, external source ACL policy).
 
-**Recommendation**: Codex should clarify whether P2-OSS-ACTIVATE-001 is expected to create the full `services/source_ingestion` service or only audit the bounded CI baseline that P0 landed. If service creation is in scope, it should be treated as a new task slice rather than a "research" task.
+**Remaining scope question**: P2-OSS-ACTIVATE-001 should clarify whether the task scope is (a) auditing and documenting the existing fail-closed posture of the current service, or (b) further hardening or adding features. If (b), additional task slicing may be needed to keep the "research" task bounded.
 
-### 4.2 `EvidenceBundle` Boundary Not Fully Implemented Yet
+### 4.2 `EvidenceBundle` Boundary — Partial Enforcement Confirmed
 
-The acceptance criteria mention `EvidenceBundle` as a control that no OSS path should bypass. The current codebase has the contract defined in `OPENCLAW_RUNTIME_CONTRACT.md`, but whether a live enforcement layer exists in service code is unclear from the bounded CI baseline.
+`SearchGateway` enforces `EvidenceBundle` existence before surfacing results (`raises SearchPolicyError` if bundle missing). `external_sources.py` emits `governance.canonical_sink: SourceRecord/EvidenceBundle` on every external source record.
 
-**Recommendation**: Codex should verify whether `EvidenceBundle` enforcement is already present in the code, or whether this is a documentation gap to be noted. If the enforcement does not exist yet, the activation note should document this explicitly as a prerequisite for any future production activation.
+**Remaining gap**: Whether all downstream consumers of `KnowledgeObject` / `EvidenceItem` are required to go through `SearchGateway` (vs. accessing the repository directly) is not fully verified in this sidecar. Codex should confirm that no direct `InMemoryEvidenceRepository.list_knowledge_objects()` call is exposed outside of the gateway layer in production service entrypoints.
 
 ### 4.3 TRL Activation Gate Flag Name
 
@@ -199,7 +200,7 @@ The deferred W&B re-entry condition specifies the MLflow operational history gat
 
 Codex, this packet is ready for review and parent-owner reuse.
 
-What it gives the P2-OSS-ACTIVATE-001 owner (Codex):
+What it gives the P2-OSS-ACTIVATE-001 owner (Gemini2) and reviewer (Codex):
 
 1. **Dependency-confirmed starting point**: `P0-CI-BOUNDED-001` is done (commit `8a624309`), the bounded CI baseline passes, and the fail-closed posture is verified as of 2026-05-01.
 
@@ -209,7 +210,7 @@ What it gives the P2-OSS-ACTIVATE-001 owner (Codex):
 
 4. **Open questions documented**: Four areas (source_ingestion service scope, EvidenceBundle enforcement presence, TRL flag name, W&B re-entry window) flagged for Codex to decide.
 
-Recommended next steps for Codex:
+Recommended next steps for the parent owner/reviewer:
 
 - Use A1–A2 to verify current fail-closed gate state for Qlib and TRL with targeted test runs.
 - Use A3–A6 to confirm each control surface is enforced in existing code.
