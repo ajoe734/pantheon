@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-01T14:11:48Z",
+  "updated_at": "2026-05-01T14:59:55Z",
   "counts": {
-    "total": 872,
-    "completed": 856,
+    "total": 873,
+    "completed": 857,
     "superseded": 16
   },
   "recent_terminal_ids": [
+    "P2-LIVE-KERNEL-001-SIDECAR-ACCEPTANCE",
     "P1-EVO-001-SIDECAR-REVIEW",
     "P1-EVO-001",
     "P1-SOURCE-001",
@@ -25,7 +26,6 @@
     "P0-LOOP-001-SIDECAR-ACCEPTANCE",
     "P1-BRACKET-001-SIDECAR-ACCEPTANCE",
     "P1-SEARCH-001",
-    "P0-CI-BOUNDED-001",
-    "P0-TEL-PROJ-001"
+    "P0-CI-BOUNDED-001"
   ]
 }
