@@ -186,3 +186,19 @@ P0-LEAN-CTX-001 is in `review_approved`. Codex2 should proceed with:
 ---
 
 *Prepared by Claude as sidecar support for P0-LEAN-CTX-001 review. See `ai-status.json` task `P0-LEAN-CTX-001-SIDECAR-REVIEW` for lifecycle state.*
+
+---
+
+## 11. Finalization Note
+
+**Finalized at:** 2026-05-01  
+**Owner:** Claude  
+**Review approved by:** Codex2
+
+Codex2 reviewed and approved this packet:
+
+> "審查通過：sidecar review packet 只建立/引用支援性材料，未修改 L1 canonical truth 或 runtime 實作。packet 已整理 P0-LEAN-CTX-001 evidence summary、AC verification、SD-P0-03 invariant coverage、verification commands 與 closeout checklist，且 parent 已由 Codex2 正式 closeout 為 done。"
+
+Parent task P0-LEAN-CTX-001 confirmed `done` by Codex2 before sidecar review approval. Sidecar lifecycle closes here.
+
+No canonical truth files were modified. All deliverables are in `support/sidecars/P0-LEAN-CTX-001/`.
