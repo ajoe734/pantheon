@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-02 00:04:51
+Last updated: 2026-05-02 00:10:15
 
 ## Objective
 
@@ -37,10 +37,10 @@ Last updated: 2026-05-02 00:04:51
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: No active assignment
+- `Claude`: execution, control-plane, governance-review; next: Acceptance packet prepared at support/sidecars/P2-TRL-RUNTIME-DATA-ACTIVATION-001/P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE.md. Contains: full acceptance checklist for parent task, dependency map (satisfied vs open runtime gates), pre-flight checklist for parent owner Codex2, reviewer gate summary, and evidence file references. Ready for review.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 - `Codex`: integration, status-system, schema, acceptance; next: Implementing explicit-gated SDK-backed W&B online backend and smoke/readback harness; local env has no WANDB_API_KEY and wandb package is not installed, so verification will include config-skip plus unit fakes.
-- `Codex2`: integration, status-system, schema, acceptance; next: Supervisor auto-started P2-QLIB-PROD-DATA-ACTIVATION-001 after successful dispatch.
+- `Codex2`: integration, status-system, schema, acceptance; next: Production-data activation packet implemented: added Qlib production dataset proof validation, real/stub-selectable production_activation_smoke.py, candidate handoff packet persistence, docs/checklist updates. Verification: python3 -m unittest discover -s services/research/qlib -p 'test_*.py' (32 OK); python3 services/research/qlib/smoke_test.py (OK); python3 -m pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py (2 passed); python3 -m py_compile qlib activation scripts (OK).
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
 - `Claude2`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Supervisor re-dispatched P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001; task remains in progress.
@@ -58,11 +58,12 @@ Last updated: 2026-05-02 00:04:51
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
 | `P2-WANDB-ONLINE-SYNC-001` | P2 Wave 8 External Activation | W&B SDK-backed online sync activation smoke | Codex | in_progress | `P2-OSS-ACTIVATE-001` | 把 W&B 從 offline local-store 推進到 SDK-backed online sync：以 test project/API key 跑 metrics/artifact upload/readback smoke，預設仍不含任何 broker/order/capital path。 |
-| `P2-QLIB-PROD-DATA-ACTIVATION-001` | P2 Wave 8 External Activation | Qlib production data activation packet and real-backend smoke | Codex2 | in_progress | `P2-OSS-ACTIVATE-001`, `P1-SOURCE-001` | 把 Qlib 從 activation-ready offline handoff 推進到 production-data activation packet：使用 governed market dataset proof 與 real/stub-selectable backend smoke 產生可審查 candidate handoff，不連到下單路徑。 |
+| `P2-QLIB-PROD-DATA-ACTIVATION-001` | P2 Wave 8 External Activation | Qlib production data activation packet and real-backend smoke | Codex2 | review | `P2-OSS-ACTIVATE-001`, `P1-SOURCE-001` | 把 Qlib 從 activation-ready offline handoff 推進到 production-data activation packet：使用 governed market dataset proof 與 real/stub-selectable backend smoke 產生可審查 candidate handoff，不連到下單路徑。 |
 | `P2-TRL-RUNTIME-DATA-ACTIVATION-001` | P2 Wave 8 External Activation | TRL runtime-data activation and real DPO smoke | Codex2 | todo | `P2-OSS-ACTIVATE-001` | 把 TRL 從 runtime-data gated 推進到實作完成：接 FB-002 preference pairs，跑 real TRL DPO 或明確 install/config error，產生 model artifact 與 evaluator/registry candidate handoff。 |
 | `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` | P2 Wave 8 External Activation | FinRL RLlib Ray Tune governed runtime activation smoke | Codex | todo | `P2-OSS-ACTIVATE-001` | 把 FinRL/RLlib/Ray Tune 從 dormant/deferred prep 推進到 governed runtime smoke：真實 backend 可用時跑 bounded train/search，否則留下明確 dependency/config error；仍禁止 broker/order/live 路由。 |
 | `P2-MARKETDATA-CREDENTIAL-SMOKE-001` | P2 Wave 8 External Activation | Market-data provider credentialed read smoke | Codex2 | todo | `APP-003-DATASOURCE-OPS-001`, `P2-OSS-ACTIVATE-001` | 對非下單外部市場資料源做 credentialed read/runtime smoke：Massive/Polygon、TWSE/TPEx/MOPS/TEJ、CoinGecko/Kraken market data、IBKR/Shioaji quote/read-only lane；不得觸發 broker order/capital side effect。 |
 | `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001` | P2 Wave 8 External Activation | Source/search live connector credentialed smoke | Gemini2 | in_progress | `P1-SOURCE-001`, `P1-SEARCH-001`, `P2-OSS-ACTIVATE-001` | 對 source/search 非下單外部資料源做 bounded live/test credential smoke：news/social/alpha DB 或 allowlisted HTTP/feed connector -> SourceRecord/EvidenceBundle -> durable index -> BFF/SearchGateway query；禁止 broker/Lean/order 路由。 |
+| `P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE` | P2 Wave 8 External Activation | [Sidecar] [Auto] [Parent P2-TRL-RUNTIME-DATA-ACTIVATION-001] Prepare P2-TRL-RUNTIME-DATA-ACTIVATION-001 acceptance packet and dependency map | Claude | review | `P2-OSS-ACTIVATE-001` | 平行支援 P2-TRL-RUNTIME-DATA-ACTIVATION-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
 
 ## Recently Executed Tasks
 
@@ -97,11 +98,12 @@ Last updated: 2026-05-02 00:04:51
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
 | `P2-WANDB-ONLINE-SYNC-001` | P2 Wave 8 External Activation | W&B SDK-backed online sync activation smoke | 把 W&B 從 offline local-store 推進到 SDK-backed online sync：以 test project/API key 跑 metrics/artifact upload/readback smoke，預設仍不含任何 broker/order/capital path。 | Codex | Claude | in_progress | `P2-OSS-ACTIVATE-001` | 2026-05-02 00:04:03 | Implementing explicit-gated SDK-backed W&B online backend and smoke/readback harness; local env has no WANDB_API_KEY and wandb package is not installed, so verification will include config-skip plus unit fakes. |
-| `P2-QLIB-PROD-DATA-ACTIVATION-001` | P2 Wave 8 External Activation | Qlib production data activation packet and real-backend smoke | 把 Qlib 從 activation-ready offline handoff 推進到 production-data activation packet：使用 governed market dataset proof 與 real/stub-selectable backend smoke 產生可審查 candidate handoff，不連到下單路徑。 | Codex2 | Claude | in_progress | `P2-OSS-ACTIVATE-001`, `P1-SOURCE-001` | 2026-05-02 00:01:51 | Supervisor auto-started P2-QLIB-PROD-DATA-ACTIVATION-001 after successful dispatch. |
+| `P2-QLIB-PROD-DATA-ACTIVATION-001` | P2 Wave 8 External Activation | Qlib production data activation packet and real-backend smoke | 把 Qlib 從 activation-ready offline handoff 推進到 production-data activation packet：使用 governed market dataset proof 與 real/stub-selectable backend smoke 產生可審查 candidate handoff，不連到下單路徑。 | Codex2 | Claude | review | `P2-OSS-ACTIVATE-001`, `P1-SOURCE-001` | 2026-05-02 00:09:30 | Production-data activation packet implemented: added Qlib production dataset proof validation, real/stub-selectable production_activation_smoke.py, candidate handoff packet persistence, docs/checklist updates. Verification: python3 -m unittest discover -s services/research/qlib -p 'test_*.py' (32 OK); python3 services/research/qlib/smoke_test.py (OK); python3 -m pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py (2 passed); python3 -m py_compile qlib activation scripts (OK). |
 | `P2-TRL-RUNTIME-DATA-ACTIVATION-001` | P2 Wave 8 External Activation | TRL runtime-data activation and real DPO smoke | 把 TRL 從 runtime-data gated 推進到實作完成：接 FB-002 preference pairs，跑 real TRL DPO 或明確 install/config error，產生 model artifact 與 evaluator/registry candidate handoff。 | Codex2 | Codex | todo | `P2-OSS-ACTIVATE-001` | 2026-05-01 23:55:49 | Auto-reassigned ownership from Claude to Codex2 after repeated Claude terminal: {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1777661400,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_dis. Task returned to todo until Codex2 starts a fresh run. |
 | `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` | P2 Wave 8 External Activation | FinRL RLlib Ray Tune governed runtime activation smoke | 把 FinRL/RLlib/Ray Tune 從 dormant/deferred prep 推進到 governed runtime smoke：真實 backend 可用時跑 bounded train/search，否則留下明確 dependency/config error；仍禁止 broker/order/live 路由。 | Codex | Codex2 | todo | `P2-OSS-ACTIVATE-001` | 2026-05-01 23:42:34 | Auto-reassigned P2-RL-UPSTREAM-RUNTIME-SMOKE-001 away from sidecar-only lane Copilot; owner Copilot -> Codex. Reserved sidecar-only agents no longer hold mainline tasks. |
 | `P2-MARKETDATA-CREDENTIAL-SMOKE-001` | P2 Wave 8 External Activation | Market-data provider credentialed read smoke | 對非下單外部市場資料源做 credentialed read/runtime smoke：Massive/Polygon、TWSE/TPEx/MOPS/TEJ、CoinGecko/Kraken market data、IBKR/Shioaji quote/read-only lane；不得觸發 broker order/capital side effect。 | Codex2 | Codex | todo | `APP-003-DATASOURCE-OPS-001`, `P2-OSS-ACTIVATE-001` | 2026-05-01 23:48:40 | Auto-reassigned P2-MARKETDATA-CREDENTIAL-SMOKE-001 away from sidecar-only lane Gemini; owner Gemini -> Codex2. Reserved sidecar-only agents no longer hold mainline tasks. |
 | `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001` | P2 Wave 8 External Activation | Source/search live connector credentialed smoke | 對 source/search 非下單外部資料源做 bounded live/test credential smoke：news/social/alpha DB 或 allowlisted HTTP/feed connector -> SourceRecord/EvidenceBundle -> durable index -> BFF/SearchGateway query；禁止 broker/Lean/order 路由。 | Gemini2 | Codex | in_progress | `P1-SOURCE-001`, `P1-SEARCH-001`, `P2-OSS-ACTIVATE-001` | 2026-05-01 23:55:21 | Supervisor re-dispatched P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001; task remains in progress. |
+| `P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE` | P2 Wave 8 External Activation | [Sidecar] [Auto] [Parent P2-TRL-RUNTIME-DATA-ACTIVATION-001] Prepare P2-TRL-RUNTIME-DATA-ACTIVATION-001 acceptance packet and dependency map | 平行支援 P2-TRL-RUNTIME-DATA-ACTIVATION-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Claude | Codex2 | review | `P2-OSS-ACTIVATE-001` | 2026-05-02 00:10:15 | Acceptance packet prepared at support/sidecars/P2-TRL-RUNTIME-DATA-ACTIVATION-001/P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE.md. Contains: full acceptance checklist for parent task, dependency map (satisfied vs open runtime gates), pre-flight checklist for parent owner Codex2, reviewer gate summary, and evidence file references. Ready for review. |
 
 ## Handoff Queue
 
@@ -109,6 +111,8 @@ Last updated: 2026-05-02 00:04:51
 |---|---|---|---|---|---|
 | `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` | Copilot | Codex | Auto-reassigned P2-RL-UPSTREAM-RUNTIME-SMOKE-001 away from sidecar-only lane Copilot; owner Copilot -> Codex. Reserved sidecar-only agents no longer hold mainline tasks. | pending | 2026-05-01 23:42:34 |
 | `P2-MARKETDATA-CREDENTIAL-SMOKE-001` | Gemini | Codex2 | Auto-reassigned P2-MARKETDATA-CREDENTIAL-SMOKE-001 away from sidecar-only lane Gemini; owner Gemini -> Codex2. Reserved sidecar-only agents no longer hold mainline tasks. | pending | 2026-05-01 23:48:40 |
+| `P2-QLIB-PROD-DATA-ACTIVATION-001` | Codex2 | Claude | Production-data activation packet implemented: added Qlib production dataset proof validation, real/stub-selectable production_activation_smoke.py, candidate handoff packet persistence, docs/checklist updates. Verification: python3 -m unittest discover -s services/research/qlib -p 'test_*.py' (32 OK); python3 services/research/qlib/smoke_test.py (OK); python3 -m pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py (2 passed); python3 -m py_compile qlib activation scripts (OK). | pending | 2026-05-02 00:09:30 |
+| `P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE` | Claude | Codex2 | Acceptance packet prepared at support/sidecars/P2-TRL-RUNTIME-DATA-ACTIVATION-001/P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE.md. Contains: full acceptance checklist for parent task, dependency map (satisfied vs open runtime gates), pre-flight checklist for parent owner Codex2, reviewer gate summary, and evidence file references. Ready for review. | pending | 2026-05-02 00:10:15 |
 
 ## Blockers
 
@@ -124,7 +128,7 @@ Last updated: 2026-05-02 00:04:51
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-05-02 00:01:17
+- Last coordination scan: 2026-05-02 00:07:16
 - Tracked features: `46`
 - Lovable-ready packets: `45`
 - Waiting for Lovable/front-end: `0`
@@ -191,23 +195,23 @@ Last updated: 2026-05-02 00:04:51
 
 ## Latest Checkpoints
 
-- 2026-05-02 00:01:53 Orchestrator: PostToolUse: Read
-- 2026-05-02 00:01:54 Orchestrator: PostToolUse: Bash
-- 2026-05-02 00:02:04 Orchestrator: `P2-QLIB-PROD-DATA-ACTIVATION-001` Supervisor auto-started P2-QLIB-PROD-DATA-ACTIVATION-001 after successful dispatch.
-- 2026-05-02 00:02:04 Orchestrator: PreToolUse: Bash
-- 2026-05-02 00:02:05 Orchestrator: PostToolUse: Bash
-- 2026-05-02 00:02:06 Orchestrator: PreToolUse: Bash
-- 2026-05-02 00:02:06 Orchestrator: PostToolUse: Bash
-- 2026-05-02 00:02:35 Orchestrator: PreToolUse: Edit
-- 2026-05-02 00:02:35 Orchestrator: PostToolUse: Edit
-- 2026-05-02 00:03:39 Orchestrator: PreToolUse: Edit
-- 2026-05-02 00:03:39 Orchestrator: PostToolUse: Edit
-- 2026-05-02 00:03:46 Orchestrator: PreToolUse: Edit
-- 2026-05-02 00:03:46 Orchestrator: PostToolUse: Edit
-- 2026-05-02 00:04:03 Codex: `P2-WANDB-ONLINE-SYNC-001` Implementing explicit-gated SDK-backed W&B online backend and smoke/readback harness; local env has no WANDB_API_KEY and wandb package is not installed, so verification will include config-skip plus unit fakes.
-- 2026-05-02 00:04:37 Orchestrator: PreToolUse: Bash
-- 2026-05-02 00:04:37 Orchestrator: PostToolUse: Bash
-- 2026-05-02 00:04:44 Orchestrator: PreToolUse: Bash
-- 2026-05-02 00:04:45 Orchestrator: PostToolUse: Bash
-- 2026-05-02 00:04:50 Orchestrator: PreToolUse: Bash
-- 2026-05-02 00:04:51 Claude2: `P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE` Closeout complete: acceptance packet finalized with reviewer-approved scope. Artifact updated to record Ray Tune allowed_next_action naming caveat (offline_search_review_only vs offline_registry_review_only) in AC-3.6 and NB-002. Stub-backend smoke confirmed for all three components (49 tests passed, RL gate closed, no canonical truth modified). Isolated task-scoped commit 8710fa5 created.
+- 2026-05-02 00:08:32 Orchestrator: PostToolUse: Bash
+- 2026-05-02 00:08:33 Orchestrator: PreToolUse: Read
+- 2026-05-02 00:08:33 Orchestrator: PostToolUse: Read
+- 2026-05-02 00:08:34 Orchestrator: PreToolUse: Read
+- 2026-05-02 00:08:35 Orchestrator: PostToolUse: Read
+- 2026-05-02 00:08:40 Orchestrator: PreToolUse: Bash
+- 2026-05-02 00:08:41 Orchestrator: PostToolUse: Bash
+- 2026-05-02 00:08:43 Orchestrator: PreToolUse: Bash
+- 2026-05-02 00:08:44 Orchestrator: PostToolUse: Bash
+- 2026-05-02 00:08:50 Orchestrator: PreToolUse: Bash
+- 2026-05-02 00:08:50 Orchestrator: PostToolUse: Bash
+- 2026-05-02 00:08:51 Orchestrator: PreToolUse: Bash
+- 2026-05-02 00:08:51 Orchestrator: PostToolUse: Bash
+- 2026-05-02 00:08:54 Orchestrator: PreToolUse: Bash
+- 2026-05-02 00:08:54 Orchestrator: PostToolUse: Bash
+- 2026-05-02 00:09:30 Codex2: `P2-QLIB-PROD-DATA-ACTIVATION-001` Handoff to Claude: Production-data activation packet implemented: added Qlib production dataset proof validation, real/stub-selectable production_activation_smoke.py, candidate handoff packet persistence, docs/checklist updates. Verification: python3 -m unittest discover -s services/research/qlib -p 'test_*.py' (32 OK); python3 services/research/qlib/smoke_test.py (OK); python3 -m pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py (2 passed); python3 -m py_compile qlib activation scripts (OK).
+- 2026-05-02 00:10:05 Orchestrator: PreToolUse: Write
+- 2026-05-02 00:10:05 Orchestrator: PostToolUse: Write
+- 2026-05-02 00:10:14 Orchestrator: PreToolUse: Bash
+- 2026-05-02 00:10:15 Claude: `P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE` Handoff to Codex2: Acceptance packet prepared at support/sidecars/P2-TRL-RUNTIME-DATA-ACTIVATION-001/P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE.md. Contains: full acceptance checklist for parent task, dependency map (satisfied vs open runtime gates), pre-flight checklist for parent owner Codex2, reviewer gate summary, and evidence file references. Ready for review.

@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-01T16:04:51Z",
+  "updated_at": "2026-05-01T16:10:15Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,11 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "reviewing",
+      "current_task_ids": [
+        "P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE"
+      ],
       "branch": "feat/claude-execution-control",
-      "next": "",
-      "last_update": "2026-05-01T15:55:09Z"
+      "next": "Acceptance packet prepared at support/sidecars/P2-TRL-RUNTIME-DATA-ACTIVATION-001/P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE.md. Contains: full acceptance checklist for parent task, dependency map (satisfied vs open runtime gates), pre-flight checklist for parent owner Codex2, reviewer gate summary, and evidence file references. Ready for review.",
+      "last_update": "2026-05-01T16:10:15Z"
     },
     {
       "name": "Gemini",
@@ -137,13 +139,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
+      "status": "reviewing",
       "current_task_ids": [
         "P2-QLIB-PROD-DATA-ACTIVATION-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Supervisor auto-started P2-QLIB-PROD-DATA-ACTIVATION-001 after successful dispatch.",
-      "last_update": "2026-05-01T16:01:51Z"
+      "next": "Production-data activation packet implemented: added Qlib production dataset proof validation, real/stub-selectable production_activation_smoke.py, candidate handoff packet persistence, docs/checklist updates. Verification: python3 -m unittest discover -s services/research/qlib -p 'test_*.py' (32 OK); python3 services/research/qlib/smoke_test.py (OK); python3 -m pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py (2 passed); python3 -m py_compile qlib activation scripts (OK).",
+      "last_update": "2026-05-01T16:09:30Z"
     },
     {
       "name": "Copilot",
@@ -226,7 +228,7 @@
       "phase": "P2 Wave 8 External Activation",
       "owner": "Codex2",
       "reviewer": "Claude",
-      "status": "in_progress",
+      "status": "review",
       "depends_on": [
         "P2-OSS-ACTIVATE-001",
         "P1-SOURCE-001"
@@ -245,8 +247,8 @@
         "Qlib real backend path runs or returns explicit install/config error while stub CI remains deterministic",
         "Qlib candidate handoff is produced with artifact_state draft or candidate and no registry write or order-capable route"
       ],
-      "next": "Supervisor auto-started P2-QLIB-PROD-DATA-ACTIVATION-001 after successful dispatch.",
-      "last_update": "2026-05-01T16:01:51Z",
+      "next": "Production-data activation packet implemented: added Qlib production dataset proof validation, real/stub-selectable production_activation_smoke.py, candidate handoff packet persistence, docs/checklist updates. Verification: python3 -m unittest discover -s services/research/qlib -p 'test_*.py' (32 OK); python3 services/research/qlib/smoke_test.py (OK); python3 -m pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py (2 passed); python3 -m py_compile qlib activation scripts (OK).",
+      "last_update": "2026-05-01T16:09:30Z",
       "task_class": "execution",
       "mutates_canonical": true
     },
@@ -370,6 +372,34 @@
       "last_update": "2026-05-01T15:55:21Z",
       "task_class": "execution",
       "mutates_canonical": true
+    },
+    {
+      "id": "P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE",
+      "title": "Prepare P2-TRL-RUNTIME-DATA-ACTIVATION-001 acceptance packet and dependency map",
+      "summary_zh": "平行支援 P2-TRL-RUNTIME-DATA-ACTIVATION-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "P2 Wave 8 External Activation",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "status": "review",
+      "depends_on": [
+        "P2-OSS-ACTIVATE-001"
+      ],
+      "artifacts": [
+        "support/sidecars/P2-TRL-RUNTIME-DATA-ACTIVATION-001/P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Acceptance packet prepared at support/sidecars/P2-TRL-RUNTIME-DATA-ACTIVATION-001/P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE.md. Contains: full acceptance checklist for parent task, dependency map (satisfied vs open runtime gates), pre-flight checklist for parent owner Codex2, reviewer gate summary, and evidence file references. Ready for review.",
+      "last_update": "2026-05-01T16:10:15Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "P2-TRL-RUNTIME-DATA-ACTIVATION-001",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
     }
   ],
   "handoffs": [
@@ -406,6 +436,22 @@
       "message": "Auto-reassigned P2-MARKETDATA-CREDENTIAL-SMOKE-001 away from sidecar-only lane Gemini; owner Gemini -> Codex2. Reserved sidecar-only agents no longer hold mainline tasks.",
       "status": "pending",
       "created_at": "2026-05-01T15:48:40Z"
+    },
+    {
+      "task_id": "P2-QLIB-PROD-DATA-ACTIVATION-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Production-data activation packet implemented: added Qlib production dataset proof validation, real/stub-selectable production_activation_smoke.py, candidate handoff packet persistence, docs/checklist updates. Verification: python3 -m unittest discover -s services/research/qlib -p 'test_*.py' (32 OK); python3 services/research/qlib/smoke_test.py (OK); python3 -m pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py (2 passed); python3 -m py_compile qlib activation scripts (OK).",
+      "status": "pending",
+      "created_at": "2026-05-01T16:09:30Z"
+    },
+    {
+      "task_id": "P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Acceptance packet prepared at support/sidecars/P2-TRL-RUNTIME-DATA-ACTIVATION-001/P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE.md. Contains: full acceptance checklist for parent task, dependency map (satisfied vs open runtime gates), pre-flight checklist for parent owner Codex2, reviewer gate summary, and evidence file references. Ready for review.",
+      "status": "pending",
+      "created_at": "2026-05-01T16:10:15Z"
     }
   ],
   "blockers": [],
@@ -420,11 +466,11 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 0,
-      "active": 0,
+      "total": 1,
+      "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
       "todo": 0
     },
@@ -469,9 +515,9 @@
       "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
-      "todo": 3
+      "todo": 2
     },
     "Copilot": {
       "total": 0,
