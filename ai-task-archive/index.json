@@ -1,12 +1,14 @@
 {
   "version": 1,
-  "updated_at": "2026-05-01T15:34:04Z",
+  "updated_at": "2026-05-01T15:56:59Z",
   "counts": {
-    "total": 876,
-    "completed": 860,
+    "total": 878,
+    "completed": 862,
     "superseded": 16
   },
   "recent_terminal_ids": [
+    "P2-BROKER-SANDBOX-ORDER-001",
+    "P2-OSS-ACTIVATE-001-SIDECAR-REVIEW",
     "P2-LIVE-KERNEL-001",
     "P2-OSS-ACTIVATE-001",
     "P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE",
@@ -24,8 +26,6 @@
     "P1-LIVE-PLAN-001",
     "P0-REC-001-SIDECAR-ACCEPTANCE",
     "P0-REC-001",
-    "P0-LOOP-001",
-    "P1-PERSIST-001-SIDECAR-ACCEPTANCE",
-    "P0-LOOP-001-SIDECAR-ACCEPTANCE"
+    "P0-LOOP-001"
   ]
 }
