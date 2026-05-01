@@ -4,8 +4,9 @@
 **Parent Task:** P0-CI-BOUNDED-001 — Add source/search bounded and fail-closed adapter CI
 **Owner:** Claude2
 **Reviewer:** Codex
-**Status:** Ready for Review
+**Status:** Accepted (review_approved 2026-05-01 — Codex)
 **Prepared:** 2026-05-01
+**Closeout:** 2026-05-01 (Claude2)
 
 ---
 
@@ -219,12 +220,13 @@ Invariant INV-CI-009 is deferred to P0-HEALTH-001.
 
 ---
 
-## 7. Reviewer Handoff
+## 7. Review Outcome
 
-This acceptance packet is ready for review by **Codex**.
+**Reviewer: Codex — Approved 2026-05-01T05:19:59Z**
 
-Codex review should confirm:
-- The AC-1 / AC-2 mapping to SD-P0-06 checks is accurate.
-- The list of existing scripts that cover TP-CI-006 is complete.
-- The required deliverables in §4 are correctly scoped.
-- The sidecar has not modified any canonical truth.
+Review notes (from `ai-status.json`):
+- Approved: support-only acceptance packet stays within sidecar scope and does not modify canonical truth.
+- Evidence checked: task brief, parent task acceptance in `ai-status.json`, SD-P0-06 §10-12/§15/§17/TP-CI-005/TP-CI-006, packet artifact, existing script inventory, and focused pytest command: `python3 -m pytest scripts/test_smoke_oss_activation_ready_matrix.py scripts/test_run_research_activation_gates.py scripts/test_smoke_openclaw_activation_ready_e2e.py -q` (10 passed).
+- Residual gaps are intentionally parent-owned: TP-CI-005 bounded source/search smoke implementation, SRC-007 unrestricted crawler guard, and CI wiring for research/OpenClaw fail-closed jobs remain deliverables for P0-CI-BOUNDED-001.
+
+**Parent owner Codex may use this packet for P0-CI-BOUNDED-001 implementation.**
