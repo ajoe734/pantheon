@@ -67,7 +67,7 @@ When only specific parent tasks are unsafe for sidecar generation, keep `sidecar
 For `approval_actions`, only act on approvals whose command preview and task context you can judge:
 
 - Allow low-risk validation, read-only inspection, and scoped test commands.
-- Allow a normal non-force `git push` only when the branch/upstream are clear, the task has a reviewed closeout commit with matching metadata, and no human hold is present.
+- Require / allow a pending normal non-force `git push` when the branch/upstream are clear, the task or closeout batch has reviewed closeout commit metadata, and no human hold is present.
 - Deny orphaned, stale, destructive, live-trading, credential, broad filesystem, or unclear commands.
 - Deny force, mirror, delete, all-branch, tag-wide, or ambiguous push commands as routine closeout.
 - Omit an approval if you cannot decide from the prompt.
@@ -79,7 +79,7 @@ When reviewing the board, explicitly call out:
 
 - `review_approved` tasks whose owner is idle and should be re-dispatched for finalization.
 - `done` tasks that have no task-scoped commit and no exception note.
-- `done` tasks whose delivery metadata shows `push_status: ahead` when remote publication is expected.
+- `done` tasks whose delivery metadata shows `push_status: ahead` on a branch with a configured upstream.
 - finalization that skipped required review notes, evidence, acceptance packet, or task-specific docs.
 
-Do not directly mark tasks `done`. Recommend owner re-dispatch, a closeout follow-up, or a scoped push approval.
+Do not directly mark tasks `done`. Recommend owner re-dispatch, a closeout follow-up, or approve the scoped normal push when it is safe.

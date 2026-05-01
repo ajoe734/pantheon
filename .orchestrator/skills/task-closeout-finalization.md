@@ -49,13 +49,13 @@ Do not edit these generated state files by hand during closeout.
 
 ## Push Policy
 
-Push is a publish action, not an automatic side effect of `done`.
+Closeout is not complete until the finished work is published to the configured upstream whenever that is safely possible.
 
-- Default: do not auto-push during ordinary finalization.
-- If delivery metadata shows `push_status: ahead`, treat the task as locally finalized but publish-pending.
-- Chair man may approve a normal non-force `git push` when the branch/upstream are clear, the commit metadata matches the task, and no human hold is present.
+- Default: after the task-scoped commit, `done` transition, generated state/archive update, and any required state/archive commit, run a normal non-force `git push` to the configured upstream.
+- If delivery metadata shows `push_status: ahead`, treat the task as publish-incomplete until the branch is pushed or an explicit human hold says not to publish.
+- Chair man must approve a pending normal non-force `git push` when the branch/upstream are clear, the commit metadata matches the task or closeout batch, and no human hold is present.
 - Never approve or run `git push --force`, `--mirror`, `--delete`, `--all`, `--tags`, or broad ambiguous push commands as routine closeout.
-- If there is no upstream, leave `push_status: no_upstream` and record the publication gap instead of inventing a remote target.
+- If there is no upstream, leave `push_status: no_upstream`, record the publication gap, and escalate for a remote/upstream decision instead of inventing a remote target.
 
 ## Chair Man Oversight
 
@@ -63,7 +63,7 @@ Chair man should flag any completed task with one of these closeout gaps:
 
 - `review_approved` remains idle while its owner is available.
 - `done` was recorded without a task-scoped commit and no exception note.
-- `push_status: ahead` remains after the user expects remote publication.
+- `push_status: ahead` remains after task finalization on a branch with a configured upstream.
 - finalization skipped required review, acceptance, or evidence artifacts.
 
-Chair man can recommend owner re-dispatch, a small closeout follow-up, or a scoped push approval depending on the gap.
+Chair man should recommend owner re-dispatch, a small closeout follow-up, or approve the scoped normal push depending on the gap.

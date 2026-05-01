@@ -252,11 +252,11 @@ Commit requirements:
 
 Publication rule:
 
-- `done` does not automatically mean remote publication
+- closeout is not complete until the finished work is published to the configured upstream whenever that is safely possible
 - `scripts/ai-status.sh done` records branch, commit, dirty count, remote/upstream, and push status
-- default behavior is no automatic `git push`
-- if delivery metadata shows `push_status: ahead`, the task is locally finalized but publish-pending
-- chair man may approve a normal non-force `git push` only when branch/upstream are clear, closeout commit metadata matches the task, and no human hold is present
+- after the task-scoped commit, `done` transition, generated state/archive update, and any required state/archive commit, run a normal non-force `git push` to the configured upstream
+- if delivery metadata shows `push_status: ahead`, the task is publish-incomplete until pushed or an explicit human hold says not to publish
+- chair man must approve a normal non-force `git push` when branch/upstream are clear, closeout commit metadata matches the task or closeout batch, and no human hold is present
 - never use force, mirror, delete, all-branch, or tag-wide pushes as routine closeout
 
 ### Discussion Planning Mode
