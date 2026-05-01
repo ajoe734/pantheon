@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "P2-BROKER-SANDBOX-ORDER-001",
+  "archived_at": "2026-05-01T15:56:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P2-BROKER-SANDBOX-ORDER-001",
+    "title": "Broker sandbox/test-key order API smoke",
+    "summary_zh": "先用 broker paper/sandbox/test key 串接下單 API 並留存 place/cancel/readback/reconcile 證據；production live 真實資金路徑仍需 explicit activation。",
+    "phase": "P2 Wave 7",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "P2-LIVE-KERNEL-001"
+    ],
+    "artifacts": [
+      "services/execution/ibkr_adapter.py",
+      "services/execution/shioaji_adapter.py",
+      "services/execution/kraken_adapter.py",
+      "scripts/probe_ibkr_session.py",
+      "scripts/probe_ibkr_open_orders.py",
+      "scripts/probe_ibkr_executions.py",
+      "scripts/run_ibkr_live_order_cancel.py",
+      "scripts/validate_ep5_live_order_cancel.py",
+      "docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md",
+      "docs/deployment/ep5-canary-ready/broker-venue-config-boundary.md"
+    ],
+    "acceptance": [
+      "Broker order API smoke runs with paper/sandbox/test credentials, simulation mode, or validate-only mode before any production-live side effect",
+      "smoke captures auth, account readiness, place, cancel/replace, status/readback, execution/no-fill or fill disposition, telemetry, and reconciliation evidence",
+      "production-live order/cancel/position/capital routes remain disabled unless explicit activation gate passes and no raw broker secrets enter repo artifacts"
+    ],
+    "next": "Finalized broker sandbox/test-key order API smoke after Codex review approval. Commit 1861472 adds bounded smoke runner, focused tests, repo-safe IBKR/Shioaji/Kraken evidence packets, review artifact, and canary docs. Verification rerun: 29 focused tests passed; git diff --check passed; evidence secret scan only found intended secret:// refs; production-live and raw credential negative checks exited 2.",
+    "last_update": "2026-05-01T15:56:59Z",
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "human_correction",
+      "session_id": "2026-05-01-broker-api-integration-posture"
+    },
+    "priority": "P2",
+    "wave": 7,
+    "review_notes_zh": [
+      "Approved after reviewer hardening: credential_ref now requires an explicit secret-reference scheme; production-live modes remain rejected.",
+      "Verification passed: 29 focused tests, git diff --check on reviewed task files, evidence secret-pattern scan with only intended secret:// refs, and negative CLI checks for live mode/raw credential text."
+    ],
+    "review_file": "support/reviews/P2-BROKER-SANDBOX-ORDER-001-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T15:56:59Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "18614722f85951fcb7a9b0c9c04244d3de599414",
+      "commit_subject": "P2-BROKER-SANDBOX-ORDER-001 broker sandbox smoke",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "P2-BROKER-SANDBOX-ORDER-001",
+        "Reviewer": "Codex",
+        "Verification": "python3 -m pytest scripts/test_run_broker_sandbox_order_smoke.py services/execution/test_ibkr_adapter.py services/execution/test_shioaji_adapter.py services/execution/test_kraken_adapter.py (29 passed); git diff --check; evidence secret-pattern scan only found intended secret:// refs; live/raw-credential negative checks exited 2."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 160,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P2-BROKER-SANDBOX-ORDER-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: added fail-closed broker sandbox/test-key order smoke runner plus tests, docs entrypoints, and archived IBKR/Shioaji/Kraken validate-only/simulation evidence under docs/deployment/evidence/broker-sandbox-order-smoke/20260501T154654Z. Verification: python3 -m pytest scripts/test_run_broker_sandbox_order_smoke.py services/execution/test_ibkr_adapter.py services/execution/test_shioaji_adapter.py services/execution/test_kraken_adapter.py; git diff --check on touched files; evidence secret-pattern scan.",
+      "status": "done",
+      "created_at": "2026-05-01T15:48:15Z",
+      "resolved_at": "2026-05-01T15:53:38Z"
+    },
+    {
+      "task_id": "P2-BROKER-SANDBOX-ORDER-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved after secret-reference hardening; owner should finalize with task-scoped commit. Verification: 29 focused tests passed, diff check passed, evidence scan found only intended secret:// refs, negative live/raw-credential checks returned exit 2.",
+      "status": "done",
+      "created_at": "2026-05-01T15:53:38Z",
+      "resolved_at": "2026-05-01T15:56:59Z"
+    }
+  ],
+  "blockers": []
+}
