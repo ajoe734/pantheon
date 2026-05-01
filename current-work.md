@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-01 17:24:24
+Last updated: 2026-05-01 17:30:59
 
 ## Objective
 
@@ -39,10 +39,10 @@ Last updated: 2026-05-01 17:24:24
 
 - `Claude`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Assignment created
-- `Codex2`: integration, status-system, schema, acceptance; next: Ready for review. Frontend repo /home/edna/code/front-ai-trading-system commit a1dbf3d adds SourceModeBadge/sourceMode helpers, source_mode strips on runtime/deployment/governance/evolution/persona/knowledge critical surfaces, and runtime identity grids showing bridge repo/commit, runtime_binding_id, deployment_plan_id, artifact_id, capital_pool_id. Verification: npm run build; npm run check:prod-demo-routes; npx eslint targeted changed files.
+- `Codex`: integration, status-system, schema, acceptance; next: Supervisor auto-started P1-PERSIST-001 after successful dispatch.
+- `Codex2`: integration, status-system, schema, acceptance; next: Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex2 starts a fresh run.
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: Review packet complete. support/sidecars/P1-LIVE-PLAN-001/P1-LIVE-PLAN-001-SIDECAR-REVIEW.md contains: (1) evidence mapping for all three acceptance criteria against runbook sections, (2) policy alignment check for PAPER_CANARY_LIVE_POLICY.md / KILL_SWITCH / ROLLBACK / BINDING docs, (3) Codex review summary, (4) P1 boundary confirmation, (5) open items categorized as deferred. No canonical truth modified. Parent task P1-LIVE-PLAN-001 is review_approved by Codex; this packet is supplementary support for Claude's finalization.
+- `Claude2`: execution, control-plane, governance-review; next: Sidecar review packet verified and approved: evidence mapping accurate across all three acceptance criteria, policy alignment clean against PAPER_CANARY_LIVE_POLICY/KILL_SWITCH/ROLLBACK/BINDING docs, P1 boundary preserved. Returning to Claude2 for closeout.
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 
 ## Delivery Layers
@@ -51,10 +51,9 @@ Last updated: 2026-05-01 17:24:24
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `P0-FE-SOURCE-001` | Pantheon P0 Paper Loop | Add source mode and runtime identity to critical frontend surfaces | Codex2 | review | `P0-FE-DEMO-001`, `P0-TEL-PROJ-001` | 在 runtime/deployment/governance/evolution 等關鍵 UI 加 source_mode 與 bridge/binding/runtime identity。 |
 | `P1-BRACKET-001` | P1 Wave 5 | Guarded paper/sim bracket order execution | Codex2 | todo | `P0-LIVE-GUARD-001` | 在 paper/sim broker 範圍內實作受治理 bracket order execution；live 仍 fail-closed。 |
-| `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | Codex | todo | `P0-CI-BOUNDED-001` | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 |
-| `P1-LIVE-PLAN-001-SIDECAR-REVIEW` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-LIVE-PLAN-001] Prepare P1-LIVE-PLAN-001 review packet and evidence summary | Claude2 | review | `P0-LOOP-001` | 平行支援 P1-LIVE-PLAN-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
+| `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | Codex | in_progress | `P0-CI-BOUNDED-001` | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 |
+| `P1-LIVE-PLAN-001-SIDECAR-REVIEW` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-LIVE-PLAN-001] Prepare P1-LIVE-PLAN-001 review packet and evidence summary | Claude2 | review_approved | `P0-LOOP-001` | 平行支援 P1-LIVE-PLAN-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -66,17 +65,15 @@ Last updated: 2026-05-01 17:24:24
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `P0-FE-SOURCE-001` | Pantheon P0 Paper Loop | Add source mode and runtime identity to critical frontend surfaces | 在 runtime/deployment/governance/evolution 等關鍵 UI 加 source_mode 與 bridge/binding/runtime identity。 | Codex2 | Claude | review | `P0-FE-DEMO-001`, `P0-TEL-PROJ-001` | 2026-05-01 17:18:03 | Ready for review. Frontend repo /home/edna/code/front-ai-trading-system commit a1dbf3d adds SourceModeBadge/sourceMode helpers, source_mode strips on runtime/deployment/governance/evolution/persona/knowledge critical surfaces, and runtime identity grids showing bridge repo/commit, runtime_binding_id, deployment_plan_id, artifact_id, capital_pool_id. Verification: npm run build; npm run check:prod-demo-routes; npx eslint targeted changed files. |
 | `P1-BRACKET-001` | P1 Wave 5 | Guarded paper/sim bracket order execution | 在 paper/sim broker 範圍內實作受治理 bracket order execution；live 仍 fail-closed。 | Codex2 | Claude | todo | `P0-LIVE-GUARD-001` | 2026-05-01 17:23:26 | Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex2 starts a fresh run. |
-| `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 | Codex | Claude | todo | `P0-CI-BOUNDED-001` | 2026-05-01 15:16:56 | Assignment created |
-| `P1-LIVE-PLAN-001-SIDECAR-REVIEW` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-LIVE-PLAN-001] Prepare P1-LIVE-PLAN-001 review packet and evidence summary | 平行支援 P1-LIVE-PLAN-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Claude2 | Claude | review | `P0-LOOP-001` | 2026-05-01 17:15:05 | Review packet complete. support/sidecars/P1-LIVE-PLAN-001/P1-LIVE-PLAN-001-SIDECAR-REVIEW.md contains: (1) evidence mapping for all three acceptance criteria against runbook sections, (2) policy alignment check for PAPER_CANARY_LIVE_POLICY.md / KILL_SWITCH / ROLLBACK / BINDING docs, (3) Codex review summary, (4) P1 boundary confirmation, (5) open items categorized as deferred. No canonical truth modified. Parent task P1-LIVE-PLAN-001 is review_approved by Codex; this packet is supplementary support for Claude's finalization. |
+| `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 | Codex | Claude | in_progress | `P0-CI-BOUNDED-001` | 2026-05-01 17:28:53 | Supervisor auto-started P1-PERSIST-001 after successful dispatch. |
+| `P1-LIVE-PLAN-001-SIDECAR-REVIEW` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-LIVE-PLAN-001] Prepare P1-LIVE-PLAN-001 review packet and evidence summary | 平行支援 P1-LIVE-PLAN-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Claude2 | Claude | review_approved | `P0-LOOP-001` | 2026-05-01 17:29:49 | Sidecar review packet verified and approved: evidence mapping accurate across all three acceptance criteria, policy alignment clean against PAPER_CANARY_LIVE_POLICY/KILL_SWITCH/ROLLBACK/BINDING docs, P1 boundary preserved. Returning to Claude2 for closeout. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| `P1-LIVE-PLAN-001-SIDECAR-REVIEW` | Claude2 | Claude | Review packet complete. support/sidecars/P1-LIVE-PLAN-001/P1-LIVE-PLAN-001-SIDECAR-REVIEW.md contains: (1) evidence mapping for all three acceptance criteria against runbook sections, (2) policy alignment check for PAPER_CANARY_LIVE_POLICY.md / KILL_SWITCH / ROLLBACK / BINDING docs, (3) Codex review summary, (4) P1 boundary confirmation, (5) open items categorized as deferred. No canonical truth modified. Parent task P1-LIVE-PLAN-001 is review_approved by Codex; this packet is supplementary support for Claude's finalization. | pending | 2026-05-01 17:15:05 |
-| `P0-FE-SOURCE-001` | Codex2 | Claude | Ready for review. Frontend repo /home/edna/code/front-ai-trading-system commit a1dbf3d adds SourceModeBadge/sourceMode helpers, source_mode strips on runtime/deployment/governance/evolution/persona/knowledge critical surfaces, and runtime identity grids showing bridge repo/commit, runtime_binding_id, deployment_plan_id, artifact_id, capital_pool_id. Verification: npm run build; npm run check:prod-demo-routes; npx eslint targeted changed files. | pending | 2026-05-01 17:18:03 |
+| `P1-LIVE-PLAN-001-SIDECAR-REVIEW` | Claude | Claude2 | Sidecar review packet verified and approved: evidence mapping accurate across all three acceptance criteria, policy alignment clean against PAPER_CANARY_LIVE_POLICY/KILL_SWITCH/ROLLBACK/BINDING docs, P1 boundary preserved. Returning to Claude2 for closeout. | pending | 2026-05-01 17:29:49 |
 
 ## Blockers
 
@@ -88,11 +85,11 @@ Last updated: 2026-05-01 17:24:24
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| _(none)_ | - | - | - |
+| `P1-LIVE-PLAN-001-SIDECAR-REVIEW` | Claude | 審查通過：三項驗收標準均有對應 runbook 章節佐證（criterion 1→§2.1-2.7；criterion 2→§4-§5；criterion 3→§6.1-6.3）；四份 L1 政策文件對齊確認無語意衝突；P1 邊界正確保留（canary/live 仍 fail-closed，§7.4 延期清單清晰）；開放項目均屬已計劃延期，不阻擋 P1。Sidecar scope compliance 確認：無修改 canonical truth。 | support/sidecars/P1-LIVE-PLAN-001/P1-LIVE-PLAN-001-SIDECAR-REVIEW.md |
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-05-01 17:23:05
+- Last coordination scan: 2026-05-01 17:28:51
 - Tracked features: `46`
 - Lovable-ready packets: `45`
 - Waiting for Lovable/front-end: `0`
@@ -159,23 +156,23 @@ Last updated: 2026-05-01 17:24:24
 
 ## Latest Checkpoints
 
-- 2026-05-01 17:23:25 Orchestrator: `P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE` Supervisor resumed P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE for finalize after successful dispatch.
-- 2026-05-01 17:23:29 Orchestrator: PreToolUse: Read
-- 2026-05-01 17:23:29 Orchestrator: PostToolUse: Read
-- 2026-05-01 17:23:29 Orchestrator: PreToolUse: Read
-- 2026-05-01 17:23:30 Orchestrator: PreToolUse: Read
-- 2026-05-01 17:23:30 Orchestrator: PreToolUse: Read
-- 2026-05-01 17:23:30 Orchestrator: PostToolUse: Read
-- 2026-05-01 17:23:30 Orchestrator: PostToolUse: Read
-- 2026-05-01 17:23:31 Orchestrator: PostToolUse: Read
-- 2026-05-01 17:23:35 Orchestrator: `P1-BRACKET-001` Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex2 starts a fresh run.
-- 2026-05-01 17:23:39 Orchestrator: `P0-FE-SOURCE-001` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
-- 2026-05-01 17:23:42 Orchestrator: `P1-LIVE-PLAN-001-SIDECAR-REVIEW` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
-- 2026-05-01 17:23:46 Orchestrator: PreToolUse: Read
-- 2026-05-01 17:23:47 Orchestrator: PostToolUse: Read
-- 2026-05-01 17:23:47 Orchestrator: PreToolUse: Bash
-- 2026-05-01 17:23:48 Orchestrator: PostToolUse: Bash
-- 2026-05-01 17:23:55 Orchestrator: PreToolUse: Bash
-- 2026-05-01 17:23:55 Orchestrator: PostToolUse: Bash
-- 2026-05-01 17:23:55 Orchestrator: PreToolUse: Bash
-- 2026-05-01 17:24:23 Codex: `P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE` Closeout complete: support-only acceptance packet and Claude review artifact committed in 0f73b9d; verified task remained review_approved with owner Codex/reviewer Claude, no canonical truth or runtime implementation staged for this sidecar.
+- 2026-05-01 17:29:07 Orchestrator: PostToolUse: Read
+- 2026-05-01 17:29:08 Orchestrator: PostToolUse: Read
+- 2026-05-01 17:29:12 Orchestrator: `P0-FE-SOURCE-001` Supervisor resumed P0-FE-SOURCE-001 for finalize after successful dispatch.
+- 2026-05-01 17:29:16 Orchestrator: PreToolUse: Read
+- 2026-05-01 17:29:16 Orchestrator: `P1-LIVE-PLAN-001-SIDECAR-REVIEW` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
+- 2026-05-01 17:29:16 Orchestrator: PostToolUse: Read
+- 2026-05-01 17:29:23 Orchestrator: PreToolUse: Read
+- 2026-05-01 17:29:23 Orchestrator: PreToolUse: Read
+- 2026-05-01 17:29:23 Orchestrator: PostToolUse: Read
+- 2026-05-01 17:29:24 Orchestrator: PostToolUse: Read
+- 2026-05-01 17:29:29 Orchestrator: PreToolUse: Read
+- 2026-05-01 17:29:29 Orchestrator: PostToolUse: Read
+- 2026-05-01 17:29:49 Orchestrator: PreToolUse: Bash
+- 2026-05-01 17:29:49 Claude: `P1-LIVE-PLAN-001-SIDECAR-REVIEW` Sidecar review packet verified and approved: evidence mapping accurate across all three acceptance criteria, policy alignment clean against PAPER_CANARY_LIVE_POLICY/KILL_SWITCH/ROLLBACK/BINDING docs, P1 boundary preserved. Returning to Claude2 for closeout.
+- 2026-05-01 17:30:00 Orchestrator: PostToolUse: Bash
+- 2026-05-01 17:30:04 Orchestrator: PreToolUse: Bash
+- 2026-05-01 17:30:05 Orchestrator: PostToolUse: Bash
+- 2026-05-01 17:30:15 Orchestrator: Stop: Stop
+- 2026-05-01 17:30:16 Orchestrator: SessionEnd: SessionEnd
+- 2026-05-01 17:30:58 Codex2: `P0-FE-SOURCE-001` Closeout complete: frontend repo commit a1dbf3d implements source mode strips and runtime identity grid; Pantheon review artifact committed in bd7a951; verified npm run build, npm run check:prod-demo-routes, and targeted npx eslint.

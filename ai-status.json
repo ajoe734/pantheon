@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；production、paper、canary、live gate 預設仍 fail-closed。",
-  "updated_at": "2026-05-01T09:24:24Z",
+  "updated_at": "2026-05-01T09:30:59Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -121,13 +121,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "ready",
+      "status": "working",
       "current_task_ids": [
         "P1-PERSIST-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Assignment created",
-      "last_update": "2026-05-01T07:16:56Z"
+      "next": "Supervisor auto-started P1-PERSIST-001 after successful dispatch.",
+      "last_update": "2026-05-01T09:28:53Z"
     },
     {
       "name": "Codex2",
@@ -137,13 +137,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "reviewing",
+      "status": "ready",
       "current_task_ids": [
-        "P0-FE-SOURCE-001"
+        "P1-BRACKET-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Ready for review. Frontend repo /home/edna/code/front-ai-trading-system commit a1dbf3d adds SourceModeBadge/sourceMode helpers, source_mode strips on runtime/deployment/governance/evolution/persona/knowledge critical surfaces, and runtime identity grids showing bridge repo/commit, runtime_binding_id, deployment_plan_id, artifact_id, capital_pool_id. Verification: npm run build; npm run check:prod-demo-routes; npx eslint targeted changed files.",
-      "last_update": "2026-05-01T09:18:03Z"
+      "next": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex2 starts a fresh run.",
+      "last_update": "2026-05-01T09:23:26Z"
     },
     {
       "name": "Copilot",
@@ -166,13 +166,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "reviewing",
+      "status": "finalize",
       "current_task_ids": [
         "P1-LIVE-PLAN-001-SIDECAR-REVIEW"
       ],
       "branch": "feat/claude2-execution-control",
-      "next": "Review packet complete. support/sidecars/P1-LIVE-PLAN-001/P1-LIVE-PLAN-001-SIDECAR-REVIEW.md contains: (1) evidence mapping for all three acceptance criteria against runbook sections, (2) policy alignment check for PAPER_CANARY_LIVE_POLICY.md / KILL_SWITCH / ROLLBACK / BINDING docs, (3) Codex review summary, (4) P1 boundary confirmation, (5) open items categorized as deferred. No canonical truth modified. Parent task P1-LIVE-PLAN-001 is review_approved by Codex; this packet is supplementary support for Claude's finalization.",
-      "last_update": "2026-05-01T09:15:05Z"
+      "next": "Sidecar review packet verified and approved: evidence mapping accurate across all three acceptance criteria, policy alignment clean against PAPER_CANARY_LIVE_POLICY/KILL_SWITCH/ROLLBACK/BINDING docs, P1 boundary preserved. Returning to Claude2 for closeout.",
+      "last_update": "2026-05-01T09:29:49Z"
     },
     {
       "name": "Gemini2",
@@ -190,46 +190,6 @@
     }
   ],
   "tasks": [
-    {
-      "id": "P0-FE-SOURCE-001",
-      "title": "Add source mode and runtime identity to critical frontend surfaces",
-      "summary_zh": "在 runtime/deployment/governance/evolution 等關鍵 UI 加 source_mode 與 bridge/binding/runtime identity。",
-      "phase": "Pantheon P0 Paper Loop",
-      "owner": "Codex2",
-      "reviewer": "Claude",
-      "depends_on": [
-        "P0-FE-DEMO-001",
-        "P0-TEL-PROJ-001"
-      ],
-      "artifacts": [
-        "docs/04/pantheon_p0_sd/SD-P0-05_Frontend_Production_Adoption_Demo_Cleanup.md"
-      ],
-      "acceptance": [
-        "critical pages show authoritative_bff, derived_projection, stale_cache, preview_mock_only, demo_only, or unavailable",
-        "runtime detail shows bridge repo/commit, runtime_binding_id, deployment_plan_id, artifact_id, and capital_pool_id"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
-        "phase": "phase6",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
-        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-05-01T03:58:17Z",
-        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
-      },
-      "status": "review",
-      "next": "Ready for review. Frontend repo /home/edna/code/front-ai-trading-system commit a1dbf3d adds SourceModeBadge/sourceMode helpers, source_mode strips on runtime/deployment/governance/evolution/persona/knowledge critical surfaces, and runtime identity grids showing bridge repo/commit, runtime_binding_id, deployment_plan_id, artifact_id, capital_pool_id. Verification: npm run build; npm run check:prod-demo-routes; npx eslint targeted changed files.",
-      "last_update": "2026-05-01T09:18:03Z"
-    },
     {
       "id": "P1-BRACKET-001",
       "title": "Guarded paper/sim bracket order execution",
@@ -270,7 +230,7 @@
       "phase": "P1 Wave 5",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "todo",
+      "status": "in_progress",
       "depends_on": [
         "P0-CI-BOUNDED-001"
       ],
@@ -283,8 +243,8 @@
         "dev fallback clearly dev-only",
         "environment posture visible in health/runtime metadata"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-05-01T07:16:56Z",
+      "next": "Supervisor auto-started P1-PERSIST-001 after successful dispatch.",
+      "last_update": "2026-05-01T09:28:53Z",
       "source_plane": "planning",
       "source_ref": {
         "type": "discussion_planning",
@@ -304,7 +264,7 @@
       "phase": "P1 Wave 5",
       "owner": "Claude2",
       "reviewer": "Claude",
-      "status": "review",
+      "status": "review_approved",
       "depends_on": [
         "P0-LOOP-001"
       ],
@@ -316,14 +276,18 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Review packet complete. support/sidecars/P1-LIVE-PLAN-001/P1-LIVE-PLAN-001-SIDECAR-REVIEW.md contains: (1) evidence mapping for all three acceptance criteria against runbook sections, (2) policy alignment check for PAPER_CANARY_LIVE_POLICY.md / KILL_SWITCH / ROLLBACK / BINDING docs, (3) Codex review summary, (4) P1 boundary confirmation, (5) open items categorized as deferred. No canonical truth modified. Parent task P1-LIVE-PLAN-001 is review_approved by Codex; this packet is supplementary support for Claude's finalization.",
-      "last_update": "2026-05-01T09:15:05Z",
+      "next": "Sidecar review packet verified and approved: evidence mapping accurate across all three acceptance criteria, policy alignment clean against PAPER_CANARY_LIVE_POLICY/KILL_SWITCH/ROLLBACK/BINDING docs, P1 boundary preserved. Returning to Claude2 for closeout.",
+      "last_update": "2026-05-01T09:29:49Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "P1-LIVE-PLAN-001",
       "helper_kind": "review_packet",
       "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "審查通過：三項驗收標準均有對應 runbook 章節佐證（criterion 1→§2.1-2.7；criterion 2→§4-§5；criterion 3→§6.1-6.3）；四份 L1 政策文件對齊確認無語意衝突；P1 邊界正確保留（canary/live 仍 fail-closed，§7.4 延期清單清晰）；開放項目均屬已計劃延期，不阻擋 P1。Sidecar scope compliance 確認：無修改 canonical truth。"
+      ],
+      "review_file": "support/sidecars/P1-LIVE-PLAN-001/P1-LIVE-PLAN-001-SIDECAR-REVIEW.md"
     }
   ],
   "handoffs": [
@@ -337,29 +301,21 @@
       "resolved_at": "2026-04-17T12:39:53Z"
     },
     {
-      "task_id": "P0-FE-SOURCE-001",
-      "from": "Copilot",
-      "to": "Codex",
-      "message": "Auto-reassigned P0-FE-SOURCE-001 away from sidecar-only lane Copilot; owner Copilot -> Codex. Reserved sidecar-only agents no longer hold mainline tasks.",
-      "status": "done",
-      "created_at": "2026-05-01T03:59:19Z",
-      "resolved_at": "2026-05-01T08:42:49Z"
-    },
-    {
       "task_id": "P1-LIVE-PLAN-001-SIDECAR-REVIEW",
       "from": "Claude2",
       "to": "Claude",
       "message": "Review packet complete. support/sidecars/P1-LIVE-PLAN-001/P1-LIVE-PLAN-001-SIDECAR-REVIEW.md contains: (1) evidence mapping for all three acceptance criteria against runbook sections, (2) policy alignment check for PAPER_CANARY_LIVE_POLICY.md / KILL_SWITCH / ROLLBACK / BINDING docs, (3) Codex review summary, (4) P1 boundary confirmation, (5) open items categorized as deferred. No canonical truth modified. Parent task P1-LIVE-PLAN-001 is review_approved by Codex; this packet is supplementary support for Claude's finalization.",
-      "status": "pending",
-      "created_at": "2026-05-01T09:15:05Z"
+      "status": "done",
+      "created_at": "2026-05-01T09:15:05Z",
+      "resolved_at": "2026-05-01T09:29:49Z"
     },
     {
-      "task_id": "P0-FE-SOURCE-001",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Ready for review. Frontend repo /home/edna/code/front-ai-trading-system commit a1dbf3d adds SourceModeBadge/sourceMode helpers, source_mode strips on runtime/deployment/governance/evolution/persona/knowledge critical surfaces, and runtime identity grids showing bridge repo/commit, runtime_binding_id, deployment_plan_id, artifact_id, capital_pool_id. Verification: npm run build; npm run check:prod-demo-routes; npx eslint targeted changed files.",
+      "task_id": "P1-LIVE-PLAN-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Sidecar review packet verified and approved: evidence mapping accurate across all three acceptance criteria, policy alignment clean against PAPER_CANARY_LIVE_POLICY/KILL_SWITCH/ROLLBACK/BINDING docs, P1 boundary preserved. Returning to Claude2 for closeout.",
       "status": "pending",
-      "created_at": "2026-05-01T09:18:03Z"
+      "created_at": "2026-05-01T09:29:49Z"
     }
   ],
   "blockers": [],
@@ -384,11 +340,11 @@
     },
     "Claude2": {
       "total": 1,
-      "active": 1,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 1,
-      "review_approved": 0,
+      "review": 0,
+      "review_approved": 1,
       "todo": 0
     },
     "Gemini": {
@@ -411,7 +367,7 @@
     },
     "Codex": {
       "total": 1,
-      "active": 0,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
@@ -419,11 +375,11 @@
       "todo": 1
     },
     "Codex2": {
-      "total": 2,
-      "active": 1,
+      "total": 1,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 1,
+      "review": 0,
       "review_approved": 0,
       "todo": 1
     },
