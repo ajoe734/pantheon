@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-01 16:59:31
+Last updated: 2026-05-01 17:07:27
 
 ## Objective
 
@@ -39,11 +39,11 @@ Last updated: 2026-05-01 16:59:31
 
 - `Claude`: execution, control-plane, governance-review; next: Runbook ready for review. docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md covers all three acceptance criteria: canary/live prerequisites documented, rollback and kill switch criteria named, human approval gates enumerated. Derived from PAPER_CANARY_LIVE_POLICY.md, KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md, and ROLLBACK_AND_POSITION_SEMANTICS.md. P1 scope is activation readiness only; production live remains fail-closed.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Continuing frontend source_mode/runtime identity implementation in front-ai-trading-system; preserving existing handoff edits.
-- `Codex2`: integration, status-system, schema, acceptance; next: P0 paper reconciliation ready for review: added ReconciliationRecord writer in reconciliation-drift, optional incident service create request on threshold breach, and proposed-only evolution envelope. Verification: python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py -q => 6 passed.
+- `Codex`: integration, status-system, schema, acceptance; next: Supervisor preempted P1-BRACKET-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.
+- `Codex2`: integration, status-system, schema, acceptance; next: Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex2 starts a fresh run.
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: Acceptance packet created at support/sidecars/P0-REC-001/P0-REC-001-SIDECAR-ACCEPTANCE.md; handed off to Codex2 for review.
-- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Supervisor auto-started P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE after successful dispatch.
+- `Claude2`: execution, control-plane, governance-review; next: Owner picked up review_approved task for closeout: verifying acceptance packet, staging task-scoped commit, then marking done.
+- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 
 ## Delivery Layers
 
@@ -51,13 +51,12 @@ Last updated: 2026-05-01 16:59:31
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `P0-REC-001` | Pantheon P0 Paper Loop | Write basic paper ReconciliationRecord | Codex2 | review | `P0-LOOP-001` | 在 paper run 後產生最低限度 ReconciliationRecord，並允許 threshold breach 開 IncidentCase。 |
-| `P0-FE-SOURCE-001` | Pantheon P0 Paper Loop | Add source mode and runtime identity to critical frontend surfaces | Codex | in_progress | `P0-FE-DEMO-001`, `P0-TEL-PROJ-001` | 在 runtime/deployment/governance/evolution 等關鍵 UI 加 source_mode 與 bridge/binding/runtime identity。 |
+| `P0-FE-SOURCE-001` | Pantheon P0 Paper Loop | Add source mode and runtime identity to critical frontend surfaces | Codex2 | todo | `P0-FE-DEMO-001`, `P0-TEL-PROJ-001` | 在 runtime/deployment/governance/evolution 等關鍵 UI 加 source_mode 與 bridge/binding/runtime identity。 |
 | `P1-BRACKET-001` | P1 Wave 5 | Guarded paper/sim bracket order execution | Codex | todo | `P0-LIVE-GUARD-001` | 在 paper/sim broker 範圍內實作受治理 bracket order execution；live 仍 fail-closed。 |
 | `P1-LIVE-PLAN-001` | P1 Wave 5 | Canary/live activation criteria and runbook | Claude | review | `P0-LOOP-001` | 定義 canary/live activation criteria 與 runbook；P1 只取得 activation readiness，不開 production live。 |
 | `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | Codex | todo | `P0-CI-BOUNDED-001` | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 |
-| `P0-REC-001-SIDECAR-ACCEPTANCE` | Pantheon P0 Paper Loop | [Sidecar] [Auto] [Parent P0-REC-001] Prepare P0-REC-001 acceptance packet and dependency map | Claude2 | review | `P0-LOOP-001` | 平行支援 P0-REC-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
-| `P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-LIVE-PLAN-001] Prepare P1-LIVE-PLAN-001 acceptance packet and dependency map | Gemini2 | in_progress | `P0-LOOP-001` | 平行支援 P1-LIVE-PLAN-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
+| `P0-REC-001-SIDECAR-ACCEPTANCE` | Pantheon P0 Paper Loop | [Sidecar] [Auto] [Parent P0-REC-001] Prepare P0-REC-001 acceptance packet and dependency map | Claude2 | in_progress | `P0-LOOP-001` | 平行支援 P0-REC-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
+| `P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-LIVE-PLAN-001] Prepare P1-LIVE-PLAN-001 acceptance packet and dependency map | Codex | todo | `P0-LOOP-001` | 平行支援 P1-LIVE-PLAN-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -69,21 +68,18 @@ Last updated: 2026-05-01 16:59:31
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `P0-REC-001` | Pantheon P0 Paper Loop | Write basic paper ReconciliationRecord | 在 paper run 後產生最低限度 ReconciliationRecord，並允許 threshold breach 開 IncidentCase。 | Codex2 | Codex | review | `P0-LOOP-001` | 2026-05-01 16:58:58 | P0 paper reconciliation ready for review: added ReconciliationRecord writer in reconciliation-drift, optional incident service create request on threshold breach, and proposed-only evolution envelope. Verification: python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py -q => 6 passed. |
-| `P0-FE-SOURCE-001` | Pantheon P0 Paper Loop | Add source mode and runtime identity to critical frontend surfaces | 在 runtime/deployment/governance/evolution 等關鍵 UI 加 source_mode 與 bridge/binding/runtime identity。 | Codex | Claude | in_progress | `P0-FE-DEMO-001`, `P0-TEL-PROJ-001` | 2026-05-01 16:55:10 | Continuing frontend source_mode/runtime identity implementation in front-ai-trading-system; preserving existing handoff edits. |
+| `P0-FE-SOURCE-001` | Pantheon P0 Paper Loop | Add source mode and runtime identity to critical frontend surfaces | 在 runtime/deployment/governance/evolution 等關鍵 UI 加 source_mode 與 bridge/binding/runtime identity。 | Codex2 | Claude | todo | `P0-FE-DEMO-001`, `P0-TEL-PROJ-001` | 2026-05-01 17:00:19 | Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex2 starts a fresh run. |
 | `P1-BRACKET-001` | P1 Wave 5 | Guarded paper/sim bracket order execution | 在 paper/sim broker 範圍內實作受治理 bracket order execution；live 仍 fail-closed。 | Codex | Claude | todo | `P0-LIVE-GUARD-001` | 2026-05-01 15:57:10 | Supervisor preempted P1-BRACKET-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
 | `P1-LIVE-PLAN-001` | P1 Wave 5 | Canary/live activation criteria and runbook | 定義 canary/live activation criteria 與 runbook；P1 只取得 activation readiness，不開 production live。 | Claude | Codex | review | `P0-LOOP-001` | 2026-05-01 16:56:54 | Runbook ready for review. docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md covers all three acceptance criteria: canary/live prerequisites documented, rollback and kill switch criteria named, human approval gates enumerated. Derived from PAPER_CANARY_LIVE_POLICY.md, KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md, and ROLLBACK_AND_POSITION_SEMANTICS.md. P1 scope is activation readiness only; production live remains fail-closed. |
 | `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | 補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。 | Codex | Claude | todo | `P0-CI-BOUNDED-001` | 2026-05-01 15:16:56 | Assignment created |
-| `P0-REC-001-SIDECAR-ACCEPTANCE` | Pantheon P0 Paper Loop | [Sidecar] [Auto] [Parent P0-REC-001] Prepare P0-REC-001 acceptance packet and dependency map | 平行支援 P0-REC-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Claude2 | Codex2 | review | `P0-LOOP-001` | 2026-05-01 16:59:31 | Acceptance packet created at support/sidecars/P0-REC-001/P0-REC-001-SIDECAR-ACCEPTANCE.md; handed off to Codex2 for review. |
-| `P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-LIVE-PLAN-001] Prepare P1-LIVE-PLAN-001 acceptance packet and dependency map | 平行支援 P1-LIVE-PLAN-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Gemini2 | Claude | in_progress | `P0-LOOP-001` | 2026-05-01 16:54:39 | Supervisor auto-started P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE after successful dispatch. |
+| `P0-REC-001-SIDECAR-ACCEPTANCE` | Pantheon P0 Paper Loop | [Sidecar] [Auto] [Parent P0-REC-001] Prepare P0-REC-001 acceptance packet and dependency map | 平行支援 P0-REC-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Claude2 | Codex2 | in_progress | `P0-LOOP-001` | 2026-05-01 17:06:49 | Owner picked up review_approved task for closeout: verifying acceptance packet, staging task-scoped commit, then marking done. |
+| `P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE` | P1 Wave 5 | [Sidecar] [Auto] [Parent P1-LIVE-PLAN-001] Prepare P1-LIVE-PLAN-001 acceptance packet and dependency map | 平行支援 P1-LIVE-PLAN-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Codex | Claude | todo | `P0-LOOP-001` | 2026-05-01 17:05:50 | Auto-reassigned ownership from Gemini2 to Codex after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex starts a fresh run. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
 | `P1-LIVE-PLAN-001` | Claude | Codex | Runbook ready for review. docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md covers all three acceptance criteria: canary/live prerequisites documented, rollback and kill switch criteria named, human approval gates enumerated. Derived from PAPER_CANARY_LIVE_POLICY.md, KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md, and ROLLBACK_AND_POSITION_SEMANTICS.md. P1 scope is activation readiness only; production live remains fail-closed. | pending | 2026-05-01 16:56:54 |
-| `P0-REC-001` | Codex2 | Codex | P0 paper reconciliation ready for review: added ReconciliationRecord writer in reconciliation-drift, optional incident service create request on threshold breach, and proposed-only evolution envelope. Verification: python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py -q => 6 passed. | pending | 2026-05-01 16:58:58 |
-| `P0-REC-001-SIDECAR-ACCEPTANCE` | Claude2 | Codex2 | Acceptance packet ready for review. Packet covers: dependency map (P0-LOOP-001 done), existing asset map (reconciliation-drift store, telemetry ingest), ReconciliationRecord contract extension (artifact_id + deployment_stage:paper), 10-item acceptance checklist for Codex (parent reviewer), suggested deliverables (paper_reconciliation.py + tests + integration note). Sidecar does not touch canonical truth. Ready for Codex2 review. | pending | 2026-05-01 16:59:16 |
 
 ## Blockers
 
@@ -95,11 +91,11 @@ Last updated: 2026-05-01 16:59:31
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| _(none)_ | - | - | - |
+| `P0-REC-001-SIDECAR-ACCEPTANCE` | Codex2 | 審查通過：dependency map 與目前 archive/status 相符，P0-LOOP-001 與 P0-TEL-PROJ-001 均已 done；acceptance checklist 可作為 P0-REC-001 parent review frame。<br>邊界確認：sidecar 只更新 support artifact，未修改 L1 canonical truth、核心 runtime/registry/governance 實作。<br>非阻塞提醒：parent task 已進入 review，因此 packet 現在用途是 review frame 與 dependency evidence，而非新的 implementation guidance。 | support/sidecars/P0-REC-001/P0-REC-001-SIDECAR-ACCEPTANCE.md |
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-05-01 16:53:40
+- Last coordination scan: 2026-05-01 17:05:50
 - Tracked features: `46`
 - Lovable-ready packets: `45`
 - Waiting for Lovable/front-end: `0`
@@ -166,23 +162,23 @@ Last updated: 2026-05-01 16:59:31
 
 ## Latest Checkpoints
 
-- 2026-05-01 16:57:24 Orchestrator: PreToolUse: Bash
-- 2026-05-01 16:57:24 Orchestrator: PostToolUse: Bash
-- 2026-05-01 16:57:28 Orchestrator: PreToolUse: Read
-- 2026-05-01 16:57:28 Orchestrator: PreToolUse: Bash
-- 2026-05-01 16:57:28 Orchestrator: PreToolUse: Read
-- 2026-05-01 16:57:28 Orchestrator: PostToolUse: Read
-- 2026-05-01 16:57:28 Orchestrator: PostToolUse: Read
-- 2026-05-01 16:57:29 Orchestrator: PostToolUse: Bash
-- 2026-05-01 16:57:33 Orchestrator: PreToolUse: Bash
-- 2026-05-01 16:57:35 Orchestrator: PostToolUse: Bash
-- 2026-05-01 16:57:45 Orchestrator: Stop: Stop
-- 2026-05-01 16:57:45 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-01 16:58:58 Codex2: `P0-REC-001` Handoff to Codex: P0 paper reconciliation ready for review: added ReconciliationRecord writer in reconciliation-drift, optional incident service create request on threshold breach, and proposed-only evolution envelope. Verification: python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py -q => 6 passed.
-- 2026-05-01 16:59:06 Orchestrator: PreToolUse: Write
-- 2026-05-01 16:59:06 Orchestrator: PostToolUse: Write
-- 2026-05-01 16:59:16 Orchestrator: PreToolUse: Bash
-- 2026-05-01 16:59:16 Claude2: `P0-REC-001-SIDECAR-ACCEPTANCE` Handoff to Codex2: Acceptance packet ready for review. Packet covers: dependency map (P0-LOOP-001 done), existing asset map (reconciliation-drift store, telemetry ingest), ReconciliationRecord contract extension (artifact_id + deployment_stage:paper), 10-item acceptance checklist for Codex (parent reviewer), suggested deliverables (paper_reconciliation.py + tests + integration note). Sidecar does not touch canonical truth. Ready for Codex2 review.
-- 2026-05-01 16:59:26 Orchestrator: PostToolUse: Bash
-- 2026-05-01 16:59:31 Orchestrator: PreToolUse: Bash
-- 2026-05-01 16:59:31 Claude2: `P0-REC-001-SIDECAR-ACCEPTANCE` Acceptance packet created at support/sidecars/P0-REC-001/P0-REC-001-SIDECAR-ACCEPTANCE.md; handed off to Codex2 for review.
+- 2026-05-01 17:06:14 Orchestrator: PostToolUse: Read
+- 2026-05-01 17:06:15 Orchestrator: PostToolUse: Read
+- 2026-05-01 17:06:22 Orchestrator: `P0-REC-001` Supervisor resumed P0-REC-001 for finalize after successful dispatch.
+- 2026-05-01 17:06:22 Orchestrator: `P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE` Worker superseded after task responsibility moved to another agent.
+- 2026-05-01 17:06:25 Orchestrator: `P1-LIVE-PLAN-001` pull request create failed: GraphQL: The backend-dev-publish-20260429 branch has no history in common with master (createPullRequest)
+- 2026-05-01 17:06:27 Orchestrator: PreToolUse: Read
+- 2026-05-01 17:06:27 Orchestrator: PostToolUse: Read
+- 2026-05-01 17:06:37 Orchestrator: PreToolUse: Bash
+- 2026-05-01 17:06:37 Orchestrator: PostToolUse: Bash
+- 2026-05-01 17:06:48 Orchestrator: PreToolUse: Bash
+- 2026-05-01 17:06:49 Claude2: `P0-REC-001-SIDECAR-ACCEPTANCE` Owner picked up review_approved task for closeout: verifying acceptance packet, staging task-scoped commit, then marking done.
+- 2026-05-01 17:06:58 Orchestrator: PostToolUse: Bash
+- 2026-05-01 17:07:06 Orchestrator: PreToolUse: Bash
+- 2026-05-01 17:07:07 Orchestrator: PostToolUse: Bash
+- 2026-05-01 17:07:11 Orchestrator: PreToolUse: Bash
+- 2026-05-01 17:07:17 Orchestrator: PreToolUse: Bash
+- 2026-05-01 17:07:18 Orchestrator: PostToolUse: Bash
+- 2026-05-01 17:07:24 Orchestrator: PreToolUse: Bash
+- 2026-05-01 17:07:24 Orchestrator: PostToolUse: Bash
+- 2026-05-01 17:07:27 Codex2: `P0-REC-001` Done after task-scoped commit 648c1ce. Delivered paper ReconciliationRecord writer, record store/read endpoints, threshold-breach IncidentCase create request envelope, proposed-only EvolutionDecision envelope, and SA-17 implementation note. Verification: python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py -q => 7 passed.

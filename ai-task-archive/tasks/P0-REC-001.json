@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "P0-REC-001",
+  "archived_at": "2026-05-01T09:07:27Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-REC-001",
+    "title": "Write basic paper ReconciliationRecord",
+    "summary_zh": "在 paper run 後產生最低限度 ReconciliationRecord，並允許 threshold breach 開 IncidentCase。",
+    "phase": "Pantheon P0 Paper Loop",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "depends_on": [
+      "P0-LOOP-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_sa/SA-17_telemetry_reconciliation_evolution_gap_analysis.md"
+    ],
+    "acceptance": [
+      "one paper run creates a ReconciliationRecord linked to runtime binding, artifact, and capital pool",
+      "threshold breach can create IncidentCase; EvolutionDecision remains proposed only"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-05-01T03:58:17Z",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Done after task-scoped commit 648c1ce. Delivered paper ReconciliationRecord writer, record store/read endpoints, threshold-breach IncidentCase create request envelope, proposed-only EvolutionDecision envelope, and SA-17 implementation note. Verification: python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py -q => 7 passed.",
+    "last_update": "2026-05-01T09:07:27Z",
+    "review_notes_zh": [
+      "審查通過。已檢查 P0 paper reconciliation endpoint、JSON store、SA-17 implementation note 與 HTTP tests；審查中補上 ReconciliationRecord severity contract normalization，避免 warning/degraded 直接寫入 record severity。驗證：python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py -q => 7 passed."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T09:07:27Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "648c1ce3a430fb9c1b72ffaa90e52d6a7f712e83",
+      "commit_subject": "P0-REC-001 add paper reconciliation records",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "P0-REC-001",
+        "Reviewer": "Codex",
+        "Verification": "python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py -q => 7 passed"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 118,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-REC-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "P0 paper reconciliation ready for review: added ReconciliationRecord writer in reconciliation-drift, optional incident service create request on threshold breach, and proposed-only evolution envelope. Verification: python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py -q => 6 passed.",
+      "status": "done",
+      "created_at": "2026-05-01T08:58:58Z",
+      "resolved_at": "2026-05-01T09:03:43Z"
+    },
+    {
+      "task_id": "P0-REC-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved after contract normalization fix. Verification: python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py -q => 7 passed.",
+      "status": "done",
+      "created_at": "2026-05-01T09:03:43Z",
+      "resolved_at": "2026-05-01T09:07:27Z"
+    }
+  ],
+  "blockers": []
+}

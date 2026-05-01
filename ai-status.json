@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；production、paper、canary、live gate 預設仍 fail-closed。",
-  "updated_at": "2026-05-01T08:59:59Z",
+  "updated_at": "2026-05-01T09:07:27Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -125,13 +125,13 @@
       ],
       "status": "ready",
       "current_task_ids": [
-        "P0-FE-SOURCE-001",
         "P1-BRACKET-001",
-        "P1-PERSIST-001"
+        "P1-PERSIST-001",
+        "P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Supervisor preempted P0-FE-SOURCE-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
-      "last_update": "2026-05-01T08:59:59Z"
+      "next": "Supervisor preempted P1-BRACKET-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
+      "last_update": "2026-05-01T07:57:10Z"
     },
     {
       "name": "Codex2",
@@ -141,13 +141,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "reviewing",
+      "status": "ready",
       "current_task_ids": [
-        "P0-REC-001"
+        "P0-FE-SOURCE-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "P0 paper reconciliation ready for review: added ReconciliationRecord writer in reconciliation-drift, optional incident service create request on threshold breach, and proposed-only evolution envelope. Verification: python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py -q => 6 passed.",
-      "last_update": "2026-05-01T08:58:58Z"
+      "next": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex2 starts a fresh run.",
+      "last_update": "2026-05-01T09:00:19Z"
     },
     {
       "name": "Copilot",
@@ -170,13 +170,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "reviewing",
+      "status": "working",
       "current_task_ids": [
         "P0-REC-001-SIDECAR-ACCEPTANCE"
       ],
       "branch": "feat/claude2-execution-control",
-      "next": "Acceptance packet created at support/sidecars/P0-REC-001/P0-REC-001-SIDECAR-ACCEPTANCE.md; handed off to Codex2 for review.",
-      "last_update": "2026-05-01T08:59:31Z"
+      "next": "Owner picked up review_approved task for closeout: verifying acceptance packet, staging task-scoped commit, then marking done.",
+      "last_update": "2026-05-01T09:06:49Z"
     },
     {
       "name": "Gemini2",
@@ -186,61 +186,20 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "working",
-      "current_task_ids": [
-        "P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/gemini2-research-runtime",
-      "next": "Supervisor auto-started P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE after successful dispatch.",
-      "last_update": "2026-05-01T08:54:39Z"
+      "next": "",
+      "last_update": "2026-05-01T09:00:09Z"
     }
   ],
   "tasks": [
-    {
-      "id": "P0-REC-001",
-      "title": "Write basic paper ReconciliationRecord",
-      "summary_zh": "在 paper run 後產生最低限度 ReconciliationRecord，並允許 threshold breach 開 IncidentCase。",
-      "phase": "Pantheon P0 Paper Loop",
-      "owner": "Codex2",
-      "reviewer": "Codex",
-      "depends_on": [
-        "P0-LOOP-001"
-      ],
-      "artifacts": [
-        "docs/04/pantheon_sa/SA-17_telemetry_reconciliation_evolution_gap_analysis.md"
-      ],
-      "acceptance": [
-        "one paper run creates a ReconciliationRecord linked to runtime binding, artifact, and capital pool",
-        "threshold breach can create IncidentCase; EvolutionDecision remains proposed only"
-      ],
-      "source_plane": "planning",
-      "source_ref": {
-        "type": "discussion_planning",
-        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
-        "phase": "phase6",
-        "profile": "generic",
-        "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
-        "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
-        "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
-      },
-      "materialization_ref": {
-        "materialized_at": "2026-05-01T03:58:17Z",
-        "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
-        "consensus_status": "accepted",
-        "human_gate_status": "approved",
-        "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
-      },
-      "status": "review",
-      "next": "P0 paper reconciliation ready for review: added ReconciliationRecord writer in reconciliation-drift, optional incident service create request on threshold breach, and proposed-only evolution envelope. Verification: python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py -q => 6 passed.",
-      "last_update": "2026-05-01T08:58:58Z"
-    },
     {
       "id": "P0-FE-SOURCE-001",
       "title": "Add source mode and runtime identity to critical frontend surfaces",
       "summary_zh": "在 runtime/deployment/governance/evolution 等關鍵 UI 加 source_mode 與 bridge/binding/runtime identity。",
       "phase": "Pantheon P0 Paper Loop",
-      "owner": "Codex",
+      "owner": "Codex2",
       "reviewer": "Claude",
       "depends_on": [
         "P0-FE-DEMO-001",
@@ -272,8 +231,8 @@
         "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
       },
       "status": "todo",
-      "next": "Supervisor preempted P0-FE-SOURCE-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
-      "last_update": "2026-05-01T08:59:59Z"
+      "next": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex2 starts a fresh run.",
+      "last_update": "2026-05-01T09:00:19Z"
     },
     {
       "id": "P1-BRACKET-001",
@@ -383,7 +342,7 @@
       "phase": "Pantheon P0 Paper Loop",
       "owner": "Claude2",
       "reviewer": "Codex2",
-      "status": "review",
+      "status": "in_progress",
       "depends_on": [
         "P0-LOOP-001"
       ],
@@ -395,23 +354,29 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Acceptance packet created at support/sidecars/P0-REC-001/P0-REC-001-SIDECAR-ACCEPTANCE.md; handed off to Codex2 for review.",
-      "last_update": "2026-05-01T08:59:31Z",
+      "next": "Owner picked up review_approved task for closeout: verifying acceptance packet, staging task-scoped commit, then marking done.",
+      "last_update": "2026-05-01T09:06:49Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "P0-REC-001",
       "helper_kind": "acceptance_packet",
       "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "審查通過：dependency map 與目前 archive/status 相符，P0-LOOP-001 與 P0-TEL-PROJ-001 均已 done；acceptance checklist 可作為 P0-REC-001 parent review frame。",
+        "邊界確認：sidecar 只更新 support artifact，未修改 L1 canonical truth、核心 runtime/registry/governance 實作。",
+        "非阻塞提醒：parent task 已進入 review，因此 packet 現在用途是 review frame 與 dependency evidence，而非新的 implementation guidance。"
+      ],
+      "review_file": "support/sidecars/P0-REC-001/P0-REC-001-SIDECAR-ACCEPTANCE.md"
     },
     {
       "id": "P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE",
       "title": "Prepare P1-LIVE-PLAN-001 acceptance packet and dependency map",
       "summary_zh": "平行支援 P1-LIVE-PLAN-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
       "phase": "P1 Wave 5",
-      "owner": "Gemini2",
+      "owner": "Codex",
       "reviewer": "Claude",
-      "status": "in_progress",
+      "status": "todo",
       "depends_on": [
         "P0-LOOP-001"
       ],
@@ -423,8 +388,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Supervisor auto-started P1-LIVE-PLAN-001-SIDECAR-ACCEPTANCE after successful dispatch.",
-      "last_update": "2026-05-01T08:54:39Z",
+      "next": "Auto-reassigned ownership from Gemini2 to Codex after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex starts a fresh run.",
+      "last_update": "2026-05-01T09:05:50Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "P1-LIVE-PLAN-001",
@@ -461,20 +426,22 @@
       "created_at": "2026-05-01T08:56:54Z"
     },
     {
-      "task_id": "P0-REC-001",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "P0 paper reconciliation ready for review: added ReconciliationRecord writer in reconciliation-drift, optional incident service create request on threshold breach, and proposed-only evolution envelope. Verification: python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py -q => 6 passed.",
-      "status": "pending",
-      "created_at": "2026-05-01T08:58:58Z"
-    },
-    {
       "task_id": "P0-REC-001-SIDECAR-ACCEPTANCE",
       "from": "Claude2",
       "to": "Codex2",
       "message": "Acceptance packet ready for review. Packet covers: dependency map (P0-LOOP-001 done), existing asset map (reconciliation-drift store, telemetry ingest), ReconciliationRecord contract extension (artifact_id + deployment_stage:paper), 10-item acceptance checklist for Codex (parent reviewer), suggested deliverables (paper_reconciliation.py + tests + integration note). Sidecar does not touch canonical truth. Ready for Codex2 review.",
-      "status": "pending",
-      "created_at": "2026-05-01T08:59:16Z"
+      "status": "done",
+      "created_at": "2026-05-01T08:59:16Z",
+      "resolved_at": "2026-05-01T09:01:55Z"
+    },
+    {
+      "task_id": "P0-REC-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Review approved: acceptance packet dependency map and checklist are valid as support material; updated packet with Codex2 reviewer note and handed back to Claude2 for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-01T09:01:55Z",
+      "resolved_at": "2026-05-01T09:06:49Z"
     }
   ],
   "blockers": [],
@@ -502,9 +469,9 @@
       "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 1,
+      "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Gemini": {
       "total": 0,
@@ -516,13 +483,13 @@
       "todo": 0
     },
     "Gemini2": {
-      "total": 1,
-      "active": 1,
+      "total": 0,
+      "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Codex": {
       "total": 3,
@@ -535,12 +502,12 @@
     },
     "Codex2": {
       "total": 1,
-      "active": 1,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 1,
+      "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Copilot": {
       "total": 0,
