@@ -504,6 +504,42 @@ PM-GAP-004: corrective actions 是否可追蹤未驗證。
 PM-GAP-005: postmortem → EvolutionDecision 未驗證。
 ```
 
+### 11.3 P1-EVO-001 Implementation Note
+
+`P1-EVO-001` closes the narrow postmortem evidence baseline without claiming
+the full postmortem automation pipeline:
+
+```text
+services/incident/evidence_collector.py
+  → PostmortemEvidenceCollector
+  → EvidenceBundle
+  → validated IncidentCase
+```
+
+Delivered evidence captured on `IncidentCase`:
+
+```text
+telemetry_event_ids
+runtime_id
+binding_id
+deployment_stage
+deployment_plan_id
+artifact_id / artifact_version
+capital_pool_id
+persona_capital_binding_id
+trace_id
+lineage_ref
+evidence_summary
+```
+
+Residual postmortem gaps remain:
+
+```text
+PM-GAP-002: timeline builder remains unverified.
+PM-GAP-003: root cause taxonomy remains undefined.
+PM-GAP-004: corrective actions tracking remains unverified.
+```
+
 ---
 
 ## 12. Evolution Pipeline Gap
@@ -543,6 +579,28 @@ merge_persona
 | freeze / rollback 是否驅動 Lean 未驗證 | runtime action bridge 缺 |
 | retrain / revalidate 是否驅動 research orchestrator 未驗證 | 回研究閉環缺 |
 | mutate persona 是否走 persona mutation gate 未驗證 | learning safety 缺 |
+
+### 12.3 P1-EVO-001 Implementation Note
+
+`P1-EVO-001` adds invariant coverage for the governed dispatch baseline:
+
+```text
+services/control-plane/governance/test_evolution_dispatcher_invariants.py
+```
+
+Verified baseline:
+
+```text
+dispatch_approved() rejects proposed / reviewed / rejected / canceled decisions
+EvolutionDecision.execute() rejects non-approved decisions
+live freeze and force_risk_off cannot dispatch before approval
+linked_postmortem_id / linked_incident_id survive the dispatch metadata path
+EvolutionDecisionStore preserves the single-active-decision invariant
+```
+
+This does not claim direct Lean mutation, research job completion, or persona
+mutation automation. It proves the required approval gate and prevents
+`EvolutionDecision` from becoming an unreviewed live mutation surface.
 
 ---
 
@@ -607,9 +665,9 @@ complex multi-pool reconciliation
 | Projection → Reconciliation | Unverified | comparator / record store | High |
 | Reconciliation → DriftReport | Unverified | drift detector | High |
 | DriftReport → Incident | Unverified | alert/classifier | High |
-| Incident → Postmortem | Partial / Unverified | evidence collector | Medium-High |
-| Postmortem → Evolution | Unverified | decision proposal | High |
-| Evolution → Action | Unverified | dispatcher to Lean/research/persona | Critical |
+| Incident → Postmortem | Partial | P1-EVO evidence collector baseline; timeline/root-cause/actions still open | Medium-High |
+| Postmortem → Evolution | Partial | postmortem/incident link preserved through EvolutionDecision dispatch; automatic proposal still open | High |
+| Evolution → Action | Partial / governed baseline | approved-only dispatch invariant proven; direct Lean/research/persona completion still open | Critical |
 
 ---
 
