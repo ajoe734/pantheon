@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-01T15:57:24Z",
+  "updated_at": "2026-05-01T16:04:51Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -121,14 +121,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "ready",
+      "status": "working",
       "current_task_ids": [
-        "P2-WANDB-ONLINE-SYNC-001",
-        "P2-RL-UPSTREAM-RUNTIME-SMOKE-001"
+        "P2-WANDB-ONLINE-SYNC-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Supervisor preempted P2-WANDB-ONLINE-SYNC-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
-      "last_update": "2026-05-01T15:48:29Z"
+      "next": "Implementing explicit-gated SDK-backed W&B online backend and smoke/readback harness; local env has no WANDB_API_KEY and wandb package is not installed, so verification will include config-skip plus unit fakes.",
+      "last_update": "2026-05-01T16:04:03Z"
     },
     {
       "name": "Codex2",
@@ -138,15 +137,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "ready",
+      "status": "working",
       "current_task_ids": [
-        "P2-QLIB-PROD-DATA-ACTIVATION-001",
-        "P2-TRL-RUNTIME-DATA-ACTIVATION-001",
-        "P2-MARKETDATA-CREDENTIAL-SMOKE-001"
+        "P2-QLIB-PROD-DATA-ACTIVATION-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Auto-reassigned P2-QLIB-PROD-DATA-ACTIVATION-001 away from sidecar-only lane Copilot; reviewer Copilot -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
-      "last_update": "2026-05-01T15:42:23Z"
+      "next": "Supervisor auto-started P2-QLIB-PROD-DATA-ACTIVATION-001 after successful dispatch.",
+      "last_update": "2026-05-01T16:01:51Z"
     },
     {
       "name": "Copilot",
@@ -169,13 +166,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "finalize",
-      "current_task_ids": [
-        "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude2-execution-control",
-      "next": "Review approved: acceptance packet is support-only, aligns with parent RL runtime-smoke acceptance criteria, and focused FinRL/RLlib/Ray Tune adapter verification passed (49 tests). Ray Tune allowed_next_action naming difference is recorded as a parent-task caveat, not a sidecar blocker.",
-      "last_update": "2026-05-01T15:57:24Z"
+      "next": "",
+      "last_update": "2026-05-01T16:01:18Z"
     },
     {
       "name": "Gemini2",
@@ -202,7 +197,7 @@
       "phase": "P2 Wave 8 External Activation",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "todo",
+      "status": "in_progress",
       "depends_on": [
         "P2-OSS-ACTIVATE-001"
       ],
@@ -219,8 +214,8 @@
         "W&B test project smoke uploads metrics and artifact then reads back run or artifact references without persisting raw secrets",
         "BFF registry and evaluator can resolve W&B run refs while no source path can route to broker order execution"
       ],
-      "next": "Supervisor preempted P2-WANDB-ONLINE-SYNC-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
-      "last_update": "2026-05-01T15:48:29Z",
+      "next": "Implementing explicit-gated SDK-backed W&B online backend and smoke/readback harness; local env has no WANDB_API_KEY and wandb package is not installed, so verification will include config-skip plus unit fakes.",
+      "last_update": "2026-05-01T16:04:03Z",
       "task_class": "execution",
       "mutates_canonical": true
     },
@@ -231,7 +226,7 @@
       "phase": "P2 Wave 8 External Activation",
       "owner": "Codex2",
       "reviewer": "Claude",
-      "status": "todo",
+      "status": "in_progress",
       "depends_on": [
         "P2-OSS-ACTIVATE-001",
         "P1-SOURCE-001"
@@ -250,8 +245,8 @@
         "Qlib real backend path runs or returns explicit install/config error while stub CI remains deterministic",
         "Qlib candidate handoff is produced with artifact_state draft or candidate and no registry write or order-capable route"
       ],
-      "next": "Auto-reassigned P2-QLIB-PROD-DATA-ACTIVATION-001 away from sidecar-only lane Copilot; reviewer Copilot -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
-      "last_update": "2026-05-01T15:42:23Z",
+      "next": "Supervisor auto-started P2-QLIB-PROD-DATA-ACTIVATION-001 after successful dispatch.",
+      "last_update": "2026-05-01T16:01:51Z",
       "task_class": "execution",
       "mutates_canonical": true
     },
@@ -375,39 +370,6 @@
       "last_update": "2026-05-01T15:55:21Z",
       "task_class": "execution",
       "mutates_canonical": true
-    },
-    {
-      "id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE",
-      "title": "Prepare P2-RL-UPSTREAM-RUNTIME-SMOKE-001 acceptance packet and dependency map",
-      "summary_zh": "平行支援 P2-RL-UPSTREAM-RUNTIME-SMOKE-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
-      "phase": "P2 Wave 8 External Activation",
-      "owner": "Claude2",
-      "reviewer": "Codex",
-      "status": "review_approved",
-      "depends_on": [
-        "P2-OSS-ACTIVATE-001"
-      ],
-      "artifacts": [
-        "support/sidecars/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Review approved: acceptance packet is support-only, aligns with parent RL runtime-smoke acceptance criteria, and focused FinRL/RLlib/Ray Tune adapter verification passed (49 tests). Ray Tune allowed_next_action naming difference is recorded as a parent-task caveat, not a sidecar blocker.",
-      "last_update": "2026-05-01T15:57:24Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
-      "helper_kind": "acceptance_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization",
-      "review_notes_zh": [
-        "審查通過：sidecar acceptance packet 符合 support-only 邊界，artifact scope 只新增 support packet，未修改 L1 canonical truth、runtime、registry 或 governance 實作。",
-        "已核對 parent acceptance、RL_PATH_APPROVAL_GATE=closed、FinRL/RLlib/Ray Tune package pins與 prep gates；focused verification 通過：python3 -m pytest services/research/finrl/test_adapter.py services/research/rllib/test_adapter.py services/research/rllib/test_ray_tune_adapter.py（49 passed）與 git diff --check support packet。",
-        "Reviewer caveat：Ray Tune candidate packet 使用 offline_search_review_only，而非 FinRL/RLlib 的 offline_registry_review_only；這不破壞 research-only/no-broker 邊界，但 parent owner 應在主線實作時保留此命名差異。"
-      ]
     }
   ],
   "handoffs": [
@@ -425,8 +387,9 @@
       "from": "Copilot",
       "to": "Claude",
       "message": "Auto-reassigned P2-QLIB-PROD-DATA-ACTIVATION-001 away from sidecar-only lane Copilot; reviewer Copilot -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
-      "status": "pending",
-      "created_at": "2026-05-01T15:42:23Z"
+      "status": "done",
+      "created_at": "2026-05-01T15:42:23Z",
+      "resolved_at": "2026-05-01T16:01:51Z"
     },
     {
       "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
@@ -443,23 +406,6 @@
       "message": "Auto-reassigned P2-MARKETDATA-CREDENTIAL-SMOKE-001 away from sidecar-only lane Gemini; owner Gemini -> Codex2. Reserved sidecar-only agents no longer hold mainline tasks.",
       "status": "pending",
       "created_at": "2026-05-01T15:48:40Z"
-    },
-    {
-      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE",
-      "from": "Claude2",
-      "to": "Codex",
-      "message": "Acceptance packet ready for review. Artifact: support/sidecars/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE.md. Package contains: 21-item acceptance checklist across 3 parent criteria, dependency map (upstream package pins, gate dependencies, transitive chain), stub-backend smoke verification evidence for FinRL/RLlib/RayTune (all draft+closed+none confirmed 2026-05-01), and 4 non-blocking open items. RL gate confirmed closed; no canonical truth modified. Commit c06cd59.",
-      "status": "done",
-      "created_at": "2026-05-01T15:53:41Z",
-      "resolved_at": "2026-05-01T15:57:24Z"
-    },
-    {
-      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE",
-      "from": "Codex",
-      "to": "Claude2",
-      "message": "Review approved: acceptance packet is support-only, aligns with parent RL runtime-smoke acceptance criteria, and focused FinRL/RLlib/Ray Tune adapter verification passed (49 tests). Ray Tune allowed_next_action naming difference is recorded as a parent-task caveat, not a sidecar blocker.",
-      "status": "pending",
-      "created_at": "2026-05-01T15:57:24Z"
     }
   ],
   "blockers": [],
@@ -483,12 +429,12 @@
       "todo": 0
     },
     "Claude2": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 1,
+      "review_approved": 0,
       "todo": 0
     },
     "Gemini": {
@@ -511,7 +457,7 @@
     },
     "Codex": {
       "total": 2,
-      "active": 0,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
@@ -520,7 +466,7 @@
     },
     "Codex2": {
       "total": 3,
-      "active": 0,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
