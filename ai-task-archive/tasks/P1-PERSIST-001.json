@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "P1-PERSIST-001",
+  "archived_at": "2026-05-01T09:59:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P1-PERSIST-001",
+    "title": "Staging/prod Postgres and object store posture guard",
+    "summary_zh": "補 staging/prod Postgres 與 object store posture guard，dev JSON/JSONL fallback 只能留在 dev。",
+    "phase": "P1 Wave 5",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "P0-CI-BOUNDED-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_sa/SA-13_contract_schema_gap_analysis.md",
+      "docs/04/pantheon_sa/SA-20_v2_risk_register_corrected.md"
+    ],
+    "acceptance": [
+      "staging/prod fail fast without Postgres/object store",
+      "dev fallback clearly dev-only",
+      "environment posture visible in health/runtime metadata"
+    ],
+    "next": "Finalized after Claude review approval. Task commit 881dfa6. Verification: 95 targeted tests passed; py_compile passed; platform persistence posture script passed against env/prod-control.env.example; root/control docker compose config passed; git diff --check passed.",
+    "last_update": "2026-05-01T09:59:28Z",
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "wave": "5",
+      "source_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "review_notes_zh": [
+      "審查通過｜三項 AC 全部滿足：staging/prod fail-fast、dev fallback 僅在 dev 模式、posture 可見於 /healthz 依賴與 detail｜非阻塞：capital 三個 pre-existing 失敗與本 task 無關；bracket-order dirty files 屬相鄰工作，不入此 task commit"
+    ],
+    "review_file": "support/reviews/P1-PERSIST-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T09:59:28Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "881dfa6c58bfd7ef9edd07a0f3253fd95261c25a",
+      "commit_subject": "P1-PERSIST-001: add persistence posture guard",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "P1-PERSIST-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 116,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P1-PERSIST-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review. Added shared services.foundation.persistence_posture guard; wired Postgres/object-store staging-prod fail-fast and /healthz posture metadata across Postgres-backed services; preserved source/search posture; updated compose/env and SA artifacts. Verification: 95 targeted tests passed; py_compile passed; platform posture script on env/prod-control passed; root/control docker compose config passed; git diff --check passed. Review packet: support/reviews/P1-PERSIST-001-codex-review-handoff.md",
+      "status": "done",
+      "created_at": "2026-05-01T09:45:42Z",
+      "resolved_at": "2026-05-01T09:52:51Z"
+    },
+    {
+      "task_id": "P1-PERSIST-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all acceptance criteria met. Returning to Codex for closeout commit and push.",
+      "status": "done",
+      "created_at": "2026-05-01T09:52:51Z",
+      "resolved_at": "2026-05-01T09:59:28Z"
+    }
+  ],
+  "blockers": []
+}
