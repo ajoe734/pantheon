@@ -55,6 +55,17 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert "source-ingest" in services["smoke-stack"]["depends_on"]
     assert "source-ingest-data" in compose["volumes"]
 
+    source_search_smoke = services["source-search-bounded-smoke"]
+    source_search_smoke_env = _env_map(source_search_smoke)
+    assert source_search_smoke["profiles"] == ["source-search-bounded"]
+    assert "run --rm --use-aliases source-search-bounded-smoke" in compose_path.read_text(encoding="utf-8")
+    assert source_search_smoke["command"] == ["python", "scripts/smoke_source_search_bounded.py"]
+    assert source_search_smoke_env["SOURCE_INGEST_URL"] == "http://source-ingest:8097"
+    assert source_search_smoke_env["SEARCH_URL"] == "http://search-svc:8098"
+    assert source_search_smoke_env["SOURCE_INGEST_EXTERNAL_FEED_HOST"] == "source-search-bounded-smoke"
+    assert source_search_smoke["depends_on"]["source-ingest"]["condition"] == "service_healthy"
+    assert source_search_smoke["depends_on"]["search-svc"]["condition"] == "service_healthy"
+
     bff_env = _env_map(services["operator-bff"])
     assert bff_env["PANTHEON_SOURCE_INGEST_API_URL"] == "http://source-ingest:8097"
     assert "source-ingest" in services["operator-bff"]["depends_on"]
@@ -70,6 +81,15 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/jobs"' in smoke
     assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/run-scheduled"' in smoke
     assert 'f"{SEARCH_URL}/api/search/query"' in smoke
+
+    bounded_smoke = (compose_path.parent / "scripts/smoke_source_search_bounded.py").read_text(encoding="utf-8")
+    assert '"mode": "static_records"' in bounded_smoke
+    assert '"mode": "external_feed"' in bounded_smoke
+    assert '"allowed_url_prefixes": [feed_url.rsplit("/", 1)[0] + "/"]' in bounded_smoke
+    assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/dlq/replay"' in bounded_smoke
+    assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/run-scheduled"' in bounded_smoke
+    assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/audit"' in bounded_smoke
+    assert 'f"{SEARCH_URL}/api/search/index/refresh"' in bounded_smoke
 
     prod_env = (compose_path.parent / "env/prod-control.env.example").read_text(encoding="utf-8")
     assert "PANTHEON_SOURCE_SEARCH_POSTURE=production" in prod_env

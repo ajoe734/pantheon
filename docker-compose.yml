@@ -1175,6 +1175,34 @@ services:
     restart: "no"
 
   # ===========================================================================
+  # Source/search bounded CI smoke — disabled by default.
+  #
+  # Run:
+  #   docker compose --profile source-search-bounded run --rm --use-aliases source-search-bounded-smoke
+  #
+  # The smoke verifies configured static_records and guarded external_feed
+  # connectors, DLQ/frontier/audit replay, incremental search refresh, and no
+  # unrestricted crawler mode.
+  # ===========================================================================
+
+  source-search-bounded-smoke:
+    profiles: ["source-search-bounded"]
+    build:
+      context: .
+      dockerfile: Dockerfile.smoke
+    environment:
+      SOURCE_INGEST_URL: http://source-ingest:8097
+      SEARCH_URL: http://search-svc:8098
+      SOURCE_INGEST_EXTERNAL_FEED_HOST: source-search-bounded-smoke
+    depends_on:
+      source-ingest:
+        condition: service_healthy
+      search-svc:
+        condition: service_healthy
+    command: ["python", "scripts/smoke_source_search_bounded.py"]
+    restart: "no"
+
+  # ===========================================================================
   # Dormant OSS deferred-prep smoke profiles — activation-gated; not started by default
   #
   # Run a single service:

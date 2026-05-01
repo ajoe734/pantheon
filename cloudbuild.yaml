@@ -184,6 +184,15 @@ steps:
           echo "[warn] no services matched filter '${FILTER}' — verify service IDs"
         fi
 
+  # ── Step 1.5: run adapter CI checks ──────────────────────────────────────────
+  - id: run-adapter-checks
+    name: gcr.io/cloud-builders/python:3.9
+    entrypoint: python3
+    waitFor:
+      - build-and-push-core # Ensure images are built before running checks
+    args:
+      - scripts/ci/run_adapter_checks.py
+
   # ── Step 2: emit build manifest ─────────────────────────────────────────────
   # Write a JSON manifest of what was built into GCS so downstream stages
   # (dev auto-deploy, acceptance checks) can discover the artifact set without
@@ -192,7 +201,7 @@ steps:
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
     waitFor:
-      - build-and-push-core
+      - run-adapter-checks # Ensure adapter checks are done before emitting manifest
     args:
       - -euo
       - pipefail
