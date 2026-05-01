@@ -1,0 +1,16 @@
+{
+  "status": "event_shape_validated",
+  "event": {
+    "event_type": "broker_order_smoke.validate_only",
+    "task_id": "P2-BROKER-SANDBOX-ORDER-001",
+    "provider": "IBKR",
+    "mode": "validate_only",
+    "generated_at": "2026-05-01T15:46:54Z",
+    "account_ref": "DU-PAPER-REF",
+    "symbol": "AAPL.US",
+    "side": "BUY",
+    "quantity": 1,
+    "production_live_enabled": false,
+    "raw_secret_material_present": false
+  }
+}

@@ -8,6 +8,7 @@ It prepares the entry path that sits between the archived `EP4` governed paper
 packet and a later human-gated `EP5-002` proof run:
 
 - real broker / venue config boundary
+- broker paper-account / sandbox / test-key order API smoke requirement
 - truthful governed datasource boundary for `IBKR`, `Shioaji`, `Kraken`, and `TEJ`
 - scaled canary capital gate
 - runnable operator approval checklist
@@ -34,6 +35,8 @@ This directory does not raise the repo beyond stable `EP4`.
 It does not claim:
 
 - real broker acknowledgement or fills
+- completed broker sandbox/test-key order API smoke unless an operator-owned
+  packet is archived next to the canary evidence
 - slippage / reject / partial-fill evidence
 - a production-grade canary runtime package
 - operator signoff completion
@@ -92,6 +95,10 @@ python3 scripts/run_ep5_canary_readiness.py \
 ```
 
 Use `--dry-run` until a human gate and real canary infrastructure are available.
+
+Do not interpret `--dry-run` as a reason to defer broker API integration.
+Broker paper-account, sandbox, simulation, validate-only, or test-key order
+smoke should be captured before any production live order/cancel packet.
 
 The local `run-rollback-drill --dry-run` output is a payload rehearsal only.
 Its `summary.json` stays `prepared`, so feeding that file into

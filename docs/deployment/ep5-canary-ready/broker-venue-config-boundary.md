@@ -6,6 +6,37 @@ This note defines the concrete boundary for the canary-ready execution path.
 
 Broker / venue secrets remain VM-2 only.
 
+This boundary does not mean broker order APIs wait until production live.
+Broker paper accounts, sandbox endpoints, simulation mode, validate-only mode,
+or test credentials should be wired and smoke-tested before canary/live
+promotion is proposed.
+
+The repo-local smoke entrypoint is:
+
+```bash
+python3 scripts/run_broker_sandbox_order_smoke.py \
+  --provider ibkr \
+  --mode validate_only \
+  --symbol AAPL.US \
+  --side buy \
+  --quantity 1 \
+  --limit-price '<non-marketable test limit>' \
+  --account-ref '<paper-or-sandbox-account-ref>' \
+  --credential-ref '<vm2-secret-ref-only>' \
+  --output-dir docs/deployment/evidence/broker-sandbox-order-smoke/<timestamp>/ibkr
+```
+
+Provider lanes are intentionally non-production:
+
+- `ibkr`: `validate_only` or `paper_validate_only`
+- `shioaji`: `simulation`
+- `kraken`: `validate_only`
+
+Each packet writes auth/account readiness, place, cancel/replace, readback,
+execution/no-fill disposition, telemetry event shape, and reconciliation JSON.
+It does not accept raw broker secrets and does not submit production-live
+orders.
+
 VM-1 and repo-tracked docs may know:
 
 - public runtime-manager URL
@@ -59,6 +90,8 @@ canary rehearsal:
 | `BROKER_ADAPTER_MODE=real` | prevents canary rehearsal from silently using mock broker semantics |
 | `EXCHANGE_ADAPTER_MODE=real` | prevents canary rehearsal from silently using mock venue semantics |
 | `PANTHEON_SECRETS_OPTIONAL=false` | blocks bring-up if real secret material is missing |
+| `BROKER_TEST_ENV_REF` or broker-specific paper/sandbox refs | identifies the non-production broker API lane used for order smoke |
+| `BROKER_ORDER_SMOKE_MODE=paper|sandbox|simulation|validate_only` | prevents the smoke from silently using production live order routes |
 | `CANARY_BROKER_ACCOUNT_REF` | identifies the broker account / subaccount boundary |
 | `CANARY_VENUE_REF` | identifies the venue or routing profile boundary |
 | `BROKER_API_*` and `EXCHANGE_API_*` or their secret-name refs | ties the boundary to VM-2 secret injection only |
@@ -89,3 +122,5 @@ semantics and runtime-manager endpoints.
 
 It does not claim that the repo already has the final truthful canary runtime
 package or broker-fill proof. That later proof still belongs to `EP5-002`.
+It also does not permit skipping broker API integration: sandbox/test-key order
+smoke should be archived before a real-money canary/live attempt.

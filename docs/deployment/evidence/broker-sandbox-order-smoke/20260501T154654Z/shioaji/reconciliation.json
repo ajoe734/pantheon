@@ -1,0 +1,10 @@
+{
+  "status": "passed",
+  "checks": {
+    "place_request_symbol_matches": true,
+    "place_request_quantity_matches": true,
+    "cancel_or_replace_targets_same_order_ref": true,
+    "production_live_side_effect_disabled": true,
+    "raw_secret_material_absent": true
+  }
+}

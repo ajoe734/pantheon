@@ -1,0 +1,110 @@
+{
+  "provider": "Shioaji",
+  "mode": "simulation",
+  "auth": {
+    "status": "credential_ref_recorded",
+    "credential_ref": "secret://pantheon/shioaji-simulation"
+  },
+  "account_readiness": {
+    "status": "simulation_account_ref_recorded",
+    "account_ref": "SHIOAJI-SIM-REF"
+  },
+  "place": {
+    "status": "simulation_payload_validated",
+    "request": {
+      "symbol": "2330",
+      "side": "BUY",
+      "quantity": 1,
+      "order_type": "ROD",
+      "price_type": "LMT",
+      "odd_lot": false,
+      "day_trade_short": false,
+      "account": "SHIOAJI-SIM-REF",
+      "price": 950.0,
+      "metadata": {
+        "smoke_mode": "simulation",
+        "task_id": "P2-BROKER-SANDBOX-ORDER-001"
+      },
+      "simulation": true
+    },
+    "side_effect": "simulation_only"
+  },
+  "cancel_replace": {
+    "status": "simulation_payload_validated",
+    "cancel_request": {
+      "order_ref": "shioaji-simulation-order-ref",
+      "account_ref": "SHIOAJI-SIM-REF"
+    },
+    "replace_request": {
+      "order_ref": "shioaji-simulation-order-ref",
+      "price": 949.0
+    },
+    "side_effect": "simulation_only"
+  },
+  "task_id": "P2-BROKER-SANDBOX-ORDER-001",
+  "status": "passed",
+  "generated_at": "2026-05-01T15:46:54Z",
+  "symbol": "2330.TW",
+  "production_live": {
+    "enabled": false,
+    "order_side_effects_allowed": false,
+    "activation_gate": "not_requested"
+  },
+  "readback": {
+    "status": "readback_shape_validated",
+    "source": "local_adapter_payload",
+    "observed_order": {
+      "symbol": "2330",
+      "side": "BUY",
+      "quantity": 1,
+      "order_type": "ROD",
+      "price_type": "LMT",
+      "odd_lot": false,
+      "day_trade_short": false,
+      "account": "SHIOAJI-SIM-REF",
+      "price": 950.0,
+      "metadata": {
+        "smoke_mode": "simulation",
+        "task_id": "P2-BROKER-SANDBOX-ORDER-001"
+      },
+      "simulation": true
+    }
+  },
+  "execution": {
+    "status": "no_broker_execution_attempted",
+    "fill_status": "no_fill_validate_only",
+    "matching_execution_count": 0,
+    "matching_quantity": 0
+  },
+  "telemetry": {
+    "status": "event_shape_validated",
+    "event": {
+      "event_type": "broker_order_smoke.validate_only",
+      "task_id": "P2-BROKER-SANDBOX-ORDER-001",
+      "provider": "Shioaji",
+      "mode": "simulation",
+      "generated_at": "2026-05-01T15:46:54Z",
+      "account_ref": "SHIOAJI-SIM-REF",
+      "symbol": "2330.TW",
+      "side": "BUY",
+      "quantity": 1,
+      "production_live_enabled": false,
+      "raw_secret_material_present": false
+    }
+  },
+  "reconciliation": {
+    "status": "passed",
+    "checks": {
+      "place_request_symbol_matches": true,
+      "place_request_quantity_matches": true,
+      "cancel_or_replace_targets_same_order_ref": true,
+      "production_live_side_effect_disabled": true,
+      "raw_secret_material_absent": true
+    }
+  },
+  "notes": [
+    "This packet contains no raw broker secrets.",
+    "This runner validates sandbox/simulation/validate-only order API shape only.",
+    "Production-live order, cancel/replace, position, and capital side effects remain disabled."
+  ]
+}

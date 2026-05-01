@@ -1,0 +1,18 @@
+{
+  "status": "validate_only_payload_validated",
+  "request": {
+    "type": "buy",
+    "ordertype": "limit",
+    "volume": "1.0",
+    "price": "60000.0",
+    "validate": true,
+    "metadata": {
+      "smoke_mode": "validate_only",
+      "task_id": "P2-BROKER-SANDBOX-ORDER-001"
+    },
+    "pair": "BTC/USD",
+    "venue": "KRAKEN",
+    "provider": "Kraken"
+  },
+  "side_effect": "none"
+}

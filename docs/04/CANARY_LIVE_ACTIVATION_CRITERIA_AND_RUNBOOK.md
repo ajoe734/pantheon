@@ -46,6 +46,13 @@ The readiness target is narrower:
   as explicit fail-closed blockers;
 - keep OpenClaw-compatible runtimes outside the execution kernel.
 
+For `P2-BROKER-SANDBOX-ORDER-001`, the bounded smoke runner is
+`scripts/run_broker_sandbox_order_smoke.py`. It generates repo-safe evidence
+packets for IBKR validate-only / paper-validate-only, Shioaji simulation, and
+Kraken validate-only lanes. The packet proves order intent shape, cancel/replace
+shape, readback, no-fill disposition, telemetry event shape, and reconciliation
+without accepting raw broker secrets or enabling production-live side effects.
+
 ### 1.3 Hard invariants that must remain true through activation
 
 From `SUPERVISOR_PLANNING_P0_NEXT_DEV_WORK.md`:
