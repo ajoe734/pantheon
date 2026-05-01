@@ -193,3 +193,19 @@ This sidecar packet is complete. Please verify:
 4. No canonical truth files were modified by this sidecar.
 
 If the packet is accurate and complete, approve this sidecar task. The parent task review decision (approve/reopen P0-FE-DEMO-001) belongs to Codex and is independent of this sidecar.
+
+---
+
+## 8. Sidecar Review Addendum
+
+**Reviewed by:** Codex2  
+**Reviewed:** 2026-05-01
+
+Outcome: approved for sidecar scope.
+
+Review notes:
+
+- Parent task `P0-FE-DEMO-001` is now `review_approved` in `ai-status.json`.
+- Parent review file `support/reviews/P0-FE-DEMO-001-codex-review.md` approves frontend commit `ea284a1b32470bfddbbbd86093656f26dc23e48f` and confirms the prior auth lifecycle blocker is fixed.
+- The packet's `Pending` references were accurate at packet preparation time. Current durable state supersedes them: parent owner `Codex2` should perform closeout finalization for `P0-FE-DEMO-001`.
+- Sidecar scope remained support-only. This review did not modify canonical truth or runtime implementation.
