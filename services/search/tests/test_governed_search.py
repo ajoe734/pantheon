@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from integrations.openclaw.search_gateway import OpenClawSearchGateway
@@ -64,6 +66,35 @@ def _repository() -> InMemoryEvidenceRepository:
         metadata={"relevance_score": 0.99},
     )
     repository.add_knowledge_object(private_object)
+
+    future_item = EvidenceItem(
+        evidence_item_id="evi-future-note",
+        source_id=source.source_id,
+        item_type="text_chunk",
+        content_ref="note://pantheon/future#1",
+        citation_label="future-note#1",
+        body="Momentum volatility evidence that is not available yet.",
+        available_time=datetime.now(timezone.utc) + timedelta(days=1),
+        access_scope=["research"],
+        trace_refs=["trace-evi-future"],
+    )
+    future_bundle = builder.build_bundle(
+        source_records=[source],
+        evidence_items=[future_item],
+        summary="Future momentum evidence.",
+        created_by="Codex",
+        evidence_bundle_id="evbundle-future",
+    )
+    builder.build_knowledge_object(
+        knowledge_object_id="ko-future",
+        source_record=source,
+        evidence_item=future_item,
+        evidence_bundle=future_bundle,
+        title="Future unavailable momentum note",
+        text=future_item.body,
+        keywords=["momentum", "volatility"],
+        metadata={"relevance_score": 0.99},
+    )
     return repository
 
 
@@ -89,8 +120,9 @@ def test_search_returns_cited_evidence_bundle_refs() -> None:
 
     assert [result.evidence_bundle_id for result in response.results] == ["evbundle-volatility"]
     assert response.results[0].citations == ["volatility-note#1"]
-    assert response.rejected_items_count == 1
+    assert response.rejected_items_count == 2
     assert response.filters_applied["pre_ranking_filter"] == "acl_license_workspace_environment"
+    assert response.filters_applied["available_time"] == "not_future"
 
 
 def test_openclaw_search_requires_persona_and_workspace_scope() -> None:
@@ -116,7 +148,15 @@ def test_openclaw_search_returns_evidence_not_raw_undocumented_blob() -> None:
 
     result = response["results"][0]
     assert result["evidence_bundle_id"] == "evbundle-volatility"
-    assert result["citations"] == ["volatility-note#1"]
+    assert result["citation_pack"] == [
+        {
+            "citation_label": "volatility-note#1",
+            "evidence_bundle_id": "evbundle-volatility",
+        }
+    ]
+    assert "answer_context" not in result
+    assert "matched_items" not in result
+    assert "citations" not in result
     assert "raw_payload" not in result
 
 

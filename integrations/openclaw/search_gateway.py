@@ -14,6 +14,13 @@ from services.search.filters import SearchPolicyError
 
 
 class OpenClawSearchGateway:
+    """Sanitized OpenClaw search facade.
+
+    This adapter deliberately returns citation/evidence references only. Full
+    answer context and raw source payloads stay inside the governed search
+    service and evidence repository.
+    """
+
     def __init__(self, repository: InMemoryEvidenceRepository) -> None:
         self.gateway = SearchGateway(repository)
 
@@ -43,14 +50,19 @@ class OpenClawSearchGateway:
         )
         response = self.gateway.search(request, context)
         return {
+            "status": "ok",
             "request_id": response.request_id,
             "trace_id": response.trace_id,
             "results": [
                 {
                     "evidence_bundle_id": result.evidence_bundle_id,
-                    "citations": result.citations,
-                    "answer_context": result.answer_context,
-                    "matched_items": result.matched_items,
+                    "citation_pack": [
+                        {
+                            "citation_label": citation,
+                            "evidence_bundle_id": result.evidence_bundle_id,
+                        }
+                        for citation in result.citations
+                    ],
                     "relevance_score": result.relevance_score,
                 }
                 for result in response.results

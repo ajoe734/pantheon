@@ -29,6 +29,7 @@ POST /api/openclaw-adapter/lifecycle/sessions            — idempotent create; 
 POST /api/openclaw-adapter/lifecycle/sessions/{id}/cancel — operator-owned cancel; preserves state on degraded upstream
 GET  /api/openclaw-adapter/lifecycle/sessions/{id}/audit — append-only audit trail for the session
 
+POST /api/openclaw-adapter/search/query              — governed evidence/citation search only
 POST /api/openclaw-adapter/broker/paper/orders       — gated paper order simulation handoff
 GET  /api/openclaw-adapter/broker/paper/orders       — gated paper order list via broker sidecar
 GET  /api/openclaw-adapter/broker/paper/orders/{id}  — gated paper order read via broker sidecar
@@ -48,8 +49,10 @@ from typing import Any, Dict, List, Optional
 import httpx
 from fastapi import FastAPI, Header
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from integrations.openclaw.search_gateway import OpenClawSearchGateway, SearchPolicyError as OpenClawSearchPolicyError
+from services.knowledge.evidence import JsonlEvidenceRepository
 from session_lifecycle import (
     LifecycleError,
     SessionLifecycleStore,
@@ -91,6 +94,13 @@ _LIVE_ADAPTER_ENABLED = os.getenv("OPENCLAW_LIVE_ADAPTER_ENABLED", "").lower() i
 _CAPITAL_BINDING_ENABLED = os.getenv("OPENCLAW_CAPITAL_BINDING_ENABLED", "").lower() in {"1", "true", "yes"}
 _BROKER_SIDECAR_URL = os.getenv("OPENCLAW_BROKER_SIDECAR_URL", "")
 _RUNTIME_MANAGER_URL = os.getenv("OPENCLAW_RUNTIME_MANAGER_URL", "") or os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "")
+_SEARCH_EVIDENCE_STORE_PATH = os.getenv(
+    "OPENCLAW_SEARCH_EVIDENCE_STORE_PATH",
+    os.getenv(
+        "SEARCH_EVIDENCE_STORE_PATH",
+        os.getenv("SOURCE_INGEST_EVIDENCE_STORE_PATH", "/tmp/pantheon/search/source_evidence.jsonl"),
+    ),
+)
 
 # Static capability snapshot — reflects the minimum runtime contract from OPENCLAW_RUNTIME_CONTRACT.md §4.
 # Returned without a live upstream call so the adapter remains useful in degraded mode.
@@ -102,6 +112,7 @@ _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
     "live_adapter": "deferred",
     "live_gate_harness": "present_disabled",
     "capital_binding": "deferred",
+    "governed_search": "enabled",
     "session_lifecycle_state": "activation_ready",
     "fail_closed": True,
     "supported_session_types": [
@@ -128,6 +139,7 @@ _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
         "capital_binding": "OPENCLAW_CAPITAL_BINDING_ENABLED",
         "paper_runtime_binding_check": "OPENCLAW_RUNTIME_MANAGER_URL",
         "live_gate_harness": "OPENCLAW_LIVE_ADAPTER_ENABLED + OPENCLAW_LIVE_HUMAN_APPROVAL_TOKEN",
+        "governed_search": "SearchGateway ACL/license/available_time filters",
     },
     "session_lifecycle": {
         "owner": "pantheon_adapter",
@@ -149,7 +161,8 @@ _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
         "Session lifecycle is Pantheon-owned with durable state, idempotent create, operator "
         "ownership, and degraded recovery. Production/live broker execution remains deferred. "
         "Paper order submission is available only behind the explicit paper gate and requires "
-        "a verified active paper RuntimeBinding."
+        "a verified active paper RuntimeBinding. Search is constrained to governed evidence "
+        "bundle and citation-pack responses."
     ),
 }
 
@@ -831,6 +844,23 @@ def _upstream_client_or_none() -> Optional[OpenClawUpstreamClient]:
     return _client()
 
 
+_OPENCLAW_SEARCH_REPOSITORY = JsonlEvidenceRepository(_SEARCH_EVIDENCE_STORE_PATH)
+_OPENCLAW_SEARCH_GATEWAY = OpenClawSearchGateway(_OPENCLAW_SEARCH_REPOSITORY)
+
+
+class SearchQueryRequest(BaseModel):
+    query: str
+    persona_id: str
+    workspace_id: str
+    request_id: Optional[str] = None
+    trace_id: Optional[str] = None
+    environment: str = "paper"
+    source_types: List[str] = Field(default_factory=list)
+    access_scopes: List[str] = Field(default_factory=lambda: ["public"])
+    license_scopes: List[str] = Field(default_factory=lambda: ["internal", "open"])
+    top_k: int = 5
+
+
 class ToolInvokeRequest(BaseModel):
     session_id: str
     tool_name: str
@@ -840,6 +870,49 @@ class ToolInvokeRequest(BaseModel):
 class WorkflowTriggerRequest(BaseModel):
     workflow_ref: str
     context: Optional[Any] = None
+
+
+@app.post("/api/openclaw-adapter/search/query")
+def query_search(
+    req: SearchQueryRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+) -> JSONResponse:
+    if not x_operator_id:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "search_error",
+                "error_code": "SEARCH_OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required.",
+            },
+        )
+    try:
+        _OPENCLAW_SEARCH_REPOSITORY.reload()
+        result = _OPENCLAW_SEARCH_GATEWAY.search(
+            {
+                "request_id": req.request_id or f"openclaw-search-{x_operator_id}",
+                "trace_id": req.trace_id or x_trace_id or f"trace-openclaw-search-{x_operator_id}",
+                "query": req.query,
+                "persona_id": req.persona_id,
+                "workspace_id": req.workspace_id,
+                "environment": req.environment,
+                "source_types": req.source_types,
+                "access_scopes": req.access_scopes,
+                "license_scopes": req.license_scopes,
+                "top_k": req.top_k,
+            }
+        )
+    except OpenClawSearchPolicyError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "search_error",
+                "error_code": "SEARCH_POLICY_ERROR",
+                "message": str(exc),
+            },
+        )
+    return JSONResponse(status_code=200, content=result)
 
 
 @app.get("/api/openclaw-adapter/tools/policy")

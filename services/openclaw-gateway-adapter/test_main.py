@@ -286,6 +286,13 @@ class TestCapabilities(unittest.TestCase):
         self.assertNotEqual(body.get("broker_execution"), "enabled")
         self.assertNotEqual(body.get("live_adapter"), "enabled")
 
+    def test_capabilities_include_governed_search(self):
+        resp = client.get("/api/openclaw-adapter/capabilities")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["governed_search"], "enabled")
+        self.assertIn("governed_search", body["activation_gates"])
+
 
 # ---------------------------------------------------------------------------
 # Session stubs
@@ -494,6 +501,100 @@ class TestCapabilityFenceCompleteness(unittest.TestCase):
         body = resp.json()
         for field in ("broker_execution", "paper_adapter", "live_adapter", "capital_binding"):
             self.assertNotEqual(body.get(field), "enabled", f"Expected {field} to be deferred, not enabled")
+
+
+# ---------------------------------------------------------------------------
+# Governed search route
+# ---------------------------------------------------------------------------
+
+
+class TestGovernedSearchRoute(unittest.TestCase):
+    def test_search_requires_operator_id(self):
+        resp = client.post(
+            "/api/openclaw-adapter/search/query",
+            json={
+                "query": "momentum volatility",
+                "persona_id": "persona-alpha",
+                "workspace_id": "workspace-research",
+            },
+        )
+        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(resp.json()["error_code"], "SEARCH_OPERATOR_REQUIRED")
+
+    def test_search_returns_sanitized_citation_pack(self):
+        fake_repo = MagicMock()
+        fake_search = MagicMock()
+        fake_search.search.return_value = {
+            "status": "ok",
+            "request_id": "search-1",
+            "trace_id": "trace-1",
+            "results": [
+                {
+                    "evidence_bundle_id": "evbundle-1",
+                    "citation_pack": [
+                        {
+                            "citation_label": "note#1",
+                            "evidence_bundle_id": "evbundle-1",
+                        }
+                    ],
+                    "relevance_score": 0.75,
+                }
+            ],
+            "rejected_items_count": 0,
+            "filters_applied": {
+                "pre_ranking_filter": "acl_license_workspace_environment",
+                "available_time": "not_future",
+            },
+        }
+        with (
+            patch.object(adapter_main, "_OPENCLAW_SEARCH_REPOSITORY", fake_repo),
+            patch.object(adapter_main, "_OPENCLAW_SEARCH_GATEWAY", fake_search),
+        ):
+            resp = client.post(
+                "/api/openclaw-adapter/search/query",
+                json={
+                    "request_id": "search-1",
+                    "trace_id": "trace-1",
+                    "query": "momentum volatility",
+                    "persona_id": "persona-alpha",
+                    "workspace_id": "workspace-research",
+                    "access_scopes": ["research"],
+                    "license_scopes": ["internal"],
+                    "source_types": ["internal_note"],
+                },
+                headers={"X-Operator-Id": "op-1"},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        result = body["results"][0]
+        self.assertEqual(result["evidence_bundle_id"], "evbundle-1")
+        self.assertEqual(result["citation_pack"][0]["citation_label"], "note#1")
+        self.assertNotIn("answer_context", result)
+        self.assertNotIn("matched_items", result)
+        self.assertNotIn("raw_payload", result)
+        fake_repo.reload.assert_called_once()
+        fake_search.search.assert_called_once()
+
+    def test_search_policy_error_maps_to_400(self):
+        fake_repo = MagicMock()
+        fake_search = MagicMock()
+        fake_search.search.side_effect = adapter_main.OpenClawSearchPolicyError("query is required")
+        with (
+            patch.object(adapter_main, "_OPENCLAW_SEARCH_REPOSITORY", fake_repo),
+            patch.object(adapter_main, "_OPENCLAW_SEARCH_GATEWAY", fake_search),
+        ):
+            resp = client.post(
+                "/api/openclaw-adapter/search/query",
+                json={
+                    "query": " ",
+                    "persona_id": "persona-alpha",
+                    "workspace_id": "workspace-research",
+                },
+                headers={"X-Operator-Id": "op-1"},
+            )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error_code"], "SEARCH_POLICY_ERROR")
 
 
 # ---------------------------------------------------------------------------

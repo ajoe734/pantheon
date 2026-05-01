@@ -18,6 +18,21 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _available_at_or_before_now(value: Any, now: datetime) -> bool:
+    if value in (None, ""):
+        return True
+    if isinstance(value, datetime):
+        available_at = value
+    else:
+        try:
+            available_at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return False
+    if available_at.tzinfo is None:
+        available_at = available_at.replace(tzinfo=timezone.utc)
+    return available_at.astimezone(timezone.utc) <= now
+
+
 @dataclass(frozen=True)
 class RetrievalResult:
     result_id: str
@@ -85,6 +100,7 @@ class SearchGateway:
         filtered = []
         rejected = 0
         requested_source_types = set(request.source_types)
+        now = datetime.now(timezone.utc)
 
         for knowledge_object in self.repository.list_knowledge_objects():
             if requested_source_types and knowledge_object.source_type not in requested_source_types:
@@ -99,6 +115,10 @@ class SearchGateway:
                 if bundle is None or not bundle.citation_refs:
                     rejected += 1
                     continue
+            evidence_item = self.repository.get_evidence_item(knowledge_object.evidence_item_id)
+            if evidence_item is None or not _available_at_or_before_now(evidence_item.available_time, now):
+                rejected += 1
+                continue
             filtered.append(knowledge_object)
 
         index_documents = self.index_adapter.documents_for(filtered)
@@ -112,6 +132,7 @@ class SearchGateway:
             "access_scopes": list(context.access_scopes),
             "license_scopes": list(context.license_scopes),
             "pre_ranking_filter": "acl_license_workspace_environment",
+            "available_time": "not_future",
         }
         for match in matches:
             knowledge_object = match.knowledge_object
