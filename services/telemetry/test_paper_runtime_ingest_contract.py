@@ -12,6 +12,7 @@ from typing import Any
 from services.execution.lean_runtime.paper_runtime import RuntimeTelemetryEmitter
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 from services.telemetry.ingest_svc import TelemetryIngestService
+from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
 
 
 SCHEMA_PATH = str(Path(__file__).with_name("telemetry_event.schema.json"))
@@ -80,6 +81,7 @@ def _paper_event(
     *,
     event_type: str = "heartbeat",
     event_id: str | None = None,
+    created_at: str = "2026-05-01T00:00:00Z",
     deployment_stage: str = "paper",
     binding_id: str | None = KNOWN_BINDING_ID,
     metrics: dict[str, Any] | None = None,
@@ -89,7 +91,7 @@ def _paper_event(
     event = {
         "event_id": event_id or str(uuid.uuid4()),
         "event_type": event_type,
-        "created_at": "2026-05-01T00:00:00Z",
+        "created_at": created_at,
         "execution_mode": "paper" if deployment_stage == "paper" else "live",
         "environment": deployment_stage,
         "deployment_stage": deployment_stage,
@@ -224,6 +226,40 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(stats["service"]["total_ingested"], 1)
         self.assertEqual(stats["writer"]["total_written"], 1)
+
+    def test_paper_heartbeat_updates_runtime_summary_projection(self):
+        async def scenario():
+            summary_store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+            svc = TelemetryIngestService(
+                schema_path=SCHEMA_PATH,
+                binding_store=_StubBindingStore(),
+                runtime_summary_store=summary_store,
+                batch_size=10,
+                batch_interval=0.01,
+            )
+            await svc.start()
+            ok = await svc.ingest(
+                _paper_event(
+                    event_type="heartbeat",
+                    event_id="evt-heartbeat-projection",
+                    created_at="2026-05-01T00:01:00Z",
+                )
+            )
+            await asyncio.sleep(0.05)
+            summary = svc.get_runtime_summary("rt-paper-contract")
+            stats = svc.stats()
+            await svc.stop(graceful=True)
+            return ok, summary, stats
+
+        ok, summary, stats = asyncio.run(scenario())
+
+        self.assertTrue(ok)
+        self.assertEqual(summary["last_heartbeat_at"], "2026-05-01T00:01:00Z")
+        self.assertEqual(summary["runtime_binding_id"], KNOWN_BINDING_ID)
+        self.assertEqual(summary["deployment_stage"], "paper")
+        self.assertEqual(summary["engine_bridge_repo"], "ajoe734/pantheon-lean.git")
+        self.assertEqual(summary["engine_bridge_commit"], "abc1234")
+        self.assertEqual(stats["runtime_summary_projection"]["summary_count"], 1)
 
 
 if __name__ == "__main__":

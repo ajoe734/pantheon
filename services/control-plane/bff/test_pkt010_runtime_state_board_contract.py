@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
+import read_store as bff_read_store
 from read_store import ReadSurfaceStore
 
 
@@ -35,6 +36,9 @@ def test_pkt010_runtime_state_board_returns_contract_payload() -> None:
         ]
         store.get_telemetry_summary = lambda runtime_id: {
             "runtime_id": "runtime-042",
+            "runtime_binding_id": "rtb-042",
+            "deployment_stage": "paper",
+            "state": "active",
             "window": "1h",
             "pnl": -0.12,
             "drawdown": 0.125,
@@ -43,6 +47,17 @@ def test_pkt010_runtime_state_board_returns_contract_payload() -> None:
             "avg_slippage_bps": 3.2,
             "total_trades": 47,
             "collected_at": "2026-04-10T15:00:00Z",
+            "last_heartbeat_at": "2026-04-10T15:00:00Z",
+            "last_event_at": "2026-04-10T15:00:00Z",
+            "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+            "engine_bridge_commit": "abc1234",
+            "health_summary": {
+                "paper_runtime": "ok",
+                "bridge": "ok",
+                "telemetry": "ok",
+                "broker": "not_applicable",
+            },
+            "projection_source": "telemetry_ingest",
         } if runtime_id == "runtime-042" else None
         store.get_rollbacks = lambda runtime_id: []
         store.dataset_source = lambda dataset: {
@@ -97,6 +112,20 @@ def test_pkt010_runtime_state_board_returns_contract_payload() -> None:
                             "avg_slippage_bps": 3.2,
                             "total_trades": 47,
                         },
+                        "runtime_binding_id": "rtb-042",
+                        "deployment_stage": "paper",
+                        "state": "active",
+                        "last_heartbeat_at": "2026-04-10T15:00:00Z",
+                        "last_event_at": "2026-04-10T15:00:00Z",
+                        "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+                        "engine_bridge_commit": "abc1234",
+                        "health_summary": {
+                            "paper_runtime": "ok",
+                            "bridge": "ok",
+                            "telemetry": "ok",
+                            "broker": "not_applicable",
+                        },
+                        "projection_source": "telemetry_ingest",
                     },
                     "rollback_summary": {
                         "count": 0,
@@ -247,5 +276,78 @@ def test_pkt010_runtime_state_board_supports_backend_owned_sorting_filtering_and
                 "initiated_at": "2026-04-18T05:00:00Z",
                 "completed_at": "2026-04-18T05:02:00Z",
             }
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_pkt010_runtime_state_board_reads_runtime_summary_from_telemetry_service(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        monkeypatch.setenv("PANTHEON_TELEMETRY_API_URL", "http://telemetry.test")
+
+        def fake_http_json_get(base_url, path, *, headers=None):
+            if base_url == "http://telemetry.test" and path == "/api/telemetry/runtime-summaries":
+                return True, {
+                    "summaries": [
+                        {
+                            "runtime_id": "runtime-paper-001",
+                            "runtime_binding_id": "rtb-paper-001",
+                            "deployment_stage": "paper",
+                            "state": "active",
+                            "window": "latest",
+                            "collected_at": "2026-05-01T00:00:30Z",
+                            "last_heartbeat_at": "2026-05-01T00:00:30Z",
+                            "last_event_at": "2026-05-01T00:00:30Z",
+                            "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+                            "engine_bridge_commit": "abc1234",
+                            "health_summary": {
+                                "paper_runtime": "ok",
+                                "bridge": "ok",
+                                "telemetry": "ok",
+                                "broker": "not_applicable",
+                            },
+                        }
+                    ]
+                }
+            return False, None
+
+        monkeypatch.setattr(bff_read_store, "_http_json_get", fake_http_json_get)
+        store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+        store.list_runtime_bindings = lambda: [
+            {
+                "id": "rtb-paper-001",
+                "runtime_id": "runtime-paper-001",
+                "deployment_stage": "paper",
+                "status": "running",
+                "plan_id": "plan-paper-001",
+                "artifact_id": "artifact-paper-001",
+                "artifact_version": "1.0.0",
+            }
+        ]
+        store.get_rollbacks = lambda runtime_id: []
+        store.dataset_source = lambda dataset: {
+            "runtime_bindings": "canonical",
+            "telemetry_summaries": "service_client",
+            "rollbacks": "local_snapshot",
+        }.get(dataset, "missing")
+        bff_main.read_store = store
+        client = TestClient(bff_main.app)
+
+        try:
+            response = client.get(
+                "/api/v1/operator/runtime-state",
+                headers={"Authorization": OPERATOR_TOKEN},
+            )
+            assert response.status_code == 200, response.text
+            runtime = response.json()["runtimes"][0]
+            assert runtime["runtime_binding_id"] == "rtb-paper-001"
+            assert runtime["deployment_stage"] == "paper"
+            assert runtime["telemetry_summary"]["last_heartbeat_at"] == "2026-05-01T00:00:30Z"
+            assert runtime["telemetry_summary"]["runtime_binding_id"] == "rtb-paper-001"
+            assert runtime["telemetry_summary"]["engine_bridge_repo"] == "ajoe734/pantheon-lean.git"
+            assert runtime["telemetry_summary"]["engine_bridge_commit"] == "abc1234"
         finally:
             bff_main.read_store = original_store

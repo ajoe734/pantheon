@@ -62,6 +62,7 @@ from .dead_letter import (
     TAG_WRITER_ERROR,
     TAG_RETRY_EXHAUSTED,
 )
+from .runtime_summary import RuntimeSummaryProjectionStore
 
 try:
     import jsonschema
@@ -218,6 +219,7 @@ class TelemetryIngestService:
         write_fn: Optional[Callable[[list[dict[str, Any]]], Coroutine[Any, Any, WriteResult]]] = None,
         schema: Optional[dict[str, Any]] = None,
         binding_store: Optional[RuntimeBindingProtocol] = None,
+        runtime_summary_store: Optional[RuntimeSummaryProjectionStore] = None,
         dedup_max_size: int = 500_000,
     ):
         """
@@ -253,6 +255,9 @@ class TelemetryIngestService:
             When provided, binding_id is resolved and all identity fields plus
             temporal window are verified against the canonical binding record.
             When absent, only field-presence and enum checks are applied.
+        runtime_summary_store : RuntimeSummaryProjectionStore, optional
+            Telemetry-owned read model updated after validated paper telemetry
+            is accepted, used by the BFF runtime-state surfaces.
         dedup_max_size : int
             Maximum number of event_ids tracked for idempotent deduplication.
             When exceeded, the oldest half of tracked IDs are evicted.
@@ -290,6 +295,7 @@ class TelemetryIngestService:
 
         # RuntimeBinding store for authoritative evidence cross-validation
         self._binding_store = binding_store
+        self._runtime_summary_store = runtime_summary_store
 
         # Write function
         self._write_fn = write_fn or self._default_write_fn
@@ -527,6 +533,11 @@ class TelemetryIngestService:
                     self._seen_event_ids.discard(eid)
 
         self._total_ingested += 1
+        if self._runtime_summary_store is not None:
+            try:
+                self._runtime_summary_store.project_event(event)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Runtime summary projection failed for event %s: %s", event_id, exc)
         return True
 
     async def ingest_batch(self, events: list[dict[str, Any]]) -> dict[str, int]:
@@ -595,7 +606,22 @@ class TelemetryIngestService:
             "writer": self._writer.stats(),
             "dead_letter_queue": self._dlq.stats(),
             "backpressure": self._backpressure.stats(),
+            "runtime_summary_projection": (
+                self._runtime_summary_store.stats()
+                if self._runtime_summary_store is not None
+                else {"summary_count": 0, "path": None}
+            ),
         }
+
+    def get_runtime_summary(self, runtime_id: str) -> Optional[dict[str, Any]]:
+        if self._runtime_summary_store is None:
+            return None
+        return self._runtime_summary_store.get(runtime_id)
+
+    def list_runtime_summaries(self) -> list[dict[str, Any]]:
+        if self._runtime_summary_store is None:
+            return []
+        return self._runtime_summary_store.list()
 
     # -- Diagnostics / Replay --
 

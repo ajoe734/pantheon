@@ -810,6 +810,11 @@ class ServiceBackedReadAdapter:
             "base_env": ("PANTHEON_EVOLUTION_API_URL", "PANTHEON_GOVERNANCE_API_URL"),
             "list_path": "/api/evolution/proposals",
         },
+        "telemetry_summaries": {
+            "base_env": ("PANTHEON_TELEMETRY_API_URL", "PANTHEON_TELEMETRY_URL"),
+            "list_path": "/api/telemetry/runtime-summaries",
+            "list_key": "summaries",
+        },
         "lineage_edges": {
             "base_env": ("PANTHEON_LINEAGE_READ_URL", "PANTHEON_LINEAGE_API_URL"),
             "list_path": "/api/v1/lineage",

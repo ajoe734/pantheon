@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 import services.telemetry.main as _main
 from services.telemetry.ingest_svc import TelemetryIngestService
 from services.telemetry.lineage_read import LineageReadService
+from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
 
 # ---------------------------------------------------------------------------
 # Stubs
@@ -53,10 +54,17 @@ class _StubBindingStore:
         return _KNOWN_BINDING if binding_id == _KNOWN_BINDING_ID else None
 
 
-def _make_event(binding_id: str = _KNOWN_BINDING_ID, event_id: str = "evt-001") -> dict:
+def _make_event(
+    binding_id: str = _KNOWN_BINDING_ID,
+    event_id: str = "evt-001",
+    *,
+    event_type: str = "pnl_snapshot",
+    metrics: dict | None = None,
+    metadata: dict | None = None,
+) -> dict:
     return {
         "event_id": event_id,
-        "event_type": "pnl_snapshot",
+        "event_type": event_type,
         "created_at": "2026-04-15T12:00:00Z",
         "execution_mode": "paper",
         "environment": "paper",
@@ -69,7 +77,8 @@ def _make_event(binding_id: str = _KNOWN_BINDING_ID, event_id: str = "evt-001") 
         "plan_id": "plan-456",
         "persona_capital_binding_id": "pcb-789",
         "target": {"strategy_id": "test-strategy"},
-        "metrics": {"pnl": 100.0},
+        "metrics": metrics or {"pnl": 100.0},
+        "metadata": metadata or {},
     }
 
 
@@ -227,6 +236,7 @@ class TestMainRoutes(unittest.TestCase):
             batch_size=10,
             batch_interval=0.05,
             binding_store=_StubBindingStore(),
+            runtime_summary_store=RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=120),
         )
         asyncio.run_coroutine_threadsafe(svc.start(), loop).result(timeout=5)
 
@@ -272,6 +282,36 @@ class TestMainRoutes(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 202)
         self.assertEqual(resp.get_json()["status"], "accepted")
+
+    def test_paper_heartbeat_updates_runtime_summary_route(self):
+        resp = self.client.post(
+            "/api/telemetry/ingest",
+            json=_make_event(
+                binding_id=_KNOWN_BINDING_ID,
+                event_id="route-heartbeat-summary-001",
+                event_type="heartbeat",
+                metrics={"heartbeat": 1},
+                metadata={
+                    "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+                    "engine_bridge_path": "pantheon/lean",
+                    "engine_bridge_commit": "abc1234",
+                },
+            ),
+        )
+        self.assertEqual(resp.status_code, 202)
+
+        summary_resp = self.client.get("/api/telemetry/runtime-summaries/lean-worker-1")
+        self.assertEqual(summary_resp.status_code, 200)
+        summary = summary_resp.get_json()
+        self.assertEqual(summary["last_heartbeat_at"], "2026-04-15T12:00:00Z")
+        self.assertEqual(summary["runtime_binding_id"], _KNOWN_BINDING_ID)
+        self.assertEqual(summary["deployment_stage"], "paper")
+        self.assertEqual(summary["engine_bridge_repo"], "ajoe734/pantheon-lean.git")
+        self.assertEqual(summary["engine_bridge_commit"], "abc1234")
+
+        list_resp = self.client.get("/api/telemetry/runtime-summaries")
+        self.assertEqual(list_resp.status_code, 200)
+        self.assertGreaterEqual(list_resp.get_json()["count"], 1)
 
     # --- ingest: binding-invalid rejection through HTTP surface ---
 

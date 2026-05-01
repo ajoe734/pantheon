@@ -2592,7 +2592,7 @@ def _split_csv_query(value: Optional[str]) -> Optional[List[str]]:
 def _project_runtime_state_telemetry_summary(summary: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not summary:
         return None
-    return {
+    projected = {
         "window": summary.get("window"),
         "collected_at": summary.get("collected_at"),
         "metrics": {
@@ -2604,6 +2604,26 @@ def _project_runtime_state_telemetry_summary(summary: Optional[Dict[str, Any]]) 
             "total_trades": summary.get("total_trades"),
         },
     }
+    for key in (
+        "runtime_binding_id",
+        "binding_id",
+        "deployment_stage",
+        "state",
+        "last_heartbeat_at",
+        "last_event_at",
+        "last_event_type",
+        "engine_bridge_repo",
+        "engine_bridge_commit",
+        "engine_bridge_path",
+        "runtime_adapter_version",
+        "health_summary",
+        "projection_source",
+        "projection_updated_at",
+        "staleness",
+    ):
+        if key in summary:
+            projected[key] = summary.get(key)
+    return projected
 
 
 def _project_runtime_state_latest_rollback(rollbacks: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -2639,6 +2659,8 @@ def _derive_runtime_state_last_updated_at(
         binding.get("updated_at"),
         binding.get("started_at"),
         binding.get("created_at"),
+        (telemetry_summary or {}).get("last_heartbeat_at"),
+        (telemetry_summary or {}).get("last_event_at"),
         (telemetry_summary or {}).get("collected_at"),
         (latest_rollback or {}).get("completed_at"),
         (latest_rollback or {}).get("initiated_at"),
@@ -2662,7 +2684,11 @@ def _project_operator_runtime_state_row(binding: Dict[str, Any]) -> Dict[str, An
 
     return {
         "runtime_id": runtime_id,
-        "runtime_binding_id": binding.get("id"),
+        "runtime_binding_id": (
+            binding.get("runtime_binding_id")
+            or binding.get("binding_id")
+            or binding.get("id")
+        ),
         "deployment_stage": binding.get("deployment_stage") or binding.get("deployment_mode"),
         "status": binding.get("status"),
         "capital_pool_id": binding.get("capital_pool_id"),

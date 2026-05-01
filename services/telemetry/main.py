@@ -71,6 +71,14 @@ TELEMETRY_SCHEMA_PATH
 TELEMETRY_STORAGE_DIR
     Directory for DLQ spill files.  Defaults to /tmp/pantheon/telemetry.
 
+TELEMETRY_RUNTIME_SUMMARY_STORE
+    JSON file for the telemetry-owned runtime status projection consumed by
+    BFF read paths. Defaults to TELEMETRY_STORAGE_DIR/runtime_summaries.json.
+
+TELEMETRY_RUNTIME_HEARTBEAT_STALE_SECONDS
+    Seconds after the last heartbeat before a runtime summary is returned as
+    degraded. Defaults to 90.
+
 TELEMETRY_BUFFER_BACKEND
     "memory" (default) or "redis".
 
@@ -122,6 +130,7 @@ from flask import Flask, jsonify, request
 
 from .ingest_svc import TelemetryIngestService, build_postgres_write_fn
 from .lineage_read import LineageReadService
+from .runtime_summary import RuntimeSummaryProjectionStore
 from services.foundation.health import register_flask_health_routes
 from services.runtime_auth import resolve_runtime_manager_auth
 
@@ -278,8 +287,20 @@ def _build_service() -> TelemetryIngestService:
         max_retries = int(os.getenv("TELEMETRY_MAX_RETRIES", "5"))
     except ValueError:
         max_retries = 5
+    try:
+        heartbeat_stale_after = int(os.getenv("TELEMETRY_RUNTIME_HEARTBEAT_STALE_SECONDS", "90"))
+    except ValueError:
+        heartbeat_stale_after = 90
 
     Path(storage_dir).mkdir(parents=True, exist_ok=True)
+    runtime_summary_path = os.getenv(
+        "TELEMETRY_RUNTIME_SUMMARY_STORE",
+        str(Path(storage_dir) / "runtime_summaries.json"),
+    )
+    runtime_summary_store = RuntimeSummaryProjectionStore(
+        runtime_summary_path,
+        heartbeat_stale_after_seconds=heartbeat_stale_after,
+    )
 
     return TelemetryIngestService(
         schema_path=schema_path if Path(schema_path).exists() else None,
@@ -291,6 +312,7 @@ def _build_service() -> TelemetryIngestService:
         max_retries=max_retries,
         write_fn=write_fn,
         binding_store=binding_store,
+        runtime_summary_store=runtime_summary_store,
     )
 
 
@@ -491,6 +513,29 @@ def stats():
     """Return TelemetryIngestService statistics."""
     svc = _get_service()
     return jsonify(svc.stats()), 200
+
+
+@app.route("/api/telemetry/runtime-summaries", methods=["GET"])
+def runtime_summaries():
+    """Return telemetry-owned runtime status summaries for BFF read paths."""
+    svc = _get_service()
+    summaries = svc.list_runtime_summaries()
+    return jsonify({"summaries": summaries, "count": len(summaries)}), 200
+
+
+@app.route("/api/telemetry/runtime-summaries/<runtime_id>", methods=["GET"])
+def runtime_summary(runtime_id: str):
+    """Return one telemetry-owned runtime status summary."""
+    svc = _get_service()
+    summary = svc.get_runtime_summary(runtime_id)
+    if summary is None:
+        return jsonify({
+            "error": {
+                "code": "RUNTIME_SUMMARY_NOT_FOUND",
+                "message": f"No runtime summary for {runtime_id}",
+            }
+        }), 404
+    return jsonify(summary), 200
 
 
 @app.route("/api/telemetry/dlq", methods=["GET"])
