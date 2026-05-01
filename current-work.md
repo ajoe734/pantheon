@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-01 23:35:00
+Last updated: 2026-05-01 23:57:24
 
 ## Objective
 
@@ -37,13 +37,13 @@ Last updated: 2026-05-01 23:35:00
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Review packet ready for sidecar review. Artifact: support/sidecars/P2-OSS-ACTIVATE-001/P2-OSS-ACTIVATE-001-SIDECAR-REVIEW.md. Package contains: Codex review findings summary, 111-test evidence, control surface inventory (6 controls), SIDECAR-ACCEPTANCE 14-item checklist mapped to post-review state, and 4 non-blocking open items for closeout tracking. Does not modify canonical truth.
+- `Claude`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: No active assignment
-- `Codex2`: integration, status-system, schema, acceptance; next: Create or wire provider-specific smoke runners/evidence packets for IBKR first, then Shioaji/Kraken where sandbox/test lanes are available.
+- `Codex`: integration, status-system, schema, acceptance; next: Supervisor preempted P2-WANDB-ONLINE-SYNC-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.
+- `Codex2`: integration, status-system, schema, acceptance; next: Auto-reassigned P2-QLIB-PROD-DATA-ACTIVATION-001 away from sidecar-only lane Copilot; reviewer Copilot -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: No active assignment
-- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
+- `Claude2`: execution, control-plane, governance-review; next: Review approved: acceptance packet is support-only, aligns with parent RL runtime-smoke acceptance criteria, and focused FinRL/RLlib/Ray Tune adapter verification passed (49 tests). Ray Tune allowed_next_action naming difference is recorded as a parent-task caveat, not a sidecar blocker.
+- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Supervisor re-dispatched P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001; task remains in progress.
 
 ## Delivery Layers
 
@@ -51,21 +51,29 @@ Last updated: 2026-05-01 23:35:00
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `P2-BROKER-SANDBOX-ORDER-001` | P2 Wave 7 | Broker sandbox/test-key order API smoke | Codex2 | todo | `P2-LIVE-KERNEL-001` | 先用 broker paper/sandbox/test key 串接下單 API 並留存 place/cancel/readback/reconcile 證據；production live 真實資金路徑仍需 explicit activation。 |
+| _(none)_ | - | - | - | - | - | - |
 
 ### External / Upstream Integration Work
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `P2-OSS-ACTIVATE-001-SIDECAR-REVIEW` | P2 Wave 7 | [Sidecar] [Auto] [Parent P2-OSS-ACTIVATE-001] Prepare P2-OSS-ACTIVATE-001 review packet and evidence summary | Claude | review | `P0-CI-BOUNDED-001` | 平行支援 P2-OSS-ACTIVATE-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
+| `P2-WANDB-ONLINE-SYNC-001` | P2 Wave 8 External Activation | W&B SDK-backed online sync activation smoke | Codex | todo | `P2-OSS-ACTIVATE-001` | 把 W&B 從 offline local-store 推進到 SDK-backed online sync：以 test project/API key 跑 metrics/artifact upload/readback smoke，預設仍不含任何 broker/order/capital path。 |
+| `P2-QLIB-PROD-DATA-ACTIVATION-001` | P2 Wave 8 External Activation | Qlib production data activation packet and real-backend smoke | Codex2 | todo | `P2-OSS-ACTIVATE-001`, `P1-SOURCE-001` | 把 Qlib 從 activation-ready offline handoff 推進到 production-data activation packet：使用 governed market dataset proof 與 real/stub-selectable backend smoke 產生可審查 candidate handoff，不連到下單路徑。 |
+| `P2-TRL-RUNTIME-DATA-ACTIVATION-001` | P2 Wave 8 External Activation | TRL runtime-data activation and real DPO smoke | Codex2 | todo | `P2-OSS-ACTIVATE-001` | 把 TRL 從 runtime-data gated 推進到實作完成：接 FB-002 preference pairs，跑 real TRL DPO 或明確 install/config error，產生 model artifact 與 evaluator/registry candidate handoff。 |
+| `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` | P2 Wave 8 External Activation | FinRL RLlib Ray Tune governed runtime activation smoke | Codex | todo | `P2-OSS-ACTIVATE-001` | 把 FinRL/RLlib/Ray Tune 從 dormant/deferred prep 推進到 governed runtime smoke：真實 backend 可用時跑 bounded train/search，否則留下明確 dependency/config error；仍禁止 broker/order/live 路由。 |
+| `P2-MARKETDATA-CREDENTIAL-SMOKE-001` | P2 Wave 8 External Activation | Market-data provider credentialed read smoke | Codex2 | todo | `APP-003-DATASOURCE-OPS-001`, `P2-OSS-ACTIVATE-001` | 對非下單外部市場資料源做 credentialed read/runtime smoke：Massive/Polygon、TWSE/TPEx/MOPS/TEJ、CoinGecko/Kraken market data、IBKR/Shioaji quote/read-only lane；不得觸發 broker order/capital side effect。 |
+| `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001` | P2 Wave 8 External Activation | Source/search live connector credentialed smoke | Gemini2 | in_progress | `P1-SOURCE-001`, `P1-SEARCH-001`, `P2-OSS-ACTIVATE-001` | 對 source/search 非下單外部資料源做 bounded live/test credential smoke：news/social/alpha DB 或 allowlisted HTTP/feed connector -> SourceRecord/EvidenceBundle -> durable index -> BFF/SearchGateway query；禁止 broker/Lean/order 路由。 |
+| `P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE` | P2 Wave 8 External Activation | [Sidecar] [Auto] [Parent P2-RL-UPSTREAM-RUNTIME-SMOKE-001] Prepare P2-RL-UPSTREAM-RUNTIME-SMOKE-001 acceptance packet and dependency map | Claude2 | review_approved | `P2-OSS-ACTIVATE-001` | 平行支援 P2-RL-UPSTREAM-RUNTIME-SMOKE-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-01 23:34:04
-- Terminal tasks archived: `876` total, `860` completed, `16` superseded
+- Archive updated: 2026-05-01 23:56:59
+- Terminal tasks archived: `878` total, `862` completed, `16` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `P2-BROKER-SANDBOX-ORDER-001` | P2 Wave 7 | Broker sandbox/test-key order API smoke | Codex2 | completed | 2026-05-01 23:56:59 | `ai-task-archive/tasks/P2-BROKER-SANDBOX-ORDER-001.json` |
+| `P2-OSS-ACTIVATE-001-SIDECAR-REVIEW` | P2 Wave 7 | Prepare P2-OSS-ACTIVATE-001 review packet and evidence summary | Claude | completed | 2026-05-01 23:56:18 | `ai-task-archive/tasks/P2-OSS-ACTIVATE-001-SIDECAR-REVIEW.json` |
 | `P2-LIVE-KERNEL-001` | P2 Wave 7 | Full Lean Launcher + broker SDK production readiness plan | Codex | completed | 2026-05-01 23:34:04 | `ai-task-archive/tasks/P2-LIVE-KERNEL-001.json` |
 | `P2-OSS-ACTIVATE-001` | P2 Wave 7 | Research OSS production data posture and activation | Codex2 | completed | 2026-05-01 23:33:19 | `ai-task-archive/tasks/P2-OSS-ACTIVATE-001.json` |
 | `P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE` | P2 Wave 7 | Prepare P2-OSS-ACTIVATE-001 acceptance packet and dependency map | Claude | completed | 2026-05-01 23:08:35 | `ai-task-archive/tasks/P2-OSS-ACTIVATE-001-SIDECAR-ACCEPTANCE.json` |
@@ -84,21 +92,27 @@ Last updated: 2026-05-01 23:35:00
 | `P0-REC-001-SIDECAR-ACCEPTANCE` | Pantheon P0 Paper Loop | Prepare P0-REC-001 acceptance packet and dependency map | Claude2 | completed | 2026-05-01 17:09:35 | `ai-task-archive/tasks/P0-REC-001-SIDECAR-ACCEPTANCE.json` |
 | `P0-REC-001` | Pantheon P0 Paper Loop | Write basic paper ReconciliationRecord | Codex2 | completed | 2026-05-01 17:07:27 | `ai-task-archive/tasks/P0-REC-001.json` |
 | `P0-LOOP-001` | Pantheon P0 Paper Loop | Add minimum paper operating loop smoke | Codex | completed | 2026-05-01 16:52:03 | `ai-task-archive/tasks/P0-LOOP-001.json` |
-| `P1-PERSIST-001-SIDECAR-ACCEPTANCE` | P1 Wave 5 | Prepare P1-PERSIST-001 acceptance packet and dependency map | Claude2 | completed | 2026-05-01 16:34:13 | `ai-task-archive/tasks/P1-PERSIST-001-SIDECAR-ACCEPTANCE.json` |
-| `P0-LOOP-001-SIDECAR-ACCEPTANCE` | Pantheon P0 Paper Loop | Prepare P0-LOOP-001 acceptance packet and dependency map | Claude | completed | 2026-05-01 16:27:41 | `ai-task-archive/tasks/P0-LOOP-001-SIDECAR-ACCEPTANCE.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `P2-BROKER-SANDBOX-ORDER-001` | P2 Wave 7 | Broker sandbox/test-key order API smoke | 先用 broker paper/sandbox/test key 串接下單 API 並留存 place/cancel/readback/reconcile 證據；production live 真實資金路徑仍需 explicit activation。 | Codex2 | Codex | todo | `P2-LIVE-KERNEL-001` | 2026-05-01 23:09:24 | Create or wire provider-specific smoke runners/evidence packets for IBKR first, then Shioaji/Kraken where sandbox/test lanes are available. |
-| `P2-OSS-ACTIVATE-001-SIDECAR-REVIEW` | P2 Wave 7 | [Sidecar] [Auto] [Parent P2-OSS-ACTIVATE-001] Prepare P2-OSS-ACTIVATE-001 review packet and evidence summary | 平行支援 P2-OSS-ACTIVATE-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Claude | Codex2 | review | `P0-CI-BOUNDED-001` | 2026-05-01 23:35:00 | Review packet ready for sidecar review. Artifact: support/sidecars/P2-OSS-ACTIVATE-001/P2-OSS-ACTIVATE-001-SIDECAR-REVIEW.md. Package contains: Codex review findings summary, 111-test evidence, control surface inventory (6 controls), SIDECAR-ACCEPTANCE 14-item checklist mapped to post-review state, and 4 non-blocking open items for closeout tracking. Does not modify canonical truth. |
+| `P2-WANDB-ONLINE-SYNC-001` | P2 Wave 8 External Activation | W&B SDK-backed online sync activation smoke | 把 W&B 從 offline local-store 推進到 SDK-backed online sync：以 test project/API key 跑 metrics/artifact upload/readback smoke，預設仍不含任何 broker/order/capital path。 | Codex | Claude | todo | `P2-OSS-ACTIVATE-001` | 2026-05-01 23:48:29 | Supervisor preempted P2-WANDB-ONLINE-SYNC-001 to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
+| `P2-QLIB-PROD-DATA-ACTIVATION-001` | P2 Wave 8 External Activation | Qlib production data activation packet and real-backend smoke | 把 Qlib 從 activation-ready offline handoff 推進到 production-data activation packet：使用 governed market dataset proof 與 real/stub-selectable backend smoke 產生可審查 candidate handoff，不連到下單路徑。 | Codex2 | Claude | todo | `P2-OSS-ACTIVATE-001`, `P1-SOURCE-001` | 2026-05-01 23:42:23 | Auto-reassigned P2-QLIB-PROD-DATA-ACTIVATION-001 away from sidecar-only lane Copilot; reviewer Copilot -> Claude. Reserved sidecar-only agents no longer hold mainline tasks. |
+| `P2-TRL-RUNTIME-DATA-ACTIVATION-001` | P2 Wave 8 External Activation | TRL runtime-data activation and real DPO smoke | 把 TRL 從 runtime-data gated 推進到實作完成：接 FB-002 preference pairs，跑 real TRL DPO 或明確 install/config error，產生 model artifact 與 evaluator/registry candidate handoff。 | Codex2 | Codex | todo | `P2-OSS-ACTIVATE-001` | 2026-05-01 23:55:49 | Auto-reassigned ownership from Claude to Codex2 after repeated Claude terminal: {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1777661400,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_dis. Task returned to todo until Codex2 starts a fresh run. |
+| `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` | P2 Wave 8 External Activation | FinRL RLlib Ray Tune governed runtime activation smoke | 把 FinRL/RLlib/Ray Tune 從 dormant/deferred prep 推進到 governed runtime smoke：真實 backend 可用時跑 bounded train/search，否則留下明確 dependency/config error；仍禁止 broker/order/live 路由。 | Codex | Codex2 | todo | `P2-OSS-ACTIVATE-001` | 2026-05-01 23:42:34 | Auto-reassigned P2-RL-UPSTREAM-RUNTIME-SMOKE-001 away from sidecar-only lane Copilot; owner Copilot -> Codex. Reserved sidecar-only agents no longer hold mainline tasks. |
+| `P2-MARKETDATA-CREDENTIAL-SMOKE-001` | P2 Wave 8 External Activation | Market-data provider credentialed read smoke | 對非下單外部市場資料源做 credentialed read/runtime smoke：Massive/Polygon、TWSE/TPEx/MOPS/TEJ、CoinGecko/Kraken market data、IBKR/Shioaji quote/read-only lane；不得觸發 broker order/capital side effect。 | Codex2 | Codex | todo | `APP-003-DATASOURCE-OPS-001`, `P2-OSS-ACTIVATE-001` | 2026-05-01 23:48:40 | Auto-reassigned P2-MARKETDATA-CREDENTIAL-SMOKE-001 away from sidecar-only lane Gemini; owner Gemini -> Codex2. Reserved sidecar-only agents no longer hold mainline tasks. |
+| `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001` | P2 Wave 8 External Activation | Source/search live connector credentialed smoke | 對 source/search 非下單外部資料源做 bounded live/test credential smoke：news/social/alpha DB 或 allowlisted HTTP/feed connector -> SourceRecord/EvidenceBundle -> durable index -> BFF/SearchGateway query；禁止 broker/Lean/order 路由。 | Gemini2 | Codex | in_progress | `P1-SOURCE-001`, `P1-SEARCH-001`, `P2-OSS-ACTIVATE-001` | 2026-05-01 23:55:21 | Supervisor re-dispatched P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001; task remains in progress. |
+| `P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE` | P2 Wave 8 External Activation | [Sidecar] [Auto] [Parent P2-RL-UPSTREAM-RUNTIME-SMOKE-001] Prepare P2-RL-UPSTREAM-RUNTIME-SMOKE-001 acceptance packet and dependency map | 平行支援 P2-RL-UPSTREAM-RUNTIME-SMOKE-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Claude2 | Codex | review_approved | `P2-OSS-ACTIVATE-001` | 2026-05-01 23:57:24 | Review approved: acceptance packet is support-only, aligns with parent RL runtime-smoke acceptance criteria, and focused FinRL/RLlib/Ray Tune adapter verification passed (49 tests). Ray Tune allowed_next_action naming difference is recorded as a parent-task caveat, not a sidecar blocker. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| `P2-OSS-ACTIVATE-001-SIDECAR-REVIEW` | Claude | Codex2 | Review packet ready for sidecar review. Artifact: support/sidecars/P2-OSS-ACTIVATE-001/P2-OSS-ACTIVATE-001-SIDECAR-REVIEW.md. Package contains: Codex review findings summary, 111-test evidence, control surface inventory (6 controls), SIDECAR-ACCEPTANCE 14-item checklist mapped to post-review state, and 4 non-blocking open items for closeout tracking. Does not modify canonical truth. | pending | 2026-05-01 23:35:00 |
+| `P2-QLIB-PROD-DATA-ACTIVATION-001` | Copilot | Claude | Auto-reassigned P2-QLIB-PROD-DATA-ACTIVATION-001 away from sidecar-only lane Copilot; reviewer Copilot -> Claude. Reserved sidecar-only agents no longer hold mainline tasks. | pending | 2026-05-01 23:42:23 |
+| `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` | Copilot | Codex | Auto-reassigned P2-RL-UPSTREAM-RUNTIME-SMOKE-001 away from sidecar-only lane Copilot; owner Copilot -> Codex. Reserved sidecar-only agents no longer hold mainline tasks. | pending | 2026-05-01 23:42:34 |
+| `P2-MARKETDATA-CREDENTIAL-SMOKE-001` | Gemini | Codex2 | Auto-reassigned P2-MARKETDATA-CREDENTIAL-SMOKE-001 away from sidecar-only lane Gemini; owner Gemini -> Codex2. Reserved sidecar-only agents no longer hold mainline tasks. | pending | 2026-05-01 23:48:40 |
+| `P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE` | Codex | Claude2 | Review approved: acceptance packet is support-only, aligns with parent RL runtime-smoke acceptance criteria, and focused FinRL/RLlib/Ray Tune adapter verification passed (49 tests). Ray Tune allowed_next_action naming difference is recorded as a parent-task caveat, not a sidecar blocker. | pending | 2026-05-01 23:57:24 |
 
 ## Blockers
 
@@ -110,11 +124,11 @@ Last updated: 2026-05-01 23:35:00
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| _(none)_ | - | - | - |
+| `P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE` | Codex | 審查通過：sidecar acceptance packet 符合 support-only 邊界，artifact scope 只新增 support packet，未修改 L1 canonical truth、runtime、registry 或 governance 實作。<br>已核對 parent acceptance、RL_PATH_APPROVAL_GATE=closed、FinRL/RLlib/Ray Tune package pins與 prep gates；focused verification 通過：python3 -m pytest services/research/finrl/test_adapter.py services/research/rllib/test_adapter.py services/research/rllib/test_ray_tune_adapter.py（49 passed）與 git diff --check support packet。<br>Reviewer caveat：Ray Tune candidate packet 使用 offline_search_review_only，而非 FinRL/RLlib 的 offline_registry_review_only；這不破壞 research-only/no-broker 邊界，但 parent owner 應在主線實作時保留此命名差異。 | - |
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-05-01 23:31:17
+- Last coordination scan: 2026-05-01 23:54:58
 - Tracked features: `46`
 - Lovable-ready packets: `45`
 - Waiting for Lovable/front-end: `0`
@@ -181,23 +195,23 @@ Last updated: 2026-05-01 23:35:00
 
 ## Latest Checkpoints
 
-- 2026-05-01 23:32:27 Orchestrator: PreToolUse: Read
-- 2026-05-01 23:32:27 Orchestrator: PostToolUse: Read
-- 2026-05-01 23:32:28 Orchestrator: PostToolUse: Read
-- 2026-05-01 23:32:54 Orchestrator: PreToolUse: Read
-- 2026-05-01 23:32:54 Orchestrator: PreToolUse: Glob
-- 2026-05-01 23:32:55 Orchestrator: PostToolUse: Read
-- 2026-05-01 23:32:55 Orchestrator: PostToolUse: Glob
-- 2026-05-01 23:32:58 Orchestrator: PreToolUse: Read
-- 2026-05-01 23:32:58 Orchestrator: PostToolUse: Read
-- 2026-05-01 23:33:13 Orchestrator: PreToolUse: Bash
-- 2026-05-01 23:33:14 Orchestrator: PostToolUse: Bash
-- 2026-05-01 23:33:19 Codex2: `P2-OSS-ACTIVATE-001` Done: production research data activation posture finalized with task-scoped commit 05d52eb. Evidence packet services/learning/OSS_ACTIVATION_NOTES.md and OSS_INTEGRATION_CHECKLIST.md document gated production data use, Qlib/TRL draft-none posture, OpenClaw evidence/citation-only search handoff, and no direct broker/Lean/paper/canary/live/capital/order path. Verification: focused pytest suite 111 passed; git diff --check on task artifacts passed.
-- 2026-05-01 23:34:04 Codex: `P2-LIVE-KERNEL-001` Closed after Claude approval. Artifact commit 4e36777 documents P2 live-kernel readiness; closeout checkpoint 1ba9a12 preserves task-specific HEAD metadata after a concurrent same-branch commit. Scope verified: broker sandbox/test-key smoke is required before canary/live readiness, entitlement/subaccount/capital gaps block production live only, and kill-switch drill ack gates remain required. Verification: git diff --check on task files; rg acceptance scan across three artifacts; secret pattern scan returned no matches.
-- 2026-05-01 23:34:36 Orchestrator: PreToolUse: Write
-- 2026-05-01 23:34:37 Orchestrator: PostToolUse: Write
-- 2026-05-01 23:34:44 Orchestrator: PreToolUse: Bash
-- 2026-05-01 23:34:44 Claude: `P2-OSS-ACTIVATE-001-SIDECAR-REVIEW` Review packet created at support/sidecars/P2-OSS-ACTIVATE-001/P2-OSS-ACTIVATE-001-SIDECAR-REVIEW.md. Summarizes Codex review findings, test evidence (111 pytest passed), control surface inventory, cross-references SIDECAR-ACCEPTANCE 14-item checklist against post-review state, and flags 4 non-blocking open items for closeout tracking.
-- 2026-05-01 23:34:54 Orchestrator: PostToolUse: Bash
-- 2026-05-01 23:34:59 Orchestrator: PreToolUse: Bash
-- 2026-05-01 23:35:00 Claude: `P2-OSS-ACTIVATE-001-SIDECAR-REVIEW` Handoff to Codex2: Review packet ready for sidecar review. Artifact: support/sidecars/P2-OSS-ACTIVATE-001/P2-OSS-ACTIVATE-001-SIDECAR-REVIEW.md. Package contains: Codex review findings summary, 111-test evidence, control surface inventory (6 controls), SIDECAR-ACCEPTANCE 14-item checklist mapped to post-review state, and 4 non-blocking open items for closeout tracking. Does not modify canonical truth.
+- 2026-05-01 23:56:13 Orchestrator: PreToolUse: Bash
+- 2026-05-01 23:56:13 Orchestrator: PostToolUse: Bash
+- 2026-05-01 23:56:18 Orchestrator: PreToolUse: Bash
+- 2026-05-01 23:56:18 Claude: `P2-OSS-ACTIVATE-001-SIDECAR-REVIEW` Closeout complete: sidecar review packet approved by Codex2 (2026-05-01 23:50:39). Parent lifecycle (done, commit 05d52eb) confirmed explicit in §1/§9/§10. Support artifact only; no canonical truth modified. Task-scoped commit b26fdf6.
+- 2026-05-01 23:56:32 Orchestrator: PostToolUse: Bash
+- 2026-05-01 23:56:35 Orchestrator: PreToolUse: Bash
+- 2026-05-01 23:56:40 Orchestrator: PreToolUse: Bash
+- 2026-05-01 23:56:40 Orchestrator: PostToolUse: Bash
+- 2026-05-01 23:56:43 Orchestrator: PreToolUse: Bash
+- 2026-05-01 23:56:44 Orchestrator: PostToolUse: Bash
+- 2026-05-01 23:56:46 Orchestrator: PreToolUse: Bash
+- 2026-05-01 23:56:47 Orchestrator: PostToolUse: Bash
+- 2026-05-01 23:56:52 Orchestrator: PreToolUse: Bash
+- 2026-05-01 23:56:57 Orchestrator: PreToolUse: Bash
+- 2026-05-01 23:56:57 Orchestrator: PostToolUse: Bash
+- 2026-05-01 23:56:59 Codex2: `P2-BROKER-SANDBOX-ORDER-001` Finalized broker sandbox/test-key order API smoke after Codex review approval. Commit 1861472 adds bounded smoke runner, focused tests, repo-safe IBKR/Shioaji/Kraken evidence packets, review artifact, and canary docs. Verification rerun: 29 focused tests passed; git diff --check passed; evidence secret scan only found intended secret:// refs; production-live and raw credential negative checks exited 2.
+- 2026-05-01 23:57:00 Orchestrator: PreToolUse: Bash
+- 2026-05-01 23:57:00 Orchestrator: PostToolUse: Bash
+- 2026-05-01 23:57:23 Orchestrator: PreToolUse: Bash
+- 2026-05-01 23:57:24 Codex: `P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE` Review approved: acceptance packet is support-only, aligns with parent RL runtime-smoke acceptance criteria, and focused FinRL/RLlib/Ray Tune adapter verification passed (49 tests). Ray Tune allowed_next_action naming difference is recorded as a parent-task caveat, not a sidecar blocker.
