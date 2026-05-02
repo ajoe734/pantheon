@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-02T11:26:15Z",
+  "updated_at": "2026-05-02T12:04:30Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -121,11 +121,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "finalize",
+      "current_task_ids": [
+        "P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-REVIEW"
+      ],
       "branch": "feat/codex-collab-system",
-      "next": "",
-      "last_update": "2026-05-01T19:18:08Z"
+      "next": "Review approved — all sidecar checks pass; single-file support-only commit 578c2d6 confirmed; 9-provider uncredentialed and 2-provider quote-readback evidence fields verified; no canonical mutation; returned to owner Codex for finalization and done transition",
+      "last_update": "2026-05-02T12:04:30Z"
     },
     {
       "name": "Codex2",
@@ -178,13 +180,11 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-REVIEW"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/gemini2-research-runtime",
-      "next": "Helper-claimed by Gemini2 while Claude completes higher-priority work.",
-      "last_update": "2026-05-02T11:24:43Z"
+      "next": "",
+      "last_update": "2026-05-02T11:35:40Z"
     }
   ],
   "tasks": [
@@ -254,9 +254,9 @@
       "title": "Prepare P2-MARKETDATA-CREDENTIAL-SMOKE-001 review packet and evidence summary",
       "summary_zh": "平行支援 P2-MARKETDATA-CREDENTIAL-SMOKE-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
       "phase": "P2 Wave 8 External Activation",
-      "owner": "Gemini2",
+      "owner": "Codex",
       "reviewer": "Claude",
-      "status": "todo",
+      "status": "review_approved",
       "depends_on": [
         "APP-003-DATASOURCE-OPS-001",
         "P2-OSS-ACTIVATE-001"
@@ -269,14 +269,19 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Helper-claimed by Gemini2 while Claude completes higher-priority work.",
-      "last_update": "2026-05-02T11:24:43Z",
+      "next": "Review approved — all sidecar checks pass; single-file support-only commit 578c2d6 confirmed; 9-provider uncredentialed and 2-provider quote-readback evidence fields verified; no canonical mutation; returned to owner Codex for finalization and done transition",
+      "last_update": "2026-05-02T12:04:30Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "P2-MARKETDATA-CREDENTIAL-SMOKE-001",
       "helper_kind": "review_packet",
       "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "審查通過：support-only scope、無 canonical mutation、parent 狀態精確、11 個 provider 欄位全部通過",
+        "後續追蹤：owner Codex 執行 closeout 並 push；parent push_status: ahead 由 parent owner 處理"
+      ],
+      "review_file": "support/reviews/P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-REVIEW-claude-review.md"
     }
   ],
   "handoffs": [
@@ -392,8 +397,44 @@
       "from": "Claude",
       "to": "Gemini2",
       "message": "Helper-claimed by Gemini2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-02T11:24:43Z",
+      "resolved_at": "2026-05-02T11:30:20Z"
+    },
+    {
+      "task_id": "P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review packet ready at support/sidecars/P2-MARKETDATA-CREDENTIAL-SMOKE-001/P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-REVIEW.md. Support-only sidecar commit 578c2d6 summarizes archived parent done/completed state, approved parent review, nine-provider evidence summaries, IBKR/Shioaji quote-readback evidence, no raw secrets, and no order/capital side effects. Verification: ai_status show parent+sidecar, jq archive/evidence checks, per-provider rate_limit/session_provenance field checks, git diff --check.",
+      "status": "done",
+      "created_at": "2026-05-02T11:44:37Z",
+      "resolved_at": "2026-05-02T11:51:39Z"
+    },
+    {
+      "task_id": "P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Gemini2",
+      "message": "Auto-reassigned review from Codex2 to Gemini2 after repeated Codex2 terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-05-02T11:51:39Z",
+      "resolved_at": "2026-05-02T12:02:15Z"
+    },
+    {
+      "task_id": "P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-REVIEW",
+      "from": "Gemini2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Gemini2 to Claude after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-05-02T12:02:15Z",
+      "resolved_at": "2026-05-02T12:04:30Z"
+    },
+    {
+      "task_id": "P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved — all sidecar checks pass; single-file support-only commit 578c2d6 confirmed; 9-provider uncredentialed and 2-provider quote-readback evidence fields verified; no canonical mutation; returned to owner Codex for finalization and done transition",
       "status": "pending",
-      "created_at": "2026-05-02T11:24:43Z"
+      "created_at": "2026-05-02T12:04:30Z"
     }
   ],
   "blockers": [],
@@ -435,21 +476,21 @@
       "todo": 0
     },
     "Gemini2": {
-      "total": 1,
-      "active": 0,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 1
-    },
-    "Codex": {
       "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
+      "todo": 0
+    },
+    "Codex": {
+      "total": 1,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 1,
       "todo": 0
     },
     "Codex2": {
