@@ -21,6 +21,7 @@ import os
 import sys
 import tempfile
 import unittest
+import uuid
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -28,6 +29,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 # Use a temp dir so tests don't share state with each other
 os.environ["BFF_DATA_DIR"] = "/tmp/pantheon/bff_test"
 os.environ.setdefault("BFF_READ_SURFACE_STATE", "fresh")
+os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 from fastapi.testclient import TestClient
 import main as bff_main
 from main import app, command_store
@@ -43,6 +45,13 @@ ADMIN_MFA_TOKEN = "Bearer op-4:admin:mfa"
 REVIEWER_TOKEN = "Bearer op-5:reviewer"
 
 
+def _command_headers(token: str | None, idempotency_key: str | None = None) -> dict[str, str]:
+    headers = {"X-Idempotency-Key": idempotency_key or f"idmp-smoke-{uuid.uuid4().hex}"}
+    if token:
+        headers["Authorization"] = token
+    return headers
+
+
 def _submit(client, token=APPROVER_TOKEN, **overrides):
     payload = {
         "command": "ApproveDeployment",
@@ -54,8 +63,9 @@ def _submit(client, token=APPROVER_TOKEN, **overrides):
         },
         "audit_context": {"reason": "Test approval"},
     }
+    idempotency_key = overrides.pop("idempotency_key", None)
     payload.update(overrides)
-    headers = {"Authorization": token} if token else {}
+    headers = _command_headers(token, idempotency_key)
     return client.post("/api/v1/operator/commands", json=payload, headers=headers)
 
 
@@ -205,7 +215,7 @@ class TestOperatorBFF(unittest.TestCase):
         # Poll
         r2 = self.client.get(
             f"/api/v1/operator/commands/{command_id}",
-            headers={"Authorization": APPROVER_TOKEN},
+            headers=_command_headers(APPROVER_TOKEN),
         )
         self.assertEqual(r2.status_code, 200)
         status_body = r2.json()
@@ -230,7 +240,7 @@ class TestOperatorBFF(unittest.TestCase):
     def test_command_not_found(self):
         r = self.client.get(
             "/api/v1/operator/commands/non-existent-id",
-            headers={"Authorization": APPROVER_TOKEN},
+            headers=_command_headers(APPROVER_TOKEN),
         )
         self.assertEqual(r.status_code, 404)
 
@@ -286,7 +296,7 @@ class TestOperatorBFF(unittest.TestCase):
                 "params": {"runtime_binding_id": "rb-1", "pause_action": "pause", "reason": "investigation"},
                 "audit_context": {"reason": "test"},
             },
-            headers={"Authorization": APPROVER_TOKEN},
+            headers=_command_headers(APPROVER_TOKEN),
         )
         self.assertEqual(r.status_code, 403, r.text)
         self.assertEqual(r.json()["detail"]["error"]["code"], ErrorCode.INSUFFICIENT_ROLE.value)
@@ -304,7 +314,7 @@ class TestOperatorBFF(unittest.TestCase):
                 "params": {"scope": "all", "activate": True, "severity": "critical", "rationale": "test"},
                 "audit_context": {"reason": "test"},
             },
-            headers={"Authorization": ADMIN_TOKEN},  # admin but no MFA
+            headers=_command_headers(ADMIN_TOKEN),  # admin but no MFA
         )
         self.assertEqual(r.status_code, 403, r.text)
         self.assertEqual(r.json()["detail"]["error"]["code"], ErrorCode.MFA_REQUIRED.value)
@@ -319,7 +329,7 @@ class TestOperatorBFF(unittest.TestCase):
                 "params": {"scope": "all", "activate": True, "severity": "critical", "rationale": "test"},
                 "audit_context": {"reason": "test"},
             },
-            headers={"Authorization": ADMIN_MFA_TOKEN},
+            headers=_command_headers(ADMIN_MFA_TOKEN),
         )
         self.assertEqual(r.status_code, 202, r.text)
 
@@ -333,7 +343,7 @@ class TestOperatorBFF(unittest.TestCase):
                 "params": {"scope": "galaxy", "activate": True},
                 "audit_context": {"reason": "test"},
             },
-            headers={"Authorization": ADMIN_MFA_TOKEN},
+            headers=_command_headers(ADMIN_MFA_TOKEN),
         )
         self.assertEqual(r.status_code, 422, r.text)
         self.assertEqual(r.json()["detail"]["error"]["code"], ErrorCode.INVALID_PARAMS.value)
@@ -388,7 +398,7 @@ class TestOperatorBFF(unittest.TestCase):
                 "params": {"runtime_binding_id": "rb-happy", "pause_action": "pause", "reason": "investigation"},
                 "audit_context": {"reason": "test"},
             },
-            headers={"Authorization": OPERATOR_TOKEN},
+            headers=_command_headers(OPERATOR_TOKEN),
         )
         self.assertEqual(r.status_code, 202, r.text)
 
@@ -406,7 +416,7 @@ class TestOperatorBFF(unittest.TestCase):
                 },
                 "audit_context": {"reason": "test"},
             },
-            headers={"Authorization": ADMIN_TOKEN},
+            headers=_command_headers(ADMIN_TOKEN),
         )
         self.assertEqual(r.status_code, 202, r.text)
 
@@ -423,7 +433,7 @@ class TestOperatorBFF(unittest.TestCase):
                 },
                 "audit_context": {"reason": "test"},
             },
-            headers={"Authorization": APPROVER_TOKEN},
+            headers=_command_headers(APPROVER_TOKEN),
         )
         self.assertEqual(r.status_code, 202, r.text)
 
@@ -440,7 +450,7 @@ class TestOperatorBFF(unittest.TestCase):
                 },
                 "audit_context": {"reason": "test"},
             },
-            headers={"Authorization": APPROVER_TOKEN},
+            headers=_command_headers(APPROVER_TOKEN),
         )
         self.assertEqual(r.status_code, 202, r.text)
 
@@ -459,7 +469,7 @@ class TestOperatorBFF(unittest.TestCase):
                 },
                 "audit_context": {"reason": "test"},
             },
-            headers={"Authorization": REVIEWER_TOKEN},
+            headers=_command_headers(REVIEWER_TOKEN),
         )
         self.assertEqual(r.status_code, 202, r.text)
 
@@ -477,7 +487,7 @@ class TestOperatorBFF(unittest.TestCase):
                 },
                 "audit_context": {"reason": "test"},
             },
-            headers={"Authorization": ADMIN_TOKEN},
+            headers=_command_headers(ADMIN_TOKEN),
         )
         self.assertEqual(r.status_code, 202, r.text)
 

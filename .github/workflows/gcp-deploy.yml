@@ -108,8 +108,11 @@ jobs:
           # build_ids is a JSON array like ["router","governance-api","bff",...].
           # Convert to comma-separated for the Cloud Build substitution.
           GLOBAL_CHANGED="$(printf '%s' "${REPORT}" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["global_changed"]).lower())')"
-          if [ "${GLOBAL_CHANGED}" = "true" ]; then
+          GLOBAL_IMAGE_CHANGED="$(printf '%s' "${REPORT}" | python3 -c 'import json,sys; files=json.load(sys.stdin)["changed_files"]; image_global_files={"cloudbuild.yaml","docker-compose.yml","docker-compose.remote-dev.yml"}; print(str(any(path in image_global_files for path in files)).lower())')"
+          if [ "${GLOBAL_CHANGED}" = "true" ] && [ "${GLOBAL_IMAGE_CHANGED}" = "true" ]; then
             SERVICES="all"
+          elif [ "${GLOBAL_CHANGED}" = "true" ]; then
+            SERVICES=""
           else
             SERVICES="$(printf '%s' "${REPORT}" | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["build_ids"]))')"
           fi
@@ -118,6 +121,8 @@ jobs:
 
           if [ -z "${SERVICES}" ]; then
             echo "[info] no build targets changed — skipping Cloud Build submission"
+          elif [ "${SERVICES}" = "all" ]; then
+            echo "[info] image-impacting global change detected — building all services"
           else
             echo "[info] services to build: ${SERVICES}"
           fi

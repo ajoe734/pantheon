@@ -82,9 +82,11 @@ jobs:
 
           REPORT="$(python3 scripts/ci_stage0.py detect-changes --base "${BASE_SHA}" --head "${HEAD_SHA}")"
           TARGET_COUNT="$(printf '%s' "${REPORT}" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["target_ids"]))')"
+          DEPLOY_FILE_COUNT="$(printf '%s' "${REPORT}" | python3 -c 'import json,sys; files=json.load(sys.stdin)["changed_files"]; skip_prefixes=(".github/","docs/"); skip_names={"smoke_test.py"}; print(sum(1 for path in files if not (path.startswith(skip_prefixes) or "/tests/" in path or (path.rsplit("/",1)[-1]).startswith("test_") or (path.rsplit("/",1)[-1]).endswith("_test.py") or (path.rsplit("/",1)[-1]) in skip_names or (path.rsplit("/",1)[-1]).endswith(".md"))))')"
           echo "target_count=${TARGET_COUNT}" >> "$GITHUB_OUTPUT"
+          echo "deploy_file_count=${DEPLOY_FILE_COUNT}" >> "$GITHUB_OUTPUT"
 
-          if [ "${TARGET_COUNT}" = "0" ]; then
+          if [ "${TARGET_COUNT}" = "0" ] || [ "${DEPLOY_FILE_COUNT}" = "0" ]; then
             echo "deploy=false" >> "$GITHUB_OUTPUT"
             echo "[info] no runtime deploy targets changed; skipping dev VM deploy"
           else
