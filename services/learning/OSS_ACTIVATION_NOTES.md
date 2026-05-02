@@ -34,11 +34,11 @@ capital movement.
 
 | Component | Current status | Explicit gate | Production activation read |
 |---|---|---|---|
-| Qlib | `smoke-tested`; activation-ready offline handoff only | Worker requires `PANTHEON_QLIB_ACTIVATION_READY_ENABLED=1` and explicit `QLIB_BACKEND=stub|real`; gateway dispatch requires `PANTHEON_OFFLINE_GATE_ENABLED=true` | Still blocked on a named RS-003 candidate artifact, governed >=50 instrument / >=2 year OHLCV dataset proof, target StrategySpec binding, and production credential/storage evidence for the selected data provider. Output remains `artifact_state=draft`, `deployment_summary.current_stage=none`, with a non-writing candidate packet. |
+| Qlib | `smoke-tested`; follow-up active | Worker requires `PANTHEON_QLIB_ACTIVATION_READY_ENABLED=1` and explicit `QLIB_BACKEND=stub|real`; gateway dispatch requires `PANTHEON_OFFLINE_GATE_ENABLED=true` | `P2-QLIB-PROD-DATA-ACTIVATION-001` now owns the production-data proof and real/stub-selectable backend smoke. Output must remain research/model artifact handoff only with no order-capable route. |
 | TRL | `smoke-tested`; follow-up review-approved | Worker requires `PANTHEON_TRL_ACTIVATION_READY_ENABLED=1`; activation evidence harness requires `--enable-activation-ready` | `P2-TRL-RUNTIME-DATA-ACTIVATION-001` produced bounded FB-002 evidence (240 events/pairs, 3 strategy families, all approve/edit/reject actions), evaluator/registry/candidate handoff packets, and explicit real-backend dependency/config evidence (`No module named 'trl'`, `silent_stub_fallback=false`). No direct governance write or order route opens. |
-| FinRL | `criteria-defined`; deferred prep only | Worker requires `PANTHEON_FINRL_PREP_ENABLED=1`; smoke requires `--enable-deferred-prep` | Production RL activation remains closed until the RL path approval gate reopens after Qlib supervised alpha proof. No paper/canary/live, registry write, or broker route is open. |
-| RLlib / Ray Tune | `version-pinned`; deferred prep only | Workers require `PANTHEON_RLLIB_PREP_ENABLED=1` or `PANTHEON_RAYTUNE_PREP_ENABLED=1`; smokes require `--enable-deferred-prep` | Same RL gate as FinRL. Prep outputs are draft/none only and cannot dispatch production train/eval loops. |
-| W&B | `criteria-defined`; offline local-store only | `EXPERIMENT_BACKEND=wandb` requires `PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1` or legacy deferred-prep flag | SDK-backed/networked W&B activation remains blocked on the MLflow operational-history gate, operator preference, SDK pin, network readiness, and re-entry approval. |
+| FinRL | `smoke-tested`; task done | Worker requires `PANTHEON_FINRL_PREP_ENABLED=1`; activation smoke uses `--enable-activation-ready --backend real`; explicit `ModuleNotFoundError` recorded with `silent_stub_fallback=false` | `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` done — bounded governed runtime smoke completed; checksum-bearing artifact bundle, evaluator packet, registry entry, and candidate packet in `support/evidence/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/`; no paper/canary/live, registry write, broker route, or capital binding. |
+| RLlib / Ray Tune | `smoke-tested`; task done | Workers require `PANTHEON_RLLIB_PREP_ENABLED=1` or `PANTHEON_RAYTUNE_PREP_ENABLED=1`; activation smokes use `--enable-activation-ready --backend real`; explicit `ModuleNotFoundError` recorded with `silent_stub_fallback=false` | `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` done — bounded train/search runtime smoke completed as research-only artifact output; evidence in `support/evidence/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/`. |
+| W&B | `criteria-defined`; online sync follow-up active | Offline store uses `PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1`; online sync must use explicit test project/API-key env gates | `P2-WANDB-ONLINE-SYNC-001` now owns SDK pinning, online metrics/artifact upload, and readback smoke. Broker/order/capital paths remain out of scope. |
 | OpenClaw | `governed`; search/session/tool bridge active under policy | Runtime profile and adapter env are opt-in; broker paper path requires `OPENCLAW_PAPER_ADAPTER_ENABLED=true`; live order path is hard rejected | OpenClaw can request governed research context and session/tool metadata, but cannot bypass SearchGateway controls or open broker/capital paths. |
 
 ## Remaining Production Prerequisites
@@ -68,10 +68,12 @@ volume and production registry refs remain separate runtime gates.
 
 ## Disposition
 
-`OSS_INTEGRATION_CHECKLIST.md` should keep Qlib and TRL at `smoke-tested`.
-Their repo-local adapters are runnable and guarded, but the production evidence
-bundles are not present. Source/search production posture is activation-ready
-only for governed read-only ingestion and retrieval once durable storage and
-object-store dependencies are configured. No OSS path is authorized to route
-directly to broker, Lean, paper/canary/live deployment, capital binding, or
-order-capable execution.
+`OSS_INTEGRATION_CHECKLIST.md` should keep Qlib and TRL at `smoke-tested` until
+their active follow-ups produce the required production-data/runtime-data
+evidence. W&B, FinRL, RLlib, and Ray Tune are no longer blocked by a blanket
+live/production ban; their follow-ups should complete bounded runtime or online
+sync smoke where safe. Source/search production posture is activation-ready only
+for governed read-only ingestion and retrieval once durable storage and object
+store dependencies are configured. No OSS path is authorized to route directly
+to broker, Lean, paper/canary/live deployment, capital binding, or order-capable
+execution.

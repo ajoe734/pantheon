@@ -46,6 +46,9 @@ Use these rules when claiming progress:
 2. Do not claim "runtime complete" from `EP3`.
 3. Claim `EP4` only when Pantheon has a governed paper-runtime proof that includes authority, telemetry, and recovery semantics together.
 4. Claim `EP5` only when canary or live behavior is proven under the same governance model, not merely under a direct OSS smoke path.
+5. Do not skip broker API integration while waiting for live activation. Broker
+   paper-account, sandbox, simulation, validate-only, or test-key order smoke is
+   required evidence before a production live order route can be considered.
 
 ## 5. Current Repo Interpretation
 
@@ -73,8 +76,9 @@ As of the current repo state (updated 2026-04-24):
 
 EP4 is stable as of 2026-04-19. The next proof-raising steps are:
 
-1. `EP5-001` — prepare the canary-ready execution path: real broker/venue config, scaled capital
-   gate, operator approval checklist, and rollback drill harness; this is a downstream prerequisite
+1. `EP5-001` — prepare the canary-ready execution path: broker paper/sandbox/test-key
+   order API smoke, real broker/venue config, scaled capital gate, operator
+   approval checklist, and rollback drill harness; this is a downstream prerequisite
    slice gated on stable EP4. The prepared repo-local entry bundle lives at
    `docs/deployment/ep5-canary-ready/`, with runnable tooling at
    `scripts/run_ep5_canary_readiness.py` and `env/canary-exec.env.example`

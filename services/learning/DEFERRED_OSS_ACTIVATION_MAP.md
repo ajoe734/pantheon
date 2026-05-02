@@ -5,7 +5,7 @@
 **Reviewer**: Claude
 **Scope**: Define the dormant implementation and executable activation path for deferred Qlib, TRL, FinRL, RLlib, and W&B rows
 **Status**: Done — review approved by Claude 2026-04-16
-**Last Updated**: 2026-04-29
+**Last Updated**: 2026-05-01
 
 ---
 
@@ -21,6 +21,19 @@ repo-local dormant implementation work such as interfaces, schema, feature flags
 smoke tests, Dockerfiles, and fail-closed adapters. They may not become active production,
 paper, canary, live, registry-writing, governance-writing, or networked backend paths until the
 named activation gate is satisfied.
+
+2026-05-01 correction: the old blanket avoidance of live/production behavior does not apply to
+non-ordering external integrations. The only hard fail-closed boundary is production-live
+real-capital side effects such as broker order placement, cancel/replace, position/capital
+mutation, and order-capable routing. Adjustable deferred/offline rows now have active follow-up
+execution tasks to finish development and runtime smoke where appropriate:
+
+| Component | Follow-up task | Intent |
+|---|---|---|
+| `W&B` | `P2-WANDB-ONLINE-SYNC-001` | Add SDK-backed online sync using a test project/API key and readback evidence while keeping broker/order/capital paths out of scope. |
+| `Qlib` | `P2-QLIB-PROD-DATA-ACTIVATION-001` | Produce governed production-data proof and real/stub-selectable backend smoke for a reviewable candidate handoff. |
+| `TRL` | `P2-TRL-RUNTIME-DATA-ACTIVATION-001` | Connect FB-002 preference-pair runtime data and run real TRL DPO smoke or explicit dependency/config evidence. |
+| `FinRL / RLlib / Ray Tune` | `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` | Move dormant/deferred prep to bounded governed train/search runtime smoke with research-only artifacts. |
 
 It does **not** replace the per-row gate documents. Those remain authoritative for detailed criteria
 and workflow design. This map adds:
@@ -38,9 +51,9 @@ and workflow design. This map adds:
 |---|---|---|---|---|---|
 | `Qlib` | `smoke-tested` | Yes — `pyqlib==0.9.6` in `services/research/qlib/requirements.txt`; Qlib Dockerfile exists | Yes — `GovernedQlibDataAdapter` + `StubLightGBMBackend` + `QlibLightGBMBackend` + `run_qlib_workflow` | Yes — smoke passes (14 unit tests + smoke assertions OK, revalidated 2026-04-24); activation packet now in `integrations/qlib/activation_packet.md` | Qwen (Qlib gate owner) — production blocked on RS-003 candidate readiness, governed market-data proof, and target StrategySpec binding |
 | `TRL` | `smoke-tested` | Yes — `trl>=0.8.0,<0.10.0` pinned in `services/learning/trl/requirements.txt` | Yes — `GovernedPreferencePairAdapter` + `StubDPOBackend` + `TRLDPOBackend` + `run_trl_dpo_workflow` | Yes — smoke passes (29 unit tests + assertions OK, revalidated 2026-04-29); evidence in `integrations/trl/` | Claude (OSS-NEXT-002 owner) — production blocked on runtime data gates |
-| `FinRL` | `criteria-defined` | Yes — `finrl==0.3.6` in `services/research/finrl/requirements.txt`; FinRL Dockerfile carries the deferred-prep scaffold | Prep-only yes — governed input adapter, stub backend, and FinRL import-path backend exist, but production activation remains closed | Prep-only yes — smoke requires `--enable-deferred-prep` and emits draft/none only | Copilot (RL path owner) → dormant contracts/scaffolds may proceed fail-closed; governed training activation requires explicit RL-path approval first |
-| `RLlib` | `version-pinned` | Yes — `ray[rllib]>=2.9.0,<3.0.0` and `ray[tune]>=2.9.0,<3.0.0` in `services/research/rllib/requirements.txt`; RLlib Dockerfile carries the deferred-prep scaffold | Prep-only yes — RLlib train/eval and Ray Tune search adapters exist, but production activation remains closed | Prep-only yes — both smoke paths require `--enable-deferred-prep` and emit draft/none only | Copilot (RL path owner) → dormant environment contracts/offline harnesses may proceed fail-closed; governed train/eval activation requires the RL path approval gate |
-| `W&B` | `criteria-defined` | No SDK pin landed yet | Offline local-store only — `EXPERIMENT_BACKEND=wandb` is selectable only behind `PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1` (legacy `PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1` still accepted); `OfflineWandbLocalBackend` writes local JSON run/artifact refs with no SDK import or network activation | Offline local-store yes — smoke path exists behind the explicit flag only | Qwen (gate doc owner) → offline adapter upkeep may proceed; SDK-backed or networked backend activation waits for all re-entry conditions |
+| `FinRL` | `smoke-tested` | Yes — `finrl==0.3.6` in `services/research/finrl/requirements.txt`; FinRL Dockerfile carries the deferred-prep scaffold | Yes — governed input adapter, stub backend, and FinRL import-path backend; activation evidence harness (`activation_smoke.py`) with `--enable-activation-ready` flag | Yes — `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` done; activation smoke produced explicit `ModuleNotFoundError` with `silent_stub_fallback=false`, checksum-bearing artifact bundle, evaluator packet, registry entry, and candidate packet in `support/evidence/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/` | task done; no broker route or capital binding; RL gate remains closed |
+| `RLlib` | `smoke-tested` | Yes — `ray[rllib]>=2.9.0,<3.0.0` and `ray[tune]>=2.9.0,<3.0.0` in `services/research/rllib/requirements.txt`; RLlib Dockerfile carries the deferred-prep scaffold | Yes — RLlib train/eval and Ray Tune search adapters with activation evidence harnesses | Yes — `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` done; bounded train/search smoke produced explicit `ModuleNotFoundError` with `silent_stub_fallback=false`, research-only artifact output, evidence in `support/evidence/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/` | task done; no broker route or capital binding; RL gate remains closed |
+| `W&B` | `activation-gated` | Yes — `wandb>=0.16.0,<1.0` in `services/registry/experiments/requirements.txt` for the experiments container | Offline local-store exists; SDK-backed `WandbOnlineBackend` exists behind `PANTHEON_WANDB_ONLINE_SYNC_ENABLED=1` plus test project/API key | Offline local-store yes; online upload/readback harness present. Local credentialed smoke skipped on 2026-05-01 because W&B SDK and `WANDB_API_KEY` were not present in this workspace | Codex → hand off `P2-WANDB-ONLINE-SYNC-001` for review; no broker route or capital binding |
 
 ---
 
@@ -278,17 +291,19 @@ RLlib/Tune activation lane.
 
 **Current repo truth**:
 
-- No `wandb` SDK pin exists in any `requirements.txt`.
+- `services/registry/experiments/requirements.txt` pins `wandb>=0.16.0,<1.0` for the W&B
+  online sync smoke container.
 - `services/registry/experiments/config.py` now defines `EXPERIMENT_BACKEND` as an env-var
-  selector (default `"mlflow"`). `"wandb"` is accepted only when
+  selector (default `"mlflow"`). `"wandb"` offline/dryrun mode is accepted only when
   `PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1` is set (legacy
-  `PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1` remains a compatibility alias), and
-  `PANTHEON_WANDB_MODE` is restricted to `offline` or `dryrun`.
+  `PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1` remains a compatibility alias). Online mode requires
+  `PANTHEON_WANDB_ONLINE_SYNC_ENABLED=1` plus a test W&B project and `WANDB_API_KEY`.
 - `services/registry/experiments/adapter.py` exposes `RegistryExperimentAdapter` with an
-  `ExperimentBackend` protocol, backend factory wiring, and an offline
-  `OfflineWandbLocalBackend` that writes W&B-compatible local run/artifact refs without importing
-  the SDK or connecting to the network.
-- `services/registry/experiments/README.md` explicitly states W&B remains deferred.
+  `ExperimentBackend` protocol, backend factory wiring, an offline `OfflineWandbLocalBackend`,
+  and an SDK-backed `WandbOnlineBackend` that uploads metrics/artifact bundles and reads back
+  W&B run/artifact refs when the online gate and credentials are present.
+- `services/registry/experiments/README.md` records the offline default, online env gate,
+  credentialed smoke command, and missing-config skip behavior.
 - MLflow is now at `governed` status (`mlflow==3.10.1` pinned, runnable adapter present, smoke
   tested on 2026-04-15 per OSS-003). The 30-day operational history criterion is not yet met.
 - The adapter now mirrors canonical `artifact_state` + derived `deployment_stage`; legacy
@@ -300,29 +315,20 @@ RLlib/Tune activation lane.
 |---|---|
 | MLflow ≥30 days operational history | Not met — MLflow governed as of 2026-04-15 |
 | Explicit operator preference documented | No documented operator request |
-| `EXPERIMENT_BACKEND` selector in `services/registry/experiments/config.py` | Done — default `"mlflow"`; W&B selectable only behind explicit offline-store flag |
-| `RegistryExperimentAdapter` generalized to accept non-MLflow backends | Offline local-store done — backend protocol/factory exists, but no SDK-backed W&B backend is active |
+| `EXPERIMENT_BACKEND` selector in `services/registry/experiments/config.py` | Done — default `"mlflow"`; W&B selectable only behind explicit offline-store or online-sync flags |
+| `RegistryExperimentAdapter` generalized to accept non-MLflow backends | Done — backend protocol/factory supports MLflow, offline W&B local store, and explicit-gated SDK-backed W&B online backend |
 | Canonical `artifact_state` / `deployment_stage` migration landed in experiment bridge | Prep-only done — canonical fields are primary; legacy lifecycle is compatibility-only |
-| W&B SDK pin (`wandb>=0.16.0`) | Missing |
-| Network/infrastructure readiness for `api.wandb.ai` | Not verified |
+| W&B SDK pin (`wandb>=0.16.0`) | Done — `wandb>=0.16.0,<1.0` in `services/registry/experiments/requirements.txt` |
+| Network/infrastructure readiness for `api.wandb.ai` | Not verified in this workspace; local smoke reports explicit skipped config when gate/project/key/SDK are absent |
 
-**Executable next step**: No SDK-backed, online, or production-supporting W&B activation task
-should open yet. The `EXPERIMENT_BACKEND` env-var selector and offline local-store adapter are now
-in place, and offline adapter upkeep may continue if it remains non-networked, feature-flagged,
-and incapable of becoming the active online backend. W&B remains formally deferred because the six re-entry conditions
-in `WANDB_ACTIVATION.md §7.3` are still unmet. The next activation action is to prepare a reopen
-packet once those six conditions are simultaneously satisfied; only then should Pantheon
-materialize separate execution tasks for SDK-backed W&B backend implementation.
+**Executable next step**: `P2-WANDB-ONLINE-SYNC-001` now has an SDK-backed online sync path and
+smoke harness. The credentialed smoke command is:
+`PANTHEON_WANDB_ONLINE_SYNC_ENABLED=1 PANTHEON_WANDB_PROJECT=<test-project> WANDB_API_KEY=<test-api-key> python3 services/registry/experiments/smoke_test.py --backend wandb-online`.
+Without those env vars and SDK install, the harness returns a structured skip naming missing
+config without persisting secrets. This is not a broker, paper/canary/live, order-routing,
+registry-promotion, or capital-binding task.
 
-`EXEC-OSS-WANDB-001` closes the execution-slice ambiguity here: the first reviewable follow-up is
-the **reopen packet itself**, not a backend implementation slice.
-
-**OSS-NEXT-004 decision (2026-04-17)**: W&B is **formally deferred** for the current wave. All
-six entry criteria remain unmet. Detailed re-entry gate now in `WANDB_ACTIVATION.md §7`. Earliest
-eligible reopen: 2026-05-15 (MLflow 30-day history gate).
-
-**Activation owner for follow-on work**: Qwen (gate doc owner). W&B follow-on should be a
-separate execution task once all six re-entry conditions in `WANDB_ACTIVATION.md §7.3` are met.
+**Activation owner for follow-on work**: Codex owns `P2-WANDB-ONLINE-SYNC-001`; Claude reviews.
 
 ---
 
@@ -332,9 +338,9 @@ separate execution task once all six re-entry conditions in `WANDB_ACTIVATION.md
 |---|---|---|---|
 | `Qlib` | Smoke-tested baseline landed — package pin, governed adapter, LightGBM smoke path, and activation packet are present | RS-003 candidate readiness + governed dataset availability (>=50 instruments, >=2 years data) + target StrategySpec binding | Run the first governed alpha activation through `QlibLightGBMBackend` when the gates clear |
 | `TRL` | Smoke-tested baseline landed — blocked on runtime data gates; non-writing preflight scaffold present | ≥200 FB-002 events, ≥100 pairs, active LP-002, and a ready downstream consumer | Accumulate FB-002 volume, run the TRL preflight, then run the first governed production DPO activation with `TRLDPOBackend` |
-| `FinRL` | Dormant adapter, worker, Dockerfile, examples, and explicit-gate smoke path are landed; outputs remain draft/none and non-writing | RL path approval gate not met (Qlib must plateau first) | Approval packet against `services/learning/rl/RL_PATH_APPROVAL_GATE.md`; then governed single-agent policy-output mapping |
-| `RLlib` | Version pin and dormant RLlib/Ray Tune prep scaffold landed; workers/smokes require explicit gates and output draft/none only | Same RL path approval gate as FinRL; production train/eval and registry-writing adapters remain closed | Approval packet against `services/learning/rl/RL_PATH_APPROVAL_GATE.md`; then governed activation lane after FinRL proof |
-| `W&B` | Deferred honestly; `EXPERIMENT_BACKEND` selector and offline local run store now landed | SDK-backed backend activation blocked; MLflow 30-day operational history not yet met | Keep offline local adapter fail-closed; after all re-entry gates clear, implement SDK-backed backend |
+| `FinRL` | Dormant adapter, worker, Dockerfile, examples, and explicit-gate smoke path are landed; follow-up runtime smoke is active | Bounded governed runtime smoke not yet completed | `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` |
+| `RLlib` | Version pin and dormant RLlib/Ray Tune prep scaffold landed; follow-up runtime smoke is active | Bounded governed runtime smoke not yet completed | `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` |
+| `W&B` | Offline local run store landed; SDK-backed online sync backend, SDK pin, BFF/evaluator ref preservation, and smoke harness are implemented | Credentialed W&B project/API-key smoke still requires external env in the target deployment | `P2-WANDB-ONLINE-SYNC-001` review |
 
 ---
 
@@ -348,8 +354,9 @@ separate execution task once all six re-entry conditions in `WANDB_ACTIVATION.md
   executable proofs. Note: BP5-OSS-004 advanced the RLlib checklist row to `version-pinned`;
   this later dormant scaffold is still prep-only and does not change the activation gate.
 - It does not forbid dormant implementation. It forbids activation before the named gate: no
-  production dispatch, paper/canary/live, canonical registry/governance writes, networked W&B
-  backend, or broker/capital-bound runtime path may be inferred from prep-only work.
+  production dispatch, paper/canary/live, canonical registry/governance writes, or
+  broker/capital-bound runtime path may be inferred from prep-only work. The W&B online backend is
+  limited to explicit-gated experiment metadata sync and readback.
 
 ---
 
