@@ -41,6 +41,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0   # full history needed for changed-path detection
+          submodules: recursive
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -100,20 +101,16 @@ jobs:
             exit 0
           fi
 
-          # Run the Stage 0 detector; extract the build_ids list.
-          python3 scripts/ci_stage0.py detect-changes --github-output /tmp/stage0_out.txt
-          source /tmp/stage0_out.txt 2>/dev/null || true
+          # Run the Stage 0 detector and parse its JSON report.
+          REPORT="$(python3 scripts/ci_stage0.py detect-changes)"
 
           # build_ids is a JSON array like ["router","governance-api","bff",...].
           # Convert to comma-separated for the Cloud Build substitution.
-          if [ "${global_changed:-false}" = "true" ]; then
+          GLOBAL_CHANGED="$(printf '%s' "${REPORT}" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["global_changed"]).lower())')"
+          if [ "${GLOBAL_CHANGED}" = "true" ]; then
             SERVICES="all"
-          elif [ -n "${build_ids:-}" ] && [ "${build_ids}" != "[]" ]; then
-            # Strip JSON array brackets and quotes, replace ", " with ","
-            SERVICES=$(echo "${build_ids}" | python3 -c \
-              "import sys,json; ids=json.load(sys.stdin); print(','.join(ids))")
           else
-            SERVICES=""
+            SERVICES="$(printf '%s' "${REPORT}" | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["build_ids"]))')"
           fi
 
           echo "services=${SERVICES}" >> "$GITHUB_OUTPUT"
