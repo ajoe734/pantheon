@@ -20,6 +20,11 @@ posture is complete:
 Dev rollback remains available by leaving `PANTHEON_SOURCE_SEARCH_POSTURE=dev`
 and selecting the JSONL backends.
 
+This posture is not a live-data off switch. It guards production durability,
+auditability, and replay integrity for read-only ingestion/search. Live
+fail-closed belongs to order-capable broker/execution paths: order placement,
+cancel/replace, position changes, and capital movement.
+
 ## Health, Metrics, Alerts
 
 `source-ingest` and `search-svc` expose posture status on:
@@ -50,3 +55,21 @@ The broader honest-stack smoke still covers the end-to-end source/search flow:
 connector configuration, external feed fetch, durable evidence persistence,
 ingest-completion index trigger, freshness, governed query, snapshot replay,
 DLQ replay, scheduled ingest, and materialized index replay.
+
+For the credentialed or live-test external connector path, use the task-scoped
+smoke harness:
+
+```bash
+SOURCE_INGEST_URL=http://127.0.0.1:8097 \
+SEARCH_URL=http://127.0.0.1:8098 \
+SOURCE_SEARCH_LIVE_FEED_URL=https://allowlisted.example.test/feed.json \
+SOURCE_SEARCH_LIVE_ALLOWED_URL_PREFIXES=https://allowlisted.example.test/ \
+SOURCE_SEARCH_LIVE_SECRET_REF_ID=env://SOURCE_VENDOR_API_KEY \
+scripts/run_source_search_live_connector_smoke.py
+```
+
+The feed must emit the governed source-ingest external-feed contract
+(`{"records": [...]}`), including entitlement, license/PIT, and
+`available_time` fields required by news/social/alpha DB records. If no
+credentialed/test feed target is configured, the harness writes explicit
+`dependency_missing` evidence instead of claiming live proof.

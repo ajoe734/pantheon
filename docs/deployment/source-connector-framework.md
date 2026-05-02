@@ -40,6 +40,10 @@ External feed config is bounded and allowlisted:
 Auth-bearing connectors must use a secret ref such as
 `env://OPENALEX_API_KEY`, `vault://...`, or another non-secret reference id.
 
+These rules do not block production data reads. They block inline secrets,
+unbounded fetches, unsafe redirects, and any connector path that would bypass
+governed evidence/search controls or route directly to order-capable execution.
+
 ## BFF Read Path
 
 The operator BFF reads connector metadata through the source-ingest service
