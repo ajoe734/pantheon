@@ -28,8 +28,10 @@ Pantheon classifies all data sources into **six source classes**. Every ingested
 1. **Every dataset must declare exactly one `source_class`** at ingest time.
 2. **`official_reference` is the authority** for SecurityMaster, ContractMaster, and MarketCalendar identity fields.
 3. **`broker_execution` is the authority** for execution-time price/volume reconciliation.
-4. **`research_grade` data must not be used for live execution** without promotion through the data factory pipeline.
-5. **`internal_can` is the only source class** that downstream planes (Research, Decision, Execution) should consume for production runs.
+4. **`research_grade` data may be ingested and used in production** once durable storage, entitlement, license/PIT, rate-limit, freshness, and audit posture are complete.
+5. **No external data source may route directly to order-capable execution.** Research-grade data must be promoted through the data factory pipeline before it can influence production decisions.
+6. **Only broker/order-capable paths require live fail-closed controls** for order placement, cancel/replace, position changes, and capital movement.
+7. **`internal_can` is the only source class** that downstream planes (Research, Decision, Execution) should consume for production runs.
 
 ---
 

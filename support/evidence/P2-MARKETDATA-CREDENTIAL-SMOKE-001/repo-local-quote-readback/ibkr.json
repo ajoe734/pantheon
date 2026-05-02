@@ -1,0 +1,88 @@
+{
+  "capital_side_effects_allowed": false,
+  "credential": {
+    "credential_env": null,
+    "credential_fingerprint": null,
+    "credential_not_required": false,
+    "credential_present": false,
+    "raw_secret_material_present_in_artifact": false,
+    "secret_ref": null,
+    "secret_ref_env": null,
+    "secret_ref_name": null,
+    "secret_ref_present": false
+  },
+  "generated_at": "2026-05-01T17:21:19Z",
+  "market": "US",
+  "order_capable_provider": true,
+  "order_path": "disabled_for_marketdata_smoke",
+  "order_side_effects_allowed": false,
+  "provider": "IBKR market data",
+  "provider_key": "ibkr",
+  "rate_limit": {
+    "header_allowlist": [
+      "ratelimit-limit",
+      "ratelimit-remaining",
+      "ratelimit-reset",
+      "retry-after",
+      "x-api-limit",
+      "x-api-remaining",
+      "x-api-used",
+      "x-cg-pro-api-credits-left",
+      "x-cg-pro-api-credits-used",
+      "x-cg-pro-api-limit",
+      "x-cg-pro-api-reset",
+      "x-kf-api-key-expire",
+      "x-ratelimit-limit",
+      "x-ratelimit-remaining",
+      "x-ratelimit-reset"
+    ],
+    "headers": {},
+    "quota": {
+      "non_secret": true,
+      "status": "unavailable"
+    },
+    "reason": "quote readback file does not expose provider rate-limit/quota headers",
+    "status": "unavailable"
+  },
+  "read_intent": {
+    "boundaryRole": "execution_sync_fallback",
+    "contract": {
+      "currency": "USD",
+      "exchange": "SMART",
+      "secType": "STK",
+      "symbol": "AAPL"
+    },
+    "genericTicks": "",
+    "marketDataType": 3,
+    "provider": "IBKR market data",
+    "readonly": true,
+    "regulatorySnapshot": false,
+    "snapshot": true,
+    "sourceClass": "broker_execution"
+  },
+  "read_only": true,
+  "readback": {
+    "json_type": "dict",
+    "record_count_hint": null,
+    "source": "IBKR_QUOTE_READBACK_JSON"
+  },
+  "session_provenance": {
+    "details": {
+      "bytes_read": 119,
+      "captured_at": "2026-05-01T17:20:00Z",
+      "credential_session_evidence_status": "not_available_in_repo_local_readback",
+      "file_name": "ibkr-readback.json",
+      "file_sha256": "fdb89d051e7781b0dd391c2a30cdaaf5df93dc647dc375dded58e87bcd36d909",
+      "loaded_at": "2026-05-01T17:21:19Z",
+      "source_env": "IBKR_QUOTE_READBACK_JSON"
+    },
+    "generated_at": "2026-05-01T17:21:19Z",
+    "raw_secret_material_present_in_artifact": false,
+    "reason": null,
+    "session_type": "quote_readback_file",
+    "status": "observed"
+  },
+  "source_class": "broker_execution",
+  "status": "read_ok",
+  "task_id": "P2-MARKETDATA-CREDENTIAL-SMOKE-001"
+}

@@ -58,6 +58,37 @@ Review before any later human gate:
 - `Kraken` order and venue quote payloads are materialized from the env-backed boundary
 - `TEJ` dataset normalization stays on the `research_grade` vendor boundary
 
+## 3A. Run The Read-Only Market-Data Credential Smoke
+
+Run this on VM-2, or another credentialed runtime, when provider credentials or
+quote readback files are available:
+
+```bash
+python3 scripts/run_marketdata_credential_smoke.py \
+  --env-file env/canary-exec.env \
+  --allow-network \
+  --output-dir /tmp/pantheon/ep5-canary-ready/marketdata-credential-smoke
+```
+
+Expected artifacts:
+
+- one JSON packet for each governed read-only provider:
+  `Massive / Polygon`, `TWSE`, `TPEx`, `MOPS`, `TEJ`, `CoinGecko`,
+  `Kraken`, `IBKR`, and `Shioaji`
+- `summary.json`
+
+Review before any later human gate:
+
+- credentialed providers show `read_ok` or explicit unavailable-credential
+  evidence without raw secret material
+- public official/reference providers show `read_ok` or explicit read-unavailable
+  evidence
+- every provider packet includes non-secret `rate_limit` / quota evidence and
+  `session_provenance`; absent headers, disabled network, or repo-local quote
+  readback files must record an explicit unavailable / not-observed reason
+- `IBKR`, `Shioaji`, and `Kraken` order paths remain disabled in this smoke;
+  broker order API evidence belongs to `P2-BROKER-SANDBOX-ORDER-001`
+
 ## 4. Emit The Canary DeploymentPlan Artifact
 
 ```bash
