@@ -1,5 +1,5 @@
 {
-  "created_at": "2026-05-01T16:51:51Z",
+  "created_at": "2026-05-02T12:00:30Z",
   "dataset_evidence": {
     "activation_floor_check": {
       "estimated_steps": 27,
@@ -32,21 +32,22 @@
   },
   "handoff_artifact_manifest": {
     "artifacts": {
-      "artifact_bundle": "/tmp/pantheon/research/finrl/activation/artifact_bundle.json",
-      "candidate_packet": "/tmp/pantheon/research/finrl/activation/candidate_packet.json",
-      "evaluator_packet": "/tmp/pantheon/research/finrl/activation/evaluator_packet.json",
-      "manifest": "/tmp/pantheon/research/finrl/activation/manifest.json",
-      "registry_entry": "/tmp/pantheon/research/finrl/activation/registry_entry.json"
+      "artifact_bundle": "/tmp/pantheon_rl_smoke/finrl/artifact_bundle.json",
+      "candidate_packet": "/tmp/pantheon_rl_smoke/finrl/candidate_packet.json",
+      "evaluator_packet": "/tmp/pantheon_rl_smoke/finrl/evaluator_packet.json",
+      "manifest": "/tmp/pantheon_rl_smoke/finrl/manifest.json",
+      "registry_entry": "/tmp/pantheon_rl_smoke/finrl/registry_entry.json"
     },
     "backend": "stub_finrl",
     "checksums": {
-      "artifact_bundle": "sha256:d7581d96efe5ccca5723b65fad021402955a8bf7e307b01da00161376a70662b",
-      "candidate_packet": "sha256:89bb0c211757c5fe1f752e626f42b34327e2786d33cf4561e66af1990001d5ef",
-      "registry_entry": "sha256:f65777e82a4a242260cd25d0723e543ca33051daaa19c2b5c2a51e4bdb016591"
+      "artifact_bundle": "sha256:29f0d75af510380429a86d4b3d36f1ac93fb781004b08a4d99188f3b82b15898",
+      "candidate_packet": "sha256:5b11df706656187c6b66aac109453a691d3247f066e80fc9a4d41e29b56a6fd1",
+      "evaluator_packet": "sha256:ab83987fa2fa27475612b5edda714c1bf383673dc8f0a11d0a0dcdf7f3d444ec",
+      "registry_entry": "sha256:1aaa94980026225fb0a59856f857f53375cc0ff7b97f9d8bc2a02ff5dcda7092"
     },
-    "created_at": "2026-05-01T16:51:51Z",
-    "output_dir": "/tmp/pantheon/research/finrl/activation",
-    "run_id": "finrl-stub-2f60bdbc27ea"
+    "created_at": "2026-05-02T12:00:30Z",
+    "output_dir": "/tmp/pantheon_rl_smoke/finrl",
+    "run_id": "finrl-stub-499a72c437f9"
   },
   "handoff_backend": "stub_finrl",
   "real_backend_attempt": {

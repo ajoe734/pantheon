@@ -6,6 +6,7 @@ from .rllib_adapter import (
     RLlibTrainingConfig,
     RLlibTrainEvalResult,
     StubRLlibBackend,
+    prepared_rllib_dataset_checksum,
     run_rllib_workflow,
 )
 from .ray_tune_adapter import (
@@ -34,6 +35,7 @@ __all__ = [
     "RayTuneSearchResult",
     "StubRLlibBackend",
     "StubRayTuneBackend",
+    "prepared_rllib_dataset_checksum",
     "run_ray_tune_workflow",
     "run_rllib_workflow",
 ]

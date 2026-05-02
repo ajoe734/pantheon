@@ -1,5 +1,5 @@
 {
-  "artifact_checksum": "sha256:6a8ece2139486704f8b65a71538b455aac0a0b03ef1f7aaedd4d675d5bffa137",
+  "artifact_checksum": "sha256:9d17d3d811c0e1cc468a5c83962456ec741c2e1aa897ef714462d899a05d9ffb",
   "artifact_type": "optimizer_result",
   "auditable_fields": [
     "backend_used",
@@ -8,7 +8,7 @@
     "governance"
   ],
   "backend_used": "stub_ray_tune",
-  "created_at": "2026-05-01T16:52:01Z",
+  "created_at": "2026-05-02T12:00:31Z",
   "evaluator": "EV-001",
   "framework": "ray_tune",
   "governance": {
@@ -19,8 +19,8 @@
     "order_routing_enabled": false,
     "paper_canary_live_promotion": false
   },
-  "packet_id": "EV-001-raytune-rl-hparam-search-activation-2026.05.01",
-  "run_id": "raytune-stub-5c0de7168013",
+  "packet_id": "EV-001-raytune-rl-exit-timing-ray-tune-2026.05.01",
+  "run_id": "raytune-stub-91243138ecdb",
   "scoring": {
     "advisory_note": "Stub-baseline Ray Tune search evidence. Real ray[tune] backend requires install. Gate remains closed; offline review only.",
     "best_trial_id": "trial-003",
@@ -50,16 +50,16 @@
       "num_trials": 8,
       "objective_metric": "validation_sharpe_proxy",
       "recommended_candidate_registry_ids": [
-        "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-003",
-        "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-004",
-        "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-006"
+        "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-003",
+        "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-004",
+        "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-006"
       ],
       "search_space_dimensions": 6,
       "search_strategy": "pbt",
       "top_k": 3
     }
   },
-  "strategy_id": "rl-hparam-search-activation",
+  "strategy_id": "rl-exit-timing-ray-tune",
   "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
   "version": "2026.05.01"
 }

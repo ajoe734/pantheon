@@ -1,5 +1,5 @@
 {
-  "artifact_checksum": "sha256:149c3462348779cdeae224a4c76c904cafc6360004ae8ff9bd14e81fd0d48881",
+  "artifact_checksum": "sha256:e8cd2cd1356a875fa0ce6aacdbf5fd738881a80df9d5a0093282a6eecaaa50ce",
   "artifact_type": "model_artifact",
   "auditable_fields": [
     "backend_used",
@@ -8,7 +8,7 @@
     "governance"
   ],
   "backend_used": "stub_finrl",
-  "created_at": "2026-05-01T16:51:51Z",
+  "created_at": "2026-05-02T12:00:30Z",
   "evaluator": "EV-001",
   "framework": "finrl",
   "governance": {
@@ -21,24 +21,24 @@
   },
   "model_family": "rl_policy",
   "packet_id": "EV-001-finrl-rl-exit-timing-activation-2026.05.01",
-  "run_id": "finrl-stub-2f60bdbc27ea",
+  "run_id": "finrl-stub-499a72c437f9",
   "scoring": {
     "advisory_note": "Stub-baseline RL policy evidence. Real FinRL backend requires install. Gate remains closed; offline review only.",
     "components": [
       {
         "name": "mean_reward_proxy",
-        "value": -0.00126244,
+        "value": -0.00321223,
         "weight": 0.4
       },
       {
         "name": "reward_proxy_stddev",
         "note": "lower is better",
-        "value": 0.01126367,
+        "value": 0.0144132,
         "weight": 0.2
       },
       {
         "name": "max_action_prior",
-        "value": 0.951331,
+        "value": 0.948175,
         "weight": 0.2
       },
       {

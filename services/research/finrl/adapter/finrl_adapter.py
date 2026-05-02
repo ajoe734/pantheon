@@ -49,6 +49,18 @@ def _sha256_json(value: Any) -> str:
     return hashlib.sha256(_stable_json(value).encode("utf-8")).hexdigest()
 
 
+def _prepared_dataset_payload(dataset: "PreparedFinRLDataset") -> dict[str, Any]:
+    return {
+        "dataset_summary": dataset.dataset_summary(),
+        "periods": list(dataset.periods),
+        "observations": [list(row) for row in dataset.observations],
+    }
+
+
+def prepared_finrl_dataset_checksum(dataset: "PreparedFinRLDataset") -> str:
+    return f"sha256:{_sha256_json(_prepared_dataset_payload(dataset))}"
+
+
 class FinRLDeferredPrepError(ValueError):
     """Raised when a governed FinRL deferred-prep workflow is invalid."""
 
@@ -499,6 +511,7 @@ def _build_artifact_bundle(
     result: PolicyTrainingResult,
     config: PolicyTrainingConfig,
 ) -> dict[str, Any]:
+    dataset_checksum = prepared_finrl_dataset_checksum(dataset)
     return {
         "schema_version": "1.0",
         "artifact_family": "rl_policy",
@@ -507,6 +520,30 @@ def _build_artifact_bundle(
         "framework_version": FINRL_VERSION_PIN,
         "created_at": utc_now(),
         "created_by": config.requested_by,
+        "dataset_checksum": dataset_checksum,
+        "dataset_schema": {
+            "required_ohlcv_fields": list(REQUIRED_OHLCV_FIELDS),
+            "min_instruments": MIN_INSTRUMENTS,
+            "min_periods": MIN_PERIODS,
+            "min_lookback": MIN_LOOKBACK,
+            "observed_lookback_window": dataset.lookback_window,
+        },
+        "environment_schema": {
+            "decision_focus": dataset.decision_focus,
+            "action_labels": list(dataset.action_labels),
+            "observation_dim": dataset.observation_dim,
+            "reward_inputs": [
+                "momentum_window",
+                "momentum_1",
+                "volatility",
+                "volume_change",
+                "position_ratio",
+                "cash_ratio",
+                "dispersion",
+            ],
+            "reward_scale": config.reward_scale,
+            "risk_aversion": config.risk_aversion,
+        },
         "dataset_summary": dataset.dataset_summary(),
         "training_config": {
             "version": config.version,
@@ -577,6 +614,7 @@ def _build_registry_entry(
             "model_family": "rl_policy",
             "framework_version": FINRL_VERSION_PIN,
             "training_backend": result.backend,
+            "dataset_checksum": artifact_bundle["dataset_checksum"],
             "algorithm": config.algorithm,
             "decision_focus": dataset.decision_focus,
             "action_labels": list(dataset.action_labels),

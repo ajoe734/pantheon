@@ -62,6 +62,32 @@ def _sha256_json(value: Any) -> str:
     return hashlib.sha256(_stable_json(value).encode("utf-8")).hexdigest()
 
 
+def _rollout_step_payload(step: "RolloutStep") -> dict[str, Any]:
+    return {
+        "split": step.split,
+        "step_index": step.step_index,
+        "period": step.period,
+        "observation": list(step.observation),
+        "action_mask": list(step.action_mask),
+        "reward_proxy": step.reward_proxy,
+        "portfolio_value_proxy": step.portfolio_value_proxy,
+        "max_drawdown_proxy": step.max_drawdown_proxy,
+    }
+
+
+def _prepared_dataset_payload(dataset: "PreparedRLlibDataset") -> dict[str, Any]:
+    return {
+        "dataset_summary": dataset.dataset_summary(),
+        "periods": list(dataset.periods),
+        "train_rollout": [_rollout_step_payload(step) for step in dataset.train_rollout],
+        "eval_rollout": [_rollout_step_payload(step) for step in dataset.eval_rollout],
+    }
+
+
+def prepared_rllib_dataset_checksum(dataset: "PreparedRLlibDataset") -> str:
+    return f"sha256:{_sha256_json(_prepared_dataset_payload(dataset))}"
+
+
 class RLlibDeferredPrepError(ValueError):
     """Raised when a governed RLlib deferred-prep workflow is invalid."""
 
@@ -707,6 +733,7 @@ def _build_artifact_bundle(
     result: RLlibTrainEvalResult,
     config: RLlibTrainingConfig,
 ) -> dict[str, Any]:
+    dataset_checksum = prepared_rllib_dataset_checksum(dataset)
     return {
         "schema_version": "1.0",
         "artifact_family": "rl_policy",
@@ -718,6 +745,25 @@ def _build_artifact_bundle(
         "ray_tune_version": RAY_TUNE_VERSION_PIN,
         "created_at": utc_now(),
         "created_by": config.requested_by,
+        "dataset_checksum": dataset_checksum,
+        "dataset_schema": {
+            "required_ohlcv_fields": list(REQUIRED_OHLCV_FIELDS),
+            "min_instruments": MIN_INSTRUMENTS,
+            "min_periods": MIN_PERIODS,
+            "min_lookback": MIN_LOOKBACK,
+            "observed_lookback_window": dataset.lookback_window,
+        },
+        "environment_schema": {
+            "observation_rows": dataset.observation_rows,
+            "observation_features": dataset.observation_features,
+            "flattened_observation_dim": dataset.flattened_observation_dim,
+            "action_vector_length": len(dataset.instruments),
+            "joint_action_cardinality": dataset.joint_action_cardinality,
+            "reward_spec": dict(dataset.reward_spec),
+            "transaction_cost_pct": dataset.transaction_cost_pct,
+            "slippage_bps": dataset.slippage_bps,
+            "max_position_size": dataset.max_position_size,
+        },
         "dataset_summary": dataset.dataset_summary(),
         "train_eval_schema": copy.deepcopy(result.train_eval_schema),
         "training_config": {
@@ -799,6 +845,7 @@ def _build_registry_entry(
             "ray_tune_package": RAY_TUNE_PACKAGE,
             "ray_tune_version": RAY_TUNE_VERSION_PIN,
             "training_backend": result.backend,
+            "dataset_checksum": artifact_bundle["dataset_checksum"],
             "algorithm": config.algorithm,
             "decision_focus": dataset.decision_focus,
             "action_labels": list(dataset.action_labels),

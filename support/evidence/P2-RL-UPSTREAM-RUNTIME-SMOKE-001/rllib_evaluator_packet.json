@@ -1,5 +1,5 @@
 {
-  "artifact_checksum": "sha256:832e86de49e784a286fd47fce98dcd312dfdf8867fa32eb1962105b4bab3c339",
+  "artifact_checksum": "sha256:4487f2df56152d4ceefeee5f0736db00b32f57f01fc7a40b38e2f0b8d0486564",
   "artifact_type": "model_artifact",
   "auditable_fields": [
     "backend_used",
@@ -8,7 +8,7 @@
     "governance"
   ],
   "backend_used": "stub_rllib",
-  "created_at": "2026-05-01T16:52:00Z",
+  "created_at": "2026-05-02T12:00:30Z",
   "evaluator": "EV-001",
   "framework": "rllib",
   "governance": {
@@ -20,35 +20,35 @@
     "paper_canary_live_promotion": false
   },
   "model_family": "rl_policy",
-  "packet_id": "EV-001-rllib-rl-portfolio-rebalance-activation-2026.05.01",
-  "run_id": "rllib-stub-0645a34388b2",
+  "packet_id": "EV-001-rllib-rl-exit-timing-rllib-2026.05.01",
+  "run_id": "rllib-stub-b938543c5d82",
   "scoring": {
     "advisory_note": "Stub-baseline RLlib train/eval evidence. Real ray[rllib] backend requires install. Gate remains closed; offline review only.",
     "components": [
       {
         "name": "train_reward_mean",
-        "value": -0.00166353,
+        "value": -0.00097748,
         "weight": 0.3
       },
       {
         "name": "eval_reward_mean",
-        "value": -0.00284076,
+        "value": -0.00218562,
         "weight": 0.3
       },
       {
         "name": "validation_sharpe_proxy",
-        "value": -0.19691744,
+        "value": -0.1586496,
         "weight": 0.25
       },
       {
         "name": "validation_max_drawdown_proxy",
         "note": "lower is better",
-        "value": 0.05323377,
+        "value": 0.05706284,
         "weight": 0.15
       }
     ]
   },
-  "strategy_id": "rl-portfolio-rebalance-activation",
+  "strategy_id": "rl-exit-timing-rllib",
   "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
   "version": "2026.05.01"
 }

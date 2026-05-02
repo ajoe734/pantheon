@@ -144,7 +144,6 @@ def main(argv: list[str] | None = None) -> int:
 
     _write_json(output_dir / "dataset_evidence.json", dataset_evidence)
     _write_json(output_dir / "real_backend_attempt.json", real_attempt)
-    _write_json(output_dir / "evaluator_packet.json", evaluator_packet)
     _write_json(output_dir / "activation_evidence_summary.json", evidence)
     print(json.dumps(evidence, indent=2, sort_keys=True))
     return 0
@@ -292,6 +291,7 @@ def _persist_artifacts(result: Any, evaluator_packet: dict[str, Any], output_dir
     _write_json(output_dir / "artifact_bundle.json", result.artifact_bundle)
     _write_json(output_dir / "registry_entry.json", result.registry_entry)
     _write_json(output_dir / "candidate_packet.json", result.candidate_packet)
+    _write_json(output_dir / "evaluator_packet.json", evaluator_packet)
     artifacts["artifact_bundle"] = str(output_dir / "artifact_bundle.json")
     artifacts["registry_entry"] = str(output_dir / "registry_entry.json")
     artifacts["candidate_packet"] = str(output_dir / "candidate_packet.json")

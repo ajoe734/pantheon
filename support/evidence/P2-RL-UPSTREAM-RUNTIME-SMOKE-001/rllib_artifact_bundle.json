@@ -1,8 +1,8 @@
 {
   "artifact_family": "rl_policy",
-  "created_at": "2026-05-01T16:52:00Z",
-  "created_by": "Claude",
-  "dataset_checksum": "sha256:a1e3d41a72ce49bf6f5526352f87ef55efd99d67c9c6753eaf2f9a5aedf7b0e1",
+  "created_at": "2026-05-02T12:00:30Z",
+  "created_by": "Claude2",
+  "dataset_checksum": "sha256:a5c3ba3284809208605111239ae5096da752be96fabd030bf4323f46c76a02cd",
   "dataset_schema": {
     "min_instruments": 2,
     "min_lookback": 3,
@@ -52,7 +52,7 @@
       "synthetic-ohlcv://bounded-fixture/30-periods"
     ],
     "source_strategy_spec_id": "strategy-spec:rl-rebalance-v1",
-    "strategy_id": "rl-portfolio-rebalance-activation",
+    "strategy_id": "rl-exit-timing-rllib",
     "train_steps": 18,
     "transaction_cost_pct": 0.001
   },
@@ -72,15 +72,15 @@
     "transaction_cost_pct": 0.001
   },
   "evaluation_summary": {
-    "best_trial_reward_proxy": 0.01130051,
-    "eval_reward_mean": -0.00284076,
+    "best_trial_reward_proxy": 0.00934347,
+    "eval_reward_mean": -0.00218562,
     "eval_steps": 9,
     "joint_action_cardinality": 125,
     "search_space_dimensions": 4,
-    "train_reward_mean": -0.00166353,
+    "train_reward_mean": -0.00097748,
     "train_steps": 18,
-    "validation_max_drawdown_proxy": 0.05323377,
-    "validation_sharpe_proxy": -0.19691744
+    "validation_max_drawdown_proxy": 0.05706284,
+    "validation_sharpe_proxy": -0.1586496
   },
   "framework": "rllib",
   "framework_package": "ray[rllib]",
@@ -114,11 +114,11 @@
       "buy_large"
     ],
     "action_priors": {
-      "buy_large": 0.001019,
-      "buy_small": 0.000904,
-      "hold": 0.983632,
-      "sell_large": 0.008701,
-      "sell_small": 0.005744
+      "buy_large": 0.001004,
+      "buy_small": 0.000991,
+      "hold": 0.982702,
+      "sell_large": 0.009229,
+      "sell_small": 0.006074
     },
     "algorithm": "ppo",
     "decision_focus": "rebalance",
@@ -145,19 +145,19 @@
   },
   "rollout_summary": {
     "eval": {
-      "max_drawdown_proxy": 0.05323377,
-      "portfolio_value_end": 0.95387607,
-      "reward_mean": -0.00284076,
-      "reward_sharpe_proxy": -0.19691744,
-      "reward_stddev": 0.01442617,
+      "max_drawdown_proxy": 0.05706284,
+      "portfolio_value_end": 0.9678437,
+      "reward_mean": -0.00218562,
+      "reward_sharpe_proxy": -0.1586496,
+      "reward_stddev": 0.01377641,
       "steps": 9
     },
     "train": {
-      "max_drawdown_proxy": 0.03573415,
-      "portfolio_value_end": 0.96913364,
-      "reward_mean": -0.00166353,
-      "reward_sharpe_proxy": -0.21133743,
-      "reward_stddev": 0.00787142,
+      "max_drawdown_proxy": 0.03841226,
+      "portfolio_value_end": 0.97850758,
+      "reward_mean": -0.00097748,
+      "reward_sharpe_proxy": -0.12740344,
+      "reward_stddev": 0.00767233,
       "steps": 18
     }
   },
@@ -217,7 +217,7 @@
     "learning_rate": 0.0003,
     "num_trials": 8,
     "objective_metric": "validation_sharpe_proxy",
-    "requested_by": "Claude",
+    "requested_by": "Claude2",
     "search_strategy": "pbt",
     "seed": 42,
     "version": "2026.05.01"

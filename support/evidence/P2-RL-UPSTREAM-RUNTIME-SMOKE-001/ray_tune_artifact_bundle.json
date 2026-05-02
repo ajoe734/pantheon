@@ -25,7 +25,7 @@
     "seed": 42,
     "version": "2026.05.01"
   },
-  "dataset_checksum": "sha256:92dbad1b2d157fe91acfc96fbd66b388ec95dd26b48c65ef394c303640fcf0b2",
+  "dataset_checksum": "sha256:f81a8c6f9bc6237ae911fc5aadf763c5415127d9e840482d159befc71b1c0855",
   "dataset_schema": {
     "joint_action_cardinality": 125,
     "observation_shape": [
@@ -54,7 +54,7 @@
       "buy_large"
     ],
     "data_frequency": "daily",
-    "dataset_id": "raytune-activation-smoke-20260501",
+    "dataset_id": "ray-tune-activation-smoke-20260501",
     "decision_focus": "portfolio_optimization",
     "eval_steps": 9,
     "flattened_observation_dim": 72,
@@ -81,7 +81,7 @@
       "synthetic-ohlcv://bounded-fixture/30-periods"
     ],
     "source_strategy_spec_id": "strategy-spec:rl-hparam-search-v1",
-    "strategy_id": "rl-hparam-search-activation",
+    "strategy_id": "rl-exit-timing-ray-tune",
     "train_steps": 18,
     "transaction_cost_pct": 0.001
   },
@@ -110,7 +110,7 @@
   },
   "metrics": {
     "best": {
-      "measured_at": "2026-05-01T16:52:01Z",
+      "measured_at": "2026-05-02T12:00:31Z",
       "trial_id": "trial-003",
       "value": 1.03700316
     },
@@ -146,7 +146,7 @@
     "top_k": 3,
     "trainable": "rllib_ppo"
   },
-  "optimization_timestamp": "2026-05-01T16:52:01Z",
+  "optimization_timestamp": "2026-05-02T12:00:31Z",
   "optimizer_id": "ray_tune_rllib_search_v1",
   "optimizer_method": "rllib_ppo",
   "optimizer_version": "2026.05.01",
@@ -154,7 +154,7 @@
     {
       "artifact_state": "draft",
       "artifact_type": "model_artifact",
-      "candidate_registry_id": "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-003",
+      "candidate_registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-003",
       "checksum": "sha256:de1ec1387d972b12c3098e042f806cb6b4a0543fde889c10c4ab231a6a86a6fe",
       "metrics_snapshot": {
         "convergence_steps_proxy": 4521,
@@ -167,14 +167,14 @@
       },
       "storage_ref": {
         "backend": "object_store",
-        "path": "research/rllib/rl-hparam-search-activation/2026.05.01/trials/trial-003/artifact.json"
+        "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-003/artifact.json"
       },
       "version": "2026.05.01"
     },
     {
       "artifact_state": "draft",
       "artifact_type": "model_artifact",
-      "candidate_registry_id": "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-004",
+      "candidate_registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-004",
       "checksum": "sha256:54e7430267949f989c0f32dadd7557e27f433b4ac5aed97b8aa7b943a3a828e0",
       "metrics_snapshot": {
         "convergence_steps_proxy": 4417,
@@ -187,14 +187,14 @@
       },
       "storage_ref": {
         "backend": "object_store",
-        "path": "research/rllib/rl-hparam-search-activation/2026.05.01/trials/trial-004/artifact.json"
+        "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-004/artifact.json"
       },
       "version": "2026.05.01"
     },
     {
       "artifact_state": "draft",
       "artifact_type": "model_artifact",
-      "candidate_registry_id": "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-006",
+      "candidate_registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-006",
       "checksum": "sha256:f46b2f35d32b496c0d93b44d1a99d1434ead611595506a72ee736ca73144fe3f",
       "metrics_snapshot": {
         "convergence_steps_proxy": 4775,
@@ -207,7 +207,7 @@
       },
       "storage_ref": {
         "backend": "object_store",
-        "path": "research/rllib/rl-hparam-search-activation/2026.05.01/trials/trial-006/artifact.json"
+        "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-006/artifact.json"
       },
       "version": "2026.05.01"
     }
@@ -219,7 +219,7 @@
     "deployment_stage": "none",
     "optimizer_method": "rllib_ppo"
   },
-  "run_id": "raytune-stub-5c0de7168013",
+  "run_id": "raytune-stub-91243138ecdb",
   "schema_version": "1.0",
   "search_space_schema": {
     "framework": "ray_tune",
@@ -316,9 +316,9 @@
     "num_trials": 8,
     "objective_metric": "validation_sharpe_proxy",
     "recommended_candidate_registry_ids": [
-      "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-003",
-      "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-004",
-      "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-006"
+      "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-003",
+      "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-004",
+      "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-006"
     ],
     "search_space_dimensions": 6,
     "search_strategy": "pbt",
@@ -359,11 +359,11 @@
         "objective_metric": "validation_sharpe_proxy",
         "optimizer_method": "rllib_ppo",
         "rank": 1,
-        "registry_id": "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-003",
+        "registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-003",
         "search_strategy": "pbt",
         "storage_ref": {
           "backend": "object_store",
-          "path": "research/rllib/rl-hparam-search-activation/2026.05.01/trials/trial-003/artifact.json"
+          "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-003/artifact.json"
         },
         "version": "2026.05.01"
       },
@@ -414,11 +414,11 @@
         "objective_metric": "validation_sharpe_proxy",
         "optimizer_method": "rllib_ppo",
         "rank": 2,
-        "registry_id": "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-004",
+        "registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-004",
         "search_strategy": "pbt",
         "storage_ref": {
           "backend": "object_store",
-          "path": "research/rllib/rl-hparam-search-activation/2026.05.01/trials/trial-004/artifact.json"
+          "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-004/artifact.json"
         },
         "version": "2026.05.01"
       },
@@ -469,11 +469,11 @@
         "objective_metric": "validation_sharpe_proxy",
         "optimizer_method": "rllib_ppo",
         "rank": 3,
-        "registry_id": "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-006",
+        "registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-006",
         "search_strategy": "pbt",
         "storage_ref": {
           "backend": "object_store",
-          "path": "research/rllib/rl-hparam-search-activation/2026.05.01/trials/trial-006/artifact.json"
+          "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-006/artifact.json"
         },
         "version": "2026.05.01"
       },
@@ -524,11 +524,11 @@
         "objective_metric": "validation_sharpe_proxy",
         "optimizer_method": "rllib_ppo",
         "rank": 4,
-        "registry_id": "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-005",
+        "registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-005",
         "search_strategy": "pbt",
         "storage_ref": {
           "backend": "object_store",
-          "path": "research/rllib/rl-hparam-search-activation/2026.05.01/trials/trial-005/artifact.json"
+          "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-005/artifact.json"
         },
         "version": "2026.05.01"
       },
@@ -579,11 +579,11 @@
         "objective_metric": "validation_sharpe_proxy",
         "optimizer_method": "rllib_ppo",
         "rank": 5,
-        "registry_id": "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-002",
+        "registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-002",
         "search_strategy": "pbt",
         "storage_ref": {
           "backend": "object_store",
-          "path": "research/rllib/rl-hparam-search-activation/2026.05.01/trials/trial-002/artifact.json"
+          "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-002/artifact.json"
         },
         "version": "2026.05.01"
       },
@@ -634,11 +634,11 @@
         "objective_metric": "validation_sharpe_proxy",
         "optimizer_method": "rllib_ppo",
         "rank": 6,
-        "registry_id": "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-007",
+        "registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-007",
         "search_strategy": "pbt",
         "storage_ref": {
           "backend": "object_store",
-          "path": "research/rllib/rl-hparam-search-activation/2026.05.01/trials/trial-007/artifact.json"
+          "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-007/artifact.json"
         },
         "version": "2026.05.01"
       },
@@ -689,11 +689,11 @@
         "objective_metric": "validation_sharpe_proxy",
         "optimizer_method": "rllib_ppo",
         "rank": 7,
-        "registry_id": "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-008",
+        "registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-008",
         "search_strategy": "pbt",
         "storage_ref": {
           "backend": "object_store",
-          "path": "research/rllib/rl-hparam-search-activation/2026.05.01/trials/trial-008/artifact.json"
+          "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-008/artifact.json"
         },
         "version": "2026.05.01"
       },
@@ -744,11 +744,11 @@
         "objective_metric": "validation_sharpe_proxy",
         "optimizer_method": "rllib_ppo",
         "rank": 8,
-        "registry_id": "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-001",
+        "registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-001",
         "search_strategy": "pbt",
         "storage_ref": {
           "backend": "object_store",
-          "path": "research/rllib/rl-hparam-search-activation/2026.05.01/trials/trial-001/artifact.json"
+          "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-001/artifact.json"
         },
         "version": "2026.05.01"
       },

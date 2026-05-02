@@ -3,8 +3,8 @@
   "approver": null,
   "artifact_state": "draft",
   "artifact_type": "optimizer_result",
-  "checksum": "sha256:6a8ece2139486704f8b65a71538b455aac0a0b03ef1f7aaedd4d675d5bffa137",
-  "created_at": "2026-05-01T16:52:01Z",
+  "checksum": "sha256:9d17d3d811c0e1cc468a5c83962456ec741c2e1aa897ef714462d899a05d9ffb",
+  "created_at": "2026-05-02T12:00:31Z",
   "deployment_summary": {
     "current_stage": "none"
   },
@@ -15,9 +15,9 @@
     "num_trials": 8,
     "objective_metric": "validation_sharpe_proxy",
     "recommended_candidate_registry_ids": [
-      "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-003",
-      "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-004",
-      "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-006"
+      "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-003",
+      "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-004",
+      "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-006"
     ],
     "search_space_dimensions": 6,
     "search_strategy": "pbt",
@@ -28,7 +28,7 @@
       "synthetic-ohlcv://bounded-fixture/30-periods"
     ],
     "source_run_ids": [
-      "raytune-stub-5c0de7168013"
+      "raytune-stub-91243138ecdb"
     ],
     "source_strategy_spec_id": "strategy-spec:rl-hparam-search-v1"
   },
@@ -36,11 +36,11 @@
     "best_trial_id": "trial-003",
     "best_trial_score": 1.03700316,
     "candidate_registry_ids": [
-      "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-003",
-      "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-004",
-      "rllib-policy-rl-hparam-search-activation-2026.05.01-trial-006"
+      "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-003",
+      "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-004",
+      "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-006"
     ],
-    "dataset_checksum": "sha256:92dbad1b2d157fe91acfc96fbd66b388ec95dd26b48c65ef394c303640fcf0b2",
+    "dataset_checksum": "sha256:f81a8c6f9bc6237ae911fc5aadf763c5415127d9e840482d159befc71b1c0855",
     "framework": "ray_tune",
     "framework_package": "ray[tune]",
     "framework_version": ">=2.9.0,<3.0.0",
@@ -52,13 +52,13 @@
     "top_k": 3,
     "training_backend": "stub_ray_tune"
   },
-  "producer_run_id": "raytune-stub-5c0de7168013",
-  "registry_id": "raytune-search-rl-hparam-search-activation-2026.05.01",
+  "producer_run_id": "raytune-stub-91243138ecdb",
+  "registry_id": "raytune-search-rl-exit-timing-ray-tune-2026.05.01",
   "rollback_target": null,
   "storage_ref": {
     "backend": "object_store",
-    "path": "research/ray_tune/rl-hparam-search-activation/2026.05.01/optimizer_result.json"
+    "path": "research/ray_tune/rl-exit-timing-ray-tune/2026.05.01/optimizer_result.json"
   },
-  "strategy_id": "rl-hparam-search-activation",
+  "strategy_id": "rl-exit-timing-ray-tune",
   "version": "2026.05.01"
 }

@@ -1,8 +1,8 @@
 {
   "artifact_family": "rl_policy",
-  "created_at": "2026-05-01T16:51:51Z",
-  "created_by": "Claude",
-  "dataset_checksum": "sha256:7df00f08f611af7bd8501b3918bac42fc90e19f1f6b5d6dd509664de61d7fb4e",
+  "created_at": "2026-05-02T12:00:30Z",
+  "created_by": "Claude2",
+  "dataset_checksum": "sha256:45cc82e6a3b0edb668c033730a8ff55d942c8e82e6625ac95fc94e18e16a02d5",
   "dataset_schema": {
     "min_instruments": 2,
     "min_lookback": 3,
@@ -67,13 +67,13 @@
     "risk_aversion": 0.25
   },
   "evaluation_summary": {
-    "buy_bias_total": 0.15673276,
-    "max_action_prior": 0.951331,
-    "mean_reward_proxy": -0.00126244,
+    "buy_bias_total": 0.14157709,
+    "max_action_prior": 0.948175,
+    "mean_reward_proxy": -0.00321223,
     "num_instruments": 3,
     "num_steps": 27,
-    "reward_proxy_stddev": 0.01126367,
-    "sell_bias_total": 0.81621802
+    "reward_proxy_stddev": 0.0144132,
+    "sell_bias_total": 0.90200688
   },
   "framework": "finrl",
   "framework_version": "0.3.6",
@@ -105,11 +105,11 @@
       "sell_large"
     ],
     "action_priors": {
-      "buy_large": 0.003644,
-      "buy_small": 0.005607,
-      "hold": 0.951331,
-      "sell_large": 0.010219,
-      "sell_small": 0.029198
+      "buy_large": 0.003286,
+      "buy_small": 0.005056,
+      "hold": 0.948175,
+      "sell_large": 0.011274,
+      "sell_small": 0.03221
     },
     "algorithm": "ppo",
     "decision_focus": "exit_timing",
@@ -130,7 +130,7 @@
     "algorithm": "ppo",
     "gamma": 0.99,
     "learning_rate": 0.0003,
-    "requested_by": "Claude",
+    "requested_by": "Claude2",
     "reward_scale": 1.0,
     "risk_aversion": 0.25,
     "seed": 42,

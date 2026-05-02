@@ -5,28 +5,28 @@
     "approver": null,
     "artifact_state": "candidate",
     "artifact_type": "model_artifact",
-    "checksum": "sha256:832e86de49e784a286fd47fce98dcd312dfdf8867fa32eb1962105b4bab3c339",
-    "created_at": "2026-05-01T16:52:00Z",
+    "checksum": "sha256:4487f2df56152d4ceefeee5f0736db00b32f57f01fc7a40b38e2f0b8d0486564",
+    "created_at": "2026-05-02T12:00:30Z",
     "deployment_summary": {
       "current_stage": "none"
     },
     "evaluation_summary": {
-      "best_trial_reward_proxy": 0.01130051,
-      "eval_reward_mean": -0.00284076,
+      "best_trial_reward_proxy": 0.00934347,
+      "eval_reward_mean": -0.00218562,
       "eval_steps": 9,
       "joint_action_cardinality": 125,
       "search_space_dimensions": 4,
-      "train_reward_mean": -0.00166353,
+      "train_reward_mean": -0.00097748,
       "train_steps": 18,
-      "validation_max_drawdown_proxy": 0.05323377,
-      "validation_sharpe_proxy": -0.19691744
+      "validation_max_drawdown_proxy": 0.05706284,
+      "validation_sharpe_proxy": -0.1586496
     },
     "lineage": {
       "source_dataset_refs": [
         "synthetic-ohlcv://bounded-fixture/30-periods"
       ],
       "source_run_ids": [
-        "rllib-stub-0645a34388b2"
+        "rllib-stub-b938543c5d82"
       ],
       "source_strategy_spec_id": "strategy-spec:rl-rebalance-v1"
     },
@@ -40,7 +40,7 @@
       ],
       "algorithm": "ppo",
       "candidate_promotion_scope": "offline_only",
-      "dataset_checksum": "sha256:a1e3d41a72ce49bf6f5526352f87ef55efd99d67c9c6753eaf2f9a5aedf7b0e1",
+      "dataset_checksum": "sha256:a5c3ba3284809208605111239ae5096da752be96fabd030bf4323f46c76a02cd",
       "decision_focus": "rebalance",
       "flattened_observation_dim": 72,
       "framework": "rllib",
@@ -60,25 +60,25 @@
       "search_strategy": "pbt",
       "training_backend": "stub_rllib"
     },
-    "producer_run_id": "rllib-stub-0645a34388b2",
-    "registry_id": "rllib-policy-rl-portfolio-rebalance-activation-2026.05.01",
+    "producer_run_id": "rllib-stub-b938543c5d82",
+    "registry_id": "rllib-policy-rl-exit-timing-rllib-2026.05.01",
     "rollback_target": null,
     "storage_ref": {
       "backend": "object_store",
-      "path": "research/rllib/rl-portfolio-rebalance-activation/2026.05.01/artifact.json"
+      "path": "research/rllib/rl-exit-timing-rllib/2026.05.01/artifact.json"
     },
-    "strategy_id": "rl-portfolio-rebalance-activation",
+    "strategy_id": "rl-exit-timing-rllib",
     "version": "2026.05.01"
   },
   "current_artifact_state": "draft",
   "deployment_stage": "none",
   "gate_state": "closed",
-  "packet_id": "rllib-candidate-rl-portfolio-rebalance-activation",
+  "packet_id": "rllib-candidate-rl-exit-timing-rllib",
   "requested_artifact_state": "candidate",
   "required_checks": [
     "RL gate remains closed until Qlib approved + 3 months stable evidence.",
     "Train/eval schema must stay prep-only and non-default.",
     "Promotion to candidate requires offline review of rollout/result lineage only."
   ],
-  "source_run_id": "rllib-stub-0645a34388b2"
+  "source_run_id": "rllib-stub-b938543c5d82"
 }

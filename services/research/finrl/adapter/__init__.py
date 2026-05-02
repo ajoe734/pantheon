@@ -11,6 +11,7 @@ from .finrl_adapter import (
     GovernedFinRLPolicyAdapter,
     PolicyTrainingConfig,
     StubFinRLBackend,
+    prepared_finrl_dataset_checksum,
     run_finrl_workflow,
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     "GovernedFinRLPolicyAdapter",
     "PolicyTrainingConfig",
     "StubFinRLBackend",
+    "prepared_finrl_dataset_checksum",
     "run_finrl_workflow",
 ]

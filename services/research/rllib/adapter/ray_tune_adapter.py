@@ -27,6 +27,7 @@ from .rllib_adapter import (
     RAY_TUNE_PACKAGE,
     RAY_TUNE_VERSION_PIN,
     RLlibTrainingConfig,
+    prepared_rllib_dataset_checksum,
 )
 
 PRIMARY_BACKEND = "ray_tune_search"
@@ -643,6 +644,7 @@ def _build_artifact_bundle(
     search_result: RayTuneSearchResult,
 ) -> dict[str, Any]:
     created_at = utc_now()
+    dataset_checksum = prepared_rllib_dataset_checksum(prepared.dataset)
     top_trials = list(search_result.trial_results[: prepared.top_k])
     output_artifacts = []
     for trial in top_trials:
@@ -674,6 +676,24 @@ def _build_artifact_bundle(
         "optimization_objective": prepared.objective_metric,
         "trigger": prepared.trigger,
         "run_id": search_result.run_id,
+        "dataset_checksum": dataset_checksum,
+        "dataset_schema": {
+            "required_ohlcv_fields": ["open", "high", "low", "close", "volume"],
+            "observation_shape": [
+                prepared.dataset.observation_rows,
+                prepared.dataset.observation_features,
+            ],
+            "joint_action_cardinality": prepared.dataset.joint_action_cardinality,
+            "reward_spec": dict(prepared.dataset.reward_spec),
+        },
+        "artifact_schema": {
+            "output_type": "optimizer_result",
+            "candidate_output_count": len(output_artifacts),
+            "candidate_checksum_required": True,
+            "ranking_policy": copy.deepcopy(
+                search_result.search_space_schema.get("ranking_policy", [])
+            ),
+        },
         "source_artifact": {
             "registry_id": None,
             "artifact_type": "model_artifact",
@@ -796,6 +816,7 @@ def _build_registry_entry(
             "optimizer_id": prepared.optimizer_id,
             "optimizer_method": RLLIB_OPTIMIZER_METHOD,
             "training_backend": search_result.backend,
+            "dataset_checksum": artifact_bundle["dataset_checksum"],
             "search_strategy": prepared.search_strategy,
             "objective_metric": prepared.objective_metric,
             "num_trials": prepared.num_trials,
