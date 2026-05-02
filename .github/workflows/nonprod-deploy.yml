@@ -79,6 +79,8 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Deploy dev VM
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           bash scripts/deploy_nonprod_vm.sh \
             --environment dev \
@@ -135,6 +137,8 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Deploy requested VM stack
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           args=(
             --environment "${{ inputs.environment }}"

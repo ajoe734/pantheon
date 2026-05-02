@@ -39,6 +39,10 @@ under `~/pantheon-ci-deploy`, starts the expected Compose stack from the pinned
 commit, and runs health checks. This keeps CI deploys from overwriting operator
 or agent work in `/home/edna/code/pantheon`.
 
+For private repository fetches on the VM, GitHub Actions passes its short-lived
+`GITHUB_TOKEN` only to the deploy SSH session. The token is used as a temporary
+Git extra header for `git fetch`; it is not written into the VM git config.
+
 Examples:
 
 ```bash

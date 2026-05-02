@@ -50,6 +50,7 @@ Options:
 Environment overrides:
   REMOTE_USER
   PANTHEON_DEPLOY_WORKTREE_ROOT
+  GITHUB_TOKEN
   DEV_VM DEV_ZONE DEV_REMOTE_DIR
   STAGING_CONTROL_VM STAGING_CONTROL_ZONE STAGING_CONTROL_REMOTE_DIR
   STAGING_EXEC_VM STAGING_EXEC_ZONE STAGING_EXEC_REMOTE_DIR
@@ -159,6 +160,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEPLOY_SHA=$(shell_quote "$DEPLOY_SHA")"
   command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "$remote_dir")"
   command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
+  command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
   command_prefix+=" PANTHEON_ALLOW_DIRTY_DEPLOY=$(shell_quote "$ALLOW_DIRTY")"
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
   command_prefix+=" bash -s"
@@ -207,6 +209,14 @@ require_clean_checkout() {
   fi
 }
 
+git_fetch_origin() {
+  if [[ -n "${PANTHEON_GITHUB_TOKEN:-}" ]]; then
+    git -c "http.https://github.com/.extraheader=AUTHORIZATION: bearer ${PANTHEON_GITHUB_TOKEN}" fetch origin "$@"
+  else
+    git fetch origin "$@"
+  fi
+}
+
 prepare_deploy_worktree() {
   local sha="${PANTHEON_DEPLOY_SHA}"
   local source_dir="${PANTHEON_REMOTE_DIR}"
@@ -216,9 +226,9 @@ prepare_deploy_worktree() {
 
   cd "$source_dir"
   info "fetching origin"
-  git fetch origin --prune
+  git_fetch_origin --prune
   if ! git cat-file -e "${sha}^{commit}" 2>/dev/null; then
-    git fetch origin "$sha"
+    git_fetch_origin "$sha"
   fi
 
   mkdir -p "$root"
@@ -230,7 +240,7 @@ prepare_deploy_worktree() {
     cd "$deploy_dir"
     require_clean_checkout
     info "reusing managed deploy worktree ${deploy_dir}"
-    git fetch origin --prune
+    git_fetch_origin --prune
     git checkout --detach "$sha"
   else
     info "creating managed deploy worktree ${deploy_dir}"
