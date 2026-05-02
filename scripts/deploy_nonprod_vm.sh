@@ -2,8 +2,9 @@
 # Deploy Pantheon non-prod VM compose stacks from a verified git commit.
 #
 # This script is designed for GitHub Actions, but it can also be run by an
-# operator from a workstation with gcloud access. It never resets a dirty remote
-# checkout by default; pass --allow-dirty only for an explicit emergency patch.
+# operator from a workstation with gcloud access. The VM's human-facing checkout
+# is used only as the git object source and snapshot target; deployment runs from
+# a managed clean worktree under ~/pantheon-ci-deploy.
 
 set -euo pipefail
 
@@ -40,7 +41,7 @@ Options:
                          auto maps to root for dev and all for staging-live.
   --sha <commit>         Required unless GITHUB_SHA is set. Commit to deploy.
   --project-id <id>      GCP project. Default: pantheon-493602.
-  --allow-dirty          Allow deployment from a dirty remote checkout.
+  --allow-dirty          Emergency only: allow a dirty managed deploy worktree.
   --allow-example-env    Allow staging to use env/*.env.example if real env files
                          are absent. Intended for rehearsal only.
   --dry-run              Print the target plan without SSHing.
@@ -48,6 +49,7 @@ Options:
 
 Environment overrides:
   REMOTE_USER
+  PANTHEON_DEPLOY_WORKTREE_ROOT
   DEV_VM DEV_ZONE DEV_REMOTE_DIR
   STAGING_CONTROL_VM STAGING_CONTROL_ZONE STAGING_CONTROL_REMOTE_DIR
   STAGING_EXEC_VM STAGING_EXEC_ZONE STAGING_EXEC_REMOTE_DIR
@@ -156,6 +158,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEPLOY_COMPONENT=$(shell_quote "$remote_component")"
   command_prefix+=" PANTHEON_DEPLOY_SHA=$(shell_quote "$DEPLOY_SHA")"
   command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "$remote_dir")"
+  command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
   command_prefix+=" PANTHEON_ALLOW_DIRTY_DEPLOY=$(shell_quote "$ALLOW_DIRTY")"
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
   command_prefix+=" bash -s"
@@ -194,28 +197,50 @@ snapshot_remote_state() {
 
 require_clean_checkout() {
   if [[ "${PANTHEON_ALLOW_DIRTY_DEPLOY}" == "true" ]]; then
-    info "dirty checkout allowed by explicit flag"
+    info "dirty managed deploy worktree allowed by explicit flag"
     return
   fi
 
   if [[ -n "$(git status --porcelain)" ]]; then
     git status --short >&2
-    error "remote checkout is dirty; refusing deploy without --allow-dirty"
+    error "managed deploy worktree is dirty; refusing deploy without --allow-dirty"
   fi
 }
 
-checkout_target_commit() {
+prepare_deploy_worktree() {
   local sha="${PANTHEON_DEPLOY_SHA}"
+  local source_dir="${PANTHEON_REMOTE_DIR}"
+  local root="${PANTHEON_DEPLOY_WORKTREE_ROOT:-${HOME}/pantheon-ci-deploy}"
+  local deploy_dir="${root}/${PANTHEON_DEPLOY_ENV}-${PANTHEON_DEPLOY_COMPONENT}"
+  local marker="${root}/.${PANTHEON_DEPLOY_ENV}-${PANTHEON_DEPLOY_COMPONENT}.marker"
 
+  cd "$source_dir"
   info "fetching origin"
   git fetch origin --prune
   if ! git cat-file -e "${sha}^{commit}" 2>/dev/null; then
     git fetch origin "$sha"
   fi
 
-  info "checking out ${sha}"
-  git checkout --detach "$sha"
+  mkdir -p "$root"
+
+  if [[ -e "$deploy_dir" ]]; then
+    [[ -f "$marker" ]] || error "refusing to reuse unmarked deploy path: ${deploy_dir}"
+    [[ "$(cat "$marker")" == "$deploy_dir" ]] || error "deploy marker does not match ${deploy_dir}"
+    git -C "$deploy_dir" rev-parse --is-inside-work-tree >/dev/null
+    cd "$deploy_dir"
+    require_clean_checkout
+    info "reusing managed deploy worktree ${deploy_dir}"
+    git fetch origin --prune
+    git checkout --detach "$sha"
+  else
+    info "creating managed deploy worktree ${deploy_dir}"
+    git worktree add --detach "$deploy_dir" "$sha"
+    printf '%s\n' "$deploy_dir" >"$marker"
+    cd "$deploy_dir"
+  fi
+
   git submodule update --init --recursive
+  info "prepared deploy worktree ${deploy_dir} at ${sha}"
 }
 
 real_env_or_example() {
@@ -224,6 +249,11 @@ real_env_or_example() {
 
   if [[ -f "$real_file" ]]; then
     printf '%s\n' "$real_file"
+    return
+  fi
+
+  if [[ -f "${PANTHEON_REMOTE_DIR}/${real_file}" ]]; then
+    printf '%s\n' "${PANTHEON_REMOTE_DIR}/${real_file}"
     return
   fi
 
@@ -242,8 +272,7 @@ git rev-parse --is-inside-work-tree >/dev/null
 case "${PANTHEON_DEPLOY_COMPONENT}" in
   root)
     snapshot_remote_state pantheon docker-compose.yml
-    require_clean_checkout
-    checkout_target_commit
+    prepare_deploy_worktree
     docker compose -p pantheon -f docker-compose.yml config --quiet
     COMPOSE_BAKE=false \
     PANTHEON_ENV=dev \
@@ -256,8 +285,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
 
   exec)
     snapshot_remote_state pantheon-exec docker-compose.exec.yml
-    require_clean_checkout
-    checkout_target_commit
+    prepare_deploy_worktree
     env_file="$(real_env_or_example env/prod-exec.env env/prod-exec.env.example)"
     docker compose --env-file "$env_file" -p pantheon-exec -f docker-compose.exec.yml config --quiet
     COMPOSE_BAKE=false docker compose --env-file "$env_file" -p pantheon-exec -f docker-compose.exec.yml up -d --build
@@ -269,8 +297,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
 
   control)
     snapshot_remote_state pantheon-control docker-compose.control.yml
-    require_clean_checkout
-    checkout_target_commit
+    prepare_deploy_worktree
     env_file="$(real_env_or_example env/prod-control.env env/prod-control.env.example)"
     docker compose --env-file "$env_file" -p pantheon-control -f docker-compose.control.yml config --quiet
     COMPOSE_BAKE=false \

@@ -34,8 +34,10 @@ scripts/deploy_nonprod_vm.sh
 ```
 
 The script SSHes to the target VM through `gcloud compute ssh`, snapshots the
-current remote state, refuses dirty remote checkouts by default, checks out the
-requested commit, starts the expected Compose stack, and runs health checks.
+current human-facing remote checkout, prepares a managed clean deploy worktree
+under `~/pantheon-ci-deploy`, starts the expected Compose stack from the pinned
+commit, and runs health checks. This keeps CI deploys from overwriting operator
+or agent work in `/home/edna/code/pantheon`.
 
 Examples:
 
