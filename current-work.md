@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-02 01:19:26
+Last updated: 2026-05-02 19:26:15
 
 ## Objective
 
@@ -37,13 +37,13 @@ Last updated: 2026-05-02 01:19:26
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Supervisor preempted P2-RL-UPSTREAM-RUNTIME-SMOKE-001 to free Claude for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.
+- `Claude`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 - `Codex`: integration, status-system, schema, acceptance; next: No active assignment
-- `Codex2`: integration, status-system, schema, acceptance; next: Supervisor re-dispatched P2-MARKETDATA-CREDENTIAL-SMOKE-001; task remains in progress.
+- `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: No active assignment
-- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
+- `Claude2`: execution, control-plane, governance-review; next: Addressed all three Codex2 review items: (1) adapter schema/checksum files included in commit, (2) evaluator_packet written inside _persist_artifacts before checksum computation so per-framework manifest now carries evaluator_packet checksum, (3) OSS_INTEGRATION_CHECKLIST.md changed from 'task closed' to 'evidence produced'. Tests: finrl 16 OK, rllib 33 OK. Evidence regenerated. Committing now.
+- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Helper-claimed by Gemini2 while Claude completes higher-priority work.
 
 ## Delivery Layers
 
@@ -57,17 +57,18 @@ Last updated: 2026-05-02 01:19:26
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` | P2 Wave 8 External Activation | FinRL RLlib Ray Tune governed runtime activation smoke | Claude | todo | `P2-OSS-ACTIVATE-001` | 把 FinRL/RLlib/Ray Tune 從 dormant/deferred prep 推進到 governed runtime smoke：真實 backend 可用時跑 bounded train/search，否則留下明確 dependency/config error；仍禁止 broker/order/live 路由。 |
-| `P2-MARKETDATA-CREDENTIAL-SMOKE-001` | P2 Wave 8 External Activation | Market-data provider credentialed read smoke | Codex2 | in_progress | `APP-003-DATASOURCE-OPS-001`, `P2-OSS-ACTIVATE-001` | 對非下單外部市場資料源做 credentialed read/runtime smoke：Massive/Polygon、TWSE/TPEx/MOPS/TEJ、CoinGecko/Kraken market data、IBKR/Shioaji quote/read-only lane；不得觸發 broker order/capital side effect。 |
-| `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001` | P2 Wave 8 External Activation | Source/search live connector credentialed smoke | Codex2 | todo | `P1-SOURCE-001`, `P1-SEARCH-001`, `P2-OSS-ACTIVATE-001` | 對 source/search 非下單外部資料源做 bounded live/test credential smoke：news/social/alpha DB 或 allowlisted HTTP/feed connector -> SourceRecord/EvidenceBundle -> durable index -> BFF/SearchGateway query；禁止 broker/Lean/order 路由。 |
+| `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` | P2 Wave 8 External Activation | FinRL RLlib Ray Tune governed runtime activation smoke | Claude2 | in_progress | `P2-OSS-ACTIVATE-001` | 把 FinRL/RLlib/Ray Tune 從 dormant/deferred prep 推進到 governed runtime smoke：真實 backend 可用時跑 bounded train/search，否則留下明確 dependency/config error；仍禁止 broker/order/live 路由。 |
+| `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001` | P2 Wave 8 External Activation | Source/search live connector credentialed smoke | Claude2 | todo | `P1-SOURCE-001`, `P1-SEARCH-001`, `P2-OSS-ACTIVATE-001` | 對 source/search 非下單外部資料源做 bounded live/test credential smoke：news/social/alpha DB 或 allowlisted HTTP/feed connector -> SourceRecord/EvidenceBundle -> durable index -> BFF/SearchGateway query；禁止 broker/Lean/order 路由。 |
+| `P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-REVIEW` | P2 Wave 8 External Activation | [Sidecar] [Auto] [Parent P2-MARKETDATA-CREDENTIAL-SMOKE-001] Prepare P2-MARKETDATA-CREDENTIAL-SMOKE-001 review packet and evidence summary | Gemini2 | todo | `APP-003-DATASOURCE-OPS-001`, `P2-OSS-ACTIVATE-001` | 平行支援 P2-MARKETDATA-CREDENTIAL-SMOKE-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-02 01:19:26
-- Terminal tasks archived: `886` total, `870` completed, `16` superseded
+- Archive updated: 2026-05-02 19:26:14
+- Terminal tasks archived: `887` total, `871` completed, `16` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `P2-MARKETDATA-CREDENTIAL-SMOKE-001` | P2 Wave 8 External Activation | Market-data provider credentialed read smoke | Claude | completed | 2026-05-02 19:26:14 | `ai-task-archive/tasks/P2-MARKETDATA-CREDENTIAL-SMOKE-001.json` |
 | `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF` | P2 Wave 8 External Activation | Prepare P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001 BFF and frontend handoff packet | Claude | completed | 2026-05-02 01:19:26 | `ai-task-archive/tasks/P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF.json` |
 | `P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW` | P2 Wave 8 External Activation | Prepare P2-RL-UPSTREAM-RUNTIME-SMOKE-001 review packet and evidence summary | Codex | completed | 2026-05-02 01:14:29 | `ai-task-archive/tasks/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW.json` |
 | `P2-TRL-RUNTIME-DATA-ACTIVATION-001` | P2 Wave 8 External Activation | TRL runtime-data activation and real DPO smoke | Codex2 | completed | 2026-05-02 00:58:28 | `ai-task-archive/tasks/P2-TRL-RUNTIME-DATA-ACTIVATION-001.json` |
@@ -87,21 +88,21 @@ Last updated: 2026-05-02 01:19:26
 | `P1-SOURCE-001` | P1 Wave 6 | News/social/alpha DB connector expansion | Codex | completed | 2026-05-01 22:03:05 | `ai-task-archive/tasks/P1-SOURCE-001.json` |
 | `P1-KILL-001` | P1 Wave 6 | KillSwitchBridge secondary path and telemetry ack | Codex2 | completed | 2026-05-01 21:50:52 | `ai-task-archive/tasks/P1-KILL-001.json` |
 | `P1-PERSIST-001` | P1 Wave 5 | Staging/prod Postgres and object store posture guard | Codex | completed | 2026-05-01 17:59:28 | `ai-task-archive/tasks/P1-PERSIST-001.json` |
-| `P1-BRACKET-001-SIDECAR-REVIEW` | P1 Wave 5 | Prepare P1-BRACKET-001 review packet and evidence summary | Claude | completed | 2026-05-01 17:57:18 | `ai-task-archive/tasks/P1-BRACKET-001-SIDECAR-REVIEW.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` | P2 Wave 8 External Activation | FinRL RLlib Ray Tune governed runtime activation smoke | 把 FinRL/RLlib/Ray Tune 從 dormant/deferred prep 推進到 governed runtime smoke：真實 backend 可用時跑 bounded train/search，否則留下明確 dependency/config error；仍禁止 broker/order/live 路由。 | Claude | Codex2 | todo | `P2-OSS-ACTIVATE-001` | 2026-05-02 01:17:49 | Supervisor preempted P2-RL-UPSTREAM-RUNTIME-SMOKE-001 to free Claude for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
-| `P2-MARKETDATA-CREDENTIAL-SMOKE-001` | P2 Wave 8 External Activation | Market-data provider credentialed read smoke | 對非下單外部市場資料源做 credentialed read/runtime smoke：Massive/Polygon、TWSE/TPEx/MOPS/TEJ、CoinGecko/Kraken market data、IBKR/Shioaji quote/read-only lane；不得觸發 broker order/capital side effect。 | Codex2 | Codex | in_progress | `APP-003-DATASOURCE-OPS-001`, `P2-OSS-ACTIVATE-001` | 2026-05-02 01:18:12 | Supervisor re-dispatched P2-MARKETDATA-CREDENTIAL-SMOKE-001; task remains in progress. |
-| `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001` | P2 Wave 8 External Activation | Source/search live connector credentialed smoke | 對 source/search 非下單外部資料源做 bounded live/test credential smoke：news/social/alpha DB 或 allowlisted HTTP/feed connector -> SourceRecord/EvidenceBundle -> durable index -> BFF/SearchGateway query；禁止 broker/Lean/order 路由。 | Codex2 | Codex | todo | `P1-SOURCE-001`, `P1-SEARCH-001`, `P2-OSS-ACTIVATE-001` | 2026-05-02 00:19:24 | Auto-reassigned ownership from Gemini2 to Codex2 after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex2 starts a fresh run. |
+| `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` | P2 Wave 8 External Activation | FinRL RLlib Ray Tune governed runtime activation smoke | 把 FinRL/RLlib/Ray Tune 從 dormant/deferred prep 推進到 governed runtime smoke：真實 backend 可用時跑 bounded train/search，否則留下明確 dependency/config error；仍禁止 broker/order/live 路由。 | Claude2 | Codex2 | in_progress | `P2-OSS-ACTIVATE-001` | 2026-05-02 01:44:51 | Addressed all three Codex2 review items: (1) adapter schema/checksum files included in commit, (2) evaluator_packet written inside _persist_artifacts before checksum computation so per-framework manifest now carries evaluator_packet checksum, (3) OSS_INTEGRATION_CHECKLIST.md changed from 'task closed' to 'evidence produced'. Tests: finrl 16 OK, rllib 33 OK. Evidence regenerated. Committing now. |
+| `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001` | P2 Wave 8 External Activation | Source/search live connector credentialed smoke | 對 source/search 非下單外部資料源做 bounded live/test credential smoke：news/social/alpha DB 或 allowlisted HTTP/feed connector -> SourceRecord/EvidenceBundle -> durable index -> BFF/SearchGateway query；禁止 broker/Lean/order 路由。 | Claude2 | Codex2 | todo | `P1-SOURCE-001`, `P1-SEARCH-001`, `P2-OSS-ACTIVATE-001` | 2026-05-02 01:41:29 | Chair reassigned owner from Claude to Claude2: Claude is occupied in finalize mode; Claude2 is idle with matching capability lane. All three dependencies (P1-SOURCE-001, P1-SEARCH-001, P2-OSS-ACTIVATE-001) are done; task is immediately runnable.. Task returned to todo for a fresh run. |
+| `P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-REVIEW` | P2 Wave 8 External Activation | [Sidecar] [Auto] [Parent P2-MARKETDATA-CREDENTIAL-SMOKE-001] Prepare P2-MARKETDATA-CREDENTIAL-SMOKE-001 review packet and evidence summary | 平行支援 P2-MARKETDATA-CREDENTIAL-SMOKE-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Gemini2 | Claude | todo | `APP-003-DATASOURCE-OPS-001`, `P2-OSS-ACTIVATE-001` | 2026-05-02 19:24:43 | Helper-claimed by Gemini2 while Claude completes higher-priority work. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - |
+| `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001` | Claude | Claude2 | Chair reassigned owner from Claude to Claude2: Claude is occupied in finalize mode; Claude2 is idle with matching capability lane. All three dependencies (P1-SOURCE-001, P1-SEARCH-001, P2-OSS-ACTIVATE-001) are done; task is immediately runnable.. Task returned to todo for a fresh run. | pending | 2026-05-02 01:41:29 |
+| `P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-REVIEW` | Claude | Gemini2 | Helper-claimed by Gemini2 while Claude completes higher-priority work. | pending | 2026-05-02 19:24:43 |
 
 ## Blockers
 
@@ -117,7 +118,7 @@ Last updated: 2026-05-02 01:19:26
 
 ## Lovable Coordination
 
-- Last coordination scan: 2026-05-02 01:17:49
+- Last coordination scan: 2026-05-02 19:24:28
 - Tracked features: `46`
 - Lovable-ready packets: `45`
 - Waiting for Lovable/front-end: `0`
@@ -184,23 +185,23 @@ Last updated: 2026-05-02 01:19:26
 
 ## Latest Checkpoints
 
-- 2026-05-02 01:18:32 Orchestrator: PreToolUse: Write
-- 2026-05-02 01:18:32 Orchestrator: PostToolUse: Write
-- 2026-05-02 01:18:35 Orchestrator: PreToolUse: Edit
-- 2026-05-02 01:18:35 Orchestrator: PostToolUse: Edit
-- 2026-05-02 01:18:46 Orchestrator: PreToolUse: Edit
-- 2026-05-02 01:18:46 Orchestrator: PostToolUse: Edit
-- 2026-05-02 01:18:47 Orchestrator: Stop: Stop
-- 2026-05-02 01:18:47 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-02 01:18:53 Orchestrator: PreToolUse: Edit
-- 2026-05-02 01:18:53 Orchestrator: PostToolUse: Edit
-- 2026-05-02 01:18:58 Orchestrator: PreToolUse: Edit
-- 2026-05-02 01:18:58 Orchestrator: PostToolUse: Edit
-- 2026-05-02 01:19:01 Orchestrator: PreToolUse: Bash
-- 2026-05-02 01:19:01 Orchestrator: PostToolUse: Bash
-- 2026-05-02 01:19:12 Orchestrator: PreToolUse: Bash
-- 2026-05-02 01:19:13 Orchestrator: PostToolUse: Bash
-- 2026-05-02 01:19:20 Orchestrator: PreToolUse: Bash
-- 2026-05-02 01:19:21 Orchestrator: PostToolUse: Bash
-- 2026-05-02 01:19:26 Orchestrator: PreToolUse: Bash
-- 2026-05-02 01:19:26 Claude: `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF` Sidecar closeout complete. Applied Codex2 review caveats: GAP-04 reworded to clarify dedicated DLQ preview endpoint is absent (ops surface already composes DLQ entries); Step 5 operator journey updated to note connector_id is client-side filter today. Task-scoped commit 84225ee. No canonical truth modified.
+- 2026-05-02 19:24:59 Orchestrator: `P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-REVIEW` Helper-claimed by Gemini2 while Claude completes higher-priority work.
+- 2026-05-02 19:24:59 Orchestrator: `P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-REVIEW` Skipped stale queued wake event for P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-REVIEW: task state changed after the wake-up was queued.
+- 2026-05-02 19:24:59 Orchestrator: `P2-MARKETDATA-CREDENTIAL-SMOKE-001` Resumed worker after approval apr-20260502T111519Z-72806e6c
+- 2026-05-02 19:24:59 Orchestrator: `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` Resumed worker after approval apr-20260502T111438Z-423ada18
+- 2026-05-02 19:25:14 Orchestrator: SessionStart: SessionStart
+- 2026-05-02 19:25:18 Orchestrator: SessionStart: SessionStart
+- 2026-05-02 19:25:19 Orchestrator: PreToolUse: Bash
+- 2026-05-02 19:25:20 Orchestrator: PostToolUse: Bash
+- 2026-05-02 19:25:22 Orchestrator: PreToolUse: Bash
+- 2026-05-02 19:25:23 Orchestrator: Removed temporary Claude allow rule: Bash(git add -- DATA_SOURCE_SCOPE_MATRIX.md docs/deployment/ep5-canary-ready/operator-approval-checklist.md docs/deployment/external-data-integration-materialization-audit.md scripts/run_marketdata_credential_smoke.py scripts/test_run_marketdata_credential_smoke.py 'support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/***' support/reviews/P2-MARKETDATA-CREDENTIAL-SMOKE-001-codex-review.md && git diff --cached --name-only)
+- 2026-05-02 19:25:23 Orchestrator: PostToolUse: Bash
+- 2026-05-02 19:25:41 Orchestrator: `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` Approval requested for Bash (apr-20260502T112541Z-da4cd944)
+- 2026-05-02 19:25:41 Orchestrator: PreToolUse: Bash
+- 2026-05-02 19:25:42 Orchestrator: SessionEnd: SessionEnd
+- 2026-05-02 19:25:47 Orchestrator: PreToolUse: Bash
+- 2026-05-02 19:25:48 Orchestrator: PostToolUse: Bash
+- 2026-05-02 19:26:06 Orchestrator: PreToolUse: Bash
+- 2026-05-02 19:26:07 Orchestrator: PostToolUse: Bash
+- 2026-05-02 19:26:13 Orchestrator: PreToolUse: Bash
+- 2026-05-02 19:26:14 Claude: `P2-MARKETDATA-CREDENTIAL-SMOKE-001` Closeout finalized: nine-provider read-only credentialed smoke + IBKR/Shioaji quote-readback delivered with rate_limit/session_provenance evidence, no raw secrets, no order/capital side effects. Verification: py_compile + 7-test unittest + repo-local smoke rerun + jq evidence field check. Task-scoped commit 02257b2.

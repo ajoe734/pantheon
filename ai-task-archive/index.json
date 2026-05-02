@@ -1,12 +1,14 @@
 {
   "version": 1,
-  "updated_at": "2026-05-01T17:14:29Z",
+  "updated_at": "2026-05-02T11:26:14Z",
   "counts": {
-    "total": 885,
-    "completed": 869,
+    "total": 887,
+    "completed": 871,
     "superseded": 16
   },
   "recent_terminal_ids": [
+    "P2-MARKETDATA-CREDENTIAL-SMOKE-001",
+    "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF",
     "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW",
     "P2-TRL-RUNTIME-DATA-ACTIVATION-001",
     "P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-ACCEPTANCE",
@@ -24,8 +26,6 @@
     "P1-EVO-001",
     "P1-SOURCE-001",
     "P1-KILL-001",
-    "P1-PERSIST-001",
-    "P1-BRACKET-001-SIDECAR-REVIEW",
-    "P1-BRACKET-001"
+    "P1-PERSIST-001"
   ]
 }
