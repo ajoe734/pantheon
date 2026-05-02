@@ -65,20 +65,53 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Detect dev deploy scope
+        id: deploy_scope
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          BASE_SHA="$(git rev-parse "${HEAD_SHA}^" 2>/dev/null || true)"
+          if [ -z "${BASE_SHA}" ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            echo "[info] no parent commit available; deploying conservatively"
+            exit 0
+          fi
+
+          REPORT="$(python3 scripts/ci_stage0.py detect-changes --base "${BASE_SHA}" --head "${HEAD_SHA}")"
+          TARGET_COUNT="$(printf '%s' "${REPORT}" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["target_ids"]))')"
+          echo "target_count=${TARGET_COUNT}" >> "$GITHUB_OUTPUT"
+
+          if [ "${TARGET_COUNT}" = "0" ]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "[info] no runtime deploy targets changed; skipping dev VM deploy"
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            echo "[info] deploy targets changed: ${TARGET_COUNT}"
+          fi
+
+      - name: Skip dev deploy notice
+        if: steps.deploy_scope.outputs.deploy == 'false'
+        run: echo "No runtime deploy targets changed on the published commit."
 
       - name: Validate dev compose contract
+        if: steps.deploy_scope.outputs.deploy == 'true'
         run: docker compose -f docker-compose.yml config --quiet
 
       - name: Authenticate to Google Cloud via Workload Identity Federation
+        if: steps.deploy_scope.outputs.deploy == 'true'
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT || vars.GCP_SERVICE_ACCOUNT }}
 
       - name: Set up Cloud SDK
+        if: steps.deploy_scope.outputs.deploy == 'true'
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Deploy dev VM
+        if: steps.deploy_scope.outputs.deploy == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -89,6 +122,7 @@ jobs:
             --project-id "${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-493602' }}"
 
       - name: Public dev smoke
+        if: steps.deploy_scope.outputs.deploy == 'true'
         run: |
           curl -fsS https://pantheon-dev-bff.35.236.178.81.sslip.io/health
           curl -sS -D - -o /tmp/dev-cors-body \

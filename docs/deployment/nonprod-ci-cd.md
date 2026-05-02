@@ -11,7 +11,8 @@ missing GitHub Actions deployment lane:
 - CI remains `Pantheon Stage 0 CI`.
 - Image publishing remains `Publish images to Artifact Registry`.
 - Dev deployment is automatic after push-triggered image publishing succeeds on
-  the deployment branch. The current GitHub default branch is
+  the deployment branch and the published commit changes at least one runtime
+  deploy target. The current GitHub default branch is
   `backend-dev-publish-20260429`; the workflows also accept `master` and `main`
   while the repo branch naming is being cleaned up.
 - Staging-live deployment is manual and should be protected by GitHub
@@ -70,9 +71,11 @@ Emergency flags:
 
 Automatic dev deploy runs after a push-triggered
 `Publish images to Artifact Registry` run completes successfully on the
-deployment branch. The current GitHub default branch is
-`backend-dev-publish-20260429`; `master` and `main` are also included in the
-workflow triggers during the branch cleanup period.
+deployment branch and `scripts/ci_stage0.py detect-changes` finds at least one
+runtime deploy target for the published commit. Pure CI/CD or documentation
+commits leave a skip notice and do not SSH to the VM. The current GitHub default
+branch is `backend-dev-publish-20260429`; `master` and `main` are also included
+in the workflow triggers during the branch cleanup period.
 Manual image-publish runs do not auto-deploy dev; use the manual deploy entry
 when that is desired.
 
