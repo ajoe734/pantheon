@@ -65,6 +65,12 @@ _ROUTE_KEY_TOKENS = {
     "targets",
     "write_to",
 }
+_ROUTE_PROVENANCE_KEYS = {
+    "content_ref",
+    "raw_uri",
+    "source_feed_url",
+    "source_uri",
+}
 
 
 def is_external_research_source_type(source_type: SourceType | str) -> bool:
@@ -300,6 +306,8 @@ def _assert_allowed_use_safe(values: Iterable[Any], *, context: str) -> None:
 def _assert_no_direct_execution_route(value: Any, *, context: str) -> None:
     for key, item in _iter_mapping_items(value):
         key_text = str(key).strip().lower()
+        if key_text in _ROUTE_PROVENANCE_KEYS:
+            continue
         if key_text in {"direct_execution_allowed", "direct_lean_feed", "direct_broker_feed"} and bool(item):
             raise SourceEvidenceError(f"{context} cannot enable direct Lean, broker, or execution feed")
         if key_text in _ROUTE_KEY_TOKENS or any(token in key_text for token in _ROUTE_KEY_TOKENS):

@@ -1,0 +1,23 @@
+{
+  "schema_version": "source_search_registry_entry.v1",
+  "task_id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001",
+  "registered_at": "2026-05-02T14:00:00Z",
+  "connector_type": "external_feed",
+  "governed_source_types": ["news", "social", "alpha_db"],
+  "policy": "news_social_alpha_pit_v1",
+  "entitlement_required": true,
+  "pit_required": true,
+  "available_time_required": true,
+  "forbidden_routes": ["broker", "lean", "execution", "order_routing", "paper", "canary", "live", "capital"],
+  "allowed_sinks": ["SourceRecord", "EvidenceBundle", "search_index", "research"],
+  "schema_contract": "docs/contracts/evidence_bundle.schema.json",
+  "test_coverage": {
+    "test_news_static_connector_emits_pit_source_record_with_entitlement": "news connector produces PIT source record with entitlement",
+    "test_external_source_record_builds_entitled_evidence_bundle": "EvidenceBundle inherits entitlement and access scope",
+    "test_social_connector_requires_trust_score_and_platform_policy": "social connector requires trust_score and platform_policy_ref",
+    "test_alpha_db_requires_entitlement_pit_and_blocks_execution_targets": "alpha_db blocks execution routes",
+    "test_external_feed_provenance_url_is_not_treated_as_execution_route": "provenance URLs are not treated as execution routes",
+    "test_live_connector_smoke_path_enforces_governance_and_preserves_pit": "full live connector smoke path via in-process HTTP feed",
+    "test_live_connector_smoke_rejects_forbidden_execution_routes": "broker/live/order routes all raise SourceEvidenceError"
+  }
+}
