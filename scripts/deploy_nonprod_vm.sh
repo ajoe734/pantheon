@@ -210,14 +210,21 @@ require_clean_checkout() {
 }
 
 git_fetch_origin() {
+  local prune_flag=()
+  if [[ "${1:-}" == "--prune" ]]; then
+    prune_flag=(--prune)
+    shift
+  fi
+
   if [[ -n "${PANTHEON_GITHUB_TOKEN:-}" ]]; then
     local github_basic_auth
     github_basic_auth="$(printf 'x-access-token:%s' "${PANTHEON_GITHUB_TOKEN}" | base64 | tr -d '\n')"
     info "fetch auth: github token present"
-    git -c "http.extraheader=AUTHORIZATION: basic ${github_basic_auth}" fetch origin "$@"
+    git -c "http.extraheader=AUTHORIZATION: basic ${github_basic_auth}" \
+      fetch --recurse-submodules=no "${prune_flag[@]}" origin "$@"
   else
     info "fetch auth: no github token"
-    git fetch origin "$@"
+    git fetch --recurse-submodules=no "${prune_flag[@]}" origin "$@"
   fi
 }
 
