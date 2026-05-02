@@ -1,12 +1,12 @@
 # P2-MARKETDATA-CREDENTIAL-SMOKE-001 Sidecar Review Packet
 
-**Task ID:** `P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-REVIEW`  
-**Parent task:** `P2-MARKETDATA-CREDENTIAL-SMOKE-001`  
-**Helper kind:** `review_packet`  
-**Owner:** Codex  
-**Reviewer:** Codex2  
-**Status:** ready for review  
-**Generated:** 2026-05-02T11:42:51Z
+- **Task ID:** `P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-REVIEW`
+- **Parent task:** `P2-MARKETDATA-CREDENTIAL-SMOKE-001`
+- **Helper kind:** `review_packet`
+- **Owner:** Codex
+- **Reviewer:** Claude
+- **Status:** review approved; owner finalization in progress
+- **Generated:** 2026-05-02T11:42:51Z
 
 This is a support-only sidecar packet. It does not update canonical truth,
 core contract truth, L1 policy, or runtime / registry / governance
