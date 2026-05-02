@@ -62,7 +62,8 @@ jobs:
       #     attribute condition:
       #       attribute.repository == "ajoe734/pantheon"
       #   - Service account:         pantheon-cloud-build@<PROJECT_ID>.iam.gserviceaccount.com
-      #     roles: roles/cloudbuild.builds.editor, roles/storage.objectAdmin (for build source)
+      #     roles: roles/cloudbuild.builds.editor, roles/storage.objectAdmin (for build source),
+      #            roles/serviceusage.serviceUsageConsumer
       #   - IAM binding (WIF → SA):
       #     serviceAccount:pantheon-cloud-build@...  with  roles/iam.workloadIdentityUser
       #     principal: principalSet://iam.googleapis.com/projects/<NUMBER>/locations/global/
@@ -129,12 +130,14 @@ jobs:
         if: steps.detect.outputs.services != ''
         env:
           GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCS_SOURCE_STAGING_DIR: ${{ vars.GCP_BUILD_STAGING_BUCKET || 'gs://pantheon-493602-pantheon-builds/source' }}
           ENV_TAG: ${{ github.event.inputs.env_tag || 'dev-candidate' }}
           SERVICES: ${{ steps.detect.outputs.services }}
         run: |
           gcloud builds submit \
             --project="${GCP_PROJECT_ID}" \
             --config=cloudbuild.yaml \
+            --gcs-source-staging-dir="${GCS_SOURCE_STAGING_DIR}" \
             --substitutions="_ENV_TAG=${ENV_TAG},_SERVICES=${SERVICES}" \
             --timeout=3600s \
             .

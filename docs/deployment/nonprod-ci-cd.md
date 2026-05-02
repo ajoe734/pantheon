@@ -143,9 +143,16 @@ GCP_SERVICE_ACCOUNT
 Optional deploy-specific variable:
 
 ```text
+GCP_BUILD_STAGING_BUCKET
 GCP_DEPLOY_PROJECT_ID
 GCP_DEPLOY_SERVICE_ACCOUNT
 ```
+
+`GCP_BUILD_STAGING_BUCKET` is the Cloud Build source staging path used by
+`gcloud builds submit`; the current value is
+`gs://pantheon-493602-pantheon-builds/source`. If it is absent, the image publish
+workflow defaults to that path instead of the absent legacy
+`gs://pantheon-493602_cloudbuild` bucket.
 
 `GCP_DEPLOY_PROJECT_ID` is the VM project for `gcloud compute ssh`; the current
 VMs live in `pantheon-493602`. If it is absent, the deploy workflow defaults to
@@ -177,6 +184,8 @@ Required permissions depend on the VM SSH posture:
 - Metadata SSH key posture: grant the deploy identity the Compute permissions
   needed by `gcloud compute ssh` to inspect instances and add temporary SSH
   keys.
+- Cloud Build submitter posture: grant `roles/serviceusage.serviceUsageConsumer`
+  and write access to the configured build source staging bucket.
 
 Keep this identity narrower than the runtime service accounts. It should deploy
 VM compose stacks, not read broker secrets from Secret Manager.

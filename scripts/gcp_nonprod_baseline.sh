@@ -289,6 +289,7 @@ info "Step 4/6: grant GitHub -> Cloud Build submit permissions"
 ensure_project_role "serviceAccount:${CLOUD_BUILD_SA}" "roles/cloudbuild.builds.editor"
 ensure_project_role "serviceAccount:${CLOUD_BUILD_SA}" "roles/artifactregistry.writer"
 ensure_project_role "serviceAccount:${CLOUD_BUILD_SA}" "roles/storage.objectAdmin"
+ensure_project_role "serviceAccount:${CLOUD_BUILD_SA}" "roles/serviceusage.serviceUsageConsumer"
 
 run gcloud iam service-accounts add-iam-policy-binding "${CLOUD_BUILD_SA}" \
   --project="${PROJECT_ID}" \
