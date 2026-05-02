@@ -211,8 +211,10 @@ require_clean_checkout() {
 
 git_fetch_origin() {
   if [[ -n "${PANTHEON_GITHUB_TOKEN:-}" ]]; then
+    local github_basic_auth
+    github_basic_auth="$(printf 'x-access-token:%s' "${PANTHEON_GITHUB_TOKEN}" | base64 | tr -d '\n')"
     info "fetch auth: github token present"
-    git -c "http.extraheader=AUTHORIZATION: Bearer ${PANTHEON_GITHUB_TOKEN}" fetch origin "$@"
+    git -c "http.extraheader=AUTHORIZATION: basic ${github_basic_auth}" fetch origin "$@"
   else
     info "fetch auth: no github token"
     git fetch origin "$@"
