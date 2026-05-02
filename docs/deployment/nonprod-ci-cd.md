@@ -184,6 +184,11 @@ Required permissions depend on the VM SSH posture:
 - Metadata SSH key posture: grant the deploy identity the Compute permissions
   needed by `gcloud compute ssh` to inspect instances and add temporary SSH
   keys.
+- Default Compute service account posture: grant the deploy identity
+  `roles/iam.serviceAccountUser` on
+  `41950751674-compute@developer.gserviceaccount.com`, because `gcloud compute
+  ssh` checks access to the service account attached to the VM before adding
+  temporary SSH metadata.
 - Cloud Build submitter posture: grant `roles/serviceusage.serviceUsageConsumer`
   and write access to the configured build source staging bucket.
 
