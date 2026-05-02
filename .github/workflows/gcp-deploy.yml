@@ -1,12 +1,14 @@
 name: Publish images to Artifact Registry
 
-# Triggers after every push to main.
+# Triggers after every push to the default branch.
 # Prerequisite: the Stage 0 CI workflow (stage-0-ci.yml) must also be green;
 # enforce this via a branch-protection rule that requires stage-0-ci to pass
-# before any push reaches main.
+# before any push reaches the default branch.
 on:
   push:
     branches:
+      - backend-dev-publish-20260429
+      - master
       - main
   workflow_dispatch:
     inputs:

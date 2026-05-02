@@ -11,6 +11,9 @@ infer runtime ownership from where VS Code is connected.
 This document is the operating rule for humans and LLM agents working in the
 non-prod environments.
 
+CI/CD automation for these environments is tracked in
+`docs/deployment/nonprod-ci-cd.md`.
+
 ## Current Roles
 
 | Role | VM | Compose project | Use |
