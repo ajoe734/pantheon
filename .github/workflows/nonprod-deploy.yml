@@ -1,0 +1,182 @@
+name: Pantheon Nonprod Deploy
+
+on:
+  workflow_run:
+    workflows:
+      - Publish images to Artifact Registry
+    types:
+      - completed
+    branches:
+      - backend-dev-publish-20260429
+      - master
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Non-prod environment to deploy"
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging-live
+      component:
+        description: "Stack slice to deploy; auto maps to dev/root or staging/all"
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - root
+          - control
+          - exec
+          - all
+      ref:
+        description: "Commit SHA, branch, or tag to deploy. Leave blank for the workflow ref."
+        required: false
+        default: ""
+        type: string
+      allow_dirty:
+        description: "Emergency only: allow dirty remote checkout"
+        required: false
+        default: false
+        type: boolean
+      allow_example_env:
+        description: "Rehearsal only: allow staging to use env/*.env.example"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: pantheon-nonprod-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy-dev-after-publish:
+    name: Auto deploy dev after image publish
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - name: Checkout published commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Validate dev compose contract
+        run: docker compose -f docker-compose.yml config --quiet
+
+      - name: Authenticate to Google Cloud via Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT || vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy dev VM
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          bash scripts/deploy_nonprod_vm.sh \
+            --environment dev \
+            --component root \
+            --sha "${{ github.event.workflow_run.head_sha }}" \
+            --project-id "${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-493602' }}"
+
+      - name: Public dev smoke
+        run: |
+          curl -fsS https://pantheon-dev-bff.35.236.178.81.sslip.io/health
+          curl -sS -D - -o /tmp/dev-cors-body \
+            -X OPTIONS https://pantheon-dev-bff.35.236.178.81.sslip.io/health \
+            -H 'Origin: https://pantheon-ai-system-front-dev.lovable.app' \
+            -H 'Access-Control-Request-Method: GET' \
+            | grep -qi 'access-control-allow-origin: https://pantheon-ai-system-front-dev.lovable.app'
+
+  deploy-manual:
+    name: Manual nonprod deploy
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Checkout requested ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Resolve commit SHA
+        id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Validate target and compose contract
+        run: |
+          case "${{ inputs.environment }}:${{ inputs.component }}" in
+            dev:auto|dev:root)
+              docker compose -f docker-compose.yml config --quiet
+              ;;
+            staging-live:auto|staging-live:control|staging-live:exec|staging-live:all)
+              bash scripts/validate_split_topology.sh
+              ;;
+            *)
+              echo "Invalid deployment target: ${{ inputs.environment }}/${{ inputs.component }}" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Authenticate to Google Cloud via Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT || vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy requested VM stack
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          args=(
+            --environment "${{ inputs.environment }}"
+            --component "${{ inputs.component }}"
+            --sha "${{ steps.sha.outputs.sha }}"
+            --project-id "${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-493602' }}"
+          )
+
+          if [[ "${{ inputs.allow_dirty }}" == "true" ]]; then
+            args+=(--allow-dirty)
+          fi
+
+          if [[ "${{ inputs.allow_example_env }}" == "true" ]]; then
+            args+=(--allow-example-env)
+          fi
+
+          bash scripts/deploy_nonprod_vm.sh "${args[@]}"
+
+      - name: Public BFF smoke
+        run: |
+          case "${{ inputs.environment }}:${{ inputs.component }}" in
+            dev:* )
+              curl -fsS https://pantheon-dev-bff.35.236.178.81.sslip.io/health
+              curl -sS -D - -o /tmp/dev-cors-body \
+                -X OPTIONS https://pantheon-dev-bff.35.236.178.81.sslip.io/health \
+                -H 'Origin: https://pantheon-ai-system-front-dev.lovable.app' \
+                -H 'Access-Control-Request-Method: GET' \
+                | grep -qi 'access-control-allow-origin: https://pantheon-ai-system-front-dev.lovable.app'
+              ;;
+            staging-live:auto|staging-live:control|staging-live:all )
+              curl -fsS https://pantheon-staging-bff.34.81.225.122.sslip.io/health
+              curl -sS -D - -o /tmp/staging-cors-body \
+                -X OPTIONS https://pantheon-staging-bff.34.81.225.122.sslip.io/health \
+                -H 'Origin: https://pantheon-ai-system-front-staging-live.lovable.app' \
+                -H 'Access-Control-Request-Method: GET' \
+                | grep -qi 'access-control-allow-origin: https://pantheon-ai-system-front-staging-live.lovable.app'
+              ;;
+            staging-live:exec )
+              echo "Execution-only deploy has no public BFF smoke."
+              ;;
+          esac

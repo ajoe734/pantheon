@@ -405,7 +405,7 @@ services:
     volumes:
       - broker-data:/data/broker
     ports:
-      - "${BROKER_PORT:-18102}:8102"
+      - "${BROKER_PORT:-18106}:8102"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8102/readyz', timeout=5).read()"]
       interval: 10s

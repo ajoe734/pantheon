@@ -21,6 +21,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 ROOT_JSON="$TMP_DIR/root-compose.json"
 CONTROL_JSON="$TMP_DIR/control-compose.json"
 EXEC_JSON="$TMP_DIR/exec-compose.json"
+STAGING_JSON="$TMP_DIR/staging-full-compose.json"
 
 fail() {
   echo "ERROR: $*" >&2
@@ -91,6 +92,7 @@ forbid_env_key() {
 compose_json "$ROOT_JSON" -f docker-compose.yml
 compose_json "$CONTROL_JSON" --env-file env/prod-control.env.example -f docker-compose.control.yml
 compose_json "$EXEC_JSON" --env-file env/prod-exec.env.example -f docker-compose.exec.yml
+compose_json "$STAGING_JSON" --env-file env/prod-control.env.example -f docker-compose.control.yml -f docker-compose.staging-full.yml
 
 grep -q "topology: dev-single-vm-baseline" docker-compose.yml \
   || fail "docker-compose.yml must be labelled as dev-single-vm-baseline"
@@ -103,12 +105,20 @@ for service in operator-bff telemetry governance deployment incidents postmortem
   require_service "$CONTROL_JSON" "$service"
 done
 
+for service in consultation-svc source-ingest search-svc training-session-svc policy-learning-svc research-orchestrator-svc research-worker-gateway-svc openclaw-gateway-adapter router web-channel reconciliation-drift-svc; do
+  require_service "$STAGING_JSON" "$service"
+done
+
 for service in runtime-manager broker-adapter exchange-adapter pantheon-paper-runtime signal-store; do
   require_service "$EXEC_JSON" "$service"
 done
 
-for service in runtime-manager broker-adapter exchange-adapter pantheon-paper-runtime pantheon-lean-live signal-store router; do
+for service in runtime-manager broker broker-adapter exchange-adapter pantheon-paper-runtime pantheon-lean-live signal-store router; do
   forbid_service "$CONTROL_JSON" "$service"
+done
+
+for service in runtime-manager broker broker-adapter exchange-adapter pantheon-paper-runtime pantheon-lean-live signal-store; do
+  forbid_service "$STAGING_JSON" "$service"
 done
 
 for service in operator-bff persona registry promotion lineage-read governance telemetry incidents postmortems capital evolution evaluation feedback memory optimizer-svc deployment; do
@@ -117,6 +127,7 @@ done
 
 for key in BROKER_API_KEY BROKER_API_SECRET EXCHANGE_API_KEY EXCHANGE_API_SECRET SHIOAJI_API_KEY SHIOAJI_SECRET_KEY KRAKEN_API_KEY KRAKEN_API_SECRET TEJ_API_KEY; do
   forbid_env_key "$CONTROL_JSON" "$key"
+  forbid_env_key "$STAGING_JSON" "$key"
 done
 
 require_env "$CONTROL_JSON" operator-bff PANTHEON_ENV staging-live
@@ -130,6 +141,18 @@ require_env "$CONTROL_JSON" operator-bff PANTHEON_GOVERNANCE_APPROVAL_API_URL ht
 require_env "$CONTROL_JSON" operator-bff PANTHEON_DEPLOYMENT_API_URL http://deployment:8095
 require_env "$CONTROL_JSON" telemetry PANTHEON_RUNTIME_MANAGER_URL http://10.140.0.5:28081
 require_env_nonempty "$CONTROL_JSON" telemetry PANTHEON_RUNTIME_MANAGER_TOKEN
+
+require_env "$STAGING_JSON" operator-bff PANTHEON_ENV staging-live
+require_env "$STAGING_JSON" operator-bff PANTHEON_LIVE_BROKER_ENABLED true
+require_env "$STAGING_JSON" operator-bff PANTHEON_INTERNAL_API_URL http://10.140.0.5:28081
+require_env "$STAGING_JSON" operator-bff PANTHEON_RUNTIME_MANAGER_URL http://10.140.0.5:28081
+require_env "$STAGING_JSON" operator-bff PANTHEON_CONSULTATION_API_URL http://consultation-svc:8096
+require_env "$STAGING_JSON" operator-bff PANTHEON_RESEARCH_ORCHESTRATOR_API_URL http://research-orchestrator-svc:8101
+require_env "$STAGING_JSON" operator-bff PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL http://openclaw-gateway-adapter:8104
+require_env "$STAGING_JSON" telemetry PANTHEON_RUNTIME_MANAGER_URL http://10.140.0.5:28081
+require_env "$STAGING_JSON" reconciliation-drift-svc PANTHEON_RUNTIME_MANAGER_URL http://10.140.0.5:28081
+require_env "$STAGING_JSON" openclaw-gateway-adapter OPENCLAW_RUNTIME_MANAGER_URL http://10.140.0.5:28081
+require_env "$STAGING_JSON" openclaw-gateway-adapter OPENCLAW_BROKER_SIDECAR_URL ""
 
 require_env "$EXEC_JSON" runtime-manager PANTHEON_SINGLE_RUNTIME_ENFORCED true
 require_env "$EXEC_JSON" broker-adapter PANTHEON_RUNTIME_MANAGER_URL http://runtime-manager:8081
