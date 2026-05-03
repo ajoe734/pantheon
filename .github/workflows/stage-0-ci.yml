@@ -6,11 +6,6 @@ on:
       - backend-dev-publish-20260429
       - master
       - main
-  push:
-    branches:
-      - backend-dev-publish-20260429
-      - master
-      - main
   workflow_dispatch:
 
 permissions:
