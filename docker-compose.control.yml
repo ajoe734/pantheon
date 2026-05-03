@@ -582,6 +582,49 @@ services:
       retries: 10
       start_period: 5s
 
+  reconciliation-drift-svc:
+    build:
+      context: .
+      dockerfile: services/reconciliation-drift/Dockerfile
+    environment:
+      PORT: "8102"
+      RECONCILIATION_DRIFT_DATA_DIR: /data/reconciliation-drift
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
+      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
+      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
+      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
+      # Dev rollback defaults to JSON; staging/prod select postgres via env.
+      RECONCILIATION_DRIFT_STORE_BACKEND: ${RECONCILIATION_DRIFT_STORE_BACKEND:-json}
+      RECONCILIATION_DRIFT_STORE_DSN: ${RECONCILIATION_DRIFT_STORE_DSN:-}
+      PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
+      PANTHEON_LINEAGE_READ_URL: http://lineage-read:8094
+      PANTHEON_EVOLUTION_API_URL: http://evolution:8093
+      # VM-2 runtime-manager reached via external URL; not co-located on VM-1.
+      PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-}
+    volumes:
+      - reconciliation-drift-data:/data/reconciliation-drift
+    depends_on:
+      telemetry:
+        condition: service_healthy
+      lineage-read:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${RECONCILIATION_DRIFT_PORT:-38106}:8102"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8102'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
 volumes:
   bff-data:
   capital-data:
@@ -593,5 +636,6 @@ volumes:
   nats-data:
   postgres-data:
   promotion-data:
+  reconciliation-drift-data:
   runtime-data:
   telemetry-data:

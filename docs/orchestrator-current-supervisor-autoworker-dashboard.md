@@ -2,6 +2,22 @@
 
 Status date: 2026-04-28
 
+## 2026-05-03 Local Runtime Addendum
+
+The local `/home/lupin/code/pantheon` supervisor is temporarily running with an
+execution-only guard while blueprint execution tasks drain. The guard lives in
+`.orchestrator/config.local.json` and sets `coordination.enabled=false`,
+`github_bus.enabled=false`, and `chair_review.enabled=false`.
+
+This is not a permanent architecture change. It prevents the old coordination
+queue backup from being re-enqueued while the execution board is active. The
+runbook is `docs/operations/orchestrator-execution-queue-isolation.md`.
+
+Auto-worker readiness is tracked separately from queue isolation. See
+`docs/operations/auto-worker-readiness.md` for the current provider matrix and
+`docs/operations/orchestrator-coordination-replay-policy.md` for the safe replay
+policy for the isolated coordination queue.
+
 This document records the current local orchestrator architecture before the
 planned supervisor redesign. It is a baseline for the existing
 `supervisor + auto worker + dashboard` system.

@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-02T12:15:09Z",
+  "updated_at": "2026-05-03T13:46:09Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,11 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "working",
+      "current_task_ids": [
+        "SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3"
+      ],
       "branch": "feat/claude-execution-control",
-      "next": "",
-      "last_update": "2026-05-01T17:35:39Z"
+      "next": "Added reconciliation-drift-svc to docker-compose.control.yml (was missing from VM-1 control slice); created docs/operations/postgres-cutoff-wave3-runbook.md with verification commands, env vars, schema bootstrap and rollback notes; all 8 focused store tests pass (test_control_plane_postgres_owner_stores + test_persistence_posture)",
+      "last_update": "2026-05-03T13:46:09Z"
     },
     {
       "name": "Gemini",
@@ -111,7 +113,7 @@
       "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
       "next": "",
-      "last_update": "2026-05-01T15:44:53Z"
+      "last_update": "2026-05-03T12:44:35Z"
     },
     {
       "name": "Codex",
@@ -121,11 +123,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "finalize",
+      "current_task_ids": [
+        "ORCH-EXECUTION-QUEUE-ISOLATION-CLOSEOUT"
+      ],
       "branch": "feat/codex-collab-system",
-      "next": "",
-      "last_update": "2026-05-02T12:12:46Z"
+      "next": "Ownership updated",
+      "last_update": "2026-05-03T13:44:47Z"
     },
     {
       "name": "Codex2",
@@ -139,7 +143,7 @@
       "current_task_ids": [],
       "branch": "feat/codex-collab-system",
       "next": "",
-      "last_update": "2026-05-01T18:56:40Z"
+      "last_update": "2026-05-03T13:15:01Z"
     },
     {
       "name": "Copilot",
@@ -162,13 +166,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
-      "current_task_ids": [
-        "P2-RL-UPSTREAM-RUNTIME-SMOKE-001"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude2-execution-control",
-      "next": "Addressed all three Codex2 review items: (1) adapter schema/checksum files included in commit, (2) evaluator_packet written inside _persist_artifacts before checksum computation so per-framework manifest now carries evaluator_packet checksum, (3) OSS_INTEGRATION_CHECKLIST.md changed from 'task closed' to 'evidence produced'. Tests: finrl 16 OK, rllib 33 OK. Evidence regenerated. Committing now.",
-      "last_update": "2026-05-01T17:44:51Z"
+      "next": "",
+      "last_update": "2026-05-02T12:54:58Z"
     },
     {
       "name": "Gemini2",
@@ -182,70 +184,325 @@
       "current_task_ids": [],
       "branch": "feat/gemini2-research-runtime",
       "next": "",
-      "last_update": "2026-05-02T11:35:40Z"
+      "last_update": "2026-05-02T13:21:44Z"
     }
   ],
   "tasks": [
     {
-      "id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
-      "title": "FinRL RLlib Ray Tune governed runtime activation smoke",
-      "summary_zh": "把 FinRL/RLlib/Ray Tune 從 dormant/deferred prep 推進到 governed runtime smoke：真實 backend 可用時跑 bounded train/search，否則留下明確 dependency/config error；仍禁止 broker/order/live 路由。",
-      "phase": "P2 Wave 8 External Activation",
-      "owner": "Claude2",
-      "reviewer": "Codex2",
+      "id": "SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3",
+      "title": "Move remaining production owner stores off JSONL baseline",
+      "summary_zh": "把剩餘 control/data-plane owner store 從 JSON/JSONL baseline 推到 staging/prod Postgres ownership cutoff；dev 可以保留 JSONL rollback，但 staging/prod 必須 fail closed 或要求 Postgres backend。",
+      "phase": "Blueprint gap execution wave 2026-05-03",
+      "owner": "Claude",
+      "reviewer": "Codex",
       "status": "in_progress",
       "depends_on": [
-        "P2-OSS-ACTIVATE-001"
+        "SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT"
       ],
       "artifacts": [
-        "services/research/finrl",
-        "services/research/rllib",
-        "services/learning/rl",
-        "services/research-worker-gateway",
-        "services/evaluation",
-        "OSS_INTEGRATION_CHECKLIST.md",
-        "docs/deployment/external-data-integration-execution-task-inventory.md"
+        "DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md",
+        "docker-compose.yml",
+        "docker-compose.control.yml",
+        "services",
+        "env/prod-control.env.example"
       ],
       "acceptance": [
-        "FinRL RLlib and Ray Tune enabled paths run bounded governed train/search smoke or produce explicit upstream dependency/config evidence",
-        "Reward environment dataset and artifact schemas are enforced with persisted checksums and evaluator packet",
-        "Outputs remain research artifacts only with no broker session order routing paper canary live promotion or capital binding"
+        "staging/prod env 不會靜默使用 JSON/JSONL owner store；owner table 與 migration/runbook 更新；focused store tests 通過"
       ],
-      "next": "Addressed all three Codex2 review items: (1) adapter schema/checksum files included in commit, (2) evaluator_packet written inside _persist_artifacts before checksum computation so per-framework manifest now carries evaluator_packet checksum, (3) OSS_INTEGRATION_CHECKLIST.md changed from 'task closed' to 'evidence produced'. Tests: finrl 16 OK, rllib 33 OK. Evidence regenerated. Committing now.",
-      "last_update": "2026-05-01T17:44:51Z",
-      "task_class": "execution",
-      "mutates_canonical": true
+      "next": "Added reconciliation-drift-svc to docker-compose.control.yml (was missing from VM-1 control slice); created docs/operations/postgres-cutoff-wave3-runbook.md with verification commands, env vars, schema bootstrap and rollback notes; all 8 focused store tests pass (test_control_plane_postgres_owner_stores + test_persistence_posture)",
+      "last_update": "2026-05-03T13:46:09Z"
     },
     {
-      "id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001",
-      "title": "Source/search live connector credentialed smoke",
-      "summary_zh": "對 source/search 非下單外部資料源做 bounded live/test credential smoke：news/social/alpha DB 或 allowlisted HTTP/feed connector -> SourceRecord/EvidenceBundle -> durable index -> BFF/SearchGateway query；禁止 broker/Lean/order 路由。",
-      "phase": "P2 Wave 8 External Activation",
-      "owner": "Claude2",
-      "reviewer": "Codex2",
+      "id": "SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4",
+      "title": "Cut BFF staging/prod reads over to service-backed clients",
+      "summary_zh": "BFF 在 staging/prod 不再靠 local JSON snapshot 或 cross-service volume 讀資料；改用 service-backed HTTP read client 或明確 degraded response。dev snapshot fallback 必須顯式 env-gated。",
+      "phase": "Blueprint gap execution wave 2026-05-03",
+      "owner": "Codex",
+      "reviewer": "Claude",
       "status": "todo",
       "depends_on": [
-        "P1-SOURCE-001",
-        "P1-SEARCH-001",
-        "P2-OSS-ACTIVATE-001"
+        "SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT"
+      ],
+      "artifacts": [
+        "services/control-plane/bff/read_store.py",
+        "services/control-plane/bff/main.py",
+        "docker-compose.yml",
+        "docker-compose.control.yml",
+        "services/control-plane/bff/tests"
+      ],
+      "acceptance": [
+        "staging/prod BFF 不能靜默讀本地 snapshot；downstream unavailable 回傳明確 degraded 狀態；BFF tests 覆蓋 dev fallback 與 prod cutoff"
+      ],
+      "next": "Ownership updated",
+      "last_update": "2026-05-03T13:00:17Z"
+    },
+    {
+      "id": "SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF",
+      "title": "Replace frontend demo auth and demo islands with BFF-backed staging paths",
+      "summary_zh": "front-ai-trading-system 移除或 dev-gate demo AuthProvider、demo token、@/demo dashboard islands；staging/prod UI 走 Pantheon BFF/OIDC/JWT-compatible contract。",
+      "phase": "Blueprint gap execution wave 2026-05-03",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4"
+      ],
+      "artifacts": [
+        "/home/lupin/code/front-ai-trading-system/src/auth",
+        "/home/lupin/code/front-ai-trading-system/src/pages",
+        "/home/lupin/code/front-ai-trading-system/src/lib"
+      ],
+      "acceptance": [
+        "staging/prod build 不含 demo quick-login production path；production routes 不直接 import @/demo；frontend build/lint 通過並有 BFF auth 設定文件"
+      ],
+      "next": "Ownership updated",
+      "last_update": "2026-05-03T13:00:20Z"
+    },
+    {
+      "id": "SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE",
+      "title": "Finalize health readiness probe standard across active services",
+      "summary_zh": "統一 active/default/control/exec services 的 /healthz /livez /readyz 與 compose healthcheck；保留舊 /health 或 /__health__ 只作 compatibility，不作 staging contract。",
+      "phase": "Blueprint gap execution wave 2026-05-03",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT"
+      ],
+      "artifacts": [
+        "services",
+        "docker-compose.yml",
+        "docker-compose.control.yml",
+        "docker-compose.exec.yml",
+        "services/foundation/health.py"
+      ],
+      "acceptance": [
+        "control/exec compose healthcheck 使用 readiness contract；active services 提供 /healthz /livez /readyz；compose config 與 health tests 通過"
+      ],
+      "next": "Ownership updated",
+      "last_update": "2026-05-03T13:00:24Z"
+    },
+    {
+      "id": "SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE",
+      "title": "Complete OSS research learning pre-activation integration without enabling gates",
+      "summary_zh": "把 research、policy-learning、research-worker-gateway、Qlib/TRL/RL/W&B dormant scaffolds 做到 activation-ready：interface、schema、offline smoke、BFF read-only aggregation 與 fail-closed adapter 串接完成，但 gate 仍關閉。",
+      "phase": "Blueprint gap execution wave 2026-05-03",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4",
+        "SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE"
+      ],
+      "artifacts": [
+        "services/research",
+        "services/policy-learning",
+        "services/research-worker-gateway",
+        "services/control-plane/bff",
+        "DEFERRED_OSS_ACTIVATION_MAP.md",
+        "RESEARCH_BACKEND_MATURITY_MATRIX.md"
+      ],
+      "acceptance": [
+        "offline smoke 可跑；BFF 可 read-only 顯示 pre-activation capability/status；缺 gate 或 production secret 時所有 activation path fail closed；不得啟用 Qlib/TRL/RL/W&B online 或 paper/canary/live"
+      ],
+      "next": "Ownership updated",
+      "last_update": "2026-05-03T13:00:28Z"
+    },
+    {
+      "id": "SVC-BLUEPRINT-OPENCLAW-READY-FACADE",
+      "title": "Make OpenClaw adapter activation-ready while live broker remains gated",
+      "summary_zh": "OpenClaw adapter/facade 補齊 runtime adoption scaffold、schema、health/readiness、offline smoke、BFF status surface；live broker、paper adapter、session creation 仍是 gate closed/deferred。",
+      "phase": "Blueprint gap execution wave 2026-05-03",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE"
+      ],
+      "artifacts": [
+        "services/openclaw-gateway-adapter",
+        "services/control-plane/bff",
+        "docker-compose.yml",
+        "OPENCLAW_RUNTIME_CONTRACT.md"
+      ],
+      "acceptance": [
+        "adapter 可在無 live broker 下提供 deterministic degraded/status；BFF 可顯示 capability 與 gate reason；live/paper/canary execution path fail closed；tests 覆蓋 gated posture"
+      ],
+      "next": "Ownership updated",
+      "last_update": "2026-05-03T13:00:32Z"
+    },
+    {
+      "id": "SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER",
+      "title": "Upgrade source/search into bounded autonomous connector and indexer platform",
+      "summary_zh": "source-ingest/search 從 bounded baseline 推進到合理完整功能：connector registry、bounded scheduled ingest、fetch evidence、DLQ/replay、materialized index refresh、freshness/retention visibility。不是無限制 crawler。",
+      "phase": "Blueprint gap execution wave 2026-05-03",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3",
+        "SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4"
       ],
       "artifacts": [
         "services/source_ingestion",
         "services/search",
         "services/control-plane/bff",
-        "services/openclaw-gateway-adapter",
-        "docs/deployment/source-search-prod-hardening.md",
-        "docs/deployment/external-data-integration-materialization-audit.md"
+        "docker-compose.yml",
+        "docs/03/SD-03_source_knowledge_evidence.md"
       ],
       "acceptance": [
-        "Bounded live/test connector smoke ingests at least one governed external source through SourceRecord and EvidenceBundle with entitlement license PIT and available_time preserved",
-        "Search index and BFF/SearchGateway readback prove durable citation/evidence refs without caller-supplied document normal path",
-        "No connector can route directly to Lean broker order-capable execution paper/canary/live deployment or capital binding"
+        "configured connector schedule/run/freshness 透過 API/BFF 可見；durable index refresh 可重跑且有 evidence；request-document compatibility 不再是 staging normal path；tests 通過"
       ],
-      "next": "Chair reassigned owner from Claude to Claude2: Claude is occupied in finalize mode; Claude2 is idle with matching capability lane. All three dependencies (P1-SOURCE-001, P1-SEARCH-001, P2-OSS-ACTIVATE-001) are done; task is immediately runnable.. Task returned to todo for a fresh run.",
-      "last_update": "2026-05-01T17:41:29Z",
-      "task_class": "execution",
-      "mutates_canonical": true
+      "next": "Ownership updated",
+      "last_update": "2026-05-03T13:00:36Z"
+    },
+    {
+      "id": "SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD",
+      "title": "Complete pantheon-lean runtime kernel scaffold without live activation",
+      "summary_zh": "以 pantheon/lean / pantheon-lean 為正式 execution bridge，補完整 activation-ready Launcher/runtime bridge scaffold：DeploymentPlan、RuntimeBinding、artifact context、TelemetryEvent、safe runtime actions。paper smoke 可用；canary/live gate closed。",
+      "phase": "Blueprint gap execution wave 2026-05-03",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT",
+        "SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE"
+      ],
+      "artifacts": [
+        "services/execution",
+        "services/runtime-manager",
+        "lean",
+        "docker-compose.exec.yml",
+        "docs/04/pantheon_p0_sd"
+      ],
+      "acceptance": [
+        "runtime context 可到 pantheon-lean bridge；paper smoke 產生 heartbeat/order/fill/position 類 canonical evidence；canary/live 缺 gate 時 fail closed；不得 target lean-platform"
+      ],
+      "next": "Ownership updated",
+      "last_update": "2026-05-03T13:00:39Z"
+    },
+    {
+      "id": "SVC-BLUEPRINT-PAPER-BRACKET-BASELINE",
+      "title": "Implement deterministic paper bracket order semantics under fail-closed live guards",
+      "summary_zh": "把 stop-loss/take-profit bracket order 在 paper/sim baseline 補成 deterministic semantics 與 telemetry evidence；live path 不啟用且必須經 guard 拒絕。",
+      "phase": "Blueprint gap execution wave 2026-05-03",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD"
+      ],
+      "artifacts": [
+        "services/execution",
+        "services/runtime-manager",
+        "lean",
+        "tests"
+      ],
+      "acceptance": [
+        "paper/sim bracket order 產出可驗證 order events；risk guard 覆蓋 invalid bracket；live/canary adapter 未啟用時 fail closed；focused tests 通過"
+      ],
+      "next": "Ownership updated",
+      "last_update": "2026-05-03T13:00:43Z"
+    },
+    {
+      "id": "SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS",
+      "title": "Add operator fallback drills while BFF HA remains deferred",
+      "summary_zh": "BFF HA/LB 先 defer，但要補 operator fallback drill：BFF down 時透過 CLI/internal API/kill-switch 完成 emergency pause/liquidate/replace 類安全動作與 audit evidence。",
+      "phase": "Blueprint gap execution wave 2026-05-03",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT",
+        "SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD"
+      ],
+      "artifacts": [
+        "OPERATOR_ACCEPTANCE_MATRIX.md",
+        "docs/deployment",
+        "services/runtime-manager",
+        "scripts"
+      ],
+      "acceptance": [
+        "有 BFF-down drill runbook 與 smoke；emergency action path 不依賴 frontend；audit evidence 可查；不引入 BFF replicas/LB production HA"
+      ],
+      "next": "Ownership updated",
+      "last_update": "2026-05-03T13:00:47Z"
+    },
+    {
+      "id": "ORCH-EXECUTION-QUEUE-ISOLATION-CLOSEOUT",
+      "title": "Close out execution-only queue isolation",
+      "summary_zh": "把 2026-05-03 為了 blueprint execution 而做的 runtime queue 隔離正式收斂：記錄備份檔、隔離理由、local config guard、恢復程序與驗證方式，避免之後誤以為 coordination/GitHub bus 是永久停用。",
+      "phase": "Orchestrator runtime cleanup 2026-05-03",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "review_approved",
+      "depends_on": [],
+      "artifacts": [
+        ".orchestrator/config.local.json",
+        ".orchestrator/backups/event-queue.pre-blueprint-execution-20260503T130840Z.jsonl",
+        ".orchestrator/event-queue.jsonl",
+        "docs/operations/orchestrator-execution-queue-isolation.md"
+      ],
+      "acceptance": [
+        "docs/runbook 明確列出 .orchestrator/backups/event-queue.pre-blueprint-execution-20260503T130840Z.jsonl 與 active event-queue 差異",
+        "local config execution-only guard 有清楚 revert 步驟",
+        "supervisor/dashboard 能看出這次只跑 execution board",
+        "不會重新灌入 113 個舊 coordination dispatch"
+      ],
+      "next": "Ownership updated",
+      "last_update": "2026-05-03T13:44:47Z",
+      "review_notes_zh": [
+        "審查通過：文件正確記錄 queue diff（active 2 行 vs backup 115 行）、config.local.json 三個 false override、restore 程序、dashboard evidence 與 no-bulk-reimport 規則；所有驗證指令與實際 artifact 吻合。",
+        "後續：Codex 請依 closeout checklist 建立 task-scoped commit 後執行 done。"
+      ]
+    },
+    {
+      "id": "ORCH-COORDINATION-QUEUE-TRIAGE-REPLAY-POLICY",
+      "title": "Triage isolated coordination queue before replay",
+      "summary_zh": "盤點被隔離的舊 coordination dispatch，不直接丟回 active queue；先分類為已完成/過期/仍需 replay，建立安全 replay policy 與 dry-run 檢查，避免舊 front-sync/runtime-worker 事件再次淹沒 blueprint execution。",
+      "phase": "Orchestrator runtime cleanup 2026-05-03",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        ".orchestrator/backups/event-queue.pre-blueprint-execution-20260503T130840Z.jsonl",
+        ".coordination/requests",
+        ".orchestrator/event-queue.jsonl",
+        "docs/operations/orchestrator-coordination-replay-policy.md"
+      ],
+      "acceptance": [
+        "能列出 backup queue 中 coordination events 的分類摘要",
+        "有 dry-run replay 指令或腳本",
+        "只會 replay 仍有效且未 terminal 的事件",
+        "active execution queue 不被舊事件覆蓋"
+      ],
+      "next": "Ownership updated",
+      "last_update": "2026-05-03T13:45:10Z"
+    },
+    {
+      "id": "ORCH-AUTOWORKER-READINESS-RECOVERY",
+      "title": "Recover and document auto worker readiness",
+      "summary_zh": "修復 Gemini/Gemini2/Copilot/Claude2 不能當 auto worker 的 readiness gap：補 auth/profile 檢查、文件化必要登入/credential migration，並讓 doctor/dashboard 明確呈現可自動派工與不可派工原因。",
+      "phase": "Orchestrator runtime cleanup 2026-05-03",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        ".orchestrator/doctor.py",
+        ".orchestrator/config.local.json",
+        ".orchestrator/config.json",
+        "docs/operations/auto-worker-readiness.md"
+      ],
+      "acceptance": [
+        "doctor 能清楚顯示 Claude/Codex/Codex2/Gemini/Gemini2/Copilot/Claude2 的 auto-ready 狀態與阻塞原因",
+        "補齊不需密碼外洩的 setup/runbook",
+        "未 ready provider 不會被 supervisor 主線任務誤派",
+        "ready provider 可重新進入 fallback list"
+      ],
+      "next": "Ownership updated",
+      "last_update": "2026-05-03T13:45:30Z"
     }
   ],
   "handoffs": [
@@ -259,57 +516,38 @@
       "resolved_at": "2026-04-17T12:39:53Z"
     },
     {
-      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
-      "from": "Copilot",
+      "task_id": "SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3",
+      "from": "Gemini",
       "to": "Codex",
-      "message": "Auto-reassigned P2-RL-UPSTREAM-RUNTIME-SMOKE-001 away from sidecar-only lane Copilot; owner Copilot -> Codex. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "message": "Auto-reassigned SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3 away from sidecar-only lane Gemini; reviewer Gemini -> Codex. Reserved sidecar-only agents no longer hold mainline tasks.",
       "status": "done",
-      "created_at": "2026-05-01T15:42:34Z",
-      "resolved_at": "2026-05-01T16:18:55Z"
+      "created_at": "2026-05-03T12:56:13Z",
+      "resolved_at": "2026-05-03T13:37:55Z"
     },
     {
-      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
-      "from": "Claude",
+      "task_id": "SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF",
+      "from": "Copilot",
       "to": "Codex2",
-      "message": "Implementation ready for review: created activation_smoke.py for FinRL, RLlib, and Ray Tune; all three ran with --enable-activation-ready --backend real and recorded explicit dependency/config errors (ModuleNotFoundError: finrl / ray) with silent_stub_fallback=false; stub-backed handoff artifacts (artifact_bundle, registry_entry, candidate_packet, evaluator_packet) produced and persisted at support/evidence/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/; all acceptance gates pass (bounded smoke or explicit error, checksums, evaluator packet, no broker/order/promotion/capital); OSS_INTEGRATION_CHECKLIST.md updated: FinRL/RLlib/Ray Tune smoke-tested; tests: finrl 16 passed, rllib 33 passed; commit: 2a6a705",
-      "status": "done",
-      "created_at": "2026-05-01T16:55:37Z",
-      "resolved_at": "2026-05-01T17:08:59Z"
-    },
-    {
-      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Changes requested by Codex2: support/reviews/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-codex2-review.md. Main blocker: schema/checksum adapter support behind the evidence is still uncommitted and absent from task commit 2a6a705; also fix per-framework evaluator_packet checksum omission and remove premature 'closed' wording from OSS_INTEGRATION_CHECKLIST.md before re-handoff.",
-      "status": "done",
-      "created_at": "2026-05-01T17:08:59Z",
-      "resolved_at": "2026-05-01T17:08:59Z"
-    },
-    {
-      "task_id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex2 is dispatch-paused.",
-      "status": "done",
-      "created_at": "2026-05-01T17:35:16Z",
-      "resolved_at": "2026-05-01T17:41:29Z"
-    },
-    {
-      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
-      "from": "Claude",
-      "to": "Claude2",
-      "message": "Chair reassigned owner from Claude to Claude2: Claude is occupied in finalize mode for P2-MARKETDATA-CREDENTIAL-SMOKE-001; Claude2 is idle and shares the same capability lane (execution, control-plane, governance-review). Dependency P2-OSS-ACTIVATE-001 is done; task is immediately runnable.. Task returned to todo for a fresh run.",
-      "status": "done",
-      "created_at": "2026-05-01T17:41:18Z",
-      "resolved_at": "2026-05-01T17:41:41Z"
-    },
-    {
-      "task_id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001",
-      "from": "Claude",
-      "to": "Claude2",
-      "message": "Chair reassigned owner from Claude to Claude2: Claude is occupied in finalize mode; Claude2 is idle with matching capability lane. All three dependencies (P1-SOURCE-001, P1-SEARCH-001, P2-OSS-ACTIVATE-001) are done; task is immediately runnable.. Task returned to todo for a fresh run.",
+      "message": "Auto-reassigned SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF away from sidecar-only lane Copilot; owner Copilot -> Codex2. Reserved sidecar-only agents no longer hold mainline tasks.",
       "status": "pending",
-      "created_at": "2026-05-01T17:41:29Z"
+      "created_at": "2026-05-03T12:56:17Z"
+    },
+    {
+      "task_id": "ORCH-EXECUTION-QUEUE-ISOLATION-CLOSEOUT",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: added docs/operations/orchestrator-execution-queue-isolation.md documenting backup vs active event queue diff, local coordination/github_bus/chair_review guard, restore procedure, dashboard evidence, and no-bulk-reimport rule. Verified: wc queue counts; jq active/backup reason counts; jq active event TSV; config.local parsed through common.load_json; docs-site dashboard runtime_summary.mode_occupancy; git diff --check for the new doc.",
+      "status": "done",
+      "created_at": "2026-05-03T13:31:44Z",
+      "resolved_at": "2026-05-03T13:34:03Z"
+    },
+    {
+      "task_id": "ORCH-EXECUTION-QUEUE-ISOLATION-CLOSEOUT",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: docs/operations/orchestrator-execution-queue-isolation.md correctly documents queue isolation scope, diff counts (active 2 vs backup 115), config.local.json guards, restore procedure, dashboard evidence, and no-bulk-reimport rule. All verification commands match actual artifacts. Return to Codex for finalization.",
+      "status": "pending",
+      "created_at": "2026-05-03T13:34:03Z"
     }
   ],
   "blockers": [],
@@ -324,6 +562,15 @@
   },
   "workload_summary": {
     "Claude": {
+      "total": 5,
+      "active": 1,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 5
+    },
+    "Claude2": {
       "total": 0,
       "active": 0,
       "blocked": 0,
@@ -331,15 +578,6 @@
       "review": 0,
       "review_approved": 0,
       "todo": 0
-    },
-    "Claude2": {
-      "total": 2,
-      "active": 1,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 2
     },
     "Gemini": {
       "total": 0,
@@ -360,13 +598,13 @@
       "todo": 0
     },
     "Codex": {
-      "total": 0,
+      "total": 8,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 0,
-      "todo": 0
+      "review_approved": 1,
+      "todo": 7
     },
     "Codex2": {
       "total": 0,
