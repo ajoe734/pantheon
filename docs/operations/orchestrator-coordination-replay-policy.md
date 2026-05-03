@@ -30,7 +30,7 @@ Observed on 2026-05-03:
 
 ```text
 Backup events: 115
-Active events: 2
+Active events: 0
 Replay candidates: 0
 ```
 

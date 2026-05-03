@@ -41,28 +41,26 @@ wc -l .orchestrator/event-queue.jsonl \
   .orchestrator/backups/event-queue.pre-blueprint-execution-20260503T130840Z.jsonl
 ```
 
-Observed during closeout on 2026-05-03:
+Observed after manual closeout on 2026-05-03:
 
 ```text
-2   .orchestrator/event-queue.jsonl
+0   .orchestrator/event-queue.jsonl
 115 .orchestrator/backups/event-queue.pre-blueprint-execution-20260503T130840Z.jsonl
 ```
 
 Active queue reasons:
 
 ```text
-1 owned_ready_dispatch
-1 owned_finalize_dispatch
+<empty>
 ```
 
 Active queue events are allowed to change while the execution board drains.
 The invariant is that the active queue contains no `coordination:*` or
-`chair_review:*` events while the execution-only guard is active. One observed
-snapshot during manual closeout was:
+`chair_review:*` events while the execution-only guard is active. After this
+manual closeout, the active queue was intentionally empty:
 
 ```text
-2026-05-03T13:37:55Z evt-20260503T133755Z-2cedcc3a SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3 claude owned_ready_dispatch
-2026-05-03T13:37:55Z evt-20260503T133755Z-613aef22 ORCH-EXECUTION-QUEUE-ISOLATION-CLOSEOUT codex owned_finalize_dispatch
+0 active queue events
 ```
 
 Backup queue reasons:
@@ -111,9 +109,10 @@ Runtime effects:
 ## Dashboard Evidence
 
 `docs-site/dashboard-bundle.json` can be used to verify the isolated runtime.
-During closeout it showed `focus_mode=execution`, zero live coordination
-occupancy, and no active coordination queue reasons. The exact number of
-running execution workers changes as the board drains.
+During closeout it showed zero live coordination occupancy and no active
+coordination queue reasons. The exact number of running execution workers
+changes as the board drains; after manual cleanup the runtime state was set to
+idle with an empty active queue.
 
 ```json
 jq '{focus_mode, runtime_summary: {queue_depth: .runtime_summary.queue_depth, running_workers: .runtime_summary.running_workers, mode_occupancy: .runtime_summary.mode_occupancy}}' docs-site/dashboard-bundle.json
