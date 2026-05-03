@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-03 21:52:46
+Last updated: 2026-05-03 22:23:42
 
 ## Objective
 
@@ -37,7 +37,7 @@ Last updated: 2026-05-03 21:52:46
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Implementation complete. Gaps fixed: (1) reconciliation-drift-svc added to docker-compose.control.yml — was missing from the VM-1 control-plane slice; adapts runtime-manager dependency to PANTHEON_RUNTIME_MANAGER_URL env var; adds reconciliation-drift-data volume. (2) docs/operations/postgres-cutoff-wave3-runbook.md created with env var table, fail-closed guarantee verification, schema bootstrap steps, dev rollback procedure, compose topology notes, and verification commands. All existing implementations (governance, capital, incidents, postmortems, promotion, memory + reconciliation-drift) already had postgres backends with require_persistence_posture() fail-closed enforcement. Focused tests: 8 passed (test_control_plane_postgres_owner_stores + test_persistence_posture). Commit: b2c4de8
+- `Claude`: execution, control-plane, governance-review; next: Review approved by Codex. Focused store/posture tests passed (8), control compose config passed with and without prod-control env file, and review artifact recorded at .orchestrator/reviews/SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3-review-codex.md. Owner should perform task closeout finalization.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 - `Codex`: integration, status-system, schema, acceptance; next: Ownership updated
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
@@ -51,7 +51,7 @@ Last updated: 2026-05-03 21:52:46
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3` | Blueprint gap execution wave 2026-05-03 | Move remaining production owner stores off JSONL baseline | Claude | review | `SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT` | 把剩餘 control/data-plane owner store 從 JSON/JSONL baseline 推到 staging/prod Postgres ownership cutoff；dev 可以保留 JSONL rollback，但 staging/prod 必須 fail closed 或要求 Postgres backend。 |
+| `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3` | Blueprint gap execution wave 2026-05-03 | Move remaining production owner stores off JSONL baseline | Claude | review_approved | `SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT` | 把剩餘 control/data-plane owner store 從 JSON/JSONL baseline 推到 staging/prod Postgres ownership cutoff；dev 可以保留 JSONL rollback，但 staging/prod 必須 fail closed 或要求 Postgres backend。 |
 | `SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF` | Blueprint gap execution wave 2026-05-03 | Replace frontend demo auth and demo islands with BFF-backed staging paths | Codex | todo | `SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4` | front-ai-trading-system 移除或 dev-gate demo AuthProvider、demo token、@/demo dashboard islands；staging/prod UI 走 Pantheon BFF/OIDC/JWT-compatible contract。 |
 | `SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD` | Blueprint gap execution wave 2026-05-03 | Complete pantheon-lean runtime kernel scaffold without live activation | Claude | todo | `SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT`, `SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE` | 以 pantheon/lean / pantheon-lean 為正式 execution bridge，補完整 activation-ready Launcher/runtime bridge scaffold：DeploymentPlan、RuntimeBinding、artifact context、TelemetryEvent、safe runtime actions。paper smoke 可用；canary/live gate closed。 |
 | `SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS` | Blueprint gap execution wave 2026-05-03 | Add operator fallback drills while BFF HA remains deferred | Codex | todo | `SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT`, `SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD` | BFF HA/LB 先 defer，但要補 operator fallback drill：BFF down 時透過 CLI/internal API/kill-switch 完成 emergency pause/liquidate/replace 類安全動作與 audit evidence。 |
@@ -99,7 +99,7 @@ Last updated: 2026-05-03 21:52:46
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3` | Blueprint gap execution wave 2026-05-03 | Move remaining production owner stores off JSONL baseline | 把剩餘 control/data-plane owner store 從 JSON/JSONL baseline 推到 staging/prod Postgres ownership cutoff；dev 可以保留 JSONL rollback，但 staging/prod 必須 fail closed 或要求 Postgres backend。 | Claude | Codex | review | `SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT` | 2026-05-03 21:47:09 | Implementation complete. Gaps fixed: (1) reconciliation-drift-svc added to docker-compose.control.yml — was missing from the VM-1 control-plane slice; adapts runtime-manager dependency to PANTHEON_RUNTIME_MANAGER_URL env var; adds reconciliation-drift-data volume. (2) docs/operations/postgres-cutoff-wave3-runbook.md created with env var table, fail-closed guarantee verification, schema bootstrap steps, dev rollback procedure, compose topology notes, and verification commands. All existing implementations (governance, capital, incidents, postmortems, promotion, memory + reconciliation-drift) already had postgres backends with require_persistence_posture() fail-closed enforcement. Focused tests: 8 passed (test_control_plane_postgres_owner_stores + test_persistence_posture). Commit: b2c4de8 |
+| `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3` | Blueprint gap execution wave 2026-05-03 | Move remaining production owner stores off JSONL baseline | 把剩餘 control/data-plane owner store 從 JSON/JSONL baseline 推到 staging/prod Postgres ownership cutoff；dev 可以保留 JSONL rollback，但 staging/prod 必須 fail closed 或要求 Postgres backend。 | Claude | Codex | review_approved | `SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT` | 2026-05-03 22:23:42 | Review approved by Codex. Focused store/posture tests passed (8), control compose config passed with and without prod-control env file, and review artifact recorded at .orchestrator/reviews/SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3-review-codex.md. Owner should perform task closeout finalization. |
 | `SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4` | Blueprint gap execution wave 2026-05-03 | Cut BFF staging/prod reads over to service-backed clients | BFF 在 staging/prod 不再靠 local JSON snapshot 或 cross-service volume 讀資料；改用 service-backed HTTP read client 或明確 degraded response。dev snapshot fallback 必須顯式 env-gated。 | Codex | Claude | todo | `SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT` | 2026-05-03 21:00:17 | Ownership updated |
 | `SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF` | Blueprint gap execution wave 2026-05-03 | Replace frontend demo auth and demo islands with BFF-backed staging paths | front-ai-trading-system 移除或 dev-gate demo AuthProvider、demo token、@/demo dashboard islands；staging/prod UI 走 Pantheon BFF/OIDC/JWT-compatible contract。 | Codex | Claude | todo | `SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4` | 2026-05-03 21:00:20 | Ownership updated |
 | `SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE` | Blueprint gap execution wave 2026-05-03 | Finalize health readiness probe standard across active services | 統一 active/default/control/exec services 的 /healthz /livez /readyz 與 compose healthcheck；保留舊 /health 或 /__health__ 只作 compatibility，不作 staging contract。 | Codex | Claude | todo | `SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT` | 2026-05-03 21:00:24 | Ownership updated |
@@ -115,7 +115,7 @@ Last updated: 2026-05-03 21:52:46
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
 | `SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF` | Copilot | Codex2 | Auto-reassigned SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF away from sidecar-only lane Copilot; owner Copilot -> Codex2. Reserved sidecar-only agents no longer hold mainline tasks. | pending | 2026-05-03 20:56:17 |
-| `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3` | Claude | Codex | Implementation complete. Gaps fixed: (1) reconciliation-drift-svc added to docker-compose.control.yml — was missing from the VM-1 control-plane slice; adapts runtime-manager dependency to PANTHEON_RUNTIME_MANAGER_URL env var; adds reconciliation-drift-data volume. (2) docs/operations/postgres-cutoff-wave3-runbook.md created with env var table, fail-closed guarantee verification, schema bootstrap steps, dev rollback procedure, compose topology notes, and verification commands. All existing implementations (governance, capital, incidents, postmortems, promotion, memory + reconciliation-drift) already had postgres backends with require_persistence_posture() fail-closed enforcement. Focused tests: 8 passed (test_control_plane_postgres_owner_stores + test_persistence_posture). Commit: b2c4de8 | pending | 2026-05-03 21:47:09 |
+| `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3` | Codex | Claude | Review approved by Codex. Focused store/posture tests passed (8), control compose config passed with and without prod-control env file, and review artifact recorded at .orchestrator/reviews/SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3-review-codex.md. Owner should perform task closeout finalization. | pending | 2026-05-03 22:23:42 |
 
 ## Blockers
 
@@ -127,7 +127,7 @@ Last updated: 2026-05-03 21:52:46
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| _(none)_ | - | - | - |
+| `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3` | Codex | Codex review approved. Verified b2c4de8/current artifacts: wave3 prod-control env selects Postgres backends, persistence posture fails closed for staging/prod JSON/JSONL, reconciliation-drift-svc is present in docker-compose.control.yml with external runtime-manager URL, and runbook documents env gates/schema bootstrap/dev rollback. Verification: python3 -m pytest services/foundation/tests/test_control_plane_postgres_owner_stores.py services/foundation/tests/test_persistence_posture.py -v (8 passed); docker compose -f docker-compose.control.yml config --quiet; docker compose --env-file env/prod-control.env.example -f docker-compose.control.yml config --quiet. | .orchestrator/reviews/SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3-review-codex.md |
 
 ## Lovable Coordination
 
@@ -198,23 +198,23 @@ Last updated: 2026-05-03 21:52:46
 
 ## Latest Checkpoints
 
-- 2026-05-03 21:46:29 Orchestrator: PreToolUse: Bash
-- 2026-05-03 21:46:29 Orchestrator: PostToolUse: Bash
-- 2026-05-03 21:46:38 Orchestrator: PreToolUse: Bash
-- 2026-05-03 21:46:39 Orchestrator: PostToolUse: Bash
-- 2026-05-03 21:47:09 Orchestrator: PreToolUse: Bash
-- 2026-05-03 21:47:09 Claude: `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3` Handoff to Codex: Implementation complete. Gaps fixed: (1) reconciliation-drift-svc added to docker-compose.control.yml — was missing from the VM-1 control-plane slice; adapts runtime-manager dependency to PANTHEON_RUNTIME_MANAGER_URL env var; adds reconciliation-drift-data volume. (2) docs/operations/postgres-cutoff-wave3-runbook.md created with env var table, fail-closed guarantee verification, schema bootstrap steps, dev rollback procedure, compose topology notes, and verification commands. All existing implementations (governance, capital, incidents, postmortems, promotion, memory + reconciliation-drift) already had postgres backends with require_persistence_posture() fail-closed enforcement. Focused tests: 8 passed (test_control_plane_postgres_owner_stores + test_persistence_posture). Commit: b2c4de8
-- 2026-05-03 21:47:12 Orchestrator: PostToolUse: Bash
-- 2026-05-03 21:47:16 Orchestrator: PreToolUse: TodoWrite
-- 2026-05-03 21:47:17 Orchestrator: PostToolUse: TodoWrite
-- 2026-05-03 21:47:25 Orchestrator: Stop: Stop
-- 2026-05-03 21:47:25 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-03 21:48:34 Codex: `ORCH-EXECUTION-QUEUE-ISOLATION-CLOSEOUT` Closed execution-only queue isolation runbook: active queue remains isolated from the backed-up coordination backlog, local guard and restore procedure are documented, and replay is explicitly deferred to the triage policy.
-- 2026-05-03 21:48:50 Codex: `ORCH-COORDINATION-QUEUE-TRIAGE-REPLAY-POLICY` Manual closeout in progress per user request: triage script, replay policy, and empty replay-candidate artifact are prepared without dispatching another worker.
-- 2026-05-03 21:49:00 Codex: `ORCH-COORDINATION-QUEUE-TRIAGE-REPLAY-POLICY` Handoff to Claude: Manual closeout ready: backup queue triage reports 115 old events, 0 auto replay candidates, and replay policy forbids bulk append while preserving manual review buckets.
-- 2026-05-03 21:49:12 Claude: `ORCH-COORDINATION-QUEUE-TRIAGE-REPLAY-POLICY` Administrative approval: triage and replay policy are sufficient for safe manual handling without redispatching the old coordination queue.
-- 2026-05-03 21:49:29 Codex: `ORCH-COORDINATION-QUEUE-TRIAGE-REPLAY-POLICY` Closed coordination queue triage and replay policy: isolated backup is classified, replay candidates file is empty, and future replay must be manual/fresh rather than bulk-appending old queue lines.
-- 2026-05-03 21:49:40 Codex: `ORCH-AUTOWORKER-READINESS-RECOVERY` Manual closeout in progress per user request: doctor output, readiness matrix, dispatch rules, and dashboard expectations are documented without dispatching another worker.
-- 2026-05-03 21:49:50 Codex: `ORCH-AUTOWORKER-READINESS-RECOVERY` Handoff to Claude: Manual closeout ready: auto-worker readiness now records current doctor truth, blocked auth/profile lanes, Copilot disabled mainline state, Claude rate-limit caution, and recovery checklist.
-- 2026-05-03 21:50:00 Claude: `ORCH-AUTOWORKER-READINESS-RECOVERY` Administrative approval: readiness runbook matches current doctor output and keeps non-ready providers fail-closed from mainline dispatch.
-- 2026-05-03 21:50:17 Codex: `ORCH-AUTOWORKER-READINESS-RECOVERY` Closed auto-worker readiness recovery: current doctor truth, blocked auth/profile lanes, Copilot disabled-mainline nuance, and recovery checklist are documented for safe future dispatch.
+- 2026-05-03 22:06:15 Orchestrator: PreToolUse: Bash
+- 2026-05-03 22:06:15 Orchestrator: PostToolUse: Bash
+- 2026-05-03 22:06:29 Orchestrator: PreToolUse: Bash
+- 2026-05-03 22:06:29 Orchestrator: PostToolUse: Bash
+- 2026-05-03 22:06:47 Orchestrator: PreToolUse: Bash
+- 2026-05-03 22:07:04 Orchestrator: PreToolUse: Read
+- 2026-05-03 22:07:04 Orchestrator: PostToolUse: Read
+- 2026-05-03 22:07:10 Orchestrator: PreToolUse: Edit
+- 2026-05-03 22:07:10 Orchestrator: PostToolUse: Edit
+- 2026-05-03 22:07:20 Orchestrator: PreToolUse: Bash
+- 2026-05-03 22:07:26 Orchestrator: PreToolUse: Bash
+- 2026-05-03 22:07:27 Orchestrator: PostToolUse: Bash
+- 2026-05-03 22:07:38 Orchestrator: PreToolUse: Bash
+- 2026-05-03 22:07:42 Orchestrator: PostToolUse: Bash
+- 2026-05-03 22:07:52 Orchestrator: Stop: Stop
+- 2026-05-03 22:20:16 Orchestrator: Auto-pruned stale approval apr-20260503T133730Z-a2f88479
+- 2026-05-03 22:20:16 Orchestrator: Auto-pruned stale approval apr-20260503T134338Z-6503eb09
+- 2026-05-03 22:20:21 Orchestrator: `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3` Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-03 22:20:21 Orchestrator: `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3` Worker started via codex: review_ready_dispatch
+- 2026-05-03 22:23:42 Codex: `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3` Review approved by Codex. Focused store/posture tests passed (8), control compose config passed with and without prod-control env file, and review artifact recorded at .orchestrator/reviews/SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3-review-codex.md. Owner should perform task closeout finalization.
