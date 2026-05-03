@@ -1,21 +1,16 @@
 name: Publish images to Artifact Registry
 
-# Triggers after every push to the default branch.
-# Prerequisite: the Stage 0 CI workflow (stage-0-ci.yml) must also be green;
-# enforce this via a branch-protection rule that requires stage-0-ci to pass
-# before any push reaches the default branch.
+# Manual image publish. Keep Cloud Build off push to control GitHub Actions
+# minutes and GCP spend; run this workflow explicitly when a candidate image is
+# needed.
 on:
-  push:
-    branches:
-      - backend-dev-publish-20260429
-      - master
-      - main
   workflow_dispatch:
     inputs:
       services:
         description: >
           Comma-separated service IDs to build, or "all" for a full rebuild.
-          Leave blank to auto-detect changed services.
+          Leave blank to auto-detect from the selected ref's previous commit;
+          no build runs if nothing image-impacting changed.
         required: false
         default: ""
       env_tag:
@@ -48,32 +43,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      # ── Identity: OIDC → GCP Workload Identity Federation ──────────────────
+      # Identity: OIDC to GCP Workload Identity Federation.
       # GitHub exchanges an OIDC token for a short-lived GCP access token.
       # No long-lived service-account key is stored in GitHub.
       #
-      # Required GCP-side setup (one-time, documented in Section 19 of
-      # Pantheon_GCP_GitHub_Docker_正式部署與環境設計_v2.md):
-      #   - Workload Identity Pool:  pantheon-github-pool
-      #   - Pool Provider:           pantheon-github-provider
-      #     attribute mapping:
-      #       google.subject       = assertion.sub
-      #       attribute.repository = assertion.repository
-      #     attribute condition:
-      #       attribute.repository == "ajoe734/pantheon"
-      #   - Service account:         pantheon-cloud-build@<PROJECT_ID>.iam.gserviceaccount.com
-      #     roles: roles/cloudbuild.builds.editor, roles/storage.objectAdmin (for build source),
-      #            roles/serviceusage.serviceUsageConsumer
-      #   - IAM binding (WIF → SA):
-      #     serviceAccount:pantheon-cloud-build@...  with  roles/iam.workloadIdentityUser
-      #     principal: principalSet://iam.googleapis.com/projects/<NUMBER>/locations/global/
-      #                workloadIdentityPools/pantheon-github-pool/attribute.repository/ajoe734/pantheon
-      #
-      # Store these as repository variables (not secrets, since they are not secret):
-      #   GCP_PROJECT_ID            GCP project ID (e.g. pantheon-shared)
-      #   GCP_PROJECT_NUMBER        GCP project number (numeric)
-      #   GCP_WIF_PROVIDER          full provider resource name
-      #   GCP_SERVICE_ACCOUNT       service account email
+      # Required GCP-side setup is documented in Section 19 of
+      # Pantheon_GCP_GitHub_Docker deployment docs.
+      # Store these as repository variables, not secrets:
+      #   GCP_PROJECT_ID, GCP_PROJECT_NUMBER, GCP_WIF_PROVIDER,
+      #   GCP_SERVICE_ACCOUNT, and optionally GCP_BUILD_STAGING_BUCKET.
       - name: Authenticate to Google Cloud via Workload Identity Federation
         id: auth
         uses: google-github-actions/auth@v2
@@ -84,15 +62,8 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      # ── Detect changed services ─────────────────────────────────────────────
-      # Use the Stage 0 matrix to determine which build targets changed.
-      # This respects the global-changed fast-path (full rebuild when matrix
-      # files or this workflow itself changes).
       - name: Detect changed build targets
         id: detect
-        env:
-          STAGE0_BASE_SHA: ${{ github.event.before }}
-          STAGE0_HEAD_SHA: ${{ github.sha }}
         run: |
           # If the caller supplied an explicit service list, skip detection.
           MANUAL_SERVICES="${{ github.event.inputs.services }}"
@@ -102,11 +73,17 @@ jobs:
             exit 0
           fi
 
-          # Run the Stage 0 detector and parse its JSON report.
+          BASE_SHA="$(git rev-parse "${GITHUB_SHA}^" 2>/dev/null || true)"
+          if [ -z "${BASE_SHA}" ]; then
+            echo "services=" >> "$GITHUB_OUTPUT"
+            echo "[info] no parent commit available; set services=all or a comma-separated service list"
+            exit 0
+          fi
+
+          export STAGE0_BASE_SHA="${BASE_SHA}"
+          export STAGE0_HEAD_SHA="${GITHUB_SHA}"
           REPORT="$(python3 scripts/ci_stage0.py detect-changes)"
 
-          # build_ids is a JSON array like ["router","governance-api","bff",...].
-          # Convert to comma-separated for the Cloud Build substitution.
           GLOBAL_CHANGED="$(printf '%s' "${REPORT}" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["global_changed"]).lower())')"
           GLOBAL_IMAGE_CHANGED="$(printf '%s' "${REPORT}" | python3 -c 'import json,sys; files=json.load(sys.stdin)["changed_files"]; image_global_files={"cloudbuild.yaml","docker-compose.yml","docker-compose.remote-dev.yml"}; print(str(any(path in image_global_files for path in files)).lower())')"
           if [ "${GLOBAL_CHANGED}" = "true" ] && [ "${GLOBAL_IMAGE_CHANGED}" = "true" ]; then
@@ -120,16 +97,15 @@ jobs:
           echo "services=${SERVICES}" >> "$GITHUB_OUTPUT"
 
           if [ -z "${SERVICES}" ]; then
-            echo "[info] no build targets changed — skipping Cloud Build submission"
+            echo "[info] no image build targets changed; skipping Cloud Build submission"
           elif [ "${SERVICES}" = "all" ]; then
-            echo "[info] image-impacting global change detected — building all services"
+            echo "[info] image-impacting global change detected; building all services"
           else
             echo "[info] services to build: ${SERVICES}"
           fi
 
-      # ── Submit build to Cloud Build ─────────────────────────────────────────
       # The build runs entirely in GCP; GitHub Actions only submits the job and
-      # waits for the result.  All image construction and Artifact Registry
+      # waits for the result. All image construction and Artifact Registry
       # publishing happens inside Cloud Build, never on the GitHub runner.
       - name: Submit Cloud Build job
         if: steps.detect.outputs.services != ''
@@ -149,4 +125,4 @@ jobs:
 
       - name: Skip notice
         if: steps.detect.outputs.services == ''
-        run: echo "No Dockerfile-bearing targets changed on this push — Cloud Build submission skipped."
+        run: echo "No image build targets selected for this manual publish; Cloud Build submission skipped."
