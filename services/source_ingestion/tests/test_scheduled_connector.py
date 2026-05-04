@@ -327,6 +327,122 @@ def test_registry_reports_connector_freshness_after_scheduled_run(client) -> Non
     assert freshness["seconds_until_due"] > 0
 
 
+def test_policy_registry_reports_crawler_guards_and_rate_limits(client) -> None:
+    test_client, _, _ = client
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": _connector(
+                connector_id="conn-news-policy",
+                source_type="news",
+                license_scope="vendor",
+                rate_limit_policy={
+                    "requests_per_minute": 30,
+                    "burst": 5,
+                    "retry_after_seconds": 60,
+                    "policy_ref": "source-ingest://policy/news-policy",
+                },
+                license_policy={
+                    "license_scope": "vendor",
+                    "allowed_use": ["research", "search_index"],
+                    "policy_ref": "source-ingest://license/news-policy",
+                },
+                metadata={"entitlement_tags": ["news-policy-research"], "access_scope": ["research"]},
+            ),
+            "fetch": {
+                "mode": "external_feed",
+                "url": "https://feeds.example.test/news.json",
+                "allowed_url_prefixes": ["https://feeds.example.test/"],
+                "timeout_seconds": 3,
+                "max_bytes": 32768,
+                "max_records": 7,
+                "default_access_scope": ["research"],
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+    scheduled = test_client.put(
+        "/api/source-ingest/connectors/conn-news-policy/schedule",
+        json={"interval_seconds": 300, "enabled": True},
+    )
+    assert scheduled.status_code == 200, scheduled.text
+
+    response = test_client.get("/api/source-ingest/policy-registry")
+    assert response.status_code == 200, response.text
+    registry = response.json()
+    policy = next(
+        policy for policy in registry["connector_policies"] if policy["connector_id"] == "conn-news-policy"
+    )
+
+    assert registry["schema_version"] == "source_crawler_indexer_policy_registry.v1"
+    assert registry["default_guards"]["bounded_crawler_adapters_only"] is True
+    assert policy["crawler"]["adapter_type"] == "bounded_external_feed_crawler"
+    assert policy["crawler"]["allowlist_enforced"] is True
+    assert policy["crawler"]["allowed_url_hosts"] == ["feeds.example.test"]
+    assert policy["crawler"]["max_records"] == 7
+    assert policy["crawler"]["request_documents_compat"] is False
+    assert policy["guards"]["rate_limit"]["requests_per_minute"] == 30
+    assert policy["guards"]["license"]["allowed_use"] == ["research", "search_index"]
+    assert policy["guards"]["pit_required"] is True
+    assert policy["lifecycle"]["ready_for_scheduled_crawl"] is True
+    assert policy["indexer"]["normal_search_path"] == "durable_index"
+    assert registry["summary"]["external_allowlist_policy_count"] >= 1
+    assert registry["summary"]["pit_policy_count"] >= 1
+
+
+def test_connector_lifecycle_disable_blocks_runs_and_records_audit(client) -> None:
+    test_client, _, _ = client
+    configured = _configure_with_records(test_client, connector_id="conn-lifecycle-notes")
+    assert configured.status_code == 201, configured.text
+    scheduled = test_client.put(
+        "/api/source-ingest/connectors/conn-lifecycle-notes/schedule",
+        json={"interval_seconds": 1, "enabled": True},
+    )
+    assert scheduled.status_code == 200, scheduled.text
+
+    lifecycle = test_client.put(
+        "/api/source-ingest/connectors/conn-lifecycle-notes/lifecycle",
+        json={
+            "status": "disabled",
+            "reason": "license review hold",
+            "actor_id": "operator-test",
+            "trace_id": "trace-lifecycle-test",
+        },
+    )
+    assert lifecycle.status_code == 200, lifecycle.text
+    body = lifecycle.json()
+    assert body["connector"]["status"] == "disabled"
+    assert body["lifecycle"]["reason"] == "license review hold"
+    assert body["audit_action"]["action_type"] == "source_ingestion.connector_lifecycle.updated"
+
+    manual = test_client.post(
+        "/api/source-ingest/jobs",
+        json={"connector_id": "conn-lifecycle-notes", "trace_id": "trace-disabled-manual"},
+    )
+    assert manual.status_code == 400
+    assert "disabled rejects ingest runs" in manual.json()["detail"]
+
+    scheduled_run = test_client.post("/api/source-ingest/run-scheduled")
+    assert scheduled_run.status_code == 200, scheduled_run.text
+    assert scheduled_run.json()["summary"]["total_ran"] == 0
+    assert scheduled_run.json()["summary"]["total_skipped"] == 1
+
+    registry = test_client.get("/api/source-ingest/registry").json()
+    entry = next(conn for conn in registry["connectors"] if conn["connector_id"] == "conn-lifecycle-notes")
+    assert entry["status"] == "disabled"
+    assert entry["crawler_policy"]["lifecycle"]["ready_for_scheduled_crawl"] is False
+
+    audit = test_client.get("/api/source-ingest/audit")
+    assert audit.status_code == 200
+    assert any(
+        action["action_type"] == "source_ingestion.connector_lifecycle.updated"
+        and action["metadata"]["connector_id"] == "conn-lifecycle-notes"
+        and action["metadata"]["next_status"] == "disabled"
+        and action["payload_checksum"]
+        for action in audit.json()["actions"]
+    )
+
+
 def test_set_schedule_returns_404_for_unknown_connector(client) -> None:
     test_client, _, _ = client
 

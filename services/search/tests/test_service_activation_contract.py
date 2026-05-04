@@ -30,6 +30,12 @@ def test_compose_wires_search_service_and_bff_normal_path() -> None:
     assert bff["environment"]["PANTHEON_SEARCH_API_URL"] == "http://search-svc:8098"
     assert bff["depends_on"]["search-svc"]["condition"] == "service_healthy"
 
+    scheduler = services["search-index-scheduler"]
+    assert scheduler["command"] == ["python", "-m", "services.search.scheduler_worker"]
+    assert scheduler["environment"]["SEARCH_API_URL"] == "http://search-svc:8098"
+    assert scheduler["environment"]["SEARCH_INDEX_SCHEDULER_MATERIALIZE"] == "${SEARCH_INDEX_SCHEDULER_MATERIALIZE:-true}"
+    assert scheduler["depends_on"]["search-svc"]["condition"] == "service_healthy"
+
 
 def test_honest_stack_smoke_waits_for_and_queries_search_service() -> None:
     smoke = (ROOT / "scripts/smoke_honest_stack.py").read_text(encoding="utf-8")
@@ -41,6 +47,11 @@ def test_honest_stack_smoke_waits_for_and_queries_search_service() -> None:
     assert 'f"{SEARCH_URL}/api/search/snapshots/{search_body[\'request_id\']}"' in smoke
     assert '"query": f"momentum volatility {source_search_token}"' in smoke
     assert '"documents": [' not in smoke
+
+    scheduler_worker = (ROOT / "services/search/scheduler_worker.py").read_text(encoding="utf-8")
+    assert '"/api/search/index/refresh"' in scheduler_worker
+    assert '"/api/search/index/materialize"' in scheduler_worker
+    assert '"triggered_by": "scheduled_refresh"' in scheduler_worker
 
     prod_env = (ROOT / "env/prod-control.env.example").read_text(encoding="utf-8")
     assert "PANTHEON_SOURCE_SEARCH_POSTURE=production" in prod_env

@@ -49,6 +49,16 @@ def test_get_source_ops_snapshot_normal_path() -> None:
                     },
                 ],
                 "provider_examples": [],
+                "policy_registry": {
+                    "schema_version": "source_crawler_indexer_policy_registry.v1",
+                    "default_guards": {"search_refresh_notification_configured": True},
+                    "summary": {
+                        "connector_policy_count": 1,
+                        "external_allowlist_policy_count": 1,
+                        "pit_policy_count": 0,
+                        "scheduled_policy_count": 1,
+                    },
+                },
             }
         if path.startswith("/api/source-ingest/jobs"):
             return True, {
@@ -99,6 +109,10 @@ def test_get_source_ops_snapshot_normal_path() -> None:
     assert snap["summary"]["frontier_count"] == 1
     assert snap["summary"]["scheduled_connector_count"] == 1
     assert snap["summary"]["due_connector_count"] == 1
+    assert snap["policy_registry"]["schema_version"] == "source_crawler_indexer_policy_registry.v1"
+    assert snap["summary"]["connector_policy_count"] == 1
+    assert snap["summary"]["external_allowlist_policy_count"] == 1
+    assert snap["summary"]["search_refresh_notification_configured"] is True
 
 
 def test_get_source_ops_snapshot_degraded_source() -> None:
@@ -140,6 +154,63 @@ def test_get_source_ops_snapshot_service_unavailable() -> None:
     assert snap["source"] == "unavailable"
     assert snap["connector_health"] == []
     assert snap["dlq"] == []
+
+
+def test_get_source_ops_snapshot_surfaces_policy_registry_summary() -> None:
+    from read_store import ReadSurfaceStore
+
+    def fake_get(base_url, path, *, headers=None):
+        if path.startswith("/api/source-ingest/registry"):
+            return True, {
+                "schema_version": "source_connector_registry.v1",
+                "connectors": [
+                    {
+                        "connector_id": "conn-news",
+                        "status": "enabled",
+                        "schedule": {"enabled": True, "interval_seconds": 300},
+                        "freshness": {"status": "fresh", "is_due": False},
+                        "crawler_policy": {
+                            "crawler": {"adapter_type": "bounded_external_feed_crawler"},
+                            "indexer": {"normal_search_path": "durable_index"},
+                        },
+                    }
+                ],
+                "policy_registry": {
+                    "schema_version": "source_crawler_indexer_policy_registry.v1",
+                    "default_guards": {"search_refresh_notification_configured": True},
+                    "summary": {
+                        "connector_policy_count": 1,
+                        "external_allowlist_policy_count": 1,
+                        "pit_policy_count": 1,
+                        "scheduled_policy_count": 1,
+                    },
+                },
+            }
+        if path.startswith("/api/source-ingest/jobs"):
+            return True, {"runs": []}
+        if path.startswith("/api/source-ingest/dlq"):
+            return True, {"entries": []}
+        if path.startswith("/api/source-ingest/frontier"):
+            return True, {"frontier": []}
+        if path.startswith("/api/source-ingest/audit"):
+            return True, {"actions": []}
+        return False, None
+
+    with tempfile.TemporaryDirectory() as td:
+        with mock.patch.dict(os.environ, {"PANTHEON_SOURCE_INGEST_API_URL": "http://source:8097"}):
+            with mock.patch("read_store._http_json_get", side_effect=fake_get):
+                store = ReadSurfaceStore(
+                    os.path.join(td, "read_surfaces.json"),
+                    allow_local_snapshot_fallback=False,
+                )
+                snap = store.get_source_ops_snapshot()
+
+    assert snap["policy_registry"]["schema_version"] == "source_crawler_indexer_policy_registry.v1"
+    assert snap["summary"]["connector_policy_count"] == 1
+    assert snap["summary"]["external_allowlist_policy_count"] == 1
+    assert snap["summary"]["pit_policy_count"] == 1
+    assert snap["summary"]["scheduled_policy_count"] == 1
+    assert snap["summary"]["search_refresh_notification_configured"] is True
 
 
 def test_get_search_ops_snapshot_normal_path() -> None:

@@ -492,8 +492,10 @@ Source-ingest service current API:
 
 ```text
 GET  /api/source-ingest/registry
+GET  /api/source-ingest/policy-registry
 POST /api/source-ingest/connectors
 GET  /api/source-ingest/connectors/{connector_id}
+PUT  /api/source-ingest/connectors/{connector_id}/lifecycle
 PUT  /api/source-ingest/connectors/{connector_id}/schedule
 GET  /api/source-ingest/connectors/{connector_id}/schedule
 POST /api/source-ingest/jobs
@@ -541,12 +543,15 @@ POST /api/v1/operator/search/index/materialize
 Delivered bounded behavior:
 
 - Connector registry responses include fetch policy, schedule, fetch state, and per-connector freshness derived from schedule, watermark, and latest run.
+- Connector registry responses include a per-connector crawler/indexer policy projection, and `GET /api/source-ingest/policy-registry` summarizes bounded adapter classes, allowlists, license/rate/PIT/audit guards, scheduled readiness, and durable-index search policy.
+- Connector lifecycle changes use `PUT /api/source-ingest/connectors/{connector_id}/lifecycle`; disabled connectors reject manual ingest, are skipped by scheduled runs, and record foundation audit actions with payload checksums plus connector/status metadata.
 - Scheduled ingest is bounded by `SOURCE_INGEST_MAX_RECORDS`, scheduler concurrency, frontier attempts, and explicit `static_records` / `external_feed` fetch modes.
 - `external_feed` requires `allowed_url_prefixes`, validates redirect scope, rejects inline secret material, enforces max bytes / max records, and honors robots.txt when enabled.
 - Failed scheduled runs and rejected source records route to the shared DLQ with replay/audit evidence.
 - Source-ingest persists SourceRecord, EvidenceItem, EvidenceBundle, and KnowledgeObject refs; search consumes that durable evidence store.
-- Search index refresh records replayable pipeline snapshots with freshness SLA and retention visibility; materialize records a durable materialized index snapshot.
+- Search index refresh records replayable pipeline snapshots with freshness SLA and retention visibility; materialize records a durable materialized index snapshot. `search-index-scheduler` can periodically call refresh and materialize through the search service HTTP API.
 - Normal staging/prod search path is durable-index based; request-document search is exposed only through the explicit compatibility endpoint/flag and is blocked when `SEARCH_DURABLE_INDEX_ONLY=true`.
+- BFF source/search read surfaces expose connector crawler policy, policy registry summary, connector freshness, search freshness, pipeline runs, and materialized-index state via service clients rather than cross-service volume reads.
 - Staging/prod source/search posture requires Postgres stores, object-store config, and durable-index-only search.
 
 ---

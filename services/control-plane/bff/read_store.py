@@ -9253,11 +9253,13 @@ class ReadSurfaceStore:
         provider_examples = (
             payload.get("provider_examples") if isinstance(payload.get("provider_examples"), list) else []
         )
+        policy_registry = payload.get("policy_registry") if isinstance(payload.get("policy_registry"), dict) else None
         return {
             "source": "service_client",
             "schema_version": payload.get("schema_version"),
             "connectors": json.loads(json.dumps(connectors)),
             "provider_examples": json.loads(json.dumps(provider_examples)),
+            "policy_registry": json.loads(json.dumps(policy_registry)) if policy_registry else None,
         }
 
     # ---------------------------------------------------------------------- #
@@ -9282,6 +9284,7 @@ class ReadSurfaceStore:
             return {
                 "source": "missing",
                 "connector_health": [],
+                "policy_registry": None,
                 "crawl_runs": [],
                 "dlq": [],
                 "frontier": [],
@@ -9295,16 +9298,25 @@ class ReadSurfaceStore:
                     "scheduled_connector_count": 0,
                     "due_connector_count": 0,
                     "degraded_connector_count": 0,
+                    "connector_policy_count": 0,
+                    "external_allowlist_policy_count": 0,
+                    "pit_policy_count": 0,
+                    "scheduled_policy_count": 0,
+                    "search_refresh_notification_configured": False,
                 },
             }
 
         # connectors / health
         avail_reg, payload_reg = _http_json_get(base_url, "/api/source-ingest/registry")
         connectors: List[Dict[str, Any]] = []
+        policy_registry: Optional[Dict[str, Any]] = None
         if avail_reg and isinstance(payload_reg, dict):
             raw = payload_reg.get("connectors")
             if isinstance(raw, list):
                 connectors = json.loads(json.dumps(raw))
+            raw_policy = payload_reg.get("policy_registry")
+            if isinstance(raw_policy, dict):
+                policy_registry = json.loads(json.dumps(raw_policy))
 
         # crawl runs
         runs_path = "/api/source-ingest/jobs"
@@ -9357,11 +9369,15 @@ class ReadSurfaceStore:
             freshness_status = str(freshness.get("status") or "")
             if freshness.get("is_due") is True or freshness_status in {"due", "never_ingested"}:
                 due_connector_count += 1
-            if freshness_status == "degraded":
+            connector_status = str(connector.get("status") or "").strip().lower()
+            if freshness_status == "degraded" or connector_status in {"disabled", "degraded"}:
                 degraded_connector_count += 1
+        registry_summary = policy_registry.get("summary", {}) if isinstance(policy_registry, dict) else {}
+        default_guards = policy_registry.get("default_guards", {}) if isinstance(policy_registry, dict) else {}
         return {
             "source": "service_client" if service_available else "unavailable",
             "connector_health": connectors,
+            "policy_registry": policy_registry,
             "crawl_runs": crawl_runs,
             "dlq": dlq_entries,
             "frontier": frontier,
@@ -9375,6 +9391,13 @@ class ReadSurfaceStore:
                 "scheduled_connector_count": scheduled_connector_count,
                 "due_connector_count": due_connector_count,
                 "degraded_connector_count": degraded_connector_count,
+                "connector_policy_count": int(registry_summary.get("connector_policy_count") or 0),
+                "external_allowlist_policy_count": int(registry_summary.get("external_allowlist_policy_count") or 0),
+                "pit_policy_count": int(registry_summary.get("pit_policy_count") or 0),
+                "scheduled_policy_count": int(registry_summary.get("scheduled_policy_count") or 0),
+                "search_refresh_notification_configured": bool(
+                    default_guards.get("search_refresh_notification_configured")
+                ),
             },
         }
 

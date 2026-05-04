@@ -9132,6 +9132,7 @@ async def list_source_connectors(
     }
     meta["source"] = source
     meta["provider_examples"] = list(registry.get("provider_examples") or [])
+    meta["policy_registry"] = registry.get("policy_registry")
     return {
         "data": list(registry.get("connectors") or []),
         "meta": meta,

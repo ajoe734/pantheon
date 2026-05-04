@@ -220,6 +220,22 @@ services:
       retries: 10
       start_period: 5s
 
+  search-index-scheduler:
+    profiles: ["search-index-scheduler"]
+    build:
+      context: .
+      dockerfile: services/search/Dockerfile
+    command: ["python", "-m", "services.search.scheduler_worker"]
+    environment:
+      SEARCH_API_URL: http://search-svc:8098
+      SEARCH_INDEX_SCHEDULER_INTERVAL_SECONDS: ${SEARCH_INDEX_SCHEDULER_INTERVAL_SECONDS:-300}
+      SEARCH_INDEX_SCHEDULER_MAX_TICKS: ${SEARCH_INDEX_SCHEDULER_MAX_TICKS:-0}
+      SEARCH_INDEX_SCHEDULER_FORCE_FULL: ${SEARCH_INDEX_SCHEDULER_FORCE_FULL:-false}
+      SEARCH_INDEX_SCHEDULER_MATERIALIZE: ${SEARCH_INDEX_SCHEDULER_MATERIALIZE:-true}
+    depends_on:
+      search-svc:
+        condition: service_healthy
+
   training-session-svc:
     build:
       context: .

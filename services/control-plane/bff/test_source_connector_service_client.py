@@ -44,6 +44,10 @@ def test_bff_reads_source_connector_registry_through_service_client() -> None:
                     "fetch_policy": {"mode": "external_feed"},
                 }
             ],
+            "policy_registry": {
+                "schema_version": "source_crawler_indexer_policy_registry.v1",
+                "summary": {"connector_policy_count": 1},
+            },
         }
 
     with tempfile.TemporaryDirectory() as td:
@@ -60,3 +64,4 @@ def test_bff_reads_source_connector_registry_through_service_client() -> None:
     assert registry["connectors"][0]["connector_id"] == "conn-openalex-api"
     assert registry["connectors"][0]["policy"]["auth"]["secret_ref"]["secret_ref_id"] == "env://OPENALEX_API_KEY"
     assert registry["provider_examples"][0]["fetch_policy"]["mode"] == "external_feed"
+    assert registry["policy_registry"]["schema_version"] == "source_crawler_indexer_policy_registry.v1"

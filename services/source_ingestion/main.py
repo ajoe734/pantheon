@@ -27,7 +27,15 @@ except ImportError:  # pragma: no cover - compatibility with older pydantic.
 
     ConfigDict = None  # type: ignore[assignment]
 
-from services.foundation import ActorRef, ActorType, DeadLetterQueue, DeadLetterReplayProcessor, SchemaRegistry
+from services.foundation import (
+    ActorRef,
+    ActorType,
+    AuditAction,
+    DeadLetterQueue,
+    DeadLetterReplayProcessor,
+    SchemaRegistry,
+    TraceContext,
+)
 from services.foundation.health import register_fastapi_health_routes
 from services.knowledge.evidence import EvidenceBundleBuilder, EvidenceItem, normalize_source_evidence, normalize_source_record
 from services.knowledge.evidence.models import EvidenceValidationError
@@ -52,6 +60,7 @@ from .external_sources import (
 )
 from .ingest_manager import IngestManager
 from .pg_store import build_source_evidence_repository
+from .policy_registry import crawler_policy_for_connector, policy_registry_payload
 from .scheduler import IngestBatch, IngestionScheduler, JsonlIngestScheduleStore
 
 
@@ -277,6 +286,13 @@ class SetScheduleRequest(StrictBaseModel):
     enabled: bool = False
 
 
+class SetConnectorLifecycleRequest(StrictBaseModel):
+    status: ConnectorStatus
+    reason: str
+    actor_id: str = "source-ingest-operator"
+    trace_id: str | None = None
+
+
 class RunScheduledRequest(StrictBaseModel):
     max_concurrency: int | None = None
 
@@ -474,6 +490,16 @@ def _connector_registry_entry(
     fetch: dict[str, Any] | None,
     state: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    schedule = _schedule_summary(connector.connector_id)
+    freshness = _connector_freshness_summary(connector.connector_id)
+    state_payload = state or {
+        "connector_id": connector.connector_id,
+        "attempts": 0,
+        "successful_attempts": 0,
+        "failed_attempts": 0,
+        "last_error": None,
+        "updated_at": None,
+    }
     return {
         "schema_version": "source_connector_registry_entry.v1",
         "connector_id": connector.connector_id,
@@ -484,18 +510,52 @@ def _connector_registry_entry(
         "policy": connector.policy_summary(),
         "metadata": dict(connector.metadata),
         "fetch_policy": _fetch_policy_summary(fetch),
-        "schedule": _schedule_summary(connector.connector_id),
-        "freshness": _connector_freshness_summary(connector.connector_id),
-        "state": state
-        or {
-            "connector_id": connector.connector_id,
-            "attempts": 0,
-            "successful_attempts": 0,
-            "failed_attempts": 0,
-            "last_error": None,
-            "updated_at": None,
-        },
+        "schedule": schedule,
+        "freshness": freshness,
+        "state": state_payload,
+        "crawler_policy": crawler_policy_for_connector(
+            connector,
+            fetch=fetch,
+            schedule=schedule,
+            freshness=freshness,
+            state=state_payload,
+        ),
     }
+
+
+def _source_connector_entries() -> list[dict[str, Any]]:
+    configured_by_id = {config.connector.connector_id: config for config in connector_store.list_configs()}
+    connector_ids = set(configured_by_id)
+    connectors = list(manager.list_connectors())
+    connector_ids.update(connector.connector_id for connector in connectors)
+
+    entries: list[dict[str, Any]] = []
+    for connector_id in sorted(connector_ids):
+        config = configured_by_id.get(connector_id)
+        connector = config.connector if config else manager.get_connector(connector_id)
+        if connector is None:
+            continue
+        entries.append(
+            _connector_registry_entry(
+                connector,
+                fetch=dict(config.fetch) if config else None,
+                state=connector_store.get_fetch_state(connector_id) if config else None,
+            )
+        )
+    return entries
+
+
+def _source_policy_registry_payload() -> dict[str, Any]:
+    entries = _source_connector_entries()
+    connector_policies = [dict(entry["crawler_policy"]) for entry in entries]
+    return policy_registry_payload(
+        connector_policies,
+        max_records_per_job=MAX_RECORDS_PER_JOB,
+        scheduler_max_concurrency=SCHEDULER_MAX_CONCURRENCY,
+        frontier_max_attempts=FRONTIER_MAX_ATTEMPTS,
+        search_ingest_notify_url=SEARCH_INGEST_NOTIFY_URL,
+        posture=PRODUCTION_POSTURE.to_dict(),
+    )
 
 
 def _provider_example_payloads() -> list[dict[str, Any]]:
@@ -528,6 +588,11 @@ def _connector_for_job(request: TriggerIngestJobRequest) -> SourceConnector:
     if config is None:
         raise SourceEvidenceError(f"Connector fetch is not configured: {connector_id}")
     return _register_or_validate_connector(config.connector)
+
+
+def _assert_connector_lifecycle_allows_run(connector: SourceConnector) -> None:
+    if connector.status == ConnectorStatus.DISABLED:
+        raise SourceEvidenceError(f"Connector lifecycle status disabled rejects ingest runs: {connector.connector_id}")
 
 
 def _inline_fetch(records: tuple[SourceRecord, ...], next_watermark: str | None):
@@ -716,6 +781,7 @@ def _run_job(
     fetch_batch: Any,
     frontier_id: str | None = None,
 ) -> tuple[Any, dict[str, Any]]:
+    _assert_connector_lifecycle_allows_run(connector)
     result = scheduler.run_once(
         connector_id=connector.connector_id,
         trace_id=trace_id,
@@ -825,6 +891,85 @@ def _replay_source_event(event: Any) -> str:
     return f"source_ingest_run:{result.run.ingest_run_id}"
 
 
+def _record_connector_lifecycle_audit(
+    *,
+    connector_id: str,
+    previous_status: str,
+    next_status: str,
+    reason: str,
+    actor_id: str,
+    trace_id: str | None,
+) -> dict[str, Any]:
+    actor = ActorRef(ActorType.SERVICE, actor_id or "source-ingest-operator", roles=("source_ingest_operator",))
+    trace = TraceContext(
+        trace_id=trace_id or f"trace-source-ingest-lifecycle-{connector_id}",
+        correlation_id=trace_id or f"trace-source-ingest-lifecycle-{connector_id}",
+        environment=scheduler.environment,
+        actor_ref=actor,
+    )
+    payload = {
+        "connector_id": connector_id,
+        "previous_status": previous_status,
+        "next_status": next_status,
+        "reason": reason,
+    }
+    action = AuditAction.record(
+        actor_ref=actor,
+        action_type="source_ingestion.connector_lifecycle.updated",
+        target_ref=f"source_connector:{connector_id}",
+        environment=scheduler.environment,
+        reason=reason,
+        trace=trace,
+        payload=payload,
+        before_state_ref=f"source_connector:{connector_id}:status:{previous_status}",
+        after_state_ref=f"source_connector:{connector_id}:status:{next_status}",
+        metadata={"connector_id": connector_id, "previous_status": previous_status, "next_status": next_status},
+    )
+    _append_audit_actions((action,))
+    return action.to_dict()
+
+
+def _set_connector_lifecycle(connector_id: str, request: SetConnectorLifecycleRequest) -> dict[str, Any]:
+    config = connector_store.get_config(connector_id)
+    if config is None:
+        raise HTTPException(status_code=404, detail="connector config not found")
+    reason = str(request.reason or "").strip()
+    if not reason:
+        raise SourceEvidenceError("lifecycle reason is required")
+    previous = config.connector
+    previous_status = previous.status.value
+    next_status = request.status.value
+    payload = previous.to_dict()
+    payload["status"] = next_status
+    metadata = dict(payload.get("metadata") or {})
+    metadata["lifecycle"] = {
+        "status": next_status,
+        "previous_status": previous_status,
+        "reason": reason,
+        "actor_id": request.actor_id,
+        "updated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    }
+    payload["metadata"] = metadata
+    updated_connector = validate_external_source_connector(SourceConnector.from_dict(payload))
+    manager.upsert_connector(updated_connector)
+    stored = connector_store.upsert_config(updated_connector, config.fetch)
+    audit = _record_connector_lifecycle_audit(
+        connector_id=connector_id,
+        previous_status=previous_status,
+        next_status=next_status,
+        reason=reason,
+        actor_id=request.actor_id,
+        trace_id=request.trace_id,
+    )
+    return {
+        "connector": stored.connector.to_dict(),
+        "fetch": dict(stored.fetch),
+        "state": connector_store.get_fetch_state(connector_id),
+        "lifecycle": metadata["lifecycle"],
+        "audit_action": audit,
+    }
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     return {
@@ -874,29 +1019,18 @@ def list_connectors() -> dict[str, Any]:
 
 @app.get("/api/source-ingest/registry")
 def source_connector_registry() -> dict[str, Any]:
-    configured_by_id = {config.connector.connector_id: config for config in connector_store.list_configs()}
-    connector_ids = set(configured_by_id)
-    connectors = list(manager.list_connectors())
-    connector_ids.update(connector.connector_id for connector in connectors)
-
-    entries: list[dict[str, Any]] = []
-    for connector_id in sorted(connector_ids):
-        config = configured_by_id.get(connector_id)
-        connector = config.connector if config else manager.get_connector(connector_id)
-        if connector is None:
-            continue
-        entries.append(
-            _connector_registry_entry(
-                connector,
-                fetch=dict(config.fetch) if config else None,
-                state=connector_store.get_fetch_state(connector_id) if config else None,
-            )
-        )
+    entries = _source_connector_entries()
     return {
         "schema_version": "source_connector_registry.v1",
         "connectors": entries,
         "provider_examples": _provider_example_payloads(),
+        "policy_registry": _source_policy_registry_payload(),
     }
+
+
+@app.get("/api/source-ingest/policy-registry")
+def source_policy_registry() -> dict[str, Any]:
+    return _source_policy_registry_payload()
 
 
 @app.get("/api/source-ingest/connectors/{connector_id}")
@@ -910,6 +1044,14 @@ def get_connector(connector_id: str) -> dict[str, Any]:
         "state": connector_store.get_fetch_state(connector_id),
         "updated_at": config.updated_at,
     }
+
+
+@app.put("/api/source-ingest/connectors/{connector_id}/lifecycle")
+def set_connector_lifecycle(connector_id: str, request: SetConnectorLifecycleRequest) -> dict[str, Any]:
+    try:
+        return _set_connector_lifecycle(connector_id, request)
+    except SourceEvidenceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/source-ingest/jobs", status_code=201)
@@ -1115,6 +1257,9 @@ def run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dict
         config = connector_store.get_config(sched.connector_id)
         if config is None:
             failed.append({"connector_id": sched.connector_id, "error": "connector config not found"})
+            continue
+        if config.connector.status == ConnectorStatus.DISABLED:
+            skipped.append(sched.connector_id)
             continue
         try:
             _register_or_validate_connector(config.connector)
