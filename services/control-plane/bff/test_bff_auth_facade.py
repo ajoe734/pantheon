@@ -641,6 +641,64 @@ class TestExtractIdentityJwks:
         assert identity.roles == ["admin"]
         assert identity.mfa_verified is True
 
+    def test_mfa_required_rejects_unaccepted_idp_mfa_claim(self):
+        """MFA_REQUIRED=true must not accept an IdP claim outside the configured values."""
+        from fastapi import HTTPException
+
+        token = _make_rs256_jwt(
+            sub="op-idp-admin",
+            roles=["admin"],
+            extra={"amr": ["pwd", "sms"]},
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(
+                f"Bearer {token}",
+                env_overrides={
+                    "PANTHEON_BFF_MFA_REQUIRED": "true",
+                    "PANTHEON_BFF_MFA_CLAIMS": "amr",
+                    "PANTHEON_BFF_MFA_VALUES": "mfa,webauthn",
+                },
+            )
+        assert exc_info.value.status_code == 401
+        assert "MFA_REQUIRED" in json.dumps(exc_info.value.detail)
+
+    def test_strict_role_map_unmapped_group_denies_admin_write(self):
+        """Unmapped IdP groups must not satisfy protected BFF admin routes."""
+        token = _make_rs256_jwt(
+            sub="op-unmapped",
+            roles=None,
+            extra={"groups": ["unknown-idp-group"], "amr": ["pwd", "mfa"]},
+        )
+        env = {
+            **_JWKS_ENV,
+            "PANTHEON_BFF_ROLE_CLAIMS": "groups",
+            "PANTHEON_BFF_ROLE_MAP": "pantheon-staging-admins=admin",
+            "PANTHEON_BFF_ROLE_MAP_MODE": "strict",
+            "PANTHEON_BFF_MFA_REQUIRED": "true",
+            "PANTHEON_BFF_MFA_CLAIMS": "amr",
+            "PANTHEON_BFF_MFA_VALUES": "mfa",
+        }
+        with patch(_JWKS_FETCH_TARGET, return_value=_TEST_JWKS):
+            with patch.dict(os.environ, env, clear=False):
+                with tempfile.TemporaryDirectory() as td:
+                    original = bff_main.settings_store
+                    from settings_store import SettingsStore
+
+                    bff_main.settings_store = SettingsStore(os.path.join(td, "settings.json"))
+                    try:
+                        client = TestClient(bff_main.app)
+                        resp = client.post(
+                            "/api/v1/settings",
+                            headers={"Authorization": f"Bearer {token}"},
+                            json={"settings": {"general": {"theme": "dark"}}},
+                        )
+                    finally:
+                        bff_main.settings_store = original
+
+        assert resp.status_code == 403
+        detail = resp.json()["detail"]
+        assert detail["error"]["details"]["precondition_failed"] == "role_check"
+
     # ---- kid matching ----
 
     def test_kid_mismatch_raises_401(self):

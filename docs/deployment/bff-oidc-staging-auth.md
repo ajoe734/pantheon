@@ -1,6 +1,6 @@
 # BFF OIDC Staging Auth
 
-Status date: 2026-04-30
+Status date: 2026-05-04
 
 This note defines the staging-live IdP posture for the operator BFF. It is a
 deployment record for `docker-compose.control.yml` and
@@ -16,6 +16,9 @@ deployment record for `docker-compose.control.yml` and
     metadata.
   - `PANTHEON_BFF_JWKS_URI`, when discovery is not available and the issuer's
     JWKS endpoint is documented directly.
+- The checked-in env example shows the required staging shape. Before a VM1
+  staging-live deploy, replace the example IdP host with the actual issuer,
+  audience, and either discovery URL or direct JWKS URI.
 - `PANTHEON_BFF_OIDC_ISSUER` and `PANTHEON_BFF_OIDC_AUDIENCE` must match the
   token `iss` and `aud` claims. If `OIDC_ISSUER` is blank and discovery is
   used, the discovery metadata `issuer` is used.
@@ -82,8 +85,10 @@ Run focused auth coverage:
 
 ```bash
 python3 -m pytest services/control-plane/bff/test_bff_auth_facade.py -q
+python3 -m pytest services/control-plane/bff/test_bff_oidc_staging_env_contract.py -q
 ```
 
 The focused tests cover OIDC discovery, JWKS validation, cache hit, forced
-refresh on `kid` miss, sanitized auth errors, strict role mapping, MFA claim
-mapping, and HS256 fallback.
+refresh on `kid` miss, sanitized auth errors, strict role mapping, negative MFA
+claim mapping, staging env/compose IdP posture, stub-disabled defaults, and
+HS256 fallback.
