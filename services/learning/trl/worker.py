@@ -7,8 +7,11 @@ import sys
 from pathlib import Path
 
 SERVICE_DIR = Path(__file__).resolve().parent
-if str(SERVICE_DIR) not in sys.path:
-    sys.path.insert(0, str(SERVICE_DIR))
+# Add repo root so cross-service imports (services.evaluation) resolve when run as subprocess.
+REPO_ROOT = Path(os.environ.get("PANTHEON_REPO_ROOT", str(SERVICE_DIR.parents[2])))
+for _p in (str(SERVICE_DIR), str(REPO_ROOT)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from adapter import (
     ActivationReadyGate,

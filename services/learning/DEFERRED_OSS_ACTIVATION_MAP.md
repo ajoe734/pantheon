@@ -140,6 +140,11 @@ and strategy gates in `ACTIVATION_CRITERIA.md §1` are satisfied.
 - The 2026-05-01 real backend attempt failed explicitly because the local environment does not
   have the upstream `trl` module installed (`ModuleNotFoundError: No module named 'trl'`);
   the evidence records `silent_stub_fallback=false`.
+- 2026-05-04 (SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE): fixed a subprocess path issue in
+  `services/learning/trl/worker.py` — the worker now inserts the repo root into `sys.path` so
+  that `services.evaluation` imports resolve correctly when the gateway dispatches it as a
+  subprocess. Verified: `scripts/test_smoke_oss_activation_ready_matrix.py` now passes
+  16/16 rows (all default+enabled paths pass including `enabled:trl:offline`).
 - Smoke test passes: 29 unit tests + assertions OK (revalidated 2026-04-29). Evidence in `integrations/trl/`.
 - `services/learning/trl/PREFERENCE_LEARNING_CONTRACT.md` and `WORKFLOW_DEFINITION.md` remain
   authoritative for pair-construction contract and workflow design.
