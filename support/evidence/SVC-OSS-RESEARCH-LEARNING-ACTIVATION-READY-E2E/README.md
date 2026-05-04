@@ -45,6 +45,28 @@ Run from `/home/lupin/code/pantheon` with temporary test venv `/tmp/pantheon-oss
 The venv was created under `/tmp` because the system Python is externally managed and lacked
 `fastapi` for the focused service tests.
 
+## Owner Closeout Verification
+
+Finalization rerun from `/home/lupin/code/pantheon` on 2026-05-04:
+
+```bash
+/tmp/pantheon-oss-e2e-venv/bin/python scripts/smoke_oss_activation_ready_matrix.py --keep-output
+# 16/16 passed; forbidden_writes={'registry_write': False, 'governance_write': False, 'broker_write': False, 'live_write': False}
+# output_dir=/tmp/pantheon-oss-matrix-trcwqgfq
+```
+
+```bash
+/tmp/pantheon-oss-e2e-venv/bin/python -m pytest -q \
+  scripts/test_smoke_oss_activation_ready_matrix.py \
+  scripts/test_smoke_openclaw_activation_ready_e2e.py \
+  services/control-plane/bff/test_research_oss_preactivation_contract.py \
+  services/research/tests/test_research_orchestrator_http_service.py \
+  services/policy-learning/tests/test_policy_learning_http_service.py \
+  services/policy-learning/tests/test_policy_learning_gateway_routing.py \
+  services/research-worker-gateway/tests/
+# 51 passed in 27.64s
+```
+
 ## Notes
 
 - `DEFERRED_OSS_ACTIVATION_MAP.md` is the task artifact named in status, but the repo-local file
