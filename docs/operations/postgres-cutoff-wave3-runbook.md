@@ -177,3 +177,19 @@ docker compose -f docker-compose.control.yml config --quiet
 | Wave 3 | SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3 (this) | governance, capital, incidents, postmortems, promotion, reconciliation-drift, memory |
 
 Wave 2 services are covered by the `PANTHEON_PERSISTENCE_POSTURE` + `PANTHEON_SOURCE_SEARCH_POSTURE` gates in `env/prod-control.env.example` and `DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md` section 4.1.
+
+---
+
+## 9. Closeout Verification (2026-05-03)
+
+Final owner verification run at task closeout:
+
+```bash
+python3 -m pytest services/foundation/tests/test_control_plane_postgres_owner_stores.py \
+  services/foundation/tests/test_persistence_posture.py -v
+# 8 passed in 3.61s
+```
+
+Reviewer: Codex — approval recorded at `.orchestrator/reviews/SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3-review-codex.md`
+
+Task status: done
