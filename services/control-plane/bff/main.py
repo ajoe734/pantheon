@@ -2299,6 +2299,64 @@ def _dataset_surface_status(
     return surface
 
 
+def _read_surface_meta(
+    dataset: str,
+    surface_key: str,
+    *,
+    snapshot_at: Optional[str] = None,
+    total: Optional[int] = None,
+    surface: Optional[Dict[str, Any]] = None,
+    has_data: Optional[bool] = None,
+    missing_message: Optional[str] = None,
+    degraded_reason: Optional[str] = None,
+    unavailable_reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    snapshot_at = snapshot_at or utc_now()
+    surface = surface or _dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        has_data=has_data,
+        missing_message=missing_message,
+    )
+    meta: Dict[str, Any] = {
+        "snapshot_at": snapshot_at,
+        "surfaces": {
+            surface_key: surface,
+        },
+    }
+    if total is not None:
+        meta["total"] = total
+    staleness = _meta_staleness()
+    if staleness is not None:
+        meta["staleness"] = staleness
+    label = surface_key.replace("_", " ")
+    reason = _surface_degradation_reason(
+        surface,
+        degraded_reason=degraded_reason or f"{label} is degraded and may be stale.",
+        unavailable_reason=unavailable_reason or f"{label} is currently unavailable.",
+    )
+    if reason is not None:
+        meta["degradation"] = {"reason": reason}
+    return meta
+
+
+def _raise_if_read_surface_unavailable(
+    surface: Dict[str, Any],
+    *,
+    label: str,
+) -> None:
+    if surface.get("status") != "unavailable":
+        return
+    raise _bff_error(
+        503,
+        ErrorCode.DOWNSTREAM_UNAVAILABLE,
+        f"{label} read surface unavailable",
+        str(surface.get("message") or surface.get("note") or f"{label} downstream read source is unavailable."),
+        precondition_failed="read_surface_unavailable",
+        suggestion="Verify the owning service URL and health before retrying this read.",
+    )
+
+
 def _composed_surface_status(
     *,
     snapshot_at: Optional[str] = None,
@@ -6168,12 +6226,15 @@ async def list_personas(
         mandate=mandate,
         strategy_family=strategy_family,
     )
+    snapshot_at = utc_now()
     return {
         "data": personas,
-        "meta": {
-            "total": len(personas),
-            "staleness": _meta_staleness(),
-        },
+        "meta": _read_surface_meta(
+            "personas",
+            "persona_list",
+            snapshot_at=snapshot_at,
+            total=len(personas),
+        ),
     }
 
 
@@ -6183,8 +6244,11 @@ async def get_persona_detail(persona_id: str, authorization: Optional[str] = Hea
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
+    snapshot_at = utc_now()
+    persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
     persona = read_store.get_persona(persona_id)
     if not persona:
+        _raise_if_read_surface_unavailable(persona_surface, label="Persona")
         raise _bff_error(
             404,
             ErrorCode.OBJECT_NOT_FOUND,
@@ -6198,9 +6262,12 @@ async def get_persona_detail(persona_id: str, authorization: Optional[str] = Hea
 
     return {
         "data": payload,
-        "meta": {
-            "staleness": _meta_staleness(),
-        },
+        "meta": _read_surface_meta(
+            "personas",
+            "persona_detail",
+            snapshot_at=snapshot_at,
+            surface=persona_surface,
+        ),
     }
 
 
@@ -6214,8 +6281,11 @@ async def list_persona_sessions(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
+    snapshot_at = utc_now()
+    persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
     persona = read_store.get_persona(persona_id)
     if not persona:
+        _raise_if_read_surface_unavailable(persona_surface, label="Persona")
         raise _bff_error(
             404,
             ErrorCode.OBJECT_NOT_FOUND,
@@ -6226,10 +6296,12 @@ async def list_persona_sessions(
     sessions = read_store.list_sessions_for_persona(persona_id, status=status) or []
     return {
         "data": sessions,
-        "meta": {
-            "total": len(sessions),
-            "staleness": _meta_staleness(),
-        },
+        "meta": _read_surface_meta(
+            "sessions",
+            "persona_sessions",
+            snapshot_at=snapshot_at,
+            total=len(sessions),
+        ),
     }
 
 
@@ -6239,8 +6311,11 @@ async def get_session_detail(session_id: str, authorization: Optional[str] = Hea
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
+    snapshot_at = utc_now()
+    session_surface = _dataset_surface_status("sessions", snapshot_at=snapshot_at)
     session = read_store.get_session(session_id)
     if not session:
+        _raise_if_read_surface_unavailable(session_surface, label="Session")
         raise _bff_error(
             404,
             ErrorCode.OBJECT_NOT_FOUND,
@@ -6258,9 +6333,12 @@ async def get_session_detail(session_id: str, authorization: Optional[str] = Hea
 
     return {
         "data": payload,
-        "meta": {
-            "staleness": _meta_staleness(),
-        },
+        "meta": _read_surface_meta(
+            "sessions",
+            "session_detail",
+            snapshot_at=snapshot_at,
+            surface=session_surface,
+        ),
     }
 
 
@@ -6274,8 +6352,11 @@ async def list_persona_teaching_sessions(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
+    snapshot_at = utc_now()
+    persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
     persona = read_store.get_persona(persona_id)
     if not persona:
+        _raise_if_read_surface_unavailable(persona_surface, label="Persona")
         raise _bff_error(
             404,
             ErrorCode.OBJECT_NOT_FOUND,
@@ -6286,10 +6367,12 @@ async def list_persona_teaching_sessions(
     sessions = read_store.list_teaching_sessions_for_persona(persona_id, status=status) or []
     return {
         "data": sessions,
-        "meta": {
-            "total": len(sessions),
-            "staleness": _meta_staleness(),
-        },
+        "meta": _read_surface_meta(
+            "teaching_sessions",
+            "teaching_sessions",
+            snapshot_at=snapshot_at,
+            total=len(sessions),
+        ),
     }
 
 
@@ -6301,8 +6384,11 @@ async def get_persona_capabilities(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
+    snapshot_at = utc_now()
+    persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
     persona = read_store.get_persona(persona_id)
     if not persona:
+        _raise_if_read_surface_unavailable(persona_surface, label="Persona")
         raise _bff_error(
             404,
             ErrorCode.OBJECT_NOT_FOUND,
@@ -6310,8 +6396,10 @@ async def get_persona_capabilities(
             f"Persona {persona_id} does not exist",
         )
 
+    capability_surface = _dataset_surface_status("capability_snapshots", snapshot_at=snapshot_at)
     snapshot = read_store.get_capability_snapshot_for_persona(persona_id)
     if not snapshot:
+        _raise_if_read_surface_unavailable(capability_surface, label="Capability snapshot")
         raise _bff_error(
             404,
             ErrorCode.OBJECT_NOT_FOUND,
@@ -6321,9 +6409,12 @@ async def get_persona_capabilities(
 
     return {
         "data": snapshot,
-        "meta": {
-            "staleness": _meta_staleness(),
-        },
+        "meta": _read_surface_meta(
+            "capability_snapshots",
+            "capability_snapshot",
+            snapshot_at=snapshot_at,
+            surface=capability_surface,
+        ),
     }
 
 
@@ -6912,12 +7003,15 @@ async def list_capital_pools(
     _require_read_role(identity)
 
     pools = read_store.list_capital_pools(status=status, risk_policy_ref=risk_policy_ref)
+    snapshot_at = utc_now()
     return {
         "data": pools,
-        "meta": {
-            "total": len(pools),
-            "staleness": _meta_staleness(),
-        },
+        "meta": _read_surface_meta(
+            "capital_pools",
+            "capital_pool_list",
+            snapshot_at=snapshot_at,
+            total=len(pools),
+        ),
     }
 
 
@@ -6939,12 +7033,15 @@ async def list_bindings(
         role=role,
         validity=validity,
     )
+    snapshot_at = utc_now()
     return {
         "data": bindings,
-        "meta": {
-            "total": len(bindings),
-            "staleness": _meta_staleness(),
-        },
+        "meta": _read_surface_meta(
+            "persona_bindings",
+            "binding_list",
+            snapshot_at=snapshot_at,
+            total=len(bindings),
+        ),
     }
 
 
@@ -6962,12 +7059,15 @@ async def list_deployment_plans(
         status=status,
         capital_pool_id=capital_pool_id,
     )
+    snapshot_at = utc_now()
     return {
         "data": plans,
-        "meta": {
-            "total": len(plans),
-            "staleness": _meta_staleness(),
-        },
+        "meta": _read_surface_meta(
+            "deployment_plans",
+            "deployment_plan_list",
+            snapshot_at=snapshot_at,
+            total=len(plans),
+        ),
     }
 
 
@@ -6985,12 +7085,15 @@ async def list_approval_decisions(
         outcome=outcome,
         state=state,
     )
+    snapshot_at = utc_now()
     return {
         "data": decisions,
-        "meta": {
-            "total": len(decisions),
-            "staleness": _meta_staleness(),
-        },
+        "meta": _read_surface_meta(
+            "approval_decisions",
+            "approval_decision_list",
+            snapshot_at=snapshot_at,
+            total=len(decisions),
+        ),
     }
 
 
@@ -7002,8 +7105,11 @@ async def get_approval_decision_detail(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
+    snapshot_at = utc_now()
+    decision_surface = _dataset_surface_status("approval_decisions", snapshot_at=snapshot_at)
     decision = read_store.get_approval_decision(decision_id)
     if not decision:
+        _raise_if_read_surface_unavailable(decision_surface, label="Approval decision")
         raise _bff_error(
             404,
             ErrorCode.OBJECT_NOT_FOUND,
@@ -7013,9 +7119,12 @@ async def get_approval_decision_detail(
 
     return {
         "data": decision,
-        "meta": {
-            "staleness": _meta_staleness(),
-        },
+        "meta": _read_surface_meta(
+            "approval_decisions",
+            "approval_decision_detail",
+            snapshot_at=snapshot_at,
+            surface=decision_surface,
+        ),
     }
 
 
@@ -7033,12 +7142,15 @@ async def list_runtime_bindings(
         deployment_mode=deployment_mode,
         version=version,
     )
+    snapshot_at = utc_now()
     return {
         "data": bindings,
-        "meta": {
-            "total": len(bindings),
-            "staleness": _meta_staleness(),
-        },
+        "meta": _read_surface_meta(
+            "runtime_bindings",
+            "runtime_binding_list",
+            snapshot_at=snapshot_at,
+            total=len(bindings),
+        ),
     }
 
 
@@ -7050,8 +7162,11 @@ async def get_runtime_status(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
+    snapshot_at = utc_now()
+    runtime_surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
     runtime_binding = read_store.get_runtime_binding_by_runtime_id(runtime_id)
     if not runtime_binding:
+        _raise_if_read_surface_unavailable(runtime_surface, label="Runtime")
         raise _bff_error(
             404,
             ErrorCode.OBJECT_NOT_FOUND,
@@ -7061,9 +7176,12 @@ async def get_runtime_status(
 
     return {
         "data": runtime_binding,
-        "meta": {
-            "staleness": _meta_staleness(),
-        },
+        "meta": _read_surface_meta(
+            "runtime_bindings",
+            "runtime_status",
+            snapshot_at=snapshot_at,
+            surface=runtime_surface,
+        ),
     }
 
 
@@ -7077,8 +7195,11 @@ async def get_deployment_plan(plan_id: str, authorization: Optional[str] = Heade
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
+    snapshot_at = utc_now()
+    plan_surface = _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at)
     plan = read_store.get_deployment_plan(plan_id)
     if not plan:
+        _raise_if_read_surface_unavailable(plan_surface, label="Deployment plan")
         raise _bff_error(
             404,
             ErrorCode.OBJECT_NOT_FOUND,
@@ -7093,9 +7214,12 @@ async def get_deployment_plan(plan_id: str, authorization: Optional[str] = Heade
 
     return {
         "data": payload,
-        "meta": {
-            "staleness": _meta_staleness(),
-        },
+        "meta": _read_surface_meta(
+            "deployment_plans",
+            "deployment_plan_detail",
+            snapshot_at=snapshot_at,
+            surface=plan_surface,
+        ),
     }
 
 
@@ -7104,8 +7228,11 @@ async def get_capital_pool(pool_id: str, authorization: Optional[str] = Header(d
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
+    snapshot_at = utc_now()
+    pool_surface = _dataset_surface_status("capital_pools", snapshot_at=snapshot_at)
     pool = read_store.get_capital_pool(pool_id)
     if not pool:
+        _raise_if_read_surface_unavailable(pool_surface, label="Capital pool")
         raise _bff_error(
             404,
             ErrorCode.OBJECT_NOT_FOUND,
@@ -7119,9 +7246,12 @@ async def get_capital_pool(pool_id: str, authorization: Optional[str] = Header(d
 
     return {
         "data": payload,
-        "meta": {
-            "staleness": _meta_staleness(),
-        },
+        "meta": _read_surface_meta(
+            "capital_pools",
+            "capital_pool_detail",
+            snapshot_at=snapshot_at,
+            surface=pool_surface,
+        ),
     }
 
 
@@ -7130,8 +7260,11 @@ async def get_binding(binding_id: str, authorization: Optional[str] = Header(def
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
+    snapshot_at = utc_now()
+    binding_surface = _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at)
     binding = read_store.get_binding(binding_id)
     if not binding:
+        _raise_if_read_surface_unavailable(binding_surface, label="Binding")
         raise _bff_error(
             404,
             ErrorCode.OBJECT_NOT_FOUND,
@@ -7146,9 +7279,12 @@ async def get_binding(binding_id: str, authorization: Optional[str] = Header(def
 
     return {
         "data": payload,
-        "meta": {
-            "staleness": _meta_staleness(),
-        },
+        "meta": _read_surface_meta(
+            "persona_bindings",
+            "binding_detail",
+            snapshot_at=snapshot_at,
+            surface=binding_surface,
+        ),
     }
 
 
@@ -7157,8 +7293,11 @@ async def get_runtime_binding(binding_id: str, authorization: Optional[str] = He
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
+    snapshot_at = utc_now()
+    runtime_binding_surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
     runtime_binding = read_store.get_runtime_binding(binding_id)
     if not runtime_binding:
+        _raise_if_read_surface_unavailable(runtime_binding_surface, label="Runtime binding")
         raise _bff_error(
             404,
             ErrorCode.OBJECT_NOT_FOUND,
@@ -7173,9 +7312,12 @@ async def get_runtime_binding(binding_id: str, authorization: Optional[str] = He
 
     return {
         "data": payload,
-        "meta": {
-            "staleness": _meta_staleness(),
-        },
+        "meta": _read_surface_meta(
+            "runtime_bindings",
+            "runtime_binding_detail",
+            snapshot_at=snapshot_at,
+            surface=runtime_binding_surface,
+        ),
     }
 
 
