@@ -9,7 +9,10 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_BACKUP = ROOT / ".orchestrator/backups/event-queue.pre-blueprint-execution-20260503T130840Z.jsonl"
+DEFAULT_BACKUP = (
+    ROOT
+    / ".orchestrator/backups/retired-queues/20260504-stale-coordination-dispatch/event-queue.invalidated.jsonl"
+)
 DEFAULT_ACTIVE = ROOT / ".orchestrator/event-queue.jsonl"
 AI_STATUS = ROOT / "ai-status.json"
 ARCHIVE_DIR = ROOT / "ai-task-archive/tasks"

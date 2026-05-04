@@ -16,8 +16,10 @@ queue is isolated.
 
 - Local guard: `.orchestrator/config.local.json`
 - Active queue: `.orchestrator/event-queue.jsonl`
-- Pre-isolation backup:
-  `.orchestrator/backups/event-queue.pre-blueprint-execution-20260503T130840Z.jsonl`
+- Retired pre-isolation archive:
+  `.orchestrator/backups/retired-queues/20260504-stale-coordination-dispatch/event-queue.invalidated.jsonl`
+- Retired replay candidate marker:
+  `.orchestrator/backups/retired-queues/20260504-stale-coordination-dispatch/replay-candidates.empty.jsonl`
 - Dashboard evidence: `docs-site/dashboard-bundle.json`
 
 ## Why Isolation Happened
@@ -38,14 +40,14 @@ Command:
 
 ```bash
 wc -l .orchestrator/event-queue.jsonl \
-  .orchestrator/backups/event-queue.pre-blueprint-execution-20260503T130840Z.jsonl
+  .orchestrator/backups/retired-queues/20260504-stale-coordination-dispatch/event-queue.invalidated.jsonl
 ```
 
 Observed after manual closeout on 2026-05-03:
 
 ```text
 0   .orchestrator/event-queue.jsonl
-115 .orchestrator/backups/event-queue.pre-blueprint-execution-20260503T130840Z.jsonl
+115 .orchestrator/backups/retired-queues/20260504-stale-coordination-dispatch/event-queue.invalidated.jsonl
 ```
 
 Active queue reasons:
@@ -76,6 +78,11 @@ Backup queue reasons:
 The backup therefore contains 113 coordination dispatches, one old execution
 dispatch, and one chair review event. It is an audit artifact and must not be
 bulk-appended back into the active queue.
+
+On 2026-05-04 the operator instructed the repo to assume this old queue is
+stale/invalid if expired and to process it into the correct archive. The file
+was moved out of the generic backup root and into the retired queue archive
+listed above. It remains audit evidence only.
 
 ## Local Guard
 
@@ -162,13 +169,13 @@ Use this only after the execution wave no longer needs isolation.
 ## Non-Goals
 
 - Do not copy
-  `.orchestrator/backups/event-queue.pre-blueprint-execution-20260503T130840Z.jsonl`
+  `.orchestrator/backups/retired-queues/20260504-stale-coordination-dispatch/event-queue.invalidated.jsonl`
   over `.orchestrator/event-queue.jsonl`.
 - Do not append all backup lines into the active queue.
 - Do not interpret the current local guard as canonical architecture, product
   policy, or permanent retirement of coordination/GitHub/chair modes.
-- Do not erase the backup file; it records exactly what was removed from the
-  active queue before the blueprint execution isolation.
+- Do not erase the retired archive file; it records exactly what was removed
+  from the active queue before the blueprint execution isolation.
 
 ## Verification Commands
 
@@ -176,9 +183,9 @@ Focused checks used for this record:
 
 ```bash
 wc -l .orchestrator/event-queue.jsonl \
-  .orchestrator/backups/event-queue.pre-blueprint-execution-20260503T130840Z.jsonl
+  .orchestrator/backups/retired-queues/20260504-stale-coordination-dispatch/event-queue.invalidated.jsonl
 jq -r '.reason' .orchestrator/event-queue.jsonl | sort | uniq -c
-jq -r '.reason' .orchestrator/backups/event-queue.pre-blueprint-execution-20260503T130840Z.jsonl | sort | uniq -c
+jq -r '.reason' .orchestrator/backups/retired-queues/20260504-stale-coordination-dispatch/event-queue.invalidated.jsonl | sort | uniq -c
 jq -r '[.created_at,.event_id,.task_id,.target_agent,.reason] | @tsv' \
   .orchestrator/event-queue.jsonl
 jq '{focus_mode, runtime_summary: {queue_depth: .runtime_summary.queue_depth, running_workers: .runtime_summary.running_workers, mode_occupancy: .runtime_summary.mode_occupancy}}' \
