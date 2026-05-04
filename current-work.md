@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-04 09:06:42
+Last updated: 2026-05-04 09:26:27
 
 ## Objective
 
@@ -39,11 +39,11 @@ Last updated: 2026-05-04 09:06:42
 
 - `Claude`: execution, control-plane, governance-review; next: Ownership updated
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Ownership updated
-- `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
+- `Codex`: integration, status-system, schema, acceptance; next: Supervisor auto-started SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER after successful dispatch.
+- `Codex2`: integration, status-system, schema, acceptance; next: Supervisor auto-started SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF after successful dispatch.
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
 - `Claude2`: execution, control-plane, governance-review; next: No active assignment
-- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Supervisor auto-started SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF after successful dispatch.
+- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Supervisor auto-started SVC-BLUEPRINT-OPENCLAW-READY-FACADE after successful dispatch.
 
 ## Delivery Layers
 
@@ -51,26 +51,26 @@ Last updated: 2026-05-04 09:06:42
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF` | Blueprint gap execution wave 2026-05-03 | Replace frontend demo auth and demo islands with BFF-backed staging paths | Gemini2 | in_progress | `SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4` | front-ai-trading-system 移除或 dev-gate demo AuthProvider、demo token、@/demo dashboard islands；staging/prod UI 走 Pantheon BFF/OIDC/JWT-compatible contract。 |
-| `SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD` | Blueprint gap execution wave 2026-05-03 | Complete pantheon-lean runtime kernel scaffold without live activation | Claude | todo | `SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT`, `SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE` | 以 pantheon/lean / pantheon-lean 為正式 execution bridge，補完整 activation-ready Launcher/runtime bridge scaffold：DeploymentPlan、RuntimeBinding、artifact context、TelemetryEvent、safe runtime actions。paper smoke 可用；canary/live gate closed。 |
+| `SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF` | Blueprint gap execution wave 2026-05-03 | Replace frontend demo auth and demo islands with BFF-backed staging paths | Codex2 | in_progress | `SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4` | front-ai-trading-system 移除或 dev-gate demo AuthProvider、demo token、@/demo dashboard islands；staging/prod UI 走 Pantheon BFF/OIDC/JWT-compatible contract。 |
+| `SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD` | Blueprint gap execution wave 2026-05-03 | Complete pantheon-lean runtime kernel scaffold without live activation | Codex2 | todo | `SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT`, `SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE` | 以 pantheon/lean / pantheon-lean 為正式 execution bridge，補完整 activation-ready Launcher/runtime bridge scaffold：DeploymentPlan、RuntimeBinding、artifact context、TelemetryEvent、safe runtime actions。paper smoke 可用；canary/live gate closed。 |
 | `SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS` | Blueprint gap execution wave 2026-05-03 | Add operator fallback drills while BFF HA remains deferred | Codex | todo | `SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT`, `SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD` | BFF HA/LB 先 defer，但要補 operator fallback drill：BFF down 時透過 CLI/internal API/kill-switch 完成 emergency pause/liquidate/replace 類安全動作與 audit evidence。 |
 
 ### External / Upstream Integration Work
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE` | Blueprint gap execution wave 2026-05-03 | Complete OSS research learning pre-activation integration without enabling gates | Claude | todo | `SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4`, `SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE` | 把 research、policy-learning、research-worker-gateway、Qlib/TRL/RL/W&B dormant scaffolds 做到 activation-ready：interface、schema、offline smoke、BFF read-only aggregation 與 fail-closed adapter 串接完成，但 gate 仍關閉。 |
-| `SVC-BLUEPRINT-OPENCLAW-READY-FACADE` | Blueprint gap execution wave 2026-05-03 | Make OpenClaw adapter activation-ready while live broker remains gated | Claude | todo | `SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE` | OpenClaw adapter/facade 補齊 runtime adoption scaffold、schema、health/readiness、offline smoke、BFF status surface；live broker、paper adapter、session creation 仍是 gate closed/deferred。 |
-| `SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER` | Blueprint gap execution wave 2026-05-03 | Upgrade source/search into bounded autonomous connector and indexer platform | Claude | todo | `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3`, `SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4` | source-ingest/search 從 bounded baseline 推進到合理完整功能：connector registry、bounded scheduled ingest、fetch evidence、DLQ/replay、materialized index refresh、freshness/retention visibility。不是無限制 crawler。 |
+| `SVC-BLUEPRINT-OPENCLAW-READY-FACADE` | Blueprint gap execution wave 2026-05-03 | Make OpenClaw adapter activation-ready while live broker remains gated | Gemini2 | in_progress | `SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE` | OpenClaw adapter/facade 補齊 runtime adoption scaffold、schema、health/readiness、offline smoke、BFF status surface；live broker、paper adapter、session creation 仍是 gate closed/deferred。 |
+| `SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER` | Blueprint gap execution wave 2026-05-03 | Upgrade source/search into bounded autonomous connector and indexer platform | Codex | in_progress | `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3`, `SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4` | source-ingest/search 從 bounded baseline 推進到合理完整功能：connector registry、bounded scheduled ingest、fetch evidence、DLQ/replay、materialized index refresh、freshness/retention visibility。不是無限制 crawler。 |
 | `SVC-BLUEPRINT-PAPER-BRACKET-BASELINE` | Blueprint gap execution wave 2026-05-03 | Implement deterministic paper bracket order semantics under fail-closed live guards | Claude | todo | `SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD` | 把 stop-loss/take-profit bracket order 在 paper/sim baseline 補成 deterministic semantics 與 telemetry evidence；live path 不啟用且必須經 guard 拒絕。 |
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-04 09:06:42
-- Terminal tasks archived: `897` total, `881` completed, `16` superseded
+- Archive updated: 2026-05-04 09:26:10
+- Terminal tasks archived: `898` total, `882` completed, `16` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE` | Blueprint gap execution wave 2026-05-03 | Complete OSS research learning pre-activation integration without enabling gates | Claude | completed | 2026-05-04 09:26:10 | `ai-task-archive/tasks/SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE.json` |
 | `SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE` | Blueprint gap execution wave 2026-05-03 | Finalize health readiness probe standard across active services | Codex | completed | 2026-05-04 09:06:42 | `ai-task-archive/tasks/SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE.json` |
 | `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3` | Blueprint gap execution wave 2026-05-03 | Move remaining production owner stores off JSONL baseline | Claude | completed | 2026-05-04 09:05:46 | `ai-task-archive/tasks/SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3.json` |
 | `SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4` | Blueprint gap execution wave 2026-05-03 | Cut BFF staging/prod reads over to service-backed clients | Codex | completed | 2026-05-04 09:03:32 | `ai-task-archive/tasks/SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4.json` |
@@ -90,17 +90,15 @@ Last updated: 2026-05-04 09:06:42
 | `P2-WANDB-ONLINE-SYNC-001` | P2 Wave 8 External Activation | W&B SDK-backed online sync activation smoke | Codex | completed | 2026-05-02 00:30:39 | `ai-task-archive/tasks/P2-WANDB-ONLINE-SYNC-001.json` |
 | `P2-QLIB-PROD-DATA-ACTIVATION-001` | P2 Wave 8 External Activation | Qlib production data activation packet and real-backend smoke | Codex2 | completed | 2026-05-02 00:21:00 | `ai-task-archive/tasks/P2-QLIB-PROD-DATA-ACTIVATION-001.json` |
 | `P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE` | P2 Wave 8 External Activation | Prepare P2-RL-UPSTREAM-RUNTIME-SMOKE-001 acceptance packet and dependency map | Claude2 | completed | 2026-05-02 00:04:51 | `ai-task-archive/tasks/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE.json` |
-| `P2-BROKER-SANDBOX-ORDER-001` | P2 Wave 7 | Broker sandbox/test-key order API smoke | Codex2 | completed | 2026-05-01 23:56:59 | `ai-task-archive/tasks/P2-BROKER-SANDBOX-ORDER-001.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF` | Blueprint gap execution wave 2026-05-03 | Replace frontend demo auth and demo islands with BFF-backed staging paths | front-ai-trading-system 移除或 dev-gate demo AuthProvider、demo token、@/demo dashboard islands；staging/prod UI 走 Pantheon BFF/OIDC/JWT-compatible contract。 | Gemini2 | Codex | in_progress | `SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4` | 2026-05-04 09:06:16 | Supervisor auto-started SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF after successful dispatch. |
-| `SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE` | Blueprint gap execution wave 2026-05-03 | Complete OSS research learning pre-activation integration without enabling gates | 把 research、policy-learning、research-worker-gateway、Qlib/TRL/RL/W&B dormant scaffolds 做到 activation-ready：interface、schema、offline smoke、BFF read-only aggregation 與 fail-closed adapter 串接完成，但 gate 仍關閉。 | Claude | Codex | todo | `SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4`, `SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE` | 2026-05-03 21:00:28 | Ownership updated |
-| `SVC-BLUEPRINT-OPENCLAW-READY-FACADE` | Blueprint gap execution wave 2026-05-03 | Make OpenClaw adapter activation-ready while live broker remains gated | OpenClaw adapter/facade 補齊 runtime adoption scaffold、schema、health/readiness、offline smoke、BFF status surface；live broker、paper adapter、session creation 仍是 gate closed/deferred。 | Claude | Codex | todo | `SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE` | 2026-05-03 21:00:32 | Ownership updated |
-| `SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER` | Blueprint gap execution wave 2026-05-03 | Upgrade source/search into bounded autonomous connector and indexer platform | source-ingest/search 從 bounded baseline 推進到合理完整功能：connector registry、bounded scheduled ingest、fetch evidence、DLQ/replay、materialized index refresh、freshness/retention visibility。不是無限制 crawler。 | Claude | Codex | todo | `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3`, `SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4` | 2026-05-04 09:06:11 | Helper-claimed by Claude while Codex completes higher-priority work. |
-| `SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD` | Blueprint gap execution wave 2026-05-03 | Complete pantheon-lean runtime kernel scaffold without live activation | 以 pantheon/lean / pantheon-lean 為正式 execution bridge，補完整 activation-ready Launcher/runtime bridge scaffold：DeploymentPlan、RuntimeBinding、artifact context、TelemetryEvent、safe runtime actions。paper smoke 可用；canary/live gate closed。 | Claude | Codex | todo | `SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT`, `SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE` | 2026-05-03 21:00:39 | Ownership updated |
+| `SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF` | Blueprint gap execution wave 2026-05-03 | Replace frontend demo auth and demo islands with BFF-backed staging paths | front-ai-trading-system 移除或 dev-gate demo AuthProvider、demo token、@/demo dashboard islands；staging/prod UI 走 Pantheon BFF/OIDC/JWT-compatible contract。 | Codex2 | Codex | in_progress | `SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4` | 2026-05-04 09:25:41 | Supervisor auto-started SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF after successful dispatch. |
+| `SVC-BLUEPRINT-OPENCLAW-READY-FACADE` | Blueprint gap execution wave 2026-05-03 | Make OpenClaw adapter activation-ready while live broker remains gated | OpenClaw adapter/facade 補齊 runtime adoption scaffold、schema、health/readiness、offline smoke、BFF status surface；live broker、paper adapter、session creation 仍是 gate closed/deferred。 | Gemini2 | Claude | in_progress | `SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE` | 2026-05-04 09:26:23 | Supervisor auto-started SVC-BLUEPRINT-OPENCLAW-READY-FACADE after successful dispatch. |
+| `SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER` | Blueprint gap execution wave 2026-05-03 | Upgrade source/search into bounded autonomous connector and indexer platform | source-ingest/search 從 bounded baseline 推進到合理完整功能：connector registry、bounded scheduled ingest、fetch evidence、DLQ/replay、materialized index refresh、freshness/retention visibility。不是無限制 crawler。 | Codex | Claude | in_progress | `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3`, `SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4` | 2026-05-04 09:26:27 | Supervisor auto-started SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER after successful dispatch. |
+| `SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD` | Blueprint gap execution wave 2026-05-03 | Complete pantheon-lean runtime kernel scaffold without live activation | 以 pantheon/lean / pantheon-lean 為正式 execution bridge，補完整 activation-ready Launcher/runtime bridge scaffold：DeploymentPlan、RuntimeBinding、artifact context、TelemetryEvent、safe runtime actions。paper smoke 可用；canary/live gate closed。 | Codex2 | Claude | todo | `SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT`, `SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE` | 2026-05-04 09:25:35 | Helper-claimed by Codex2 while Claude completes higher-priority work. |
 | `SVC-BLUEPRINT-PAPER-BRACKET-BASELINE` | Blueprint gap execution wave 2026-05-03 | Implement deterministic paper bracket order semantics under fail-closed live guards | 把 stop-loss/take-profit bracket order 在 paper/sim baseline 補成 deterministic semantics 與 telemetry evidence；live path 不啟用且必須經 guard 拒絕。 | Claude | Codex | todo | `SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD` | 2026-05-03 21:00:43 | Ownership updated |
 | `SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS` | Blueprint gap execution wave 2026-05-03 | Add operator fallback drills while BFF HA remains deferred | BFF HA/LB 先 defer，但要補 operator fallback drill：BFF down 時透過 CLI/internal API/kill-switch 完成 emergency pause/liquidate/replace 類安全動作與 audit evidence。 | Codex | Claude | todo | `SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT`, `SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD` | 2026-05-03 21:00:47 | Ownership updated |
 
@@ -108,7 +106,7 @@ Last updated: 2026-05-04 09:06:42
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| `SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER` | Codex | Claude | Helper-claimed by Claude while Codex completes higher-priority work. | pending | 2026-05-04 09:06:11 |
+| `SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD` | Claude | Codex2 | Helper-claimed by Codex2 while Claude completes higher-priority work. | pending | 2026-05-04 09:25:35 |
 
 ## Blockers
 
@@ -191,23 +189,23 @@ Last updated: 2026-05-04 09:06:42
 
 ## Latest Checkpoints
 
-- 2026-05-04 09:05:46 Claude: `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3` Owner finalized: 8 store/posture tests pass; runbook Section 9 records final verification and Codex approval; task-scoped commit 0d62c33 (runbook only); docker-compose.control.yml healthcheck updates excluded (belong to OBSERVABILITY-PROBE-FINALIZE).
-- 2026-05-04 09:05:51 Orchestrator: PostToolUse: Bash
-- 2026-05-04 09:05:55 Orchestrator: PreToolUse: Bash
-- 2026-05-04 09:05:58 Orchestrator: PreToolUse: Bash
-- 2026-05-04 09:05:59 Orchestrator: PostToolUse: Bash
-- 2026-05-04 09:06:03 Orchestrator: PreToolUse: Bash
-- 2026-05-04 09:06:03 Orchestrator: PostToolUse: Bash
-- 2026-05-04 09:06:07 Orchestrator: PreToolUse: Bash
-- 2026-05-04 09:06:10 Orchestrator: PreToolUse: Bash
-- 2026-05-04 09:06:10 Orchestrator: PostToolUse: Bash
-- 2026-05-04 09:06:11 Orchestrator: `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3` Worker superseded after task responsibility moved to another agent.
-- 2026-05-04 09:06:12 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-04 09:06:16 Orchestrator: `SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER` Wake-up queued for supervisor: owned_ready_dispatch
-- 2026-05-04 09:06:16 Orchestrator: `SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER` Helper-claimed by Claude while Codex completes higher-priority work.
-- 2026-05-04 09:06:16 Orchestrator: `SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF` Wake-up queued for supervisor: owned_ready_dispatch
-- 2026-05-04 09:06:16 Orchestrator: `SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER` Skipped stale queued wake event for SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER: task state changed after the wake-up was queued.
-- 2026-05-04 09:06:16 Orchestrator: `SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF` Worker started via gemini: owned_ready_dispatch
-- 2026-05-04 09:06:16 Gemini2: `SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF` Supervisor auto-started SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF after successful dispatch.
-- 2026-05-04 09:06:22 Orchestrator: `SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF` Supervisor auto-started SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF after successful dispatch.
-- 2026-05-04 09:06:42 Codex: `SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE` Closeout finalized by Codex. Commit f0383d0 records readiness probe standard across control/exec services, paper runtime standard health probes with legacy compatibility, runtime-manager optional URL readiness posture, focused health tests, and Claude review artifact. Verification: /tmp/pantheon-health-venv/bin/python -m pytest services/foundation/tests/test_health.py services/execution/lean_runtime/test_paper_runtime.py services/runtime-manager/test_internal_api_routes.py -q (20 passed); docker compose -f docker-compose.yml config --quiet; docker compose --env-file env/prod-control.env.example -f docker-compose.control.yml config --quiet; docker compose --env-file env/prod-exec.env.example -f docker-compose.exec.yml config --quiet.
+- 2026-05-04 09:25:41 Orchestrator: `SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF` Worker started via codex: owned_ready_dispatch
+- 2026-05-04 09:25:41 Codex2: `SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF` Supervisor auto-started SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF after successful dispatch.
+- 2026-05-04 09:25:47 Orchestrator: `SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF` Supervisor auto-started SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF after successful dispatch.
+- 2026-05-04 09:25:59 Orchestrator: PostToolUse: Bash
+- 2026-05-04 09:26:10 Orchestrator: PreToolUse: Bash
+- 2026-05-04 09:26:10 Claude: `SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE` Owner closeout complete. Task-scoped commit 68fa21f6 contains all deliverables: TRL worker subprocess path fix, OSS pre-activation scaffolds (research/policy-learning/research-worker-gateway/BFF), DEFERRED_OSS_ACTIVATION_MAP.md, RESEARCH_BACKEND_MATURITY_MATRIX.md. Re-ran full 51-test suite (test_smoke_oss_activation_ready_matrix, test_smoke_openclaw_activation_ready_e2e, bff contract, research/policy-learning/gateway tests) — all passed. Fail-closed posture and no-online-activation acceptance criteria confirmed.
+- 2026-05-04 09:26:14 Orchestrator: PostToolUse: Bash
+- 2026-05-04 09:26:17 Orchestrator: PreToolUse: Bash
+- 2026-05-04 09:26:18 Orchestrator: PostToolUse: Bash
+- 2026-05-04 09:26:21 Orchestrator: PreToolUse: Bash
+- 2026-05-04 09:26:22 Orchestrator: PostToolUse: Bash
+- 2026-05-04 09:26:22 Orchestrator: `SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE` Worker superseded after task responsibility moved to another agent.
+- 2026-05-04 09:26:22 Orchestrator: `SVC-BLUEPRINT-OPENCLAW-READY-FACADE` Wake-up queued for supervisor: owned_ready_dispatch
+- 2026-05-04 09:26:22 Orchestrator: `SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER` Wake-up queued for supervisor: owned_ready_dispatch
+- 2026-05-04 09:26:22 Orchestrator: `SVC-BLUEPRINT-OPENCLAW-READY-FACADE` Worker started via gemini: owned_ready_dispatch
+- 2026-05-04 09:26:22 Orchestrator: SessionEnd: SessionEnd
+- 2026-05-04 09:26:23 Gemini2: `SVC-BLUEPRINT-OPENCLAW-READY-FACADE` Supervisor auto-started SVC-BLUEPRINT-OPENCLAW-READY-FACADE after successful dispatch.
+- 2026-05-04 09:26:27 Orchestrator: `SVC-BLUEPRINT-OPENCLAW-READY-FACADE` Supervisor auto-started SVC-BLUEPRINT-OPENCLAW-READY-FACADE after successful dispatch.
+- 2026-05-04 09:26:27 Orchestrator: `SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER` Worker started via codex: owned_ready_dispatch
+- 2026-05-04 09:26:27 Codex: `SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER` Supervisor auto-started SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER after successful dispatch.

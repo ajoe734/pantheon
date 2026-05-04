@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-04T01:06:42Z",
+  "updated_at": "2026-05-04T01:26:27Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,16 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "ready",
+      "status": "waiting",
       "current_task_ids": [
-        "SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE",
-        "SVC-BLUEPRINT-OPENCLAW-READY-FACADE",
-        "SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER",
-        "SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD"
+        "SVC-BLUEPRINT-PAPER-BRACKET-BASELINE"
       ],
       "branch": "feat/claude-execution-control",
       "next": "Ownership updated",
-      "last_update": "2026-05-03T13:00:28Z"
+      "last_update": "2026-05-04T01:24:41Z"
     },
     {
       "name": "Gemini",
@@ -126,13 +123,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "waiting",
+      "status": "working",
       "current_task_ids": [
-        "SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS"
+        "SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Ownership updated",
-      "last_update": "2026-05-04T01:04:45Z"
+      "next": "Supervisor auto-started SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER after successful dispatch.",
+      "last_update": "2026-05-04T01:26:27Z"
     },
     {
       "name": "Codex2",
@@ -142,11 +139,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "working",
+      "current_task_ids": [
+        "SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF"
+      ],
       "branch": "feat/codex-collab-system",
-      "next": "",
-      "last_update": "2026-05-03T13:15:01Z"
+      "next": "Supervisor auto-started SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF after successful dispatch.",
+      "last_update": "2026-05-04T01:25:41Z"
     },
     {
       "name": "Copilot",
@@ -185,11 +184,11 @@
       ],
       "status": "working",
       "current_task_ids": [
-        "SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF"
+        "SVC-BLUEPRINT-OPENCLAW-READY-FACADE"
       ],
       "branch": "feat/gemini2-research-runtime",
-      "next": "Supervisor auto-started SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF after successful dispatch.",
-      "last_update": "2026-05-04T01:06:16Z"
+      "next": "Supervisor auto-started SVC-BLUEPRINT-OPENCLAW-READY-FACADE after successful dispatch.",
+      "last_update": "2026-05-04T01:26:23Z"
     }
   ],
   "tasks": [
@@ -198,7 +197,7 @@
       "title": "Replace frontend demo auth and demo islands with BFF-backed staging paths",
       "summary_zh": "front-ai-trading-system 移除或 dev-gate demo AuthProvider、demo token、@/demo dashboard islands；staging/prod UI 走 Pantheon BFF/OIDC/JWT-compatible contract。",
       "phase": "Blueprint gap execution wave 2026-05-03",
-      "owner": "Gemini2",
+      "owner": "Codex2",
       "reviewer": "Codex",
       "status": "in_progress",
       "depends_on": [
@@ -213,42 +212,16 @@
         "staging/prod build 不含 demo quick-login production path；production routes 不直接 import @/demo；frontend build/lint 通過並有 BFF auth 設定文件"
       ],
       "next": "Supervisor auto-started SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF after successful dispatch.",
-      "last_update": "2026-05-04T01:06:16Z"
-    },
-    {
-      "id": "SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE",
-      "title": "Complete OSS research learning pre-activation integration without enabling gates",
-      "summary_zh": "把 research、policy-learning、research-worker-gateway、Qlib/TRL/RL/W&B dormant scaffolds 做到 activation-ready：interface、schema、offline smoke、BFF read-only aggregation 與 fail-closed adapter 串接完成，但 gate 仍關閉。",
-      "phase": "Blueprint gap execution wave 2026-05-03",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4",
-        "SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE"
-      ],
-      "artifacts": [
-        "services/research",
-        "services/policy-learning",
-        "services/research-worker-gateway",
-        "services/control-plane/bff",
-        "DEFERRED_OSS_ACTIVATION_MAP.md",
-        "RESEARCH_BACKEND_MATURITY_MATRIX.md"
-      ],
-      "acceptance": [
-        "offline smoke 可跑；BFF 可 read-only 顯示 pre-activation capability/status；缺 gate 或 production secret 時所有 activation path fail closed；不得啟用 Qlib/TRL/RL/W&B online 或 paper/canary/live"
-      ],
-      "next": "Ownership updated",
-      "last_update": "2026-05-03T13:00:28Z"
+      "last_update": "2026-05-04T01:25:41Z"
     },
     {
       "id": "SVC-BLUEPRINT-OPENCLAW-READY-FACADE",
       "title": "Make OpenClaw adapter activation-ready while live broker remains gated",
       "summary_zh": "OpenClaw adapter/facade 補齊 runtime adoption scaffold、schema、health/readiness、offline smoke、BFF status surface；live broker、paper adapter、session creation 仍是 gate closed/deferred。",
       "phase": "Blueprint gap execution wave 2026-05-03",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
+      "owner": "Gemini2",
+      "reviewer": "Claude",
+      "status": "in_progress",
       "depends_on": [
         "SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE"
       ],
@@ -261,17 +234,17 @@
       "acceptance": [
         "adapter 可在無 live broker 下提供 deterministic degraded/status；BFF 可顯示 capability 與 gate reason；live/paper/canary execution path fail closed；tests 覆蓋 gated posture"
       ],
-      "next": "Ownership updated",
-      "last_update": "2026-05-03T13:00:32Z"
+      "next": "Supervisor auto-started SVC-BLUEPRINT-OPENCLAW-READY-FACADE after successful dispatch.",
+      "last_update": "2026-05-04T01:26:23Z"
     },
     {
       "id": "SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER",
       "title": "Upgrade source/search into bounded autonomous connector and indexer platform",
       "summary_zh": "source-ingest/search 從 bounded baseline 推進到合理完整功能：connector registry、bounded scheduled ingest、fetch evidence、DLQ/replay、materialized index refresh、freshness/retention visibility。不是無限制 crawler。",
       "phase": "Blueprint gap execution wave 2026-05-03",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "in_progress",
       "depends_on": [
         "SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3",
         "SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4"
@@ -286,16 +259,16 @@
       "acceptance": [
         "configured connector schedule/run/freshness 透過 API/BFF 可見；durable index refresh 可重跑且有 evidence；request-document compatibility 不再是 staging normal path；tests 通過"
       ],
-      "next": "Helper-claimed by Claude while Codex completes higher-priority work.",
-      "last_update": "2026-05-04T01:06:11Z"
+      "next": "Supervisor auto-started SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER after successful dispatch.",
+      "last_update": "2026-05-04T01:26:27Z"
     },
     {
       "id": "SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD",
       "title": "Complete pantheon-lean runtime kernel scaffold without live activation",
       "summary_zh": "以 pantheon/lean / pantheon-lean 為正式 execution bridge，補完整 activation-ready Launcher/runtime bridge scaffold：DeploymentPlan、RuntimeBinding、artifact context、TelemetryEvent、safe runtime actions。paper smoke 可用；canary/live gate closed。",
       "phase": "Blueprint gap execution wave 2026-05-03",
-      "owner": "Claude",
-      "reviewer": "Codex",
+      "owner": "Codex2",
+      "reviewer": "Claude",
       "status": "todo",
       "depends_on": [
         "SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT",
@@ -311,8 +284,8 @@
       "acceptance": [
         "runtime context 可到 pantheon-lean bridge；paper smoke 產生 heartbeat/order/fill/position 類 canonical evidence；canary/live 缺 gate 時 fail closed；不得 target lean-platform"
       ],
-      "next": "Ownership updated",
-      "last_update": "2026-05-03T13:00:39Z"
+      "next": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
+      "last_update": "2026-05-04T01:25:35Z"
     },
     {
       "id": "SVC-BLUEPRINT-PAPER-BRACKET-BASELINE",
@@ -395,8 +368,35 @@
       "from": "Codex",
       "to": "Claude",
       "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-04T01:06:11Z",
+      "resolved_at": "2026-05-04T01:25:29Z"
+    },
+    {
+      "task_id": "SVC-BLUEPRINT-OPENCLAW-READY-FACADE",
+      "from": "Claude",
+      "to": "Gemini2",
+      "message": "Helper-claimed by Gemini2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-04T01:25:25Z",
+      "resolved_at": "2026-05-04T01:26:23Z"
+    },
+    {
+      "task_id": "SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-04T01:25:29Z",
+      "resolved_at": "2026-05-04T01:26:27Z"
+    },
+    {
+      "task_id": "SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
       "status": "pending",
-      "created_at": "2026-05-04T01:06:11Z"
+      "created_at": "2026-05-04T01:25:35Z"
     }
   ],
   "blockers": [],
@@ -411,13 +411,13 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 5,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 5
+      "todo": 1
     },
     "Claude2": {
       "total": 0,
@@ -447,22 +447,22 @@
       "todo": 1
     },
     "Codex": {
-      "total": 1,
-      "active": 0,
+      "total": 2,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 2
     },
     "Codex2": {
-      "total": 0,
-      "active": 0,
+      "total": 2,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 2
     },
     "Copilot": {
       "total": 0,
