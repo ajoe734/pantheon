@@ -156,6 +156,11 @@ EOF
 
         self.assertEqual(permission_broker.classify_command(command), "allow")
 
+    def test_git_submodule_status_is_auto_allowed(self) -> None:
+        command = "git submodule status lean 2>/dev/null"
+
+        self.assertEqual(permission_broker.classify_command(command), "allow")
+
     def test_docker_read_checks_are_auto_allowed(self) -> None:
         command = "docker ps 2>/dev/null | head -5; docker images 2>/dev/null | head -10"
 

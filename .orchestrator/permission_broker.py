@@ -60,6 +60,7 @@ SAFE_BASH_PATTERNS = [
     re.compile(r"^git log(\s|$)"),
     re.compile(r"^git branch(\s|$)"),
     re.compile(r"^git push(\s|$)"),
+    re.compile(r"^git submodule status(\s|$)"),
     re.compile(r"^git -C .+ (status|diff|show|log|remote -v|submodule status)(\s|$)"),
     re.compile(r"^gh issue comment(\s|$)"),
     re.compile(r"^gh pr create(\s|$)"),

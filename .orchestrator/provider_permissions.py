@@ -294,6 +294,7 @@ def _verified_claude_policy(config: dict[str, Any]) -> dict[str, Any]:
         "Bash(git status*)",
         "Bash(git diff*)",
         "Bash(git show*)",
+        "Bash(git submodule status*)",
         "Bash(git push *)",
         "Bash(gh issue comment *)",
         "Bash(gh pr create *)",
