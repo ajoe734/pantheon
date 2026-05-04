@@ -9280,6 +9280,9 @@ class ReadSurfaceStore:
                     "dlq_count": 0,
                     "frontier_count": 0,
                     "audit_count": 0,
+                    "scheduled_connector_count": 0,
+                    "due_connector_count": 0,
+                    "degraded_connector_count": 0,
                 },
             }
 
@@ -9331,6 +9334,19 @@ class ReadSurfaceStore:
                 audit = json.loads(json.dumps(raw[-audit_limit:]))
 
         service_available = any([avail_reg, avail_runs, avail_dlq, avail_fr, avail_audit])
+        scheduled_connector_count = 0
+        due_connector_count = 0
+        degraded_connector_count = 0
+        for connector in connectors:
+            schedule = connector.get("schedule") if isinstance(connector.get("schedule"), dict) else {}
+            freshness = connector.get("freshness") if isinstance(connector.get("freshness"), dict) else {}
+            if schedule.get("enabled") is True:
+                scheduled_connector_count += 1
+            freshness_status = str(freshness.get("status") or "")
+            if freshness.get("is_due") is True or freshness_status in {"due", "never_ingested"}:
+                due_connector_count += 1
+            if freshness_status == "degraded":
+                degraded_connector_count += 1
         return {
             "source": "service_client" if service_available else "unavailable",
             "connector_health": connectors,
@@ -9344,6 +9360,9 @@ class ReadSurfaceStore:
                 "dlq_count": len(dlq_entries),
                 "frontier_count": len(frontier),
                 "audit_count": len(audit),
+                "scheduled_connector_count": scheduled_connector_count,
+                "due_connector_count": due_connector_count,
+                "degraded_connector_count": degraded_connector_count,
             },
         }
 
@@ -9363,9 +9382,11 @@ class ReadSurfaceStore:
                 "source": "missing",
                 "index_freshness": None,
                 "pipeline_runs": [],
+                "pipeline_retention_runs": None,
                 "materialized_index": None,
                 "summary": {
                     "pipeline_run_count": 0,
+                    "pipeline_retention_runs": None,
                     "freshness_ok": False,
                     "freshness_status": "unknown",
                 },
@@ -9382,11 +9403,14 @@ class ReadSurfaceStore:
         avail_pipe, payload_pipe = _http_json_get(base_url, runs_path)
         pipeline_runs: List[Dict[str, Any]] = []
         pipeline_total: int = 0
+        pipeline_retention_runs: Optional[int] = None
         if avail_pipe and isinstance(payload_pipe, dict):
             raw = payload_pipe.get("runs")
             if isinstance(raw, list):
                 pipeline_runs = json.loads(json.dumps(raw))
             pipeline_total = int(payload_pipe.get("total") or len(pipeline_runs))
+            if payload_pipe.get("retention_runs") is not None:
+                pipeline_retention_runs = int(payload_pipe.get("retention_runs") or 0)
 
         # materialized index (best-effort; 404 → None)
         avail_mat, payload_mat = _http_json_get(base_url, "/api/search/index/materialize")
@@ -9395,7 +9419,14 @@ class ReadSurfaceStore:
             materialized = json.loads(json.dumps(payload_mat))
 
         service_available = any([avail_fresh, avail_pipe, avail_mat])
-        freshness_ok = bool(freshness and freshness.get("within_sla"))
+        freshness_ok = bool(
+            freshness
+            and (
+                freshness.get("within_sla") is True
+                or freshness.get("is_fresh") is True
+                or str(freshness.get("status") or "").lower() == "fresh"
+            )
+        )
         freshness_status = "unknown"
         if freshness:
             freshness_status = "ok" if freshness_ok else "stale"
@@ -9405,9 +9436,11 @@ class ReadSurfaceStore:
             "index_freshness": freshness,
             "pipeline_runs": pipeline_runs,
             "pipeline_run_total": pipeline_total,
+            "pipeline_retention_runs": pipeline_retention_runs,
             "materialized_index": materialized,
             "summary": {
                 "pipeline_run_count": pipeline_total,
+                "pipeline_retention_runs": pipeline_retention_runs,
                 "freshness_ok": freshness_ok,
                 "freshness_status": freshness_status,
             },

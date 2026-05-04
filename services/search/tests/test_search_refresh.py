@@ -81,6 +81,7 @@ def test_search_index_refresh_records_pipeline_snapshot(tmp_path: Path) -> None:
     runs = client.get("/api/search/index/pipeline-runs?limit=5")
     assert runs.status_code == 200, runs.text
     assert runs.json()["total"] == 1
+    assert runs.json()["retention_runs"] == 500
     assert runs.json()["runs"][0]["pipeline_run_id"] == snapshot["pipeline_run_id"]
 
 
@@ -101,6 +102,8 @@ def test_search_refresh_freshness_starts_closed_then_opens_after_refresh(tmp_pat
     assert before.status_code == 200
     assert before.json()["status"] == "never_indexed"
     assert before.json()["is_fresh"] is False
+    assert before.json()["within_sla"] is False
+    assert before.json()["last_run_at"] is None
 
     refresh = client.post("/api/search/index/refresh", json={"force_full": True})
     assert refresh.status_code == 200, refresh.text
@@ -109,6 +112,9 @@ def test_search_refresh_freshness_starts_closed_then_opens_after_refresh(tmp_pat
     assert after.status_code == 200
     assert after.json()["status"] == "fresh"
     assert after.json()["is_fresh"] is True
+    assert after.json()["within_sla"] is True
+    assert after.json()["last_run_at"] == after.json()["last_indexed_at"]
+    assert after.json()["seconds_since_last_run"] == after.json()["staleness_seconds"]
 
 
 def test_search_production_posture_fails_closed_without_durable_backend() -> None:

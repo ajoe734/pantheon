@@ -40,7 +40,13 @@ def test_get_source_ops_snapshot_normal_path() -> None:
             return True, {
                 "schema_version": "source_connector_registry.v1",
                 "connectors": [
-                    {"connector_id": "conn-a", "status": "enabled", "provider": "TestProvider"},
+                    {
+                        "connector_id": "conn-a",
+                        "status": "enabled",
+                        "provider": "TestProvider",
+                        "schedule": {"enabled": True, "interval_seconds": 300},
+                        "freshness": {"status": "due", "is_due": True},
+                    },
                 ],
                 "provider_examples": [],
             }
@@ -91,6 +97,8 @@ def test_get_source_ops_snapshot_normal_path() -> None:
     assert snap["summary"]["connector_count"] == 1
     assert snap["summary"]["dlq_count"] == 1
     assert snap["summary"]["frontier_count"] == 1
+    assert snap["summary"]["scheduled_connector_count"] == 1
+    assert snap["summary"]["due_connector_count"] == 1
 
 
 def test_get_source_ops_snapshot_degraded_source() -> None:
@@ -151,6 +159,7 @@ def test_get_search_ops_snapshot_normal_path() -> None:
                     {"run_id": "pipe-001", "status": "completed", "indexed_count": 5},
                 ],
                 "total": 1,
+                "retention_runs": 500,
             }
         if "/api/search/index/materialize" in path:
             return True, {
@@ -174,7 +183,40 @@ def test_get_search_ops_snapshot_normal_path() -> None:
     assert snap["summary"]["freshness_status"] == "ok"
     assert len(snap["pipeline_runs"]) == 1
     assert snap["pipeline_run_total"] == 1
+    assert snap["summary"]["pipeline_retention_runs"] == 500
     assert snap["materialized_index"]["indexed_object_count"] == 42
+
+
+def test_get_search_ops_snapshot_accepts_current_freshness_contract() -> None:
+    from read_store import ReadSurfaceStore
+
+    def fake_get(base_url, path, *, headers=None):
+        if "/api/search/index/freshness" in path:
+            return True, {
+                "status": "fresh",
+                "is_fresh": True,
+                "sla_seconds": 3600,
+                "staleness_seconds": 12.0,
+                "last_indexed_at": "2026-04-30T07:00:00Z",
+            }
+        if "/api/search/index/pipeline-runs" in path:
+            return True, {"runs": [], "total": 0, "retention_runs": 250}
+        if "/api/search/index/materialize" in path:
+            return True, None
+        return False, None
+
+    with tempfile.TemporaryDirectory() as td:
+        with mock.patch.dict(os.environ, {"PANTHEON_SEARCH_API_URL": "http://search:8098"}):
+            with mock.patch("read_store._http_json_get", side_effect=fake_get):
+                store = ReadSurfaceStore(
+                    os.path.join(td, "read_surfaces.json"),
+                    allow_local_snapshot_fallback=False,
+                )
+                snap = store.get_search_ops_snapshot()
+
+    assert snap["summary"]["freshness_ok"] is True
+    assert snap["summary"]["freshness_status"] == "ok"
+    assert snap["summary"]["pipeline_retention_runs"] == 250
 
 
 def test_get_search_ops_snapshot_stale_index() -> None:

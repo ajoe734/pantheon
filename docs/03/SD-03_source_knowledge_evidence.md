@@ -477,6 +477,78 @@ POST /api/v1/strategy-seeds/{seed_id}/promote
 POST /api/v1/openclaw/search
 ```
 
+### 12.1 Current bounded activation slice (2026-05-04)
+
+本輪 `SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER` 落地的是 bounded autonomous connector / indexer slice，不是 unrestricted crawler。
+目前 repo 內實作路徑使用 underscore package names：
+
+```text
+services/source_ingestion/
+services/search/
+services/control-plane/bff/
+```
+
+Source-ingest service current API:
+
+```text
+GET  /api/source-ingest/registry
+POST /api/source-ingest/connectors
+GET  /api/source-ingest/connectors/{connector_id}
+PUT  /api/source-ingest/connectors/{connector_id}/schedule
+GET  /api/source-ingest/connectors/{connector_id}/schedule
+POST /api/source-ingest/jobs
+GET  /api/source-ingest/jobs
+GET  /api/source-ingest/watermarks/{connector_id}
+POST /api/source-ingest/run-scheduled
+GET  /api/source-ingest/frontier
+POST /api/source-ingest/frontier/{frontier_id}/replay
+GET  /api/source-ingest/dlq
+POST /api/source-ingest/dlq/replay
+GET  /api/source-ingest/audit
+GET  /api/source-ingest/source-records
+GET  /api/source-ingest/evidence/items
+GET  /api/source-ingest/evidence/bundles
+GET  /api/source-ingest/evidence/knowledge-objects
+```
+
+Search service current API:
+
+```text
+POST /api/search/query
+POST /api/search/query/request-documents-compat   # dev/compat only; not staging normal path
+POST /api/search/index/refresh
+GET  /api/search/index/freshness
+GET  /api/search/index/pipeline-runs
+POST /api/search/index/materialize
+GET  /api/search/index/materialize
+GET  /api/search/index/status
+GET  /api/search/snapshots/{request_id}
+```
+
+BFF operator/read surfaces:
+
+```text
+GET  /api/v1/research/source-connectors
+GET  /api/v1/research/search
+GET  /api/v1/operator/source/ops
+GET  /api/v1/operator/search/ops
+POST /api/v1/operator/source/dlq/replay
+POST /api/v1/operator/source/frontier/{frontier_id}/replay
+POST /api/v1/operator/search/index/refresh
+POST /api/v1/operator/search/index/materialize
+```
+
+Delivered bounded behavior:
+
+- Connector registry responses include fetch policy, schedule, fetch state, and per-connector freshness derived from schedule, watermark, and latest run.
+- Scheduled ingest is bounded by `SOURCE_INGEST_MAX_RECORDS`, scheduler concurrency, frontier attempts, and explicit `static_records` / `external_feed` fetch modes.
+- `external_feed` requires `allowed_url_prefixes`, validates redirect scope, rejects inline secret material, enforces max bytes / max records, and honors robots.txt when enabled.
+- Failed scheduled runs and rejected source records route to the shared DLQ with replay/audit evidence.
+- Source-ingest persists SourceRecord, EvidenceItem, EvidenceBundle, and KnowledgeObject refs; search consumes that durable evidence store.
+- Search index refresh records replayable pipeline snapshots with freshness SLA and retention visibility; materialize records a durable materialized index snapshot.
+- Normal staging/prod search path is durable-index based; request-document search is exposed only through the explicit compatibility endpoint/flag and is blocked when `SEARCH_DURABLE_INDEX_ONLY=true`.
+- Staging/prod source/search posture requires Postgres stores, object-store config, and durable-index-only search.
+
 ---
 
 ## 13. Integration points

@@ -14,7 +14,7 @@ import os
 import re
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal
@@ -369,6 +369,105 @@ def _schedule_summary(connector_id: str) -> dict[str, Any]:
     }
 
 
+def _parse_utc_datetime(value: Any) -> datetime | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _run_status_value(run: Any) -> str:
+    status = getattr(run, "status", "")
+    return status.value if hasattr(status, "value") else str(status)
+
+
+def _run_effective_at(run: Any) -> datetime:
+    return (
+        _parse_utc_datetime(getattr(run, "finished_at", None))
+        or _parse_utc_datetime(getattr(run, "started_at", None))
+        or datetime.min.replace(tzinfo=timezone.utc)
+    )
+
+
+def _latest_run_for_connector(connector_id: str) -> Any | None:
+    runs = [run for run in store.list_runs() if getattr(run, "connector_id", None) == connector_id]
+    if not runs:
+        return None
+    return max(runs, key=_run_effective_at)
+
+
+def _connector_freshness_summary(connector_id: str) -> dict[str, Any]:
+    schedule = schedule_config_store.get_schedule(connector_id)
+    watermark = store.get_watermark(connector_id)
+    latest_run = _latest_run_for_connector(connector_id)
+    now = datetime.now(timezone.utc)
+
+    schedule_enabled = bool(schedule and schedule.enabled and schedule.interval_seconds > 0)
+    last_success_at = watermark.updated_at if watermark else None
+    last_success_dt = _parse_utc_datetime(last_success_at)
+    latest_run_at = _run_effective_at(latest_run) if latest_run else None
+    latest_run_status = _run_status_value(latest_run) if latest_run else None
+    next_due_at: str | None = None
+    seconds_until_due: int | None = None
+    staleness_seconds: int | None = None
+    is_due = False
+
+    if schedule is None:
+        status = "unscheduled"
+    elif not schedule_enabled:
+        status = "disabled"
+    elif last_success_dt is None:
+        status = "never_ingested"
+        is_due = True
+    else:
+        due_at = last_success_dt + timedelta(seconds=schedule.interval_seconds)
+        next_due_at = due_at.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        staleness_seconds = max(0, int((now - last_success_dt).total_seconds()))
+        seconds_until_due = int((due_at - now).total_seconds())
+        is_due = seconds_until_due <= 0
+        status = "due" if is_due else "fresh"
+        seconds_until_due = max(0, seconds_until_due)
+
+    if (
+        latest_run is not None
+        and latest_run_status in {"failed", "rejected"}
+        and (last_success_dt is None or latest_run_at >= last_success_dt)
+    ):
+        status = "degraded"
+
+    latest_run_payload = None
+    if latest_run is not None:
+        latest_run_payload = {
+            "ingest_run_id": latest_run.ingest_run_id,
+            "status": latest_run_status,
+            "trigger_type": latest_run.trigger_type,
+            "finished_at": latest_run.to_dict().get("finished_at"),
+            "raw_count": latest_run.raw_count,
+            "normalized_count": latest_run.normalized_count,
+            "rejected_count": latest_run.rejected_count,
+        }
+
+    return {
+        "schema_version": "source_connector_freshness.v1",
+        "status": status,
+        "is_due": is_due,
+        "schedule_enabled": schedule_enabled,
+        "last_success_at": last_success_at,
+        "last_watermark": watermark.value if watermark else None,
+        "last_ingest_run_id": watermark.last_ingest_run_id if watermark else None,
+        "latest_run": latest_run_payload,
+        "staleness_seconds": staleness_seconds,
+        "next_due_at": next_due_at,
+        "seconds_until_due": seconds_until_due,
+    }
+
+
 def _connector_registry_entry(
     connector: SourceConnector,
     *,
@@ -386,6 +485,7 @@ def _connector_registry_entry(
         "metadata": dict(connector.metadata),
         "fetch_policy": _fetch_policy_summary(fetch),
         "schedule": _schedule_summary(connector.connector_id),
+        "freshness": _connector_freshness_summary(connector.connector_id),
         "state": state
         or {
             "connector_id": connector.connector_id,

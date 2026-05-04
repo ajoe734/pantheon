@@ -232,17 +232,24 @@ class IncrementalIndexPipeline:
                 "staleness_seconds": None,
                 "sla_seconds": self.freshness_sla_seconds,
                 "is_fresh": False,
+                "within_sla": False,
+                "last_run_at": None,
+                "seconds_since_last_run": None,
             }
         now = datetime.now(timezone.utc)
         last_dt = _parse_time(latest.indexed_at)
         staleness = (now - last_dt).total_seconds() if last_dt else None
         is_fresh = staleness is not None and staleness <= self.freshness_sla_seconds
+        staleness_rounded = round(staleness, 1) if staleness is not None else None
         return {
             "status": "fresh" if is_fresh else "stale",
             "last_indexed_at": latest.indexed_at,
-            "staleness_seconds": round(staleness, 1) if staleness is not None else None,
+            "staleness_seconds": staleness_rounded,
             "sla_seconds": self.freshness_sla_seconds,
             "is_fresh": is_fresh,
+            "within_sla": is_fresh,
+            "last_run_at": latest.indexed_at,
+            "seconds_since_last_run": staleness_rounded,
             "last_pipeline_run_id": latest.pipeline_run_id,
             "last_indexed_count": latest.indexed_count,
             "last_triggered_by": latest.triggered_by,

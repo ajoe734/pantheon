@@ -287,6 +287,46 @@ def test_run_scheduled_skips_not_due_connector(client) -> None:
     assert body["summary"]["total_skipped"] == 1
 
 
+def test_registry_reports_connector_freshness_after_scheduled_run(client) -> None:
+    test_client, _, _ = client
+    configured = _configure_with_records(test_client)
+    assert configured.status_code == 201, configured.text
+
+    test_client.put(
+        "/api/source-ingest/connectors/conn-sched-notes/schedule",
+        json={"interval_seconds": 86400, "enabled": True},
+    )
+
+    before = test_client.get("/api/source-ingest/registry")
+    assert before.status_code == 200, before.text
+    before_entry = next(
+        connector
+        for connector in before.json()["connectors"]
+        if connector["connector_id"] == "conn-sched-notes"
+    )
+    assert before_entry["freshness"]["status"] == "never_ingested"
+    assert before_entry["freshness"]["is_due"] is True
+
+    run = test_client.post("/api/source-ingest/run-scheduled")
+    assert run.status_code == 200, run.text
+    assert run.json()["summary"]["total_ran"] == 1
+
+    after = test_client.get("/api/source-ingest/registry")
+    assert after.status_code == 200, after.text
+    entry = next(
+        connector
+        for connector in after.json()["connectors"]
+        if connector["connector_id"] == "conn-sched-notes"
+    )
+    freshness = entry["freshness"]
+    assert freshness["schema_version"] == "source_connector_freshness.v1"
+    assert freshness["status"] == "fresh"
+    assert freshness["is_due"] is False
+    assert freshness["last_ingest_run_id"]
+    assert freshness["latest_run"]["status"] == "completed"
+    assert freshness["seconds_until_due"] > 0
+
+
 def test_set_schedule_returns_404_for_unknown_connector(client) -> None:
     test_client, _, _ = client
 

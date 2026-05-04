@@ -356,6 +356,7 @@ def create_app(
         return {
             "runs": [r.to_dict() for r in reversed(runs)],
             "total": pipeline_store.count_runs(),
+            "retention_runs": pipeline_store.max_retention,
         }
 
     @app.post("/api/search/index/reload")
