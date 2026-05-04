@@ -137,7 +137,7 @@ Two prior review artifacts exist and must be considered by the Codex reviewer:
 
 ### Review A — `.coordination/reviews/BP5-LUV-004-review.md` (Claude, not approved)
 
-This review directly inspected the mirrored frontend checkout at `/home/edna/code/front-ai-trading-system` and found four concrete issues:
+This review directly inspected the mirrored frontend checkout at `/home/lupin/code/front-ai-trading-system` and found four concrete issues:
 
 | Finding | Detail |
 |---|---|

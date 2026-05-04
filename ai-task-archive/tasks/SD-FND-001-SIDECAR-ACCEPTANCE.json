@@ -31,7 +31,7 @@
     "auto_created_by": "supervisor-underutilization",
     "review_notes_zh": [
       "Sidecar acceptance packet 通過審查：(1) 僅建立 support/sidecars/SD-FND-001/SD-FND-001-SIDECAR-ACCEPTANCE.md，未修改 L1 canonical / runtime / registry / governance 真相。",
-      "Section 3-4 acceptance checklist 與 services/foundation 套件實況一致：README、__init__.py 公開符號、services/foundation/tests/test_primitives.py 涵蓋 trace / command / error / idempotency / policy / audit / secret-ref；reviewer 重跑 PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages python3.12 -m pytest services/foundation/tests -q 結果為 10 passed in 0.17s，與 packet 宣稱的 10 passed in 0.16s 一致。",
+      "Section 3-4 acceptance checklist 與 services/foundation 套件實況一致：README、__init__.py 公開符號、services/foundation/tests/test_primitives.py 涵蓋 trace / command / error / idempotency / policy / audit / secret-ref；reviewer 重跑 PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages python3.12 -m pytest services/foundation/tests -q 結果為 10 passed in 0.17s，與 packet 宣稱的 10 passed in 0.16s 一致。",
       "Section 5 dependency map 正確反映 SD-FND-002 (BFF / runtime-manager command-path adoption) 與 SD-FND-003 (outbox / DLQ / schema-registry / replay / persistence) 的下游邊界，並把 EP5-002-PACKET-PREP-001、CROSS-REPO-SD-VERIFY-001 與 SD-LIN-TRACE-001 / SD-SRC-EVIDENCE-001 / SD-CONSULT-001 / SD-RECON-001 的關係界定清楚。",
       "Section 6-7 已標明 parent handoff doc reviewer 文字漂移 (Claude vs ai-status.json 的歷史 Codex2 / 目前 Claude) 並把 EP5 live / canary、raw secret resolution、L1 canonical 改寫排除在 sidecar 之外。",
       "Packet 可作為 SD-FND-001 在 review 階段的 reviewer-facing 支援材料，parent owner 可決定是否吸收進主線。"

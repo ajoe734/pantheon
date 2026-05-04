@@ -32,7 +32,7 @@ StrategySpec
 |---|---|
 | `pantheon` | Primary owner：orchestrator、backend registry、experiment task/run registry、metric normalizer、artifact packager。 |
 | `front-ai-trading-system` | UI consumer：Research Workbench、Experiment Console、Run Detail、Rapid Eval Preview。 |
-| `lean-platform` | 不屬於 research backend；只在後續 SD-08 consume approved deployment plan。 |
+| `pantheon-lean` | 不屬於 research backend；只在後續 SD-08 consume approved deployment plan。 |
 | external research libraries | Qlib、vectorbt、statsmodels、QuantLib、FinRL 作為 adapters，不擁有 registry truth。 |
 
 ---

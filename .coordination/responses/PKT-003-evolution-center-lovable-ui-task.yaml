@@ -1,7 +1,7 @@
 feature_id: PKT-003-evolution-center
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: closed
+status: ready
 pantheon_pr: null
 base_url: null
 workbench: evolution-workbench
@@ -45,3 +45,5 @@ gap_handoff_path: .coordination/requests/PKT-003-evolution-center-bff-gap.yaml
 gap_handoff_template: .coordination/requests/PKT-003-evolution-center-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/PKT-003-evolution-center-ui-done.yaml
 completion_handoff_template: .coordination/requests/PKT-003-evolution-center-ui-done.example.yaml
+feedback_handoff_path: .coordination/requests/PKT-003-evolution-center-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/PKT-003-evolution-center-frontend-feedback.example.yaml

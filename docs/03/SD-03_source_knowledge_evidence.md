@@ -33,7 +33,7 @@ OpenClaw 不得直接持有 vendor token，也不得直接任意上網抓資料�
 |---|---|
 | `pantheon` | Primary owner：source ingestion、normalizer、evidence store、search gateway、StrategySpec seed builder。 |
 | `front-ai-trading-system` | UI consumer：Knowledge Workbench、Research Search、Evidence Bundle Viewer、Connector Health。 |
-| `lean-platform` | Existing connector source reference：Polygon / Benzinga 等 execution-facing connector 可作為 adapter reference，但 canonical ingestion authority 應回到 Pantheon。 |
+| `pantheon-lean` | Existing connector source reference：Polygon / Benzinga 等 execution-facing connector 可作為 adapter reference，但 canonical ingestion authority 應回到 Pantheon。 |
 | `OpenClaw` integration | Governed search client only；不可直接擁有 source authority。 |
 
 ---
@@ -489,7 +489,7 @@ POST /api/v1/openclaw/search
 | Research Orchestrator | Consumes StrategySpecSeed / EvidenceBundle to create StrategySpec / ExperimentTask. |
 | Governance | Review gate consumes evidence bundle and citations. |
 | Console | Displays source health, evidence bundles, strategy seeds. |
-| lean-platform | Existing news / market connectors can be wrapped as data source adapters, but canonical source registry remains Pantheon. |
+| pantheon-lean | Existing news / market connectors can be wrapped as data source adapters, but canonical source registry remains Pantheon. |
 
 ---
 

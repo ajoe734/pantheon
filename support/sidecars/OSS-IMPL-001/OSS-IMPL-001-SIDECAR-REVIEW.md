@@ -38,10 +38,10 @@ This sidecar exists because the parent is already waiting on reviewer action. Th
 
 | Artifact | Evidence summary |
 |---|---|
-| `services/research/statsmodels/adapter/statsmodels_adapter.py` | Declares governed invariants at [services/research/statsmodels/adapter/statsmodels_adapter.py](/home/edna/code/pantheon/services/research/statsmodels/adapter/statsmodels_adapter.py:1); validates governed input shape at line 47; emits canonical research artifact envelope with `artifact_family=regime_report` and `artifact_state=draft` at line 88; provides stub and real backends at lines 124 and 165; runs three analysis paths through one governed workflow at line 223 |
-| `services/research/statsmodels/smoke_test.py` | Builds a deterministic governed dataset at [services/research/statsmodels/smoke_test.py](/home/edna/code/pantheon/services/research/statsmodels/smoke_test.py:21); asserts non-live governance flags and registry envelope at line 41; confirms all three analysis paths and prints `SMOKE TEST PASSED` at line 81 |
-| `services/research/statsmodels/test_adapter.py` | Covers schema rejection at [services/research/statsmodels/test_adapter.py](/home/edna/code/pantheon/services/research/statsmodels/test_adapter.py:60); canonical output envelope at line 103; stub determinism and regime packaging at line 143; selective-path behavior at line 170; artifact ID uniqueness at line 200 |
-| `OSS_INTEGRATION_CHECKLIST.md` | The `statsmodels` row at [OSS_INTEGRATION_CHECKLIST.md](/home/edna/code/pantheon/OSS_INTEGRATION_CHECKLIST.md:44) records `smoke-tested`, the governed adapter components, smoke coverage over cointegration/VAR-VECM/Markov-switching, and the next Gate 2 evidence-pack follow-up |
+| `services/research/statsmodels/adapter/statsmodels_adapter.py` | Declares governed invariants at [services/research/statsmodels/adapter/statsmodels_adapter.py](/home/lupin/code/pantheon/services/research/statsmodels/adapter/statsmodels_adapter.py:1); validates governed input shape at line 47; emits canonical research artifact envelope with `artifact_family=regime_report` and `artifact_state=draft` at line 88; provides stub and real backends at lines 124 and 165; runs three analysis paths through one governed workflow at line 223 |
+| `services/research/statsmodels/smoke_test.py` | Builds a deterministic governed dataset at [services/research/statsmodels/smoke_test.py](/home/lupin/code/pantheon/services/research/statsmodels/smoke_test.py:21); asserts non-live governance flags and registry envelope at line 41; confirms all three analysis paths and prints `SMOKE TEST PASSED` at line 81 |
+| `services/research/statsmodels/test_adapter.py` | Covers schema rejection at [services/research/statsmodels/test_adapter.py](/home/lupin/code/pantheon/services/research/statsmodels/test_adapter.py:60); canonical output envelope at line 103; stub determinism and regime packaging at line 143; selective-path behavior at line 170; artifact ID uniqueness at line 200 |
+| `OSS_INTEGRATION_CHECKLIST.md` | The `statsmodels` row at [OSS_INTEGRATION_CHECKLIST.md](/home/lupin/code/pantheon/OSS_INTEGRATION_CHECKLIST.md:44) records `smoke-tested`, the governed adapter components, smoke coverage over cointegration/VAR-VECM/Markov-switching, and the next Gate 2 evidence-pack follow-up |
 
 ## 4. Reproduced Evidence
 
@@ -90,7 +90,7 @@ The warnings are all the same deprecation warning from `_build_artifact_bundle()
 ### Finding 1
 
 **Severity:** non-blocking  
-**Location:** [services/research/statsmodels/adapter/statsmodels_adapter.py](/home/edna/code/pantheon/services/research/statsmodels/adapter/statsmodels_adapter.py:95)
+**Location:** [services/research/statsmodels/adapter/statsmodels_adapter.py](/home/lupin/code/pantheon/services/research/statsmodels/adapter/statsmodels_adapter.py:95)
 
 `_build_artifact_bundle()` uses `datetime.datetime.utcnow()`, which now emits a deprecation warning under Python 3.12. This does not block `OSS-IMPL-001` acceptance because smoke and unit tests still pass and the emitted timestamp shape is otherwise correct, but the warning should be cleaned up before this adapter becomes a pattern other OSS slices copy forward.
 

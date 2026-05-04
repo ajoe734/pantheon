@@ -12,7 +12,7 @@ the narrow PKT-001 publication-replay residual after the replay bundle was
 republished truthfully to the tracked front branch.
 
 Companion packet:
-[APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE.md](/home/edna/code/pantheon/support/sidecars/APP-003-PKT001-PUBLICATION-REPLAY-001/APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE.md:1)
+[APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE.md](/home/lupin/code/pantheon/support/sidecars/APP-003-PKT001-PUBLICATION-REPLAY-001/APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE.md:1)
 
 ## 1. Parent Snapshot
 
@@ -30,7 +30,7 @@ finalized on `2026-04-23`.
 ### 2.1 Pantheon truth surfaces still keep PKT-001 narrow
 
 The refreshed
-[.coordination/responses/PKT-001-deployment-review-frontend-feedback.yaml](/home/edna/code/pantheon/.coordination/responses/PKT-001-deployment-review-frontend-feedback.yaml:1)
+[.coordination/responses/PKT-001-deployment-review-frontend-feedback.yaml](/home/lupin/code/pantheon/.coordination/responses/PKT-001-deployment-review-frontend-feedback.yaml:1)
 now records that:
 
 - Pantheon PKT-001 list/detail/command routes are already live

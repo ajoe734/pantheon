@@ -33,7 +33,7 @@ Source / Evidence
 |---|---|
 | `pantheon` | Primary owner：registry domain model、storage、lineage、query API、event publication。 |
 | `front-ai-trading-system` | Read model consumer：顯示 lineage、registry state、artifact history，不直接寫 registry。 |
-| `lean-platform` | Runtime reference producer：只透過 RuntimeBinding / TelemetryEvent 反向關聯 registry。 |
+| `pantheon-lean` | Runtime reference producer：只透過 RuntimeBinding / TelemetryEvent 反向關聯 registry。 |
 
 ---
 

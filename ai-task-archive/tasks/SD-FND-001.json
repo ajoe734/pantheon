@@ -19,7 +19,7 @@
     "acceptance": [
       "Follow packet acceptance boundary"
     ],
-    "next": "Owner finalized Claude-approved foundation package boundary. Final check reran PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages:. python3.12 -m pytest services/foundation/tests -q: 8 passed on 2026-04-27 UTC. Delivery commit 978afe9.",
+    "next": "Owner finalized Claude-approved foundation package boundary. Final check reran PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages:. python3.12 -m pytest services/foundation/tests -q: 8 passed on 2026-04-27 UTC. Delivery commit 978afe9.",
     "last_update": "2026-04-27T14:17:06Z",
     "task_class": "sd_materialization",
     "source_packet": "docs/reviews/2026-04-27-sd-materializable-execution-task-packet.md",

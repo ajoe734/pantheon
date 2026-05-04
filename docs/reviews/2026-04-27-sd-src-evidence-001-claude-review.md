@@ -42,7 +42,7 @@ SD-01/SD-09 lineage closure remain explicitly out of scope.
 | OpenClaw response carries cited evidence, not raw blobs | Adapter returns `evidence_bundle_id`, `citations`, `matched_items`, `answer_context`, and `relevance_score`; never returns `raw_payload`; covered by `test_openclaw_search_returns_evidence_not_raw_undocumented_blob` | PASS |
 | BFF RW-02 consumes governed truth and preserves response `data` shape | `ReadSurfaceStore.list_research_search_results` builds an in-memory `EvidenceBundleBuilder`, projects through `SearchGateway`, stores `_last_governed_search_refs`, and replays them via `meta.governed_evidence` only - the per-item `data` shape (`result_id`, `match_type`, `title`, `excerpt`, `linked_ticket_id`, `relevance_score`, `links`) is unchanged (`services/control-plane/bff/read_store.py:7280-7491`); main.py adds `meta["governed_evidence"]` only when refs exist (`services/control-plane/bff/main.py:7717-7722`); covered by `test_rw02_search_contract_returns_ranked_projection_and_index_adapter_meta` | PASS |
 | Contract schemas validate model payloads | JSON Schemas under `docs/contracts/{source_connector,evidence_bundle,knowledge_object,search_request}.schema.json` validated against `to_dict()` outputs in `services/search/tests/test_contracts.py::test_sd03_contract_schemas_accept_model_payloads` | PASS |
-| Targeted suite passes | `PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages python3 -m pytest -p no:cacheprovider services/source_ingestion/tests services/knowledge/evidence/tests services/search/tests services/control-plane/bff/test_rw02_search_contract.py services/control-plane/bff/test_kw03_evidence_refs_contract.py -q` -> `18 passed in 3.03s` (rerun during review) | PASS |
+| Targeted suite passes | `PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages python3 -m pytest -p no:cacheprovider services/source_ingestion/tests services/knowledge/evidence/tests services/search/tests services/control-plane/bff/test_rw02_search_contract.py services/control-plane/bff/test_kw03_evidence_refs_contract.py -q` -> `18 passed in 3.03s` (rerun during review) | PASS |
 
 ## Boundary And Scope
 
@@ -105,7 +105,7 @@ response `data` shape. Downstream work (`SD-RECON-001`,
 ## Verification Reproduction
 
 ```text
-PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages \
+PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages \
   python3 -m pytest -p no:cacheprovider \
     services/source_ingestion/tests \
     services/knowledge/evidence/tests \

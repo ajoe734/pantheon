@@ -73,10 +73,10 @@ Current `docker-compose.yml` already includes:
 
 Reference anchors:
 
-- [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:1)
-- [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:23)
-- [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:42)
-- [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:490)
+- [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:1)
+- [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:23)
+- [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:42)
+- [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:490)
 
 ### 4.2 Downstream env wiring is already visible
 
@@ -89,10 +89,10 @@ Current compose wiring already points application services at the new substrate:
 
 Reference anchors:
 
-- [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:125)
-- [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:131)
-- [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:154)
-- [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:219)
+- [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:125)
+- [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:131)
+- [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:154)
+- [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:219)
 
 ### 4.3 Support artifacts listed on the parent task also exist
 
@@ -103,8 +103,8 @@ The repo now includes:
 
 Reference anchors:
 
-- [.env.example](/home/edna/code/pantheon/.env.example:1)
-- [scripts/bootstrap.sh](/home/edna/code/pantheon/scripts/bootstrap.sh:1)
+- [.env.example](/home/lupin/code/pantheon/.env.example:1)
+- [scripts/bootstrap.sh](/home/lupin/code/pantheon/scripts/bootstrap.sh:1)
 
 ### 4.4 Static compose validation passes
 

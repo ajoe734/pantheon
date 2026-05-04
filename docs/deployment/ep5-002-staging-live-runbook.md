@@ -32,14 +32,14 @@ Run EP5-002 on staging-live before any production environment exists:
 
 ```bash
 gcloud compute ssh edna@pantheon-exec-vm2-20260424 --zone=asia-east1-a --project=pantheon-493602 -- \
-  'cd /home/edna/code/pantheon-ep5 && docker compose -p pantheon-exec -f docker-compose.exec.yml up -d && curl -fsS http://127.0.0.1:28081/__health__'
+  'cd /home/lupin/code/pantheon-ep5 && docker compose -p pantheon-exec -f docker-compose.exec.yml up -d && curl -fsS http://127.0.0.1:28081/__health__'
 ```
 
 2. Start or verify VM1 control stack:
 
 ```bash
 gcloud compute ssh edna@pantheon-taiwan --zone=asia-east1-b --project=pantheon-493602 -- \
-  'cd /home/edna/code/pantheon && PANTHEON_RUNTIME_MANAGER_URL=http://10.140.0.5:28081 PANTHEON_RUNTIME_MANAGER_TOKEN=runtime-control-internal PANTHEON_INTERNAL_API_URL=http://10.140.0.5:28081 PANTHEON_LIVE_BROKER_ENABLED=true docker compose -f docker-compose.control.yml up -d && curl -fsS http://127.0.0.1:38001/health && curl -fsS http://10.140.0.5:28081/__health__'
+  'cd /home/lupin/code/pantheon && PANTHEON_RUNTIME_MANAGER_URL=http://10.140.0.5:28081 PANTHEON_RUNTIME_MANAGER_TOKEN=runtime-control-internal PANTHEON_INTERNAL_API_URL=http://10.140.0.5:28081 PANTHEON_LIVE_BROKER_ENABLED=true docker compose -f docker-compose.control.yml up -d && curl -fsS http://127.0.0.1:38001/health && curl -fsS http://10.140.0.5:28081/__health__'
 ```
 
 3. Publish the staging Lovable app from a verified commit.
@@ -50,7 +50,7 @@ gcloud compute ssh edna@pantheon-taiwan --zone=asia-east1-b --project=pantheon-4
 
 Use the existing closeout as the baseline:
 
-- [ibkr-live-tws-api-closeout.md](/home/edna/code/pantheon/docs/deployment/ibkr-live-tws-api-closeout.md)
+- [ibkr-live-tws-api-closeout.md](/home/lupin/code/pantheon/docs/deployment/ibkr-live-tws-api-closeout.md)
 
 Before live order/cancel, re-check:
 
@@ -64,13 +64,13 @@ Before live order/cancel, re-check:
 
 Use the runtime-manager packet prep boundary first:
 
-- [ep5-002-runtime-manager-proof-packet.md](/home/edna/code/pantheon/docs/deployment/ep5-002-runtime-manager-proof-packet.md)
+- [ep5-002-runtime-manager-proof-packet.md](/home/lupin/code/pantheon/docs/deployment/ep5-002-runtime-manager-proof-packet.md)
 
 The direct IBKR harness can capture broker acknowledgement and cancel facts, but
 EP5-002 proof requires the packet to also archive runtime-manager origin,
 lifecycle, telemetry, operator, and closeout evidence:
 
-- [ibkr-minimal-live-order-cancel-manual.md](/home/edna/code/pantheon/docs/deployment/ibkr-minimal-live-order-cancel-manual.md)
+- [ibkr-minimal-live-order-cancel-manual.md](/home/lupin/code/pantheon/docs/deployment/ibkr-minimal-live-order-cancel-manual.md)
 - `scripts/run_ibkr_live_order_cancel.py`
 - `scripts/validate_ep5_live_order_cancel.py`
 
@@ -124,14 +124,14 @@ Stop staging VM1 BFF:
 
 ```bash
 gcloud compute ssh edna@pantheon-taiwan --zone=asia-east1-b --project=pantheon-493602 -- \
-  'cd /home/edna/code/pantheon && docker compose -f docker-compose.control.yml stop operator-bff'
+  'cd /home/lupin/code/pantheon && docker compose -f docker-compose.control.yml stop operator-bff'
 ```
 
 Stop staging execution:
 
 ```bash
 gcloud compute ssh edna@pantheon-exec-vm2-20260424 --zone=asia-east1-a --project=pantheon-493602 -- \
-  'cd /home/edna/code/pantheon-ep5 && docker compose -p pantheon-exec -f docker-compose.exec.yml stop'
+  'cd /home/lupin/code/pantheon-ep5 && docker compose -p pantheon-exec -f docker-compose.exec.yml stop'
 ```
 
 If a broker order remains open, cancel it in TWS first and then record the

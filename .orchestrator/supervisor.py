@@ -828,6 +828,25 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             )
             changed = True
             continue
+        request_agent_id = str(getattr(request, "agent_id", event.get("target_agent")) or "")
+        auto_block_reason = agent_auto_dispatch_block_reason(config, state, request_agent_id, provider_report)
+        if auto_block_reason:
+            record["status"] = "failed"
+            record["processed_at"] = utc_now()
+            record["error"] = f"Auto dispatch unavailable for {request_agent_id}: {auto_block_reason}"
+            write_activity_log(
+                config,
+                {
+                    "type": "wake_skipped",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                    "provider": request.provider,
+                    "message": record["error"],
+                    "queue_event_id": event_id,
+                },
+            )
+            changed = True
+            continue
         record["attempt_count"] = int(record.get("attempt_count", 0)) + 1
         record["last_attempt_at"] = utc_now()
         ok, outcome, delivery = start_worker_for_request(
@@ -2979,6 +2998,47 @@ def first_viable_agent(
     return None
 
 
+def agent_auto_dispatch_block_reason(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    agent_id: str | None,
+    provider_report: dict[str, Any] | None = None,
+) -> str | None:
+    """Return a human-readable reason when an agent must not receive auto dispatch."""
+    normalized_agent = normalize_agent_id(agent_id or "")
+    if not normalized_agent:
+        return "missing target agent"
+    if agent_dispatch_paused(config, state, normalized_agent):
+        return f"dispatch is paused or disabled for {display_name_for(config, normalized_agent) or normalized_agent}"
+    if not provider_report:
+        return None
+
+    agent = (config.get("agents", {}) or {}).get(normalized_agent)
+    provider_id = normalize_agent_id(
+        str((agent or {}).get("provider") or normalized_agent)
+    )
+    agent_capability = ((provider_report.get("agent_adapters") or {}).get(normalized_agent) or {})
+    provider_capability = ((provider_report.get("providers") or {}).get(provider_id) or {})
+
+    if agent_capability:
+        if not agent_capability.get("supported", True):
+            notes = str(agent_capability.get("notes") or "").strip()
+            return notes or f"{normalized_agent} adapter is not supported"
+        if agent_capability.get("can_auto_deliver") is False:
+            notes = str(agent_capability.get("notes") or "").strip()
+            return notes or f"{normalized_agent} cannot auto-deliver in the current workspace"
+
+    if provider_capability:
+        if provider_capability.get("local_cli_worker_supported") is False:
+            return f"{provider_id} local CLI worker is not ready"
+        if provider_capability.get("supports_auto_approve") is False:
+            return f"{provider_id} does not currently support auto-approved dispatch"
+        if provider_capability.get("auth_ready") is False:
+            return f"{provider_id} authentication is not ready"
+
+    return None
+
+
 def sync_status_pipeline(config: dict[str, Any]) -> bool:
     script = config_path(config, "status_file").parent / "scripts" / "ai_status.py"
     if not script.exists():
@@ -4693,6 +4753,7 @@ def eligible_idle_agents_for_sidecars(
     status: dict[str, Any],
     *,
     max_active_sidecars_per_agent: int,
+    provider_report: dict[str, Any] | None = None,
 ) -> list[str]:
     settings = ready_dispatch_settings(config)
     active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
@@ -4705,7 +4766,7 @@ def eligible_idle_agents_for_sidecars(
         if "legacy alias" in display_name.lower():
             continue
         normalized = normalize_agent_id(agent_id)
-        if agent_dispatch_paused(config, state, normalized):
+        if agent_auto_dispatch_block_reason(config, state, normalized, provider_report):
             continue
         if normalized in active_agents or normalized in pending_agents:
             continue
@@ -5484,7 +5545,12 @@ def build_dispatch_event(task: dict[str, Any], target_agent: str, reason: str, t
     }
 
 
-def dispatch_discussion_planning(config: dict[str, Any], state: dict[str, Any], planning_state: dict[str, Any] | None = None) -> bool:
+def dispatch_discussion_planning(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    planning_state: dict[str, Any] | None = None,
+    provider_report: dict[str, Any] | None = None,
+) -> bool:
     planning_state = planning_state or load_discussion_planning_state()
     if not discussion_planning_is_active(planning_state):
         return False
@@ -5502,7 +5568,7 @@ def dispatch_discussion_planning(config: dict[str, Any], state: dict[str, Any], 
         agent_id = normalize_agent_id(agent_name)
         if not agent_id or agent_id not in config.get("agents", {}):
             continue
-        if agent_dispatch_paused(config, state, agent_id):
+        if agent_auto_dispatch_block_reason(config, state, agent_id, provider_report):
             continue
         readout_status = str((readout or {}).get("status") or "").lower()
         if readout_status in {"submitted", "accepted"}:
@@ -5524,7 +5590,11 @@ def dispatch_discussion_planning(config: dict[str, Any], state: dict[str, Any], 
     return changed
 
 
-def dispatch_ready_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
+def dispatch_ready_tasks(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    provider_report: dict[str, Any] | None = None,
+) -> bool:
     settings = ready_dispatch_settings(config)
     if not settings.get("enabled", True):
         return False
@@ -5577,7 +5647,7 @@ def dispatch_ready_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
         target_agent = display_name_for(config, agent_id)
         if target_agent in failure_loop_agents:
             continue
-        if agent_dispatch_paused(config, state, agent_id):
+        if agent_auto_dispatch_block_reason(config, state, agent_id, provider_report):
             continue
         if agent_id in active_agents or agent_id in pending_agents:
             continue
@@ -5590,7 +5660,14 @@ def dispatch_ready_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
             task_status = str(task.get("status") or "").lower()
             task_owner = task.get(owner_field)
             task_reviewer = task.get(reviewer_field)
-            owner_paused = agent_dispatch_paused(config, state, normalize_agent_id(str(task_owner or "")))
+            owner_paused = bool(
+                agent_auto_dispatch_block_reason(
+                    config,
+                    state,
+                    normalize_agent_id(str(task_owner or "")),
+                    provider_report,
+                )
+            )
 
             if (task_id, agent_id) in active_task_agents or (task_id, agent_id) in pending_task_agents:
                 continue
@@ -5698,7 +5775,12 @@ def dispatch_ready_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
     return changed
 
 
-def dispatch_chair_review(config: dict[str, Any], state: dict[str, Any], planning_state: dict[str, Any] | None = None) -> bool:
+def dispatch_chair_review(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    planning_state: dict[str, Any] | None = None,
+    provider_report: dict[str, Any] | None = None,
+) -> bool:
     settings = chair_review_settings(config)
     if not settings.get("enabled", True):
         return False
@@ -5748,7 +5830,7 @@ def dispatch_chair_review(config: dict[str, Any], state: dict[str, Any], plannin
         agent_id = normalize_agent_id(agent_name)
         if not agent_id or agent_id not in config.get("agents", {}):
             continue
-        if agent_dispatch_paused(config, state, agent_id):
+        if agent_auto_dispatch_block_reason(config, state, agent_id, provider_report):
             continue
         if agent_name in failure_loop_agents:
             continue
@@ -5773,7 +5855,11 @@ def dispatch_chair_review(config: dict[str, Any], state: dict[str, Any], plannin
     return False
 
 
-def dispatch_underutilization_sidecars(config: dict[str, Any], state: dict[str, Any]) -> bool:
+def dispatch_underutilization_sidecars(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    provider_report: dict[str, Any] | None = None,
+) -> bool:
     settings = underutilization_settings(config)
     tracking = state.setdefault("underutilization", {})
     rotation = chair_rotation_state(state)
@@ -5825,6 +5911,7 @@ def dispatch_underutilization_sidecars(config: dict[str, Any], state: dict[str, 
         state,
         status,
         max_active_sidecars_per_agent=int(settings.get("max_active_sidecars_per_agent", 1)),
+        provider_report=provider_report,
     )
     if not idle_agents:
         tracking["last_sidecar_wave_at"] = now
@@ -6054,17 +6141,17 @@ def run_once(
         changed = auto_materialize_discussion_planning(config, planning_state) or changed
         planning_state = load_discussion_planning_state()
         if discussion_planning_is_active(planning_state):
-            changed = dispatch_discussion_planning(config, state, planning_state) or changed
+            changed = dispatch_discussion_planning(config, state, planning_state, provider_report=provider_report) or changed
         else:
             if chair_review_failure_loop_details(config, state):
-                chair_dispatched = dispatch_chair_review(config, state, planning_state)
+                chair_dispatched = dispatch_chair_review(config, state, planning_state, provider_report=provider_report)
                 changed = chair_dispatched or changed
                 if not chair_dispatched and not chair_review_active(state):
-                    changed = dispatch_ready_tasks(config, state) or changed
+                    changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
             else:
-                changed = dispatch_ready_tasks(config, state) or changed
-                changed = dispatch_chair_review(config, state, planning_state) or changed
-            changed = dispatch_underutilization_sidecars(config, state) or changed
+                changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
+                changed = dispatch_chair_review(config, state, planning_state, provider_report=provider_report) or changed
+            changed = dispatch_underutilization_sidecars(config, state, provider_report=provider_report) or changed
         changed = process_queue(config, state, provider_report) or changed
         changed = poll_workers(config, state, provider_report=provider_report) or changed
         changed = reconcile_queue_records(config, state) or changed

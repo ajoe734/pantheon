@@ -11,6 +11,12 @@ evidence_baseline: >
   front-ai-trading-system README / bffClient、Lean README / Launcher，以及本對話已產出的 SA-01～SA-10。
 ---
 
+> **2026-05-03 Canonical correction**: `pantheon/lean` submodule backed by `ajoe734/pantheon-lean.git` is the official execution substrate. Any older `lean-platform` repo-mapping drift language in this SA note is superseded; do not treat `lean-platform` as an active gap or task target.
+
+
+
+
+
 # SA-13 — Contract / Schema 差異分析
 
 ## 1. 本章目的

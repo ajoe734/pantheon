@@ -1,8 +1,7 @@
 feature_id: EW-05-mutation-review
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: loop-complete
-cycle: 2
+status: ready
 pantheon_pr: null
 base_url: null
 workbench: evolution-workbench
@@ -19,12 +18,6 @@ constraints:
 - do not add raw fetch in components
 - do not import demo providers
 - if any required field is missing, emit a bff-gap handoff instead of mocking
-- render the live HTTP 503 evidence_unavailable response as the explicit
-  unavailable-state placeholder instead of the generic load-error branch
-- fail closed when required nested fields inside change_details,
-  threshold_triggers, required_approvals, review_chain, evidence_refs, or a
-  non-null rollback_followthrough are missing
-- publish the required EW-05 feedback bundle on the next return cycle
 acceptance:
 - fetch decision projection from GET /api/v1/operator/mutation-review/{decision_id}
   only
@@ -57,5 +50,5 @@ gap_handoff_path: .coordination/requests/EW-05-mutation-review-bff-gap.yaml
 gap_handoff_template: .coordination/requests/EW-05-mutation-review-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/EW-05-mutation-review-ui-done.yaml
 completion_handoff_template: .coordination/requests/EW-05-mutation-review-ui-done.example.yaml
-frontend_feedback_handoff_path: .coordination/requests/EW-05-mutation-review-frontend-feedback.yaml
-review_findings_ref: .coordination/reviews/EW-05-mutation-review-review.md
+feedback_handoff_path: .coordination/requests/EW-05-mutation-review-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/EW-05-mutation-review-frontend-feedback.example.yaml

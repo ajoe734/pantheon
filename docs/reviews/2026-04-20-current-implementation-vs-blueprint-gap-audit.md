@@ -25,7 +25,7 @@
   - `services/control-plane/bff/main.py`
   - route-level live decorators and composed payload wiring
 - frontend implementation truth：
-  - `/home/edna/code/front-ai-trading-system/src/App.tsx`
+  - `/home/lupin/code/front-ai-trading-system/src/App.tsx`
   - workbench pages and sidebar IA
 - execution / delivery truth：
   - `current-work.md`
@@ -110,7 +110,7 @@ Pantheon 目前離完整藍圖的差距，不是「主藍圖還沒展開」，�
   - `/knowledge/memory/:entry_id`
   - `/consultation/requests`
   - `/consultation/requests/:request_id`
-  - evidence: `/home/edna/code/front-ai-trading-system/src/App.tsx:119-155`
+  - evidence: `/home/lupin/code/front-ai-trading-system/src/App.tsx:119-155`
 
 但更大的真相是：
 
@@ -132,14 +132,14 @@ Pantheon 目前離完整藍圖的差距，不是「主藍圖還沒展開」，�
   - `/knowledge/insights`
   - `/knowledge/strategy-specs`
 
-evidence: `/home/edna/code/front-ai-trading-system/src/App.tsx:121-159`
+evidence: `/home/lupin/code/front-ai-trading-system/src/App.tsx:121-159`
 
 另外，sidebar IA 也還是舊的：
 
 - Research 只有 `/research` 和 `/memory`
 - Trainer 只有 `/trainer`
 - Inspiration 還被標成 `comingSoon`
-- evidence: `/home/edna/code/front-ai-trading-system/src/components/AppSidebar.tsx:56-85`
+- evidence: `/home/lupin/code/front-ai-trading-system/src/components/AppSidebar.tsx:56-85`
 
 ### 1.3 前端頁面品質真相
 
@@ -148,13 +148,13 @@ evidence: `/home/edna/code/front-ai-trading-system/src/App.tsx:121-159`
 - `InspirationGraph` 仍是明確 placeholder，直接寫著 route 未 live、仍 blocked-shell
   - 但 backend route 其實已 live
   - evidence:
-    - placeholder page: `/home/edna/code/front-ai-trading-system/src/pages/inspiration/Graph.tsx:17-25`, `42-50`, `75-80`
+    - placeholder page: `/home/lupin/code/front-ai-trading-system/src/pages/inspiration/Graph.tsx:17-25`, `42-50`, `75-80`
     - live route: `services/control-plane/bff/main.py:7904-7920`
 - `Research` 舊頁面仍走 legacy monolith flow，不是 blueprint 中拆分後的 RW-01/02/03/04 canonical screens
   - top comment 還在寫 `GET /api/research/search`, `POST /api/research/analyze`, `POST /api/execute`
-  - evidence: `/home/edna/code/front-ai-trading-system/src/pages/research/Research.tsx:1-8`
+  - evidence: `/home/lupin/code/front-ai-trading-system/src/pages/research/Research.tsx:1-8`
 - `Trainer` 舊頁面仍直接接 demo provider，而不是 canonical BFF trainer workflow
-  - evidence: `/home/edna/code/front-ai-trading-system/src/pages/trainer/Trainer.tsx:16-22`
+  - evidence: `/home/lupin/code/front-ai-trading-system/src/pages/trainer/Trainer.tsx:16-22`
 
 ### 1.4 Execution truth
 

@@ -159,8 +159,8 @@ Sources:
 - `.coordination/reviews/BP6-UI-REVIEW-001-review.md`
 - `docs/pantheon-delivery/PKT-002-incident-detail/DELIVERY_NOTE.md`
 - `docs/pantheon-delivery/PKT-002-incident-detail/CONTRACT_LOCK.json`
-- `/home/edna/code/front-ai-trading-system/src/pages/operator/IncidentDetail.tsx`
-- `/home/edna/code/front-ai-trading-system/src/App.tsx`
+- `/home/lupin/code/front-ai-trading-system/src/pages/operator/IncidentDetail.tsx`
+- `/home/lupin/code/front-ai-trading-system/src/App.tsx`
 
 ### 4.3 Resulting parent-task posture
 

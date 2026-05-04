@@ -197,12 +197,12 @@ treating `JsonlOutboxStore` as a durable production store?
 ### 6.3 Verification commands replayed by Claude during review
 
 ```text
-PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages:. \
+PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages:. \
   python3 -m pytest services/foundation/tests -q
 ..........                                                               [100%]
 10 passed in 0.83s
 
-PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages:. \
+PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages:. \
   python3 -m pytest services/telemetry/test_ingest_shock_absorption.py -q
 .....................................................                    [100%]
 53 passed in 6.04s
@@ -269,7 +269,7 @@ Spot-checks performed:
   apply failure paths.
 - `services/foundation/README.md` was spot-checked for the storage-light
   boundary and service-owned telemetry authority language.
-- `PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages:. python3 -m pytest services/foundation/tests -q`
+- `PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages:. python3 -m pytest services/foundation/tests -q`
   was replayed and passed: 10 / 10.
 
 No missing evidence was found. This sidecar is ready for owner finalization or

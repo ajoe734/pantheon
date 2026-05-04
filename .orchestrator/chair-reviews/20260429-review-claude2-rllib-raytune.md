@@ -49,7 +49,7 @@
 ## Test Verification
 
 ```
-PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages python3 -m pytest \
+PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages python3 -m pytest \
   services/research/rllib/test_adapter.py \
   services/research/rllib/test_ray_tune_adapter.py -q
 # 29 passed in 0.30s ✓

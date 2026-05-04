@@ -28,7 +28,7 @@ No SDK-backed W&B backend, governed RL train/eval lane, OpenClaw execution-kerne
 
 ## Verification
 
-Commands run from `/home/edna/code/pantheon`:
+Commands run from `/home/lupin/code/pantheon`:
 
 ```bash
 git diff --check -- RESEARCH_BACKEND_MATURITY_MATRIX.md OSS_INTEGRATION_CHECKLIST.md services/learning/DEFERRED_OSS_ACTIVATION_MAP.md OPENCLAW_RUNTIME_CONTRACT.md services/registry/experiments/WANDB_ACTIVATION.md

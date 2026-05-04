@@ -197,7 +197,7 @@ bash scripts/smoke_test_dual_vm.sh \
 ```
 
 That script records the request/response artifacts needed by
-[`dual-vm-acceptance-results.md`](/home/edna/code/pantheon/docs/deployment/dual-vm-acceptance-results.md:1).
+[`dual-vm-acceptance-results.md`](/home/lupin/code/pantheon/docs/deployment/dual-vm-acceptance-results.md:1).
 
 ## Boundary Note
 

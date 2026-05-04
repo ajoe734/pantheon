@@ -27,7 +27,7 @@ Observed repo evidence:
 - `docs/bff/PKT-010-runtime-state-board.md` already requires `runtime_id`, `runtime_binding_id`, `deployment_stage`, `capital_pool_id`, `plan_ref.plan_id`, `artifact_ref.artifact_id`, telemetry summary, rollback summary, and surface health for `GET /api/v1/operator/runtime-state`.
 - `services/control-plane/bff/main.py` currently projects runtime-state rows from runtime bindings and exposes runtime binding detail, deployment plan detail, capital pool detail, and deployment review composed views.
 - `services/telemetry/telemetry_event.schema.json` requires telemetry events to carry `binding_id`, `runtime_id`, `capital_pool_id`, `artifact_id`, `artifact_version`, `deployment_stage`, and `plan_id`; bridge repo/commit is not a required telemetry field in that schema.
-- `/home/edna/code/front-ai-trading-system` already has live BFF frontend surfaces such as `OperatorRuntimeStateBoard.tsx`, `DeploymentReviewConsole.tsx`, `DeploymentPlanDetail.tsx`, and degradation handling, but source-mode labels and bridge identity fields are not consistently present in the searched frontend paths.
+- `/home/lupin/code/front-ai-trading-system` already has live BFF frontend surfaces such as `OperatorRuntimeStateBoard.tsx`, `DeploymentReviewConsole.tsx`, `DeploymentPlanDetail.tsx`, and degradation handling, but source-mode labels and bridge identity fields are not consistently present in the searched frontend paths.
 
 ## 3. BFF Query Gaps
 
@@ -174,7 +174,7 @@ Suggested `bff-gap` conditions:
 
 ## 8. Verification Performed
 
-Commands run from `/home/edna/code/pantheon`:
+Commands run from `/home/lupin/code/pantheon`:
 
 ```bash
 jq '.tasks[] | select(.id=="P0-FE-SOURCE-001-SIDECAR-BFF-HANDOFF")' ai-status.json
@@ -186,7 +186,7 @@ sed -n '2620,2785p' services/control-plane/bff/main.py
 sed -n '6960,7140p' services/control-plane/bff/main.py
 sed -n '7360,7455p' services/control-plane/bff/main.py
 sed -n '1,240p' services/telemetry/telemetry_event.schema.json
-rg -n "source_mode|sourceMode|runtime_binding_id|runtimeBinding|deployment_plan_id|bridge_repo|bridge_commit|preview_mock_only|demo_only|authoritative_bff|stale_cache|unavailable|@/demo|mock" /home/edna/code/front-ai-trading-system/src /home/edna/code/front-ai-trading-system/scripts /home/edna/code/front-ai-trading-system/docs
+rg -n "source_mode|sourceMode|runtime_binding_id|runtimeBinding|deployment_plan_id|bridge_repo|bridge_commit|preview_mock_only|demo_only|authoritative_bff|stale_cache|unavailable|@/demo|mock" /home/lupin/code/front-ai-trading-system/src /home/lupin/code/front-ai-trading-system/scripts /home/lupin/code/front-ai-trading-system/docs
 ```
 
 No runtime tests were run because this sidecar only updates a support artifact.

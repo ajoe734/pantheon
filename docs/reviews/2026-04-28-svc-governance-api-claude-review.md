@@ -58,8 +58,8 @@ records the approval decision so the parent task can move to
 ## 3. Re-run Test Evidence
 
 ```
-PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages \
-  /home/edna/.local/bin/pytest \
+PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages \
+  /home/lupin/.local/bin/pytest \
   services/control-plane/governance/test_service_family_contract.py \
   services/governance/test_governance_api.py \
   services/capital/test_service.py \

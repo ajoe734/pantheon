@@ -69,7 +69,7 @@ Key review findings:
 - App-shell and shared-client wiring confirmed in immutable Git history (App.tsx routes, AppSidebar.tsx navigation, WorkbenchBreadcrumb.tsx mapping, bffClient.ts RW-04 client)
 - Three prior logic regressions confirmed fixed: route-not-live 404 classification, launch-polling continuation, history filter pagination reset
 - Cancel/degradation handling contract-aligned: `allowedActions.canCancel` plus surface state gate, no local lifecycle inference
-- Static verification passed: `npm run build` succeeded in `/home/edna/code/front-ai-trading-system`
+- Static verification passed: `npm run build` succeeded in `/home/lupin/code/front-ai-trading-system`
 
 ### Frontend Closeout
 

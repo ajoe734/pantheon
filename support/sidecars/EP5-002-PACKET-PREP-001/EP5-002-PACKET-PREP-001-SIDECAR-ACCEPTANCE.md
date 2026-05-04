@@ -86,7 +86,7 @@ Downstream tasks that should not be absorbed into this parent:
 
 ## 5. Suggested Parent Verification Commands
 
-Run from `/home/edna/code/pantheon` unless noted.
+Run from `/home/lupin/code/pantheon` unless noted.
 
 Use these read-only or packet-initialization checks to ground the parent packet:
 

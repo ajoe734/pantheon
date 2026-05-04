@@ -33,7 +33,7 @@ ConsultRequest
 | `pantheon` | Primary owner：consult request manager、committee/red-team orchestrator、memo store、audit log、policy evaluation。 |
 | `front-ai-trading-system` | UI consumer：Consultation Workbench、Red-Team Queue、Memo Viewer、Review Inputs。 |
 | OpenClaw integration | May execute persona-mediated consult sessions through governed tools; cannot bypass Pantheon consult policy。 |
-| `lean-platform` | No ownership；may appear as evidence/runtime context in red-team review only。 |
+| `pantheon-lean` | No ownership；may appear as evidence/runtime context in red-team review only。 |
 
 ---
 

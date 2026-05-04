@@ -32,7 +32,7 @@ persona authority
 |---|---|
 | `pantheon` | Primary owner：capital pool registry、risk policy registry、broker account registry、persona-capital binding、pool state manager、admissibility checker。 |
 | `front-ai-trading-system` | UI consumer：Capital Pool Console、Risk Policy Editor、Binding Viewer、Pool State View。 |
-| `lean-platform` | Consumes broker/runtime config through approved RuntimeBinding only；does not own pool governance truth。 |
+| `pantheon-lean` | Consumes broker/runtime config through approved RuntimeBinding only；does not own pool governance truth。 |
 | `Lean` | Upstream reference only；not Pantheon governance authority。 |
 
 ---
@@ -77,7 +77,7 @@ src/types/capitalPool.ts
 src/lib/capitalPoolClient.ts
 ```
 
-### `lean-platform`
+### `pantheon-lean`
 
 ```text
 # Required later by SD-08 integration; no direct governance ownership here.

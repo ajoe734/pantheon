@@ -9,7 +9,7 @@ outcome: approved
 
 ## Reviewed Artifact
 
-Frontend repo: `/home/edna/code/front-ai-trading-system`
+Frontend repo: `/home/lupin/code/front-ai-trading-system`
 Commit: `a1dbf3d` — "P0-FE-SOURCE-001 add frontend source identity"
 
 ## Acceptance Criteria Verification

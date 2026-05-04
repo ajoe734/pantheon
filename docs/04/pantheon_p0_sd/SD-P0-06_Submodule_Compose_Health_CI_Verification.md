@@ -14,7 +14,7 @@ baseline: >
 
 ## 1. Purpose
 
-本 SD 定義 P0 CI / verification 工作，確保目前 Pantheon 的 execution bridge、compose topology、health endpoint、source/search、fail-closed adapters 不再被誤判或漂移。
+本 SD 定義 P0 CI / verification 工作，確保目前 Pantheon 的 execution bridge、compose topology、health endpoint、source/search、order-capable live execution guard 不再被誤判或漂移。
 
 此文件是把 SA-18 v2 轉成可施工 CI 規格。
 
@@ -32,7 +32,7 @@ baseline: >
 7. Verify live role is health-only fail-closed.
 8. Verify health endpoints are standardized or tracked.
 9. Verify source/search bounded baseline remains guarded.
-10. Verify research/learning/OpenClaw production adapters remain fail-closed by default.
+10. Verify research/learning/OpenClaw adapters cannot bypass data posture, artifact promotion, or direct-order-routing boundaries.
 ```
 
 ---
@@ -350,31 +350,31 @@ SRC-007:
 
 ---
 
-## 11. CI Job: Research / Learning Fail-Closed
+## 11. CI Job: Research / Learning Production Posture
 
 Codex reported:
 
 ```text
-Qlib / TRL / FinRL / RLlib / Ray / W&B production adapters fail-closed.
+Qlib / TRL / FinRL / RLlib / Ray / W&B production data/model paths are explicit-gated and cannot route directly to orders.
 ```
 
 ### 11.1 Checks
 
 ```text
 OSS-001:
-  qlib production activation disabled by default.
+  qlib production data/model activation requires explicit data posture and artifact promotion evidence.
 
 OSS-002:
-  finrl production activation disabled by default.
+  finrl production data/model activation requires explicit data posture and artifact promotion evidence.
 
 OSS-003:
-  rllib/ray production activation disabled by default.
+  rllib/ray production data/model activation requires explicit data posture and artifact promotion evidence.
 
 OSS-004:
   offline smoke may run only under explicit flag.
 
 OSS-005:
-  activation attempt without flag returns fail-closed status.
+  activation attempt without required evidence returns explicit not_ready status.
 ```
 
 ---
@@ -440,7 +440,7 @@ FRONT-004:
 | ci-compose-contract | pantheon | warn/fail | yes |
 | ci-health-endpoint-cleanup | pantheon | warn then fail | yes |
 | ci-source-search-bounded | pantheon | fail | yes |
-| ci-research-fail-closed | pantheon | fail | yes |
+| ci-research-production-posture | pantheon | fail | yes |
 | ci-openclaw-facade | pantheon | fail | yes |
 | ci-front-demo-prod-guard | front | fail | yes |
 
@@ -465,7 +465,7 @@ INV-CI-005:
   source/search must not enable unrestricted crawler by default.
 
 INV-CI-006:
-  research/learning production adapters must fail closed by default.
+  research/learning production adapters must require data posture and artifact promotion evidence and must not route directly to orders.
 
 INV-CI-007:
   OpenClaw must not enable broker/live/capital binding by default.
@@ -488,7 +488,7 @@ INV-CI-010:
 1. Do not make CI require full live broker runtime.
 2. Do not remove dev JSON/JSONL fallback.
 3. Do not enable unrestricted crawler.
-4. Do not enable research OSS production adapters.
+4. Do not bypass research OSS data posture or artifact promotion gates.
 5. Do not enable OpenClaw broker/live adapter.
 6. Do not implement BFF HA/LB.
 7. Do not migrate to lean-platform.
@@ -515,7 +515,7 @@ AC-CI-005:
   source/search bounded tests pass.
 
 AC-CI-006:
-  research/learning fail-closed tests pass.
+  research/learning production posture tests pass.
 
 AC-CI-007:
   OpenClaw facade fail-closed tests pass.
@@ -608,19 +608,20 @@ acceptance:
   - DLQ / frontier / incremental refresh smoke
 ```
 
-### TP-CI-006 — OpenClaw / research fail-closed tests
+### TP-CI-006 — OpenClaw / research production posture tests
 
 ```yaml
 task_id: TP-CI-006
 repo: pantheon
-goal: Verify production adapters are fail-closed by default.
+goal: Verify research production adapters require explicit posture/promotion evidence and cannot route directly to orders.
 target_paths:
   - integrations/openclaw/tests/*
   - services/research/tests/*
   - services/policy-learning/tests/*
 acceptance:
   - broker/live/capital binding off by default
-  - OSS production adapters fail closed
+  - OSS production adapters require posture/promotion evidence
+  - OSS/source paths cannot route directly to order-capable execution
 ```
 
 ---
@@ -740,6 +741,6 @@ pantheon/lean is the current bridge.
 paper baseline is expected.
 live is fail-closed.
 source/search are bounded.
-research/OpenClaw production activations are off.
+research/OpenClaw production data/model activations require explicit posture or artifact-promotion evidence and cannot route directly to orders.
 frontend demo usage must not leak into staging/prod.
 ```

@@ -81,8 +81,8 @@
 
 來源：
 
-- [WORKBENCH_DELIVERY_BACKLOG.md](/home/edna/code/pantheon/WORKBENCH_DELIVERY_BACKLOG.md:56)
-- [EW-004 Packet Family](/home/edna/code/pantheon/docs/pantheon-handoffs/EW-004-evolution-workbench/PACKET_FAMILY.md:108)
+- [WORKBENCH_DELIVERY_BACKLOG.md](/home/lupin/code/pantheon/WORKBENCH_DELIVERY_BACKLOG.md:56)
+- [EW-004 Packet Family](/home/lupin/code/pantheon/docs/pantheon-handoffs/EW-004-evolution-workbench/PACKET_FAMILY.md:108)
 
 ### A1. EW-04 Inspiration Graph
 
@@ -165,8 +165,8 @@
 
 來源：
 
-- [WORKBENCH_DELIVERY_BACKLOG.md](/home/edna/code/pantheon/WORKBENCH_DELIVERY_BACKLOG.md:63)
-- [RW-005 Packet Family](/home/edna/code/pantheon/docs/pantheon-handoffs/RW-005-research-workbench/PACKET_FAMILY.md:32)
+- [WORKBENCH_DELIVERY_BACKLOG.md](/home/lupin/code/pantheon/WORKBENCH_DELIVERY_BACKLOG.md:63)
+- [RW-005 Packet Family](/home/lupin/code/pantheon/docs/pantheon-handoffs/RW-005-research-workbench/PACKET_FAMILY.md:32)
 
 ### B1. RW-01 Research Ticket
 
@@ -325,9 +325,9 @@
 
 來源：
 
-- [WORKBENCH_DELIVERY_BACKLOG.md](/home/edna/code/pantheon/WORKBENCH_DELIVERY_BACKLOG.md:75)
-- [KW-006 Packet Family](/home/edna/code/pantheon/docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md:48)
-- [PKT Knowledge Overview BFF](/home/edna/code/pantheon/docs/bff/PKT-knowledge-workbench.md:1)
+- [WORKBENCH_DELIVERY_BACKLOG.md](/home/lupin/code/pantheon/WORKBENCH_DELIVERY_BACKLOG.md:75)
+- [KW-006 Packet Family](/home/lupin/code/pantheon/docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md:48)
+- [PKT Knowledge Overview BFF](/home/lupin/code/pantheon/docs/bff/PKT-knowledge-workbench.md:1)
 
 ### C1. KW-01 Institutional Memory
 
@@ -467,9 +467,9 @@
 
 來源：
 
-- [WORKBENCH_DELIVERY_BACKLOG.md](/home/edna/code/pantheon/WORKBENCH_DELIVERY_BACKLOG.md:87)
-- [CW-008 Packet Family](/home/edna/code/pantheon/docs/pantheon-handoffs/CW-008-consultation-workbench/PACKET_FAMILY.md:48)
-- [PKT Consultation Overview BFF](/home/edna/code/pantheon/docs/bff/PKT-consultation-workbench.md:1)
+- [WORKBENCH_DELIVERY_BACKLOG.md](/home/lupin/code/pantheon/WORKBENCH_DELIVERY_BACKLOG.md:87)
+- [CW-008 Packet Family](/home/lupin/code/pantheon/docs/pantheon-handoffs/CW-008-consultation-workbench/PACKET_FAMILY.md:48)
+- [PKT Consultation Overview BFF](/home/lupin/code/pantheon/docs/bff/PKT-consultation-workbench.md:1)
 
 ### D1. CW-01 Consult Request
 
@@ -591,8 +591,8 @@
 
 來源：
 
-- [WORKBENCH_DELIVERY_BACKLOG.md](/home/edna/code/pantheon/WORKBENCH_DELIVERY_BACKLOG.md:96)
-- [TW-007 Packet Family](/home/edna/code/pantheon/docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md:48)
+- [WORKBENCH_DELIVERY_BACKLOG.md](/home/lupin/code/pantheon/WORKBENCH_DELIVERY_BACKLOG.md:96)
+- [TW-007 Packet Family](/home/lupin/code/pantheon/docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md:48)
 
 ### E1. TW-01 Teaching Dialog
 

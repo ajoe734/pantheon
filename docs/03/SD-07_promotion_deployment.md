@@ -32,7 +32,7 @@ CandidateArtifact
 |---|---|
 | `pantheon` | Primary owner：validators、review gates、approval registry、promotion controller、deployment planner、rollback controller、loader checks。 |
 | `front-ai-trading-system` | UI consumer：Review Queue、Approval Detail、Deployment Plan Viewer、Rollback Console。 |
-| `lean-platform` | Consumes approved deployment plan only through SD-08 boundary。 |
+| `pantheon-lean` | Consumes approved deployment plan only through SD-08 boundary。 |
 | OpenClaw | May help prepare review context; cannot approve/deploy without Pantheon commands and policy checks。 |
 
 ---

@@ -372,6 +372,50 @@ def _shell_command_segments(shell_command: str) -> list[str]:
     return segments
 
 
+def _shell_command_segments_with_and(shell_command: str) -> list[str]:
+    segments: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    escape = False
+    index = 0
+    while index < len(shell_command):
+        char = shell_command[index]
+        if escape:
+            current.append(char)
+            escape = False
+            index += 1
+            continue
+        if char == "\\":
+            current.append(char)
+            escape = True
+            index += 1
+            continue
+        if quote:
+            current.append(char)
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in {"'", '"'}:
+            current.append(char)
+            quote = char
+            index += 1
+            continue
+        if char == ";" or shell_command.startswith("&&", index):
+            segment = "".join(current).strip()
+            if segment:
+                segments.append(segment)
+            current = []
+            index += 2 if shell_command.startswith("&&", index) else 1
+            continue
+        current.append(char)
+        index += 1
+    tail = "".join(current).strip()
+    if tail:
+        segments.append(tail)
+    return segments
+
+
 def _primary_shell_fragment(segment: str) -> str:
     return segment.split("|", 1)[0].strip()
 
@@ -410,6 +454,89 @@ def _is_safe_docker_exec_probe(tokens: list[str]) -> bool:
     return _is_safe_python_inline_code(tokens[index + 2], require_import=True)
 
 
+def _is_safe_compose_option_value(token: str) -> bool:
+    return bool(re.match(r"^[A-Za-z0-9_.:/@-]+$", str(token or "")))
+
+
+def _is_safe_compose_path_value(token: str) -> bool:
+    value = str(token or "").strip()
+    return bool(value and not value.startswith("-") and _looks_like_safe_repo_path(value))
+
+
+def _is_safe_docker_compose_config(tokens: list[str]) -> bool:
+    if len(tokens) < 3 or tokens[:2] != ["docker", "compose"]:
+        return False
+    index = 2
+    saw_config = False
+    path_options = {"-f", "--file", "--env-file", "--project-directory"}
+    value_options = {"-p", "--project-name", "--profile", "--ansi", "--progress"}
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "config":
+            saw_config = True
+            index += 1
+            break
+        if token in path_options:
+            if index + 1 >= len(tokens) or not _is_safe_compose_path_value(tokens[index + 1]):
+                return False
+            index += 2
+            continue
+        matched_path_option = next((option for option in path_options if token.startswith(f"{option}=")), None)
+        if matched_path_option:
+            value = token.split("=", 1)[1]
+            if not _is_safe_compose_path_value(value):
+                return False
+            index += 1
+            continue
+        if token in value_options:
+            if index + 1 >= len(tokens) or not _is_safe_compose_option_value(tokens[index + 1]):
+                return False
+            index += 2
+            continue
+        matched_value_option = next((option for option in value_options if token.startswith(f"{option}=")), None)
+        if matched_value_option:
+            value = token.split("=", 1)[1]
+            if not _is_safe_compose_option_value(value):
+                return False
+            index += 1
+            continue
+        return False
+
+    if not saw_config:
+        return False
+
+    config_flags = {
+        "--quiet",
+        "-q",
+        "--services",
+        "--volumes",
+        "--profiles",
+        "--images",
+        "--hash",
+        "--no-interpolate",
+        "--no-normalize",
+        "--no-consistency",
+        "--resolve-image-digests",
+    }
+    while index < len(tokens):
+        token = tokens[index]
+        if token in config_flags:
+            index += 1
+            continue
+        if token == "--format":
+            if index + 1 >= len(tokens) or tokens[index + 1] not in {"json", "yaml"}:
+                return False
+            index += 2
+            continue
+        if token.startswith("--format="):
+            if token.split("=", 1)[1] not in {"json", "yaml"}:
+                return False
+            index += 1
+            continue
+        return False
+    return True
+
+
 def _is_safe_docker_segment(segment: str) -> bool:
     fragment = _primary_shell_fragment(segment)
     tokens = _shell_tokens(fragment)
@@ -419,14 +546,21 @@ def _is_safe_docker_segment(segment: str) -> bool:
         return True
     if len(tokens) >= 3 and tokens[:3] in (["docker", "compose", "ps"], ["docker", "compose", "images"]):
         return True
+    if _is_safe_docker_compose_config(tokens):
+        return True
     return _is_safe_docker_exec_probe(tokens)
 
 
+def _is_safe_echo_segment(segment: str) -> bool:
+    tokens = _shell_tokens(_primary_shell_fragment(segment))
+    return bool(tokens and tokens[0] == "echo")
+
+
 def _is_safe_docker_command(shell_command: str) -> bool:
-    segments = _shell_command_segments(shell_command.strip())
+    segments = _shell_command_segments_with_and(shell_command.strip())
     if not segments:
         return False
-    return all(_is_safe_docker_segment(segment) for segment in segments)
+    return all(_is_safe_docker_segment(segment) or _is_safe_echo_segment(segment) for segment in segments)
 
 
 def _is_safe_package_inventory_segment(segment: str) -> bool:
@@ -560,6 +694,10 @@ def _split_safe_verification_segments(shell_command: str) -> list[str]:
 
 def _is_shell_redirection_token(token: str) -> bool:
     return bool(re.match(r"^\d?(?:>>?|<<?|>&)\S*$", token))
+
+
+def _is_safe_stderr_merge_token(token: str) -> bool:
+    return str(token or "").strip() == "2>&1"
 
 
 def _is_safe_pytest_install_command(shell_command: str) -> bool:
@@ -746,6 +884,9 @@ def _is_safe_finalize_git_commit(segment: list[str]) -> bool:
     index = 0
     while index < len(args):
         token = args[index]
+        if _is_safe_stderr_merge_token(token):
+            index += 1
+            continue
         if token not in FINALIZE_GIT_ALLOWED_COMMIT_FLAGS:
             return False
         if token in FINALIZE_GIT_MESSAGE_FLAGS:

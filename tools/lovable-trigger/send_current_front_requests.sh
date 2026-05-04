@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FRONT_REPO="${1:-/home/edna/code/front-ai-trading-system}"
+FRONT_REPO="${1:-/home/lupin/code/front-ai-trading-system}"
 PROFILE_DIR="${LOVABLE_PROFILE_DIR:-$HOME/.cache/pantheon-lovable-trigger/profile}"
 STORAGE_STATE="${LOVABLE_STORAGE_STATE:-}"
 COOLDOWN_MS="${LOVABLE_COOLDOWN_MS:-45000}"

@@ -18,8 +18,8 @@ The verified path is:
 
 Primary packet:
 
-- [README.md](/home/edna/code/pantheon/docs/deployment/evidence/ibkr-live-tws-api/20260425T160338Z/README.md)
-- [probe-summary.json](/home/edna/code/pantheon/docs/deployment/evidence/ibkr-live-tws-api/20260425T160338Z/probe-summary.json)
+- [README.md](/home/lupin/code/pantheon/docs/deployment/evidence/ibkr-live-tws-api/20260425T160338Z/README.md)
+- [probe-summary.json](/home/lupin/code/pantheon/docs/deployment/evidence/ibkr-live-tws-api/20260425T160338Z/probe-summary.json)
 
 Probe result highlights:
 
@@ -50,7 +50,7 @@ This closeout does not prove:
 If the operator wants to continue beyond read-only verification, use the manual
 runbook at:
 
-- [ibkr-minimal-live-order-cancel-manual.md](/home/edna/code/pantheon/docs/deployment/ibkr-minimal-live-order-cancel-manual.md)
+- [ibkr-minimal-live-order-cancel-manual.md](/home/lupin/code/pantheon/docs/deployment/ibkr-minimal-live-order-cancel-manual.md)
 
 That path must remain manually supervised and should not be represented as
 already executed until a real evidence packet exists.

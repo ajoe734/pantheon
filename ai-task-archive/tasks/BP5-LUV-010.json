@@ -116,7 +116,7 @@
       "task_id": "BP5-LUV-010",
       "from": "Codex",
       "to": "Claude",
-      "message": "Review rejected: Pantheon cites frontend commit c3a17f29e0b54d81a7b96e0c45d23ec8b1f0a422, but that commit is not present in /home/edna/code/front-ai-trading-system, no mirrored PKT-005-sse-substrate ui-done/feedback artifacts exist there, and the tracked operator screen files do not wire the SSE substrate. Publish a real GitHub-visible frontend commit plus synced ui-done/feedback, then resubmit for review.",
+      "message": "Review rejected: Pantheon cites frontend commit c3a17f29e0b54d81a7b96e0c45d23ec8b1f0a422, but that commit is not present in /home/lupin/code/front-ai-trading-system, no mirrored PKT-005-sse-substrate ui-done/feedback artifacts exist there, and the tracked operator screen files do not wire the SSE substrate. Publish a real GitHub-visible frontend commit plus synced ui-done/feedback, then resubmit for review.",
       "status": "done",
       "created_at": "2026-04-16T19:08:36Z",
       "resolved_at": "2026-04-16T19:08:36Z"

@@ -30,7 +30,7 @@ OpenClaw 可作為 Shared Capability / agent runtime substrate，但 Pantheon �
 |---|---|
 | `pantheon` | Primary owner：persona registry、policy resolver、capability resolver、teaching session、OpenClaw governance adapter。 |
 | `front-ai-trading-system` | UI owner：Persona Workbench、Trainer Workbench、Capability Viewer、Consultation entry points。 |
-| `lean-platform` | No direct persona ownership。只接受經 DeploymentPlan / RuntimeBinding 的 artifact，不接受 persona 直接命令。 |
+| `pantheon-lean` | No direct persona ownership。只接受經 DeploymentPlan / RuntimeBinding 的 artifact，不接受 persona 直接命令。 |
 
 ---
 

@@ -14,16 +14,22 @@ baseline_note: >
   3) generic upstream Lean = LEAN engine 基底概念。
 ---
 
+> **2026-05-03 Canonical correction**: `pantheon/lean` submodule backed by `ajoe734/pantheon-lean.git` is the official execution substrate. Any older `lean-platform` repo-mapping drift language in this SA note is superseded; do not treat `lean-platform` as an active gap or task target.
+
+
+
+
+
 # SA-20 v2 — Risk Register：以 `pantheon/lean` 實際 Bridge 校正
 
 ## 1. 本章修正重點
 
 本章取代原 SA-20。
-新版 Risk Register 將原本的「Lean vs lean-platform」風險修正為更精準的：
+新版 Risk Register 將原本的「Lean vs lean-platform」風險關閉為 repo mapping 決策：
 
 ```text
-Blueprint repo mapping = lean-platform
-Actual current bridge = pantheon/lean submodule / ajoe734/pantheon-lean.git
+Canonical repo mapping = pantheon/lean submodule / ajoe734/pantheon-lean.git
+lean-platform = historical / non-target clone; no active execution gap
 ```
 
 同時加入 Codex 盤點中的新風險狀態：
@@ -34,7 +40,7 @@ paper runtime baseline exists
 live health-only sidecar
 bracket order guarded paper/sim execution
 source/search bounded baseline
-research/learning fail-closed
+research/learning production posture / no direct order routing
 OpenClaw facade not broker kernel
 frontend demo auth / demo islands
 health endpoint cleanup
@@ -47,19 +53,19 @@ env-gated Postgres adoption
 
 | Rank | Risk | Severity | Revised Interpretation |
 |---|---|---|---|
-| 1 | Blueprint says lean-platform but actual bridge is pantheon/lean | Critical | repo mapping drift |
-| 2 | Production live runtime not implemented | Critical | paper baseline exists, live is health-only |
-| 3 | RuntimeBinding context propagation unverified | Critical | bridge exists but contract needs proof |
-| 4 | TelemetryEvent exporter from paper runtime unverified | High | schema can be tested first in paper; kill-switch ack now fail-closes when runtime follow-through is missing |
-| 5 | Full Lean Launcher + broker SDK kernel not active | Critical | production execution gap |
-| 6 | Bracket order is guarded outside paper/sim | High | paper/sim bracket execution now has explicit guard; live remains fail-closed |
-| 7 | Frontend auth still demo/local-token | High | production adoption gap |
-| 8 | Frontend demo islands remain | High | operator console adoption gap |
-| 9 | lean-platform stale but still in blueprint | High | Codex patch wrong repo |
+| 1 | Production live runtime not implemented | Critical | paper baseline exists, live is health-only |
+| 2 | RuntimeBinding context propagation needs production proof | Critical | bridge exists but contract needs hardening |
+| 3 | TelemetryEvent exporter from paper runtime needs production proof | High | schema can be tested first in paper; kill-switch ack now fail-closes when runtime follow-through is missing |
+| 4 | Full pantheon-lean Launcher + broker SDK kernel not active | Critical | production execution gap |
+| 5 | Bracket order is guarded outside paper/sim | High | paper/sim bracket execution now has explicit guard; live remains fail-closed |
+| 6 | Frontend auth still demo/local-token | High | production adoption gap |
+| 7 | Frontend demo islands remain | High | operator console adoption gap |
+| 8 | Data persistence env-gated, dev JSON/JSONL fallback | Medium | rollout gap |
+| 9 | control/exec compose legacy health endpoints | Medium | cleanup gap |
 | 10 | BFF HA/LB deferred | Medium | intentional, not bug |
 | 11 | Data persistence env-gated, dev JSON/JSONL fallback | Medium | rollout gap |
 | 12 | Source/search bounded, not unrestricted crawler | Low-Medium | correct bounded stance |
-| 13 | Research/learning production adapters fail-closed | Medium | intentional safety |
+| 13 | Research/learning production data/model adapters bypass posture or route directly to orders | Medium | activation boundary |
 | 14 | OpenClaw broker/live disabled | Medium | correct boundary |
 | 15 | control/exec compose legacy health endpoints | Medium | cleanup gap |
 
@@ -336,18 +342,18 @@ Status:
 
 ## 7. Research / OpenClaw risks
 
-### R-OSS-001 — Fail-closed adapters mistaken as missing work
+### R-OSS-001 — Production posture boundaries mistaken as blanket live bans
 
 ```text
 Category: Research Activation
 Description:
-  Qlib / TRL / FinRL / RLlib / Ray / W&B production adapters fail-closed 是 safety posture，不是單純缺失。
+  Qlib / TRL / FinRL / RLlib / Ray / W&B 需要 production data/model posture、artifact-promotion evidence 與 no-direct-order-routing；這不是資料源 live ban。
 Likelihood: Medium
 Impact: Medium
 Severity: Medium
 Mitigation:
-  - mark as pre-activation
-  - offline smoke allowed
+  - mark required posture/promotion evidence explicitly
+  - allow production-grade read/training paths when data, entitlement, audit, and artifact gates are satisfied
 Acceptance:
   docs distinguish scaffold / smoke / production activation.
 ```
@@ -463,8 +469,8 @@ Acceptance:
 
 ```text
 1. ADR-EXEC-001 v2: official pantheon/lean bridge policy
-2. Update blueprint repo mapping away from lean-platform or define migration
-3. CI: assert pantheon/lean submodule remote
+2. Keep blueprint/task packets canonicalized to pantheon/lean / pantheon-lean
+3. CI: assert pantheon/lean submodule remote and reject accidental lean-platform targets
 4. Runtime bootstrap contract: DeploymentPlan → runtime_bootstrap
 5. Paper runtime telemetry heartbeat
 6. Live placeholder fail-closed guard
@@ -480,6 +486,6 @@ Acceptance:
 
 SA-20 v2 的風險結論：
 
-> **目前風險狀態比原本更正面：foundation、source/search bounded baseline、OpenClaw facade、pantheon-lean bridge、paper runtime baseline 都已存在。但最大 P0 風險仍在 execution repo mapping 與 production runtime maturity：藍圖寫 lean-platform，實作接 pantheon/lean；paper baseline 有，live 仍是 health-only；bracket order log-only；前端 auth/demo islands 仍阻止 production operator readiness。**
+> **目前風險狀態比原本更正面：foundation、source/search bounded baseline、OpenClaw facade、pantheon-lean bridge、paper runtime baseline 都已存在。`pantheon/lean` / `pantheon-lean` 已是 canonical execution bridge；最大 P0 風險不再是 repo mapping，而是 production runtime maturity：paper baseline 有，live 仍是 health-only，bracket semantics 還需 paper/sim proof，前端 auth/demo islands 仍阻止 production operator readiness。**
 
 這些風險如果按優先順序處理，Pantheon 可以從「foundation materialized」推進到「paper operating loop verified」。

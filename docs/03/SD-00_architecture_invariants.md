@@ -1,7 +1,7 @@
 # SD-00 — Architecture Invariants / Pantheon 系統公理與橫切邊界
 
 版本：v0.1 Codex-ready draft  
-適用範圍：Pantheon 全系統，多 repo：`front-ai-trading-system`、`pantheon`、`lean-platform`  
+適用範圍：Pantheon 全系統，多 repo：`front-ai-trading-system`、`pantheon`、`pantheon-lean`  
 來源準繩：Pantheon 總索引版系統分析文件 v1 Consolidated、openclaw strategy lifecycle、openclaw multi-persona implementation architecture
 
 ---
@@ -29,7 +29,7 @@ Pantheon 的所有模組、API、workflow、runtime integration 都必須遵守�
 |---|---|
 | `pantheon` | Primary owner。實作 authority evaluator、policy evaluator、event envelope、audit log、idempotency、command admission、cross-plane foundation。 |
 | `front-ai-trading-system` | Consumer。只呼叫 BFF / command facade，不自行判定權限、不持有 secret、不直接寫 registry。 |
-| `lean-platform` | Runtime participant。執行已核准 deployment，送出 canonical runtime / order / fill / position / heartbeat events。 |
+| `pantheon-lean` | Runtime participant。執行已核准 deployment，送出 canonical runtime / order / fill / position / heartbeat events。 |
 | `Lean` | Upstream reference only。不得直接成為 Pantheon 主 runtime path，除非後續 migration SD 明確指定。 |
 
 ---
@@ -86,7 +86,7 @@ src/pages/operator/AuditLogPanel.tsx
 src/pages/operator/InvariantViolationPanel.tsx
 ```
 
-### `lean-platform`
+### `pantheon-lean`
 
 ```text
 Pantheon/Telemetry/
@@ -434,7 +434,7 @@ GET  /api/v1/foundation/traces/{trace_id}
 | OpenClaw gateway | Must use governed tools only; no direct runtime / broker secret access. |
 | Registry services | Must publish domain events through event outbox. |
 | Promotion service | Must enforce approval, lineage, capital pool, and runtime invariants. |
-| lean-platform | Must emit runtime events using `EventEnvelope` compatible schema. |
+| pantheon-lean | Must emit runtime events using `EventEnvelope` compatible schema. |
 | Console UI | Must display audit / invariant / authority decision read models; must not decide authority locally. |
 
 ---
@@ -486,7 +486,7 @@ This SD is complete when:
 5. Audit log is written for high-risk actions.
 6. Idempotency records prevent duplicate command effects.
 7. OpenClaw integration cannot call execution runtime directly.
-8. lean-platform can emit at least one canonical runtime heartbeat event into Pantheon telemetry path.
+8. pantheon-lean can emit at least one canonical runtime heartbeat event into Pantheon telemetry path.
 9. All tests listed above pass in CI.
 
 ---

@@ -137,6 +137,20 @@ EOF
 
         self.assertEqual(permission_broker.classify_command(command), "allow")
 
+    def test_repo_git_add_then_heredoc_commit_with_stderr_merge_is_auto_allowed(self) -> None:
+        command = """git add docs/operations/postgres-cutoff-wave3-runbook.md && git commit -m "$(cat <<'EOF'
+SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3: owner closeout finalization
+
+Add closeout verification section to runbook.
+
+LLM-Agent: Claude
+Task-ID: SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3
+Reviewer: Codex
+EOF
+)\" 2>&1"""
+
+        self.assertEqual(permission_broker.classify_command(command), "allow")
+
     def test_repo_git_push_without_force_is_auto_allowed(self) -> None:
         command = "git push origin feature/bp5-svc-014"
 
@@ -154,6 +168,39 @@ EOF
         )
 
         self.assertEqual(permission_broker.classify_command(command), "allow")
+
+    def test_docker_compose_config_is_auto_allowed(self) -> None:
+        command = "docker compose -f docker-compose.control.yml config --quiet 2>&1"
+
+        self.assertEqual(permission_broker.classify_command(command), "allow")
+
+    def test_docker_compose_config_with_env_file_is_auto_allowed(self) -> None:
+        command = (
+            "docker compose --env-file env/prod-control.env.example "
+            "-f docker-compose.control.yml config --quiet 2>&1"
+        )
+
+        self.assertEqual(permission_broker.classify_command(command), "allow")
+
+    def test_docker_compose_config_with_echo_ok_is_auto_allowed(self) -> None:
+        command = 'docker compose -f docker-compose.control.yml config --quiet 2>&1 && echo "OK"'
+
+        self.assertEqual(permission_broker.classify_command(command), "allow")
+
+    def test_docker_compose_up_still_requires_review(self) -> None:
+        command = "docker compose -f docker-compose.control.yml up -d"
+
+        self.assertEqual(permission_broker.classify_command(command), "defer")
+
+    def test_docker_compose_up_with_echo_ok_still_requires_review(self) -> None:
+        command = 'docker compose -f docker-compose.control.yml up -d && echo "OK"'
+
+        self.assertEqual(permission_broker.classify_command(command), "defer")
+
+    def test_docker_compose_config_rejects_option_shaped_file_value(self) -> None:
+        command = "docker compose -f --env-file config --quiet"
+
+        self.assertEqual(permission_broker.classify_command(command), "defer")
 
     def test_mixed_safe_and_mutating_docker_chain_still_requires_review(self) -> None:
         command = "docker ps 2>/dev/null | head -5; docker rm -f pantheon-control-plane-router-1"
@@ -481,6 +528,54 @@ EOF
         self.assertEqual(evaluation["decision"], "allow")
         self.assertEqual(evaluation["risk_class"], "repo_finalize_git")
         self.assertIn("BG-006", evaluation["reason"])
+
+    def test_finalize_heredoc_commit_sequence_with_stderr_merge_is_auto_allowed(self) -> None:
+        command = """git add docs/operations/postgres-cutoff-wave3-runbook.md && git commit -m "$(cat <<'EOF'
+SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3: owner closeout finalization
+
+LLM-Agent: Claude
+Task-ID: SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3
+Reviewer: Codex
+EOF
+)\" 2>&1"""
+        config = {"agents": {"claude": {"display_name": "Claude"}}}
+        runtime_state = {
+            "workers": {
+                "run-123": {
+                    "task_id": "SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3",
+                    "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                }
+            }
+        }
+        status_state = {
+            "tasks": [
+                {
+                    "id": "SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3",
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                    "status": "review_approved",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.dict(
+                permission_broker.os.environ,
+                {
+                    "ORCH_RUN_ID": "run-123",
+                    "ORCH_TASK_ID": "SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3",
+                    "ORCH_AGENT_ID": "claude",
+                },
+                clear=False,
+            ),
+            mock.patch.object(permission_broker, "load_runtime_state", return_value=runtime_state),
+            mock.patch.object(permission_broker, "load_status", return_value=status_state),
+        ):
+            evaluation = permission_broker.evaluate_tool_request("Bash", {"command": command}, config)
+
+        self.assertEqual(evaluation["decision"], "allow")
+        self.assertEqual(evaluation["risk_class"], "repo_finalize_git")
+        self.assertIn("SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3", evaluation["reason"])
 
     def test_non_finalize_commit_follows_safe_bash_classification(self) -> None:
         command = "git add ai-status.json && git commit -m \"BG-006 finalize\""

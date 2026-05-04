@@ -1,14 +1,14 @@
 # SD-09 — Telemetry & Reconciliation / 事件遙測、對帳與 Drift 設計
 
 版本：v0.1 Codex-ready draft  
-適用範圍：Pantheon Telemetry Plane、Reconciliation & Drift Plane、`lean-platform` runtime event ingestion、Metrics/Time-Series Store  
+適用範圍：Pantheon Telemetry Plane、Reconciliation & Drift Plane、`pantheon-lean` runtime event ingestion、Metrics/Time-Series Store  
 來源準繩：Pantheon 總索引版系統分析文件 v1 Consolidated、openclaw strategy lifecycle、openclaw multi-persona implementation architecture
 
 ---
 
 ## 1. Purpose
 
-本文件定義 Pantheon 的 **Telemetry & Reconciliation Plane**。這一層負責把 `lean-platform`、operator、promotion、capital pool、research run、consultation、trainer session 等系統事實轉成 canonical events，再以可回放、可對帳、可觸發 drift / incident / evolution 的方式儲存。
+本文件定義 Pantheon 的 **Telemetry & Reconciliation Plane**。這一層負責把 `pantheon-lean`、operator、promotion、capital pool、research run、consultation、trainer session 等系統事實轉成 canonical events，再以可回放、可對帳、可觸發 drift / incident / evolution 的方式儲存。
 
 此 SD 的核心不是「監控 dashboard」，而是讓 Pantheon 具備 operating system 的事實回流能力：
 
@@ -46,7 +46,7 @@ Non-goals：
 | Repo | Ownership |
 |---|---|
 | `pantheon` | Event Ingest Gateway、Canonical Event Normalizer、Telemetry Store、Metrics Store adapter、Reconciliation service、Drift detector、AlertCandidate producer。 |
-| `lean-platform` | Runtime event producer。依 SD-08 發送 heartbeat、order、fill、position、broker、runtime action events。 |
+| `pantheon-lean` | Runtime event producer。依 SD-08 發送 heartbeat、order、fill、position、broker、runtime action events。 |
 | `front-ai-trading-system` | Telemetry / reconciliation / drift dashboard consumer；不得直接寫 telemetry truth。 |
 | `Lean` | Upstream reference only。不得直接成為 Pantheon telemetry authority。 |
 
@@ -114,7 +114,7 @@ docs/contracts/alert_candidate.schema.json
 docs/codex/SD-09_task_packets.md
 ```
 
-### `lean-platform`
+### `pantheon-lean`
 
 ```text
 Pantheon/Telemetry/
@@ -418,7 +418,7 @@ ListAlertCandidates:
 
 ## 7. Events
 
-### 7.1 Input events from SD-08 / `lean-platform`
+### 7.1 Input events from SD-08 / `pantheon-lean`
 
 ```text
 RuntimeHeartbeatReceived
@@ -528,7 +528,7 @@ stateDiagram-v2
 ## 9. Hard invariants
 
 1. Every telemetry event must include `trace_id`, `correlation_id`, `environment`, `event_time`, `ingest_time`, `schema_version`.
-2. Every runtime event from `lean-platform` must include `runtime_binding_id`, `runtime_id`, `artifact_id`, `capital_pool_id`, and `deployment_mode`.
+2. Every runtime event from `pantheon-lean` must include `runtime_binding_id`, `runtime_id`, `artifact_id`, `capital_pool_id`, and `deployment_mode`.
 3. Telemetry ingest must be idempotent by `idempotency_key` and `payload_checksum`.
 4. Telemetry event timestamps must not be rewritten after acceptance; corrections must be new events.
 5. Reconciliation must never compare live behavior against mutable / unfrozen baselines.
@@ -549,7 +549,7 @@ telemetry_policy:
   id: default_telemetry_policy_v1
   ingestion:
     allowed_source_systems:
-      - lean-platform
+      - pantheon-lean
       - pantheon-bff
       - promotion-controller
       - research-orchestrator
@@ -717,7 +717,7 @@ GET  /api/v1/alert-candidates
 
 1. `EventEnvelope` rejects missing `trace_id`.
 2. `EventEnvelope` rejects missing `idempotency_key`.
-3. Normalizer maps `lean-platform` fill event to canonical `fill_received`.
+3. Normalizer maps `pantheon-lean` fill event to canonical `fill_received`.
 4. Unknown schema version is quarantined under policy.
 5. Duplicate telemetry event returns existing result.
 6. Heartbeat status changes from connected to degraded to disconnected.
@@ -756,7 +756,7 @@ GET  /api/v1/alert-candidates
 SD-09 is done when:
 
 1. Pantheon accepts canonical telemetry events through a validated ingest gateway.
-2. `lean-platform` runtime events are accepted, normalized, and queryable.
+2. `pantheon-lean` runtime events are accepted, normalized, and queryable.
 3. Runtime heartbeat status is computed and exposed.
 4. Backtest-paper-live reconciliation can run for at least one approved artifact.
 5. Order/fill/position reconciliation can compare internal state and broker snapshot.

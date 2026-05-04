@@ -45,18 +45,18 @@ adoption is correctly deferred.
 ## Verification Replay (this review)
 
 ```text
-PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages:. \
+PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages:. \
   python3 -m pytest services/foundation/tests -q
 ..........                                                               [100%]
 10 passed in 0.83s
 
-PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages:. \
+PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages:. \
   python3 -m pytest services/telemetry/test_ingest_shock_absorption.py -q
 .....................................................                    [100%]
 53 passed in 6.04s
 ```
 
-Numbers match the owner handoff (10 / 53). System pytest at `/home/edna/.local`
+Numbers match the owner handoff (10 / 53). System pytest at `/home/lupin/.local`
 required PYTHONPATH override; underlying pytest 9.0.3 is the same version the
 owner used.
 

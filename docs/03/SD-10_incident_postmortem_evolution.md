@@ -45,7 +45,7 @@ Non-goals：
 |---|---|
 | `pantheon` | Alert Engine、Incident Case Manager、Evidence Collector、Postmortem Builder、Action Recommendation Engine、Evolution Controller、EvolutionDecision Registry。 |
 | `front-ai-trading-system` | Alerts / Incidents / Postmortems / Evolution Workbench UI；operator action forms；timeline views。 |
-| `lean-platform` | Runtime evidence source；可接收由 SD-08 批准的 pause / replace / liquidate actions。 |
+| `pantheon-lean` | Runtime evidence source；可接收由 SD-08 批准的 pause / replace / liquidate actions。 |
 | `Lean` | Upstream reference only；不參與 incident/evolution authority。 |
 
 ---

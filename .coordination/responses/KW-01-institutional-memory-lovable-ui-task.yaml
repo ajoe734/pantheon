@@ -1,7 +1,7 @@
 feature_id: KW-01-institutional-memory
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: closed
+status: ready
 pantheon_pr: null
 base_url: null
 workbench: knowledge-workbench
@@ -52,3 +52,5 @@ gap_handoff_path: .coordination/requests/KW-01-institutional-memory-bff-gap.yaml
 gap_handoff_template: .coordination/requests/KW-01-institutional-memory-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/KW-01-institutional-memory-ui-done.yaml
 completion_handoff_template: .coordination/requests/KW-01-institutional-memory-ui-done.example.yaml
+feedback_handoff_path: .coordination/requests/KW-01-institutional-memory-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/KW-01-institutional-memory-frontend-feedback.example.yaml

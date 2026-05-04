@@ -17,7 +17,7 @@ Codex
 Re-review the returned PKT-005 SSE substrate Lovable loop against the published
 PKT-005 contract, example fixtures, front-repo publication requirements, and
 the replayable frontend implementation at
-`/home/edna/code/front-ai-trading-system`.
+`/home/lupin/code/front-ai-trading-system`.
 
 ## Reviewed Artifacts
 

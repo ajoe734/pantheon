@@ -149,17 +149,17 @@ Front-end action:
 - Reviewed the mirrored Pantheon request:
   - `.coordination/requests/RW-02-search-ui-done.yaml`
 - Reviewed the current front implementation in the sibling checkout:
-  - `/home/edna/code/front-ai-trading-system/src/pages/research/ResearchSearch.tsx`
-  - `/home/edna/code/front-ai-trading-system/src/pages/research/types.ts`
-  - `/home/edna/code/front-ai-trading-system/src/lib/bffClient.ts`
-  - `/home/edna/code/front-ai-trading-system/src/App.tsx`
+  - `/home/lupin/code/front-ai-trading-system/src/pages/research/ResearchSearch.tsx`
+  - `/home/lupin/code/front-ai-trading-system/src/pages/research/types.ts`
+  - `/home/lupin/code/front-ai-trading-system/src/lib/bffClient.ts`
+  - `/home/lupin/code/front-ai-trading-system/src/App.tsx`
 - Verified Pantheon-side acceptance evidence:
   - `python3 -m pytest -q services/control-plane/bff/test_rw02_search_contract.py`
   - `GET http://127.0.0.1:18001/health`
   - `GET http://127.0.0.1:18001/api/v1/research/search?q=momentum`
   - `GET http://127.0.0.1:18001/openapi.json`
-  - `git -C /home/edna/code/front-ai-trading-system show --stat --no-patch 2820e449dc95ab4677d9a7dc61d6eb7da4363aa4`
-  - `git -C /home/edna/code/front-ai-trading-system ls-tree -r --name-only 2820e449dc95ab4677d9a7dc61d6eb7da4363aa4 -- ...`
+  - `git -C /home/lupin/code/front-ai-trading-system show --stat --no-patch 2820e449dc95ab4677d9a7dc61d6eb7da4363aa4`
+  - `git -C /home/lupin/code/front-ai-trading-system ls-tree -r --name-only 2820e449dc95ab4677d9a7dc61d6eb7da4363aa4 -- ...`
 
 ## Not Completed
 

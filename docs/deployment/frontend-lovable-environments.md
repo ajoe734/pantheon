@@ -4,8 +4,8 @@ Status date: 2026-04-27
 
 Authoritative operating rules:
 
-- [lovable-dev-staging-operating-rules.md](/home/edna/code/pantheon/docs/deployment/lovable-dev-staging-operating-rules.md)
-- [bff-https-ingress.md](/home/edna/code/pantheon/docs/deployment/bff-https-ingress.md)
+- [lovable-dev-staging-operating-rules.md](/home/lupin/code/pantheon/docs/deployment/lovable-dev-staging-operating-rules.md)
+- [bff-https-ingress.md](/home/lupin/code/pantheon/docs/deployment/bff-https-ingress.md)
 
 ## Current State
 

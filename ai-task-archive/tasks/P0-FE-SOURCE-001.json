@@ -90,7 +90,7 @@
       "task_id": "P0-FE-SOURCE-001",
       "from": "Codex2",
       "to": "Claude",
-      "message": "Ready for review. Frontend repo /home/edna/code/front-ai-trading-system commit a1dbf3d adds SourceModeBadge/sourceMode helpers, source_mode strips on runtime/deployment/governance/evolution/persona/knowledge critical surfaces, and runtime identity grids showing bridge repo/commit, runtime_binding_id, deployment_plan_id, artifact_id, capital_pool_id. Verification: npm run build; npm run check:prod-demo-routes; npx eslint targeted changed files.",
+      "message": "Ready for review. Frontend repo /home/lupin/code/front-ai-trading-system commit a1dbf3d adds SourceModeBadge/sourceMode helpers, source_mode strips on runtime/deployment/governance/evolution/persona/knowledge critical surfaces, and runtime identity grids showing bridge repo/commit, runtime_binding_id, deployment_plan_id, artifact_id, capital_pool_id. Verification: npm run build; npm run check:prod-demo-routes; npx eslint targeted changed files.",
       "status": "done",
       "created_at": "2026-05-01T09:18:03Z",
       "resolved_at": "2026-05-01T09:26:03Z"

@@ -38,8 +38,8 @@ Usage:
   node send_prompt.mjs batch --repo <repo-path> --prompt-file <file>... [--project-url <url>] [--profile-dir <dir>] [--storage-state <file>] [--pointer-prompt] [--cooldown-ms <ms>] [--headless|--headed]
 
 Examples:
-  node send_prompt.mjs bootstrap --repo /home/edna/code/front-ai-trading-system
-  node send_prompt.mjs send --repo /home/edna/code/front-ai-trading-system --prompt-file /home/edna/code/front-ai-trading-system/docs/lovable/2026-04-24-route-live-activation-prompt.md
+  node send_prompt.mjs bootstrap --repo /home/lupin/code/front-ai-trading-system
+  node send_prompt.mjs send --repo /home/lupin/code/front-ai-trading-system --prompt-file /home/lupin/code/front-ai-trading-system/docs/lovable/2026-04-24-route-live-activation-prompt.md
 `;
   console.error(msg.trim());
   process.exit(exitCode);

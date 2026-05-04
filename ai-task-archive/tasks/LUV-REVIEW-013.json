@@ -16,7 +16,7 @@
     "artifacts": [
       "../front-ai-trading-system/.coordination/responses/PKT-007-deployment-diff-contract-ready.yaml",
       ".coordination/responses/PKT-007-deployment-diff-lovable-ui-task.yaml",
-      "/home/edna/code/pantheon/.coordination/responses/PKT-007-deployment-diff-lovable-prompt.md",
+      "/home/lupin/code/pantheon/.coordination/responses/PKT-007-deployment-diff-lovable-prompt.md",
       ".coordination/requests/PKT-007-deployment-diff-ui-done.yaml",
       ".coordination/requests/PKT-007-deployment-diff-frontend-feedback.yaml"
     ],
@@ -33,7 +33,7 @@
     "coordination_paths": {
       "contract_ready": "../front-ai-trading-system/.coordination/responses/PKT-007-deployment-diff-contract-ready.yaml",
       "lovable_task": ".coordination/responses/PKT-007-deployment-diff-lovable-ui-task.yaml",
-      "lovable_prompt": "/home/edna/code/pantheon/.coordination/responses/PKT-007-deployment-diff-lovable-prompt.md",
+      "lovable_prompt": "/home/lupin/code/pantheon/.coordination/responses/PKT-007-deployment-diff-lovable-prompt.md",
       "ui_done": ".coordination/requests/PKT-007-deployment-diff-ui-done.yaml",
       "frontend_feedback": ".coordination/requests/PKT-007-deployment-diff-frontend-feedback.yaml",
       "bff_gap": null

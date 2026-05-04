@@ -662,6 +662,60 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(state["workers"], {})
         mark_provider_dispatch_paused.assert_called_once()
 
+    def test_process_queue_skips_not_auto_ready_provider_without_starting_worker(self) -> None:
+        current_task = {
+            "id": "BUS-VAL-005B",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Claude2",
+            "depends_on": [],
+            "last_update": "2026-04-13T14:20:00Z",
+        }
+        current_event = supervisor.build_dispatch_event(
+            current_task,
+            "Claude2",
+            "review_ready_dispatch",
+            {"BUS-VAL-005B": current_task},
+        )
+        queue_payload = {
+            "event_id": "evt-not-ready",
+            "event_key": current_event["key"],
+            "task_id": "BUS-VAL-005B",
+            "target_agent": "claude2",
+            "target_display_name": "Claude2",
+            "provider": "claude2",
+            "reason": "review_ready_dispatch",
+            "message": "wake",
+            "context_files": [],
+        }
+        provider_report = {
+            "agent_adapters": {
+                "claude2": {
+                    "supported": True,
+                    "can_auto_deliver": False,
+                    "notes": "Claude CLI is installed but not authenticated.",
+                }
+            },
+            "providers": {"claude2": {"auth_ready": False}},
+        }
+        state = {"queue": {"events": {}}, "workers": {}}
+
+        with (
+            mock.patch.object(supervisor, "load_event_queue", return_value=[queue_payload]),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [current_task]}),
+            mock.patch.object(supervisor, "start_worker_for_request", side_effect=AssertionError("not-ready provider should not start")),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.process_queue(self.config, state, provider_report)
+
+        self.assertTrue(changed)
+        record = state["queue"]["events"]["evt-not-ready"]
+        self.assertEqual(record["status"], "failed")
+        self.assertIn("Auto dispatch unavailable for claude2", record["error"])
+        self.assertEqual(state["workers"], {})
+        write_activity_log.assert_called_once()
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "wake_skipped")
+
     def test_retryable_capacity_start_failure_schedules_queue_retry(self) -> None:
         current_task = {
             "id": "BUS-VAL-006",
@@ -1384,6 +1438,55 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["task_id"], "WB-013-SIDECAR-REVIEW")
         self.assertEqual(queued_event["target_agent"], "Qwen")
         self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
+
+    def test_dispatcher_skips_agent_when_provider_report_says_not_auto_ready(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "agents": {
+                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+            },
+            "providers": {},
+        }
+        status = {
+            "tasks": [
+                {"id": "AUTO-READY-001", "status": "review", "owner": "Codex", "reviewer": "Claude2", "depends_on": []},
+            ]
+        }
+        provider_report = {
+            "agent_adapters": {
+                "claude2": {
+                    "supported": True,
+                    "can_auto_deliver": False,
+                    "notes": "Claude CLI is installed but not authenticated.",
+                }
+            },
+            "providers": {
+                "claude2": {
+                    "local_cli_worker_supported": False,
+                    "supports_auto_approve": False,
+                    "auth_ready": False,
+                }
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_delivery_event") as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                {"queue": {"events": {}}, "workers": {}},
+                provider_report=provider_report,
+            )
+
+        self.assertFalse(changed)
+        queue_delivery_event.assert_not_called()
 
     def test_skips_duplicate_start_when_active_worker_already_exists(self) -> None:
         current_task = {
@@ -2638,6 +2741,47 @@ class ChairReviewDispatchTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(state["chair_rotation"]["last_chair_agent"], "Codex2")
         self.assertEqual(state["chair_rotation"]["current_index"], 2)
+
+    def test_dispatch_chair_review_falls_through_not_auto_ready_candidate(self) -> None:
+        self.config["chair_review"]["candidates"] = ["Claude2", "Codex"]
+        state = {"queue": {"events": {}}, "workers": {}, "chair_rotation": {"current_index": 0}}
+        provider_report = {
+            "agent_adapters": {
+                "claude2": {
+                    "supported": True,
+                    "can_auto_deliver": False,
+                    "notes": "Claude2 profile is not authenticated.",
+                },
+                "codex": {"supported": True, "can_auto_deliver": True},
+            },
+            "providers": {
+                "claude2": {
+                    "local_cli_worker_supported": False,
+                    "supports_auto_approve": False,
+                    "auth_ready": False,
+                },
+                "codex": {
+                    "local_cli_worker_supported": True,
+                    "supports_auto_approve": True,
+                },
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": []}),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-28T12:00:00Z"),
+        ):
+            changed = supervisor.dispatch_chair_review(
+                self.config,
+                state,
+                planning_state=None,
+                provider_report=provider_report,
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(state["chair_rotation"]["last_chair_agent"], "Codex")
+        self.assertEqual(state["chair_rotation"]["current_index"], 0)
 
     def test_dispatch_chair_review_bypasses_cooldown_for_pending_approval(self) -> None:
         state = {

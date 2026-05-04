@@ -45,12 +45,12 @@ parent review; it stands as the sidecar reviewer-facing evidence record for
 packet for the runtime closeout.
 
 Companion support artifact:
-[PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE.md](/home/edna/code/pantheon/support/sidecars/PER-001-RUNTIME-INTEGRATION-001/PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE.md:1)
+[PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE.md](/home/lupin/code/pantheon/support/sidecars/PER-001-RUNTIME-INTEGRATION-001/PER-001-RUNTIME-INTEGRATION-001-SIDECAR-ACCEPTANCE.md:1)
 
 Traceability note:
 the execution-origin packet still shows the earlier materialization-time
 owner/reviewer for `PER-001-RUNTIME-INTEGRATION-001`
-([execution packet](/home/edna/code/pantheon/docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md:65)).
+([execution packet](/home/lupin/code/pantheon/docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md:65)).
 Current lifecycle truth is the activity-log evidence above.
 
 ## 2. What The Parent Actually Closed
@@ -59,26 +59,26 @@ Current lifecycle truth is the activity-log evidence above.
 
 The execution-origin gap record said the persona surface still served a
 TODO/stub runtime path at
-[docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md:41](/home/edna/code/pantheon/docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md:41).
+[docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md:41](/home/lupin/code/pantheon/docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md:41).
 
 The current persona implementation now does the following in
-[services/control-plane/persona/main.py](/home/edna/code/pantheon/services/control-plane/persona/main.py:229):
+[services/control-plane/persona/main.py](/home/lupin/code/pantheon/services/control-plane/persona/main.py:229):
 
 - probes gateway health through `_runtime_probe(...)` and returns
   `RuntimeStatus(mode="gateway_ready_surrogate")` when the gateway is reachable
 - invokes the pinned OpenClaw gateway through `_invoke_openclaw(...)`, using
   `runtime.agent_turn(...)`, and reports `RuntimeStatus(mode="openclaw")` on
   success at
-  [lines 252-266](/home/edna/code/pantheon/services/control-plane/persona/main.py:252)
+  [lines 252-266](/home/lupin/code/pantheon/services/control-plane/persona/main.py:252)
 - returns an explicit degraded surrogate string beginning with
   `[persona runtime degraded]` when transport/auth/runtime failures occur at
-  [lines 244-275](/home/edna/code/pantheon/services/control-plane/persona/main.py:244)
+  [lines 244-275](/home/lupin/code/pantheon/services/control-plane/persona/main.py:244)
 - marks the stored session as `degraded` or `active` based on the actual
   runtime result at
-  [lines 303-320](/home/edna/code/pantheon/services/control-plane/persona/main.py:303)
+  [lines 303-320](/home/lupin/code/pantheon/services/control-plane/persona/main.py:303)
 
 Relevant test coverage rerun from
-[services/control-plane/persona/test_main.py](/home/edna/code/pantheon/services/control-plane/persona/test_main.py:55):
+[services/control-plane/persona/test_main.py](/home/lupin/code/pantheon/services/control-plane/persona/test_main.py:55):
 
 - health metadata stays truthful
 - classify returns the persona-owned surrogate boundary, not a router-local
@@ -91,26 +91,26 @@ Relevant test coverage rerun from
 
 The execution-origin gap record said the router still relied on local
 classify/permission scaffolding as the authoritative path at
-[docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md:42](/home/edna/code/pantheon/docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md:42).
+[docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md:42](/home/lupin/code/pantheon/docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md:42).
 
 The current router implementation now exposes the intended authority boundary
-in [services/control-plane/router/main.py](/home/edna/code/pantheon/services/control-plane/router/main.py:197):
+in [services/control-plane/router/main.py](/home/lupin/code/pantheon/services/control-plane/router/main.py:197):
 
 - `/health` reports `classification_owner="persona"` and
   `fallback_classifier_mode="degraded_only"` at
-  [lines 197-206](/home/edna/code/pantheon/services/control-plane/router/main.py:197)
+  [lines 197-206](/home/lupin/code/pantheon/services/control-plane/router/main.py:197)
 - `/route` calls persona `/classify` before any side-effectful invoke and only
   falls back to `_classify_intent_local(...)` on classify failure at
-  [lines 216-247](/home/edna/code/pantheon/services/control-plane/router/main.py:216)
+  [lines 216-247](/home/lupin/code/pantheon/services/control-plane/router/main.py:216)
 - permission is evaluated after classify but before persona `/invoke`, so deny
   paths still stop before governed side effects at
-  [lines 248-278](/home/edna/code/pantheon/services/control-plane/router/main.py:248)
+  [lines 248-278](/home/lupin/code/pantheon/services/control-plane/router/main.py:248)
 - the returned `routing_mode` follows the runtime-reported mode when invoke
   succeeds or degrades at
-  [lines 280-293](/home/edna/code/pantheon/services/control-plane/router/main.py:280)
+  [lines 280-293](/home/lupin/code/pantheon/services/control-plane/router/main.py:280)
 
 Relevant test coverage rerun from
-[services/control-plane/router/test_main.py](/home/edna/code/pantheon/services/control-plane/router/test_main.py:54):
+[services/control-plane/router/test_main.py](/home/lupin/code/pantheon/services/control-plane/router/test_main.py:54):
 
 - persona classify is called before persona invoke
 - router-local classify appears only as `router.degraded_fallback`
@@ -122,25 +122,25 @@ Relevant test coverage rerun from
 
 The execution-origin gap record said the web channel still exposed placeholder
 SSE output at
-[docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md:43](/home/edna/code/pantheon/docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md:43).
+[docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md:43](/home/lupin/code/pantheon/docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md:43).
 
 The current web implementation now behaves as follows in
-[services/channels/web/main.py](/home/edna/code/pantheon/services/channels/web/main.py:49):
+[services/channels/web/main.py](/home/lupin/code/pantheon/services/channels/web/main.py:49):
 
 - `/chat` forwards the router response and keeps router metadata
   (`intent_source`, `routing_mode`, `session_status`) intact at
-  [lines 49-96](/home/edna/code/pantheon/services/channels/web/main.py:49)
+  [lines 49-96](/home/lupin/code/pantheon/services/channels/web/main.py:49)
 - router failure on `/chat` is surfaced as
   `routing_mode="degraded_surrogate"` and `session_status="degraded"` instead
   of a fake success at
-  [lines 82-95](/home/edna/code/pantheon/services/channels/web/main.py:82)
+  [lines 82-95](/home/lupin/code/pantheon/services/channels/web/main.py:82)
 - `/stream/{session_id}` emits a `session` event, a truthful `router_health`
   event, and a `notice` event that explicitly says
   `streaming="disabled"` at
-  [lines 103-147](/home/edna/code/pantheon/services/channels/web/main.py:103)
+  [lines 103-147](/home/lupin/code/pantheon/services/channels/web/main.py:103)
 
 Relevant test coverage rerun from
-[services/channels/web/test_main.py](/home/edna/code/pantheon/services/channels/web/test_main.py:49):
+[services/channels/web/test_main.py](/home/lupin/code/pantheon/services/channels/web/test_main.py:49):
 
 - `/chat` forwards the router metadata without collapsing it to a local stub
 - `/stream` includes `classification_owner":"persona"` and
@@ -153,13 +153,13 @@ The adapter is part of the parent’s truth-preserving runtime story even though
 the sidecar does not review it as a separate implementation slice.
 
 In
-[integrations/openclaw/adapter/gateway_runtime.py](/home/edna/code/pantheon/integrations/openclaw/adapter/gateway_runtime.py:257),
+[integrations/openclaw/adapter/gateway_runtime.py](/home/lupin/code/pantheon/integrations/openclaw/adapter/gateway_runtime.py:257),
 successful plain-text stdout is preserved as `{ "text": stdout }` instead of
 being fabricated into a structured JSON success at
-[lines 261-267](/home/edna/code/pantheon/integrations/openclaw/adapter/gateway_runtime.py:261).
+[lines 261-267](/home/lupin/code/pantheon/integrations/openclaw/adapter/gateway_runtime.py:261).
 Transport/auth failures are converted into structured
 `OpenClawGatewayTransportError` values with Pantheon-owned error codes at
-[lines 327-375](/home/edna/code/pantheon/integrations/openclaw/adapter/gateway_runtime.py:327).
+[lines 327-375](/home/lupin/code/pantheon/integrations/openclaw/adapter/gateway_runtime.py:327).
 
 That matters for the parent review because the persona degraded response is
 only truthful if the adapter itself refuses to fabricate a successful runtime
@@ -210,16 +210,16 @@ repo state:
 
 1. Persona `/classify` still returns
    `classifier="persona.local_surrogate"` at
-   [services/control-plane/persona/main.py:290](/home/edna/code/pantheon/services/control-plane/persona/main.py:290)
+   [services/control-plane/persona/main.py:290](/home/lupin/code/pantheon/services/control-plane/persona/main.py:290)
    and
-   [services/control-plane/persona/test_main.py:85](/home/edna/code/pantheon/services/control-plane/persona/test_main.py:85).
+   [services/control-plane/persona/test_main.py:85](/home/lupin/code/pantheon/services/control-plane/persona/test_main.py:85).
    I do not read that as a blocker for this parent. The acceptance target is
    that router-local placeholder classification is no longer authoritative; it
    does not require upstream semantic classification inside `/classify`.
 
 2. The web SSE surface remains intentionally `status_only` with
    `streaming="disabled"` at
-   [services/channels/web/main.py:103](/home/edna/code/pantheon/services/channels/web/main.py:103).
+   [services/channels/web/main.py:103](/home/lupin/code/pantheon/services/channels/web/main.py:103).
    That is valid for this parent, but it means the reviewer should reject any
    broader claim that incremental token streaming is already implemented.
 

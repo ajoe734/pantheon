@@ -3,7 +3,8 @@
 Status: prepared manual broker-capture path only
 
 Scope: smallest possible live order acceptance plus cancel test after the
-read-only TWS API proof is complete.
+read-only TWS API proof and broker paper/sandbox/test-key order API smoke are
+complete.
 
 This document does not authorize automated trading. It exists so the operator
 can run the smallest possible broker-path validation manually and capture broker
@@ -11,11 +12,14 @@ facts for the runtime-manager-originated EP5-002 packet.
 
 The canonical packet prep boundary is:
 
-- [ep5-002-runtime-manager-proof-packet.md](/home/edna/code/pantheon/docs/deployment/ep5-002-runtime-manager-proof-packet.md)
+- [ep5-002-runtime-manager-proof-packet.md](/home/lupin/code/pantheon/docs/deployment/ep5-002-runtime-manager-proof-packet.md)
 
 ## Preconditions
 
 - live TWS login is active on VM2
+- broker paper/sandbox/test-key order API smoke has already proven place,
+  cancel/replace, status/readback, and execution/no-fill or fill disposition
+  without production live capital
 - `TWS API` is enabled
 - `Read-Only API` is intentionally disabled before the test
 - account ref is confirmed: `U19859952`

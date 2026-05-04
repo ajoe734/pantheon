@@ -49,7 +49,7 @@ The feedback bundle is consistent and well-formed. The block is NOT a Pantheon c
 
 ## Cross-Cutting Finding
 
-Both F-042 and PKT-001-governance-review-queue share the same root cause: **the `front-ai-trading-system` sibling checkout at `/home/edna/code/front-ai-trading-system` is mirror-only and does not contain the actual application source tree**.
+Both F-042 and PKT-001-governance-review-queue share the same root cause: **the `front-ai-trading-system` sibling checkout at `/home/lupin/code/front-ai-trading-system` is mirror-only and does not contain the actual application source tree**.
 
 This is a known issue tracked by `F-042-needs-runtime.yaml` (type: `needs-runtime`, status: `blocked`).
 

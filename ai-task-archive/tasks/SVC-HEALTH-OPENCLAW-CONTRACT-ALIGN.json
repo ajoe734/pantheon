@@ -25,7 +25,7 @@
       "python3 -m pytest -q services/foundation/tests/test_health.py passes",
       "docker compose -f docker-compose.yml config -q passes"
     ],
-    "next": "Finalized OpenClaw health contract alignment in commit 1db2168 after reviewer approval. Verification: docker compose -f docker-compose.yml config -q; python3 -m pytest -q --confcutdir=services/foundation/tests --import-mode=importlib services/foundation/tests/test_health.py (5 passed); PYTHONPATH=/home/edna/code/pantheon python3 -m pytest -q --confcutdir=services/openclaw-gateway-adapter services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_compose_activation.py (39 passed); python3 -m py_compile services/openclaw-gateway-adapter/main.py; git diff --check scoped files.",
+    "next": "Finalized OpenClaw health contract alignment in commit 1db2168 after reviewer approval. Verification: docker compose -f docker-compose.yml config -q; python3 -m pytest -q --confcutdir=services/foundation/tests --import-mode=importlib services/foundation/tests/test_health.py (5 passed); PYTHONPATH=/home/lupin/code/pantheon python3 -m pytest -q --confcutdir=services/openclaw-gateway-adapter services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_compose_activation.py (39 passed); python3 -m py_compile services/openclaw-gateway-adapter/main.py; git diff --check scoped files.",
     "last_update": "2026-04-30T13:11:57Z",
     "task_class": "execution",
     "auto_created_by": "codex-fulltest-materialization-20260430",
@@ -51,7 +51,7 @@
         "LLM-Agent": "Codex2",
         "Task-ID": "SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN",
         "Reviewer": "Codex",
-        "Verification": "docker compose -f docker-compose.yml config -q; python3 -m pytest -q --confcutdir=services/foundation/tests --import-mode=importlib services/foundation/tests/test_health.py; PYTHONPATH=/home/edna/code/pantheon python3 -m pytest -q --confcutdir=services/openclaw-gateway-adapter services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_compose_activation.py; python3 -m py_compile services/openclaw-gateway-adapter/main.py; git diff --check scoped files."
+        "Verification": "docker compose -f docker-compose.yml config -q; python3 -m pytest -q --confcutdir=services/foundation/tests --import-mode=importlib services/foundation/tests/test_health.py; PYTHONPATH=/home/lupin/code/pantheon python3 -m pytest -q --confcutdir=services/openclaw-gateway-adapter services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_compose_activation.py; python3 -m py_compile services/openclaw-gateway-adapter/main.py; git diff --check scoped files."
       },
       "git_clean": false,
       "dirty_entry_count": 106,
@@ -79,7 +79,7 @@
       "task_id": "SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN",
       "from": "Codex2",
       "to": "Codex",
-      "message": "Ready for review: upstream OpenClaw compose healthcheck now uses /readyz, adapter probes /readyz before legacy /healthz fallback, adapter compose health remains /livez, and docs/tests capture the contract. Verified: docker compose -f docker-compose.yml config -q; python3 -m pytest -q --confcutdir=services/foundation/tests --import-mode=importlib services/foundation/tests/test_health.py (5 passed); PYTHONPATH=/home/edna/code/pantheon python3 -m pytest -q --confcutdir=services/openclaw-gateway-adapter services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_compose_activation.py (39 passed); python3 -m py_compile services/openclaw-gateway-adapter/main.py; git diff --check scoped files. Note: literal non-isolated python3 -m pytest -q services/foundation/tests/test_health.py currently hits unrelated root harness secrets shadowing from TEST-FULLSUITE-HARNESS-ISOLATION.",
+      "message": "Ready for review: upstream OpenClaw compose healthcheck now uses /readyz, adapter probes /readyz before legacy /healthz fallback, adapter compose health remains /livez, and docs/tests capture the contract. Verified: docker compose -f docker-compose.yml config -q; python3 -m pytest -q --confcutdir=services/foundation/tests --import-mode=importlib services/foundation/tests/test_health.py (5 passed); PYTHONPATH=/home/lupin/code/pantheon python3 -m pytest -q --confcutdir=services/openclaw-gateway-adapter services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_compose_activation.py (39 passed); python3 -m py_compile services/openclaw-gateway-adapter/main.py; git diff --check scoped files. Note: literal non-isolated python3 -m pytest -q services/foundation/tests/test_health.py currently hits unrelated root harness secrets shadowing from TEST-FULLSUITE-HARNESS-ISOLATION.",
       "status": "done",
       "created_at": "2026-04-30T13:06:28Z",
       "resolved_at": "2026-04-30T13:10:12Z"

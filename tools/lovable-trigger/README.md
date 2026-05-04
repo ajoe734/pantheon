@@ -32,7 +32,7 @@ The default Chromium path is discovered from Playwright's cache under:
 ## Install
 
 ```bash
-cd /home/edna/code/pantheon/tools/lovable-trigger
+cd /home/lupin/code/pantheon/tools/lovable-trigger
 npm install
 ```
 
@@ -41,9 +41,9 @@ npm install
 Run this once from a real desktop session with a visible display:
 
 ```bash
-cd /home/edna/code/pantheon/tools/lovable-trigger
+cd /home/lupin/code/pantheon/tools/lovable-trigger
 node send_prompt.mjs bootstrap \
-  --repo /home/edna/code/front-ai-trading-system
+  --repo /home/lupin/code/front-ai-trading-system
 ```
 
 The bootstrap command opens the Lovable project page in a persistent browser
@@ -64,9 +64,9 @@ there without a visible browser.
 On any machine where you can log into Lovable:
 
 ```bash
-cd /home/edna/code/pantheon/tools/lovable-trigger
+cd /home/lupin/code/pantheon/tools/lovable-trigger
 node send_prompt.mjs bootstrap \
-  --repo /home/edna/code/front-ai-trading-system \
+  --repo /home/lupin/code/front-ai-trading-system \
   --profile-dir /tmp/lovable-auth-profile
 ```
 
@@ -79,7 +79,7 @@ Then copy this file to the VM:
 On the headless VM:
 
 ```bash
-cd /home/edna/code/pantheon/tools/lovable-trigger
+cd /home/lupin/code/pantheon/tools/lovable-trigger
 LOVABLE_STORAGE_STATE=/path/to/storage-state.json ./send_current_front_requests.sh
 ```
 
@@ -87,9 +87,9 @@ You can also send one prompt directly:
 
 ```bash
 node send_prompt.mjs send \
-  --repo /home/edna/code/front-ai-trading-system \
+  --repo /home/lupin/code/front-ai-trading-system \
   --storage-state /path/to/storage-state.json \
-  --prompt-file /home/edna/code/front-ai-trading-system/docs/lovable/2026-04-24-route-live-activation-prompt.md
+  --prompt-file /home/lupin/code/front-ai-trading-system/docs/lovable/2026-04-24-route-live-activation-prompt.md
 ```
 
 If Lovable expires the session, repeat bootstrap on a machine with a visible
@@ -100,7 +100,7 @@ browser and replace the copied `storage-state.json`.
 If your desktop machine is Windows and does not have the repo checked out, you
 can use the standalone auth-only script:
 
-- [bootstrap_auth_only.mjs](/home/edna/code/pantheon/tools/lovable-trigger/bootstrap_auth_only.mjs:1)
+- [bootstrap_auth_only.mjs](/home/lupin/code/pantheon/tools/lovable-trigger/bootstrap_auth_only.mjs:1)
 
 PowerShell steps:
 
@@ -123,10 +123,10 @@ After login succeeds, copy `storage-state.json` from that folder back to the VM.
 ## Send one prompt
 
 ```bash
-cd /home/edna/code/pantheon/tools/lovable-trigger
+cd /home/lupin/code/pantheon/tools/lovable-trigger
 node send_prompt.mjs send \
-  --repo /home/edna/code/front-ai-trading-system \
-  --prompt-file /home/edna/code/front-ai-trading-system/docs/lovable/2026-04-24-route-live-activation-prompt.md
+  --repo /home/lupin/code/front-ai-trading-system \
+  --prompt-file /home/lupin/code/front-ai-trading-system/docs/lovable/2026-04-24-route-live-activation-prompt.md
 ```
 
 The tool extracts the first fenced code block if present; otherwise it sends the
@@ -138,13 +138,13 @@ the page to confirm that the prompt survived as a durable message.
 ## Batch send multiple prompt files
 
 ```bash
-cd /home/edna/code/pantheon/tools/lovable-trigger
+cd /home/lupin/code/pantheon/tools/lovable-trigger
 node send_prompt.mjs batch \
-  --repo /home/edna/code/front-ai-trading-system \
+  --repo /home/lupin/code/front-ai-trading-system \
   --cooldown-ms 45000 \
-  --prompt-file /home/edna/code/front-ai-trading-system/docs/lovable/2026-04-24-route-live-activation-prompt.md \
-  --prompt-file /home/edna/code/front-ai-trading-system/docs/lovable/2026-04-24-reopened-evolution-consultation-realignment-prompt.md \
-  --prompt-file /home/edna/code/front-ai-trading-system/docs/lovable/2026-04-24-pkt001-pkt003-followup-prompt.md
+  --prompt-file /home/lupin/code/front-ai-trading-system/docs/lovable/2026-04-24-route-live-activation-prompt.md \
+  --prompt-file /home/lupin/code/front-ai-trading-system/docs/lovable/2026-04-24-reopened-evolution-consultation-realignment-prompt.md \
+  --prompt-file /home/lupin/code/front-ai-trading-system/docs/lovable/2026-04-24-pkt001-pkt003-followup-prompt.md
 ```
 
 Batch mode reuses one persistent browser context for the whole run and waits
@@ -153,14 +153,14 @@ between prompts instead of opening a brand-new session for every message.
 For the current Pantheon front-end request set, you can use the shortcut:
 
 ```bash
-cd /home/edna/code/pantheon/tools/lovable-trigger
+cd /home/lupin/code/pantheon/tools/lovable-trigger
 ./send_current_front_requests.sh
 ```
 
 Or on a headless VM with imported auth:
 
 ```bash
-cd /home/edna/code/pantheon/tools/lovable-trigger
+cd /home/lupin/code/pantheon/tools/lovable-trigger
 LOVABLE_STORAGE_STATE=/path/to/storage-state.json ./send_current_front_requests.sh
 ```
 

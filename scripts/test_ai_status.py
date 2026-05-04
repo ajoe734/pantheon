@@ -505,6 +505,19 @@ class PortableStateRenderingTests(unittest.TestCase):
                     "next": "Queue external validation",
                     "last_update": "2026-04-10T00:00:00Z",
                 },
+                {
+                    "id": "P2-OSS-ACTIVATE-001",
+                    "title": "Research OSS production activation after fail-closed gates",
+                    "summary_zh": "確認外部資料串接 activation gate。",
+                    "phase": "P2 Wave 7",
+                    "owner": "Codex",
+                    "reviewer": "Copilot",
+                    "status": "todo",
+                    "depends_on": ["P0-CI-BOUNDED-001"],
+                    "artifacts": ["services/source_ingestion", "services/search"],
+                    "next": "Assignment created",
+                    "last_update": "2026-04-10T00:00:00Z",
+                },
             ],
             "handoffs": [],
             "blockers": [],
@@ -514,13 +527,43 @@ class PortableStateRenderingTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory(prefix="ai-status-current-work-") as temp_dir:
             output_path = Path(temp_dir) / "current-work.md"
-            with mock.patch.object(ai_status, "CURRENT_WORK_FILE", output_path):
+            with (
+                mock.patch.object(ai_status, "CURRENT_WORK_FILE", output_path),
+                mock.patch.object(
+                    ai_status,
+                    "load_archive_index",
+                    return_value={
+                        "updated_at": "2026-04-10T01:00:00Z",
+                        "counts": {"total": 1, "completed": 1, "superseded": 0},
+                        "recent_terminal_ids": ["DONE-001"],
+                    },
+                ),
+                mock.patch.object(
+                    ai_status,
+                    "recent_terminal_summaries",
+                    return_value=[
+                        {
+                            "task_id": "DONE-001",
+                            "title": "Executed task",
+                            "phase": "Archive",
+                            "owner": "Codex",
+                            "terminal_outcome": "completed",
+                            "archived_at": "2026-04-10T01:00:00Z",
+                            "snapshot_path": "ai-task-archive/tasks/DONE-001.json",
+                        }
+                    ],
+                ),
+            ):
                 ai_status.write_current_work(state, [])
 
             content = output_path.read_text(encoding="utf-8")
 
         self.assertIn("### Primary Project Work", content)
         self.assertIn("### External / Upstream Integration Work", content)
+        self.assertIn("`P2-OSS-ACTIVATE-001`", content)
+        self.assertIn("## Recently Executed Tasks", content)
+        self.assertIn("`DONE-001`", content)
+        self.assertIn("`ai-task-archive/tasks/DONE-001.json`", content)
         self.assertNotIn("### Pantheon Product Work", content)
         self.assertIn("Canonical map", content)
         self.assertIn("Workbench backlog", content)

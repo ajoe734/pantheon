@@ -37,7 +37,7 @@ No new Pantheon endpoint or client-side shadow state was introduced.
 
 Source request:
 
-- `/home/edna/code/pantheon/.coordination/requests/RW-05-artifact-compare-bff-gap.yaml`
+- `/home/lupin/code/pantheon/.coordination/requests/RW-05-artifact-compare-bff-gap.yaml`
 
 Verified frontend publication chain:
 

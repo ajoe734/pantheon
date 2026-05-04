@@ -1,8 +1,7 @@
 feature_id: PKT-005-sse-substrate
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: loop-complete
-cycle: 2
+status: ready
 pantheon_pr: null
 base_url: null
 workbench: operator-console
@@ -19,10 +18,6 @@ constraints:
 - do not add raw fetch in components
 - do not import demo providers
 - if any required field is missing, emit a bff-gap handoff instead of mocking
-- do not re-implement from scratch; patch only the five delta items
-- publish frontend-feedback and ui-done from a transport-replayable commit that
-  actually contains both payload paths; do not point source_commit at an earlier
-  code-only commit
 acceptance:
 - implement a shared SSE client layer with reconnect manager (exponential backoff
   1s-30s, last_event_id tracking)
@@ -37,21 +32,6 @@ acceptance:
 - do not add raw EventSource calls in component files; all stream wiring must go through
   the shared client layer
 - if any required event data field is missing, emit a bff-gap handoff
-- last_event_id is stored only after the reconciler successfully accepts and applies
-  the event (SseClient.markApplied called by the screen, not auto-advanced on receipt)
-- each live surface shows "Real-time updates may be delayed" after 60 seconds of no
-  SSE events while the connection is in the connected state
-- accepted runtime_state_changed events trigger a detail-panel refresh in
-  DeploymentReviewConsole and a BFF re-fetch in IncidentDetail
-- accepted incident_updated events update the visible incident status badge in both
-  IncidentDetail and the PostIncidentReviewConsole detail panel (not informational only)
-- reconciler bff-gap results are surfaced in the footer or as an alert; they are not
-  silently dropped
-- frontend-feedback and ui-done are published in the same final front-repo
-  commit that contains both payload paths, and each payload source_commit matches
-  that publication commit
-- .coordination/requests/PKT-005-sse-substrate-frontend-feedback.yaml is published
-  alongside the ui-done handoff
 required_feedback:
 - docs/pantheon-feedback/PKT-005-sse-substrate/LOVABLE_CHANGE_FEEDBACK.md
 - docs/pantheon-feedback/PKT-005-sse-substrate/API_GAP_REQUESTS.json
@@ -71,5 +51,5 @@ gap_handoff_path: .coordination/requests/PKT-005-sse-substrate-bff-gap.yaml
 gap_handoff_template: .coordination/requests/PKT-005-sse-substrate-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/PKT-005-sse-substrate-ui-done.yaml
 completion_handoff_template: .coordination/requests/PKT-005-sse-substrate-ui-done.example.yaml
-frontend_feedback_handoff_path: .coordination/requests/PKT-005-sse-substrate-frontend-feedback.yaml
-review_findings_ref: .coordination/reviews/BP5-LUV-010-review.md
+feedback_handoff_path: .coordination/requests/PKT-005-sse-substrate-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/PKT-005-sse-substrate-frontend-feedback.example.yaml

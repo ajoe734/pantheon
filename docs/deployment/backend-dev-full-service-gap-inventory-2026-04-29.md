@@ -8,7 +8,7 @@ Pantheon service.
 ## Current State
 
 - Dev VM: `pantheon-dev-vm1`
-- Dev runtime checkout: `/home/edna/code/pantheon-backend-dev-publish-20260429`
+- Dev runtime checkout: `/home/lupin/code/pantheon-backend-dev-publish-20260429`
 - Dev runtime deployed commit: `c9ec7d5194df4f48534c29a457fc89651f3edd8a`
 - Current local/remote branch head: `e6f6d359c0e86b83f29f382c4ac2a3caa426f957`
 - Local worktree before writing this inventory: clean

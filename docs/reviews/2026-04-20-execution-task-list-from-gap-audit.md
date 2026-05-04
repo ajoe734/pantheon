@@ -2,7 +2,7 @@
 
 ## 目的
 
-把 [current implementation vs blueprint gap audit](/home/edna/code/pantheon/docs/reviews/2026-04-20-current-implementation-vs-blueprint-gap-audit.md:1) 轉成可直接派工的 execution 清單。
+把 [current implementation vs blueprint gap audit](/home/lupin/code/pantheon/docs/reviews/2026-04-20-current-implementation-vs-blueprint-gap-audit.md:1) 轉成可直接派工的 execution 清單。
 
 原則：
 

@@ -1,4 +1,4 @@
-# SD-08 — Execution Runtime Binding / lean-platform 執行底座與 Runtime 邊界設計
+# SD-08 — Execution Runtime Binding / pantheon-lean 執行底座與 Runtime 邊界設計
 
 版本：v0.1 Codex-ready draft  
 適用範圍：Execution Plane、Runtime Manager、Artifact Loader、Runtime Binding Store、LEAN Paper / Canary / Live Runtime、Broker / Exchange / Subaccounts、Pause / Liquidate / Replace Actions  
@@ -8,7 +8,7 @@
 
 ## 1. Purpose
 
-本文件定義 Pantheon 如何透過 `lean-platform` 承接 execution-related substrate。
+本文件定義 Pantheon 如何透過 `pantheon-lean` 承接 execution-related substrate。
 
 重點不是讓 Pantheon 直接呼叫 broker，而是建立明確 runtime boundary：
 
@@ -18,11 +18,11 @@ DeploymentPlan ready
 → Runtime Manager
 → Artifact Loader
 → RuntimeBinding
-→ lean-platform paper/canary/live runtime
+→ pantheon-lean paper/canary/live runtime
 → canonical telemetry events
 ```
 
-`lean-platform` 是目前藍圖指定的 execution substrate；`Lean` 只作為 upstream reference / patch source，不作為 Pantheon 內部平行 runtime 主線。
+`pantheon-lean` 是目前藍圖指定的 execution substrate；`Lean` 只作為 upstream reference / patch source，不作為 Pantheon 內部平行 runtime 主線。
 
 ---
 
@@ -30,7 +30,7 @@ DeploymentPlan ready
 
 | Repo | Ownership |
 |---|---|
-| `lean-platform` | Primary execution substrate：runtime manager adapter、artifact loader、broker integration、order/fill/position/heartbeat event export。 |
+| `pantheon-lean` | Primary execution substrate：runtime manager adapter、artifact loader、broker integration、order/fill/position/heartbeat event export。 |
 | `pantheon` | RuntimeBinding truth、ExecutionRequest API、deployment state, telemetry ingest boundary。 |
 | `front-ai-trading-system` | UI consumer：Runtime Manager UI、Runtime Detail、Operator Actions、Health / Kill Switch controls。 |
 | `Lean` | Upstream mirror/reference only；no direct Pantheon production authority。 |
@@ -63,7 +63,7 @@ docs/sd/08_execution_runtime_binding.md
 docs/codex/SD-08_task_packets.md
 ```
 
-### `lean-platform`
+### `pantheon-lean`
 
 ```text
 Pantheon/
@@ -229,14 +229,14 @@ ExecutionTelemetryEvent:
 | `SubmitExecutionRequest` | ready DeploymentPlan | execution_request_id | Called by SD-07 only。 |
 | `AcceptExecutionRequest` | request_id | accepted | Runtime manager validates loader report。 |
 | `CreateRuntimeBinding` | execution request | binding_id | Stored in Pantheon。 |
-| `LoadArtifactIntoRuntime` | load request | load status | Performed by lean-platform bridge。 |
+| `LoadArtifactIntoRuntime` | load request | load status | Performed by pantheon-lean bridge。 |
 | `StartRuntime` | binding_id | runtime status | Creates paper/canary/live runtime。 |
 | `PauseRuntime` | runtime_id + reason | action_id | High-risk for live。 |
 | `LiquidateRuntime` | runtime_id + reason | action_id | Requires policy/RBAC/MFA unless kill-switch path。 |
 | `ReplaceRuntimeArtifact` | runtime_id + new plan | new binding_id | Records rollback parent。 |
 | `RestartRuntime` | runtime_id | status | Restricted by runtime_action_policy。 |
 | `TerminateRuntime` | runtime_id | terminated | Audit required。 |
-| `EmitExecutionTelemetry` | telemetry event | accepted/rejected | Called by lean-platform emitter。 |
+| `EmitExecutionTelemetry` | telemetry event | accepted/rejected | Called by pantheon-lean emitter。 |
 
 ---
 
@@ -348,7 +348,7 @@ telemetry stream
 
 ## 9. Hard invariants
 
-1. `lean-platform` may consume only ready DeploymentPlans submitted via Pantheon execution gateway.
+1. `pantheon-lean` may consume only ready DeploymentPlans submitted via Pantheon execution gateway.
 2. No persona, OpenClaw tool, or frontend command may call broker or LEAN execution path directly.
 3. RuntimeBinding must reference deployment_plan_id, artifact_id, capital_pool_id, and runtime_id.
 4. Live RuntimeBinding requires approval decision and loader report.
@@ -357,7 +357,7 @@ telemetry stream
 7. Runtime must emit canonical telemetry events for heartbeat, runtime state, orders, fills, positions, and broker connectivity.
 8. Pause/liquidate/replace actions must be recorded as RuntimeAction and audit event.
 9. Replace/rollback action must preserve rollback_parent.
-10. `Lean` upstream code may be cherry-picked into `lean-platform`, but not used as parallel production execution substrate without a separate migration decision.
+10. `Lean` upstream code may be cherry-picked into `pantheon-lean`, but not used as parallel production execution substrate without a separate migration decision.
 11. Execution request handling must be idempotent by deployment_plan_id and trace_id.
 12. Kill switch / safe mode fast path may bypass normal approval latency but must still emit action and audit events.
 
@@ -373,7 +373,7 @@ telemetry stream
 | `broker_capability_policy` | Ensures runtime action/order type supported。 |
 | `telemetry_required_policy` | Defines mandatory event types and heartbeat interval。 |
 | `safe_mode_policy` | Determines actions during risk_off / kill switch。 |
-| `upstream_sync_policy` | Controls what changes can be backported from `Lean` to `lean-platform`。 |
+| `upstream_sync_policy` | Controls what changes can be backported from `Lean` to `pantheon-lean`。 |
 
 ---
 
@@ -392,7 +392,7 @@ execution_events
 execution_audit_actions
 ```
 
-### lean-platform local/runtime state
+### pantheon-lean local/runtime state
 
 ```text
 runtime_context.json
@@ -427,7 +427,7 @@ POST   /api/execution/telemetry/events
 GET    /api/execution/runtimes/{runtime_id}/trace
 ```
 
-### lean-platform bridge API / interface
+### pantheon-lean bridge API / interface
 
 ```text
 POST   /pantheon/runtime/accept-execution-request
@@ -449,7 +449,7 @@ The exact transport may be HTTP, queue, or gRPC. The contract must remain stable
 | SD-07 Promotion | read/command | ready DeploymentPlan creates ExecutionRequest。 |
 | SD-06 Capital Pool | read | broker refs, risk policy, pool state。 |
 | SD-09 Telemetry | write | canonical execution telemetry events。 |
-| `lean-platform` | command/write | runtime bridge, artifact loader, telemetry emitter。 |
+| `pantheon-lean` | command/write | runtime bridge, artifact loader, telemetry emitter。 |
 | `front-ai-trading-system` | read/command | runtime status and controlled actions。 |
 | `Lean` upstream | read-only diff | backport source only。 |
 
@@ -464,7 +464,7 @@ The exact transport may be HTTP, queue, or gRPC. The contract must remain stable
 - live action liquidate requires high-risk role or safe-mode trigger.
 - duplicate execution request is idempotent.
 
-### lean-platform bridge tests
+### pantheon-lean bridge tests
 
 - bridge rejects ExecutionRequest without loader_report_id.
 - artifact loader records artifact_id and deployment_plan_id.
@@ -490,7 +490,7 @@ The exact transport may be HTTP, queue, or gRPC. The contract must remain stable
 
 1. Pantheon execution service can accept ready DeploymentPlan and create ExecutionRequest.
 2. RuntimeBinding is persisted and queryable.
-3. lean-platform bridge can load artifact context with runtime_binding_id / pool_id / artifact_id.
+3. pantheon-lean bridge can load artifact context with runtime_binding_id / pool_id / artifact_id.
 4. Runtime status and action events flow back to Pantheon.
 5. Broker secret boundary is preserved.
 6. Paper/canary/live segregation is enforced.
@@ -534,10 +534,10 @@ Acceptance tests:
   - emits ExecutionRequestSubmitted and RuntimeBindingCreated
 ```
 
-### PTH-SD08-003 — Implement lean-platform PantheonRuntimeBridge skeleton
+### PTH-SD08-003 — Implement pantheon-lean PantheonRuntimeBridge skeleton
 
 ```text
-Repo: ajoe734/lean-platform
+Repo: ajoe734/pantheon-lean
 Target paths:
   Pantheon/RuntimeBridge/PantheonRuntimeBridge.cs
   Pantheon/RuntimeBridge/Models/ExecutionRequest.cs
@@ -553,10 +553,10 @@ Non-goals:
   - do not implement broker order logic in this task
 ```
 
-### PTH-SD08-004 — Inject runtime context into lean-platform setup
+### PTH-SD08-004 — Inject runtime context into pantheon-lean setup
 
 ```text
-Repo: ajoe734/lean-platform
+Repo: ajoe734/pantheon-lean
 Target paths:
   Engine/Setup/BrokerageSetupHandler.cs
   Pantheon/RuntimeBridge/PantheonArtifactLoader.cs
@@ -572,7 +572,7 @@ Acceptance tests:
 ### PTH-SD08-005 — Implement canonical telemetry emitter
 
 ```text
-Repo: ajoe734/lean-platform
+Repo: ajoe734/pantheon-lean
 Target paths:
   Pantheon/RuntimeBridge/PantheonTelemetryEmitter.cs
   Pantheon/RuntimeBridge/Models/TelemetryEvent.cs

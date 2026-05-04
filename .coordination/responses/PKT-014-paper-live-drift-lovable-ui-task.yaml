@@ -41,3 +41,5 @@ gap_handoff_path: .coordination/requests/PKT-014-paper-live-drift-bff-gap.yaml
 gap_handoff_template: .coordination/requests/PKT-014-paper-live-drift-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/PKT-014-paper-live-drift-ui-done.yaml
 completion_handoff_template: .coordination/requests/PKT-014-paper-live-drift-ui-done.example.yaml
+feedback_handoff_path: .coordination/requests/PKT-014-paper-live-drift-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/PKT-014-paper-live-drift-frontend-feedback.example.yaml

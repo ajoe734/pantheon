@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-host_home="${PANTHEON_HOST_HOME:-/home/edna}"
+host_home="${PANTHEON_HOST_HOME:-/home/lupin}"
 node_bin="$(ls -d "$host_home"/.vscode-server/cli/servers/Stable-*/server/node 2>/dev/null | sort -V | tail -n1)"
 gemini_js="$(ls -d "$host_home"/.local/share/pantheon-orchestrator-tools/gemini-cli-*/package/bundle/gemini.js 2>/dev/null | sort -V | tail -n1)"
 

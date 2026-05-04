@@ -89,7 +89,7 @@ Downstream tasks that should not be absorbed into this parent:
 
 ## 5. Suggested Parent Verification Commands
 
-Run from `/home/edna/code/pantheon` unless noted.
+Run from `/home/lupin/code/pantheon` unless noted.
 
 ```bash
 rg -n "POST /api/v1/operator/commands|/api/v1/operator/commands|operatorApi" \

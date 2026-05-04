@@ -29,7 +29,7 @@ This sidecar exists to make the already-approved `DEPLOY-005` review state easy 
 
 ## 2. Parent Task Truth
 
-From [ai-status.json](/home/edna/code/pantheon/ai-status.json:230), `DEPLOY-005` is currently:
+From [ai-status.json](/home/lupin/code/pantheon/ai-status.json:230), `DEPLOY-005` is currently:
 
 - owner: `Claude`
 - reviewer: `Codex2`
@@ -45,7 +45,7 @@ From [ai-status.json](/home/edna/code/pantheon/ai-status.json:230), `DEPLOY-005`
   - migrations run without hidden errors
   - `.env.example` covers all required service variables
 
-The durable handoff record in [ai-status.json](/home/edna/code/pantheon/ai-status.json:489) shows
+The durable handoff record in [ai-status.json](/home/lupin/code/pantheon/ai-status.json:489) shows
 the final reviewer disposition:
 
 > Review approved: DB provisioning in `scripts/bootstrap.sh` now fails loudly without
@@ -78,13 +78,13 @@ actual deployed service surface.
 
 The repo snapshot aligns with the fixes described in the handoff log:
 
-- [docker-compose.control.yml](/home/edna/code/pantheon/docker-compose.control.yml:67) now defines
+- [docker-compose.control.yml](/home/lupin/code/pantheon/docker-compose.control.yml:67) now defines
   `minio-init` and uses `mc mb --ignore-existing`
-- [scripts/bootstrap.sh](/home/edna/code/pantheon/scripts/bootstrap.sh:107) invokes
+- [scripts/bootstrap.sh](/home/lupin/code/pantheon/scripts/bootstrap.sh:107) invokes
   `docker compose ... run --rm minio-init` directly with no `|| true` suppression
-- [scripts/bootstrap.sh](/home/edna/code/pantheon/scripts/bootstrap.sh:128) runs DB role/database
+- [scripts/bootstrap.sh](/home/lupin/code/pantheon/scripts/bootstrap.sh:128) runs DB role/database
   provisioning with `psql -v ON_ERROR_STOP=1`, and the previous stderr suppression is absent
-- [docs/deployment/single-vm-runbook.md](/home/edna/code/pantheon/docs/deployment/single-vm-runbook.md:134)
+- [docs/deployment/single-vm-runbook.md](/home/lupin/code/pantheon/docs/deployment/single-vm-runbook.md:134)
   separates `/__health__` services from the `/health` endpoints used by `capital` and `evolution`
 
 ---
@@ -93,7 +93,7 @@ The repo snapshot aligns with the fixes described in the handoff log:
 
 ### 4.1 Environment contract coverage exists
 
-[.env.example](/home/edna/code/pantheon/.env.example:1) now provides grouped configuration for:
+[.env.example](/home/lupin/code/pantheon/.env.example:1) now provides grouped configuration for:
 
 - Postgres app/superuser variables and service DSNs
 - MinIO credentials and artifact bucket settings
@@ -107,7 +107,7 @@ That is consistent with the parent handoff claim that the file covers the single
 
 ### 4.2 Bootstrap now reflects a strict four-step bring-up
 
-[scripts/bootstrap.sh](/home/edna/code/pantheon/scripts/bootstrap.sh:54) implements the expected
+[scripts/bootstrap.sh](/home/lupin/code/pantheon/scripts/bootstrap.sh:54) implements the expected
 single-VM flow:
 
 1. start infra services and wait for health
@@ -123,9 +123,9 @@ Important review-sensitive details now present in the script:
 
 ### 4.3 Migration helper is idempotent and narrow
 
-[scripts/db_migrate.sh](/home/edna/code/pantheon/scripts/db_migrate.sh:14) derives its DSN from
+[scripts/db_migrate.sh](/home/lupin/code/pantheon/scripts/db_migrate.sh:14) derives its DSN from
 `TELEMETRY_DB_DSN` or `DATABASE_URL`, and
-[scripts/db_migrate.sh](/home/edna/code/pantheon/scripts/db_migrate.sh:26) applies three idempotent
+[scripts/db_migrate.sh](/home/lupin/code/pantheon/scripts/db_migrate.sh:26) applies three idempotent
 telemetry DDL statements:
 
 - `telemetry_events`
@@ -139,15 +139,15 @@ schema state than the script actually enforces.
 
 Repo-local evidence is internally consistent:
 
-- [docker-compose.control.yml](/home/edna/code/pantheon/docker-compose.control.yml:100) uses
+- [docker-compose.control.yml](/home/lupin/code/pantheon/docker-compose.control.yml:100) uses
   `/__health__` for telemetry and the other standard service set
-- [docker-compose.control.yml](/home/edna/code/pantheon/docker-compose.control.yml:197) and
-  [docker-compose.control.yml](/home/edna/code/pantheon/docker-compose.control.yml:226) use
+- [docker-compose.control.yml](/home/lupin/code/pantheon/docker-compose.control.yml:197) and
+  [docker-compose.control.yml](/home/lupin/code/pantheon/docker-compose.control.yml:226) use
   `/health` for BFF and persona
-- [docker-compose.control.yml](/home/edna/code/pantheon/docker-compose.control.yml:394) and
-  [docker-compose.control.yml](/home/edna/code/pantheon/docker-compose.control.yml:417) use
+- [docker-compose.control.yml](/home/lupin/code/pantheon/docker-compose.control.yml:394) and
+  [docker-compose.control.yml](/home/lupin/code/pantheon/docker-compose.control.yml:417) use
   `/health` for `capital` and `evolution`
-- [docs/deployment/single-vm-runbook.md](/home/edna/code/pantheon/docs/deployment/single-vm-runbook.md:125)
+- [docs/deployment/single-vm-runbook.md](/home/lupin/code/pantheon/docs/deployment/single-vm-runbook.md:125)
   now tells operators to check those same endpoint families manually
 
 ---
@@ -187,12 +187,12 @@ internally consistent:
 
 | Review question | Evidence | Result |
 |---|---|---|
-| Does the compose actually define `minio-init`? | [docker-compose.control.yml](/home/edna/code/pantheon/docker-compose.control.yml:67) | Yes |
-| Can bucket creation fail loudly instead of being ignored? | [scripts/bootstrap.sh](/home/edna/code/pantheon/scripts/bootstrap.sh:107) | Yes |
-| Can DB provisioning fail loudly instead of being ignored? | [scripts/bootstrap.sh](/home/edna/code/pantheon/scripts/bootstrap.sh:128) | Yes |
-| Do documented health endpoints match service definitions? | [docs/deployment/single-vm-runbook.md](/home/edna/code/pantheon/docs/deployment/single-vm-runbook.md:125), [docker-compose.control.yml](/home/edna/code/pantheon/docker-compose.control.yml:394) | Yes |
+| Does the compose actually define `minio-init`? | [docker-compose.control.yml](/home/lupin/code/pantheon/docker-compose.control.yml:67) | Yes |
+| Can bucket creation fail loudly instead of being ignored? | [scripts/bootstrap.sh](/home/lupin/code/pantheon/scripts/bootstrap.sh:107) | Yes |
+| Can DB provisioning fail loudly instead of being ignored? | [scripts/bootstrap.sh](/home/lupin/code/pantheon/scripts/bootstrap.sh:128) | Yes |
+| Do documented health endpoints match service definitions? | [docs/deployment/single-vm-runbook.md](/home/lupin/code/pantheon/docs/deployment/single-vm-runbook.md:125), [docker-compose.control.yml](/home/lupin/code/pantheon/docker-compose.control.yml:394) | Yes |
 | Do the parent artifacts all exist? | repo snapshot | Yes |
-| Has the parent already passed reviewer approval? | [ai-status.json](/home/edna/code/pantheon/ai-status.json:272), [ai-status.json](/home/edna/code/pantheon/ai-status.json:489) | Yes |
+| Has the parent already passed reviewer approval? | [ai-status.json](/home/lupin/code/pantheon/ai-status.json:272), [ai-status.json](/home/lupin/code/pantheon/ai-status.json:489) | Yes |
 
 This does not prove the entire single-VM bootstrap was executed in this sidecar pass. It does show
 that the review objections recorded in durable state are now resolved in the checked-in files.

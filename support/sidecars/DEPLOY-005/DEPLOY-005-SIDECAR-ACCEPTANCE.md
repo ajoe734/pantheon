@@ -85,9 +85,9 @@ Still outside this sidecar:
 
 Reference anchors:
 
-- [.env.example](/home/edna/code/pantheon/.env.example:1)
-- [scripts/bootstrap.sh](/home/edna/code/pantheon/scripts/bootstrap.sh:1)
-- [scripts/init-db.sh](/home/edna/code/pantheon/scripts/init-db.sh:1)
+- [.env.example](/home/lupin/code/pantheon/.env.example:1)
+- [scripts/bootstrap.sh](/home/lupin/code/pantheon/scripts/bootstrap.sh:1)
+- [scripts/init-db.sh](/home/lupin/code/pantheon/scripts/init-db.sh:1)
 
 ### 4.2 What the existing bootstrap script actually covers
 

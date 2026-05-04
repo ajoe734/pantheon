@@ -336,6 +336,7 @@ def _verified_claude_policy(config: dict[str, Any]) -> dict[str, Any]:
         "Bash(docker logs*)",
         "Bash(docker compose ps*)",
         "Bash(docker compose images*)",
+        "Bash(docker compose * config*)",
         "Bash(docker exec * python3 -c \"import*\")",
         "Bash(docker exec * python -c \"import*\")",
         "Bash(AI_NAME=* python3 scripts/ai_status.py *)",

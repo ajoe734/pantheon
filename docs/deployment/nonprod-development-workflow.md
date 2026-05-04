@@ -11,6 +11,9 @@ infer runtime ownership from where VS Code is connected.
 This document is the operating rule for humans and LLM agents working in the
 non-prod environments.
 
+CI/CD automation for these environments is tracked in
+`docs/deployment/nonprod-ci-cd.md`.
+
 ## Current Roles
 
 | Role | VM | Compose project | Use |
@@ -54,14 +57,14 @@ Check dev runtime:
 
 ```bash
 gcloud compute ssh edna@pantheon-dev-vm1 --zone=asia-east1-b --project=pantheon-493602 -- \
-  'cd /home/edna/code/pantheon && docker compose ps && curl -fsS http://127.0.0.1:18001/health'
+  'cd /home/lupin/code/pantheon && docker compose ps && curl -fsS http://127.0.0.1:18001/health'
 ```
 
 Rebuild only the dev BFF after a BFF change:
 
 ```bash
 gcloud compute ssh edna@pantheon-dev-vm1 --zone=asia-east1-b --project=pantheon-493602 -- \
-  'cd /home/edna/code/pantheon && PANTHEON_ENV=dev PANTHEON_LIVE_BROKER_ENABLED=false docker compose up -d --build operator-bff'
+  'cd /home/lupin/code/pantheon && PANTHEON_ENV=dev PANTHEON_LIVE_BROKER_ENABLED=false docker compose up -d --build operator-bff'
 ```
 
 Dev must keep live broker scope disabled:
@@ -77,7 +80,7 @@ Check staging control/BFF:
 
 ```bash
 gcloud compute ssh edna@pantheon-taiwan --zone=asia-east1-b --project=pantheon-493602 -- \
-  'cd /home/edna/code/pantheon && docker compose -f docker-compose.control.yml ps && curl -fsS http://127.0.0.1:38001/health'
+  'cd /home/lupin/code/pantheon && docker compose -f docker-compose.control.yml ps && curl -fsS http://127.0.0.1:38001/health'
 ```
 
 Check VM1 to VM2 runtime-manager reachability:
@@ -101,7 +104,7 @@ Check execution/broker runtime:
 
 ```bash
 gcloud compute ssh edna@pantheon-exec-vm2-20260424 --zone=asia-east1-a --project=pantheon-493602 -- \
-  'cd /home/edna/code/pantheon-ep5 && docker compose -p pantheon-exec -f docker-compose.exec.yml ps && curl -fsS http://127.0.0.1:28081/__health__'
+  'cd /home/lupin/code/pantheon-ep5 && docker compose -p pantheon-exec -f docker-compose.exec.yml ps && curl -fsS http://127.0.0.1:28081/__health__'
 ```
 
 ## Frontend / Lovable

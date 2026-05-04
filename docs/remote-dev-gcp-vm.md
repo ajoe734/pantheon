@@ -2,6 +2,24 @@
 
 This repo can be developed on the GCP VM through a small remote stack and a local sync loop.
 
+## Pull Full Developer State From An Old VM
+
+Use this on the new VM when cutting over from an old development VM. The default source is `edna@pantheon-taiwan` in project `pantheon-493602`, zone `asia-east1-b`, reached through `gcloud compute ssh`.
+
+```bash
+cd ~/code/pantheon
+bash scripts/pull_old_vm_dev_state.sh \
+  --include-cache \
+  --include-vscode-server \
+  --include-docker-volumes
+```
+
+It copies repo workspaces, VS Code extensions and history, VS Code server data, Codex/Claude development records, shell history, Git/GitHub/Docker config, selected package and Playwright caches, Docker volumes, SSH config/development keys, and gcloud config/auth state.
+
+Existing target files are backed up under `~/.migration-backups/old-vm-dev-state-*`. The script keeps the new VM's `~/.ssh/authorized_keys` and GCP compute SSH key unless `--include-authorized-keys` is passed.
+
+For an exact Docker volume copy, stop services that write those volumes on both VMs first, then restart them after the copy.
+
 ## VS Code Remote SSH
 
 The local SSH alias is already configured in [~/.ssh/config](/home/ajoe734/.ssh/config:1):
@@ -25,7 +43,7 @@ In VS Code:
 1. Install the `Remote - SSH` extension.
 2. Run `Remote-SSH: Connect to Host...`.
 3. Choose `pantheon-gcp`.
-4. Open `/home/edna/code/pantheon`.
+4. Open `/home/lupin/code/pantheon`.
 
 Recommended first checks in the remote terminal:
 
@@ -45,7 +63,7 @@ bash scripts/sync_remote_dev.sh
 
 What it does:
 
-- rsyncs the local working tree to `/home/edna/code/pantheon`
+- rsyncs the local working tree to `/home/lupin/code/pantheon`
 - excludes local-only state such as `.git/`, venvs, `__pycache__`, and orchestrator runtime files
 - refreshes git submodules on the VM
 - prints the remote `git status`
@@ -54,7 +72,7 @@ Optional overrides:
 
 ```bash
 PANTHEON_REMOTE_HOST=pantheon-gcp \
-PANTHEON_REMOTE_PATH=/home/edna/code/pantheon \
+PANTHEON_REMOTE_PATH=/home/lupin/code/pantheon \
 bash scripts/sync_remote_dev.sh
 ```
 
@@ -129,7 +147,7 @@ Then browse:
 
 ## Honest Service Stack
 
-The full single-VM baseline for `BP5-SVC-016` now lives in [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:1).
+The full single-VM baseline for `BP5-SVC-016` now lives in [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:1).
 
 It boots the honest backend stack instead of the old research-worker topology:
 

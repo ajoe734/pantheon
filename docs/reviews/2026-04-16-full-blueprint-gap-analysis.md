@@ -227,7 +227,7 @@ Residual difference:
 - No backlog-row gap remains.
 - One nuance remains important: `OSS-004` closes the **activation-path definition** for deferred frameworks; it does **not** mean `Qlib`, `TRL`, `FinRL`, `RLlib`, and `W&B` are now all live integrated execution paths.
 - This is not a failure relative to the canonical blueprint, because the canonical row only required explicit activation criteria. But it is still a maturity boundary worth stating clearly.
-- See [2026-04-16-oss-ecosystem-gap-analysis.md](/home/edna/code/pantheon/docs/reviews/2026-04-16-oss-ecosystem-gap-analysis.md:1) for the detailed next-wave OSS difference inventory and recommended follow-up task cuts.
+- See [2026-04-16-oss-ecosystem-gap-analysis.md](/home/lupin/code/pantheon/docs/reviews/2026-04-16-oss-ecosystem-gap-analysis.md:1) for the detailed next-wave OSS difference inventory and recommended follow-up task cuts.
 
 ## 5. Residual Delivery Gaps
 

@@ -16,7 +16,7 @@
     "artifacts": [
       "../front-ai-trading-system/.coordination/responses/PKT-004-persona-drilldowns-contract-ready.yaml",
       ".coordination/responses/PKT-004-persona-drilldowns-lovable-ui-task.yaml",
-      "/home/edna/code/pantheon/.coordination/responses/PKT-004-persona-drilldowns-lovable-prompt.md",
+      "/home/lupin/code/pantheon/.coordination/responses/PKT-004-persona-drilldowns-lovable-prompt.md",
       "../front-ai-trading-system/.coordination/requests/PKT-004-persona-drilldowns-ui-done.yaml",
       "../front-ai-trading-system/.coordination/requests/PKT-004-persona-drilldowns-frontend-feedback.yaml"
     ],
@@ -33,7 +33,7 @@
     "coordination_paths": {
       "contract_ready": "../front-ai-trading-system/.coordination/responses/PKT-004-persona-drilldowns-contract-ready.yaml",
       "lovable_task": ".coordination/responses/PKT-004-persona-drilldowns-lovable-ui-task.yaml",
-      "lovable_prompt": "/home/edna/code/pantheon/.coordination/responses/PKT-004-persona-drilldowns-lovable-prompt.md",
+      "lovable_prompt": "/home/lupin/code/pantheon/.coordination/responses/PKT-004-persona-drilldowns-lovable-prompt.md",
       "ui_done": "../front-ai-trading-system/.coordination/requests/PKT-004-persona-drilldowns-ui-done.yaml",
       "frontend_feedback": "../front-ai-trading-system/.coordination/requests/PKT-004-persona-drilldowns-frontend-feedback.yaml",
       "bff_gap": null

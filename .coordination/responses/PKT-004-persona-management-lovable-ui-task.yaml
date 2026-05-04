@@ -1,7 +1,7 @@
 feature_id: PKT-004-persona-management
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: loop-complete
+status: ready
 pantheon_pr: null
 base_url: null
 workbench: persona-workbench
@@ -44,3 +44,5 @@ gap_handoff_path: .coordination/requests/PKT-004-persona-management-bff-gap.yaml
 gap_handoff_template: .coordination/requests/PKT-004-persona-management-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/PKT-004-persona-management-ui-done.yaml
 completion_handoff_template: .coordination/requests/PKT-004-persona-management-ui-done.example.yaml
+feedback_handoff_path: .coordination/requests/PKT-004-persona-management-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/PKT-004-persona-management-frontend-feedback.example.yaml

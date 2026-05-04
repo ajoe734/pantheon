@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export GEMINI_CLI_HOME="${GEMINI_CLI_HOME:-/home/edna/.gemini2}"
+export GEMINI_CLI_HOME="${GEMINI_CLI_HOME:-/home/lupin/.gemini2}"
 exec "$(dirname "$0")/gemini" "$@"

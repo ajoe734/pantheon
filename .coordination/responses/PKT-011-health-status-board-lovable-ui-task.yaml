@@ -42,3 +42,5 @@ gap_handoff_path: .coordination/requests/PKT-011-health-status-board-bff-gap.yam
 gap_handoff_template: .coordination/requests/PKT-011-health-status-board-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/PKT-011-health-status-board-ui-done.yaml
 completion_handoff_template: .coordination/requests/PKT-011-health-status-board-ui-done.example.yaml
+feedback_handoff_path: .coordination/requests/PKT-011-health-status-board-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/PKT-011-health-status-board-frontend-feedback.example.yaml

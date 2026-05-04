@@ -40,7 +40,7 @@ activation of Qlib / TRL.
 ## Tests (rerun by reviewer)
 
 ```bash
-PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages \
+PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages \
   python3.12 -m pytest \
   services/control-plane/bff/test_governance_command_submission.py \
   services/runtime-manager/test_runtime_manager.py \
@@ -49,7 +49,7 @@ PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages \
 ```
 
 ```bash
-PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages \
+PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages \
   python3.12 -m pytest \
   services/telemetry/lineage_read/test_service.py \
   services/telemetry/test_main_routes.py -q

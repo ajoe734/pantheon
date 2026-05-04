@@ -116,6 +116,30 @@ STATUS_LABELS = {
 DEPENDENCY_DONE_STATUSES = {"done"}
 ACTIVE_TASK_STATUSES = {"todo", "in_progress", "review", "review_approved", "blocked"}
 EXTERNAL_TASK_PREFIXES = {"OC", "RS", "LP", "OSS", "SPIKE"}
+EXTERNAL_TASK_ID_TOKENS = {
+    "DATASOURCE",
+    "OPENCLAW",
+    "OSS",
+    "SEARCH",
+    "SOURCE",
+}
+EXTERNAL_TASK_TEXT_KEYWORDS = {
+    "external",
+    "external source",
+    "external search",
+    "openclaw",
+    "oss",
+    "searchgateway",
+    "source/search",
+    "source-ingest",
+    "source_ingestion",
+}
+EXTERNAL_TASK_ARTIFACT_PREFIXES = (
+    "integrations/",
+    "services/openclaw",
+    "services/search",
+    "services/source_ingestion",
+)
 TASK_TERMINAL_SUPERSEDED = "superseded"
 DEFAULT_DELIVERY_GATES = {
     "require_commit_hash": True,
@@ -1116,8 +1140,21 @@ def task_delivery_layer(task: dict[str, Any]) -> str:
         return "primary"
     if explicit in {"external", "upstream"}:
         return "external"
-    prefix = task["id"].split("-", 1)[0]
+    task_id = str(task.get("id") or "")
+    prefix = task_id.split("-", 1)[0]
     if prefix in EXTERNAL_TASK_PREFIXES:
+        return "external"
+    id_tokens = {token.strip().upper() for token in re.split(r"[-_/]+", task_id) if token.strip()}
+    if id_tokens & EXTERNAL_TASK_ID_TOKENS:
+        return "external"
+    artifacts = [str(item) for item in task.get("artifacts", []) if str(item).strip()]
+    if any(artifact.startswith(EXTERNAL_TASK_ARTIFACT_PREFIXES) for artifact in artifacts):
+        return "external"
+    text = " ".join(
+        str(task.get(field) or "")
+        for field in ("id", "title", "summary_zh", "phase")
+    ).lower()
+    if any(keyword in text for keyword in EXTERNAL_TASK_TEXT_KEYWORDS):
         return "external"
     return "primary"
 
@@ -1173,6 +1210,9 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
     planning_state = load_planning_state()
     orchestrator_state = load_json_file(ORCHESTRATOR_STATE_FILE, {})
     coordination_summary = build_coordination_summary(orchestrator_state)
+    archive_index = load_archive_index()
+    archive_counts = archive_index.get("counts", {}) if isinstance(archive_index.get("counts"), dict) else {}
+    recent_terminal_tasks = recent_terminal_summaries(limit=task_archive_recent_limit())
     active_tasks = [task for task in state["tasks"] if task.get("status") != "done"]
     primary_tasks = [task for task in active_tasks if task_delivery_layer(task) == "primary"]
     external_tasks = [task for task in active_tasks if task_delivery_layer(task) == "external"]
@@ -1255,6 +1295,34 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
         ]
     )
     append_layer_table(lines, external_tasks)
+
+    lines.extend(
+        [
+            "",
+            "## Recently Executed Tasks",
+            "",
+            f"- Archive updated: {format_display_timestamp(archive_index.get('updated_at'))}",
+            f"- Terminal tasks archived: `{int(archive_counts.get('total') or 0)}` total, `{int(archive_counts.get('completed') or 0)}` completed, `{int(archive_counts.get('superseded') or 0)}` superseded",
+            "",
+            "| ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |",
+            "|---|---|---|---|---|---|---|",
+        ]
+    )
+    if recent_terminal_tasks:
+        for task in recent_terminal_tasks:
+            lines.append(
+                "| `{id}` | {phase} | {title} | {owner} | {outcome} | {archived_at} | `{snapshot}` |".format(
+                    id=cell(task.get("task_id")),
+                    phase=cell(task.get("phase")),
+                    title=cell(task.get("title") or "-"),
+                    owner=cell(task.get("owner")),
+                    outcome=cell(task.get("terminal_outcome")),
+                    archived_at=cell(format_display_timestamp(task.get("archived_at"))),
+                    snapshot=cell(task.get("snapshot_path") or "-"),
+                )
+            )
+    else:
+        lines.append("| _(none)_ | - | - | - | - | - | - |")
 
     lines.extend(["", "## Task Board", "", "| ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |", "|---|---|---|---|---|---|---|---|---|---|"])
 

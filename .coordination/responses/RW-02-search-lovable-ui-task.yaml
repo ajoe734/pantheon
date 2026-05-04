@@ -44,3 +44,5 @@ gap_handoff_path: .coordination/requests/RW-02-search-bff-gap.yaml
 gap_handoff_template: .coordination/requests/RW-02-search-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/RW-02-search-ui-done.yaml
 completion_handoff_template: .coordination/requests/RW-02-search-ui-done.example.yaml
+feedback_handoff_path: .coordination/requests/RW-02-search-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/RW-02-search-frontend-feedback.example.yaml

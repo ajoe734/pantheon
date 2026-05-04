@@ -5,6 +5,11 @@ Source: `docs/04/pantheon_sa/*` and `docs/04/pantheon_p0_sd/*`
 Planning session: `phase6-2026-05-01-pantheon-p0-paper-loop`
 Status: accepted planning seed, materialized into `ai-status.json`
 
+2026-05-03 correction: repo mapping is no longer an open decision. P0 execution work targets
+`pantheon/lean` / `pantheon-lean`; `lean-platform` is historical / non-target unless a future
+migration ADR explicitly reopens it. The active development queue after this correction is tracked
+in `ai-status.json` under `SVC-BLUEPRINT-*`.
+
 ## Consensus
 
 The docs converge on one main point:
@@ -41,7 +46,7 @@ Live/canary remain out of P0 activation. The current live role must stay health-
 
 | Wave | Goal | Why first |
 |---|---|---|
-| 0 | Repo authority and safety guardrails | Prevent work from landing in the wrong repo or enabling live accidentally |
+| 0 | Repo authority and safety guardrails | Already canonicalized to pantheon-lean; keep guards so old docs cannot retarget work |
 | 1 | Runtime contract and context propagation | Make `DeploymentPlan -> RuntimeBinding -> runtime_bootstrap` testable |
 | 2 | Paper telemetry and projection | Prove runtime facts return to Pantheon with identity |
 | 3 | Paper loop smoke and reconciliation | Convert schemas into a minimum operating loop |
@@ -51,7 +56,7 @@ Live/canary remain out of P0 activation. The current live role must stay health-
 
 | Task ID | Owner | Reviewer | Depends On | Summary | Acceptance |
 |---|---|---|---|---|---|
-| P0-EXEC-ADR-001 | Codex | Claude | - | Land ADR/repo mapping policy for `pantheon/lean` | `.gitmodules`, docs, and task packets name `pantheon/lean`; `lean-platform` is not-current-runtime or migration-only |
+| P0-EXEC-ADR-001 | Codex | Claude | - | Historical: repo mapping policy for `pantheon/lean` | Superseded by 2026-05-03 correction; keep `lean-platform` as not-current-runtime or migration-only |
 | P0-CI-BRIDGE-001 | Codex | Codex2 | P0-EXEC-ADR-001 | Add submodule authority and no-wrong-repo CI | CI reports bridge path/remote/commit and fails P0 `lean-platform` target without ADR override |
 | P0-BOOT-001 | Codex | Codex2 | P0-CI-BRIDGE-001 | Implement `RuntimeBootstrapRequest` materializer | Request contains deployment plan, runtime binding, artifact, capital, bridge identity, and no secrets |
 | P0-CTX-001 | Codex2 | Codex | P0-BOOT-001 | Add `PantheonRuntimeContext` model and validation | Manifest/env source modes work; required fields enforced; stage mismatch and secrets rejected |

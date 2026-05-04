@@ -131,9 +131,10 @@ read path is rewired.
 
 ## 7. Health Surfaces
 
-All four governance-family services expose `GET /health` returning
-`{"status": "ok", "service": "<name>"}`. `runtime-manager` exposes
-`GET /__health__`. The single-VM compose stack uses these for healthchecks.
+All governance-family services expose the standard probe surface:
+`GET /healthz`, `GET /livez`, and `GET /readyz`. Legacy `GET /health`
+or `GET /__health__` routes may remain as compatibility aliases, but compose
+healthchecks use `GET /readyz` as the staging readiness contract.
 
 ---
 

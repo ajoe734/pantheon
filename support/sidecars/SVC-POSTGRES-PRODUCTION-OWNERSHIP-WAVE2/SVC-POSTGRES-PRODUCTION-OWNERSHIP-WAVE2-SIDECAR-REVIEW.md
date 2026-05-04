@@ -70,7 +70,7 @@ Commit `1eaf381` changes:
 
 ## Verification Run For This Packet
 
-Commands run from `/home/edna/code/pantheon` on 2026-04-30:
+Commands run from `/home/lupin/code/pantheon` on 2026-04-30:
 
 ```bash
 git show --stat --oneline --decorate --no-renames 1eaf381
@@ -136,4 +136,4 @@ evidence and handoff material, with no L1 canonical truth or runtime,
 registry, governance implementation changes.
 
 Closeout verification re-ran the focused wave 2 Postgres store tests and the
-support artifact whitespace check from `/home/edna/code/pantheon`.
+support artifact whitespace check from `/home/lupin/code/pantheon`.

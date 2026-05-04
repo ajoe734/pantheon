@@ -1,4 +1,5 @@
 Build the `PKT-003-lineage-view` UI flow in `front-ai-trading-system` using only Pantheon APIs.
+Pantheon has already published the contract-ready handoff for this feature.
 If backend fields are missing or the live payload diverges from the synced contract, stop implementation and write `.coordination/requests/PKT-003-lineage-view-bff-gap.yaml` using `.coordination/requests/PKT-003-lineage-view-bff-gap.example.yaml` as the template. Then sync that file back to GitHub through the normal Lovable flow so Pantheon supervisor can continue the loop.
 Screen: `lineage-view`.
 Workbench: `evolution-workbench`.
@@ -7,6 +8,9 @@ Allowed endpoints:
 - GET /api/v1/lineage
 - GET /api/v1/lineage/edges/{edge_id}
 - GET /api/v1/lineage/graph
+Published Pantheon dependencies:
+- .coordination/responses/PKT-003-lineage-view-contract-ready.yaml
+- .coordination/responses/PKT-003-lineage-view-backend-delivery.yaml
 Constraints:
 - use existing bff client only
 - do not add raw fetch in components
@@ -19,8 +23,16 @@ Acceptance:
 - do not expose root_type as a filter control (v1 BFF no-op)
 - use only the existing BFF client
 - render explicit empty state when lineage_graph.edges is empty (display "No lineage recorded" — not a blank canvas)
+Required feedback bundle:
+- docs/pantheon-feedback/PKT-003-lineage-view/LOVABLE_CHANGE_FEEDBACK.md
+- docs/pantheon-feedback/PKT-003-lineage-view/API_GAP_REQUESTS.json
+- docs/pantheon-feedback/PKT-003-lineage-view/UI_DECISIONS.md
+- docs/pantheon-feedback/PKT-003-lineage-view/QA_STATUS.md
 Completion handoff:
-- When the UI implementation is ready, write `.coordination/requests/PKT-003-lineage-view-ui-done.yaml` using `.coordination/requests/PKT-003-lineage-view-ui-done.example.yaml` as the template. Sync that file back to GitHub and stop so Pantheon supervisor can pick up review/integration work automatically.
+- When the UI implementation is ready, write `.coordination/requests/PKT-003-lineage-view-ui-done.yaml` using `.coordination/requests/PKT-003-lineage-view-ui-done.example.yaml` as the template. This handoff alone is not enough to close the loop.
+Feedback return:
+- After the UI handoff, write `.coordination/requests/PKT-003-lineage-view-frontend-feedback.yaml` using `.coordination/requests/PKT-003-lineage-view-frontend-feedback.example.yaml` as the template. Use the same Git-visible `source_commit` as the reviewed UI slice, include the refreshed feedback bundle paths, sync the files back to GitHub, and stop.
+- Pantheon supervisor polls the coordination and GitHub-visible return loop on a fixed cadence; once both `ui-done` and `frontend-feedback` land, supervisor will decide closeout vs. another follow-up cycle automatically.
 References:
 - docs/screens/PKT-003-lineage-view.md
 - docs/pantheon-handoffs/PKT-003-lineage-view/FRONTEND_CHANGE_SPEC.md

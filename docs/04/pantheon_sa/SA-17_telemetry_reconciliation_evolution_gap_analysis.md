@@ -13,6 +13,12 @@ baseline: >
   並要求 paper / canary / live、telemetry、reconciliation、postmortem、evolution 形成閉環。
 ---
 
+> **2026-05-03 Canonical correction**: `pantheon/lean` submodule backed by `ajoe734/pantheon-lean.git` is the official execution substrate. Any older `lean-platform` repo-mapping drift language in this SA note is superseded; do not treat `lean-platform` as an active gap or task target.
+
+
+
+
+
 # SA-17 — Telemetry / Reconciliation / Evolution 閉環差異分析
 
 ## 1. 本章目的

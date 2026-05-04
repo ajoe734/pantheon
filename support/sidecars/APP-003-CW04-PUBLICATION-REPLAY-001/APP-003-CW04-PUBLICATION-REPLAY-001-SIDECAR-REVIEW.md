@@ -16,8 +16,8 @@
 
 Companion artifacts:
 
-- [Acceptance packet](/home/edna/code/pantheon/support/sidecars/APP-003-CW04-PUBLICATION-REPLAY-001/APP-003-CW04-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE.md:1)
-- [Parent support note](/home/edna/code/pantheon/support/sidecars/APP-003-CW04-PUBLICATION-REPLAY-001/APP-003-CW04-PUBLICATION-REPLAY-001-SUPPORT.md:1)
+- [Acceptance packet](/home/lupin/code/pantheon/support/sidecars/APP-003-CW04-PUBLICATION-REPLAY-001/APP-003-CW04-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE.md:1)
+- [Parent support note](/home/lupin/code/pantheon/support/sidecars/APP-003-CW04-PUBLICATION-REPLAY-001/APP-003-CW04-PUBLICATION-REPLAY-001-SUPPORT.md:1)
 
 ## 1. Review Boundary
 
@@ -61,7 +61,7 @@ still reviewed only for support-artifact completeness.
 
 ### 3.1 Pantheon response truth now closes the loop
 
-[.coordination/responses/CW-04-redteam-memo-frontend-feedback.yaml](/home/edna/code/pantheon/.coordination/responses/CW-04-redteam-memo-frontend-feedback.yaml:1)
+[.coordination/responses/CW-04-redteam-memo-frontend-feedback.yaml](/home/lupin/code/pantheon/.coordination/responses/CW-04-redteam-memo-frontend-feedback.yaml:1)
 now records:
 
 - `disposition: close`
@@ -83,8 +83,8 @@ The sibling front repo request pair now both publish:
 
 Verified in:
 
-- [../front-ai-trading-system/.coordination/requests/CW-04-redteam-memo-ui-done.yaml](/home/edna/code/front-ai-trading-system/.coordination/requests/CW-04-redteam-memo-ui-done.yaml:1)
-- [../front-ai-trading-system/.coordination/requests/CW-04-redteam-memo-frontend-feedback.yaml](/home/edna/code/front-ai-trading-system/.coordination/requests/CW-04-redteam-memo-frontend-feedback.yaml:1)
+- [../front-ai-trading-system/.coordination/requests/CW-04-redteam-memo-ui-done.yaml](/home/lupin/code/front-ai-trading-system/.coordination/requests/CW-04-redteam-memo-ui-done.yaml:1)
+- [../front-ai-trading-system/.coordination/requests/CW-04-redteam-memo-frontend-feedback.yaml](/home/lupin/code/front-ai-trading-system/.coordination/requests/CW-04-redteam-memo-frontend-feedback.yaml:1)
 
 Both files now explicitly describe the request pair as republished after the
 Git-visible reviewed snapshot `c94f63082eae1667ed919353d62c85180d7bafba`.

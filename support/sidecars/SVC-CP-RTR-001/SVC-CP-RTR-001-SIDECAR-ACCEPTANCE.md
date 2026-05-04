@@ -28,7 +28,7 @@ This sidecar exists to make the parent closeout explicit without reopening plann
 
 ## 2. Parent Task Truth
 
-From [svc_cp_rtr_001.md](/home/edna/code/pantheon/.orchestrator/task-briefs/svc_cp_rtr_001.md:7),
+From [svc_cp_rtr_001.md](/home/lupin/code/pantheon/.orchestrator/task-briefs/svc_cp_rtr_001.md:7),
 the parent task is currently:
 
 - owner: `Codex`
@@ -55,8 +55,8 @@ This sidecar does not widen the scope beyond that approved compose slice.
 
 In scope for the parent slice:
 
-- add the `router` service to [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:327)
-- wire the service to [services/control-plane/router/Dockerfile](/home/edna/code/pantheon/services/control-plane/router/Dockerfile:1)
+- add the `router` service to [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:327)
+- wire the service to [services/control-plane/router/Dockerfile](/home/lupin/code/pantheon/services/control-plane/router/Dockerfile:1)
 - provide `PORT=8001` and `PERSONA_URL=http://persona:8002`
 - gate startup on healthy `persona`, `operator-bff`, and `governance`
 - expose the router health path and prove the compose entry can actually come up healthy
@@ -74,7 +74,7 @@ Still outside this sidecar:
 
 ### 4.1 Compose entry matches the approved review state
 
-Current [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:327) contains a `router`
+Current [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:327) contains a `router`
 service with:
 
 - build context `services/control-plane/router`
@@ -86,18 +86,18 @@ service with:
 - healthcheck probing `http://127.0.0.1:8001/health`
 
 This directly matches the approved parent brief state at
-[svc_cp_rtr_001.md](/home/edna/code/pantheon/.orchestrator/task-briefs/svc_cp_rtr_001.md:25).
+[svc_cp_rtr_001.md](/home/lupin/code/pantheon/.orchestrator/task-briefs/svc_cp_rtr_001.md:25).
 
 ### 4.2 Router image and health surface are coherent with compose
 
-[Dockerfile](/home/edna/code/pantheon/services/control-plane/router/Dockerfile:1) shows:
+[Dockerfile](/home/lupin/code/pantheon/services/control-plane/router/Dockerfile:1) shows:
 
 - base image `python:3.11-slim`
 - `pip install -r requirements.txt`
 - `EXPOSE 8001`
 - `uvicorn main:app --host 0.0.0.0 --port 8001`
 
-[main.py](/home/edna/code/pantheon/services/control-plane/router/main.py:30) shows:
+[main.py](/home/lupin/code/pantheon/services/control-plane/router/main.py:30) shows:
 
 - `FastAPI(title="Pantheon Router", version="0.3.0")`
 - `PERSONA_URL` read from env
@@ -134,7 +134,7 @@ its health gate in the current workspace.
 ### 4.5 This packet is fresher than the earlier review sidecar
 
 The existing
-[SVC-CP-RTR-001-SIDECAR-REVIEW.md](/home/edna/code/pantheon/support/sidecars/SVC-CP-RTR-001/SVC-CP-RTR-001-SIDECAR-REVIEW.md:1)
+[SVC-CP-RTR-001-SIDECAR-REVIEW.md](/home/lupin/code/pantheon/support/sidecars/SVC-CP-RTR-001/SVC-CP-RTR-001-SIDECAR-REVIEW.md:1)
 correctly captured an earlier snapshot, but two of its highlighted gaps are no longer current:
 
 - missing `persona` under `router.depends_on` has been fixed
@@ -150,12 +150,12 @@ This acceptance packet should therefore be treated as the fresher support snapsh
 
 | Check | Evidence | Status |
 |---|---|---|
-| `router` service exists in compose | [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:327) | Met |
-| build points at router Dockerfile | [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:328), [Dockerfile](/home/edna/code/pantheon/services/control-plane/router/Dockerfile:1) | Met |
-| `PORT=8001` is present | [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:331) | Met |
-| `PERSONA_URL` is present | [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:331), [main.py](/home/edna/code/pantheon/services/control-plane/router/main.py:32) | Met |
-| `depends_on` includes `persona`, `operator-bff`, `governance` with `service_healthy` | [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:334) | Met |
-| healthcheck targets `/health` on port `8001` | [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:343), [main.py](/home/edna/code/pantheon/services/control-plane/router/main.py:194) | Met |
+| `router` service exists in compose | [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:327) | Met |
+| build points at router Dockerfile | [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:328), [Dockerfile](/home/lupin/code/pantheon/services/control-plane/router/Dockerfile:1) | Met |
+| `PORT=8001` is present | [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:331) | Met |
+| `PERSONA_URL` is present | [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:331), [main.py](/home/lupin/code/pantheon/services/control-plane/router/main.py:32) | Met |
+| `depends_on` includes `persona`, `operator-bff`, `governance` with `service_healthy` | [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:334) | Met |
+| healthcheck targets `/health` on port `8001` | [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:343), [main.py](/home/lupin/code/pantheon/services/control-plane/router/main.py:194) | Met |
 
 ### AC-2: Router container can actually start and pass health
 
@@ -172,7 +172,7 @@ This acceptance packet should therefore be treated as the fresher support snapsh
 |---|---|---|
 | only support artifact work was performed | this packet only; no canonical/runtime edits | Met |
 | no L1/L2 truth was modified | file touch limited to sidecar artifact | Met |
-| packet reflects current `review_approved` parent state | [svc_cp_rtr_001.md](/home/edna/code/pantheon/.orchestrator/task-briefs/svc_cp_rtr_001.md:9) | Met |
+| packet reflects current `review_approved` parent state | [svc_cp_rtr_001.md](/home/lupin/code/pantheon/.orchestrator/task-briefs/svc_cp_rtr_001.md:9) | Met |
 
 ### Acceptance summary
 
@@ -200,9 +200,9 @@ The compose entry makes three direct health-gated dependencies explicit:
 
 | Dependency | Evidence | Why it matters |
 |---|---|---|
-| `persona` | [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:334) | router dispatches to `PERSONA_URL=http://persona:8002` |
-| `operator-bff` | [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:337) | control-plane routing is intentionally started only after the operator read/control surface is healthy |
-| `governance` | [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:339) | router startup stays aligned with governance-plane readiness in the current compose graph |
+| `persona` | [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:334) | router dispatches to `PERSONA_URL=http://persona:8002` |
+| `operator-bff` | [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:337) | control-plane routing is intentionally started only after the operator read/control surface is healthy |
+| `governance` | [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:339) | router startup stays aligned with governance-plane readiness in the current compose graph |
 
 ### 6.3 Transitive compose chain observed during live bring-up
 
@@ -210,9 +210,9 @@ The direct dependencies pulled in a wider healthy chain during `docker compose u
 
 | Service | Evidence | Dependency path |
 |---|---|---|
-| `governance` | [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:134) | depends on `postgres`, `minio`, `nats` |
-| `operator-bff` | [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:256) | depends on `governance`, `runtime-manager`, `incidents`, `postmortems`, `telemetry`, `postgres`, `nats` |
-| `persona` | [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:299) | depends on `operator-bff`, `registry`, `nats`, `minio` |
+| `governance` | [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:134) | depends on `postgres`, `minio`, `nats` |
+| `operator-bff` | [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:256) | depends on `governance`, `runtime-manager`, `incidents`, `postmortems`, `telemetry`, `postgres`, `nats` |
+| `persona` | [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:299) | depends on `operator-bff`, `registry`, `nats`, `minio` |
 | `registry`, `runtime-manager`, `telemetry`, `incidents`, `postmortems`, `postgres`, `minio`, `nats` | `docker compose ps ...` captured them all `Up (...) healthy` during this run | transitive prerequisites actually started and passed health |
 
 This matters because the router acceptance check is not just a single-container story; the current

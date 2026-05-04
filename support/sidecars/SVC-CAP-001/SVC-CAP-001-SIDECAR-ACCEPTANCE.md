@@ -31,13 +31,13 @@ history:
 ## 2. Parent Task Truth
 
 The generated parent brief now shows `SVC-CAP-001` as `review_approved` at
-[svc_cap_001.md](/home/edna/code/pantheon/.orchestrator/task-briefs/svc_cap_001.md:7), but that
+[svc_cap_001.md](/home/lupin/code/pantheon/.orchestrator/task-briefs/svc_cap_001.md:7), but that
 brief stopped updating before the owner finalized the task.
 
 `SVC-CAP-001` is no longer present in the active `ai-status.json` task list. The durable parent
 state is the archived snapshot returned by `python3 scripts/ai_status.py show SVC-CAP-001` and
 stored at
-[SVC-CAP-001.json](/home/edna/code/pantheon/ai-task-archive/tasks/SVC-CAP-001.json:1).
+[SVC-CAP-001.json](/home/lupin/code/pantheon/ai-task-archive/tasks/SVC-CAP-001.json:1).
 
 The current durable parent state is:
 
@@ -61,9 +61,9 @@ pending parent review decision.
 
 In scope for the parent slice:
 
-- add [services/capital/Dockerfile](/home/edna/code/pantheon/services/capital/Dockerfile:1)
+- add [services/capital/Dockerfile](/home/lupin/code/pantheon/services/capital/Dockerfile:1)
 - add a `capital` service entry to
-  [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:500)
+  [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:500)
 - provide `PORT=8092` and `CAPITAL_DATA_DIR=/data/capital`
 - expose a container health surface that matches the service implementation
 - prove the compose entry can actually build and come up healthy
@@ -81,7 +81,7 @@ Outside this sidecar:
 
 ### 4.1 Compose entry exists and is internally coherent
 
-Current [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:500) contains a
+Current [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:500) contains a
 `capital` service with:
 
 - build context `.`
@@ -97,7 +97,7 @@ this review.
 
 ### 4.2 Docker image wiring matches the compose entry
 
-[services/capital/Dockerfile](/home/edna/code/pantheon/services/capital/Dockerfile:1) shows:
+[services/capital/Dockerfile](/home/lupin/code/pantheon/services/capital/Dockerfile:1) shows:
 
 - base image `python:3.11-slim`
 - repo-root build context copied into `/workspace`
@@ -105,17 +105,17 @@ this review.
 - `uvicorn services.capital.main:app --host 0.0.0.0 --port 8092`
 
 The repo-root `COPY . /workspace` matters here because
-[services/capital/main.py](/home/edna/code/pantheon/services/capital/main.py:21) prepends
+[services/capital/main.py](/home/lupin/code/pantheon/services/capital/main.py:21) prepends
 `services/control-plane/governance` to `sys.path`. That means the parent slice has a code-level
 dependency on the repo-wide build context even though the compose entry has no explicit
 `depends_on`.
 
 ### 4.3 Health surface is consistent across implementation and contract
 
-[services/capital/main.py](/home/edna/code/pantheon/services/capital/main.py:564) exposes
+[services/capital/main.py](/home/lupin/code/pantheon/services/capital/main.py:564) exposes
 `GET /health` and returns `{"status":"ok","service":"pantheon-capital"}`.
 
-[services/capital/contract.md](/home/edna/code/pantheon/services/capital/contract.md:55) also
+[services/capital/contract.md](/home/lupin/code/pantheon/services/capital/contract.md:55) also
 lists `GET /health`.
 
 That means the implementation contract and the compose healthcheck agree with each other.
@@ -146,7 +146,7 @@ its health gate in the current workspace even after the parent task was archived
 ### 4.6 One acceptance-text drift remains visible
 
 The archived parent acceptance text in
-[SVC-CAP-001.json](/home/edna/code/pantheon/ai-task-archive/tasks/SVC-CAP-001.json:1) still says
+[SVC-CAP-001.json](/home/lupin/code/pantheon/ai-task-archive/tasks/SVC-CAP-001.json:1) still says
 `docker compose up capital 後 /__health__ 回傳 200`.
 
 The actual implementation and runtime evidence are consistently `/health`, not `/__health__`:
@@ -170,20 +170,20 @@ acceptance text with the real runtime surface.
 |---|---|---|
 | support artifact created under `support/sidecars/SVC-CAP-001/` | this packet | Met |
 | packet stays inside support-only scope | no canonical/runtime edits in this sidecar | Met |
-| packet is ready for assigned reviewer handoff | reviewer remains `Codex` in [ai-status.json](/home/edna/code/pantheon/ai-status.json:1091) | Met |
+| packet is ready for assigned reviewer handoff | reviewer remains `Codex` in [ai-status.json](/home/lupin/code/pantheon/ai-status.json:1091) | Met |
 
 ### 5.2 Parent acceptance evidence
 
 | Check | Evidence | Status |
 |---|---|---|
-| `services/capital/Dockerfile` exists | [Dockerfile](/home/edna/code/pantheon/services/capital/Dockerfile:1) | Met |
-| `capital` service exists in compose | [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:500) | Met |
-| compose entry provides `PORT=8092` | [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:504) | Met |
-| compose entry mounts capital data storage | [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:507) | Met |
-| healthcheck matches implementation path | [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:511), [main.py](/home/edna/code/pantheon/services/capital/main.py:564) | Met |
+| `services/capital/Dockerfile` exists | [Dockerfile](/home/lupin/code/pantheon/services/capital/Dockerfile:1) | Met |
+| `capital` service exists in compose | [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:500) | Met |
+| compose entry provides `PORT=8092` | [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:504) | Met |
+| compose entry mounts capital data storage | [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:507) | Met |
+| healthcheck matches implementation path | [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:511), [main.py](/home/lupin/code/pantheon/services/capital/main.py:564) | Met |
 | `docker compose up -d --build capital` succeeds | local command run in this sidecar | Met |
 | runtime health endpoint returns `200` | `curl http://127.0.0.1:18092/health` | Met |
-| literal parent acceptance wording matches runtime evidence | archived [SVC-CAP-001.json](/home/edna/code/pantheon/ai-task-archive/tasks/SVC-CAP-001.json:1) vs `/health` evidence | Drift recorded; accepted in parent review |
+| literal parent acceptance wording matches runtime evidence | archived [SVC-CAP-001.json](/home/lupin/code/pantheon/ai-task-archive/tasks/SVC-CAP-001.json:1) vs `/health` evidence | Drift recorded; accepted in parent review |
 
 ### Acceptance summary
 
@@ -213,9 +213,9 @@ The parent slice directly depends on:
 
 | Dependency | Evidence | Why it matters |
 |---|---|---|
-| repo-root build context | [Dockerfile](/home/edna/code/pantheon/services/capital/Dockerfile:11) | image copies the full repo, not only `services/capital/` |
-| compose service entry | [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:500) | runtime packaging is delivered through compose |
-| writable capital data volume | [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:507) | service persists pool, binding, and audit data under `/data/capital` |
+| repo-root build context | [Dockerfile](/home/lupin/code/pantheon/services/capital/Dockerfile:11) | image copies the full repo, not only `services/capital/` |
+| compose service entry | [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:500) | runtime packaging is delivered through compose |
+| writable capital data volume | [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:507) | service persists pool, binding, and audit data under `/data/capital` |
 
 ### 6.3 Code-level dependency not expressed in compose
 
@@ -223,7 +223,7 @@ The capital service has a code import dependency on the governance package path:
 
 | Dependency | Evidence | Why it matters |
 |---|---|---|
-| `services/control-plane/governance` Python modules | [main.py](/home/edna/code/pantheon/services/capital/main.py:21) | service inserts that path into `sys.path` and imports `capital_pool` and `persona_capital_binding` from there |
+| `services/control-plane/governance` Python modules | [main.py](/home/lupin/code/pantheon/services/capital/main.py:21) | service inserts that path into `sys.path` and imports `capital_pool` and `persona_capital_binding` from there |
 
 This explains why the parent `next` note calls out the full build context as important. Even
 without compose `depends_on`, the image would fail if the Docker build stopped copying the repo

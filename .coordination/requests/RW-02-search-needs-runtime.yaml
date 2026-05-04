@@ -28,9 +28,9 @@ verification:
   unavailable_probe_url: http://127.0.0.1:18002
   commands:
     - python3 -m pytest -q services/control-plane/bff/test_rw02_search_contract.py
-    - env BFF_DATA_DIR=$(mktemp -d /tmp/pantheon-rw02-live-XXXXXX) python3 -m uvicorn main:app --app-dir /home/edna/code/pantheon/services/control-plane/bff --host 127.0.0.1 --port 18001 --log-level warning
+    - env BFF_DATA_DIR=$(mktemp -d /tmp/pantheon-rw02-live-XXXXXX) python3 -m uvicorn main:app --app-dir /home/lupin/code/pantheon/services/control-plane/bff --host 127.0.0.1 --port 18001 --log-level warning
     - curl -sS -D - -H 'Authorization: Bearer test-operator:operator' 'http://127.0.0.1:18001/api/v1/research/search?q=momentum&page_size=3'
-    - env BFF_DATA_DIR=$(mktemp -d /tmp/pantheon-rw02-unavail-XXXXXX) PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK=false python3 -m uvicorn main:app --app-dir /home/edna/code/pantheon/services/control-plane/bff --host 127.0.0.1 --port 18002 --log-level warning
+    - env BFF_DATA_DIR=$(mktemp -d /tmp/pantheon-rw02-unavail-XXXXXX) PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK=false python3 -m uvicorn main:app --app-dir /home/lupin/code/pantheon/services/control-plane/bff --host 127.0.0.1 --port 18002 --log-level warning
     - curl -sS -D - -H 'Authorization: Bearer test-operator:operator' 'http://127.0.0.1:18002/api/v1/research/search?q=momentum'
   results:
     - python3 -m pytest -q services/control-plane/bff/test_rw02_search_contract.py -> 4 passed

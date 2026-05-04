@@ -221,7 +221,7 @@ Failure probes:
 
 ## 6. Verification Run For This Packet
 
-Commands run from `/home/edna/code/pantheon` on 2026-04-30:
+Commands run from `/home/lupin/code/pantheon` on 2026-04-30:
 
 ```bash
 python3 -m pytest services/control-plane/bff/test_bff_auth_facade.py -q

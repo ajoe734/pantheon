@@ -74,7 +74,7 @@ Foundations gap class. Adoption (`SD-FND-002`) and durable persistence
 ## Verification Reproduction
 
 ```text
-PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages:. \
+PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages:. \
   python3.12 -m pytest services/foundation/tests -q
 ........                                                                 [100%]
 8 passed in 0.24s

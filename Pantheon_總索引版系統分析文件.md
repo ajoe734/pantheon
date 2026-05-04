@@ -1369,7 +1369,7 @@ flowchart LR
 - 第二包 registry 與第三包 promotion 的樞紐
 - 第四包 postmortem / evolution 回寫的治理核心
 
-## 13.3 `lean-platform`
+## 13.3 `pantheon-lean`
 定位：**Execution Substrate**
 
 在本總索引中的角色：

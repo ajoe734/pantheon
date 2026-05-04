@@ -10,10 +10,10 @@ No remaining findings.
 
 The earlier review blockers are resolved:
 
-1. [services/telemetry/main.py](/home/edna/code/pantheon/services/telemetry/main.py:93) now imports `TelemetryIngestService` through the package-relative path, and `python3 -m services.telemetry.main` reaches the live Flask server instead of failing during import/bootstrap.
-2. [services/telemetry/main.py](/home/edna/code/pantheon/services/telemetry/main.py:141) now includes `_RuntimeBindingAdapter`, and [_build_service()](/home/edna/code/pantheon/services/telemetry/main.py:205) injects that authoritative binding lookup path when `PANTHEON_RUNTIME_MANAGER_URL` is configured, so production wiring can fail closed on unknown bindings.
-3. [services/telemetry/test_main_routes.py](/home/edna/code/pantheon/services/telemetry/test_main_routes.py:74) adds HTTP-surface coverage for `GET /__health__`, accepted ingest, rejected unknown binding, and malformed request bodies.
-4. Source inspection confirms the telemetry adapter matches the real runtime-manager read contract at [services/runtime-manager/main.py](/home/edna/code/pantheon/services/runtime-manager/main.py:214): `GET /api/runtime-bindings/<binding_id>` returns a single binding JSON object on `200` and `404` for unknown bindings, which is the shape `_RuntimeBindingAdapter` expects.
+1. [services/telemetry/main.py](/home/lupin/code/pantheon/services/telemetry/main.py:93) now imports `TelemetryIngestService` through the package-relative path, and `python3 -m services.telemetry.main` reaches the live Flask server instead of failing during import/bootstrap.
+2. [services/telemetry/main.py](/home/lupin/code/pantheon/services/telemetry/main.py:141) now includes `_RuntimeBindingAdapter`, and [_build_service()](/home/lupin/code/pantheon/services/telemetry/main.py:205) injects that authoritative binding lookup path when `PANTHEON_RUNTIME_MANAGER_URL` is configured, so production wiring can fail closed on unknown bindings.
+3. [services/telemetry/test_main_routes.py](/home/lupin/code/pantheon/services/telemetry/test_main_routes.py:74) adds HTTP-surface coverage for `GET /__health__`, accepted ingest, rejected unknown binding, and malformed request bodies.
+4. Source inspection confirms the telemetry adapter matches the real runtime-manager read contract at [services/runtime-manager/main.py](/home/lupin/code/pantheon/services/runtime-manager/main.py:214): `GET /api/runtime-bindings/<binding_id>` returns a single binding JSON object on `200` and `404` for unknown bindings, which is the shape `_RuntimeBindingAdapter` expects.
 
 ## Verification
 

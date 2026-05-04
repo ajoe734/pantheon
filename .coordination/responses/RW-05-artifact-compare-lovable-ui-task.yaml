@@ -24,8 +24,6 @@ acceptance:
 - use only the existing BFF client
 - do not add raw fetch calls in component files
 - render artifact list, detail, and compare data from Pantheon BFF only
-- honor `artifacts[].allowedActions.canCompare` from `GET /api/v1/artifacts`
-  as the sole registry and compare-page selector authority
 - do not derive compare output, version ancestry, or provenance pairs client-side
 - gate compare affordances from backend-shaped allowedActions only
 - emit a bff-gap handoff if any required field is absent

@@ -34,13 +34,13 @@ move to `review_approved`.
   - `docs/examples/PKT-003-lineage-view.json`
   - `docs/pantheon-handoffs/PKT-003-lineage-view/FRONTEND_CHANGE_SPEC.md`
 - Reviewed the mirrored frontend implementation in the sibling checkout:
-  - `/home/edna/code/front-ai-trading-system/src/pages/lineage/LineageView.tsx`
-  - `/home/edna/code/front-ai-trading-system/src/pages/lineage/LineageGraph.tsx`
-  - `/home/edna/code/front-ai-trading-system/src/pages/lineage/LineageEdgeDetail.tsx`
-  - `/home/edna/code/front-ai-trading-system/src/pages/lineage/types.ts`
-  - `/home/edna/code/front-ai-trading-system/src/lib/bffClient.ts`
-  - `/home/edna/code/front-ai-trading-system/src/App.tsx`
-  - `/home/edna/code/front-ai-trading-system/src/components/AppSidebar.tsx`
+  - `/home/lupin/code/front-ai-trading-system/src/pages/lineage/LineageView.tsx`
+  - `/home/lupin/code/front-ai-trading-system/src/pages/lineage/LineageGraph.tsx`
+  - `/home/lupin/code/front-ai-trading-system/src/pages/lineage/LineageEdgeDetail.tsx`
+  - `/home/lupin/code/front-ai-trading-system/src/pages/lineage/types.ts`
+  - `/home/lupin/code/front-ai-trading-system/src/lib/bffClient.ts`
+  - `/home/lupin/code/front-ai-trading-system/src/App.tsx`
+  - `/home/lupin/code/front-ai-trading-system/src/components/AppSidebar.tsx`
 - Confirmed the shared BFF client is used for LN-01/LN-02/LN-03 and that edge detail still opens
   from graph-edge selection only.
 
@@ -50,7 +50,7 @@ move to `review_approved`.
 
 The review bundle says the screen is routed with `root_id` in the query string so graph state is
 URL-addressable across refreshes. The actual implementation in
-`/home/edna/code/front-ai-trading-system/src/pages/lineage/LineageView.tsx:111-250` keeps the
+`/home/lupin/code/front-ai-trading-system/src/pages/lineage/LineageView.tsx:111-250` keeps the
 selected root only in local React state (`selectedArtifactId`) and does not read or write search
 params. A repo-wide search for `root_id`, `useSearchParams`, or equivalent wiring in the lineage
 screen returns nothing. This means the implementation does not match the shipped `UI_DECISIONS.md`
@@ -60,9 +60,9 @@ and `LOVABLE_CHANGE_FEEDBACK.md` claims.
 
 The task artifacts consistently classify this packet as `workbench: evolution-workbench`, and the
 feedback bundle says the screen route is `/evolution/lineage`. The mirrored frontend still mounts
-the screen at `/lineage` in `/home/edna/code/front-ai-trading-system/src/App.tsx:114-120` and the
+the screen at `/lineage` in `/home/lupin/code/front-ai-trading-system/src/App.tsx:114-120` and the
 sidebar links to `/lineage` in
-`/home/edna/code/front-ai-trading-system/src/components/AppSidebar.tsx:20-31`. That is a contract
+`/home/lupin/code/front-ai-trading-system/src/components/AppSidebar.tsx:20-31`. That is a contract
 drift between the packetized routing decision and the actual integration point.
 
 ## Decision
@@ -99,9 +99,9 @@ Verified corrections:
 
 Frontend spot-check against the mirrored implementation still confirms:
 
-- `/home/edna/code/front-ai-trading-system/src/App.tsx` mounts the screen at `/lineage`.
-- `/home/edna/code/front-ai-trading-system/src/components/AppSidebar.tsx` links to `/lineage`.
-- `/home/edna/code/front-ai-trading-system/src/pages/lineage/LineageView.tsx` keeps the selected
+- `/home/lupin/code/front-ai-trading-system/src/App.tsx` mounts the screen at `/lineage`.
+- `/home/lupin/code/front-ai-trading-system/src/components/AppSidebar.tsx` links to `/lineage`.
+- `/home/lupin/code/front-ai-trading-system/src/pages/lineage/LineageView.tsx` keeps the selected
   root in local state and does not implement `useSearchParams` wiring yet.
 
 With those Pantheon-side evidence corrections in place, the prior review findings are resolved.

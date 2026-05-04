@@ -224,7 +224,7 @@ Backend stop option:
 
 ```bash
 gcloud compute ssh edna@pantheon-taiwan --zone=asia-east1-b --project=pantheon-493602 -- \
-  'cd /home/edna/code/pantheon && docker compose -f docker-compose.control.yml stop operator-bff'
+  'cd /home/lupin/code/pantheon && docker compose -f docker-compose.control.yml stop operator-bff'
 ```
 
 If any broker order remains open, cancel it in TWS first and record the fact

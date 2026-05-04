@@ -147,12 +147,12 @@ commit explicitly scopes them:
 
    ```bash
    TS=$(date -u +%Y%m%dT%H%M%SZ)
-   mkdir -p "/home/edna/dev-prepublish-${TS}"
-   cd /home/edna/code/pantheon
-   git status --short > "/home/edna/dev-prepublish-${TS}/git-status.txt"
-   git diff > "/home/edna/dev-prepublish-${TS}/git-diff.patch"
-   git ls-files --others --exclude-standard > "/home/edna/dev-prepublish-${TS}/untracked.txt"
-   docker compose ps > "/home/edna/dev-prepublish-${TS}/compose-ps.txt"
+   mkdir -p "/home/lupin/dev-prepublish-${TS}"
+   cd /home/lupin/code/pantheon
+   git status --short > "/home/lupin/dev-prepublish-${TS}/git-status.txt"
+   git diff > "/home/lupin/dev-prepublish-${TS}/git-diff.patch"
+   git ls-files --others --exclude-standard > "/home/lupin/dev-prepublish-${TS}/untracked.txt"
+   docker compose ps > "/home/lupin/dev-prepublish-${TS}/compose-ps.txt"
    ```
 
 2. Build a clean local publish branch.
@@ -194,7 +194,7 @@ commit explicitly scopes them:
    Suggested path:
 
    ```bash
-   /home/edna/code/pantheon-backend-dev-publish-20260429
+   /home/lupin/code/pantheon-backend-dev-publish-20260429
    ```
 
 6. Rebuild and start the dev stack from that clean checkout.
@@ -241,7 +241,7 @@ If the publish breaks dev:
 3. Restart the original runtime checkout only if needed:
 
    ```bash
-   cd /home/edna/code/pantheon
+   cd /home/lupin/code/pantheon
    PANTHEON_ENV=dev \
    PANTHEON_LIVE_BROKER_ENABLED=false \
    PANTHEON_BFF_CORS_ORIGINS=https://pantheon-ai-system-front-dev.lovable.app \

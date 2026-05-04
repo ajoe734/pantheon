@@ -17,7 +17,7 @@
 ## 1. Parent Snapshot
 
 From
-[ai-task-archive/tasks/OSS-003-DOC-SYNC-001.json](/home/edna/code/pantheon/ai-task-archive/tasks/OSS-003-DOC-SYNC-001.json:7),
+[ai-task-archive/tasks/OSS-003-DOC-SYNC-001.json](/home/lupin/code/pantheon/ai-task-archive/tasks/OSS-003-DOC-SYNC-001.json:7),
 the parent `OSS-003-DOC-SYNC-001` is already archived as `done` /
 `completed`, owned by `Codex`, reviewed by `Claude2`, with these acceptance
 targets:
@@ -29,7 +29,7 @@ targets:
 3. no canonical OSS doc disagrees on the maturity tier for those rows
 
 The archived parent closeout recorded at
-[ai-task-archive/tasks/OSS-003-DOC-SYNC-001.json](/home/edna/code/pantheon/ai-task-archive/tasks/OSS-003-DOC-SYNC-001.json:28)
+[ai-task-archive/tasks/OSS-003-DOC-SYNC-001.json](/home/lupin/code/pantheon/ai-task-archive/tasks/OSS-003-DOC-SYNC-001.json:28)
 is:
 
 > Owner finalized approved doc sync. OpenClaw/Qlib/TRL maturity tiers now
@@ -37,22 +37,22 @@ is:
 > recorded in `docs/reviews/2026-04-22-oss-003-doc-sync-001-claude2-review.md`.
 
 The parent approval artifact is
-[docs/reviews/2026-04-22-oss-003-doc-sync-001-claude2-review.md](/home/edna/code/pantheon/docs/reviews/2026-04-22-oss-003-doc-sync-001-claude2-review.md:1).
+[docs/reviews/2026-04-22-oss-003-doc-sync-001-claude2-review.md](/home/lupin/code/pantheon/docs/reviews/2026-04-22-oss-003-doc-sync-001-claude2-review.md:1).
 
 This sidecar now records the approved support review for `Claude`, while the
 parent remains archived `done` and only owner finalization of this sidecar
 task remains in
-[ai-status.json](/home/edna/code/pantheon/ai-status.json).
+[ai-status.json](/home/lupin/code/pantheon/ai-status.json).
 
 Companion support artifact:
-[OSS-003-DOC-SYNC-001-SIDECAR-ACCEPTANCE.md](/home/edna/code/pantheon/support/sidecars/OSS-003-DOC-SYNC-001/OSS-003-DOC-SYNC-001-SIDECAR-ACCEPTANCE.md:1)
+[OSS-003-DOC-SYNC-001-SIDECAR-ACCEPTANCE.md](/home/lupin/code/pantheon/support/sidecars/OSS-003-DOC-SYNC-001/OSS-003-DOC-SYNC-001-SIDECAR-ACCEPTANCE.md:1)
 
 ## 2. What The Parent Actually Changed
 
 ### 2.1 Maturity Matrix
 
 The parent updated the matrix definitions and the three target rows in
-[RESEARCH_BACKEND_MATURITY_MATRIX.md](/home/edna/code/pantheon/RESEARCH_BACKEND_MATURITY_MATRIX.md:47):
+[RESEARCH_BACKEND_MATURITY_MATRIX.md](/home/lupin/code/pantheon/RESEARCH_BACKEND_MATURITY_MATRIX.md:47):
 
 - `Production Research Path` and `Activation-Ready` are now defined so a
   runnable smoke-tested or governed baseline can still be activation-gated
@@ -66,27 +66,27 @@ The parent updated the matrix definitions and the three target rows in
 
 Concrete row evidence:
 
-- [OpenClaw row](/home/edna/code/pantheon/RESEARCH_BACKEND_MATURITY_MATRIX.md:60)
-- [Qlib row](/home/edna/code/pantheon/RESEARCH_BACKEND_MATURITY_MATRIX.md:61)
-- [TRL row](/home/edna/code/pantheon/RESEARCH_BACKEND_MATURITY_MATRIX.md:62)
+- [OpenClaw row](/home/lupin/code/pantheon/RESEARCH_BACKEND_MATURITY_MATRIX.md:60)
+- [Qlib row](/home/lupin/code/pantheon/RESEARCH_BACKEND_MATURITY_MATRIX.md:61)
+- [TRL row](/home/lupin/code/pantheon/RESEARCH_BACKEND_MATURITY_MATRIX.md:62)
 
 The parent also rewrote the narrative sections that previously blurred
 "baseline landed" and "production-active":
 
 - runnable-but-not-active baselines are now explicit at
-  [lines 107-111](/home/edna/code/pantheon/RESEARCH_BACKEND_MATURITY_MATRIX.md:107)
+  [lines 107-111](/home/lupin/code/pantheon/RESEARCH_BACKEND_MATURITY_MATRIX.md:107)
 - activation order now starts from the already-landed OpenClaw/Qlib/TRL
   baselines at
-  [lines 118-122](/home/edna/code/pantheon/RESEARCH_BACKEND_MATURITY_MATRIX.md:118)
+  [lines 118-122](/home/lupin/code/pantheon/RESEARCH_BACKEND_MATURITY_MATRIX.md:118)
 - cross-backend consistency now says OpenClaw/Qlib/TRL no longer lack pins,
   adapters, or smoke evidence at
-  [lines 161-172](/home/edna/code/pantheon/RESEARCH_BACKEND_MATURITY_MATRIX.md:161)
+  [lines 161-172](/home/lupin/code/pantheon/RESEARCH_BACKEND_MATURITY_MATRIX.md:161)
 
 ### 2.2 Deferred Activation Map
 
 The parent updated the stale `Qlib` summary and preserved `TRL` as a
 smoke-tested, activation-gated row in
-[services/learning/DEFERRED_OSS_ACTIVATION_MAP.md](/home/edna/code/pantheon/services/learning/DEFERRED_OSS_ACTIVATION_MAP.md:31):
+[services/learning/DEFERRED_OSS_ACTIVATION_MAP.md](/home/lupin/code/pantheon/services/learning/DEFERRED_OSS_ACTIVATION_MAP.md:31):
 
 - `Qlib` now reads `smoke-tested`, `pyqlib==0.9.6`, adapter present, smoke path
   present, and the remaining work is the first governed alpha activation
@@ -96,27 +96,27 @@ smoke-tested, activation-gated row in
 
 Concrete evidence:
 
-- [Qlib row summary](/home/edna/code/pantheon/services/learning/DEFERRED_OSS_ACTIVATION_MAP.md:33)
-- [Qlib current-truth section](/home/edna/code/pantheon/services/learning/DEFERRED_OSS_ACTIVATION_MAP.md:49)
-- [Qlib next-step / owner section](/home/edna/code/pantheon/services/learning/DEFERRED_OSS_ACTIVATION_MAP.md:79)
-- [TRL row summary](/home/edna/code/pantheon/services/learning/DEFERRED_OSS_ACTIVATION_MAP.md:34)
-- [TRL current-truth section](/home/edna/code/pantheon/services/learning/DEFERRED_OSS_ACTIVATION_MAP.md:95)
-- [TRL next-step / owner section](/home/edna/code/pantheon/services/learning/DEFERRED_OSS_ACTIVATION_MAP.md:128)
+- [Qlib row summary](/home/lupin/code/pantheon/services/learning/DEFERRED_OSS_ACTIVATION_MAP.md:33)
+- [Qlib current-truth section](/home/lupin/code/pantheon/services/learning/DEFERRED_OSS_ACTIVATION_MAP.md:49)
+- [Qlib next-step / owner section](/home/lupin/code/pantheon/services/learning/DEFERRED_OSS_ACTIVATION_MAP.md:79)
+- [TRL row summary](/home/lupin/code/pantheon/services/learning/DEFERRED_OSS_ACTIVATION_MAP.md:34)
+- [TRL current-truth section](/home/lupin/code/pantheon/services/learning/DEFERRED_OSS_ACTIVATION_MAP.md:95)
+- [TRL next-step / owner section](/home/lupin/code/pantheon/services/learning/DEFERRED_OSS_ACTIVATION_MAP.md:128)
 
 ### 2.3 Evidence Anchors The Parent Is Syncing To
 
 The parent’s new summary wording is backed by the existing evidence anchors:
 
-- [OSS_INTEGRATION_CHECKLIST.md](/home/edna/code/pantheon/OSS_INTEGRATION_CHECKLIST.md:36)
+- [OSS_INTEGRATION_CHECKLIST.md](/home/lupin/code/pantheon/OSS_INTEGRATION_CHECKLIST.md:36)
   already records `OpenClaw=governed`,
-  [Qlib=smoke-tested](/home/edna/code/pantheon/OSS_INTEGRATION_CHECKLIST.md:39),
-  and [TRL=smoke-tested](/home/edna/code/pantheon/OSS_INTEGRATION_CHECKLIST.md:38)
-- [integrations/openclaw/integration.md](/home/edna/code/pantheon/integrations/openclaw/integration.md:152)
+  [Qlib=smoke-tested](/home/lupin/code/pantheon/OSS_INTEGRATION_CHECKLIST.md:39),
+  and [TRL=smoke-tested](/home/lupin/code/pantheon/OSS_INTEGRATION_CHECKLIST.md:38)
+- [integrations/openclaw/integration.md](/home/lupin/code/pantheon/integrations/openclaw/integration.md:152)
   records the realized runtime control path and live gateway smoke
-- [integrations/qlib/integration.md](/home/edna/code/pantheon/integrations/qlib/integration.md:43)
+- [integrations/qlib/integration.md](/home/lupin/code/pantheon/integrations/qlib/integration.md:43)
   records `pyqlib==0.9.6`, the governed adapter surface, and the runnable local
   baseline that the parent summary now classifies as `smoke-tested`
-- [integrations/trl/integration.md](/home/edna/code/pantheon/integrations/trl/integration.md:43)
+- [integrations/trl/integration.md](/home/lupin/code/pantheon/integrations/trl/integration.md:43)
   records the governed pair-construction adapter, runnable DPO surface, and
   smoke-tested baseline
 
@@ -143,24 +143,24 @@ summary documents the parent actually reconciled:
 
 ### Non-Blocking Caveats Worth Keeping Visible
 
-1. [integrations/qlib/integration.md](/home/edna/code/pantheon/integrations/qlib/integration.md:6)
+1. [integrations/qlib/integration.md](/home/lupin/code/pantheon/integrations/qlib/integration.md:6)
    still uses the phrase `Status: governed runnable adapter verified`. I read
    this as adapter-boundary language rather than a checklist-tier override, but
    it is the main wording that could confuse a strict cross-doc audit because
    the checklist and summary docs classify Qlib as `smoke-tested`.
 
-2. [integrations/trl/integration.md](/home/edna/code/pantheon/integrations/trl/integration.md:18)
+2. [integrations/trl/integration.md](/home/lupin/code/pantheon/integrations/trl/integration.md:18)
    still says compatibility was verified against `pyqlib 0.9.1`, while the
    activation map and checklist now reference `pyqlib==0.9.6`. This is drift in
    an evidence-detail line, not a maturity-tier contradiction.
 
-3. [services/learning/DEFERRED_OSS_ACTIVATION_MAP.md](/home/edna/code/pantheon/services/learning/DEFERRED_OSS_ACTIVATION_MAP.md:34)
+3. [services/learning/DEFERRED_OSS_ACTIVATION_MAP.md](/home/lupin/code/pantheon/services/learning/DEFERRED_OSS_ACTIVATION_MAP.md:34)
    still names `Claude` as the phase-5 activation owner for the TRL summary
    row, while the detailed section splits follow-on ownership between Claude
    and Qwen at
-   [lines 132-133](/home/edna/code/pantheon/services/learning/DEFERRED_OSS_ACTIVATION_MAP.md:132)
+   [lines 132-133](/home/lupin/code/pantheon/services/learning/DEFERRED_OSS_ACTIVATION_MAP.md:132)
    and the matrix lists `Qwen` at
-   [line 62](/home/edna/code/pantheon/RESEARCH_BACKEND_MATURITY_MATRIX.md:62).
+   [line 62](/home/lupin/code/pantheon/RESEARCH_BACKEND_MATURITY_MATRIX.md:62).
    That is ownership wording drift, not maturity drift.
 
 Secondary scope note: the matrix diff also carries consistency edits outside

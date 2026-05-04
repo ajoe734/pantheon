@@ -484,5 +484,5 @@ Closeout verification on 2026-05-01:
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.execution.lean_runtime.test_paper_runtime services.telemetry.test_paper_runtime_ingest_contract
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.telemetry.test_main_routes services.execution.lean_runtime.test_runtime_bootstrap services.execution.lean_runtime.test_runtime_context
 cd services/telemetry && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_capture
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/edna/code/pantheon:/home/edna/code/pantheon/lean/Algorithm.Python python3 lean/Algorithm.Python/pantheon_algo/test_base.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/lupin/code/pantheon:/home/lupin/code/pantheon/lean/Algorithm.Python python3 lean/Algorithm.Python/pantheon_algo/test_base.py
 ```

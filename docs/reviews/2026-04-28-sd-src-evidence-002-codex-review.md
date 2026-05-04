@@ -28,7 +28,7 @@ empty page even when an eligible artifact match exists.
 Reproduction:
 
 ```text
-PYTHONPATH=services/control-plane/bff:/home/edna/.local/lib/python3.12/site-packages python3 - <<'PY'
+PYTHONPATH=services/control-plane/bff:/home/lupin/.local/lib/python3.12/site-packages python3 - <<'PY'
 import os, tempfile
 from read_store import ReadSurfaceStore
 
@@ -74,7 +74,7 @@ artifact after all [('artifact-20260418-005', 'artifact')]
 Targeted suite:
 
 ```text
-PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages python3 -m pytest -p no:cacheprovider \
+PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages python3 -m pytest -p no:cacheprovider \
   services/source_ingestion/tests \
   services/knowledge/evidence/tests \
   services/search/tests \
@@ -87,11 +87,11 @@ PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages python3 -m pytest -p n
 Additional review checks:
 
 ```text
-PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages python3 -m pytest -p no:cacheprovider services/control-plane/bff/test_rw02_search_contract.py -q
+PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages python3 -m pytest -p no:cacheprovider services/control-plane/bff/test_rw02_search_contract.py -q
 ......                                                                   [100%]
 6 passed in 2.09s
 
-PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages python3 -m pytest -p no:cacheprovider services/knowledge/evidence/tests services/search/tests -q
+PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages python3 -m pytest -p no:cacheprovider services/knowledge/evidence/tests services/search/tests -q
 .........                                                                [100%]
 9 passed in 0.25s
 ```

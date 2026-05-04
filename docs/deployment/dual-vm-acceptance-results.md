@@ -2,7 +2,7 @@
 
 Acceptance record for `DEPLOY-009`.
 
-This artifact is paired with [`scripts/smoke_test_dual_vm.sh`](/home/edna/code/pantheon/scripts/smoke_test_dual_vm.sh:1) and captures what that smoke proves, what must be recorded after a real VM run, and the current boundary of the execution-plane paper runtime package.
+This artifact is paired with [`scripts/smoke_test_dual_vm.sh`](/home/lupin/code/pantheon/scripts/smoke_test_dual_vm.sh:1) and captures what that smoke proves, what must be recorded after a real VM run, and the current boundary of the execution-plane paper runtime package.
 
 ## Scope
 

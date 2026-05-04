@@ -45,3 +45,5 @@ gap_handoff_path: .coordination/requests/CW-01-consult-request-bff-gap.yaml
 gap_handoff_template: .coordination/requests/CW-01-consult-request-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/CW-01-consult-request-ui-done.yaml
 completion_handoff_template: .coordination/requests/CW-01-consult-request-ui-done.example.yaml
+feedback_handoff_path: .coordination/requests/CW-01-consult-request-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/CW-01-consult-request-frontend-feedback.example.yaml

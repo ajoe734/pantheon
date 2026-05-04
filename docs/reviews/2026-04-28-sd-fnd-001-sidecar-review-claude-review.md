@@ -22,7 +22,7 @@ trail, and does not silently expand parent scope.
 | Foundation package path / boundary doc | `services/foundation/README.md` normalizes on singular `services/foundation`, lists in-scope value objects, and explicitly excludes durable storage, broker, network, raw secret resolution, and HTTP middleware | PASS |
 | Public import surface is pure value objects | `services/foundation/__init__.py` re-exports primitives only; no client construction at import | PASS |
 | Side-effect-free import (live verification) | `from services import foundation` triggers 48 module imports; zero risky imports (no socket, httpx, requests, psycopg, sqlalchemy, redis, kafka, grpc, boto, google.cloud, torch, tensorflow, ray) | PASS |
-| Baseline tests rerun | `PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages python3 -m pytest services/foundation/tests -q` → `10 passed in 0.16s` | PASS |
+| Baseline tests rerun | `PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages python3 -m pytest services/foundation/tests -q` → `10 passed in 0.16s` | PASS |
 | 10 vs 8 test count rationalized | Packet section 4 explicitly attributes the +2 to SD-FND-003 outbox / DLQ / schema-registry / replay primitive tests and refuses to retroactively widen parent acceptance | PASS |
 
 ## Boundary Adherence
@@ -74,7 +74,7 @@ re-opened.
 ## Verification Reproduction
 
 ```text
-PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages \
+PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages \
   python3 -m pytest services/foundation/tests -q
 ..........                                                               [100%]
 10 passed in 0.16s

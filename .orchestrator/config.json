@@ -339,7 +339,7 @@
         "mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
         "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
         "env": {
-          "CLAUDE_CONFIG_DIR": "/home/edna/.claude"
+          "CLAUDE_CONFIG_DIR": "/home/lupin/.claude"
         }
       },
       "broker": {
@@ -377,7 +377,7 @@
         "auto_permission_mode": "auto",
         "mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
         "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
-        "home": "/home/edna/.claude2"
+        "home": "/home/lupin/.claude2"
       },
       "broker": {
         "approval_wait_seconds": 3600,
@@ -429,8 +429,8 @@
       },
       "gemini": {
         "cli": ".orchestrator/bin/gemini2",
-        "config_home": "/home/edna/.gemini2",
-        "home": "/home/edna/.gemini2",
+        "config_home": "/home/lupin/.gemini2",
+        "home": "/home/lupin/.gemini2",
         "include_directories": true,
         "model": "gemini-2.5-flash-lite",
         "output_format": "json",

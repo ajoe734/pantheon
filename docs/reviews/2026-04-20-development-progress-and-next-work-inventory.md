@@ -26,7 +26,7 @@
 
 ### 1.1 Canonical blueprint backlog
 
-根據 [docs/reviews/2026-04-16-full-blueprint-gap-analysis.md](/home/edna/code/pantheon/docs/reviews/2026-04-16-full-blueprint-gap-analysis.md:1)：
+根據 [docs/reviews/2026-04-16-full-blueprint-gap-analysis.md](/home/lupin/code/pantheon/docs/reviews/2026-04-16-full-blueprint-gap-analysis.md:1)：
 
 - `DEVELOPMENT_WORKBREAKDOWN.md` 定義的 `28/28` canonical backlog rows 都已有 archive，且皆為 `done`
 - Phase5 convergence materialized 的 `42/42` execution tasks 也都已 archive `done`
@@ -38,7 +38,7 @@
 
 ### 1.2 Already landed baselines
 
-根據 [WORKBENCH_DELIVERY_BACKLOG.md](/home/edna/code/pantheon/WORKBENCH_DELIVERY_BACKLOG.md:1)：
+根據 [WORKBENCH_DELIVERY_BACKLOG.md](/home/lupin/code/pantheon/WORKBENCH_DELIVERY_BACKLOG.md:1)：
 
 下列基線已不屬於 remaining backlog：
 
@@ -98,7 +98,7 @@
 
 ### 2.2 前端協作進度
 
-根據 [current-work.md](/home/edna/code/pantheon/current-work.md:1)：
+根據 [current-work.md](/home/lupin/code/pantheon/current-work.md:1)：
 
 - Lovable-ready packets: `33`
 - waiting for Lovable/front-end: `7`
@@ -113,7 +113,7 @@
 
 ### 2.3 OSS 生態進度
 
-根據 [docs/reviews/2026-04-16-oss-ecosystem-gap-analysis.md](/home/edna/code/pantheon/docs/reviews/2026-04-16-oss-ecosystem-gap-analysis.md:1)：
+根據 [docs/reviews/2026-04-16-oss-ecosystem-gap-analysis.md](/home/lupin/code/pantheon/docs/reviews/2026-04-16-oss-ecosystem-gap-analysis.md:1)：
 
 目前 OSS maturity 可分為：
 
@@ -222,7 +222,7 @@
 
 細節已整理在：
 
-[2026-04-20-system-design-open-questions-for-architecture-team.md](/home/edna/code/pantheon/docs/reviews/2026-04-20-system-design-open-questions-for-architecture-team.md:1)
+[2026-04-20-system-design-open-questions-for-architecture-team.md](/home/lupin/code/pantheon/docs/reviews/2026-04-20-system-design-open-questions-for-architecture-team.md:1)
 
 ---
 

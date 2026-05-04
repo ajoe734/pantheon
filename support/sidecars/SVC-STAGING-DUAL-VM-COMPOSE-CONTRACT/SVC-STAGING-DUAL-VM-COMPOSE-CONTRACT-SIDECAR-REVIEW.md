@@ -55,7 +55,7 @@ Parent handoff summary says the parent is ready for review after:
 
 ## Verification Run For This Packet
 
-Commands run from `/home/edna/code/pantheon` on 2026-04-30:
+Commands run from `/home/lupin/code/pantheon` on 2026-04-30:
 
 ```bash
 docker compose -f docker-compose.yml config --quiet

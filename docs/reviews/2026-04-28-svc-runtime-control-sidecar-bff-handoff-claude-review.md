@@ -41,7 +41,7 @@
    cited verification bundle:
 
    ```
-   PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages python3.12 -m pytest \
+   PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages python3.12 -m pytest \
      services/runtime-manager/test_internal_api_routes.py \
      services/control-plane/bff/test_command_executor.py \
      services/control-plane/bff/test_governance_command_submission.py \

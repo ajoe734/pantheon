@@ -1,7 +1,7 @@
 # Execution VM Secrets Guide
 
 Secrets for the dedicated VM-2 execution-plane stack defined in
-[`docker-compose.exec.yml`](/home/edna/code/pantheon/docker-compose.exec.yml:1).
+[`docker-compose.exec.yml`](/home/lupin/code/pantheon/docker-compose.exec.yml:1).
 
 This guide exists for `DEPLOY-008` and focuses on the execution-only boundary:
 
@@ -31,7 +31,7 @@ provider secret material.
 
 ## Expected Environment File
 
-Use [`env/prod-exec.env.example`](/home/edna/code/pantheon/env/prod-exec.env.example:1)
+Use [`env/prod-exec.env.example`](/home/lupin/code/pantheon/env/prod-exec.env.example:1)
 as the template and create a machine-local `env/prod-exec.env` on VM-2.
 
 Recommended flow:

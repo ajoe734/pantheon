@@ -1,13 +1,13 @@
 feature_id: RW-04-experiment-launch
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: loop-complete
+status: ready
 pantheon_pr: null
 base_url: null
 workbench: research-workbench
 screen: experiment-launch
 screen_id: screen-experiment-launch
-ui_spec_path: docs/pantheon-handoffs/RW-04-experiment-launch/FRONTEND_CHANGE_SPEC.md
+ui_spec_path: null
 frontend_change_spec_path: docs/pantheon-handoffs/RW-04-experiment-launch/FRONTEND_CHANGE_SPEC.md
 allowed_endpoints:
 - POST /api/v1/experiments/launch
@@ -36,7 +36,7 @@ delivery_dependencies:
 links:
   lovable_project_url: null
   bff_spec_path: docs/bff/RW-04-experiment-launch.md
-  ui_spec_path: docs/pantheon-handoffs/RW-04-experiment-launch/FRONTEND_CHANGE_SPEC.md
+  ui_spec_path: null
   frontend_change_spec_path: docs/pantheon-handoffs/RW-04-experiment-launch/FRONTEND_CHANGE_SPEC.md
   example_payload_paths:
   - docs/examples/RW-04-experiment-launch.json
@@ -45,5 +45,5 @@ gap_handoff_path: .coordination/requests/RW-04-experiment-launch-bff-gap.yaml
 gap_handoff_template: .coordination/requests/RW-04-experiment-launch-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/RW-04-experiment-launch-ui-done.yaml
 completion_handoff_template: .coordination/requests/RW-04-experiment-launch-ui-done.example.yaml
-frontend_feedback_handoff_path: .coordination/requests/RW-04-experiment-launch-frontend-feedback.yaml
-review_findings_ref: .coordination/reviews/RW-04-experiment-launch-review.md
+feedback_handoff_path: .coordination/requests/RW-04-experiment-launch-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/RW-04-experiment-launch-frontend-feedback.example.yaml

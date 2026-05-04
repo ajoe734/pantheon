@@ -20,7 +20,7 @@ baseline: >
 
 ```text
 front repo path:
-  /home/edna/code/front-ai-trading-system
+  /home/lupin/code/front-ai-trading-system
 
 BFF client:
   已集中接 BFF
@@ -503,7 +503,7 @@ but prevent staging/prod operator console from depending on demo auth, demo toke
 
 Task: `P0-FE-DEMO-001`
 
-Frontend repo: `/home/edna/code/front-ai-trading-system`
+Frontend repo: `/home/lupin/code/front-ai-trading-system`
 
 Reviewed commits:
 

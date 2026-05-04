@@ -16,7 +16,7 @@
     "artifacts": [
       "../front-ai-trading-system/.coordination/responses/PKT-003-lineage-view-contract-ready.yaml",
       ".coordination/responses/PKT-003-lineage-view-lovable-ui-task.yaml",
-      "/home/edna/code/pantheon/.coordination/responses/PKT-003-lineage-view-lovable-prompt.md",
+      "/home/lupin/code/pantheon/.coordination/responses/PKT-003-lineage-view-lovable-prompt.md",
       ".coordination/requests/PKT-003-lineage-view-ui-done.yaml",
       ".coordination/requests/PKT-003-lineage-view-frontend-feedback.yaml"
     ],
@@ -33,7 +33,7 @@
     "coordination_paths": {
       "contract_ready": "../front-ai-trading-system/.coordination/responses/PKT-003-lineage-view-contract-ready.yaml",
       "lovable_task": ".coordination/responses/PKT-003-lineage-view-lovable-ui-task.yaml",
-      "lovable_prompt": "/home/edna/code/pantheon/.coordination/responses/PKT-003-lineage-view-lovable-prompt.md",
+      "lovable_prompt": "/home/lupin/code/pantheon/.coordination/responses/PKT-003-lineage-view-lovable-prompt.md",
       "ui_done": ".coordination/requests/PKT-003-lineage-view-ui-done.yaml",
       "frontend_feedback": ".coordination/requests/PKT-003-lineage-view-frontend-feedback.yaml",
       "bff_gap": null

@@ -39,6 +39,23 @@ Conflict rule: this document overrides broader stage wording in architecture/pla
 - risk policy correctness
 - simulated execution behavior
 
+### 2.1.1 Broker sandbox / paper-account API smoke
+
+`paper` 不代表 broker order API 不串接。正確邊界是：
+
+- broker SDK / order API 應盡早用 broker-provided paper account、sandbox、
+  simulation mode 或 test credentials 串起來；
+- smoke 必須覆蓋 auth、account/readiness、order intent validation、最小測試委託
+  place、cancel/replace、open-order/status/readback、execution/no-fill/fill
+  disposition、telemetry 與 reconciliation packet；
+- 測試環境不得使用 production live credentials、不得使用真實資金，也不得在
+  telemetry 裡標成 production `live_order_submitted`；
+- 若 broker 支援 validate-only 或 paper trading，必須先跑該路徑，再討論
+  canary/live 真實資金路徑。
+
+因此 `live fail-closed` 只擋未批准的 production live order side effect，不擋
+broker API integration、paper broker smoke、sandbox order smoke 或 readback probe。
+
 ### 2.2 Canary
 
 `canary` 是：
@@ -73,7 +90,7 @@ Conflict rule: this document overrides broader stage wording in architecture/pla
 
 | mode | 市場資料 | 委託 | 資金 | 撮合 | 風控 | 主要目的 |
 |---|---|---|---|---|---|---|
-| paper | 真實 | 模擬 | 0 | 模擬 | 正式規則 + simulated checks | 驗證策略 / loader / runtime 路徑 |
+| paper | 真實 | 模擬；可含 broker sandbox / paper-account 測試委託 | 0 | 模擬或 broker test environment | 正式規則 + simulated checks | 驗證策略 / loader / runtime / broker API 路徑 |
 | canary | 真實 | 真實 | 真實，但縮量 | 真實 | 更嚴格 | 驗證真實執行與回退能力 |
 | live | 真實 | 真實 | 真實，正式額度 | 真實 | 正式規則 | 正式部署 |
 
@@ -248,6 +265,7 @@ canary 模式必須預設開啟：
 ### 9.1 Paper runtime
 - 可獨立 instance
 - 不綁真實 broker account
+- 可綁 broker sandbox / paper account / test credentials 進行 order API smoke
 - 仍必須走正式 loader / binding / telemetry path
 
 ### 9.2 Canary runtime

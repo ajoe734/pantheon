@@ -31,7 +31,7 @@
 ## Tests
 
 ```
-PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages python3.12 -m pytest \
+PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages python3.12 -m pytest \
   services/runtime-manager/ \
   services/control_plane/ \
   services/control-plane/bff/test_command_executor.py \
@@ -39,11 +39,11 @@ PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages python3.12 -m pytest \
   services/control-plane/bff/test_cw03_committee_board_contract.py
 # 97 passed in 4.67s
 
-PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages python3.12 -m pytest \
+PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages python3.12 -m pytest \
   services/governance/ services/evolution/
 # 75 passed in 3.16s
 
-PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages python3.12 \
+PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages python3.12 \
   services/runtime-manager/smoke_test.py
 # 138 passed, 0 failed out of 138 checks
 

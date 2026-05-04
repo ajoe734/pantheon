@@ -48,9 +48,9 @@ readiness promotion、或 canonical truth 對齊的 system design 問題，整�
 
 參考來源：
 
-- [2026-04-20-system-design-open-questions-for-architecture-team.md](/home/edna/code/pantheon/docs/reviews/2026-04-20-system-design-open-questions-for-architecture-team.md:1)
-- [Pantheon_Response_to_Architecture_Team_Design_Input_List.md](/home/edna/code/pantheon/docs/reviews/Pantheon_Response_to_Architecture_Team_Design_Input_List.md:1)
-- [MODULE_READINESS_RATIFICATION_2026-04-20.md](/home/edna/code/pantheon/MODULE_READINESS_RATIFICATION_2026-04-20.md:1)
+- [2026-04-20-system-design-open-questions-for-architecture-team.md](/home/lupin/code/pantheon/docs/reviews/2026-04-20-system-design-open-questions-for-architecture-team.md:1)
+- [Pantheon_Response_to_Architecture_Team_Design_Input_List.md](/home/lupin/code/pantheon/docs/reviews/Pantheon_Response_to_Architecture_Team_Design_Input_List.md:1)
+- [MODULE_READINESS_RATIFICATION_2026-04-20.md](/home/lupin/code/pantheon/MODULE_READINESS_RATIFICATION_2026-04-20.md:1)
 
 ---
 
@@ -554,8 +554,8 @@ runtime refresh、doc drift 誤判成 system design blocker。
 - 最新 execution truth：`current-work.md`
 - repo implementation truth：
   - `services/control-plane/bff/main.py`
-  - `/home/edna/code/front-ai-trading-system/src/App.tsx`
-  - `/home/edna/code/front-ai-trading-system/src/components/AppSidebar.tsx`
+  - `/home/lupin/code/front-ai-trading-system/src/App.tsx`
+  - `/home/lupin/code/front-ai-trading-system/src/components/AppSidebar.tsx`
 
 若本附錄與 `2026-04-20-current-implementation-vs-blueprint-gap-audit.md` 有衝突，
 應優先採 `2026-04-21` 的 repo / execution truth。

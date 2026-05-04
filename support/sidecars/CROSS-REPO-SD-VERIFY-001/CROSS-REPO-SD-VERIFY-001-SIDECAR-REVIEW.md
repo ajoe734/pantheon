@@ -73,14 +73,14 @@ Reviewer reruns recorded in
 `docs/reviews/2026-04-28-cross-repo-sd-verify-001-claude2-review.md`:
 
 ```bash
-PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages \
+PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages \
   python3.12 -m pytest \
   services/control-plane/bff/test_governance_command_submission.py \
   services/runtime-manager/test_runtime_manager.py \
   services/foundation/tests -q
 # 59 passed
 
-PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages \
+PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages \
   python3.12 -m pytest \
   services/telemetry/lineage_read/test_service.py \
   services/telemetry/test_main_routes.py -q

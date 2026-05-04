@@ -28,7 +28,7 @@ This sidecar exists to make `DEPLOY-008` reviewable before the parent implementa
 
 ## 2. Parent Task Truth
 
-From [ai-status.json](/home/edna/code/pantheon/ai-status.json:314), `DEPLOY-008` is currently:
+From [ai-status.json](/home/lupin/code/pantheon/ai-status.json:314), `DEPLOY-008` is currently:
 
 - owner: `Codex`
 - reviewer: `Claude`
@@ -44,7 +44,7 @@ From [ai-status.json](/home/edna/code/pantheon/ai-status.json:314), `DEPLOY-008`
   - paper runtime can start
 
 The accepted VM-2 shape is consistent with the execution-plane deployment notes in
-[Pantheon_單VM測試版_雙VM正式版_部署補充說明.md](/home/edna/code/pantheon/Pantheon_單VM測試版_雙VM正式版_部署補充說明.md:310):
+[Pantheon_單VM測試版_雙VM正式版_部署補充說明.md](/home/lupin/code/pantheon/Pantheon_單VM測試版_雙VM正式版_部署補充說明.md:310):
 
 - `runtime-manager-svc`
 - `pantheon-lean` paper runtime
@@ -65,8 +65,8 @@ This sidecar does not widen that scope. It only packages the current reviewer in
 `env/prod-control.env.example` were finalized with `runtime-manager` excluded from the VM-1 slice.
 Repo-local evidence matches that disposition:
 
-- [docker-compose.control.yml](/home/edna/code/pantheon/docker-compose.control.yml:1) states the file is the dedicated VM-1 control-plane stack
-- [docker-compose.control.yml](/home/edna/code/pantheon/docker-compose.control.yml:6) explicitly excludes `runtime-manager`, `governance`, and `router`
+- [docker-compose.control.yml](/home/lupin/code/pantheon/docker-compose.control.yml:1) states the file is the dedicated VM-1 control-plane stack
+- [docker-compose.control.yml](/home/lupin/code/pantheon/docker-compose.control.yml:6) explicitly excludes `runtime-manager`, `governance`, and `router`
 - `docker compose -f docker-compose.control.yml config --services` currently returns only VM-1 services and infra; `runtime-manager` is absent
 
 This means `DEPLOY-008` can assume the control-plane side of the split is already locked.
@@ -75,9 +75,9 @@ This means `DEPLOY-008` can assume the control-plane side of the split is alread
 
 The root compose still bundles execution responsibilities into the all-in-one topology:
 
-- [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:116) defines `runtime-manager`
-- [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:171) points `telemetry` at `http://runtime-manager:8081`
-- [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:199) points `incidents` at `http://runtime-manager:8081`
+- [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:116) defines `runtime-manager`
+- [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:171) points `telemetry` at `http://runtime-manager:8081`
+- [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:199) points `incidents` at `http://runtime-manager:8081`
 
 `docker compose -f docker-compose.yml config --services` still includes `runtime-manager`,
 `governance`, `operator-bff`, `registry`, and `telemetry` together, so the dedicated VM-2 split has
@@ -87,8 +87,8 @@ not been realized yet.
 
 The execution-plane service itself already exists and is containerized:
 
-- [services/runtime-manager/Dockerfile](/home/edna/code/pantheon/services/runtime-manager/Dockerfile:1)
-- [services/runtime-manager/main.py](/home/edna/code/pantheon/services/runtime-manager/main.py:1)
+- [services/runtime-manager/Dockerfile](/home/lupin/code/pantheon/services/runtime-manager/Dockerfile:1)
+- [services/runtime-manager/main.py](/home/lupin/code/pantheon/services/runtime-manager/main.py:1)
 
 That gives `DEPLOY-008` an implementation basis for the VM-2 compose, but not the compose split
 artifact itself.
@@ -114,9 +114,9 @@ treated as not yet implemented rather than partially accepted.
 
 The future VM-2 secrets guide does not need to invent naming or IAM boundaries from scratch:
 
-- [scripts/gcp_nonprod_foundation.sh](/home/edna/code/pantheon/scripts/gcp_nonprod_foundation.sh:32) already provisions `broker-api-key` and `broker-api-secret`
-- [docs/gcp-bootstrap-confirmation.md](/home/edna/code/pantheon/docs/gcp-bootstrap-confirmation.md:113) documents how to populate those secrets
-- [docs/gcp-bootstrap-confirmation.md](/home/edna/code/pantheon/docs/gcp-bootstrap-confirmation.md:163) records those broker secrets as execution-only access
+- [scripts/gcp_nonprod_foundation.sh](/home/lupin/code/pantheon/scripts/gcp_nonprod_foundation.sh:32) already provisions `broker-api-key` and `broker-api-secret`
+- [docs/gcp-bootstrap-confirmation.md](/home/lupin/code/pantheon/docs/gcp-bootstrap-confirmation.md:113) documents how to populate those secrets
+- [docs/gcp-bootstrap-confirmation.md](/home/lupin/code/pantheon/docs/gcp-bootstrap-confirmation.md:163) records those broker secrets as execution-only access
 
 That is useful support input for `docs/deployment/exec-vm-secrets-guide.md`.
 
@@ -170,11 +170,11 @@ What remains fully on the parent task:
 
 | Input | Type | Why it matters to `DEPLOY-008` |
 |---|---|---|
-| [docker-compose.control.yml](/home/edna/code/pantheon/docker-compose.control.yml:1) | prior deployment artifact | establishes which services belong on VM-1 and therefore must stay out of VM-2 |
-| [docker-compose.yml](/home/edna/code/pantheon/docker-compose.yml:116) | current all-in-one topology | shows the current runtime-manager coupling that `DEPLOY-008` must peel away into a dedicated exec compose |
-| [services/runtime-manager/Dockerfile](/home/edna/code/pantheon/services/runtime-manager/Dockerfile:1) | existing execution service image | provides the container build target for the VM-2 compose |
+| [docker-compose.control.yml](/home/lupin/code/pantheon/docker-compose.control.yml:1) | prior deployment artifact | establishes which services belong on VM-1 and therefore must stay out of VM-2 |
+| [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:116) | current all-in-one topology | shows the current runtime-manager coupling that `DEPLOY-008` must peel away into a dedicated exec compose |
+| [services/runtime-manager/Dockerfile](/home/lupin/code/pantheon/services/runtime-manager/Dockerfile:1) | existing execution service image | provides the container build target for the VM-2 compose |
 | `services/execution/lean_runtime/*` | existing execution code | provides the runtime implementation basis that the VM-2 slice will need to package or invoke |
-| [docs/gcp-bootstrap-confirmation.md](/home/edna/code/pantheon/docs/gcp-bootstrap-confirmation.md:113) | existing ops guidance | provides secret names and execution-only IAM expectations for the new secrets guide |
+| [docs/gcp-bootstrap-confirmation.md](/home/lupin/code/pantheon/docs/gcp-bootstrap-confirmation.md:113) | existing ops guidance | provides secret names and execution-only IAM expectations for the new secrets guide |
 
 ### 5.3 Downstream consumers waiting on `DEPLOY-008`
 

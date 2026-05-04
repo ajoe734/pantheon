@@ -35,7 +35,7 @@ Non-goals：
 |---|---|
 | `front-ai-trading-system` | Console workbenches、typed clients、view components、SSE consumer、operator UX。 |
 | `pantheon` | BFF API、read model composer、command gateway、auth/RBAC facade、SSE broker、view-model adapters。 |
-| `lean-platform` | No direct frontend integration; only visible through Pantheon BFF read models and governed runtime actions. |
+| `pantheon-lean` | No direct frontend integration; only visible through Pantheon BFF read models and governed runtime actions. |
 | `Lean` | No BFF ownership. Upstream reference only. |
 
 ---
@@ -412,7 +412,7 @@ stateDiagram-v2
 ## 9. Hard invariants
 
 1. BFF does not own domain truth; it composes read models and dispatches commands.
-2. Frontend must not call `lean-platform` directly.
+2. Frontend must not call `pantheon-lean` directly.
 3. Frontend must not store broker credentials, vendor secrets, or raw secret values.
 4. Every command must include `idempotency_key`, `trace_id`, `actor_ref`, `reason`.
 5. Destructive commands must require authority check and, when configured, approval token / MFA.

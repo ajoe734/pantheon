@@ -1,7 +1,7 @@
 # SD-12 — Cross-Cutting Foundations / Trace、Idempotency、RBAC、Secrets、Clock、Audit 與 Safe Mode 設計
 
 版本：v0.1 Codex-ready draft  
-適用範圍：Pantheon 橫切基礎能力、所有 planes、`front-ai-trading-system`、`pantheon`、`lean-platform`  
+適用範圍：Pantheon 橫切基礎能力、所有 planes、`front-ai-trading-system`、`pantheon`、`pantheon-lean`  
 來源準繩：Pantheon 總索引版系統分析文件 v1 Consolidated、openclaw strategy lifecycle、openclaw multi-persona implementation architecture
 
 ---
@@ -33,7 +33,7 @@
 |---|---|
 | `pantheon` | Policy engine、RBAC、SecretRef resolver facade、audit log、trace/idempotency middleware、schema registry、outbox/DLQ、safe mode controller。 |
 | `front-ai-trading-system` | Capability-aware UI、dangerous-action confirmation、audit trace display；不得保存 secrets 或自行判定 authority。 |
-| `lean-platform` | Runtime-side trace propagation、secret resolution inside execution boundary、runtime safe mode action handling、telemetry outbox checkpointing。 |
+| `pantheon-lean` | Runtime-side trace propagation、secret resolution inside execution boundary、runtime safe mode action handling、telemetry outbox checkpointing。 |
 | `Lean` | Upstream reference only。不得成為 cross-cutting authority。 |
 
 ---
@@ -105,7 +105,7 @@ src/components/common/TraceLink.tsx
 src/types/foundations.ts
 ```
 
-### `lean-platform`
+### `pantheon-lean`
 
 ```text
 Pantheon/Foundation/
@@ -571,7 +571,7 @@ secret_policy:
   openclaw_access: deny_raw_secret
   bff_view_access: secret_ref_only
   runtime_resolution:
-    allowed_consumers: [lean-platform-runtime, data-gateway-worker]
+    allowed_consumers: [pantheon-lean-runtime, data-gateway-worker]
   rotation:
     max_age_days: 90
 
@@ -928,11 +928,11 @@ acceptance_tests:
   - audit trail links to trace
 ```
 
-### PTH-SD12-008 — Implement lean-platform runtime foundation hooks
+### PTH-SD12-008 — Implement pantheon-lean runtime foundation hooks
 
 ```yaml
 task_id: PTH-SD12-008
-repo: ajoe734/lean-platform
+repo: ajoe734/pantheon-lean
 goal: Add TraceContext, SecretRef, SafeModeState, TelemetryOutbox support to runtime boundary.
 target_paths:
   - Pantheon/Foundation/TraceContext.cs

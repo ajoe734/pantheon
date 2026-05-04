@@ -59,14 +59,14 @@
 5. **Evidence reproduces** — confirmed. I re-ran the cited bundle:
 
    ```
-   PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages python3.12 \
+   PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages python3.12 \
      services/consultation/run_smoke.py
    ```
 
    Result: `Ran 2 tests in 0.079s OK`, matching the packet.
 
    ```
-   PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages python3.12 -m pytest \
+   PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages python3.12 -m pytest \
      services/control-plane/bff/test_consultation_surfaces.py \
      services/control-plane/bff/test_pkt015_consultation_workbench_contract.py \
      services/control-plane/bff/test_cw01_consult_request_contract.py \

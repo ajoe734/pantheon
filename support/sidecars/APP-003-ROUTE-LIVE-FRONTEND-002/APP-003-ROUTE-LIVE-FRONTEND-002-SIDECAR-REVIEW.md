@@ -17,7 +17,7 @@
 
 ## 1. Parent Snapshot
 
-From [ai-status.json](/home/edna/code/pantheon/ai-status.json:995), the parent
+From [ai-status.json](/home/lupin/code/pantheon/ai-status.json:995), the parent
 `APP-003-ROUTE-LIVE-FRONTEND-002` is already in `review`, owned by `Codex`,
 reviewed by `Codex2`, with these acceptance targets:
 
@@ -27,7 +27,7 @@ reviewed by `Codex2`, with these acceptance targets:
 4. scope stays disjoint from `APP-003-ROUTE-LIVE-FRONTEND-001`
 
 The current owner handoff recorded at
-[ai-status.json](/home/edna/code/pantheon/ai-status.json:1016) says the parent
+[ai-status.json](/home/lupin/code/pantheon/ai-status.json:1016) says the parent
 published the missing `TW-02` frontend activation packet at
 `docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md`,
 synced the active Trainer-facing docs to the live accepted/rejected patch
@@ -35,11 +35,11 @@ semantics, added a reviewer support note, and verified the targeted `TW-02`
 contract test plus example JSON.
 
 This sidecar itself is the missing support artifact named by
-[ai-status.json](/home/edna/code/pantheon/ai-status.json:1053). Companion
+[ai-status.json](/home/lupin/code/pantheon/ai-status.json:1053). Companion
 support artifacts already in the repo:
 
-- [APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md](/home/edna/code/pantheon/support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:1)
-- [APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-ACCEPTANCE.md](/home/edna/code/pantheon/support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-ACCEPTANCE.md:1)
+- [APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md](/home/lupin/code/pantheon/support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:1)
+- [APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-ACCEPTANCE.md](/home/lupin/code/pantheon/support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-ACCEPTANCE.md:1)
 
 ## 2. What The Parent Actually Closed
 
@@ -47,82 +47,82 @@ support artifacts already in the repo:
 
 The support note says the parent covers eight module-local frontend activation
 packets and that `TW-02` was the missing handoff gap that this slice closed at
-[APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:23](/home/edna/code/pantheon/support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:23)
+[APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:23](/home/lupin/code/pantheon/support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:23)
 through
-[APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:33](/home/edna/code/pantheon/support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:33).
+[APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:33](/home/lupin/code/pantheon/support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:33).
 The eight-module matrix is explicit at
-[APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:35](/home/edna/code/pantheon/support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:35)
+[APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:35](/home/lupin/code/pantheon/support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:35)
 through
-[APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:46](/home/edna/code/pantheon/support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:46).
+[APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:46](/home/lupin/code/pantheon/support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:46).
 
 The new `TW-02` module-local handoff is not a placeholder stub. In
-[FRONTEND_CHANGE_SPEC.md](/home/edna/code/pantheon/docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md:11),
+[FRONTEND_CHANGE_SPEC.md](/home/lupin/code/pantheon/docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md:11),
 the readiness gate now pins the live routes, the accepted response
 (`warnings[]`, `diff.updated_controls[]`), the rejected response
 (`error_code`, `field_errors[]`, `rejected_changes[]`), and the `409`
 precondition behavior through
-[FRONTEND_CHANGE_SPEC.md:31](/home/edna/code/pantheon/docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md:31).
+[FRONTEND_CHANGE_SPEC.md:31](/home/lupin/code/pantheon/docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md:31).
 
 The same packet also keeps the downstream frontend boundary strict:
 
 - only `patches[] = [{parameter_key, proposed_value}]` may be submitted at
-  [FRONTEND_CHANGE_SPEC.md:89](/home/edna/code/pantheon/docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md:89)
+  [FRONTEND_CHANGE_SPEC.md:89](/home/lupin/code/pantheon/docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md:89)
   through
-  [FRONTEND_CHANGE_SPEC.md:150](/home/edna/code/pantheon/docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md:150)
+  [FRONTEND_CHANGE_SPEC.md:150](/home/lupin/code/pantheon/docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md:150)
 - UI logic must not clip values, invent diffs, or infer mutation authority at
-  [FRONTEND_CHANGE_SPEC.md:173](/home/edna/code/pantheon/docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md:173)
+  [FRONTEND_CHANGE_SPEC.md:173](/home/lupin/code/pantheon/docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md:173)
   through
-  [FRONTEND_CHANGE_SPEC.md:184](/home/edna/code/pantheon/docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md:184)
+  [FRONTEND_CHANGE_SPEC.md:184](/home/lupin/code/pantheon/docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md:184)
 - the handoff still frames the remaining work as frontend activation and later
   `ui-done` / feedback publication, not completed front-repo delivery, at
-  [FRONTEND_CHANGE_SPEC.md:198](/home/edna/code/pantheon/docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md:198)
+  [FRONTEND_CHANGE_SPEC.md:198](/home/lupin/code/pantheon/docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md:198)
   through
-  [FRONTEND_CHANGE_SPEC.md:206](/home/edna/code/pantheon/docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md:206)
+  [FRONTEND_CHANGE_SPEC.md:206](/home/lupin/code/pantheon/docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md:206)
 
 ### 2.2 Trainer-Facing Docs Now Agree On The Live `TW-02` Contract
 
 The active screen spec aligns with the handoff packet on the live contract
 shape and rejected/accepted semantics:
 
-- [docs/screens/TW-02-parameter-controls.md:35](/home/edna/code/pantheon/docs/screens/TW-02-parameter-controls.md:35)
+- [docs/screens/TW-02-parameter-controls.md:35](/home/lupin/code/pantheon/docs/screens/TW-02-parameter-controls.md:35)
   through
-  [docs/screens/TW-02-parameter-controls.md:53](/home/edna/code/pantheon/docs/screens/TW-02-parameter-controls.md:53)
+  [docs/screens/TW-02-parameter-controls.md:53](/home/lupin/code/pantheon/docs/screens/TW-02-parameter-controls.md:53)
   keep `GET /controls` and `POST /patch` live and explicitly bind
   `status = "accepted"` versus `status = "rejected"`
-- [TW-02-parameter-controls.md:96](/home/edna/code/pantheon/docs/screens/TW-02-parameter-controls.md:96)
+- [TW-02-parameter-controls.md:96](/home/lupin/code/pantheon/docs/screens/TW-02-parameter-controls.md:96)
   through
-  [TW-02-parameter-controls.md:140](/home/edna/code/pantheon/docs/screens/TW-02-parameter-controls.md:140)
+  [TW-02-parameter-controls.md:140](/home/lupin/code/pantheon/docs/screens/TW-02-parameter-controls.md:140)
   require backend-authored feedback only and preserve degradation rules
 
 The Trainer packet family also now treats `TW-02` as a live module-local handoff
 surface rather than a pending-BFF gap:
 
-- [TW-007 packet family header](/home/edna/code/pantheon/docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md:5)
+- [TW-007 packet family header](/home/lupin/code/pantheon/docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md:5)
   through
-  [TW-007 packet family module inventory](/home/edna/code/pantheon/docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md:45)
+  [TW-007 packet family module inventory](/home/lupin/code/pantheon/docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md:45)
   say `TW-01` to `TW-04` route families are live and `TW-02` now has a
   published module-local handoff bundle
-- [TW-007 `TW-02` section](/home/edna/code/pantheon/docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md:81)
+- [TW-007 `TW-02` section](/home/lupin/code/pantheon/docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md:81)
   through
-  [TW-007 `TW-02` readiness gate](/home/edna/code/pantheon/docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md:112)
+  [TW-007 `TW-02` readiness gate](/home/lupin/code/pantheon/docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md:112)
   describe the same accepted/rejected patch semantics and dependency on
   `TW-01` lifecycle truth
 
 The higher-level frontend summaries now match that live `TW-02` framing:
 
-- [WORKBENCH_DELIVERY_BACKLOG.md:94](/home/edna/code/pantheon/WORKBENCH_DELIVERY_BACKLOG.md:94)
+- [WORKBENCH_DELIVERY_BACKLOG.md:94](/home/lupin/code/pantheon/WORKBENCH_DELIVERY_BACKLOG.md:94)
   through
-  [WORKBENCH_DELIVERY_BACKLOG.md:99](/home/edna/code/pantheon/WORKBENCH_DELIVERY_BACKLOG.md:99)
+  [WORKBENCH_DELIVERY_BACKLOG.md:99](/home/lupin/code/pantheon/WORKBENCH_DELIVERY_BACKLOG.md:99)
   say `TW-02` is `route-live`, its handoff bundle is published, and the
   remaining work is frontend activation/closeout
-- [LOVABLE_MASTER_SA.md:139](/home/edna/code/pantheon/docs/pantheon-handoffs/LOVABLE_MASTER_SA.md:139)
+- [LOVABLE_MASTER_SA.md:139](/home/lupin/code/pantheon/docs/pantheon-handoffs/LOVABLE_MASTER_SA.md:139)
   through
-  [LOVABLE_MASTER_SA.md:142](/home/edna/code/pantheon/docs/pantheon-handoffs/LOVABLE_MASTER_SA.md:142)
+  [LOVABLE_MASTER_SA.md:142](/home/lupin/code/pantheon/docs/pantheon-handoffs/LOVABLE_MASTER_SA.md:142)
   keep the Trainer family in the live-route bucket and call out the `TW-02`
   handoff bundle as published
-- [PANTHEON_FRONTEND_SA.md:798](/home/edna/code/pantheon/docs/lovable/PANTHEON_FRONTEND_SA.md:798)
+- [PANTHEON_FRONTEND_SA.md:798](/home/lupin/code/pantheon/docs/lovable/PANTHEON_FRONTEND_SA.md:798)
   through
-  [PANTHEON_FRONTEND_SA.md:805](/home/edna/code/pantheon/docs/lovable/PANTHEON_FRONTEND_SA.md:805)
+  [PANTHEON_FRONTEND_SA.md:805](/home/lupin/code/pantheon/docs/lovable/PANTHEON_FRONTEND_SA.md:805)
   explicitly require backend-authored `warnings[]`, `field_errors[]`,
   `rejected_changes[]`, and `diff.updated_controls[]`
 
@@ -130,16 +130,16 @@ The higher-level frontend summaries now match that live `TW-02` framing:
 
 The execution-origin packet for the sibling route-live frontend lane still
 scopes `APP-003-ROUTE-LIVE-FRONTEND-001` to `CW-02`, `KW-04`, and `KW-05` at
-[docs/reviews/2026-04-22-route-live-frontend-and-residual-truth-execution-packet.md:18](/home/edna/code/pantheon/docs/reviews/2026-04-22-route-live-frontend-and-residual-truth-execution-packet.md:18)
+[docs/reviews/2026-04-22-route-live-frontend-and-residual-truth-execution-packet.md:18](/home/lupin/code/pantheon/docs/reviews/2026-04-22-route-live-frontend-and-residual-truth-execution-packet.md:18)
 through
-[docs/reviews/2026-04-22-route-live-frontend-and-residual-truth-execution-packet.md:24](/home/edna/code/pantheon/docs/reviews/2026-04-22-route-live-frontend-and-residual-truth-execution-packet.md:24),
+[docs/reviews/2026-04-22-route-live-frontend-and-residual-truth-execution-packet.md:24](/home/lupin/code/pantheon/docs/reviews/2026-04-22-route-live-frontend-and-residual-truth-execution-packet.md:24),
 then materializes that sibling task at
-[line 36](/home/edna/code/pantheon/docs/reviews/2026-04-22-route-live-frontend-and-residual-truth-execution-packet.md:36).
+[line 36](/home/lupin/code/pantheon/docs/reviews/2026-04-22-route-live-frontend-and-residual-truth-execution-packet.md:36).
 
 The parent support note repeats the same reviewer boundary at
-[APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:55](/home/edna/code/pantheon/support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:55)
+[APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:55](/home/lupin/code/pantheon/support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:55)
 through
-[APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:64](/home/edna/code/pantheon/support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:64):
+[APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:64](/home/lupin/code/pantheon/support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SUPPORT.md:64):
 review `002` only for `TW-02` packet publication and doc alignment, not for
 `CW-02`, `KW-04`, `KW-05`, or any front-repo implementation loop.
 
@@ -189,12 +189,12 @@ repo state:
 
 ### Non-Blocking Caveats To Keep Visible
 
-1. [WORKBENCH_DELIVERY_BACKLOG.md:96](/home/edna/code/pantheon/WORKBENCH_DELIVERY_BACKLOG.md:96)
+1. [WORKBENCH_DELIVERY_BACKLOG.md:96](/home/lupin/code/pantheon/WORKBENCH_DELIVERY_BACKLOG.md:96)
    still labels `TW-01 Teaching Dialog` as `contract-live`, while
-   [TW-007](/home/edna/code/pantheon/docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md:42),
-   [LOVABLE_MASTER_SA](/home/edna/code/pantheon/docs/pantheon-handoffs/LOVABLE_MASTER_SA.md:142),
+   [TW-007](/home/lupin/code/pantheon/docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md:42),
+   [LOVABLE_MASTER_SA](/home/lupin/code/pantheon/docs/pantheon-handoffs/LOVABLE_MASTER_SA.md:142),
    and
-   [PANTHEON_FRONTEND_SA](/home/edna/code/pantheon/docs/lovable/PANTHEON_FRONTEND_SA.md:771)
+   [PANTHEON_FRONTEND_SA](/home/lupin/code/pantheon/docs/lovable/PANTHEON_FRONTEND_SA.md:771)
    frame `TW-01` as `route-live`. I do not read that as a blocker for this
    parent or this sidecar because the parent review is about supervisor-visible
    activation surfaces and the newly published `TW-02` packet, not about
@@ -207,9 +207,9 @@ repo state:
 
 3. The `TW-02` handoff packet itself still says the downstream frontend should
    build the page and later publish `ui-done` plus feedback at
-   [FRONTEND_CHANGE_SPEC.md:198](/home/edna/code/pantheon/docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md:198)
+   [FRONTEND_CHANGE_SPEC.md:198](/home/lupin/code/pantheon/docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md:198)
    through
-   [FRONTEND_CHANGE_SPEC.md:206](/home/edna/code/pantheon/docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md:206).
+   [FRONTEND_CHANGE_SPEC.md:206](/home/lupin/code/pantheon/docs/pantheon-handoffs/TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md:206).
    That means this sidecar proves Pantheon-side activation packet publication
    and doc alignment only; it does not claim the frontend implementation loop
    is already closed.

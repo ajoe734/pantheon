@@ -103,7 +103,7 @@ absorbing it into the main truth sync:
 
 ## Verification Performed
 
-Focused sidecar verification was run from `/home/edna/code/pantheon`:
+Focused sidecar verification was run from `/home/lupin/code/pantheon`:
 
 ```bash
 git diff --check -- support/sidecars/SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC/SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE.md

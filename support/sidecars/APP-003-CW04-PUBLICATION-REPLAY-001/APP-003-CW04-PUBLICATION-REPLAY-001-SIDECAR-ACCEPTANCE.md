@@ -16,8 +16,8 @@
 
 Companion artifacts:
 
-- [Review packet](/home/edna/code/pantheon/support/sidecars/APP-003-CW04-PUBLICATION-REPLAY-001/APP-003-CW04-PUBLICATION-REPLAY-001-SIDECAR-REVIEW.md:1)
-- [Parent support note](/home/edna/code/pantheon/support/sidecars/APP-003-CW04-PUBLICATION-REPLAY-001/APP-003-CW04-PUBLICATION-REPLAY-001-SUPPORT.md:1)
+- [Review packet](/home/lupin/code/pantheon/support/sidecars/APP-003-CW04-PUBLICATION-REPLAY-001/APP-003-CW04-PUBLICATION-REPLAY-001-SIDECAR-REVIEW.md:1)
+- [Parent support note](/home/lupin/code/pantheon/support/sidecars/APP-003-CW04-PUBLICATION-REPLAY-001/APP-003-CW04-PUBLICATION-REPLAY-001-SUPPORT.md:1)
 
 ## 1. Purpose
 
@@ -70,7 +70,7 @@ Current evidence now shows that close condition is met, not merely queued:
 
 Current repo truth still supports the same narrow boundary:
 
-- [.coordination/responses/CW-04-redteam-memo-frontend-feedback.yaml](/home/edna/code/pantheon/.coordination/responses/CW-04-redteam-memo-frontend-feedback.yaml:1)
+- [.coordination/responses/CW-04-redteam-memo-frontend-feedback.yaml](/home/lupin/code/pantheon/.coordination/responses/CW-04-redteam-memo-frontend-feedback.yaml:1)
   records:
   - `disposition: close`
   - `review_result: replay-clean-and-contract-aligned`
@@ -98,9 +98,9 @@ Rechecked on `2026-04-23` against `../front-ai-trading-system`:
 Both current request files now publish the reviewed transport snapshot
 truthfully:
 
-- [../front-ai-trading-system/.coordination/requests/CW-04-redteam-memo-ui-done.yaml](/home/edna/code/front-ai-trading-system/.coordination/requests/CW-04-redteam-memo-ui-done.yaml:1)
+- [../front-ai-trading-system/.coordination/requests/CW-04-redteam-memo-ui-done.yaml](/home/lupin/code/front-ai-trading-system/.coordination/requests/CW-04-redteam-memo-ui-done.yaml:1)
   pins `source_commit: c94f63082eae1667ed919353d62c85180d7bafba`
-- [../front-ai-trading-system/.coordination/requests/CW-04-redteam-memo-frontend-feedback.yaml](/home/edna/code/front-ai-trading-system/.coordination/requests/CW-04-redteam-memo-frontend-feedback.yaml:1)
+- [../front-ai-trading-system/.coordination/requests/CW-04-redteam-memo-frontend-feedback.yaml](/home/lupin/code/front-ai-trading-system/.coordination/requests/CW-04-redteam-memo-frontend-feedback.yaml:1)
   pins `source_commit: c94f63082eae1667ed919353d62c85180d7bafba`
 
 ### 4.3 The replay bundle is now Git-visible and replay-clean

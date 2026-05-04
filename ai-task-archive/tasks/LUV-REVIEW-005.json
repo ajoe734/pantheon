@@ -16,7 +16,7 @@
     "artifacts": [
       "../front-ai-trading-system/.coordination/responses/PKT-002-incident-home-contract-ready.yaml",
       ".coordination/responses/PKT-002-incident-home-lovable-ui-task.yaml",
-      "/home/edna/code/pantheon/.coordination/responses/PKT-002-incident-home-lovable-prompt.md",
+      "/home/lupin/code/pantheon/.coordination/responses/PKT-002-incident-home-lovable-prompt.md",
       ".coordination/requests/PKT-002-incident-home-ui-done.yaml",
       ".coordination/requests/PKT-002-incident-home-frontend-feedback.yaml",
       ".coordination/requests/PKT-002-incident-home-bff-gap.yaml"
@@ -34,7 +34,7 @@
     "coordination_paths": {
       "contract_ready": "../front-ai-trading-system/.coordination/responses/PKT-002-incident-home-contract-ready.yaml",
       "lovable_task": ".coordination/responses/PKT-002-incident-home-lovable-ui-task.yaml",
-      "lovable_prompt": "/home/edna/code/pantheon/.coordination/responses/PKT-002-incident-home-lovable-prompt.md",
+      "lovable_prompt": "/home/lupin/code/pantheon/.coordination/responses/PKT-002-incident-home-lovable-prompt.md",
       "ui_done": ".coordination/requests/PKT-002-incident-home-ui-done.yaml",
       "frontend_feedback": ".coordination/requests/PKT-002-incident-home-frontend-feedback.yaml",
       "bff_gap": ".coordination/requests/PKT-002-incident-home-bff-gap.yaml"

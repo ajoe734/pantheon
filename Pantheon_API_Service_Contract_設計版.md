@@ -1245,7 +1245,7 @@ sequenceDiagram
 ### 9.3 OpenClaw 外部整合
 建議以 `openclaw-gateway-adapter` 封裝，不讓前台與 domain service 直接懂 OpenClaw session 細節。
 
-### 9.4 `lean-platform`
+### 9.4 `pantheon-lean`
 作為 runtime substrate；Pantheon 僅做 control-plane binding 與 telemetry capture。
 
 ---

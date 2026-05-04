@@ -110,7 +110,7 @@
       "task_id": "EXEC-FRONT-EW05-001",
       "from": "Codex2",
       "to": "Claude",
-      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Error: ENOENT: no such file or directory, open '/home/edna/code/front-ai-trading-system/vite.config.ts.timestamp-1776687865252-01e3e9239cbe1.mjs'",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Error: ENOENT: no such file or directory, open '/home/lupin/code/front-ai-trading-system/vite.config.ts.timestamp-1776687865252-01e3e9239cbe1.mjs'",
       "status": "done",
       "created_at": "2026-04-20T12:28:05Z",
       "resolved_at": "2026-04-20T12:36:39Z"

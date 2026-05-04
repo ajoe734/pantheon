@@ -2,7 +2,7 @@
 set -euo pipefail
 
 HOST="${PANTHEON_REMOTE_HOST:-pantheon-gcp}"
-REMOTE_PATH="${PANTHEON_REMOTE_PATH:-/home/edna/code/pantheon}"
+REMOTE_PATH="${PANTHEON_REMOTE_PATH:-/home/lupin/code/pantheon}"
 SUPERVISOR_SESSION="${PANTHEON_REMOTE_SUPERVISOR_SESSION:-pantheon-supervisor}"
 ACTION="${1:-status}"
 

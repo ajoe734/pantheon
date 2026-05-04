@@ -31,7 +31,7 @@ The owner addressed the previous read-time transition bug:
 ## Verification Run
 
 ```bash
-PYTHONPATH=/home/edna/code/pantheon:/home/edna/code/pantheon/services/openclaw-gateway-adapter \
+PYTHONPATH=/home/lupin/code/pantheon:/home/lupin/code/pantheon/services/openclaw-gateway-adapter \
   python3 -m pytest services/openclaw-gateway-adapter -q
 # 61 passed
 ```

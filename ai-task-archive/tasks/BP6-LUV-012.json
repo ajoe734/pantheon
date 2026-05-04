@@ -80,7 +80,7 @@
       "task_id": "BP6-LUV-012",
       "from": "Codex2",
       "to": "Codex",
-      "message": "Incident Home loop completed and artifacts synced. Verified front repo IncidentHome against PKT-002 contract: shared BFF client only, merged degradation banner, kill-switch degraded/unavailable states, no open API gap. Updated .coordination/requests/PKT-002-incident-home-ui-done.yaml, added PKT-002-incident-home-frontend-feedback.yaml, refreshed feedback/QA docs, and revalidated with eslint plus npm run build in /home/edna/code/front-ai-trading-system. Incident Action Drawer artifacts were already implementation-complete.",
+      "message": "Incident Home loop completed and artifacts synced. Verified front repo IncidentHome against PKT-002 contract: shared BFF client only, merged degradation banner, kill-switch degraded/unavailable states, no open API gap. Updated .coordination/requests/PKT-002-incident-home-ui-done.yaml, added PKT-002-incident-home-frontend-feedback.yaml, refreshed feedback/QA docs, and revalidated with eslint plus npm run build in /home/lupin/code/front-ai-trading-system. Incident Action Drawer artifacts were already implementation-complete.",
       "status": "done",
       "created_at": "2026-04-17T02:41:26Z",
       "resolved_at": "2026-04-17T02:57:46Z"

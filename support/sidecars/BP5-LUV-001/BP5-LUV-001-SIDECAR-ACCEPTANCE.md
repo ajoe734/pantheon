@@ -43,7 +43,7 @@ This is a **support artifact only**. It does not modify canonical truth, L1 poli
 | Item | Finding |
 |------|---------|
 | Coordination task file | `.coordination/responses/PKT-001-governance-review-queue-lovable-ui-task.yaml` — `status: ready` |
-| Frontend feedback request | `/home/edna/code/front-ai-trading-system/.coordination/requests/PKT-001-governance-review-queue-frontend-feedback.yaml` — `status: blocked` |
+| Frontend feedback request | `/home/lupin/code/front-ai-trading-system/.coordination/requests/PKT-001-governance-review-queue-frontend-feedback.yaml` — `status: blocked` |
 | Feedback artifacts | `front-ai-trading-system/docs/pantheon-feedback/PKT-001-governance-review-queue/` — **four files present** |
 | **Bundle genuinely returned?** | **YES — returned and consistent, but blocked by infrastructure** |
 
@@ -61,7 +61,7 @@ This is a **support artifact only**. It does not modify canonical truth, L1 poli
 
 Both F-042 and PKT-001 share a single root cause:
 
-> The `front-ai-trading-system` sibling checkout at `/home/edna/code/front-ai-trading-system` is **mirror-only for coordination/docs purposes**. It currently has `.git/`, `.coordination/`, and `docs/`, but no actual application source tree (`src/`), package manifest, or existing BFF client implementation (`src/lib/bffClient.ts`).
+> The `front-ai-trading-system` sibling checkout at `/home/lupin/code/front-ai-trading-system` is **mirror-only for coordination/docs purposes**. It currently has `.git/`, `.coordination/`, and `docs/`, but no actual application source tree (`src/`), package manifest, or existing BFF client implementation (`src/lib/bffClient.ts`).
 
 This prevents front workers from implementing UI and returning meaningful feedback.
 
@@ -79,7 +79,7 @@ BP5-LUV-001 (parent — review Lovable feedback bundles)
   │     returned (4 files), blocked by: same infra issue
   │
   └── Both unblock after:
-        [INFRA] Replace mirror-only /home/edna/code/front-ai-trading-system
+        [INFRA] Replace mirror-only /home/lupin/code/front-ai-trading-system
                 with real ajoe734/front-ai-trading-system checkout
                   │
                   ├── Re-dispatch F-042 front worker

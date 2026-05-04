@@ -2,7 +2,7 @@
 set -euo pipefail
 
 HOST="${PANTHEON_REMOTE_HOST:-pantheon-gcp}"
-REMOTE_PATH="${PANTHEON_REMOTE_PATH:-/home/edna/code/pantheon}"
+REMOTE_PATH="${PANTHEON_REMOTE_PATH:-/home/lupin/code/pantheon}"
 MODE="${PANTHEON_REMOTE_SYNC_MODE:-code}"
 DRY_RUN=0
 

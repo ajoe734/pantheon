@@ -102,14 +102,14 @@ Review conclusion:
 
 ### 4.3 Anchor references
 
-- [docs/bff/RW-02-search.md](/home/edna/code/pantheon/docs/bff/RW-02-search.md:1)
-- [docs/screens/RW-02-search.md](/home/edna/code/pantheon/docs/screens/RW-02-search.md:1)
-- [docs/examples/RW-02-search.json](/home/edna/code/pantheon/docs/examples/RW-02-search.json:1)
-- [docs/pantheon-handoffs/RW-02-search/FRONTEND_CHANGE_SPEC.md](/home/edna/code/pantheon/docs/pantheon-handoffs/RW-02-search/FRONTEND_CHANGE_SPEC.md:1)
-- [.coordination/responses/RW-02-search-contract-ready.yaml](/home/edna/code/pantheon/.coordination/responses/RW-02-search-contract-ready.yaml:1)
-- [.coordination/responses/RW-02-search-lovable-ui-task.yaml](/home/edna/code/pantheon/.coordination/responses/RW-02-search-lovable-ui-task.yaml:1)
-- [.coordination/reviews/RW-02-SEARCH-001-review.md](/home/edna/code/pantheon/.coordination/reviews/RW-02-SEARCH-001-review.md:1)
-- [ai-task-archive/tasks/RW-02-SEARCH-001.json](/home/edna/code/pantheon/ai-task-archive/tasks/RW-02-SEARCH-001.json:1)
+- [docs/bff/RW-02-search.md](/home/lupin/code/pantheon/docs/bff/RW-02-search.md:1)
+- [docs/screens/RW-02-search.md](/home/lupin/code/pantheon/docs/screens/RW-02-search.md:1)
+- [docs/examples/RW-02-search.json](/home/lupin/code/pantheon/docs/examples/RW-02-search.json:1)
+- [docs/pantheon-handoffs/RW-02-search/FRONTEND_CHANGE_SPEC.md](/home/lupin/code/pantheon/docs/pantheon-handoffs/RW-02-search/FRONTEND_CHANGE_SPEC.md:1)
+- [.coordination/responses/RW-02-search-contract-ready.yaml](/home/lupin/code/pantheon/.coordination/responses/RW-02-search-contract-ready.yaml:1)
+- [.coordination/responses/RW-02-search-lovable-ui-task.yaml](/home/lupin/code/pantheon/.coordination/responses/RW-02-search-lovable-ui-task.yaml:1)
+- [.coordination/reviews/RW-02-SEARCH-001-review.md](/home/lupin/code/pantheon/.coordination/reviews/RW-02-SEARCH-001-review.md:1)
+- [ai-task-archive/tasks/RW-02-SEARCH-001.json](/home/lupin/code/pantheon/ai-task-archive/tasks/RW-02-SEARCH-001.json:1)
 
 ---
 

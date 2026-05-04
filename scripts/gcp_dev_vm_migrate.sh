@@ -18,7 +18,7 @@ NETWORK="${NETWORK:-default}"
 PROVISIONING_MODEL="${PROVISIONING_MODEL:-STANDARD}"
 SPOT_TERMINATION_ACTION="${SPOT_TERMINATION_ACTION:-STOP}"
 REMOTE_USER="${REMOTE_USER:-edna}"
-SOURCE_DIR="${SOURCE_DIR:-/home/edna/code/pantheon}"
+SOURCE_DIR="${SOURCE_DIR:-/home/lupin/code/pantheon}"
 REMOTE_DIR="${REMOTE_DIR:-/home/${REMOTE_USER}/code/pantheon}"
 BACKUP_ROOT="${BACKUP_ROOT:-/tmp/pantheon-dev-vm-migration}"
 SKIP_CREATE="${SKIP_CREATE:-false}"
@@ -41,8 +41,8 @@ Options are supplied as environment variables:
   SPOT_TERMINATION_ACTION
                       STOP or DELETE when PROVISIONING_MODEL=SPOT. Default: STOP
   REMOTE_USER         Linux user on the VM. Default: edna
-  SOURCE_DIR          Local Pantheon repo path. Default: /home/edna/code/pantheon
-  REMOTE_DIR          Remote Pantheon repo path. Default: /home/edna/code/pantheon
+  SOURCE_DIR          Local Pantheon repo path. Default: /home/lupin/code/pantheon
+  REMOTE_DIR          Remote Pantheon repo path. Default: /home/lupin/code/pantheon
   SKIP_CREATE=true    Do not create the VM; only migrate/start.
   SKIP_VOLUME_COPY=true
                       Do not copy Docker volumes; useful for a clean dev VM.

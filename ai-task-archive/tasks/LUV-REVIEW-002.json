@@ -16,7 +16,7 @@
     "artifacts": [
       "../front-ai-trading-system/.coordination/responses/PKT-001-deployment-review-contract-ready.yaml",
       ".coordination/responses/PKT-001-deployment-review-lovable-ui-task.yaml",
-      "/home/edna/code/pantheon/.coordination/responses/PKT-001-deployment-review-lovable-prompt.md",
+      "/home/lupin/code/pantheon/.coordination/responses/PKT-001-deployment-review-lovable-prompt.md",
       ".coordination/requests/PKT-001-deployment-review-ui-done.yaml",
       ".coordination/requests/PKT-001-deployment-review-frontend-feedback.yaml"
     ],
@@ -33,7 +33,7 @@
     "coordination_paths": {
       "contract_ready": "../front-ai-trading-system/.coordination/responses/PKT-001-deployment-review-contract-ready.yaml",
       "lovable_task": ".coordination/responses/PKT-001-deployment-review-lovable-ui-task.yaml",
-      "lovable_prompt": "/home/edna/code/pantheon/.coordination/responses/PKT-001-deployment-review-lovable-prompt.md",
+      "lovable_prompt": "/home/lupin/code/pantheon/.coordination/responses/PKT-001-deployment-review-lovable-prompt.md",
       "ui_done": ".coordination/requests/PKT-001-deployment-review-ui-done.yaml",
       "frontend_feedback": ".coordination/requests/PKT-001-deployment-review-frontend-feedback.yaml",
       "bff_gap": null

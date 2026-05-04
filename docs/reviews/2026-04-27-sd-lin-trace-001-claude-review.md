@@ -89,8 +89,8 @@ deep BFF joins.
 ## Verification Reproduction
 
 ```text
-PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages \
-  /home/edna/.local/bin/pytest \
+PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages \
+  /home/lupin/.local/bin/pytest \
     services/telemetry/lineage_read/test_service.py \
     services/telemetry/test_main_routes.py -q
 ......................................                                   [100%]

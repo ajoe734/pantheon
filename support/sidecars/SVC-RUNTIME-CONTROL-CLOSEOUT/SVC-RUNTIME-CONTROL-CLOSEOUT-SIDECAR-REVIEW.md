@@ -63,7 +63,7 @@ Primary evidence inspected:
 Focused verification run by this sidecar:
 
 ```bash
-PYTHONPATH=/home/edna/.local/lib/python3.12/site-packages python3.12 -m pytest \
+PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages python3.12 -m pytest \
   services/runtime-manager/test_internal_api_routes.py \
   services/control_plane/test_internal_api_incident.py \
   services/control-plane/bff/test_command_executor.py -q

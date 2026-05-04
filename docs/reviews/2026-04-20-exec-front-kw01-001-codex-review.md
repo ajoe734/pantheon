@@ -8,7 +8,7 @@ Status: changes requested
 
 1. The `ui-done` handoff is not replayable because the referenced `source_commit` does not contain the KW-01 implementation.
 
-- `/home/edna/code/front-ai-trading-system/.coordination/requests/KW-01-institutional-memory-ui-done.yaml:1-39` declares `source_commit: fc3b98d6f2b7fdac9927ccd46202cae33e528f7c` and claims the list/detail screens plus route wiring are implemented.
+- `/home/lupin/code/front-ai-trading-system/.coordination/requests/KW-01-institutional-memory-ui-done.yaml:1-39` declares `source_commit: fc3b98d6f2b7fdac9927ccd46202cae33e528f7c` and claims the list/detail screens plus route wiring are implemented.
 - In the front repo, `git status --short src/pages/knowledge .coordination/requests/KW-01-institutional-memory-ui-done.yaml` still shows `src/pages/knowledge/` and the `ui-done` handoff as untracked worktree files, and `git diff --name-status HEAD -- src/App.tsx src/components/AppSidebar.tsx src/components/WorkbenchBreadcrumb.tsx src/lib/bffClient.ts` still shows the route/client wiring as unstaged modifications against `HEAD`.
 - `git log --all -- src/pages/knowledge/InstitutionalMemoryList.tsx src/pages/knowledge/InstitutionalMemoryDetail.tsx src/pages/knowledge/InstitutionalMemoryTypes.ts` returns no commits, so the transport SHA in the handoff cannot reproduce the delivered UI.
 - Result: Pantheon cannot audit or replay the delivery from the declared commit, so the handoff is not yet truthful.

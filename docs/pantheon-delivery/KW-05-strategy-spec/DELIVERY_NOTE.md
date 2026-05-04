@@ -74,13 +74,13 @@ Pantheon confirmed the transport tuple is now replay-clean:
   - `docs/examples/KW-05-strategy-spec.json`
   - `docs/pantheon-handoffs/KW-05-strategy-spec/FRONTEND_CHANGE_SPEC.md`
 - Re-checked the Git-visible front branch:
-  - `git -C /home/edna/code/front-ai-trading-system rev-parse origin/pkt-004-detail-fix`
-  - `git -C /home/edna/code/front-ai-trading-system show origin/pkt-004-detail-fix:.coordination/requests/KW-05-strategy-spec-ui-done.yaml`
-  - `git -C /home/edna/code/front-ai-trading-system show origin/pkt-004-detail-fix:.coordination/requests/KW-05-strategy-spec-frontend-feedback.yaml`
-  - `git -C /home/edna/code/front-ai-trading-system branch -r --contains 6321613cff3c49b11a7619e0f9170217a27a7b17`
-  - `git -C /home/edna/code/front-ai-trading-system merge-base --is-ancestor 6321613cff3c49b11a7619e0f9170217a27a7b17 origin/pkt-004-detail-fix`
+  - `git -C /home/lupin/code/front-ai-trading-system rev-parse origin/pkt-004-detail-fix`
+  - `git -C /home/lupin/code/front-ai-trading-system show origin/pkt-004-detail-fix:.coordination/requests/KW-05-strategy-spec-ui-done.yaml`
+  - `git -C /home/lupin/code/front-ai-trading-system show origin/pkt-004-detail-fix:.coordination/requests/KW-05-strategy-spec-frontend-feedback.yaml`
+  - `git -C /home/lupin/code/front-ai-trading-system branch -r --contains 6321613cff3c49b11a7619e0f9170217a27a7b17`
+  - `git -C /home/lupin/code/front-ai-trading-system merge-base --is-ancestor 6321613cff3c49b11a7619e0f9170217a27a7b17 origin/pkt-004-detail-fix`
 - Verified the reviewed front snapshot still type-checks:
-  - `cd /home/edna/code/front-ai-trading-system && npx tsc --noEmit`
+  - `cd /home/lupin/code/front-ai-trading-system && npx tsc --noEmit`
 
 ## Files Updated
 

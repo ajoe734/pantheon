@@ -201,6 +201,7 @@ EXECUTION_SA_ID="pantheon-${ENV_NAME}-execution"
 CONTROL_PLANE_SA="${CONTROL_PLANE_SA_ID}@${PROJECT_ID}.iam.gserviceaccount.com"
 WORKER_SA="${WORKER_SA_ID}@${PROJECT_ID}.iam.gserviceaccount.com"
 EXECUTION_SA="${EXECUTION_SA_ID}@${PROJECT_ID}.iam.gserviceaccount.com"
+COMPUTE_DEFAULT_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 
 WIF_PRINCIPAL="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.repository/${GITHUB_REPO}"
 WIF_PROVIDER_RESOURCE="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/providers/${PROVIDER_ID}"
@@ -289,6 +290,12 @@ info "Step 4/6: grant GitHub -> Cloud Build submit permissions"
 ensure_project_role "serviceAccount:${CLOUD_BUILD_SA}" "roles/cloudbuild.builds.editor"
 ensure_project_role "serviceAccount:${CLOUD_BUILD_SA}" "roles/artifactregistry.writer"
 ensure_project_role "serviceAccount:${CLOUD_BUILD_SA}" "roles/storage.objectAdmin"
+ensure_project_role "serviceAccount:${CLOUD_BUILD_SA}" "roles/serviceusage.serviceUsageConsumer"
+
+run gcloud iam service-accounts add-iam-policy-binding "${COMPUTE_DEFAULT_SA}" \
+  --project="${PROJECT_ID}" \
+  --member="serviceAccount:${CLOUD_BUILD_SA}" \
+  --role="roles/iam.serviceAccountUser"
 
 run gcloud iam service-accounts add-iam-policy-binding "${CLOUD_BUILD_SA}" \
   --project="${PROJECT_ID}" \
