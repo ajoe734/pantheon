@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "SVC-BFF-IDP-STAGING-INTEGRATION-HARDENING",
+  "archived_at": "2026-05-04T05:25:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-BFF-IDP-STAGING-INTEGRATION-HARDENING",
+    "title": "Harden BFF OIDC/JWKS staging IdP integration",
+    "summary_zh": "把 BFF enterprise IdP 從 env-capable 補到 staging-ready：OIDC discovery/JWKS rotation/error policy、claim-to-role/MFA mapping、negative tests 與 staging env smoke。",
+    "phase": "Blueprint production hardening follow-up 2026-05-04",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-BFF-AUTH-FACADE-HARDENING",
+      "SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4"
+    ],
+    "artifacts": [
+      "services/control-plane/bff",
+      "env/prod-control.env.example",
+      "docker-compose.control.yml",
+      "docs/deployment",
+      "tests"
+    ],
+    "acceptance": [
+      "OIDC discovery and JWKS rotation error policy are tested",
+      "claim role and MFA mapping are configurable and covered by negative tests",
+      "staging env example requires real issuer audience and JWKS or discovery URL",
+      "auth stub remains dev/test only"
+    ],
+    "next": "Review approved by Claude; finalized task-scoped commit faf80bb2. Verification: 68 BFF auth/env tests passed, 4 read-store cutoff tests passed, compose config rendered clean, git diff --check clean.",
+    "last_update": "2026-05-04T05:25:24Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-gap-materialization-20260504",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過",
+      "68 passed OIDC/JWKS auth tests",
+      "4 passed staging read store cutoff tests",
+      "compose config renders clean",
+      "stub tokens rejected in JWT/JWKS modes",
+      "strict role-map denial HTTP coverage",
+      "MFA negative claim coverage"
+    ],
+    "review_file": "docs/reviews/2026-05-04-svc-bff-idp-staging-integration-hardening-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-04T05:25:24Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "faf80bb29cb2ee82d29d1b508e4e3fb55b1f4df4",
+      "commit_subject": "SVC-BFF-IDP-STAGING-INTEGRATION-HARDENING harden staging IdP auth",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-BFF-IDP-STAGING-INTEGRATION-HARDENING",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 22,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 12,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-BFF-IDP-STAGING-INTEGRATION-HARDENING",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implemented BFF IdP staging integration hardening follow-up: added OIDC negative MFA claim coverage, strict role-map admin-route denial coverage, staging env/compose IdP contract smoke test, and updated the BFF OIDC staging deployment note/env comment. Verification: python3 -m pytest services/control-plane/bff/test_bff_auth_facade.py services/control-plane/bff/test_bff_oidc_staging_env_contract.py -q (68 passed); python3 -m pytest services/control-plane/bff/test_staging_read_store_cutoff_contract.py -q (4 passed); docker compose --env-file env/prod-control.env.example -f docker-compose.control.yml config --quiet; git diff --check.",
+      "status": "done",
+      "created_at": "2026-05-04T05:17:30Z",
+      "resolved_at": "2026-05-04T05:21:33Z"
+    },
+    {
+      "task_id": "SVC-BFF-IDP-STAGING-INTEGRATION-HARDENING",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all acceptance criteria met. 68 auth facade tests pass, OIDC discovery/JWKS rotation/error sanitization covered, strict role-map admin-route denial verified at HTTP level, negative MFA claim tests present, staging env/compose posture confirmed. Returned to Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-05-04T05:21:33Z",
+      "resolved_at": "2026-05-04T05:25:24Z"
+    }
+  ],
+  "blockers": []
+}

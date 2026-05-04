@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-04T04:44:21Z",
+  "updated_at": "2026-05-04T05:58:06Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -97,7 +97,7 @@
       "current_task_ids": [],
       "branch": "feat/claude-execution-control",
       "next": "",
-      "last_update": "2026-05-04T04:41:51Z"
+      "last_update": "2026-05-04T05:42:38Z"
     },
     {
       "name": "Gemini",
@@ -121,14 +121,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY",
-        "FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/codex-collab-system",
-      "next": "Auto-reassigned ownership from Claude to Codex after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1777874400,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_dis. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-05-04T04:41:57Z"
+      "next": "",
+      "last_update": "2026-05-04T05:26:16Z"
     },
     {
       "name": "Codex2",
@@ -138,14 +135,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
-      "current_task_ids": [
-        "SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2",
-        "SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/codex-collab-system",
-      "next": "Codex2 picked up wave2; validating partial policy/lifecycle work and adding crawler-indexer cutoff tests.",
-      "last_update": "2026-05-04T04:43:16Z"
+      "next": "",
+      "last_update": "2026-05-04T05:54:13Z"
     },
     {
       "name": "Copilot",
@@ -189,230 +183,7 @@
       "last_update": "2026-05-04T04:28:33Z"
     }
   ],
-  "tasks": [
-    {
-      "id": "SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2",
-      "title": "Upgrade source/search to crawler-indexer platform baseline",
-      "summary_zh": "把 source/search 從 bounded connector/indexer 推到下一層 platform：crawler/indexer policy registry、connector lifecycle、scheduled refresh、license/rate/PIT/audit guard，以及 durable-only search cutoff。",
-      "phase": "Blueprint production hardening follow-up 2026-05-04",
-      "owner": "Codex2",
-      "reviewer": "Claude",
-      "status": "in_progress",
-      "depends_on": [
-        "SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER"
-      ],
-      "artifacts": [
-        "services/source_ingestion",
-        "services/search",
-        "services/control-plane/bff",
-        "docker-compose.yml",
-        "docs/03/SD-03_source_knowledge_evidence.md",
-        "tests"
-      ],
-      "acceptance": [
-        "connector registry supports bounded crawler adapters with allowlists and rate limits",
-        "index refresh is scheduled and materialized without query-time request documents",
-        "search durable-only mode has staging/prod cutoff tests",
-        "BFF exposes crawler/indexer health and freshness without direct documents compatibility as normal path"
-      ],
-      "next": "Codex2 picked up wave2; validating partial policy/lifecycle work and adding crawler-indexer cutoff tests.",
-      "last_update": "2026-05-04T04:43:16Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-gap-materialization-20260504",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E",
-      "title": "Close OSS/research/learning activation-ready E2E wiring",
-      "summary_zh": "補齊 OSS/research/learning activation-ready 端到端串接：Qlib/TRL/RL/W&B scaffold 都能在 offline/test/smoke 模式跑通；production online/live activation 仍 fail-closed。",
-      "phase": "Blueprint production hardening follow-up 2026-05-04",
-      "owner": "Codex2",
-      "reviewer": "Codex",
-      "status": "review",
-      "depends_on": [
-        "SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE"
-      ],
-      "artifacts": [
-        "services/research",
-        "services/policy-learning",
-        "services/research-worker-gateway",
-        "services/control-plane/bff",
-        "DEFERRED_OSS_ACTIVATION_MAP.md",
-        "RESEARCH_BACKEND_MATURITY_MATRIX.md",
-        "scripts"
-      ],
-      "acceptance": [
-        "BFF and gateway expose one read-only operator view for research learning and OSS capabilities",
-        "offline/test smoke covers qlib trl rl wandb scaffolds",
-        "production paper canary live and online sdk paths remain rejected by default",
-        "no broker registry governance or capital writes occur during default smoke"
-      ],
-      "next": "Ready for review. Commit 5818e8f3 adds task evidence and updates OSS activation docs/maturity records; runtime code already satisfied E2E acceptance. Verification: smoke_oss_activation_ready_matrix 16/16 passed with registry/governance/broker/live writes false; focused pytest set passed 51 in 30.47s. Production paper/canary/live and W&B online SDK paths remain fail-closed by default.",
-      "last_update": "2026-05-04T04:39:29Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-gap-materialization-20260504",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY",
-      "title": "Make OpenClaw broker adapter activation-ready without live enablement",
-      "summary_zh": "把 OpenClaw facade 往 ready-to-enable adapter 推進：完成 broker adapter interface、sandbox/paper contract smoke、session lifecycle evidence；live broker execution 仍 gate closed。",
-      "phase": "Blueprint production hardening follow-up 2026-05-04",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [
-        "SVC-BLUEPRINT-OPENCLAW-READY-FACADE"
-      ],
-      "artifacts": [
-        "services/openclaw-gateway-adapter",
-        "services/control-plane/bff",
-        "docker-compose.yml",
-        "OPENCLAW_RUNTIME_CONTRACT.md",
-        "scripts",
-        "tests"
-      ],
-      "acceptance": [
-        "adapter interface has explicit sandbox paper live capability states",
-        "sandbox or fake-paper smoke proves place cancel readback reconcile contract without real capital",
-        "live and canary broker execution remain fail-closed",
-        "BFF surfaces gate reason and adapter readiness without claiming live activation"
-      ],
-      "next": "Auto-reassigned ownership from Claude to Codex after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1777874400,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_dis. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-05-04T04:41:57Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-gap-materialization-20260504",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY",
-      "title": "Make execution sandbox/canary activation-ready while live stays gated",
-      "summary_zh": "把 execution / pantheon-lean 從 paper smoke 補到 sandbox/canary activation-ready：test-key adapter、order cancel readback reconcile smoke、canary/live promotion gate，以及 no-real-capital evidence。",
-      "phase": "Blueprint production hardening follow-up 2026-05-04",
-      "owner": "Codex2",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [
-        "SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD",
-        "SVC-BLUEPRINT-PAPER-BRACKET-BASELINE"
-      ],
-      "artifacts": [
-        "services/execution",
-        "services/runtime-manager",
-        "lean",
-        "docker-compose.exec.yml",
-        "scripts",
-        "tests",
-        "docs/deployment"
-      ],
-      "acceptance": [
-        "sandbox/test-key order lifecycle smoke covers place cancel readback reconcile",
-        "canary/live promotion remains blocked without explicit gate and capital binding",
-        "smoke records no-real-capital evidence and broker-secret boundary",
-        "lean-platform targets remain rejected and pantheon-lean stays canonical"
-      ],
-      "next": "Ownership updated",
-      "last_update": "2026-05-04T04:32:28Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-gap-materialization-20260504",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "SVC-BFF-HA-LB-DEFER-TRACKING",
-      "title": "Record BFF HA/LB as explicit deferred topology item",
-      "summary_zh": "只把 BFF HA/LB 明確記為 deferred，不實作 replicas/LB；避免未來把 staging dual-VM 誤讀成 BFF HA 已完成。",
-      "phase": "Blueprint production hardening follow-up 2026-05-04",
-      "owner": "Codex2",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT"
-      ],
-      "artifacts": [
-        "BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md",
-        "TARGET_ARCHITECTURE.md",
-        "docker-compose.control.yml",
-        "docs/deployment"
-      ],
-      "acceptance": [
-        "documents state BFF HA is intentionally deferred",
-        "compose remains single BFF instance for current staging baseline",
-        "no LB or replica implementation is added",
-        "decision explains low operator concurrency and future trigger conditions"
-      ],
-      "next": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
-      "last_update": "2026-05-04T04:40:24Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-gap-materialization-20260504",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "SVC-BFF-IDP-STAGING-INTEGRATION-HARDENING",
-      "title": "Harden BFF OIDC/JWKS staging IdP integration",
-      "summary_zh": "把 BFF enterprise IdP 從 env-capable 補到 staging-ready：OIDC discovery/JWKS rotation/error policy、claim-to-role/MFA mapping、negative tests 與 staging env smoke。",
-      "phase": "Blueprint production hardening follow-up 2026-05-04",
-      "owner": "Codex2",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [
-        "SVC-BFF-AUTH-FACADE-HARDENING",
-        "SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4"
-      ],
-      "artifacts": [
-        "services/control-plane/bff",
-        "env/prod-control.env.example",
-        "docker-compose.control.yml",
-        "docs/deployment",
-        "tests"
-      ],
-      "acceptance": [
-        "OIDC discovery and JWKS rotation error policy are tested",
-        "claim role and MFA mapping are configurable and covered by negative tests",
-        "staging env example requires real issuer audience and JWKS or discovery URL",
-        "auth stub remains dev/test only"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-04T04:26:42Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-gap-materialization-20260504",
-      "auto_generated": true,
-      "mutates_canonical": true
-    },
-    {
-      "id": "FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT",
-      "title": "Close frontend staging repo hygiene and publish readiness",
-      "summary_zh": "把 front-ai-trading-system 從 production route guard pass 推到 repo hygiene/publish closeout：清理或歸檔 dirty coordination/docs/handoff、確認 dev/demo module 不進 staging-live route graph、必要時提交並準備 push。",
-      "phase": "Blueprint production hardening follow-up 2026-05-04",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [
-        "SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF"
-      ],
-      "artifacts": [
-        "/home/lupin/code/front-ai-trading-system",
-        "/home/lupin/code/pantheon/docs/reviews",
-        "/home/lupin/code/pantheon/ai-status.json"
-      ],
-      "acceptance": [
-        "front repo dirty changes are classified as keep archive or ignore with no accidental deletion",
-        "staging-live production route guard and build still pass",
-        "dev/demo modules remain outside production route graph",
-        "closeout records front branch commit and push readiness"
-      ],
-      "next": "Supervisor preempted FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
-      "last_update": "2026-05-04T04:36:48Z",
-      "task_class": "execution",
-      "auto_created_by": "codex-gap-materialization-20260504",
-      "auto_generated": true,
-      "mutates_canonical": false
-    }
-  ],
+  "tasks": [],
   "handoffs": [
     {
       "task_id": "LUV-REVIEW-007",
@@ -422,30 +193,6 @@
       "status": "done",
       "created_at": "2026-04-17T11:50:38Z",
       "resolved_at": "2026-04-17T12:39:53Z"
-    },
-    {
-      "task_id": "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY",
-      "from": "Claude2",
-      "to": "Gemini2",
-      "message": "Helper-claimed by Gemini2 while Claude2 is dispatch-paused.",
-      "status": "pending",
-      "created_at": "2026-05-04T04:28:33Z"
-    },
-    {
-      "task_id": "SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Ready for review. Commit 5818e8f3 adds task evidence and updates OSS activation docs/maturity records; runtime code already satisfied E2E acceptance. Verification: smoke_oss_activation_ready_matrix 16/16 passed with registry/governance/broker/live writes false; focused pytest set passed 51 in 30.47s. Production paper/canary/live and W&B online SDK paths remain fail-closed by default.",
-      "status": "pending",
-      "created_at": "2026-05-04T04:39:29Z"
-    },
-    {
-      "task_id": "SVC-BFF-HA-LB-DEFER-TRACKING",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
-      "status": "pending",
-      "created_at": "2026-05-04T04:40:24Z"
     }
   ],
   "blockers": [],
@@ -496,22 +243,22 @@
       "todo": 0
     },
     "Codex": {
-      "total": 2,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 2
+      "todo": 0
     },
     "Codex2": {
-      "total": 5,
-      "active": 2,
+      "total": 0,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 1,
+      "review": 0,
       "review_approved": 0,
-      "todo": 4
+      "todo": 0
     },
     "Copilot": {
       "total": 0,

@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E",
+  "archived_at": "2026-05-04T04:50:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E",
+    "title": "Close OSS/research/learning activation-ready E2E wiring",
+    "summary_zh": "補齊 OSS/research/learning activation-ready 端到端串接：Qlib/TRL/RL/W&B scaffold 都能在 offline/test/smoke 模式跑通；production online/live activation 仍 fail-closed。",
+    "phase": "Blueprint production hardening follow-up 2026-05-04",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE"
+    ],
+    "artifacts": [
+      "services/research",
+      "services/policy-learning",
+      "services/research-worker-gateway",
+      "services/control-plane/bff",
+      "DEFERRED_OSS_ACTIVATION_MAP.md",
+      "RESEARCH_BACKEND_MATURITY_MATRIX.md",
+      "scripts"
+    ],
+    "acceptance": [
+      "BFF and gateway expose one read-only operator view for research learning and OSS capabilities",
+      "offline/test smoke covers qlib trl rl wandb scaffolds",
+      "production paper canary live and online sdk paths remain rejected by default",
+      "no broker registry governance or capital writes occur during default smoke"
+    ],
+    "next": "Finalized activation-ready OSS/research/learning E2E closeout. Task commits: 5818e8f3 evidence baseline and f56f2422 owner closeout evidence. Verification rerun: smoke_oss_activation_ready_matrix 16/16 passed with registry/governance/broker/live writes false; focused pytest set passed 51 in 27.64s. Production paper/canary/live and online SDK activation remain fail-closed by default.",
+    "last_update": "2026-05-04T04:50:19Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-gap-materialization-20260504",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Reviewer acceptance: no blocking findings. Commit 5818e8f3 adds the task evidence and OSS activation posture records; current service surfaces satisfy the read-only activation-ready acceptance without opening production activation.",
+      "Verification rerun: /tmp/pantheon-oss-e2e-venv/bin/python scripts/smoke_oss_activation_ready_matrix.py --keep-output => 16/16 passed; forbidden_writes registry/governance/broker/live all false.",
+      "Verification rerun: /tmp/pantheon-oss-e2e-venv/bin/python -m pytest -q scripts/test_smoke_oss_activation_ready_matrix.py scripts/test_smoke_openclaw_activation_ready_e2e.py services/control-plane/bff/test_research_oss_preactivation_contract.py services/research/tests/test_research_orchestrator_http_service.py services/policy-learning/tests/test_policy_learning_http_service.py services/policy-learning/tests/test_policy_learning_gateway_routing.py services/research-worker-gateway/tests/ => 51 passed in 25.87s.",
+      "Concurrent dirty worktree files observed in source/search, OpenClaw, docker-compose/read_store, and status/archive state are not part of this task approval."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-04T04:50:19Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "f56f2422f7a97762df1d1174e07607c35818a79a",
+      "commit_subject": "SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E",
+        "Reviewer": "Codex",
+        "Verification": "/tmp/pantheon-oss-e2e-venv/bin/python scripts/smoke_oss_activation_ready_matrix.py --keep-output => 16/16 passed, forbidden writes false; /tmp/pantheon-oss-e2e-venv/bin/python -m pytest -q scripts/test_smoke_oss_activation_ready_matrix.py scripts/test_smoke_openclaw_activation_ready_e2e.py services/control-plane/bff/test_research_oss_preactivation_contract.py services/research/tests/test_research_orchestrator_http_service.py services/policy-learning/tests/test_policy_learning_http_service.py services/policy-learning/tests/test_policy_learning_gateway_routing.py services/research-worker-gateway/tests/ => 51 passed in 27.64s."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 13,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 7,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review. Commit 5818e8f3 adds task evidence and updates OSS activation docs/maturity records; runtime code already satisfied E2E acceptance. Verification: smoke_oss_activation_ready_matrix 16/16 passed with registry/governance/broker/live writes false; focused pytest set passed 51 in 30.47s. Production paper/canary/live and W&B online SDK paths remain fail-closed by default.",
+      "status": "done",
+      "created_at": "2026-05-04T04:39:29Z",
+      "resolved_at": "2026-05-04T04:46:16Z"
+    },
+    {
+      "task_id": "SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: activation-ready OSS/research/learning E2E acceptance holds. Smoke matrix rerun passed 16/16 with registry/governance/broker/live writes false; focused pytest rerun passed 51 in 25.87s. Owner should finalize with task closeout.",
+      "status": "done",
+      "created_at": "2026-05-04T04:46:16Z",
+      "resolved_at": "2026-05-04T04:50:19Z"
+    }
+  ],
+  "blockers": []
+}

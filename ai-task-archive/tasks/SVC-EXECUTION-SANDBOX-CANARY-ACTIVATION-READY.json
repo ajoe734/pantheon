@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY",
+  "archived_at": "2026-05-04T05:10:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY",
+    "title": "Make execution sandbox/canary activation-ready while live stays gated",
+    "summary_zh": "把 execution / pantheon-lean 從 paper smoke 補到 sandbox/canary activation-ready：test-key adapter、order cancel readback reconcile smoke、canary/live promotion gate，以及 no-real-capital evidence。",
+    "phase": "Blueprint production hardening follow-up 2026-05-04",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD",
+      "SVC-BLUEPRINT-PAPER-BRACKET-BASELINE"
+    ],
+    "artifacts": [
+      "services/execution",
+      "services/runtime-manager",
+      "lean",
+      "docker-compose.exec.yml",
+      "scripts",
+      "tests",
+      "docs/deployment"
+    ],
+    "acceptance": [
+      "sandbox/test-key order lifecycle smoke covers place cancel readback reconcile",
+      "canary/live promotion remains blocked without explicit gate and capital binding",
+      "smoke records no-real-capital evidence and broker-secret boundary",
+      "lean-platform targets remain rejected and pantheon-lean stays canonical"
+    ],
+    "next": "Closeout finalized in task commit 5c7ba7fe after Claude review approval. Evidence archived for IBKR/Shioaji/Kraken sandbox-test-key place/cancel/readback/reconcile lifecycle with no-real-capital proof; runtime-manager canary/live forward activation gate verified; lean bridge and target guards pass. Verification: broker smoke/readiness unittest, runtime-manager service/client tests, py_compile, check_execution_bridge, check_task_targets, LEAN bootstrap tests, pantheon_algo bridge test, docker compose exec config, no-real-capital jq check, task diff check.",
+    "last_update": "2026-05-04T05:10:52Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-gap-materialization-20260504",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：sandbox/test-key lifecycle smoke（IBKR/Shioaji/Kraken 三個 provider）覆蓋 place/cancel/readback/reconcile/no-real-capital；runtime-manager canary/live activation gate 透過 _validate_activation_gate() 強制執行 5 個 promotion gate refs（canary 需 capital_scale_pct/gross_scale_pct，live 還需 canary_observation_ref）；no-real-capital evidence 完整；lean-platform targets 0 violations；服務層 40 tests 通過（HTTP route suite 因 flask 未安裝無法執行已在 review notes 中明確標示，不影響 gate 邏輯覆蓋）",
+      "後續追蹤：owner 完成 closeout commit 後 push 到 upstream"
+    ],
+    "review_file": "docs/deployment/execution-sandbox-canary-activation-ready.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-04T05:10:52Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "5c7ba7fe4208c57f8ffed2c68a061eda9c2129d6",
+      "commit_subject": "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY: finalize activation gate",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY",
+        "Reviewer": "Claude",
+        "- PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/lupin/code/pantheon": "/home/lupin/code/pantheon/lean/Algorithm.Python python3 lean/Algorithm.Python/pantheon_algo/test_base.py"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 27,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 10,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY",
+      "from": "Claude2",
+      "to": "Gemini2",
+      "message": "Helper-claimed by Gemini2 while Claude2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-04T04:28:33Z",
+      "resolved_at": "2026-05-04T04:50:36Z"
+    },
+    {
+      "task_id": "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: sandbox/test-key lifecycle smoke now archives place/cancel/readback/reconcile/no-real-capital packets at docs/deployment/evidence/execution-sandbox-canary-activation-ready/20260504T045936Z; runtime-manager blocks canary/live forward deploys without explicit promotion gate refs and capital binding evidence; pantheon-lean submodule now points at c305155fb so PantheonAlgoBase bridge guard passes. Verification: scripts broker smoke tests, EP5 readiness tests, runtime-manager service/client tests, lean bootstrap tests, check_execution_bridge, check_task_targets, docker compose exec config. Full runtime-manager HTTP route suite is not runnable locally because flask is not installed.",
+      "status": "done",
+      "created_at": "2026-05-04T05:04:25Z",
+      "resolved_at": "2026-05-04T05:07:09Z"
+    },
+    {
+      "task_id": "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Reviewer approved: all four acceptance criteria met. Sandbox lifecycle smoke archived for all three providers; runtime-manager canary/live activation gate enforced; no-real-capital evidence present; lean-platform targets clean. HTTP route suite not runnable (flask absent) but service-layer gate tests fully cover the new enforcement. Returned to Codex2 for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-04T05:07:09Z",
+      "resolved_at": "2026-05-04T05:10:52Z"
+    }
+  ],
+  "blockers": []
+}
