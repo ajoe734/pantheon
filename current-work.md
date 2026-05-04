@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-04 12:43:16
+Last updated: 2026-05-04 12:44:21
 
 ## Objective
 
@@ -37,7 +37,7 @@ Last updated: 2026-05-04 12:43:16
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Supervisor resumed SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4 for finalize after successful dispatch.
+- `Claude`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 - `Codex`: integration, status-system, schema, acceptance; next: Auto-reassigned ownership from Claude to Codex after repeated Claude terminal: {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1777874400,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_dis. Task returned to todo until Codex starts a fresh run.
 - `Codex2`: integration, status-system, schema, acceptance; next: Codex2 picked up wave2; validating partial policy/lifecycle work and adding crawler-indexer cutoff tests.
@@ -60,18 +60,18 @@ Last updated: 2026-05-04 12:43:16
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4` | Blueprint production hardening follow-up 2026-05-04 | Hard-enforce Postgres ownership for staging/prod | Claude | review_approved | `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3` | 把 Postgres ownership 從 env-gated adoption 推到 staging/prod hard enforcement：staging/prod 不允許 governance/capital/memory/source/search/consultation/reconciliation 回落到 JSON/JSONL；dev baseline 可保留。 |
 | `SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2` | Blueprint production hardening follow-up 2026-05-04 | Upgrade source/search to crawler-indexer platform baseline | Codex2 | in_progress | `SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER` | 把 source/search 從 bounded connector/indexer 推到下一層 platform：crawler/indexer policy registry、connector lifecycle、scheduled refresh、license/rate/PIT/audit guard，以及 durable-only search cutoff。 |
 | `SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E` | Blueprint production hardening follow-up 2026-05-04 | Close OSS/research/learning activation-ready E2E wiring | Codex2 | review | `SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE` | 補齊 OSS/research/learning activation-ready 端到端串接：Qlib/TRL/RL/W&B scaffold 都能在 offline/test/smoke 模式跑通；production online/live activation 仍 fail-closed。 |
 | `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` | Blueprint production hardening follow-up 2026-05-04 | Make OpenClaw broker adapter activation-ready without live enablement | Codex | todo | `SVC-BLUEPRINT-OPENCLAW-READY-FACADE` | 把 OpenClaw facade 往 ready-to-enable adapter 推進：完成 broker adapter interface、sandbox/paper contract smoke、session lifecycle evidence；live broker execution 仍 gate closed。 |
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-04 10:36:58
-- Terminal tasks archived: `904` total, `888` completed, `16` superseded
+- Archive updated: 2026-05-04 12:44:21
+- Terminal tasks archived: `905` total, `889` completed, `16` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4` | Blueprint production hardening follow-up 2026-05-04 | Hard-enforce Postgres ownership for staging/prod | Claude | completed | 2026-05-04 12:44:21 | `ai-task-archive/tasks/SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4.json` |
 | `SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS` | Blueprint gap execution wave 2026-05-03 | Add operator fallback drills while BFF HA remains deferred | Codex2 | completed | 2026-05-04 10:36:58 | `ai-task-archive/tasks/SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS.json` |
 | `SVC-BLUEPRINT-PAPER-BRACKET-BASELINE` | Blueprint gap execution wave 2026-05-03 | Implement deterministic paper bracket order semantics under fail-closed live guards | Claude | completed | 2026-05-04 10:17:37 | `ai-task-archive/tasks/SVC-BLUEPRINT-PAPER-BRACKET-BASELINE.json` |
 | `SVC-BLUEPRINT-OPENCLAW-READY-FACADE` | Blueprint gap execution wave 2026-05-03 | Make OpenClaw adapter activation-ready while live broker remains gated | Codex | completed | 2026-05-04 10:04:05 | `ai-task-archive/tasks/SVC-BLUEPRINT-OPENCLAW-READY-FACADE.json` |
@@ -91,13 +91,11 @@ Last updated: 2026-05-04 12:43:16
 | `P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-REVIEW` | P2 Wave 8 External Activation | Prepare P2-MARKETDATA-CREDENTIAL-SMOKE-001 review packet and evidence summary | Codex | completed | 2026-05-02 20:15:09 | `ai-task-archive/tasks/P2-MARKETDATA-CREDENTIAL-SMOKE-001-SIDECAR-REVIEW.json` |
 | `P2-MARKETDATA-CREDENTIAL-SMOKE-001` | P2 Wave 8 External Activation | Market-data provider credentialed read smoke | Claude | completed | 2026-05-02 19:26:14 | `ai-task-archive/tasks/P2-MARKETDATA-CREDENTIAL-SMOKE-001.json` |
 | `P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF` | P2 Wave 8 External Activation | Prepare P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001 BFF and frontend handoff packet | Claude | completed | 2026-05-02 01:19:26 | `ai-task-archive/tasks/P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-SIDECAR-BFF-HANDOFF.json` |
-| `P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW` | P2 Wave 8 External Activation | Prepare P2-RL-UPSTREAM-RUNTIME-SMOKE-001 review packet and evidence summary | Codex | completed | 2026-05-02 01:14:29 | `ai-task-archive/tasks/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4` | Blueprint production hardening follow-up 2026-05-04 | Hard-enforce Postgres ownership for staging/prod | 把 Postgres ownership 從 env-gated adoption 推到 staging/prod hard enforcement：staging/prod 不允許 governance/capital/memory/source/search/consultation/reconciliation 回落到 JSON/JSONL；dev baseline 可保留。 | Claude | Codex | review_approved | `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3` | 2026-05-04 12:41:51 | Supervisor resumed SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4 for finalize after successful dispatch. |
 | `SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2` | Blueprint production hardening follow-up 2026-05-04 | Upgrade source/search to crawler-indexer platform baseline | 把 source/search 從 bounded connector/indexer 推到下一層 platform：crawler/indexer policy registry、connector lifecycle、scheduled refresh、license/rate/PIT/audit guard，以及 durable-only search cutoff。 | Codex2 | Claude | in_progress | `SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER` | 2026-05-04 12:43:16 | Codex2 picked up wave2; validating partial policy/lifecycle work and adding crawler-indexer cutoff tests. |
 | `SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E` | Blueprint production hardening follow-up 2026-05-04 | Close OSS/research/learning activation-ready E2E wiring | 補齊 OSS/research/learning activation-ready 端到端串接：Qlib/TRL/RL/W&B scaffold 都能在 offline/test/smoke 模式跑通；production online/live activation 仍 fail-closed。 | Codex2 | Codex | review | `SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE` | 2026-05-04 12:39:29 | Ready for review. Commit 5818e8f3 adds task evidence and updates OSS activation docs/maturity records; runtime code already satisfied E2E acceptance. Verification: smoke_oss_activation_ready_matrix 16/16 passed with registry/governance/broker/live writes false; focused pytest set passed 51 in 30.47s. Production paper/canary/live and W&B online SDK paths remain fail-closed by default. |
 | `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` | Blueprint production hardening follow-up 2026-05-04 | Make OpenClaw broker adapter activation-ready without live enablement | 把 OpenClaw facade 往 ready-to-enable adapter 推進：完成 broker adapter interface、sandbox/paper contract smoke、session lifecycle evidence；live broker execution 仍 gate closed。 | Codex | Codex2 | todo | `SVC-BLUEPRINT-OPENCLAW-READY-FACADE` | 2026-05-04 12:41:57 | Auto-reassigned ownership from Claude to Codex after repeated Claude terminal: {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1777874400,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_dis. Task returned to todo until Codex starts a fresh run. |
@@ -113,7 +111,6 @@ Last updated: 2026-05-04 12:43:16
 | `SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY` | Claude2 | Gemini2 | Helper-claimed by Gemini2 while Claude2 is dispatch-paused. | pending | 2026-05-04 12:28:33 |
 | `SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E` | Codex2 | Codex | Ready for review. Commit 5818e8f3 adds task evidence and updates OSS activation docs/maturity records; runtime code already satisfied E2E acceptance. Verification: smoke_oss_activation_ready_matrix 16/16 passed with registry/governance/broker/live writes false; focused pytest set passed 51 in 30.47s. Production paper/canary/live and W&B online SDK paths remain fail-closed by default. | pending | 2026-05-04 12:39:29 |
 | `SVC-BFF-HA-LB-DEFER-TRACKING` | Codex | Codex2 | Helper-claimed by Codex2 while Codex completes higher-priority work. | pending | 2026-05-04 12:40:24 |
-| `SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4` | Codex | Claude | Review approved: Wave 4 hard enforcement matches acceptance; focused posture, compose, source/search, and BFF cutoff checks passed. Owner should finalize with task closeout. | pending | 2026-05-04 12:41:33 |
 
 ## Blockers
 
@@ -125,7 +122,7 @@ Last updated: 2026-05-04 12:43:16
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| `SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4` | Codex | Reviewer acceptance: no blocking findings. Verified Wave 4 commit 6a23986a keeps dev compose fallback while control/staging compose default to production/postgres.<br>Verification run: python3 -m pytest services/foundation/tests/test_persistence_posture.py services/test_source_search_posture.py -v; docker compose -f docker-compose.control.yml config --quiet; docker compose -f docker-compose.control.yml -f docker-compose.staging-full.yml config --quiet; docker compose config environment spot-checks; source/search and BFF cutoff contract tests. | - |
+| _(none)_ | - | - | - |
 
 ## Lovable Coordination
 
@@ -196,16 +193,6 @@ Last updated: 2026-05-04 12:43:16
 
 ## Latest Checkpoints
 
-- 2026-05-04 12:42:06 Orchestrator: `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` Auto-reassigned ownership from Claude to Codex after repeated Claude terminal: {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1777874400,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_dis. Task returned to todo until Codex starts a fresh run.
-- 2026-05-04 12:42:08 Orchestrator: PreToolUse: Read
-- 2026-05-04 12:42:08 Orchestrator: PostToolUse: Read
-- 2026-05-04 12:42:08 Orchestrator: PreToolUse: Read
-- 2026-05-04 12:42:09 Orchestrator: PostToolUse: Read
-- 2026-05-04 12:42:14 Orchestrator: PreToolUse: Read
-- 2026-05-04 12:42:14 Orchestrator: PreToolUse: Read
-- 2026-05-04 12:42:15 Orchestrator: PostToolUse: Read
-- 2026-05-04 12:42:15 Orchestrator: PostToolUse: Read
-- 2026-05-04 12:42:44 Orchestrator: PreToolUse: Bash
 - 2026-05-04 12:42:45 Orchestrator: PostToolUse: Bash
 - 2026-05-04 12:42:46 Orchestrator: PreToolUse: Bash
 - 2026-05-04 12:42:51 Orchestrator: PostToolUse: Bash
@@ -216,3 +203,13 @@ Last updated: 2026-05-04 12:43:16
 - 2026-05-04 12:43:10 Orchestrator: `SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E` Dispatch pause for claude2 expired at 2026-05-04 12:43:01; dispatch is enabled again.
 - 2026-05-04 12:43:14 Orchestrator: PreToolUse: Bash
 - 2026-05-04 12:43:16 Codex2: `SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2` Codex2 picked up wave2; validating partial policy/lifecycle work and adding crawler-indexer cutoff tests.
+- 2026-05-04 12:43:35 Orchestrator: PreToolUse: Bash
+- 2026-05-04 12:43:35 Orchestrator: PreToolUse: Bash
+- 2026-05-04 12:43:35 Orchestrator: PostToolUse: Bash
+- 2026-05-04 12:43:35 Orchestrator: PostToolUse: Bash
+- 2026-05-04 12:44:02 Orchestrator: PreToolUse: Bash
+- 2026-05-04 12:44:02 Orchestrator: PostToolUse: Bash
+- 2026-05-04 12:44:15 Orchestrator: PreToolUse: Bash
+- 2026-05-04 12:44:15 Orchestrator: PostToolUse: Bash
+- 2026-05-04 12:44:21 Orchestrator: PreToolUse: Bash
+- 2026-05-04 12:44:21 Claude: `SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4` Closeout complete: all 20 tests pass (20/20), docker-compose.control.yml and staging-full overlay validate cleanly, Wave 4 implementation commit 6a23986a confirmed intact. Dirty worktree files belong to other active tasks and are excluded from this closeout.
