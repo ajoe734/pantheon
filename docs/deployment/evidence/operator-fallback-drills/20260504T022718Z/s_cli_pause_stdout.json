@@ -1,0 +1,10 @@
+{
+  "command_id": "cmd-runtime-pause-rb-885dc69557644abf80102bc9431286c4-1777861639",
+  "duration_seconds": 900,
+  "pause_action": "pause",
+  "reason": "bff-down cli pause drill",
+  "runtime_binding_id": "rb-885dc69557644abf80102bc9431286c4",
+  "status": "executed",
+  "status_after": "paused",
+  "status_before": "active"
+}

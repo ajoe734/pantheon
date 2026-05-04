@@ -1,0 +1,13 @@
+{
+  "artifact_id": "artifact-operator-fallback",
+  "artifact_version": "1.0.0",
+  "binding_id": "rb-cc7283f1b161459996fd6ce4a0435db8",
+  "capital_pool_id": "pool-cli-liquidate",
+  "deployment_mode": "paper",
+  "effective_at": "2026-05-04T02:27:19Z",
+  "persona_capital_binding_id": "pcb-cli-liquidate",
+  "plan_id": "plan-cli-liquidate",
+  "retired_at": "2026-05-04T02:27:19Z",
+  "runtime_id": "rt-cli-liquidate",
+  "status": "retired"
+}

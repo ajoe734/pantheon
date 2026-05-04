@@ -1312,6 +1312,8 @@ def kill_switch():
     action = body.get("action", "activate")
     action_override = body.get("action_override") or body.get("action_type")
     reason = body.get("reason", "operator_emergency_stop")
+    fallback_artifact_id = body.get("fallback_artifact_id")
+    fallback_artifact_version = body.get("fallback_artifact_version")
 
     # Backward compatibility: if action is a kill-switch action type, treat
     # it as an override and default to activate.
@@ -1322,8 +1324,14 @@ def kill_switch():
     _ensure_kill_switch_imported()
     ctrl = _get_controller()
 
-    # Map scope to capital_pool_id (in production this resolves from binding)
-    capital_pool_id = scope_id or "all"
+    # Map scope to the kill-switch target. Pool-scoped commands must not set
+    # binding_id to the pool id; runtime-manager will resolve the active binding
+    # for that pool. Binding/persona-scoped commands retain the legacy direct
+    # binding-id behavior used by pantheon-admin runtime force-halt.
+    capital_pool_id = body.get("capital_pool_id") or (scope_id if scope == "pool" and scope_id else "all")
+    binding_id = body.get("binding_id")
+    if not binding_id and scope in {"binding", "runtime", "persona"}:
+        binding_id = scope_id
 
     if action == "deactivate":
         try:
@@ -1395,7 +1403,7 @@ def kill_switch():
         reason=reason,
         capital_pool_id=capital_pool_id,
         actor_id="internal-api-operator",
-        binding_id=scope_id,
+        binding_id=binding_id,
         severity=severity,
         context={"scope": scope, "mfa_verified": hasattr(request, "_mfa_token")},
     )
@@ -1404,11 +1412,17 @@ def kill_switch():
         action_kw = {}
         if action_override:
             action_kw["action_override"] = _KillSwitchActionType(action_override)
+        if fallback_artifact_id:
+            action_kw["fallback_artifact_id"] = fallback_artifact_id
+        if fallback_artifact_version:
+            action_kw["fallback_artifact_version"] = fallback_artifact_version
 
         outcome = ctrl.dispatch(trigger, **action_kw)
 
         # Persist command record with full audit trail
         command_id = outcome.command.command_id
+        command_fallback_artifact_id = getattr(outcome.command, "fallback_artifact_id", None)
+        command_fallback_artifact_version = getattr(outcome.command, "fallback_artifact_version", None)
         record = {
             "command_id": command_id,
             "type": "ActivateKillSwitch",
@@ -1424,6 +1438,8 @@ def kill_switch():
                 "audit_id": outcome.audit_entry.audit_id,
                 "dispatch_path": outcome.command.dispatch_path,
                 "bypass_review_queue": outcome.command.bypass_review_queue,
+                "fallback_artifact_id": command_fallback_artifact_id,
+                "fallback_artifact_version": command_fallback_artifact_version,
             },
             "audit": outcome.audit_entry.to_dict(),
             "error": None,
@@ -1439,6 +1455,8 @@ def kill_switch():
                 "emergency_class": outcome.command.emergency_class,
                 "safe_mode_after": outcome.safe_mode_after.value,
                 "audit_id": outcome.audit_entry.audit_id,
+                "fallback_artifact_id": command_fallback_artifact_id,
+                "fallback_artifact_version": command_fallback_artifact_version,
                 "status": "executed",
             }),
             202,

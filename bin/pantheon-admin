@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
-# Wrapper to run the pantheon-admin CLI scaffold
+# Wrapper to run the pantheon-admin operator fallback CLI
 PYTHONPATH="$(dirname "$0")/.." \
 exec python3 "$(dirname "$0")/../tools/pantheon_admin/cli.py" "$@"

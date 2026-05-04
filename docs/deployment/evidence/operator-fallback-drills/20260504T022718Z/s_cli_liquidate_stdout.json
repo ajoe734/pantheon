@@ -1,0 +1,12 @@
+{
+  "action": "liquidate",
+  "audit_id": "audit-c46f01a5d008",
+  "command_id": "ks-d5286af82b29",
+  "emergency_class": "hard",
+  "fallback_artifact_id": null,
+  "fallback_artifact_version": null,
+  "kill_switch_order_id": "ks-d5286af82b29",
+  "safe_mode_after": "paused",
+  "scope": "pool",
+  "status": "executed"
+}

@@ -1,6 +1,6 @@
 # OPERATOR_ACCEPTANCE_MATRIX
 
-Last updated: 2026-04-14
+Last updated: 2026-05-04
 Status: canonical operator acceptance matrix for Pantheon
 Tier: L1 Platform Architecture & Policy
 Owner: Claude (BG-006)
@@ -40,11 +40,15 @@ Pantheon 定義五條 operator 路徑：
 
 | Surface ID | 路徑名稱 | 入口 | 類型 | 上線前提 |
 |---|---|---|---|---|
-| `S-BFF` | BFF UI / command surface | Pantheon Console → `pantheon-bff` | composed | BFF ≥ 1 healthy replica + LB |
+| `S-BFF` | BFF UI / command surface | Pantheon Console → `pantheon-bff` | composed | BFF reachable; multi-replica/LB HA remains deferred |
 | `S-IAPI` | Internal API surface | 直連各 internal service API | authoritative | 各 service 健康 + mTLS |
 | `S-CLI` | Admin CLI surface | `pantheon-admin` CLI tool | fallback | CLI binary + service token |
 | `S-EMRG` | Emergency fast path | kill-switch controller → runtime-manager fast path | fallback | runtime-manager healthy |
 | `S-SUPP` | Support-only / diagnostic | debug / health / trace endpoints | support-only | deployment runtime + support role |
+
+> **2026-05-04 drill note:** BFF HA/LB production topology remains deferred per
+> `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md` §0. The current acceptance movement
+> is limited to BFF-down fallback drills for `S-IAPI`, `S-CLI`, and `S-EMRG`.
 
 ---
 
@@ -74,9 +78,9 @@ Pantheon 定義五條 operator 路徑：
 |---|---|---|---|---|---|---|---|
 | `S-BFF` | Pause runtime | `RuntimeBinding.status` via `runtime-manager-svc` | composed | `runtime.operator` | BFF 不可用時不可操作；需走 `S-IAPI` 或 `S-CLI` | spec defined | not drilled |
 | `S-BFF` | Rollback | `RuntimeBinding` via `runtime-manager-svc` | composed | `runtime.operator` | BFF 不可用時不可操作；需走 `S-IAPI` 或 `S-CLI` | spec defined | not drilled |
-| `S-IAPI` | Pause / rollback via runtime-manager API | `RuntimeBinding`, `RuntimeStatus` | authoritative | `runtime.admin` + mTLS | N/A | spec defined | not drilled |
-| `S-EMRG` | Emergency pause / liquidate / risk-off | `RuntimeBinding`, `RuntimeStatus` via kill-switch controller | fallback | `emergency.operator` | 此路徑本身為降級路徑；若 runtime-manager 不可用則無法執行 | spec defined | not drilled |
-| `S-CLI` | Pause via admin CLI | `RuntimeBinding.status` | fallback | `runtime.admin` | BFF 不可用時的 admin CLI 直接路徑；非 kill-switch 緊急路徑 | spec defined | not drilled |
+| `S-IAPI` | Pause / rollback via runtime-manager API | `RuntimeBinding`, `RuntimeStatus` | authoritative | `runtime.admin` + mTLS | N/A | implemented | smoke-tested (`scripts/smoke_operator_fallback_drills.py`: direct internal API pause + command audit record) |
+| `S-EMRG` | Emergency pause / liquidate / risk-off | `RuntimeBinding`, `RuntimeStatus` via kill-switch controller | fallback | `emergency.operator` | 此路徑本身為降級路徑；若 runtime-manager 不可用則無法執行 | implemented | smoke-tested (`scripts/smoke_operator_fallback_drills.py`: direct kill-switch replace + audit/telemetry ack) |
+| `S-CLI` | Pause via admin CLI | `RuntimeBinding.status` | fallback | `runtime.admin` | BFF 不可用時的 admin CLI 直接路徑；非 kill-switch 緊急路徑 | implemented | smoke-tested (`pantheon-admin` over non-BFF internal API path) |
 
 **驗收條件：**
 - BFF 不得是 kill-switch 唯一路徑（見 `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md` §8.5）
@@ -91,8 +95,8 @@ Pantheon 定義五條 operator 路徑：
 | Surface | 操作 | Canonical Object | 路徑類型 | 所需 Role | 降級行為 | 測試狀態 | Drill 狀態 |
 |---|---|---|---|---|---|---|---|
 | `S-BFF` | Manual emergency stop（UI trigger） | `RuntimeStatus` via kill-switch controller → runtime-manager fast path | composed | `emergency.operator` | BFF 不可用時不可操作；改走 `S-EMRG` 直接路徑 | spec defined | not drilled |
-| `S-EMRG` | Direct kill-switch → runtime-manager fast path | `RuntimeStatus`, `RuntimeBinding` | fallback | `emergency.operator` | 若 runtime-manager 不可用，動作無法完成；不直接繞過 LEAN runtime | spec defined | not drilled |
-| `S-CLI` | Kill-switch via admin CLI | `RuntimeStatus` | fallback | `emergency.operator` | 與 `S-EMRG` 平行入口 | spec defined | not drilled |
+| `S-EMRG` | Direct kill-switch → runtime-manager fast path | `RuntimeStatus`, `RuntimeBinding` | fallback | `emergency.operator` | 若 runtime-manager 不可用，動作無法完成；不直接繞過 LEAN runtime | implemented | smoke-tested (`replace` creates active fallback binding and retires old binding) |
+| `S-CLI` | Kill-switch via admin CLI | `RuntimeStatus` | fallback | `emergency.operator` | 與 `S-EMRG` 平行入口 | implemented | smoke-tested (`pantheon-admin kill-switch activate --action-override liquidate`) |
 
 **驗收條件（對應 `KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md` §10）：**
 - Kill switch 不直打 LEAN runtime；最短路徑 = runtime-manager fast path
@@ -195,12 +199,12 @@ Pantheon 定義五條 operator 路徑：
 
 | 驗收項目 | 對應 Surface | 目前狀態 | 負責人 |
 |---|---|---|---|
-| BFF down scenario drill | `S-CLI`, `S-EMRG` | not drilled | runtime ops team |
-| CLI fallback drill（pause / kill-switch） | `S-CLI` | not drilled | platform team |
-| Emergency fast path drill | `S-EMRG` | not drilled | runtime ops team |
+| BFF down scenario drill | `S-IAPI`, `S-CLI`, `S-EMRG` | smoke-tested (`docs/deployment/evidence/operator-fallback-drills/20260504T022718Z/summary.json`) | Codex2 |
+| CLI fallback drill（pause / kill-switch） | `S-CLI` | smoke-tested via `pantheon-admin` against runtime-manager internal API | Codex2 |
+| Emergency fast path drill | `S-EMRG` | smoke-tested: direct runtime-manager kill-switch `replace` with audit + telemetry ack | Codex2 |
 | Support-only path isolation test（確認無寫入） | `S-SUPP` | not implemented | security / platform team |
 | BFF degraded panel smoke test | `S-BFF` | spec defined | frontend team |
-| Internal API auth + audit smoke test | `S-IAPI` | spec defined | backend team |
+| Internal API auth + audit smoke test | `S-IAPI` | smoke-tested: direct pause writes command audit record without BFF | Codex2 |
 | Role matrix RBAC enforcement test | all surfaces | not tested | platform / security team |
 | Lovable / front repo cutover confirmation | `S-BFF` | pending cutover | frontend team |
 
@@ -226,6 +230,28 @@ Pantheon 定義五條 operator 路徑：
 - Role → permission mapping 的 RBAC engine 規格
 - Dual control policy（高風險環境下的雙人核准）
 - BFF session / SSE fallback policy（WebSocket → polling fallback）
+
+## 9.1 目前 Drill 證據（2026-05-04）
+
+`SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS` 補齊的是 BFF-down fallback smoke，
+不是 BFF HA/LB production 拓樸。可重跑命令：
+
+```bash
+python3 scripts/smoke_operator_fallback_drills.py \
+  --output-dir docs/deployment/evidence/operator-fallback-drills/$(date -u +%Y%m%dT%H%M%SZ)
+```
+
+目前 checked evidence:
+
+- `docs/deployment/bff-down-operator-drill-runbook.md`
+- `docs/deployment/evidence/operator-fallback-drills/20260504T022718Z/summary.json`
+- `docs/deployment/evidence/operator-fallback-drills/20260504T022718Z/kill_switch_audit_log_response.json`
+
+Smoke coverage:
+
+- `S-IAPI`: direct `/api/internal/v1/runtimes/{binding_id}/pause` records command audit and canonical binding `paused`.
+- `S-CLI`: `pantheon-admin runtime pause` and `pantheon-admin kill-switch activate --action-override liquidate` bypass BFF and mutate RuntimeBinding state through runtime-manager.
+- `S-EMRG`: direct `/api/kill-switch/dispatch` with `action_override=replace` retires the old binding, creates an active fallback binding, and returns acknowledged telemetry evidence.
 
 ---
 
