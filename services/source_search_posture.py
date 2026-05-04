@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from typing import Mapping
 
 
-ENFORCED_MODES = {"staging", "prod", "production"}
+ENFORCED_MODES = {"stage", "staging", "staging-live", "prod", "production"}
+
+
+def _is_enforced_mode(mode: str) -> bool:
+    return mode in ENFORCED_MODES or mode.startswith("staging") or mode.startswith("prod")
 
 
 @dataclass(frozen=True)
@@ -57,7 +61,7 @@ def validate_source_search_posture(
 ) -> PostureCheck:
     env_map = _env(env)
     mode = _clean(env_map.get("PANTHEON_SOURCE_SEARCH_POSTURE")).lower() or "dev"
-    enforced = mode in ENFORCED_MODES
+    enforced = _is_enforced_mode(mode)
     errors: list[str] = []
 
     backend_keys = {

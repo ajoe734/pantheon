@@ -92,11 +92,11 @@ services:
       PORT: "8082"
       GOVERNANCE_DATA_DIR: /data/governance
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
-      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
-      # Dev rollback defaults to JSON/JSONL; staging/prod select postgres via env.
-      GOVERNANCE_STORE_BACKEND: ${GOVERNANCE_STORE_BACKEND:-json}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
+      # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
+      GOVERNANCE_STORE_BACKEND: ${GOVERNANCE_STORE_BACKEND:-postgres}
       GOVERNANCE_STORE_DSN: ${GOVERNANCE_STORE_DSN:-}
-      GOVERNANCE_AUDIT_BACKEND: ${GOVERNANCE_AUDIT_BACKEND:-jsonl}
+      GOVERNANCE_AUDIT_BACKEND: ${GOVERNANCE_AUDIT_BACKEND:-postgres}
       GOVERNANCE_AUDIT_DSN: ${GOVERNANCE_AUDIT_DSN:-}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
@@ -180,13 +180,13 @@ services:
       INCIDENTS_DATA_DIR: /data/incidents
       PANTHEON_TELEMETRY_URL: http://telemetry:8083
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
-      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
       PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
       PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
       PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
-      # Dev rollback defaults to JSON; staging/prod select postgres via env.
-      INCIDENT_STORE_BACKEND: ${INCIDENT_STORE_BACKEND:-json}
+      # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
+      INCIDENT_STORE_BACKEND: ${INCIDENT_STORE_BACKEND:-postgres}
       INCIDENT_STORE_DSN: ${INCIDENT_STORE_DSN:-}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
@@ -217,9 +217,9 @@ services:
       INCIDENTS_DATA_DIR: /data/incidents
       PANTHEON_TELEMETRY_URL: http://telemetry:8083
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
-      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
-      # Shares the incident owner schema; dev rollback remains JSON.
-      POSTMORTEM_STORE_BACKEND: ${POSTMORTEM_STORE_BACKEND:-json}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
+      # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
+      POSTMORTEM_STORE_BACKEND: ${POSTMORTEM_STORE_BACKEND:-postgres}
       POSTMORTEM_STORE_DSN: ${POSTMORTEM_STORE_DSN:-}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
       PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
@@ -399,9 +399,9 @@ services:
     environment:
       PORT: "8086"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
-      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
-      # Dev rollback defaults to JSON; staging/prod select postgres via env.
-      PANTHEON_MEMORY_STORE_BACKEND: ${PANTHEON_MEMORY_STORE_BACKEND:-json}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
+      # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
+      PANTHEON_MEMORY_STORE_BACKEND: ${PANTHEON_MEMORY_STORE_BACKEND:-postgres}
       PANTHEON_MEMORY_STORE_DSN: ${PANTHEON_MEMORY_STORE_DSN:-}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
@@ -486,13 +486,13 @@ services:
       PORT: "8089"
       PROMOTION_DATA_DIR: /data/promotion
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
-      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
       PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
       PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
       PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
-      # Dev rollback defaults to JSON; staging/prod select postgres via env.
-      PROMOTION_STORE_BACKEND: ${PROMOTION_STORE_BACKEND:-json}
+      # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
+      PROMOTION_STORE_BACKEND: ${PROMOTION_STORE_BACKEND:-postgres}
       PROMOTION_STORE_DSN: ${PROMOTION_STORE_DSN:-}
     volumes:
       - promotion-data:/data/promotion
@@ -516,15 +516,15 @@ services:
       PORT: "8092"
       CAPITAL_DATA_DIR: /data/capital
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
-      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
       PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
       PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
       PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
-      # Dev rollback defaults to JSON/JSONL; staging/prod select postgres via env.
-      CAPITAL_STORE_BACKEND: ${CAPITAL_STORE_BACKEND:-json}
+      # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
+      CAPITAL_STORE_BACKEND: ${CAPITAL_STORE_BACKEND:-postgres}
       CAPITAL_STORE_DSN: ${CAPITAL_STORE_DSN:-}
-      CAPITAL_AUDIT_BACKEND: ${CAPITAL_AUDIT_BACKEND:-jsonl}
+      CAPITAL_AUDIT_BACKEND: ${CAPITAL_AUDIT_BACKEND:-postgres}
       CAPITAL_AUDIT_DSN: ${CAPITAL_AUDIT_DSN:-}
     volumes:
       - capital-data:/data/capital
@@ -590,13 +590,13 @@ services:
       PORT: "8102"
       RECONCILIATION_DRIFT_DATA_DIR: /data/reconciliation-drift
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
-      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
       PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
       PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
       PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
-      # Dev rollback defaults to JSON; staging/prod select postgres via env.
-      RECONCILIATION_DRIFT_STORE_BACKEND: ${RECONCILIATION_DRIFT_STORE_BACKEND:-json}
+      # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
+      RECONCILIATION_DRIFT_STORE_BACKEND: ${RECONCILIATION_DRIFT_STORE_BACKEND:-postgres}
       RECONCILIATION_DRIFT_STORE_DSN: ${RECONCILIATION_DRIFT_STORE_DSN:-}
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
       PANTHEON_LINEAGE_READ_URL: http://lineage-read:8094

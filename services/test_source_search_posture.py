@@ -76,3 +76,45 @@ def test_search_production_posture_rejects_request_document_mode() -> None:
 def test_source_search_posture_rejects_unknown_service() -> None:
     with pytest.raises(ValueError, match="unknown source/search posture service"):
         validate_source_search_posture("unknown", env={})
+
+
+# Wave 4: staging-live mode now enforced (was a gap before wave 4)
+def test_staging_live_mode_is_enforced_for_source_search() -> None:
+    check = validate_source_search_posture(
+        "source-ingest",
+        env={
+            "PANTHEON_SOURCE_SEARCH_POSTURE": "staging-live",
+            "SOURCE_INGEST_EVIDENCE_BACKEND": "jsonl",
+        },
+    )
+
+    assert check.enforced is True
+    assert check.status == "error"
+    assert "SOURCE_INGEST_EVIDENCE_BACKEND must be postgres" in "; ".join(check.errors)
+
+
+def test_staging_prefix_mode_is_enforced_for_source_search() -> None:
+    check = validate_source_search_posture(
+        "search",
+        env={
+            "PANTHEON_SOURCE_SEARCH_POSTURE": "staging-canary",
+            "SEARCH_INDEX_STORE_BACKEND": "jsonl",
+            "SEARCH_EVIDENCE_BACKEND": "jsonl",
+        },
+    )
+
+    assert check.enforced is True
+    assert check.status == "error"
+
+
+def test_prod_prefix_mode_is_enforced_for_source_search() -> None:
+    check = validate_source_search_posture(
+        "source-ingest",
+        env={
+            "PANTHEON_SOURCE_SEARCH_POSTURE": "prod-gcp",
+            "SOURCE_INGEST_EVIDENCE_BACKEND": "jsonl",
+        },
+    )
+
+    assert check.enforced is True
+    assert check.status == "error"

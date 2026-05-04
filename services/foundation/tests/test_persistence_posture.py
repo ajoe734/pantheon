@@ -110,3 +110,108 @@ def test_prod_control_env_example_satisfies_platform_posture() -> None:
         assert validate_persistence_posture(service, env=env).status == "ok"
     assert validate_source_search_posture("source-ingest", env=env).status == "ok"
     assert validate_source_search_posture("search", env=env).status == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Wave 4: hard enforcement — staging/prod compose defaults reject json/jsonl
+# ---------------------------------------------------------------------------
+
+STAGING_COMPOSE_BASE_ENV = {
+    "DATABASE_URL": "postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon",
+    "PANTHEON_S3_ENDPOINT": "http://minio:9000",
+    "PANTHEON_ARTIFACT_BUCKET": "pantheon-artifacts",
+    "PANTHEON_S3_ACCESS_KEY": "pantheon",
+    "PANTHEON_S3_SECRET_KEY": "pantheonminio",
+}
+
+
+def test_wave4_control_compose_governance_rejects_json_in_production_default() -> None:
+    """docker-compose.control.yml defaults PANTHEON_PERSISTENCE_POSTURE to production;
+    governance must reject json backends without explicit dev override."""
+    check = validate_persistence_posture(
+        "governance",
+        env={
+            **STAGING_COMPOSE_BASE_ENV,
+            "PANTHEON_PERSISTENCE_POSTURE": "production",
+            "GOVERNANCE_STORE_BACKEND": "json",
+            "GOVERNANCE_AUDIT_BACKEND": "jsonl",
+        },
+    )
+    assert check.enforced is True
+    assert check.status == "error"
+    assert "GOVERNANCE_STORE_BACKEND must be postgres" in "; ".join(check.errors)
+    assert "GOVERNANCE_AUDIT_BACKEND must be postgres" in "; ".join(check.errors)
+
+
+def test_wave4_control_compose_governance_accepts_postgres_in_production_default() -> None:
+    check = validate_persistence_posture(
+        "governance",
+        env={
+            **STAGING_COMPOSE_BASE_ENV,
+            "PANTHEON_PERSISTENCE_POSTURE": "production",
+            "GOVERNANCE_STORE_BACKEND": "postgres",
+            "GOVERNANCE_AUDIT_BACKEND": "postgres",
+        },
+    )
+    assert check.enforced is True
+    assert check.status == "ok"
+
+
+def test_wave4_control_compose_capital_rejects_json_in_production_default() -> None:
+    check = validate_persistence_posture(
+        "capital",
+        env={
+            **STAGING_COMPOSE_BASE_ENV,
+            "PANTHEON_PERSISTENCE_POSTURE": "production",
+            "CAPITAL_STORE_BACKEND": "json",
+            "CAPITAL_AUDIT_BACKEND": "jsonl",
+        },
+    )
+    assert check.enforced is True
+    assert check.status == "error"
+    assert "CAPITAL_STORE_BACKEND must be postgres" in "; ".join(check.errors)
+
+
+def test_wave4_dev_fallback_still_allowed_with_explicit_dev_posture() -> None:
+    """Dev single-VM can still use json/jsonl by setting PANTHEON_PERSISTENCE_POSTURE=dev."""
+    for service, backend_key, backend_val in [
+        ("governance", "GOVERNANCE_STORE_BACKEND", "json"),
+        ("capital", "CAPITAL_STORE_BACKEND", "json"),
+        ("memory", "PANTHEON_MEMORY_STORE_BACKEND", "json"),
+        ("incidents", "INCIDENT_STORE_BACKEND", "json"),
+        ("promotion", "PROMOTION_STORE_BACKEND", "json"),
+        ("reconciliation-drift", "RECONCILIATION_DRIFT_STORE_BACKEND", "json"),
+    ]:
+        check = validate_persistence_posture(
+            service,
+            env={"PANTHEON_PERSISTENCE_POSTURE": "dev", backend_key: backend_val},
+        )
+        assert check.status == "ok", f"{service} should allow json fallback in dev mode"
+        assert check.enforced is False
+
+
+def test_wave4_staging_full_compose_consultation_rejects_jsonl_in_production_default() -> None:
+    check = validate_persistence_posture(
+        "consultation",
+        env={
+            **STAGING_COMPOSE_BASE_ENV,
+            "PANTHEON_PERSISTENCE_POSTURE": "production",
+            "CONSULTATION_STORE_BACKEND": "jsonl",
+        },
+    )
+    assert check.enforced is True
+    assert check.status == "error"
+    assert "CONSULTATION_STORE_BACKEND must be postgres" in "; ".join(check.errors)
+
+
+def test_wave4_staging_full_compose_training_session_rejects_jsonl_in_production_default() -> None:
+    check = validate_persistence_posture(
+        "training-session",
+        env={
+            **STAGING_COMPOSE_BASE_ENV,
+            "PANTHEON_PERSISTENCE_POSTURE": "production",
+            "TRAINING_SESSION_EVENT_STORE_BACKEND": "jsonl",
+        },
+    )
+    assert check.enforced is True
+    assert check.status == "error"

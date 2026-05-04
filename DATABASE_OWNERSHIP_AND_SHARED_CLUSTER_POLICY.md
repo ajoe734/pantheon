@@ -1,6 +1,6 @@
 # DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY
 
-Last updated: 2026-04-30
+Last updated: 2026-05-04
 Status: canonical database ownership and cluster policy for Pantheon
 Tier: L1 Platform Architecture & Policy
 Scope: shared PostgreSQL cluster policy, schema ownership, write boundaries, and cross-service read/write rules
@@ -127,6 +127,41 @@ The `PostgresJsonOwnerStore` foundation primitive enforces explicit owner-store
 construction and supports read-only mode for non-owner consumers. Compose keeps
 the local data volumes so operators can roll staging/prod back to JSON/JSONL by
 changing only the backend env values.
+
+## 4.3 Production ownership wave 4 — hard enforcement
+
+Wave 4 (`SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4`) pushes Postgres ownership
+from *env-gated adoption* to *staging/prod hard enforcement*.
+
+### What changed
+
+| Component | Before wave 4 | After wave 4 |
+|---|---|---|
+| `docker-compose.control.yml` service defaults | `PANTHEON_PERSISTENCE_POSTURE:-dev`, backends `:-json`/`:-jsonl` | `PANTHEON_PERSISTENCE_POSTURE:-production`, backends `:-postgres` |
+| `docker-compose.staging-full.yml` service overrides | No posture override; inherits `dev` from dev compose | Adds `PANTHEON_PERSISTENCE_POSTURE:-production` + postgres backend defaults for all extended services |
+| `services/source_search_posture.py` ENFORCED_MODES | `{"staging", "prod", "production"}` — missing `staging-live` | `{"stage", "staging", "staging-live", "prod", "production"}` + `startswith` check matching `persistence_posture.py` |
+
+### Enforcement contract
+
+- **Staging/prod**: `docker-compose.control.yml` and `docker-compose.staging-full.yml` default backends to `postgres` and posture to `production`. A service that starts without a valid Postgres DSN and postgres backends will fail during module import via `require_persistence_posture` or `require_source_search_posture`.
+- **Dev single-VM**: `docker-compose.yml` retains `PANTHEON_PERSISTENCE_POSTURE:-dev` and `*_BACKEND:-json`/`:-jsonl` defaults. Dev rollback remains available.
+- **Override**: Operators may still set `PANTHEON_PERSISTENCE_POSTURE=dev` explicitly to use json/jsonl fallback, but this must be a deliberate choice — not the staging compose default.
+
+### Migration path
+
+For operators migrating an existing staging deployment:
+
+1. Ensure all wave 2 and wave 3 Postgres stores are bootstrapped (tables exist in the shared cluster).
+2. Deploy with the updated compose and `env/prod-control.env.example` (unchanged — already selects postgres backends).
+3. If rollback is needed for a specific service, set `PANTHEON_PERSISTENCE_POSTURE=dev` and the relevant `*_BACKEND=json` or `*_BACKEND=jsonl` in the env file. The local data volume retains the JSONL/JSON fallback data.
+4. Re-enable the Postgres backend by removing the dev override and restarting.
+
+### Services covered
+
+All services from waves 2 and 3 are now hard-enforced in staging/prod:
+
+- Control-plane compose: governance, capital, incidents, postmortems, promotion, memory, reconciliation-drift
+- Staging-full overlay: consultation, training-session, policy-learning, research-orchestrator, research-worker-gateway, source-ingest, search
 
 ---
 
