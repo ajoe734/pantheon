@@ -152,6 +152,8 @@ class PaperBrokerAdapter:
 
     def capability_snapshot(self) -> Dict[str, Any]:
         return {
+            "sandbox_adapter_state": "activation_ready",
+            "sandbox_gate": "OPENCLAW_PAPER_ADAPTER_ENABLED",
             "paper_adapter_enabled": self._enabled,
             "live_adapter_enabled": False,
             "broker_sidecar_configured": bool(self._broker_url),
@@ -259,6 +261,41 @@ class PaperBrokerAdapter:
     def get_paper_order(self, order_id: str) -> Dict[str, Any]:
         self._gate_check()
         return self._call_sidecar("GET", f"/api/broker/paper/orders/{order_id}")
+
+    def cancel_paper_order(
+        self,
+        order_id: str,
+        *,
+        operator_id: str,
+        trace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._gate_check()
+        if not operator_id:
+            raise PaperBrokerAdapterError(
+                "OPERATOR_REQUIRED",
+                "operator_id is required for paper order cancellation.",
+                status_code=401,
+            )
+        trace_id = trace_id or self._trace_id_factory()
+        audit_entry: Dict[str, Any] = {
+            "event": "paper_order_cancel_intent",
+            "trace_id": trace_id,
+            "operator_id": operator_id,
+            "order_id": order_id,
+            "is_real_order": False,
+            "is_real_capital": False,
+            "deployment_stage": "paper",
+        }
+        self._audit.record({**audit_entry, "outcome": "pending"})
+        try:
+            result = self._call_sidecar("POST", f"/api/broker/paper/orders/{order_id}/cancel")
+        except PaperBrokerAdapterError as exc:
+            self._audit.record(
+                {**audit_entry, "outcome": "error", "error_code": exc.error_code, "error": exc.message}
+            )
+            raise
+        self._audit.record({**audit_entry, "outcome": "ok"})
+        return result
 
     # ------------------------------------------------------------------
     # Live order operations (always rejected)

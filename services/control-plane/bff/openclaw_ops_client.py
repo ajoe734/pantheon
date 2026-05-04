@@ -195,6 +195,10 @@ class OpenClawOpsClient:
     # Dry handoff and gate validate remain on the adapter, not the BFF.
     # ------------------------------------------------------------------
 
+    def get_broker_capabilities(self) -> Dict[str, Any]:
+        """Return broker adapter capability states (sandbox/paper/canary/live)."""
+        return self._request("GET", "/api/openclaw-adapter/broker/capabilities")
+
     def get_live_gate_status(self) -> Dict[str, Any]:
         """Return the current live gate capability and configuration status."""
         return self._request("GET", "/api/openclaw-adapter/broker/live/gate/status")

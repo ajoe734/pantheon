@@ -275,3 +275,145 @@ def test_openclaw_session_create_forwards_operator_and_idempotency(monkeypatch) 
     assert headers["X-idempotency-key"] == "idmp-openclaw-create"
     assert body["agent_id"] == "agent-alpha"
     assert body["context_bundle"] == {"ticket_id": "rt-1"}
+
+
+# --------------------------------------------------------------------------- #
+# OpenClaw Broker Adapter Readiness Surface (SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY)
+# GET /api/v1/operator/openclaw/broker-adapter-readiness
+# AC4: BFF surfaces gate reason and adapter readiness without claiming live activation.
+# --------------------------------------------------------------------------- #
+
+_BROKER_CAPS_DEFERRED = {
+    "sandbox_adapter_state": "activation_ready",
+    "sandbox_gate": "OPENCLAW_PAPER_ADAPTER_ENABLED",
+    "paper_adapter_state": "gated",
+    "paper_adapter_gate": "OPENCLAW_PAPER_ADAPTER_ENABLED",
+    "canary_adapter_state": "fail_closed",
+    "canary_adapter_gate": "OPENCLAW_CANARY_ADAPTER_ENABLED",
+    "live_adapter_state": "fail_closed",
+    "live_adapter_gate": "OPENCLAW_LIVE_ADAPTER_ENABLED",
+    "paper_adapter_enabled": False,
+    "live_adapter_enabled": False,
+    "broker_sidecar_configured": True,
+    "runtime_manager_configured": True,
+    "canary_adapter_enabled": False,
+    "canary_execution_enabled": False,
+    "is_real_capital": False,
+    "is_real_order": False,
+}
+
+_BROKER_CAPS_PAPER_ENABLED = {
+    **_BROKER_CAPS_DEFERRED,
+    "paper_adapter_state": "enabled",
+    "paper_adapter_enabled": True,
+}
+
+
+def test_broker_adapter_readiness_projects_fail_closed_live_and_canary(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", BASE_URL)
+    recorder = _Recorder(
+        {("GET", f"{BASE_URL}/api/openclaw-adapter/broker/capabilities"): _BROKER_CAPS_DEFERRED}
+    )
+    client = TestClient(bff_main.app)
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", recorder):
+        response = client.get(
+            "/api/v1/operator/openclaw/broker-adapter-readiness",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    data = payload["data"]
+
+    # AC1: explicit capability states
+    assert data["sandbox_adapter_state"] == "activation_ready"
+    assert data["paper_adapter_state"] == "gated"
+    assert data["canary_adapter_state"] == "fail_closed"
+    assert data["live_adapter_state"] == "fail_closed"
+
+    # AC4: gate reasons are present and explain why
+    assert "gate" in data["sandbox_gate_reason"].lower() or "enabled" in data["sandbox_gate_reason"].lower()
+    assert data["canary_gate_reason"] == "fail_closed_explicit_gate_required"
+    assert data["live_gate_reason"] == "fail_closed_explicit_gate_required"
+
+    # Always fail-closed
+    assert data["live_execution_enabled"] is False
+    assert data["canary_execution_enabled"] is False
+    assert data["is_real_capital"] is False
+    assert data["is_real_order"] is False
+
+    # BFF activation command is always not_exposed
+    assert data["bff_activation_command"] == "not_exposed"
+
+    # Wrapper fields
+    assert payload["surface"] == "openclaw_broker_adapter_readiness"
+    assert "snapshot_at" in payload
+
+
+def test_broker_adapter_readiness_paper_enabled_state(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", BASE_URL)
+    recorder = _Recorder(
+        {("GET", f"{BASE_URL}/api/openclaw-adapter/broker/capabilities"): _BROKER_CAPS_PAPER_ENABLED}
+    )
+    client = TestClient(bff_main.app)
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", recorder):
+        response = client.get(
+            "/api/v1/operator/openclaw/broker-adapter-readiness",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+
+    assert data["paper_adapter_state"] == "enabled"
+    assert data["paper_gate_reason"] == "enabled_by_adapter"
+    # live remains fail-closed even when paper is enabled
+    assert data["live_adapter_state"] == "fail_closed"
+    assert data["live_execution_enabled"] is False
+    assert data["canary_execution_enabled"] is False
+    assert data["is_real_capital"] is False
+    assert data["is_real_order"] is False
+
+
+def test_broker_adapter_readiness_requires_auth(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", BASE_URL)
+    client = TestClient(bff_main.app)
+    response = client.get("/api/v1/operator/openclaw/broker-adapter-readiness")
+    assert response.status_code == 401
+
+
+def test_broker_adapter_readiness_requires_operator_role(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", BASE_URL)
+    client = TestClient(bff_main.app)
+    response = client.get(
+        "/api/v1/operator/openclaw/broker-adapter-readiness",
+        headers={"Authorization": VIEWER_AUTH},
+    )
+    assert response.status_code == 403
+
+
+def test_broker_adapter_readiness_degrades_when_adapter_unconfigured(monkeypatch) -> None:
+    for env_name in (
+        "PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL",
+        "PANTHEON_OPENCLAW_ADAPTER_URL",
+        "OPENCLAW_GATEWAY_ADAPTER_URL",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
+    client = TestClient(bff_main.app)
+
+    response = client.get(
+        "/api/v1/operator/openclaw/broker-adapter-readiness",
+        headers={"Authorization": OPERATOR_AUTH},
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    # Always fail-closed regardless of degradation
+    assert data["live_execution_enabled"] is False
+    assert data["canary_execution_enabled"] is False
+    assert data["is_real_capital"] is False
+    assert data["is_real_order"] is False
+    # Overall status reflects unavailability
+    assert data["overall_status"] in {"unavailable", "degraded"}

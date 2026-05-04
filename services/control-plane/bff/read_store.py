@@ -5709,6 +5709,78 @@ class ReadSurfaceStore:
             "service_status": service_status,
         }
 
+    def get_openclaw_broker_adapter_readiness(self) -> Dict[str, Any]:
+        """Project broker adapter capability states and gate reasons.
+
+        Returns sandbox/paper/canary/live capability states with gate reason text,
+        without claiming live activation.  Always fail-closed on live/canary paths.
+        """
+        client = self._openclaw_client()
+        surface, payload = self._fetch_openclaw_surface(
+            "openclaw_broker_capabilities",
+            client.get_broker_capabilities,
+        )
+        if not isinstance(payload, dict):
+            return {
+                "surface": "openclaw_broker_adapter_readiness",
+                "overall_status": "unavailable",
+                "sandbox_adapter_state": "unknown",
+                "paper_adapter_state": "unknown",
+                "canary_adapter_state": "fail_closed",
+                "live_adapter_state": "fail_closed",
+                "live_execution_enabled": False,
+                "canary_execution_enabled": False,
+                "is_real_capital": False,
+                "is_real_order": False,
+                "gate_reason": surface.get("reason") or "broker_capabilities_unavailable",
+                "service_status": surface,
+            }
+
+        def _state(key: str, default: str = "deferred") -> str:
+            return str(payload.get(key) or default).strip().lower()
+
+        def _gate_reason(state: str, gate_env: str, fail_closed: bool = False) -> str:
+            if fail_closed:
+                return "fail_closed_explicit_gate_required"
+            if state in {"enabled", "active"}:
+                return "enabled_by_adapter"
+            return f"{gate_env} is not enabled"
+
+        sandbox_state = _state("sandbox_adapter_state", "activation_ready")
+        paper_state = _state("paper_adapter_state", "gated")
+        canary_state = "fail_closed"
+        live_state = "fail_closed"
+
+        return {
+            "surface": "openclaw_broker_adapter_readiness",
+            "overall_status": "ok" if surface.get("status") == "ok" else surface.get("status", "degraded"),
+            "sandbox_adapter_state": sandbox_state,
+            "sandbox_gate": payload.get("sandbox_gate") or "OPENCLAW_PAPER_ADAPTER_ENABLED",
+            "sandbox_gate_reason": _gate_reason(sandbox_state, str(payload.get("sandbox_gate") or "")),
+            "paper_adapter_state": paper_state,
+            "paper_adapter_gate": payload.get("paper_adapter_gate") or "OPENCLAW_PAPER_ADAPTER_ENABLED",
+            "paper_gate_reason": _gate_reason(paper_state, str(payload.get("paper_adapter_gate") or "")),
+            "canary_adapter_state": canary_state,
+            "canary_adapter_gate": payload.get("canary_adapter_gate") or "OPENCLAW_CANARY_ADAPTER_ENABLED",
+            "canary_gate_reason": _gate_reason(canary_state, "", fail_closed=True),
+            "live_adapter_state": live_state,
+            "live_adapter_gate": payload.get("live_adapter_gate") or "OPENCLAW_LIVE_ADAPTER_ENABLED",
+            "live_gate_reason": _gate_reason(live_state, "", fail_closed=True),
+            "live_execution_enabled": False,
+            "canary_execution_enabled": False,
+            "is_real_capital": False,
+            "is_real_order": False,
+            "broker_sidecar_configured": bool(payload.get("broker_sidecar_configured")),
+            "runtime_manager_configured": bool(payload.get("runtime_manager_configured")),
+            "bff_activation_command": "not_exposed",
+            "note": (
+                "Live and canary broker execution remain fail-closed. "
+                "Sandbox/paper state reflects adapter configuration only. "
+                "Activation requires explicit gate enablement outside the BFF."
+            ),
+            "service_status": surface,
+        }
+
     def _consultation_data_dir(self) -> Optional[Path]:
         for env_name in _CONSULTATION_DATA_DIR_ENVS:
             raw = os.getenv(env_name, "").strip()

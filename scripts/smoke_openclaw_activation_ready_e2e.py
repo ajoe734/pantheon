@@ -237,9 +237,20 @@ class FakeBrokerHandler(BaseHTTPRequestHandler):
                 "fill_qty": body.get("qty"),
                 "fill_price": 100.0,
                 "sim_fill_flag": True,
+                "is_real_order": False,
+                "is_real_capital": False,
             }
             self.orders.append(order)
             _json_response(self, 201, {"status": "ok", "order": order})
+            return
+        if path.startswith("/api/broker/paper/orders/") and path.endswith("/cancel"):
+            order_id = path.split("/")[-2]
+            for order in self.orders:
+                if order.get("order_id") == order_id:
+                    order["status"] = "canceled"
+                    _json_response(self, 200, {"status": "ok", "order": order})
+                    return
+            _json_response(self, 404, {"status": "broker_error", "error_code": "ORDER_NOT_FOUND"})
             return
         _json_response(self, 404, {"error_code": "NOT_FOUND", "path": path})
 
@@ -491,12 +502,71 @@ def _activation_ready_rows(tmp: Path) -> list[SmokeRow]:
             json={"capital_pool_id": "pool-paper", "strategy_id": "strategy-alpha", "symbol": "AAPL", "qty": 3, "side": "buy"},
         )
         order = paper.get("order") or {}
+        order_id = str(order.get("order_id") or "")
         rows.append(
             _check(
                 "activation:paper-order",
-                status == 201 and paper.get("status") == "ok" and order.get("sim_fill_flag") is True,
+                status == 201
+                and paper.get("status") == "ok"
+                and order.get("sim_fill_flag") is True
+                and order.get("is_real_order") is False
+                and order.get("is_real_capital") is False,
                 {"status": status, "body": paper},
                 "paper order must pass only with explicit paper gate and active paper binding",
+            )
+        )
+
+        status, readback = _client_json(
+            client,
+            "GET",
+            f"/api/openclaw-adapter/broker/paper/orders/{urllib.parse.quote(order_id)}",
+        )
+        rows.append(
+            _check(
+                "activation:paper-readback",
+                status == 200
+                and (readback.get("order") or {}).get("order_id") == order_id
+                and (readback.get("order") or {}).get("is_real_order") is False
+                and (readback.get("order") or {}).get("is_real_capital") is False,
+                {"status": status, "body": readback},
+                "paper readback must return the simulated order and preserve no-real-capital flags",
+            )
+        )
+
+        status, listed = _client_json(
+            client,
+            "GET",
+            "/api/openclaw-adapter/broker/paper/orders?capital_pool_id=pool-paper&strategy_id=strategy-alpha",
+        )
+        listed_orders = listed.get("orders") if isinstance(listed.get("orders"), list) else []
+        rows.append(
+            _check(
+                "activation:paper-list-readback",
+                status == 200
+                and any(item.get("order_id") == order_id for item in listed_orders)
+                and all(item.get("is_real_order") is False for item in listed_orders)
+                and all(item.get("is_real_capital") is False for item in listed_orders),
+                {"status": status, "body": listed},
+                "paper list readback must include the simulated order and preserve no-real-capital flags",
+            )
+        )
+
+        status, canceled = _client_json(
+            client,
+            "POST",
+            f"/api/openclaw-adapter/broker/paper/orders/{urllib.parse.quote(order_id)}/cancel",
+            headers={"X-Operator-Id": "op-smoke", "X-Trace-Id": "trace-paper-cancel"},
+        )
+        rows.append(
+            _check(
+                "activation:paper-cancel",
+                status == 200
+                and (canceled.get("order") or {}).get("order_id") == order_id
+                and (canceled.get("order") or {}).get("status") == "canceled"
+                and (canceled.get("order") or {}).get("is_real_order") is False
+                and (canceled.get("order") or {}).get("is_real_capital") is False,
+                {"status": status, "body": canceled},
+                "paper cancel must update the simulated order without real broker side effects",
             )
         )
 
@@ -521,12 +591,17 @@ def _activation_ready_rows(tmp: Path) -> list[SmokeRow]:
         )
 
         status, audit = _client_json(client, "GET", "/api/openclaw-adapter/broker/audit?operator_id=op-smoke")
+        audit_entries = audit.get("entries") if isinstance(audit.get("entries"), list) else []
         rows.append(
             _check(
                 "activation:paper-audit",
-                status == 200 and any(item.get("outcome") == "ok" for item in audit.get("entries", [])),
+                status == 200
+                and any(item.get("event") == "paper_order_intent" and item.get("outcome") == "ok" for item in audit_entries)
+                and any(item.get("event") == "paper_order_cancel_intent" and item.get("outcome") == "ok" for item in audit_entries)
+                and all(item.get("is_real_order") is False for item in audit_entries)
+                and all(item.get("is_real_capital") is False for item in audit_entries),
                 {"status": status, "body": audit},
-                "paper adapter audit must record successful simulated handoff",
+                "paper adapter audit must reconcile place/cancel outcomes with no real capital",
             )
         )
     return rows

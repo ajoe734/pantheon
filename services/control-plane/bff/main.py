@@ -8591,6 +8591,32 @@ async def get_openclaw_live_gate_audit(
     )
 
 
+@app.get("/api/v1/operator/openclaw/broker-adapter-readiness")
+@app.get("/api/v1/operator/openclaw/broker/adapter-readiness")
+async def get_openclaw_broker_adapter_readiness(
+    authorization: Optional[str] = Header(default=None),
+):
+    """Return broker adapter capability states and gate reasons.
+
+    Projects sandbox/paper/canary/live adapter states with the gate reason for
+    each capability without claiming live activation.  Live and canary paths are
+    always fail-closed.  The BFF does not expose activation commands; enablement
+    requires explicit gate configuration outside the BFF.
+    """
+    identity = _extract_identity(authorization)
+    _require_openclaw_command_role(identity)
+    surface = read_store.get_openclaw_broker_adapter_readiness()
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "ok",
+            "surface": "openclaw_broker_adapter_readiness",
+            "data": surface,
+            "snapshot_at": utc_now(),
+        },
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Source / Search Operator Ops Surface (SVC-SOURCE-SEARCH-OPS-BFF)
 # --------------------------------------------------------------------------- #

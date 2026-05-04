@@ -33,6 +33,10 @@ class OpenClawActivationReadyE2ETest(unittest.TestCase):
             self.assertEqual(rows["activation:session-lifecycle"]["evidence"]["session"]["state"], "active")
             self.assertEqual(rows["activation:tool-resolution"]["evidence"]["body"]["effective_tools"], ["research.search"])
             self.assertTrue(rows["activation:paper-order"]["evidence"]["body"]["order"]["sim_fill_flag"])
+            self.assertEqual(rows["activation:paper-readback"]["status"], "passed")
+            self.assertEqual(rows["activation:paper-list-readback"]["status"], "passed")
+            self.assertEqual(rows["activation:paper-cancel"]["evidence"]["body"]["order"]["status"], "canceled")
+            self.assertEqual(rows["activation:paper-audit"]["status"], "passed")
             self.assertEqual(
                 rows["activation:live-order-denied"]["evidence"]["body"]["error_code"],
                 "LIVE_EXECUTION_DISABLED",

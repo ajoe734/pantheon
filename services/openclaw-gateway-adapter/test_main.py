@@ -709,6 +709,34 @@ class TestPaperBrokerRoutes(unittest.TestCase):
         self.assertEqual(body["order"]["order_id"], "ord-abc")
         self.assertFalse(body["order"]["is_real_order"])
 
+    def test_cancel_paper_order_forwards_operator_and_trace(self):
+        from paper_broker_adapter import PaperBrokerAdapter
+
+        mock = MagicMock(spec=PaperBrokerAdapter)
+        mock.cancel_paper_order.return_value = {
+            "status": "ok",
+            "order": {
+                "order_id": "ord-abc",
+                "status": "canceled",
+                "is_real_order": False,
+                "is_real_capital": False,
+            },
+        }
+        with patch.object(adapter_main, "_PAPER_BROKER", mock):
+            resp = client.post(
+                "/api/openclaw-adapter/broker/paper/orders/ord-abc/cancel",
+                headers={"X-Operator-Id": "op-1", "X-Trace-Id": "trace-cancel-1"},
+            )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["order"]["status"], "canceled")
+        self.assertFalse(body["order"]["is_real_order"])
+        mock.cancel_paper_order.assert_called_once_with(
+            "ord-abc",
+            operator_id="op-1",
+            trace_id="trace-cancel-1",
+        )
+
     def test_live_order_always_rejected(self):
         from live_gate_adapter import LiveGateAdapter, LiveGateError
 
@@ -763,6 +791,8 @@ class TestPaperBrokerRoutes(unittest.TestCase):
 
         mock = MagicMock(spec=PaperBrokerAdapter)
         mock.capability_snapshot.return_value = {
+            "sandbox_adapter_state": "activation_ready",
+            "sandbox_gate": "OPENCLAW_PAPER_ADAPTER_ENABLED",
             "paper_adapter_enabled": False,
             "live_adapter_enabled": False,
             "broker_sidecar_configured": False,

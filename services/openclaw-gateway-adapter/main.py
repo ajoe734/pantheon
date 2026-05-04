@@ -110,6 +110,10 @@ _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
     "adapter_version": "0.2.0",
     "activation_state": "upstream_client_degraded",
     "broker_execution": "deferred",
+    # sandbox_adapter: activation_ready means the fake-paper/sandbox contract is code-complete and
+    # can be enabled by setting OPENCLAW_PAPER_ADAPTER_ENABLED=true with a broker sidecar.
+    # No real capital or real orders — purely simulated.
+    "sandbox_adapter": "activation_ready",
     "paper_adapter": "deferred",
     "live_adapter": "deferred",
     "canary_adapter": "deferred",
@@ -137,6 +141,7 @@ _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
     },
     "activation_gates": {
         "broker_execution": "OPENCLAW_PRODUCTION_BROKER_ENABLED",
+        "sandbox_adapter": "OPENCLAW_PAPER_ADAPTER_ENABLED + OPENCLAW_BROKER_SIDECAR_URL (fake/test-key sidecar)",
         "paper_adapter": "OPENCLAW_PAPER_ADAPTER_ENABLED",
         "live_adapter": "OPENCLAW_LIVE_ADAPTER_ENABLED",
         "canary_adapter": "OPENCLAW_CANARY_ADAPTER_ENABLED",
@@ -1128,6 +1133,32 @@ def get_paper_order(order_id: str) -> JSONResponse:
     return JSONResponse(status_code=200, content=result)
 
 
+@app.post("/api/openclaw-adapter/broker/paper/orders/{order_id}/cancel")
+def cancel_paper_order(
+    order_id: str,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+) -> JSONResponse:
+    if not x_operator_id:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "paper_broker_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for paper order cancellation.",
+            },
+        )
+    try:
+        result = _PAPER_BROKER.cancel_paper_order(
+            order_id,
+            operator_id=x_operator_id,
+            trace_id=x_trace_id,
+        )
+    except PaperBrokerAdapterError as exc:
+        return _paper_broker_error_response(exc)
+    return JSONResponse(status_code=200, content=result)
+
+
 @app.post("/api/openclaw-adapter/broker/live/orders")
 def reject_live_order(
     x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
@@ -1323,14 +1354,26 @@ def list_paper_broker_audit(
 
 @app.get("/api/openclaw-adapter/broker/capabilities")
 def broker_capabilities() -> JSONResponse:
+    paper_snap = _PAPER_BROKER.capability_snapshot()
     return JSONResponse(
         status_code=200,
         content={
             "status": "ok",
-            **_PAPER_BROKER.capability_snapshot(),
+            # Explicit capability states for sandbox/paper/canary/live
+            "sandbox_adapter_state": paper_snap["sandbox_adapter_state"],
+            "sandbox_gate": paper_snap["sandbox_gate"],
+            "paper_adapter_state": "enabled" if paper_snap["paper_adapter_enabled"] else "gated",
+            "paper_adapter_gate": "OPENCLAW_PAPER_ADAPTER_ENABLED",
+            "canary_adapter_state": "fail_closed",
+            "canary_adapter_gate": "OPENCLAW_CANARY_ADAPTER_ENABLED",
+            "live_adapter_state": "fail_closed",
+            "live_adapter_gate": "OPENCLAW_LIVE_ADAPTER_ENABLED",
+            # Legacy flat fields
+            **paper_snap,
             "canary_adapter_enabled": False,
             "canary_execution_enabled": False,
             "canary_gate": "OPENCLAW_CANARY_ADAPTER_ENABLED",
             "canary_allowed_scope": "canary_gate_not_enabled",
+            "live_gate": _LIVE_GATE.capability_snapshot(),
         },
     )

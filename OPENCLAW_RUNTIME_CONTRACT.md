@@ -116,6 +116,7 @@ P2 live-kernel boundary:
 - `POST /api/openclaw-adapter/broker/live/orders`：永遠回 fail-closed `LIVE_EXECUTION_DISABLED`；live gate harness 只允許 dry handoff / validation evidence，不送真實 broker order。
 - `POST /api/openclaw-adapter/broker/canary/orders`：永遠回 fail-closed `CANARY_EXECUTION_DISABLED`；`OPENCLAW_CANARY_ADAPTER_ENABLED` 在本階段只作為顯示用 activation gate，不得啟用 canary order route。
 - `GET /api/openclaw-adapter/broker/capabilities`：回傳 paper/live/canary broker gate posture；`is_real_order=false` 且 `is_real_capital=false`。
+- BFF `GET /api/v1/operator/openclaw/broker-adapter-readiness`：只讀投影 sandbox / paper / canary / live adapter state、gate reason、adapter readiness 與 `is_real_order=false` / `is_real_capital=false`；不得暴露 activation command，也不得宣稱 live activation。
 - BFF `GET /api/v1/operator/openclaw/ops` 必須投影 `broker_execution`、`paper_adapter`、`canary_adapter`、`live_adapter`、`capital_binding` 的 `gate_state`，包含 `activation_gate`、`enabled`、`allowed_scope`、`gate_reason`，且所有 enable command 顯示為 `not_exposed` / fail-closed。
 
 **Policy 環境變數：**
