@@ -5,7 +5,7 @@
 **Reviewer**: Claude
 **Scope**: Define the dormant implementation and executable activation path for deferred Qlib, TRL, FinRL, RLlib, and W&B rows
 **Status**: Done — review approved by Claude 2026-04-16
-**Last Updated**: 2026-05-01
+**Last Updated**: 2026-05-04
 
 ---
 
@@ -25,8 +25,8 @@ named activation gate is satisfied.
 2026-05-01 correction: the old blanket avoidance of live/production behavior does not apply to
 non-ordering external integrations. The only hard fail-closed boundary is production-live
 real-capital side effects such as broker order placement, cancel/replace, position/capital
-mutation, and order-capable routing. Adjustable deferred/offline rows now have active follow-up
-execution tasks to finish development and runtime smoke where appropriate:
+mutation, and order-capable routing. Adjustable deferred/offline rows now have completed or active
+follow-up execution tasks to finish development and runtime smoke where appropriate:
 
 | Component | Follow-up task | Intent |
 |---|---|---|
@@ -34,6 +34,14 @@ execution tasks to finish development and runtime smoke where appropriate:
 | `Qlib` | `P2-QLIB-PROD-DATA-ACTIVATION-001` | Produce governed production-data proof and real/stub-selectable backend smoke for a reviewable candidate handoff. |
 | `TRL` | `P2-TRL-RUNTIME-DATA-ACTIVATION-001` | Connect FB-002 preference-pair runtime data and run real TRL DPO smoke or explicit dependency/config evidence. |
 | `FinRL / RLlib / Ray Tune` | `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` | Move dormant/deferred prep to bounded governed train/search runtime smoke with research-only artifacts. |
+
+2026-05-04 E2E closure: `SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E` verified the
+service-to-service activation-ready path without changing production activation truth. The focused
+matrix proves default Qlib/TRL/FinRL/RLlib/W&B paths reject offline dispatch, explicit test gates
+can run bounded offline Qlib/TRL/RL/W&B artifact paths, and paper/canary/live remain rejected even
+when the offline gate is open. The BFF operator view remains read-only; it exposes capability,
+run/job, artifact, log, and error metadata but no activation, registry-promotion, governance,
+broker, or capital-writing command.
 
 It does **not** replace the per-row gate documents. Those remain authoritative for detailed criteria
 and workflow design. This map adds:
@@ -53,7 +61,7 @@ and workflow design. This map adds:
 | `TRL` | `smoke-tested` | Yes — `trl>=0.8.0,<0.10.0` pinned in `services/learning/trl/requirements.txt` | Yes — `GovernedPreferencePairAdapter` + `StubDPOBackend` + `TRLDPOBackend` + `run_trl_dpo_workflow` | Yes — smoke passes (29 unit tests + assertions OK, revalidated 2026-04-29); evidence in `integrations/trl/` | Claude (OSS-NEXT-002 owner) — production blocked on runtime data gates |
 | `FinRL` | `smoke-tested` | Yes — `finrl==0.3.6` in `services/research/finrl/requirements.txt`; FinRL Dockerfile carries the deferred-prep scaffold | Yes — governed input adapter, stub backend, and FinRL import-path backend; activation evidence harness (`activation_smoke.py`) with `--enable-activation-ready` flag | Yes — `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` done; activation smoke produced explicit `ModuleNotFoundError` with `silent_stub_fallback=false`, checksum-bearing artifact bundle, evaluator packet, registry entry, and candidate packet in `support/evidence/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/` | task done; no broker route or capital binding; RL gate remains closed |
 | `RLlib` | `smoke-tested` | Yes — `ray[rllib]>=2.9.0,<3.0.0` and `ray[tune]>=2.9.0,<3.0.0` in `services/research/rllib/requirements.txt`; RLlib Dockerfile carries the deferred-prep scaffold | Yes — RLlib train/eval and Ray Tune search adapters with activation evidence harnesses | Yes — `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` done; bounded train/search smoke produced explicit `ModuleNotFoundError` with `silent_stub_fallback=false`, research-only artifact output, evidence in `support/evidence/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/` | task done; no broker route or capital binding; RL gate remains closed |
-| `W&B` | `activation-gated` | Yes — `wandb>=0.16.0,<1.0` in `services/registry/experiments/requirements.txt` for the experiments container | Offline local-store exists; SDK-backed `WandbOnlineBackend` exists behind `PANTHEON_WANDB_ONLINE_SYNC_ENABLED=1` plus test project/API key | Offline local-store yes; online upload/readback harness present. Local credentialed smoke skipped on 2026-05-01 because W&B SDK and `WANDB_API_KEY` were not present in this workspace | Codex → hand off `P2-WANDB-ONLINE-SYNC-001` for review; no broker route or capital binding |
+| `W&B` | `activation-gated` | Yes — `wandb>=0.16.0,<1.0` in `services/registry/experiments/requirements.txt` for the experiments container | Offline local-store exists; SDK-backed `WandbOnlineBackend` exists behind `PANTHEON_WANDB_ONLINE_SYNC_ENABLED=1` plus test project/API key | Offline local-store yes; online upload/readback harness present. Local credentialed smoke remains a structured skip when the SDK, test project, or `WANDB_API_KEY` are absent | `P2-WANDB-ONLINE-SYNC-001` done; no broker route or capital binding |
 
 ---
 
@@ -333,7 +341,7 @@ Without those env vars and SDK install, the harness returns a structured skip na
 config without persisting secrets. This is not a broker, paper/canary/live, order-routing,
 registry-promotion, or capital-binding task.
 
-**Activation owner for follow-on work**: Codex owns `P2-WANDB-ONLINE-SYNC-001`; Claude reviews.
+**Activation owner for follow-on work**: Codex owned `P2-WANDB-ONLINE-SYNC-001`; Claude reviewed.
 
 ---
 
@@ -343,9 +351,9 @@ registry-promotion, or capital-binding task.
 |---|---|---|---|
 | `Qlib` | Smoke-tested baseline landed — package pin, governed adapter, LightGBM smoke path, and activation packet are present | RS-003 candidate readiness + governed dataset availability (>=50 instruments, >=2 years data) + target StrategySpec binding | Run the first governed alpha activation through `QlibLightGBMBackend` when the gates clear |
 | `TRL` | Smoke-tested baseline landed — blocked on runtime data gates; non-writing preflight scaffold present | ≥200 FB-002 events, ≥100 pairs, active LP-002, and a ready downstream consumer | Accumulate FB-002 volume, run the TRL preflight, then run the first governed production DPO activation with `TRLDPOBackend` |
-| `FinRL` | Dormant adapter, worker, Dockerfile, examples, and explicit-gate smoke path are landed; follow-up runtime smoke is active | Bounded governed runtime smoke not yet completed | `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` |
-| `RLlib` | Version pin and dormant RLlib/Ray Tune prep scaffold landed; follow-up runtime smoke is active | Bounded governed runtime smoke not yet completed | `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` |
-| `W&B` | Offline local run store landed; SDK-backed online sync backend, SDK pin, BFF/evaluator ref preservation, and smoke harness are implemented | Credentialed W&B project/API-key smoke still requires external env in the target deployment | `P2-WANDB-ONLINE-SYNC-001` review |
+| `FinRL` | Dormant adapter, worker, Dockerfile, examples, explicit-gate smoke path, and bounded runtime-smoke evidence are landed | RL approval gate remains closed; no production train/eval, registry write, paper/canary/live path, broker route, or capital binding | `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` done; E2E matrix verifies offline-only default-closed behavior |
+| `RLlib` | Version pin plus dormant RLlib/Ray Tune prep scaffold and bounded runtime-smoke evidence are landed | RL approval gate remains closed; no production train/eval/search, registry write, paper/canary/live path, broker route, or capital binding | `P2-RL-UPSTREAM-RUNTIME-SMOKE-001` done; E2E matrix verifies offline-only default-closed behavior |
+| `W&B` | Offline local run store landed; SDK-backed online sync backend, SDK pin, BFF/evaluator ref preservation, and smoke harness are implemented | Credentialed W&B project/API-key smoke still requires external env in the target deployment; gateway dispatch remains fail-closed | `P2-WANDB-ONLINE-SYNC-001` done; E2E matrix verifies offline-local smoke and no online activation by default |
 
 ---
 

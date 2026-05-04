@@ -228,6 +228,7 @@ The research service boundary now exposes a fail-closed dormant capability inven
 - `services/research/main.py`: research-orchestrator dormant backend inventory and write-path denial policy
 - `services/policy-learning/main.py`: policy-learning dormant backend inventory and write-path denial policy
 - `services/control-plane/bff/main.py`: read-only `/api/v1/operator/research/oss-preactivation` aggregate for dormant capability and rejection evidence across the research orchestrator, policy-learning, worker gateway, and OpenClaw adapter surfaces
+- `scripts/smoke_oss_activation_ready_matrix.py`: E2E smoke matrix covering default fail-closed Qlib/TRL/RL/W&B paths, explicit offline test gates, paper/canary/live rejection, local artifact evidence, and no registry/governance/broker/live writes
 
 ### Why It Is a Real Gap
 
@@ -272,6 +273,9 @@ The gap is real but scoped: the platform has a valid production research path fo
 - [x] OpenClaw governed gateway adapter + live smoke evidence pack
 - [x] Qlib smoke-tested baseline and evidence pack
 - [x] TRL smoke-tested baseline and evidence pack
+- [x] FinRL/RLlib/Ray Tune bounded activation-ready smoke evidence remains offline-only and RL-gated
+- [x] W&B offline-local smoke plus explicit-gated online backend remains non-broker and non-capital-bound by default
+- [x] OSS activation-ready E2E smoke matrix passes with no registry, governance, broker, or live writes
 - [x] vectorbt governed smoke path and evidence pack
 - [x] statsmodels governed smoke path and evidence pack
 - [x] QuantLib governed smoke path and evidence pack
@@ -299,4 +303,5 @@ Follow-on activation work: P1 continuation and P2 wave.
 - `integrations/qlib/integration.md`: Qlib smoke-tested integration evidence
 - `integrations/trl/integration.md`: TRL smoke-tested integration evidence
 - `integrations/oss-002/regrade_report.md`: DSPy, imitation, MLflow regrade evidence
+- `scripts/smoke_oss_activation_ready_matrix.py`: Qlib/TRL/RL/W&B activation-ready E2E smoke matrix
 - `CANONICAL_DOCUMENT_MAP.md`: Canonical document registry
