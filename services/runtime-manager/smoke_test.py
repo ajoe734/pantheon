@@ -57,6 +57,20 @@ def check(name: str, cond: bool, detail: str = "") -> None:
     print(msg)
 
 
+def activation_gate(**overrides):
+    gate = {
+        "promotion_gate_decision_id": "gate-smoke-001",
+        "human_gate_packet_ref": "docs/deployment/evidence/ep5-human-gate-input/smoke/human-gate-packet.json",
+        "broker_sandbox_smoke_ref": "docs/deployment/evidence/execution-sandbox-canary-activation-ready/smoke",
+        "risk_owner_approval_ref": "approval://risk-owner/smoke",
+        "operator_approval_ref": "approval://operator/smoke",
+        "capital_scale_pct": 5.0,
+        "gross_scale_pct": 25.0,
+    }
+    gate.update(overrides)
+    return gate
+
+
 def run_service_layer_tests():
     print("\n=== Service Layer (service.py) ===")
 
@@ -715,6 +729,7 @@ def run_rollback_http_tests():
         "allowed_deployment_scope": "live",
         "loader_checks_passed": True,
         "runtime_id": "rt-http-rb",
+        "promotion_gate": activation_gate(),
     }
     deploy_resp = client.post("/api/runtimes/deploy", json=deploy_body, headers=AUTH)
     check("rollback HTTP setup: deploy returns 201",

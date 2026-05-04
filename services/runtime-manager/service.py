@@ -111,6 +111,17 @@ _STAGE_ORDER = {
     "canary": 2,
     "live": 3,
 }
+_ACTIVATION_GATE_STAGES = {"canary", "live"}
+_CANARY_MAX_CAPITAL_SCALE_PCT = 5.0
+_CANARY_MAX_GROSS_SCALE_PCT = 25.0
+_COMMON_ACTIVATION_GATE_FIELDS = (
+    "promotion_gate_decision_id",
+    "human_gate_packet_ref",
+    "broker_sandbox_smoke_ref",
+    "risk_owner_approval_ref",
+    "operator_approval_ref",
+)
+_LIVE_EXTRA_ACTIVATION_GATE_FIELDS = ("canary_observation_ref",)
 _FOUNDATION_POLICY_VERSION = "2026-04-27"
 _KILL_SWITCH_FOUNDATION_OPERATION = "runtime_manager.kill_switch.dispatch"
 _KILL_SWITCH_TELEMETRY_ACK_VERSION = "2026-05-01"
@@ -118,6 +129,92 @@ _KILL_SWITCH_TELEMETRY_ACK_VERSION = "2026-05-01"
 
 def _scope_allows_stage(allowed_deployment_scope: str, target_stage: str) -> bool:
     return _STAGE_ORDER.get(allowed_deployment_scope, -1) >= _STAGE_ORDER.get(target_stage, 999)
+
+
+def _nested_mapping(value: Any) -> Dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _first_non_empty_from_sources(sources: List[Dict[str, Any]], key: str) -> str:
+    for source in sources:
+        value = source.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _activation_gate_sources(request: Dict[str, Any]) -> List[Dict[str, Any]]:
+    metadata = _nested_mapping(request.get("metadata"))
+    return [
+        request,
+        _nested_mapping(request.get("promotion_gate")),
+        _nested_mapping(request.get("activation_gate")),
+        _nested_mapping(metadata.get("promotion_gate")),
+        _nested_mapping(metadata.get("activation_gate")),
+    ]
+
+
+def _float_gate_value(sources: List[Dict[str, Any]], key: str) -> Optional[float]:
+    raw = _first_non_empty_from_sources(sources, key)
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise RuntimeManagerError(f"{key} must be numeric for canary/live activation gate") from exc
+
+
+def _validate_activation_gate(
+    request: Dict[str, Any],
+    *,
+    target_stage: str,
+    persona_capital_binding_id: str,
+    allowed_deployment_scope: str,
+) -> Optional[Dict[str, Any]]:
+    if target_stage not in _ACTIVATION_GATE_STAGES:
+        return None
+
+    if not persona_capital_binding_id:
+        raise RuntimeManagerError(
+            "canary/live activation requires persona_capital_binding_id as the capital binding proof."
+        )
+    if not _scope_allows_stage(allowed_deployment_scope, target_stage):
+        raise RuntimeManagerError(
+            "canary/live activation requires a capital binding whose allowed_deployment_scope permits the target stage."
+        )
+
+    sources = _activation_gate_sources(request)
+    required_fields = list(_COMMON_ACTIVATION_GATE_FIELDS)
+    if target_stage == "live":
+        required_fields.extend(_LIVE_EXTRA_ACTIVATION_GATE_FIELDS)
+    missing = [field for field in required_fields if not _first_non_empty_from_sources(sources, field)]
+    if missing:
+        raise RuntimeManagerError(
+            f"{target_stage} activation is blocked until explicit promotion gate evidence is present: "
+            + ", ".join(missing)
+        )
+
+    capital_scale_pct = _float_gate_value(sources, "capital_scale_pct")
+    gross_scale_pct = _float_gate_value(sources, "gross_scale_pct")
+    if target_stage == "canary":
+        if capital_scale_pct is None or not (0 < capital_scale_pct <= _CANARY_MAX_CAPITAL_SCALE_PCT):
+            raise RuntimeManagerError(
+                "canary activation requires 0 < capital_scale_pct <= 5 in the promotion gate."
+            )
+        if gross_scale_pct is None or not (0 < gross_scale_pct <= _CANARY_MAX_GROSS_SCALE_PCT):
+            raise RuntimeManagerError(
+                "canary activation requires 0 < gross_scale_pct <= 25 in the promotion gate."
+            )
+
+    gate = {field: _first_non_empty_from_sources(sources, field) for field in required_fields}
+    if capital_scale_pct is not None:
+        gate["capital_scale_pct"] = capital_scale_pct
+    if gross_scale_pct is not None:
+        gate["gross_scale_pct"] = gross_scale_pct
+    gate["target_stage"] = target_stage
+    gate["persona_capital_binding_id"] = persona_capital_binding_id
+    gate["allowed_deployment_scope"] = allowed_deployment_scope
+    return gate
 
 
 def _foundation_environment_scope(request: Dict[str, Any]) -> EnvironmentScope:
@@ -505,6 +602,7 @@ class RuntimeManagerService:
         self,
         request: Dict[str, Any],
         _allow_cutover_bypass: bool = False,
+        _allow_activation_gate_bypass: bool = False,
     ) -> RuntimeBinding:
         """Create a RuntimeBinding from a validated DeploymentPlan descriptor.
 
@@ -526,6 +624,10 @@ class RuntimeManagerService:
         this class must never set it; it avoids the race condition that arises
         when the old approach temporarily mutated the service-wide
         ``_single_runtime_enforced`` flag.
+
+        ``_allow_activation_gate_bypass`` is also internal-only.  It is used by
+        rollback replacement creation so safety actions are not blocked by the
+        promotion gate intended for forward canary/live activation.
         """
         plan_id = request.get("plan_id", "")
         plan_status = request.get("plan_status", "")
@@ -588,6 +690,25 @@ class RuntimeManagerService:
             raise RuntimeManagerError(
                 "rollback_action_type is required when rollback_parent is set."
             )
+
+        if _allow_activation_gate_bypass and target_stage in _ACTIVATION_GATE_STAGES:
+            binding_metadata.setdefault(
+                "activation_gate",
+                {
+                    "target_stage": target_stage,
+                    "status": "bypassed_for_runtime_manager_rollback",
+                    "rollback_parent": rollback_parent,
+                },
+            )
+        else:
+            activation_gate = _validate_activation_gate(
+                request,
+                target_stage=target_stage,
+                persona_capital_binding_id=persona_capital_binding_id,
+                allowed_deployment_scope=allowed_deployment_scope,
+            )
+            if activation_gate is not None:
+                binding_metadata.setdefault("activation_gate", activation_gate)
 
         binding_id = f"rb-{uuid.uuid4().hex}"
         binding = RuntimeBinding(
@@ -716,7 +837,11 @@ class RuntimeManagerService:
             # deploy() call via the per-call _allow_cutover_bypass flag so that concurrent
             # deploy() calls on other threads still see the full guard.
             # Per §8: old binding core fields are not rewritten; only status -> retired.
-            new_binding = self.deploy(deploy_req, _allow_cutover_bypass=True)
+            new_binding = self.deploy(
+                deploy_req,
+                _allow_cutover_bypass=True,
+                _allow_activation_gate_bypass=True,
+            )
             self._store.retire(current_binding_id, retired_at=cutover_at)
 
         elif action_type == RollbackActionType.PAUSE_THEN_REPLACE.value:
@@ -738,7 +863,7 @@ class RuntimeManagerService:
                 )
             # Step 2: Create replacement while old is paused.
             # single-runtime rule does not fire because the old binding is no longer active.
-            new_binding = self.deploy(deploy_req)
+            new_binding = self.deploy(deploy_req, _allow_activation_gate_bypass=True)
             # Step 3: Retire old paused binding post-cutover.
             self._store.retire(current_binding_id, retired_at=cutover_at)
 
@@ -749,7 +874,7 @@ class RuntimeManagerService:
             # binding/artifact until the runtime is confirmed flat.
             self._store.retire(current_binding_id, retired_at=cutover_at)
             # Step 2: Create replacement, optionally starting in guarded / paused mode.
-            new_binding = self.deploy(deploy_req)
+            new_binding = self.deploy(deploy_req, _allow_activation_gate_bypass=True)
             if replacement_start_paused:
                 self._store.transition_status(
                     new_binding.binding_id, RuntimeBindingStatus.PENDING_PAUSE.value

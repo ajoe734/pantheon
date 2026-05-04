@@ -1,0 +1,19 @@
+{
+  "status": "passed",
+  "source_task_id": "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY",
+  "real_capital_used": false,
+  "real_capital_reserved": false,
+  "production_live_order_submitted": false,
+  "production_live_cancel_submitted": false,
+  "broker_secret_boundary": {
+    "credential_ref": "secret://pantheon/ibkr-paper-test-key",
+    "raw_secret_material_present": false,
+    "secret_material_source": "repo_safe_reference_or_absent"
+  },
+  "capital_boundary": {
+    "real_capital_used": false,
+    "real_capital_reserved": false,
+    "production_live_side_effects_allowed": false,
+    "production_live_order_submitted": false
+  }
+}

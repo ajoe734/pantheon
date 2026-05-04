@@ -1,0 +1,17 @@
+{
+  "status": "event_shape_validated",
+  "event": {
+    "event_type": "broker_order_smoke.validate_only",
+    "task_id": "P2-BROKER-SANDBOX-ORDER-001",
+    "source_task_id": "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY",
+    "provider": "Kraken",
+    "mode": "test_key_validate_only",
+    "generated_at": "2026-05-04T05:00:08Z",
+    "account_ref": "KRAKEN-TEST-KEY-001",
+    "symbol": "BTC/USD.KRAKEN",
+    "side": "buy",
+    "quantity": 1,
+    "production_live_enabled": false,
+    "raw_secret_material_present": false
+  }
+}

@@ -41,6 +41,11 @@ class BrokerSandboxOrderSmokeTest(unittest.TestCase):
         self.assertEqual(payload["execution"]["fill_status"], "no_fill_validate_only")
         self.assertEqual(payload["telemetry"]["event"]["raw_secret_material_present"], False)
         self.assertEqual(payload["reconciliation"]["status"], "passed")
+        self.assertEqual(payload["order_lifecycle"]["adapter"], "sandbox_test_key_order_lifecycle")
+        self.assertEqual(payload["order_lifecycle"]["reconciliation"]["status"], "passed")
+        self.assertFalse(payload["no_real_capital"]["real_capital_used"])
+        self.assertFalse(payload["no_real_capital"]["production_live_order_submitted"])
+        self.assertIn("after_cancel", payload["readback"])
 
     def test_shioaji_simulation_packet_sets_simulation_flag(self) -> None:
         payload = smoke.build_payload(
@@ -72,6 +77,22 @@ class BrokerSandboxOrderSmokeTest(unittest.TestCase):
         self.assertTrue(payload["place"]["request"]["validate"])
         self.assertEqual(payload["place"]["request"]["pair"], "BTC/USD")
 
+    def test_test_key_mode_builds_same_non_live_lifecycle(self) -> None:
+        payload = smoke.build_payload(
+            self.args(
+                provider="kraken",
+                mode="test_key_validate_only",
+                symbol="ETH/USD.KRAKEN",
+                account_ref="KRAKEN-TEST-KEY-001",
+                credential_ref="secret://pantheon/kraken-test-key",
+            )
+        )
+
+        self.assertEqual(payload["mode"], "test_key_validate_only")
+        self.assertEqual(payload["order_lifecycle"]["capital_boundary"]["real_capital_used"], False)
+        self.assertEqual(payload["order_lifecycle"]["steps"][-1]["step"], "reconcile")
+        self.assertEqual(payload["order_lifecycle"]["steps"][-1]["status"], "passed")
+
     def test_live_mode_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "production live"):
             smoke.build_payload(self.args(mode="live"))
@@ -99,6 +120,8 @@ class BrokerSandboxOrderSmokeTest(unittest.TestCase):
                 "execution.json",
                 "telemetry-event.json",
                 "reconciliation.json",
+                "order-lifecycle.json",
+                "no-real-capital-evidence.json",
             }
             self.assertEqual({path.name for path in output_dir.iterdir()}, expected)
             self.assertEqual(json.loads((output_dir / "summary.json").read_text())["task_id"], smoke.TASK_ID)

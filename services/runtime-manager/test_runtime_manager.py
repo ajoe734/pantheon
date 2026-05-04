@@ -59,6 +59,20 @@ def _valid_deploy_request(**overrides):
     return request
 
 
+def _valid_activation_gate(**overrides):
+    gate = {
+        "promotion_gate_decision_id": "gate-appr-001",
+        "human_gate_packet_ref": "docs/deployment/evidence/execution-sandbox-canary-ready/human-gate.json",
+        "broker_sandbox_smoke_ref": "docs/deployment/evidence/execution-sandbox-canary-ready/broker-smoke",
+        "risk_owner_approval_ref": "risk-owner-approval-001",
+        "operator_approval_ref": "operator-approval-001",
+        "capital_scale_pct": 5.0,
+        "gross_scale_pct": 25.0,
+    }
+    gate.update(overrides)
+    return gate
+
+
 def _load_main_module(store_path: Path):
     os.environ["PANTHEON_RUNTIME_BINDING_STORE_PATH"] = str(store_path)
     os.environ["PANTHEON_SINGLE_RUNTIME_ENFORCED"] = "true"
@@ -99,12 +113,49 @@ class RuntimeManagerServiceTests(unittest.TestCase):
                 target_stage="canary",
                 allowed_deployment_scope="live",
                 runtime_id="rt-canary-001",
+                promotion_gate=_valid_activation_gate(),
             )
         )
 
         self.assertEqual(binding.plan_id, "plan-canary-001")
         self.assertEqual(binding.deployment_mode, "canary")
         self.assertEqual(binding.to_dict()["deployment_mode"], "canary")
+        self.assertEqual(binding.metadata["activation_gate"]["broker_sandbox_smoke_ref"], "docs/deployment/evidence/execution-sandbox-canary-ready/broker-smoke")
+
+    def test_canary_deploy_requires_explicit_activation_gate(self):
+        with self.assertRaisesRegex(RuntimeManagerError, "activation is blocked"):
+            self.service.deploy(
+                _valid_deploy_request(
+                    plan_id="plan-canary-no-gate",
+                    target_stage="canary",
+                    allowed_deployment_scope="live",
+                    runtime_id="rt-canary-no-gate",
+                )
+            )
+
+    def test_canary_deploy_requires_policy_scale_in_gate(self):
+        with self.assertRaisesRegex(RuntimeManagerError, "capital_scale_pct"):
+            self.service.deploy(
+                _valid_deploy_request(
+                    plan_id="plan-canary-scale-bad",
+                    target_stage="canary",
+                    allowed_deployment_scope="live",
+                    runtime_id="rt-canary-scale-bad",
+                    promotion_gate=_valid_activation_gate(capital_scale_pct=12.0),
+                )
+            )
+
+    def test_live_deploy_requires_canary_observation_gate(self):
+        with self.assertRaisesRegex(RuntimeManagerError, "canary_observation_ref"):
+            self.service.deploy(
+                _valid_deploy_request(
+                    plan_id="plan-live-no-observation",
+                    target_stage="live",
+                    allowed_deployment_scope="live",
+                    runtime_id="rt-live-no-observation",
+                    promotion_gate=_valid_activation_gate(capital_scale_pct=100.0, gross_scale_pct=100.0),
+                )
+            )
 
     def test_deploy_preserves_strategy_id_in_metadata_for_runtime_readers(self):
         binding = self.service.deploy(_valid_deploy_request(strategy_id="strat-001"))

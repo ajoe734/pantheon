@@ -23,6 +23,29 @@ def base_env() -> dict[str, str]:
         "KRAKEN_API_SECRET_SECRET_NAME": "pantheon-dev-kraken-api-secret",
         "TEJ_API_KEY_SECRET_NAME": "pantheon-dev-tej-api-key",
         "CANARY_BROKER_ACCOUNT_REF": "broker-subaccount-paper-us-equities",
+        "CANARY_VENUE_REF": "venue-nyse-arca-smart",
+        "CANARY_POOL_ID": "pool-canary-001",
+        "CANARY_APPROVAL_DECISION_ID": "apv-canary-001",
+        "CANARY_PERSONA_CAPITAL_BINDING_ID": "pcb-canary-001",
+        "CANARY_HUMAN_GATE_PACKET_REF": "docs/deployment/evidence/ep5-human-gate-input/test/human-gate-packet.json",
+        "CANARY_BROKER_SANDBOX_SMOKE_REF": "docs/deployment/evidence/execution-sandbox-canary-activation-ready/test",
+        "CANARY_RISK_OWNER_APPROVAL_REF": "approval://risk-owner/canary-001",
+        "CANARY_OPERATOR_APPROVAL_REF": "approval://operator/canary-001",
+        "CANARY_REGISTRY_ID": "reg-canary-001",
+        "CANARY_REGISTRY_VERSION": "2.0.0",
+        "CANARY_ARTIFACT_TYPE": "model_artifact",
+        "CANARY_ARTIFACT_CHECKSUM": "sha256-canary",
+        "CANARY_STRATEGY_ID": "strategy-canary",
+        "CANARY_CURRENT_STAGE": "paper",
+        "CANARY_TARGET_STAGE": "canary",
+        "CANARY_PLAN_ID": "plan-canary-001",
+        "CANARY_PERSONA_ID": "persona-canary",
+        "CANARY_RUNTIME_CONFIG_REF": "runtime-config://canary/test",
+        "CANARY_CAPITAL_SCALE_PCT": "5",
+        "CANARY_GROSS_SCALE_PCT": "25",
+        "CANARY_RAMP_SCHEDULE": "day1:1%;day2:5%",
+        "CANARY_FALLBACK_ARTIFACT_ID": "reg-paper-baseline-001",
+        "CANARY_FALLBACK_ARTIFACT_VERSION": "1.1.9",
         "SHIOAJI_ACCOUNT_NAME": "paper-tw-equities",
         "TEJ_DATASET_CODE": "TWN/APRCD1",
     }
@@ -78,6 +101,16 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
             self.assertEqual(sorted(summary["providers"]), ["ibkr", "kraken", "shioaji", "tej"])
             self.assertEqual(payload["task_id"], "APP-003-DATASOURCE-OPS-001")
             self.assertEqual(payload["providers"]["tej"]["dataset_code"], "TWN/APRCD1")
+
+    def test_build_canary_plan_carries_runtime_manager_promotion_gate(self) -> None:
+        plan, projection = readiness.build_canary_plan(base_env())
+
+        gate = plan["metadata"]["promotion_gate"]
+        self.assertEqual(plan["target_stage"], "canary")
+        self.assertEqual(gate["broker_sandbox_smoke_ref"], "docs/deployment/evidence/execution-sandbox-canary-activation-ready/test")
+        self.assertEqual(gate["risk_owner_approval_ref"], "approval://risk-owner/canary-001")
+        self.assertEqual(gate["capital_scale_pct"], 5.0)
+        self.assertEqual(projection["metadata"]["deployment_stage"], "canary")
 
     def test_emit_human_gate_packet_writes_packetized_trace_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

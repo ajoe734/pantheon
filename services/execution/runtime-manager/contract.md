@@ -63,6 +63,18 @@ Before the Runtime Manager may create a `RuntimeBinding`, all of the following m
 5. **Stage consistency**  
    `RuntimeBinding.deployment_mode` must equal `DeploymentPlan.target_stage`.
 
+6. **Canary/live activation gate present**
+   `target_stage ∈ {canary, live}` requires explicit promotion-gate evidence at
+   deploy time.  The Runtime Manager rejects forward activation unless the
+   request carries a promotion gate with at least:
+   `promotion_gate_decision_id`, `human_gate_packet_ref`,
+   `broker_sandbox_smoke_ref`, `risk_owner_approval_ref`, and
+   `operator_approval_ref`.  `live` additionally requires
+   `canary_observation_ref`.  Canary activation also requires
+   `0 < capital_scale_pct <= 5` and `0 < gross_scale_pct <= 25` in the gate.
+   Rollback replacement creation may bypass this promotion gate internally,
+   because rollback is a safety action rather than a forward activation.
+
 ---
 
 ## 4. RuntimeBinding Object References

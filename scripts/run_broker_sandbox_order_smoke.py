@@ -22,10 +22,12 @@ if str(REPO_ROOT) not in sys.path:
 
 from services.execution.ibkr_adapter import IBKRAdapter, IBKRConfig, IBKROrderIntent
 from services.execution.kraken_adapter import KrakenAdapter, KrakenConfig, KrakenOrderIntent
+from services.execution.sandbox_order_lifecycle import SandboxOrderLifecycleAdapter
 from services.execution.shioaji_adapter import ShioajiAdapter, ShioajiConfig, ShioajiOrderIntent
 
 
 TASK_ID = "P2-BROKER-SANDBOX-ORDER-001"
+SOURCE_TASK_ID = "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY"
 PRODUCTION_LIVE_MODES = {"live", "production", "prod", "real_money"}
 SECRET_REF_PREFIXES = (
     "aws-secretsmanager://",
@@ -40,9 +42,9 @@ SECRET_REF_PREFIXES = (
     "vm2-secret://",
 )
 SUPPORTED_MODES = {
-    "ibkr": {"validate_only", "paper_validate_only"},
-    "shioaji": {"simulation"},
-    "kraken": {"validate_only"},
+    "ibkr": {"validate_only", "paper_validate_only", "test_key_validate_only"},
+    "shioaji": {"simulation", "test_key_simulation"},
+    "kraken": {"validate_only", "test_key_validate_only"},
 }
 
 
@@ -242,9 +244,17 @@ def attach_common_evidence(args: argparse.Namespace, payload: dict[str, Any]) ->
     generated_at = iso_now()
     request = payload["place"]["request"]
     provider = payload["provider"]
+    lifecycle = SandboxOrderLifecycleAdapter(provider=provider, mode=payload["mode"]).build(
+        generated_at=generated_at,
+        place=payload["place"],
+        cancel_replace=payload["cancel_replace"],
+        account_ref=args.account_ref,
+        credential_ref=args.credential_ref,
+    )
     telemetry_event = {
         "event_type": "broker_order_smoke.validate_only",
         "task_id": TASK_ID,
+        "source_task_id": SOURCE_TASK_ID,
         "provider": provider,
         "mode": payload["mode"],
         "generated_at": generated_at,
@@ -257,8 +267,10 @@ def attach_common_evidence(args: argparse.Namespace, payload: dict[str, Any]) ->
     }
     readback = {
         "status": "readback_shape_validated",
-        "source": "local_adapter_payload",
+        "source": "sandbox_lifecycle_adapter",
         "observed_order": request,
+        "after_place": lifecycle["readback"]["after_place"],
+        "after_cancel": lifecycle["readback"]["after_cancel"],
     }
     execution = {
         "status": "no_broker_execution_attempted",
@@ -272,13 +284,26 @@ def attach_common_evidence(args: argparse.Namespace, payload: dict[str, Any]) ->
             "place_request_symbol_matches": True,
             "place_request_quantity_matches": True,
             "cancel_or_replace_targets_same_order_ref": True,
+            "cancel_readback_present": bool(readback["after_cancel"]),
             "production_live_side_effect_disabled": True,
             "raw_secret_material_absent": True,
+            "no_real_capital_used": True,
         },
+    }
+    no_real_capital = {
+        "status": "passed",
+        "source_task_id": SOURCE_TASK_ID,
+        "real_capital_used": False,
+        "real_capital_reserved": False,
+        "production_live_order_submitted": False,
+        "production_live_cancel_submitted": False,
+        "broker_secret_boundary": lifecycle["credential_boundary"],
+        "capital_boundary": lifecycle["capital_boundary"],
     }
     payload.update(
         {
             "task_id": TASK_ID,
+            "source_task_id": SOURCE_TASK_ID,
             "status": "passed",
             "generated_at": generated_at,
             "symbol": args.symbol,
@@ -291,9 +316,11 @@ def attach_common_evidence(args: argparse.Namespace, payload: dict[str, Any]) ->
             "execution": execution,
             "telemetry": {"status": "event_shape_validated", "event": telemetry_event},
             "reconciliation": reconciliation,
+            "order_lifecycle": lifecycle,
+            "no_real_capital": no_real_capital,
             "notes": [
                 "This packet contains no raw broker secrets.",
-                "This runner validates sandbox/simulation/validate-only order API shape only.",
+                "This runner validates sandbox/simulation/test-key/validate-only order API lifecycle shape only.",
                 "Production-live order, cancel/replace, position, and capital side effects remain disabled.",
             ],
         }
@@ -311,6 +338,8 @@ def write_packet(output_dir: Path, payload: dict[str, Any]) -> None:
     dump_json(output_dir / "execution.json", payload["execution"])
     dump_json(output_dir / "telemetry-event.json", payload["telemetry"])
     dump_json(output_dir / "reconciliation.json", payload["reconciliation"])
+    dump_json(output_dir / "order-lifecycle.json", payload["order_lifecycle"])
+    dump_json(output_dir / "no-real-capital-evidence.json", payload["no_real_capital"])
 
 
 def build_payload(args: argparse.Namespace) -> dict[str, Any]:

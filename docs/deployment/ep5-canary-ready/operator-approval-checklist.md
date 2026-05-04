@@ -17,6 +17,7 @@ Fill in the machine-local file with:
 - governed provider refs for `IBKR`, `Shioaji`, `Kraken`, and `TEJ`
 - the chosen US market-data provider ref (`Massive / Polygon` when enabled, otherwise explicit `IBKR market data` fallback)
 - approval, pool, persona-binding, and fallback artifact refs
+- promotion gate refs: human-gate packet, broker sandbox smoke packet, risk-owner approval, and operator approval
 
 ## 2. Run The Readiness Checklist
 

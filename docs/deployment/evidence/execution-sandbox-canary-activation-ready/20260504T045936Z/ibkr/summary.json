@@ -1,0 +1,337 @@
+{
+  "provider": "IBKR",
+  "mode": "test_key_validate_only",
+  "auth": {
+    "status": "credential_ref_recorded",
+    "credential_ref": "secret://pantheon/ibkr-paper-test-key",
+    "host_ref": "ibkr-paper-gateway",
+    "port": 7497,
+    "client_id": 42
+  },
+  "account_readiness": {
+    "status": "account_ref_recorded",
+    "account_ref": "DU-SANDBOX-001"
+  },
+  "place": {
+    "status": "validated_not_submitted",
+    "request": {
+      "contract": {
+        "symbol": "AAPL",
+        "exchange": "SMART",
+        "currency": "USD",
+        "secType": "STK"
+      },
+      "order": {
+        "action": "BUY",
+        "totalQuantity": 1,
+        "orderType": "LMT",
+        "tif": "DAY",
+        "outsideRth": false,
+        "lmtPrice": 120.0,
+        "metadata": {
+          "smoke_mode": "test_key_validate_only",
+          "task_id": "P2-BROKER-SANDBOX-ORDER-001"
+        },
+        "account": "DU-SANDBOX-001"
+      },
+      "broker": "IBKR"
+    },
+    "side_effect": "none"
+  },
+  "cancel_replace": {
+    "status": "validated_not_submitted",
+    "cancel_request": {
+      "order_ref": "ibkr-validate-only-order-ref",
+      "account_ref": "DU-SANDBOX-001"
+    },
+    "replace_request": {
+      "order_ref": "ibkr-validate-only-order-ref",
+      "limit_price": 119.0,
+      "time_in_force": "DAY"
+    },
+    "side_effect": "none"
+  },
+  "task_id": "P2-BROKER-SANDBOX-ORDER-001",
+  "source_task_id": "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY",
+  "status": "passed",
+  "generated_at": "2026-05-04T05:00:08Z",
+  "symbol": "AAPL.US",
+  "production_live": {
+    "enabled": false,
+    "order_side_effects_allowed": false,
+    "activation_gate": "not_requested"
+  },
+  "readback": {
+    "status": "readback_shape_validated",
+    "source": "sandbox_lifecycle_adapter",
+    "observed_order": {
+      "contract": {
+        "symbol": "AAPL",
+        "exchange": "SMART",
+        "currency": "USD",
+        "secType": "STK"
+      },
+      "order": {
+        "action": "BUY",
+        "totalQuantity": 1,
+        "orderType": "LMT",
+        "tif": "DAY",
+        "outsideRth": false,
+        "lmtPrice": 120.0,
+        "metadata": {
+          "smoke_mode": "test_key_validate_only",
+          "task_id": "P2-BROKER-SANDBOX-ORDER-001"
+        },
+        "account": "DU-SANDBOX-001"
+      },
+      "broker": "IBKR"
+    },
+    "after_place": {
+      "status": "observed_open_or_validate_only",
+      "order_ref": "ibkr-validate-only-order-ref",
+      "source": "sandbox_lifecycle_adapter",
+      "submitted_to_production_broker": false,
+      "real_capital_reserved": false,
+      "observed_order": {
+        "contract": {
+          "symbol": "AAPL",
+          "exchange": "SMART",
+          "currency": "USD",
+          "secType": "STK"
+        },
+        "order": {
+          "action": "BUY",
+          "totalQuantity": 1,
+          "orderType": "LMT",
+          "tif": "DAY",
+          "outsideRth": false,
+          "lmtPrice": 120.0,
+          "metadata": {
+            "smoke_mode": "test_key_validate_only",
+            "task_id": "P2-BROKER-SANDBOX-ORDER-001"
+          },
+          "account": "DU-SANDBOX-001"
+        },
+        "broker": "IBKR"
+      }
+    },
+    "after_cancel": {
+      "status": "observed_cancelled_or_validate_only",
+      "order_ref": "ibkr-validate-only-order-ref",
+      "source": "sandbox_lifecycle_adapter",
+      "submitted_to_production_broker": false,
+      "real_capital_reserved": false,
+      "cancel_request": {
+        "order_ref": "ibkr-validate-only-order-ref",
+        "account_ref": "DU-SANDBOX-001"
+      }
+    }
+  },
+  "execution": {
+    "status": "no_broker_execution_attempted",
+    "fill_status": "no_fill_validate_only",
+    "matching_execution_count": 0,
+    "matching_quantity": 0
+  },
+  "telemetry": {
+    "status": "event_shape_validated",
+    "event": {
+      "event_type": "broker_order_smoke.validate_only",
+      "task_id": "P2-BROKER-SANDBOX-ORDER-001",
+      "source_task_id": "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY",
+      "provider": "IBKR",
+      "mode": "test_key_validate_only",
+      "generated_at": "2026-05-04T05:00:08Z",
+      "account_ref": "DU-SANDBOX-001",
+      "symbol": "AAPL.US",
+      "side": "BUY",
+      "quantity": 1,
+      "production_live_enabled": false,
+      "raw_secret_material_present": false
+    }
+  },
+  "reconciliation": {
+    "status": "passed",
+    "checks": {
+      "place_request_symbol_matches": true,
+      "place_request_quantity_matches": true,
+      "cancel_or_replace_targets_same_order_ref": true,
+      "cancel_readback_present": true,
+      "production_live_side_effect_disabled": true,
+      "raw_secret_material_absent": true,
+      "no_real_capital_used": true
+    }
+  },
+  "order_lifecycle": {
+    "adapter": "sandbox_test_key_order_lifecycle",
+    "provider": "IBKR",
+    "mode": "test_key_validate_only",
+    "generated_at": "2026-05-04T05:00:08Z",
+    "order_ref": "ibkr-validate-only-order-ref",
+    "account_ref": "DU-SANDBOX-001",
+    "credential_boundary": {
+      "credential_ref": "secret://pantheon/ibkr-paper-test-key",
+      "raw_secret_material_present": false,
+      "secret_material_source": "repo_safe_reference_or_absent"
+    },
+    "capital_boundary": {
+      "real_capital_used": false,
+      "real_capital_reserved": false,
+      "production_live_side_effects_allowed": false,
+      "production_live_order_submitted": false
+    },
+    "steps": [
+      {
+        "step": "place",
+        "status": "validated_not_submitted",
+        "side_effect": "none",
+        "submitted_to_production_broker": false
+      },
+      {
+        "step": "readback_after_place",
+        "status": "observed_open_or_validate_only",
+        "order_ref": "ibkr-validate-only-order-ref",
+        "source": "sandbox_lifecycle_adapter",
+        "submitted_to_production_broker": false,
+        "real_capital_reserved": false,
+        "observed_order": {
+          "contract": {
+            "symbol": "AAPL",
+            "exchange": "SMART",
+            "currency": "USD",
+            "secType": "STK"
+          },
+          "order": {
+            "action": "BUY",
+            "totalQuantity": 1,
+            "orderType": "LMT",
+            "tif": "DAY",
+            "outsideRth": false,
+            "lmtPrice": 120.0,
+            "metadata": {
+              "smoke_mode": "test_key_validate_only",
+              "task_id": "P2-BROKER-SANDBOX-ORDER-001"
+            },
+            "account": "DU-SANDBOX-001"
+          },
+          "broker": "IBKR"
+        }
+      },
+      {
+        "step": "cancel",
+        "status": "validated_not_submitted",
+        "side_effect": "none",
+        "submitted_to_production_broker": false
+      },
+      {
+        "step": "readback_after_cancel",
+        "status": "observed_cancelled_or_validate_only",
+        "order_ref": "ibkr-validate-only-order-ref",
+        "source": "sandbox_lifecycle_adapter",
+        "submitted_to_production_broker": false,
+        "real_capital_reserved": false,
+        "cancel_request": {
+          "order_ref": "ibkr-validate-only-order-ref",
+          "account_ref": "DU-SANDBOX-001"
+        }
+      },
+      {
+        "step": "reconcile",
+        "status": "passed",
+        "checks": {
+          "place_request_present": true,
+          "cancel_targets_same_order_ref": true,
+          "readback_after_place_present": true,
+          "readback_after_cancel_present": true,
+          "no_production_live_order": true,
+          "no_real_capital_reserved": true,
+          "credential_ref_only": true
+        }
+      }
+    ],
+    "readback": {
+      "after_place": {
+        "status": "observed_open_or_validate_only",
+        "order_ref": "ibkr-validate-only-order-ref",
+        "source": "sandbox_lifecycle_adapter",
+        "submitted_to_production_broker": false,
+        "real_capital_reserved": false,
+        "observed_order": {
+          "contract": {
+            "symbol": "AAPL",
+            "exchange": "SMART",
+            "currency": "USD",
+            "secType": "STK"
+          },
+          "order": {
+            "action": "BUY",
+            "totalQuantity": 1,
+            "orderType": "LMT",
+            "tif": "DAY",
+            "outsideRth": false,
+            "lmtPrice": 120.0,
+            "metadata": {
+              "smoke_mode": "test_key_validate_only",
+              "task_id": "P2-BROKER-SANDBOX-ORDER-001"
+            },
+            "account": "DU-SANDBOX-001"
+          },
+          "broker": "IBKR"
+        }
+      },
+      "after_cancel": {
+        "status": "observed_cancelled_or_validate_only",
+        "order_ref": "ibkr-validate-only-order-ref",
+        "source": "sandbox_lifecycle_adapter",
+        "submitted_to_production_broker": false,
+        "real_capital_reserved": false,
+        "cancel_request": {
+          "order_ref": "ibkr-validate-only-order-ref",
+          "account_ref": "DU-SANDBOX-001"
+        }
+      }
+    },
+    "execution": {
+      "status": "no_production_broker_execution_attempted",
+      "fill_status": "no_fill_sandbox_or_validate_only",
+      "matching_execution_count": 0,
+      "matching_quantity": 0
+    },
+    "reconciliation": {
+      "status": "passed",
+      "checks": {
+        "place_request_present": true,
+        "cancel_targets_same_order_ref": true,
+        "readback_after_place_present": true,
+        "readback_after_cancel_present": true,
+        "no_production_live_order": true,
+        "no_real_capital_reserved": true,
+        "credential_ref_only": true
+      }
+    }
+  },
+  "no_real_capital": {
+    "status": "passed",
+    "source_task_id": "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY",
+    "real_capital_used": false,
+    "real_capital_reserved": false,
+    "production_live_order_submitted": false,
+    "production_live_cancel_submitted": false,
+    "broker_secret_boundary": {
+      "credential_ref": "secret://pantheon/ibkr-paper-test-key",
+      "raw_secret_material_present": false,
+      "secret_material_source": "repo_safe_reference_or_absent"
+    },
+    "capital_boundary": {
+      "real_capital_used": false,
+      "real_capital_reserved": false,
+      "production_live_side_effects_allowed": false,
+      "production_live_order_submitted": false
+    }
+  },
+  "notes": [
+    "This packet contains no raw broker secrets.",
+    "This runner validates sandbox/simulation/test-key/validate-only order API lifecycle shape only.",
+    "Production-live order, cancel/replace, position, and capital side effects remain disabled."
+  ]
+}

@@ -342,6 +342,10 @@ def evaluate_checklist(
         "CANARY_POOL_ID",
         "CANARY_APPROVAL_DECISION_ID",
         "CANARY_PERSONA_CAPITAL_BINDING_ID",
+        "CANARY_HUMAN_GATE_PACKET_REF",
+        "CANARY_BROKER_SANDBOX_SMOKE_REF",
+        "CANARY_RISK_OWNER_APPROVAL_REF",
+        "CANARY_OPERATOR_APPROVAL_REF",
         "CANARY_REGISTRY_ID",
         "CANARY_REGISTRY_VERSION",
         "CANARY_FALLBACK_ARTIFACT_ID",
@@ -705,6 +709,17 @@ def build_canary_plan(env_map: dict[str, str]) -> tuple[dict[str, Any], dict[str
             "source_task_id": "EP5-001",
             "proof_boundary": "prerequisite_only",
             "entry_bundle": "docs/deployment/ep5-canary-ready",
+            "promotion_gate": {
+                "promotion_gate_decision_id": require(env_map, "CANARY_APPROVAL_DECISION_ID"),
+                "human_gate_packet_ref": require(env_map, "CANARY_HUMAN_GATE_PACKET_REF"),
+                "broker_sandbox_smoke_ref": require(env_map, "CANARY_BROKER_SANDBOX_SMOKE_REF"),
+                "risk_owner_approval_ref": require(env_map, "CANARY_RISK_OWNER_APPROVAL_REF"),
+                "operator_approval_ref": require(env_map, "CANARY_OPERATOR_APPROVAL_REF"),
+                "capital_scale_pct": scale.capital_scale_pct,
+                "gross_scale_pct": scale.gross_scale_pct,
+                "persona_capital_binding_id": require(env_map, "CANARY_PERSONA_CAPITAL_BINDING_ID"),
+                "allowed_deployment_scope": optional(env_map, "CANARY_ALLOWED_DEPLOYMENT_SCOPE", "canary"),
+            },
         },
     )
     projection = planner.build_execution_projection(plan, registry_entry)

@@ -1,0 +1,13 @@
+{
+  "status": "validated_not_submitted",
+  "cancel_request": {
+    "order_ref": "ibkr-validate-only-order-ref",
+    "account_ref": "DU-SANDBOX-001"
+  },
+  "replace_request": {
+    "order_ref": "ibkr-validate-only-order-ref",
+    "limit_price": 119.0,
+    "time_in_force": "DAY"
+  },
+  "side_effect": "none"
+}

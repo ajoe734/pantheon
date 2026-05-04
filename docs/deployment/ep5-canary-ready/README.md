@@ -11,6 +11,7 @@ packet and a later human-gated `EP5-002` proof run:
 - broker paper-account / sandbox / test-key order API smoke requirement
 - truthful governed datasource boundary for `IBKR`, `Shioaji`, `Kraken`, and `TEJ`
 - scaled canary capital gate
+- explicit runtime-manager promotion gate refs for canary activation
 - runnable operator approval checklist
 - runnable provider smoke validation
 - runnable rollback drill harness
@@ -99,6 +100,10 @@ Use `--dry-run` until a human gate and real canary infrastructure are available.
 Do not interpret `--dry-run` as a reason to defer broker API integration.
 Broker paper-account, sandbox, simulation, validate-only, or test-key order
 smoke should be captured before any production live order/cancel packet.
+Runtime-manager canary activation now requires that broker smoke packet ref,
+the human-gate packet ref, risk-owner approval, operator approval, and policy
+scale values before it will create a forward canary `RuntimeBinding`. Live
+activation remains stricter and additionally requires a canary observation ref.
 
 The local `run-rollback-drill --dry-run` output is a payload rehearsal only.
 Its `summary.json` stays `prepared`, so feeding that file into
