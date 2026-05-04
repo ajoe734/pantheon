@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-04T04:28:01Z",
+  "updated_at": "2026-05-04T04:31:06Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -98,8 +98,8 @@
         "SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Supervisor auto-started SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4 after successful dispatch.",
-      "last_update": "2026-05-04T04:27:29Z"
+      "next": "Started implementation: surveying service enforcement state; enforcement is wired but docker-compose.control.yml still defaults posture to dev; wave4 will harden the staging compose defaults to production and fix source_search_posture ENFORCED_MODES gap",
+      "last_update": "2026-05-04T04:29:50Z"
     },
     {
       "name": "Gemini",
@@ -128,8 +128,8 @@
         "SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Supervisor auto-started SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2 after successful dispatch.",
-      "last_update": "2026-05-04T04:27:51Z"
+      "next": "Implementing crawler policy/lifecycle registry, scheduled search refresh, BFF ops freshness, and durable-only cutoff tests.",
+      "last_update": "2026-05-04T04:30:31Z"
     },
     {
       "name": "Codex2",
@@ -139,14 +139,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "ready",
+      "status": "working",
       "current_task_ids": [
-        "SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E",
-        "SVC-BFF-IDP-STAGING-INTEGRATION-HARDENING"
+        "SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Auto-reassigned ownership from Claude2 to Codex2 after repeated Claude2 auth: Authentication failure. Task returned to todo until Codex2 starts a fresh run.",
-      "last_update": "2026-05-04T04:28:01Z"
+      "next": "Supervisor auto-started SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E after successful dispatch.",
+      "last_update": "2026-05-04T04:31:06Z"
     },
     {
       "name": "Copilot",
@@ -169,12 +168,10 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude2-execution-control",
-      "next": "Assignment created",
+      "next": "",
       "last_update": "2026-05-04T04:26:31Z"
     },
     {
@@ -190,8 +187,8 @@
         "FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT"
       ],
       "branch": "feat/gemini2-research-runtime",
-      "next": "Supervisor auto-started FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT after successful dispatch.",
-      "last_update": "2026-05-04T04:27:41Z"
+      "next": "Supervisor re-dispatched FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT; task remains in progress.",
+      "last_update": "2026-05-04T04:31:00Z"
     }
   ],
   "tasks": [
@@ -220,8 +217,8 @@
         "focused tests cover enforcement and allowed dev fallback",
         "runbook records migration and rollback path"
       ],
-      "next": "Supervisor auto-started SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4 after successful dispatch.",
-      "last_update": "2026-05-04T04:27:29Z",
+      "next": "Started implementation: surveying service enforcement state; enforcement is wired but docker-compose.control.yml still defaults posture to dev; wave4 will harden the staging compose defaults to production and fix source_search_posture ENFORCED_MODES gap",
+      "last_update": "2026-05-04T04:29:50Z",
       "task_class": "execution",
       "auto_created_by": "codex-gap-materialization-20260504",
       "auto_generated": true,
@@ -252,8 +249,8 @@
         "search durable-only mode has staging/prod cutoff tests",
         "BFF exposes crawler/indexer health and freshness without direct documents compatibility as normal path"
       ],
-      "next": "Supervisor auto-started SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2 after successful dispatch.",
-      "last_update": "2026-05-04T04:27:51Z",
+      "next": "Implementing crawler policy/lifecycle registry, scheduled search refresh, BFF ops freshness, and durable-only cutoff tests.",
+      "last_update": "2026-05-04T04:30:31Z",
       "task_class": "execution",
       "auto_created_by": "codex-gap-materialization-20260504",
       "auto_generated": true,
@@ -266,7 +263,7 @@
       "phase": "Blueprint production hardening follow-up 2026-05-04",
       "owner": "Codex2",
       "reviewer": "Codex",
-      "status": "todo",
+      "status": "in_progress",
       "depends_on": [
         "SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE"
       ],
@@ -285,8 +282,8 @@
         "production paper canary live and online sdk paths remain rejected by default",
         "no broker registry governance or capital writes occur during default smoke"
       ],
-      "next": "Auto-reassigned ownership from Claude2 to Codex2 after repeated Claude2 auth: Authentication failure. Task returned to todo until Codex2 starts a fresh run.",
-      "last_update": "2026-05-04T04:28:01Z",
+      "next": "Supervisor auto-started SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E after successful dispatch.",
+      "last_update": "2026-05-04T04:31:06Z",
       "task_class": "execution",
       "auto_created_by": "codex-gap-materialization-20260504",
       "auto_generated": true,
@@ -329,8 +326,8 @@
       "title": "Make execution sandbox/canary activation-ready while live stays gated",
       "summary_zh": "把 execution / pantheon-lean 從 paper smoke 補到 sandbox/canary activation-ready：test-key adapter、order cancel readback reconcile smoke、canary/live promotion gate，以及 no-real-capital evidence。",
       "phase": "Blueprint production hardening follow-up 2026-05-04",
-      "owner": "Claude2",
-      "reviewer": "Codex",
+      "owner": "Gemini2",
+      "reviewer": "Claude2",
       "status": "todo",
       "depends_on": [
         "SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD",
@@ -351,8 +348,8 @@
         "smoke records no-real-capital evidence and broker-secret boundary",
         "lean-platform targets remain rejected and pantheon-lean stays canonical"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-05-04T04:26:31Z",
+      "next": "Helper-claimed by Gemini2 while Claude2 is dispatch-paused.",
+      "last_update": "2026-05-04T04:28:33Z",
       "task_class": "execution",
       "auto_created_by": "codex-gap-materialization-20260504",
       "auto_generated": true,
@@ -442,8 +439,8 @@
         "dev/demo modules remain outside production route graph",
         "closeout records front branch commit and push readiness"
       ],
-      "next": "Supervisor auto-started FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT after successful dispatch.",
-      "last_update": "2026-05-04T04:27:41Z",
+      "next": "Supervisor re-dispatched FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT; task remains in progress.",
+      "last_update": "2026-05-04T04:31:00Z",
       "task_class": "execution",
       "auto_created_by": "codex-gap-materialization-20260504",
       "auto_generated": true,
@@ -459,6 +456,14 @@
       "status": "done",
       "created_at": "2026-04-17T11:50:38Z",
       "resolved_at": "2026-04-17T12:39:53Z"
+    },
+    {
+      "task_id": "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY",
+      "from": "Claude2",
+      "to": "Gemini2",
+      "message": "Helper-claimed by Gemini2 while Claude2 is dispatch-paused.",
+      "status": "pending",
+      "created_at": "2026-05-04T04:28:33Z"
     }
   ],
   "blockers": [],
@@ -482,13 +487,13 @@
       "todo": 2
     },
     "Claude2": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Gemini": {
       "total": 0,
@@ -500,13 +505,13 @@
       "todo": 0
     },
     "Gemini2": {
-      "total": 1,
+      "total": 2,
       "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 2
     },
     "Codex": {
       "total": 2,
@@ -519,7 +524,7 @@
     },
     "Codex2": {
       "total": 2,
-      "active": 0,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
