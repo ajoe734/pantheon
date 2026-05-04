@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS",
+  "archived_at": "2026-05-04T02:36:58Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS",
+    "title": "Add operator fallback drills while BFF HA remains deferred",
+    "summary_zh": "BFF HA/LB 先 defer，但要補 operator fallback drill：BFF down 時透過 CLI/internal API/kill-switch 完成 emergency pause/liquidate/replace 類安全動作與 audit evidence。",
+    "phase": "Blueprint gap execution wave 2026-05-03",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT",
+      "SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD"
+    ],
+    "artifacts": [
+      "OPERATOR_ACCEPTANCE_MATRIX.md",
+      "docs/deployment",
+      "services/runtime-manager",
+      "scripts"
+    ],
+    "acceptance": [
+      "有 BFF-down drill runbook 與 smoke；emergency action path 不依賴 frontend；audit evidence 可查；不引入 BFF replicas/LB production HA"
+    ],
+    "next": "Closeout finalized on commit 03fb503e0cd253569cb4685cf03135b0fc99e5d0; verified BFF-down fallback runbook, matrix, checked evidence, and non-BFF S-IAPI/S-CLI/S-EMRG smoke paths. Verification passed: /tmp/pantheon-runtime-venv/bin/python scripts/test_smoke_operator_fallback_drills.py; /tmp/pantheon-runtime-venv/bin/python services/runtime-manager/test_internal_api_routes.py; /tmp/pantheon-runtime-venv/bin/python services/runtime-manager/test_runtime_manager.py; /tmp/pantheon-runtime-venv/bin/python services/runtime-manager/test_runtime_hardening.py; /tmp/pantheon-runtime-venv/bin/python -m py_compile scripts/smoke_operator_fallback_drills.py scripts/test_smoke_operator_fallback_drills.py tools/pantheon_admin/cli.py services/control_plane/internal_api.py.",
+    "last_update": "2026-05-04T02:36:58Z",
+    "review_notes_zh": [
+      "審查通過：BFF-down fallback scope 與 task acceptance 相符；未引入 BFF replicas/LB production HA。",
+      "重跑驗證通過：/tmp/pantheon-runtime-venv/bin/python scripts/test_smoke_operator_fallback_drills.py；/tmp/pantheon-runtime-venv/bin/python services/runtime-manager/test_internal_api_routes.py；/tmp/pantheon-runtime-venv/bin/python services/runtime-manager/test_runtime_manager.py；/tmp/pantheon-runtime-venv/bin/python services/runtime-manager/test_runtime_hardening.py；/tmp/pantheon-runtime-venv/bin/python -m py_compile scripts/smoke_operator_fallback_drills.py scripts/test_smoke_operator_fallback_drills.py tools/pantheon_admin/cli.py services/control_plane/internal_api.py。",
+      "注意：test_runtime_hardening.py 僅出現既有 datetime.utcnow() deprecation warnings，非本 task 阻塞。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-04T02:36:58Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "03fb503e0cd253569cb4685cf03135b0fc99e5d0",
+      "commit_subject": "SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS add BFF-down operator fallback drills",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Adds the BFF-down operator drill runbook, executable fallback smoke harness, checked smoke evidence, and CLI/internal API fixes for non-BFF pause/liquidate/replace paths.\\n\\nVerification": "\\n- /tmp/pantheon-runtime-venv/bin/python scripts/test_smoke_operator_fallback_drills.py\\n- /tmp/pantheon-runtime-venv/bin/python services/runtime-manager/test_internal_api_routes.py\\n- /tmp/pantheon-runtime-venv/bin/python services/runtime-manager/test_runtime_manager.py\\n- /tmp/pantheon-runtime-venv/bin/python services/runtime-manager/test_runtime_hardening.py\\n- /tmp/pantheon-runtime-venv/bin/python -m py_compile scripts/smoke_operator_fallback_drills.py scripts/test_smoke_operator_fallback_drills.py tools/pantheon_admin/cli.py services/control_plane/internal_api.py",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 278,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 27,
+      "behind": 12,
+      "push_status": "diverged"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-04T02:03:50Z",
+      "resolved_at": "2026-05-04T02:12:38Z"
+    },
+    {
+      "task_id": "SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review. Commit 03fb503e adds BFF-down fallback drills without enabling BFF HA/LB: runbook, operator acceptance matrix updates, pantheon-admin/internal API fixes, smoke harness, and evidence at docs/deployment/evidence/operator-fallback-drills/20260504T022718Z/summary.json. Verification passed: scripts/test_smoke_operator_fallback_drills.py; services/runtime-manager/test_internal_api_routes.py; services/runtime-manager/test_runtime_manager.py; services/runtime-manager/test_runtime_hardening.py; py_compile for smoke/CLI/internal API.",
+      "status": "done",
+      "created_at": "2026-05-04T02:30:37Z",
+      "resolved_at": "2026-05-04T02:34:10Z"
+    },
+    {
+      "task_id": "SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: non-BFF operator fallback drill paths and evidence verified; owner should run closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-04T02:34:10Z",
+      "resolved_at": "2026-05-04T02:36:58Z"
+    }
+  ],
+  "blockers": []
+}

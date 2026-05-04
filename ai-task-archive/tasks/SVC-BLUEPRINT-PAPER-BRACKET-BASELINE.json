@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "SVC-BLUEPRINT-PAPER-BRACKET-BASELINE",
+  "archived_at": "2026-05-04T02:17:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-BLUEPRINT-PAPER-BRACKET-BASELINE",
+    "title": "Implement deterministic paper bracket order semantics under fail-closed live guards",
+    "summary_zh": "把 stop-loss/take-profit bracket order 在 paper/sim baseline 補成 deterministic semantics 與 telemetry evidence；live path 不啟用且必須經 guard 拒絕。",
+    "phase": "Blueprint gap execution wave 2026-05-03",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD"
+    ],
+    "artifacts": [
+      "services/execution",
+      "services/runtime-manager",
+      "lean",
+      "tests"
+    ],
+    "acceptance": [
+      "paper/sim bracket order 產出可驗證 order events；risk guard 覆蓋 invalid bracket；live/canary adapter 未啟用時 fail closed；focused tests 通過"
+    ],
+    "next": "Closeout verified: 16 bracket-focused tests (BracketLegBuildTests, ExecutorBracketOrderTests, ExecutorBracketGuardEdgeCaseTests) + 115 execution suite tests all pass. Implementation committed at b3d6c363. Deterministic paper/sim bracket semantics delivered; canary/live path remains fail-closed. Review file: support/reviews/SVC-BLUEPRINT-PAPER-BRACKET-BASELINE-codex-review.md",
+    "last_update": "2026-05-04T02:17:37Z",
+    "review_notes_zh": [
+      "No blocking findings; focused bracket suite and services/execution suite passed.",
+      "Paper/sim deterministic bracket leg evidence and canary/live fail-closed guard behavior satisfy acceptance."
+    ],
+    "review_file": "support/reviews/SVC-BLUEPRINT-PAPER-BRACKET-BASELINE-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-04T02:17:37Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "b3d6c363b8b5a76d618b5b7e2db9c420ba9a3398",
+      "commit_subject": "SVC-BLUEPRINT-PAPER-BRACKET-BASELINE: add focused bracket order tests",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "- BracketLegBuildTests": "deterministic price computation unit tests for",
+        "- ExecutorBracketGuardEdgeCaseTests": "canary fail-closed guard, zero-fill",
+        "- test_bracket_order_smoke_produces_verifiable_leg_evidence": "smoke-level",
+        "- test_bracket_order_canary_stage_is_fail_closed": "smoke-level canary",
+        "Verification": "41/41 bracket tests pass, 115/115 execution service tests",
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-BLUEPRINT-PAPER-BRACKET-BASELINE",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 278,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 26,
+      "behind": 12,
+      "push_status": "diverged"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-BLUEPRINT-PAPER-BRACKET-BASELINE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Paper bracket baseline complete. Added 12 focused tests: BracketLegBuildTests (deterministic price computation), canary/live fail-closed guards, invalid bracket (zero fill) → logged_only, non-entry EXIT+LONG → not_entry_signal, telemetry evidence with verifiable entry_price+leg_prices, smoke-level canary fail-closed. 41/41 bracket tests + 115/115 execution tests pass. Commit: b3d6c363.",
+      "status": "done",
+      "created_at": "2026-05-04T02:12:07Z",
+      "resolved_at": "2026-05-04T02:15:19Z"
+    },
+    {
+      "task_id": "SVC-BLUEPRINT-PAPER-BRACKET-BASELINE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Approved: deterministic paper/sim bracket evidence verified; canary/live bracket child submission remains fail-closed. Verification: 41 focused tests and 115 execution tests passed. Owner closeout required.",
+      "status": "done",
+      "created_at": "2026-05-04T02:15:19Z",
+      "resolved_at": "2026-05-04T02:17:37Z"
+    }
+  ],
+  "blockers": []
+}

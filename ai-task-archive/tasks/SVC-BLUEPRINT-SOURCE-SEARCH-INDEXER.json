@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER",
+  "archived_at": "2026-05-04T01:45:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER",
+    "title": "Upgrade source/search into bounded autonomous connector and indexer platform",
+    "summary_zh": "source-ingest/search 從 bounded baseline 推進到合理完整功能：connector registry、bounded scheduled ingest、fetch evidence、DLQ/replay、materialized index refresh、freshness/retention visibility。不是無限制 crawler。",
+    "phase": "Blueprint gap execution wave 2026-05-03",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3",
+      "SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4"
+    ],
+    "artifacts": [
+      "services/source_ingestion",
+      "services/search",
+      "services/control-plane/bff",
+      "docker-compose.yml",
+      "docs/03/SD-03_source_knowledge_evidence.md"
+    ],
+    "acceptance": [
+      "configured connector schedule/run/freshness 透過 API/BFF 可見；durable index refresh 可重跑且有 evidence；request-document compatibility 不再是 staging normal path；tests 通過"
+    ],
+    "next": "Finalized after Claude approval. Task-scoped commit 5aa85e7e records the bounded source/search indexer, BFF ops visibility, and 59-test verification.",
+    "last_update": "2026-05-04T01:45:26Z",
+    "review_notes_zh": [
+      "審查通過：connector schedule/run/freshness 透過 registry 與 BFF ops 可見；durable index refresh 可重跑有 pipeline snapshot evidence；request-document compat 不再是 staging normal path（有 DURABLE_INDEX_ONLY guard）；56 tests 通過。",
+      "後續 Codex closeout：task-scoped commit + done 收尾 + git push。"
+    ],
+    "review_file": ".orchestrator/chair-reviews/SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-04T01:45:26Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "5aa85e7e03ac262f9ca3eb6360f7e7386ca1c5c8",
+      "commit_subject": "SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER close bounded indexer",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER",
+        "Reviewer": "Claude",
+        "Verification": "/tmp/pantheon-source-search-closeout-venv/bin/python -m pytest services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_bounded_ingestion.py services/source_ingestion/tests/test_external_source_connectors.py services/search/tests/test_search_refresh.py services/search/tests/test_materialized_index.py services/search/tests/test_service_activation_contract.py services/control-plane/bff/test_source_search_ops_bff.py (59 passed in 44.75s)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 268,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 21,
+      "behind": 12,
+      "push_status": "diverged"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-04T01:06:11Z",
+      "resolved_at": "2026-05-04T01:25:29Z"
+    },
+    {
+      "task_id": "SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-04T01:25:29Z",
+      "resolved_at": "2026-05-04T01:26:27Z"
+    },
+    {
+      "task_id": "SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: bounded source/search indexer platform exposes connector schedule/run/freshness through source registry and BFF ops, search freshness/retention through service/BFF contracts, explicit request-document compat remains out of normal path; focused pytest 56 passed in /tmp venv.",
+      "status": "done",
+      "created_at": "2026-05-04T01:35:04Z",
+      "resolved_at": "2026-05-04T01:38:36Z"
+    },
+    {
+      "task_id": "SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: bounded source/search indexer platform meets all acceptance criteria. Connector freshness/schedule/run visible through registry and BFF ops; durable index refresh replayable with pipeline snapshot evidence; request-document compat gated out of staging normal path. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-04T01:38:36Z",
+      "resolved_at": "2026-05-04T01:45:26Z"
+    }
+  ],
+  "blockers": []
+}
