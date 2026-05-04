@@ -347,6 +347,47 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(emitter.snapshot()["failed"], 1)
         self.assertIn("deployment_stage='paper'", emitter.snapshot()["last_error"])
 
+    def test_bracket_order_event_carries_verifiable_entry_price_and_leg_prices(self):
+        """bracket_order_logged metadata must carry entry_price and deterministic leg prices for audit."""
+        signal = self._signal()
+        signal["metadata"] = {
+            "risk_parameters": {
+                "stop_loss_pct": 0.02,
+                "take_profit_pct": 0.05,
+            }
+        }
+        store = InMemoryPendingSignalStore([signal])
+        telemetry = _FakeTelemetryEmitter()
+        service = PaperRuntimeService(
+            store=store,
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=telemetry,
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+
+        snapshot = service.drain_once()
+
+        events = snapshot["paper_state"]["recent_order_events"]
+        bracket_events = [e for e in events if e["event_type"] == "bracket_order_logged"]
+        self.assertEqual(len(bracket_events), 1)
+        meta = bracket_events[0]["metadata"]
+
+        self.assertIn("entry_price", meta)
+        self.assertGreater(meta["entry_price"], 0)
+
+        self.assertIn("legs", meta)
+        self.assertEqual(len(meta["legs"]), 2)
+        leg_types = {leg["leg_type"] for leg in meta["legs"]}
+        self.assertEqual(leg_types, {"stop_loss", "take_profit"})
+
+        # PaperExecutionAlgorithm default_price=100; stop 2% → 98.0, tp 5% → 105.0
+        stop_leg = next(l for l in meta["legs"] if l["leg_type"] == "stop_loss")
+        tp_leg = next(l for l in meta["legs"] if l["leg_type"] == "take_profit")
+        self.assertAlmostEqual(stop_leg["stop_price"], 98.0, places=4)
+        self.assertAlmostEqual(tp_leg["limit_price"], 105.0, places=4)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -441,6 +441,56 @@ class PaperRuntimeSmokeTest(unittest.TestCase):
                 "logged_only",
             }, "bracket status must be explicit")
 
+    def test_bracket_order_smoke_produces_verifiable_leg_evidence(self):
+        """Bracket event metadata must carry entry_price and deterministic leg prices."""
+        sig = _signal(action="BUY", direction="LONG", quantity=10)
+        sig["metadata"] = {
+            "risk_parameters": {"stop_loss_pct": 0.02, "take_profit_pct": 0.05}
+        }
+
+        service, _, _, _ = self._setup_smoke_service(signals=[sig])
+        snapshot = service.drain_once()
+
+        bracket_events = [
+            e for e in snapshot["paper_state"]["recent_order_events"]
+            if e["event_type"] == "bracket_order_logged"
+        ]
+        self.assertGreater(len(bracket_events), 0, "No bracket order evidence")
+        meta = bracket_events[0]["metadata"]
+
+        self.assertIn("entry_price", meta, "entry_price must be present for audit")
+        self.assertGreater(meta["entry_price"], 0)
+        self.assertIn("legs", meta, "leg definitions must be present for audit")
+        leg_types = {leg["leg_type"] for leg in meta["legs"]}
+        self.assertIn("stop_loss", leg_types)
+        self.assertIn("take_profit", leg_types)
+
+    def test_bracket_order_canary_stage_is_fail_closed(self):
+        """Canary stage bracket execution must be fail-closed: logged_only, no broker submission."""
+        sig = _signal(action="BUY", direction="LONG", quantity=10)
+        sig["metadata"] = {
+            "risk_parameters": {"stop_loss_pct": 0.02, "take_profit_pct": 0.05}
+        }
+
+        service, _, _, _ = self._setup_smoke_service(signals=[sig])
+        # Override algo deployment stage to canary after construction
+        service._algo.DeploymentStage = "canary"
+        snapshot = service.drain_once()
+
+        bracket_events = [
+            e for e in snapshot["paper_state"]["recent_order_events"]
+            if e["event_type"] == "bracket_order_logged"
+        ]
+        self.assertGreater(len(bracket_events), 0, "Expected bracket_order_logged event")
+        for be in bracket_events:
+            self.assertEqual(
+                be["broker_submission_status"], "logged_only",
+                "Canary-stage bracket must be fail-closed (logged_only)",
+            )
+            self.assertFalse(be["submitted_to_broker"])
+        # No open bracket orders stored — guard blocked submission
+        self.assertEqual(snapshot["paper_state"]["open_bracket_orders"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
