@@ -21,11 +21,13 @@ class OpenClawActivationReadyE2ETest(unittest.TestCase):
             self.assertTrue(report["summary"]["smoke_passed"])
             self.assertFalse(report["summary"]["production_broker_enabled"])
             self.assertFalse(report["summary"]["live_execution_enabled"])
+            self.assertFalse(report["summary"]["canary_execution_enabled"])
 
             rows = {row["row"]: row for row in report["rows"]}
             self.assertEqual(rows["default:readyz-degraded"]["status"], "passed")
             self.assertEqual(rows["default:paper-denied"]["evidence"]["body"]["error_code"], "PAPER_ADAPTER_DISABLED")
             self.assertEqual(rows["default:live-denied"]["evidence"]["body"]["error_code"], "LIVE_EXECUTION_DISABLED")
+            self.assertEqual(rows["default:canary-denied"]["evidence"]["body"]["error_code"], "CANARY_EXECUTION_DISABLED")
 
             self.assertEqual(rows["activation:capabilities-upstream"]["status"], "passed")
             self.assertEqual(rows["activation:session-lifecycle"]["evidence"]["session"]["state"], "active")
@@ -34,6 +36,10 @@ class OpenClawActivationReadyE2ETest(unittest.TestCase):
             self.assertEqual(
                 rows["activation:live-order-denied"]["evidence"]["body"]["error_code"],
                 "LIVE_EXECUTION_DISABLED",
+            )
+            self.assertEqual(
+                rows["activation:canary-order-denied"]["evidence"]["body"]["error_code"],
+                "CANARY_EXECUTION_DISABLED",
             )
 
     def test_cli_writes_json_report(self) -> None:
@@ -57,6 +63,7 @@ class OpenClawActivationReadyE2ETest(unittest.TestCase):
         self.assertEqual(service["command"], ["python", "scripts/smoke_openclaw_activation_ready_e2e.py"])
         self.assertEqual(service["environment"]["OPENCLAW_PRODUCTION_BROKER_ENABLED"], "false")
         self.assertEqual(service["environment"]["OPENCLAW_LIVE_ADAPTER_ENABLED"], "false")
+        self.assertEqual(service["environment"]["OPENCLAW_CANARY_ADAPTER_ENABLED"], "false")
         self.assertEqual(service["environment"]["PANTHEON_LIVE_BROKER_ENABLED"], "false")
         self.assertNotIn("ports", service)
 

@@ -211,6 +211,10 @@ _OPENCLAW_GATE_FIELDS = {
         "activation_gate": "OPENCLAW_LIVE_ADAPTER_ENABLED",
         "allowed_scope": "live_gate_not_enabled",
     },
+    "canary_adapter": {
+        "activation_gate": "OPENCLAW_CANARY_ADAPTER_ENABLED",
+        "allowed_scope": "canary_gate_not_enabled",
+    },
     "capital_binding": {
         "activation_gate": "OPENCLAW_CAPITAL_BINDING_ENABLED",
         "allowed_scope": "capital_binding_not_enabled",
@@ -5371,11 +5375,17 @@ class ReadSurfaceStore:
             raw_state = capabilities.get(gate_name)
             state = str(raw_state or "deferred").strip().lower()
             enabled = cls._openclaw_gate_enabled(raw_state)
+            gate_reason = (
+                "enabled_by_adapter"
+                if enabled
+                else f"{activation_gates.get(gate_name) or defaults['activation_gate']} is not enabled"
+            )
             gates[gate_name] = {
                 "state": state,
                 "enabled": enabled,
                 "activation_gate": activation_gates.get(gate_name) or defaults["activation_gate"],
                 "allowed_scope": "enabled_by_adapter" if enabled else defaults["allowed_scope"],
+                "gate_reason": gate_reason,
                 "bff_activation_command": "not_exposed",
             }
         return gates
@@ -5678,6 +5688,7 @@ class ReadSurfaceStore:
                 },
                 "blocked_commands": {
                     "enable_paper_adapter": "activation_gate_required_not_available_in_bff",
+                    "enable_canary_adapter": "activation_gate_required_not_available_in_bff",
                     "enable_live_adapter": "activation_gate_required_not_available_in_bff",
                     "enable_broker_execution": "execution_gate_required_not_available_in_bff",
                     "enable_capital_binding": "capital_binding_gate_required_not_available_in_bff",
@@ -5688,6 +5699,7 @@ class ReadSurfaceStore:
                 "canInvokeTool": False,
                 "canTriggerWorkflow": False,
                 "canEnablePaper": False,
+                "canEnableCanary": False,
                 "canEnableLive": False,
             },
             "degradation": {

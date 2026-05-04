@@ -6,7 +6,7 @@ real adapter clients and gates:
 - default adapter posture degrades safely when upstream is absent;
 - fake upstream proves capabilities, sessions, tools, and workflows;
 - fake runtime-manager + fake broker prove the gated paper adapter;
-- live broker execution remains explicitly denied.
+- live and canary broker execution remain explicitly denied.
 """
 from __future__ import annotations
 
@@ -302,6 +302,7 @@ def _default_degraded_rows(tmp: Path) -> list[SmokeRow]:
         "OPENCLAW_GATEWAY_URL": "",
         "OPENCLAW_PAPER_ADAPTER_ENABLED": "false",
         "OPENCLAW_LIVE_ADAPTER_ENABLED": "false",
+        "OPENCLAW_CANARY_ADAPTER_ENABLED": "false",
         "OPENCLAW_PRODUCTION_BROKER_ENABLED": "false",
         "OPENCLAW_CAPITAL_BINDING_ENABLED": "false",
         "OPENCLAW_LIFECYCLE_STORE_PATH": str(tmp / "default" / "sessions.json"),
@@ -328,6 +329,7 @@ def _default_degraded_rows(tmp: Path) -> list[SmokeRow]:
             and caps.get("broker_execution") == "deferred"
             and caps.get("paper_adapter") == "deferred"
             and caps.get("live_adapter") == "deferred"
+            and caps.get("canary_adapter") == "deferred"
             and (caps.get("upstream") or {}).get("status") == "degraded",
             {"status": status, "body": caps},
             "capability facade must remain deferred/degraded by default",
@@ -359,6 +361,16 @@ def _default_degraded_rows(tmp: Path) -> list[SmokeRow]:
             "live order path must be explicitly denied",
         )
     )
+
+    status, canary = _client_json(client, "POST", "/api/openclaw-adapter/broker/canary/orders", headers={"X-Operator-Id": "op-smoke"})
+    rows.append(
+        _check(
+            "default:canary-denied",
+            status == 403 and canary.get("error_code") == "CANARY_EXECUTION_DISABLED",
+            {"status": status, "body": canary},
+            "canary order path must be explicitly denied",
+        )
+    )
     return rows
 
 
@@ -377,6 +389,7 @@ def _activation_ready_rows(tmp: Path) -> list[SmokeRow]:
             "OPENCLAW_ALLOWED_WORKFLOWS": "research.daily_scan",
             "OPENCLAW_PAPER_ADAPTER_ENABLED": "true",
             "OPENCLAW_LIVE_ADAPTER_ENABLED": "false",
+            "OPENCLAW_CANARY_ADAPTER_ENABLED": "false",
             "OPENCLAW_PRODUCTION_BROKER_ENABLED": "false",
             "OPENCLAW_CAPITAL_BINDING_ENABLED": "false",
             "OPENCLAW_BROKER_SIDECAR_URL": broker.url,
@@ -398,7 +411,8 @@ def _activation_ready_rows(tmp: Path) -> list[SmokeRow]:
                 and caps.get("activation_state") == "upstream_client_ready"
                 and (caps.get("upstream") or {}).get("status") == "ok"
                 and caps.get("paper_adapter") == "enabled"
-                and caps.get("live_adapter") == "deferred",
+                and caps.get("live_adapter") == "deferred"
+                and caps.get("canary_adapter") == "deferred",
                 {"status": status, "body": caps},
                 "activation profile must see fake upstream while live remains deferred",
             )
@@ -496,6 +510,16 @@ def _activation_ready_rows(tmp: Path) -> list[SmokeRow]:
             )
         )
 
+        status, canary = _client_json(client, "POST", "/api/openclaw-adapter/broker/canary/orders", headers={"X-Operator-Id": "op-smoke"})
+        rows.append(
+            _check(
+                "activation:canary-order-denied",
+                status == 403 and canary.get("error_code") == "CANARY_EXECUTION_DISABLED",
+                {"status": status, "body": canary},
+                "canary broker order must remain explicitly denied in activation-ready E2E",
+            )
+        )
+
         status, audit = _client_json(client, "GET", "/api/openclaw-adapter/broker/audit?operator_id=op-smoke")
         rows.append(
             _check(
@@ -520,6 +544,7 @@ def run_smoke(output_dir: Path) -> dict[str, Any]:
             "smoke_passed": passed == len(rows),
             "production_broker_enabled": False,
             "live_execution_enabled": False,
+            "canary_execution_enabled": False,
         },
         "rows": [asdict(row) for row in rows],
     }

@@ -63,12 +63,14 @@ def _healthy_payloads() -> Dict[Tuple[str, str], Dict[str, Any]]:
             "broker_execution": "deferred",
             "paper_adapter": "deferred",
             "live_adapter": "deferred",
+            "canary_adapter": "deferred",
             "capital_binding": "deferred",
             "fail_closed": True,
             "supported_session_types": ["interactive", "trainer"],
             "activation_gates": {
                 "paper_adapter": "OPENCLAW_PAPER_ADAPTER_ENABLED",
                 "live_adapter": "OPENCLAW_LIVE_ADAPTER_ENABLED",
+                "canary_adapter": "OPENCLAW_CANARY_ADAPTER_ENABLED",
             },
             "upstream": {"status": "ok", "capabilities": {"agents": True}},
         },
@@ -158,7 +160,10 @@ def test_openclaw_ops_surface_aggregates_status_sessions_gates_and_audit(monkeyp
 
     assert data["gate_state"]["paper_adapter"]["enabled"] is False
     assert data["gate_state"]["live_adapter"]["enabled"] is False
+    assert data["gate_state"]["canary_adapter"]["enabled"] is False
+    assert data["gate_state"]["canary_adapter"]["gate_reason"] == "OPENCLAW_CANARY_ADAPTER_ENABLED is not enabled"
     assert data["allowedActions"]["canEnablePaper"] is False
+    assert data["allowedActions"]["canEnableCanary"] is False
     assert data["allowedActions"]["canEnableLive"] is False
 
     audit = data["tool_workflow"]["audit"]
@@ -192,6 +197,8 @@ def test_openclaw_ops_surface_degrades_when_adapter_is_not_configured(monkeypatc
     assert data["production_activation"] == "disabled"
     assert data["gate_state"]["paper_adapter"]["enabled"] is False
     assert data["gate_state"]["live_adapter"]["enabled"] is False
+    assert data["gate_state"]["canary_adapter"]["enabled"] is False
+    assert data["gate_state"]["canary_adapter"]["activation_gate"] == "OPENCLAW_CANARY_ADAPTER_ENABLED"
     assert data["session_lifecycle"]["sessions"] == []
     assert any("OPENCLAW_ADAPTER_URL_NOT_CONFIGURED" in reason for reason in data["degradation"]["reasons"])
     assert payload["meta"]["surfaces"]["openclaw_ops"]["status"] == "unavailable"

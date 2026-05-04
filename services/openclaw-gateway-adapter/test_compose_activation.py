@@ -20,6 +20,7 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
     assert adapter["environment"]["OPENCLAW_PRODUCTION_BROKER_ENABLED"] == "false"
     assert adapter["environment"]["OPENCLAW_PAPER_ADAPTER_ENABLED"] == "false"
     assert adapter["environment"]["OPENCLAW_LIVE_ADAPTER_ENABLED"] == "false"
+    assert adapter["environment"]["OPENCLAW_CANARY_ADAPTER_ENABLED"] == "false"
     assert adapter["environment"]["OPENCLAW_CAPITAL_BINDING_ENABLED"] == "false"
     assert adapter["ports"] == ["${OPENCLAW_GATEWAY_ADAPTER_PORT:-18104}:8104"]
 

@@ -377,6 +377,7 @@ services:
       OPENCLAW_PRODUCTION_BROKER_ENABLED: "false"
       OPENCLAW_PAPER_ADAPTER_ENABLED: "false"
       OPENCLAW_LIVE_ADAPTER_ENABLED: "false"
+      OPENCLAW_CANARY_ADAPTER_ENABLED: "false"
       OPENCLAW_CAPITAL_BINDING_ENABLED: "false"
       OPENCLAW_BROKER_SIDECAR_URL: http://broker:8102
       OPENCLAW_RUNTIME_MANAGER_URL: http://runtime-manager:8081
@@ -1224,6 +1225,7 @@ services:
       OPENCLAW_PRODUCTION_BROKER_ENABLED: "false"
       OPENCLAW_CAPITAL_BINDING_ENABLED: "false"
       OPENCLAW_LIVE_ADAPTER_ENABLED: "false"
+      OPENCLAW_CANARY_ADAPTER_ENABLED: "false"
       PANTHEON_LIVE_BROKER_ENABLED: "false"
     command: ["python", "scripts/smoke_openclaw_activation_ready_e2e.py"]
     restart: "no"

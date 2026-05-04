@@ -34,6 +34,7 @@ POST /api/openclaw-adapter/broker/paper/orders       — gated paper order simul
 GET  /api/openclaw-adapter/broker/paper/orders       — gated paper order list via broker sidecar
 GET  /api/openclaw-adapter/broker/paper/orders/{id}  — gated paper order read via broker sidecar
 POST /api/openclaw-adapter/broker/live/orders        — always rejected
+POST /api/openclaw-adapter/broker/canary/orders      — always rejected
 GET  /api/openclaw-adapter/broker/audit              — paper intent/result audit trail
 """
 
@@ -91,6 +92,7 @@ _UPSTREAM_RETRIES = int(os.getenv("OPENCLAW_UPSTREAM_RETRIES", "1"))
 _PRODUCTION_BROKER_ENABLED = os.getenv("OPENCLAW_PRODUCTION_BROKER_ENABLED", "").lower() in {"1", "true", "yes"}
 _PAPER_ADAPTER_ENABLED = os.getenv("OPENCLAW_PAPER_ADAPTER_ENABLED", "").lower() in {"1", "true", "yes"}
 _LIVE_ADAPTER_ENABLED = os.getenv("OPENCLAW_LIVE_ADAPTER_ENABLED", "").lower() in {"1", "true", "yes"}
+_CANARY_ADAPTER_ENABLED = os.getenv("OPENCLAW_CANARY_ADAPTER_ENABLED", "").lower() in {"1", "true", "yes"}
 _CAPITAL_BINDING_ENABLED = os.getenv("OPENCLAW_CAPITAL_BINDING_ENABLED", "").lower() in {"1", "true", "yes"}
 _BROKER_SIDECAR_URL = os.getenv("OPENCLAW_BROKER_SIDECAR_URL", "")
 _RUNTIME_MANAGER_URL = os.getenv("OPENCLAW_RUNTIME_MANAGER_URL", "") or os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "")
@@ -110,6 +112,7 @@ _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
     "broker_execution": "deferred",
     "paper_adapter": "deferred",
     "live_adapter": "deferred",
+    "canary_adapter": "deferred",
     "live_gate_harness": "present_disabled",
     "capital_binding": "deferred",
     "governed_search": "enabled",
@@ -136,6 +139,7 @@ _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
         "broker_execution": "OPENCLAW_PRODUCTION_BROKER_ENABLED",
         "paper_adapter": "OPENCLAW_PAPER_ADAPTER_ENABLED",
         "live_adapter": "OPENCLAW_LIVE_ADAPTER_ENABLED",
+        "canary_adapter": "OPENCLAW_CANARY_ADAPTER_ENABLED",
         "capital_binding": "OPENCLAW_CAPITAL_BINDING_ENABLED",
         "paper_runtime_binding_check": "OPENCLAW_RUNTIME_MANAGER_URL",
         "live_gate_harness": "OPENCLAW_LIVE_ADAPTER_ENABLED + OPENCLAW_LIVE_HUMAN_APPROVAL_TOKEN",
@@ -161,8 +165,9 @@ _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
         "Session lifecycle is Pantheon-owned with durable state, idempotent create, operator "
         "ownership, and degraded recovery. Production/live broker execution remains deferred. "
         "Paper order submission is available only behind the explicit paper gate and requires "
-        "a verified active paper RuntimeBinding. Search is constrained to governed evidence "
-        "bundle and citation-pack responses."
+        "a verified active paper RuntimeBinding. Canary broker execution remains disabled and "
+        "is exposed only as an explicit fail-closed route. Search is constrained to governed "
+        "evidence bundle and citation-pack responses."
     ),
 }
 
@@ -569,6 +574,7 @@ register_fastapi_health_routes(
         "production_broker_enabled": _PRODUCTION_BROKER_ENABLED,
         "paper_adapter_enabled": _PAPER_ADAPTER_ENABLED,
         "live_adapter_enabled": _LIVE_ADAPTER_ENABLED,
+        "canary_adapter_enabled": _CANARY_ADAPTER_ENABLED,
         "capital_binding_enabled": _CAPITAL_BINDING_ENABLED,
         "runtime_manager_url": _RUNTIME_MANAGER_URL or "not_configured",
     },
@@ -608,6 +614,9 @@ def get_capabilities() -> Dict[str, Any]:
     payload = dict(_CAPABILITY_SNAPSHOT)
     payload["paper_adapter"] = "enabled" if _PAPER_ADAPTER_ENABLED else "deferred"
     payload["live_gate_harness"] = "enabled" if _LIVE_ADAPTER_ENABLED else "present_disabled"
+    # Canary execution remains hard-denied even if a local env var is set; a future
+    # activation task must introduce the actual adapter policy and evidence.
+    payload["canary_adapter"] = "deferred"
     payload["paper_broker"] = _PAPER_BROKER.capability_snapshot()
     payload["live_gate"] = _LIVE_GATE.capability_snapshot()
     try:
@@ -1131,6 +1140,43 @@ def reject_live_order(
     return JSONResponse(status_code=403, content={"status": "live_gate_error", "error_code": "LIVE_EXECUTION_DISABLED"})  # pragma: no cover
 
 
+@app.post("/api/openclaw-adapter/broker/canary/orders")
+def reject_canary_order(
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+) -> JSONResponse:
+    _PAPER_BROKER_AUDIT.record(
+        {
+            "event": "canary_order_rejected",
+            "operator_id": x_operator_id or "",
+            "is_real_order": False,
+            "is_real_capital": False,
+            "canary_enabled": False,
+            "configured_gate_enabled": _CANARY_ADAPTER_ENABLED,
+            "outcome": "rejected",
+        }
+    )
+    return JSONResponse(
+        status_code=403,
+        content={
+            "status": "canary_gate_error",
+            "error_code": "CANARY_EXECUTION_DISABLED",
+            "message": (
+                "Canary broker execution is disabled. OpenClaw canary orders are not accepted "
+                "until a separate activation gate explicitly enables this path."
+            ),
+            "gate": "canary_execution",
+            "details": {
+                "canary_enabled": False,
+                "configured_gate_enabled": _CANARY_ADAPTER_ENABLED,
+                "configured_gate": "OPENCLAW_CANARY_ADAPTER_ENABLED",
+                "allowed_scope": "canary_gate_not_enabled",
+                "is_real_order": False,
+                "is_real_capital": False,
+            },
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # Live gate harness (gated by OPENCLAW_LIVE_ADAPTER_ENABLED + all gate checks)
 # Live execution is always denied — only dry handoff is supported.
@@ -1279,5 +1325,12 @@ def list_paper_broker_audit(
 def broker_capabilities() -> JSONResponse:
     return JSONResponse(
         status_code=200,
-        content={"status": "ok", **_PAPER_BROKER.capability_snapshot()},
+        content={
+            "status": "ok",
+            **_PAPER_BROKER.capability_snapshot(),
+            "canary_adapter_enabled": False,
+            "canary_execution_enabled": False,
+            "canary_gate": "OPENCLAW_CANARY_ADAPTER_ENABLED",
+            "canary_allowed_scope": "canary_gate_not_enabled",
+        },
     )

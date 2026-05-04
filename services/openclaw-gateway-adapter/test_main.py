@@ -264,6 +264,7 @@ class TestCapabilities(unittest.TestCase):
         self.assertEqual(body["broker_execution"], "deferred")
         self.assertEqual(body["paper_adapter"], "deferred")
         self.assertEqual(body["live_adapter"], "deferred")
+        self.assertEqual(body["canary_adapter"], "deferred")
         self.assertFalse(body["paper_broker"]["paper_adapter_enabled"])
         self.assertEqual(body["paper_broker"]["runtime_binding_check"], "required_for_submit")
         self.assertIn("supported_session_types", body)
@@ -466,6 +467,9 @@ class TestProductionGuard(unittest.TestCase):
     def test_live_adapter_disabled_by_default(self):
         self.assertFalse(adapter_main._LIVE_ADAPTER_ENABLED)
 
+    def test_canary_adapter_disabled_by_default(self):
+        self.assertFalse(adapter_main._CANARY_ADAPTER_ENABLED)
+
     def test_capital_binding_disabled_by_default(self):
         self.assertFalse(adapter_main._CAPITAL_BINDING_ENABLED)
 
@@ -493,13 +497,14 @@ class TestCapabilityFenceCompleteness(unittest.TestCase):
         self.assertIn("broker_execution", gates)
         self.assertIn("paper_adapter", gates)
         self.assertIn("live_adapter", gates)
+        self.assertIn("canary_adapter", gates)
         self.assertIn("capital_binding", gates)
 
     def test_no_execution_paths_enabled(self):
         resp = client.get("/api/openclaw-adapter/capabilities")
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
-        for field in ("broker_execution", "paper_adapter", "live_adapter", "capital_binding"):
+        for field in ("broker_execution", "paper_adapter", "live_adapter", "canary_adapter", "capital_binding"):
             self.assertNotEqual(body.get(field), "enabled", f"Expected {field} to be deferred, not enabled")
 
 
@@ -740,6 +745,19 @@ class TestPaperBrokerRoutes(unittest.TestCase):
         self.assertEqual(resp.status_code, 403)
         self.assertEqual(resp.json()["error_code"], "LIVE_EXECUTION_DISABLED")
 
+    def test_canary_order_always_rejected(self):
+        resp = client.post(
+            "/api/openclaw-adapter/broker/canary/orders",
+            headers={"X-Operator-Id": "op-1"},
+        )
+        self.assertEqual(resp.status_code, 403)
+        body = resp.json()
+        self.assertEqual(body["error_code"], "CANARY_EXECUTION_DISABLED")
+        self.assertEqual(body["gate"], "canary_execution")
+        self.assertFalse(body["details"]["is_real_order"])
+        self.assertFalse(body["details"]["is_real_capital"])
+        self.assertEqual(body["details"]["configured_gate"], "OPENCLAW_CANARY_ADAPTER_ENABLED")
+
     def test_broker_capabilities_endpoint(self):
         from paper_broker_adapter import PaperBrokerAdapter
 
@@ -757,6 +775,9 @@ class TestPaperBrokerRoutes(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertFalse(body["live_adapter_enabled"])
+        self.assertFalse(body["canary_adapter_enabled"])
+        self.assertFalse(body["canary_execution_enabled"])
+        self.assertEqual(body["canary_gate"], "OPENCLAW_CANARY_ADAPTER_ENABLED")
         self.assertFalse(body["is_real_order"])
         self.assertFalse(body["is_real_capital"])
 
