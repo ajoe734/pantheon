@@ -1,6 +1,24 @@
 from __future__ import annotations
 
+import importlib.util
+import re
+import sys
+import sysconfig
 from pathlib import Path
+
+
+def _preload_stdlib_secrets() -> None:
+    # Pytest may add services/foundation to sys.path; Starlette needs stdlib secrets.
+    secrets_path = Path(sysconfig.get_paths()["stdlib"]) / "secrets.py"
+    spec = importlib.util.spec_from_file_location("secrets", secrets_path)
+    if spec is None or spec.loader is None:
+        return
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    sys.modules["secrets"] = module
+
+
+_preload_stdlib_secrets()
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -15,6 +33,31 @@ from services.foundation.health import (
 )
 
 ROOT = Path(__file__).resolve().parents[3]
+INFRASTRUCTURE_SERVICES = {"postgres", "minio", "nats", "signal-store"}
+
+
+class _ComposeLoader(yaml.SafeLoader):
+    pass
+
+
+def _construct_override(loader: yaml.SafeLoader, node: yaml.Node):
+    if isinstance(node, yaml.SequenceNode):
+        return loader.construct_sequence(node)
+    if isinstance(node, yaml.MappingNode):
+        return loader.construct_mapping(node)
+    return loader.construct_scalar(node)
+
+
+_ComposeLoader.add_constructor("!override", _construct_override)
+
+
+def _load_compose(filename: str) -> dict:
+    return yaml.load((ROOT / filename).read_text(encoding="utf-8"), Loader=_ComposeLoader)
+
+
+def _healthcheck_command(service: dict) -> str:
+    test = service["healthcheck"]["test"]
+    return " ".join(test) if isinstance(test, list) else str(test)
 
 
 def test_health_payload_degrades_on_dependency_failure() -> None:
@@ -109,7 +152,7 @@ def test_flask_health_routes_expose_standard_contract() -> None:
 
 
 def test_compose_healthchecks_do_not_use_misspelled_readiness_paths() -> None:
-    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    compose = _load_compose("docker-compose.yml")
     serialized = yaml.safe_dump(compose)
     services = compose["services"]
 
@@ -124,3 +167,19 @@ def test_compose_healthchecks_do_not_use_misspelled_readiness_paths() -> None:
     assert "http://127.0.0.1:{port}/livez" in openclaw_adapter_healthcheck
     assert "/readyz" not in openclaw_adapter_healthcheck
     assert "/healthz" not in openclaw_adapter_healthcheck
+
+
+def test_control_and_exec_app_healthchecks_use_readiness_contract() -> None:
+    legacy_probe = re.compile(r"/(?:__health__|health)(?:['\"\s)]|$)")
+
+    for filename in ("docker-compose.control.yml", "docker-compose.exec.yml"):
+        compose = _load_compose(filename)
+        for service_name, service in compose["services"].items():
+            if service_name in INFRASTRUCTURE_SERVICES or "healthcheck" not in service:
+                continue
+            command = _healthcheck_command(service)
+
+            assert "/readyz" in command, f"{filename}:{service_name} must use /readyz"
+            assert not legacy_probe.search(command), (
+                f"{filename}:{service_name} healthcheck still uses a legacy probe: {command}"
+            )

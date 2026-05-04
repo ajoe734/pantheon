@@ -41,7 +41,7 @@ services:
     ports:
       - "${RUNTIME_MANAGER_PORT:-28081}:8081"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -77,7 +77,7 @@ services:
     ports:
       - "${BROKER_ADAPTER_PORT:-28097}:8097"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8097/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8097/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -113,7 +113,7 @@ services:
     ports:
       - "${EXCHANGE_ADAPTER_PORT:-28098}:8098"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8098/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8098/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -157,7 +157,7 @@ services:
     ports:
       - "${LEAN_PAPER_PORT:-28110}:8010"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -197,7 +197,7 @@ services:
     ports:
       - "${LEAN_LIVE_PORT:-28111}:8011"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8011/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8011/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10

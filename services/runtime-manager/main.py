@@ -132,22 +132,25 @@ from services.foundation.health import register_flask_health_routes  # noqa: E40
 # ---------------------------------------------------------------------------
 
 app = Flask(__name__)
+
+
+def _optional_url_dependency(env_key: str) -> dict[str, object]:
+    url = os.getenv(env_key, "").strip()
+    return {
+        "status": "ok",
+        "configured": bool(url),
+        "optional": True,
+        "url": url,
+    }
+
+
 register_flask_health_routes(
     app,
     "runtime-manager",
     dependencies=lambda: {
-        "consultation": {
-            "status": "ok" if os.getenv("PANTHEON_CONSULTATION_API_URL", "").strip() else "degraded",
-            "url": os.getenv("PANTHEON_CONSULTATION_API_URL", "").strip(),
-        },
-        "deployment": {
-            "status": "ok" if os.getenv("PANTHEON_DEPLOYMENT_API_URL", "").strip() else "degraded",
-            "url": os.getenv("PANTHEON_DEPLOYMENT_API_URL", "").strip(),
-        },
-        "governance_approval": {
-            "status": "ok" if os.getenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "").strip() else "degraded",
-            "url": os.getenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "").strip(),
-        },
+        "consultation": _optional_url_dependency("PANTHEON_CONSULTATION_API_URL"),
+        "deployment": _optional_url_dependency("PANTHEON_DEPLOYMENT_API_URL"),
+        "governance_approval": _optional_url_dependency("PANTHEON_GOVERNANCE_APPROVAL_API_URL"),
     },
     metrics=lambda: {"binding_count": len(_get_service().list_all())},
     details=lambda: {"store_path": _STORE_PATH_ENV, "single_runtime_enforced": _SINGLE_RUNTIME_ENFORCED},

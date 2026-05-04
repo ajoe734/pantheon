@@ -1,10 +1,15 @@
+import json
 import os
+import threading
+import urllib.error
+import urllib.request
 import uuid
 import unittest
 from datetime import datetime, timezone
+from http.server import ThreadingHTTPServer
 from unittest.mock import patch
 
-from services.execution.lean_runtime.paper_runtime import PaperRuntimeService, RuntimeTelemetryEmitter
+from services.execution.lean_runtime.paper_runtime import _Handler, PaperRuntimeService, RuntimeTelemetryEmitter
 from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 
@@ -62,6 +67,18 @@ class _FakeTelemetryEmitter:
         }
 
 
+class _FakeHealthService:
+    def __init__(self, status="ok"):
+        self._status = status
+
+    def snapshot(self):
+        return {
+            "status": self._status,
+            "runtime_package": "paper_execution_runtime",
+            "paper_execution_ready": self._status == "ok",
+        }
+
+
 class PaperRuntimeServiceTest(unittest.TestCase):
     def _identity(self) -> RuntimeIdentity:
         return RuntimeIdentity.from_env(
@@ -108,6 +125,56 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             "quantity": 10,
             "quantity_type": "SHARES",
         }
+
+    def test_http_handler_exposes_standard_health_probes(self):
+        with patch(
+            "services.execution.lean_runtime.paper_runtime.get_service",
+            return_value=_FakeHealthService(),
+        ):
+            server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                for path in ("/healthz", "/livez", "/readyz", "/health", "/__health__"):
+                    with urllib.request.urlopen(f"{base_url}{path}", timeout=2) as response:
+                        payload = json.loads(response.read().decode("utf-8"))
+                    self.assertEqual(response.status, 200)
+                    self.assertTrue(payload["live"])
+                    self.assertTrue(payload["ready"])
+                    self.assertEqual(payload["health_contract"]["readyz"], "/readyz")
+                    self.assertIn("/__health__", payload["health_contract"]["legacy"])
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+    def test_http_handler_readiness_fails_when_runtime_snapshot_is_not_ok(self):
+        with patch(
+            "services.execution.lean_runtime.paper_runtime.get_service",
+            return_value=_FakeHealthService(status="error"),
+        ):
+            server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                with self.assertRaises(urllib.error.HTTPError) as raised:
+                    urllib.request.urlopen(f"{base_url}/readyz", timeout=2)
+
+                self.assertEqual(raised.exception.code, 503)
+                payload = json.loads(raised.exception.read().decode("utf-8"))
+                self.assertFalse(payload["ready"])
+
+                with urllib.request.urlopen(f"{base_url}/livez", timeout=2) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(response.status, 200)
+                self.assertTrue(payload["live"])
+                self.assertFalse(payload["ready"])
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
 
     def test_drain_once_executes_signal_and_updates_runtime_state(self):
         store = InMemoryPendingSignalStore([self._signal()])

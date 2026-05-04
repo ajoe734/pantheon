@@ -874,11 +874,28 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def _runtime_health_response(self) -> tuple[int, dict[str, Any]]:
+        snapshot = get_service().snapshot()
+        ready = snapshot.get("status") == "ok"
+        body = {
+            **snapshot,
+            "live": True,
+            "ready": ready,
+            "health_contract": {
+                "healthz": "/healthz",
+                "livez": "/livez",
+                "readyz": "/readyz",
+                "legacy": ["/health", "/__health__"],
+            },
+        }
+        if self.path in {"/healthz", "/livez"}:
+            return 200, body
+        return (200 if ready else 503), body
+
     def do_GET(self) -> None:  # noqa: N802
-        if self.path in {"/", "/__health__", "/health"}:
-            snapshot = get_service().snapshot()
-            status_code = 200 if snapshot.get("status") == "ok" else 503
-            self._write_json(status_code, snapshot)
+        if self.path in {"/", "/__health__", "/health", "/healthz", "/livez", "/readyz"}:
+            status_code, body = self._runtime_health_response()
+            self._write_json(status_code, body)
             return
         if self.path == "/api/runtime/state":
             self._write_json(200, get_service().snapshot())

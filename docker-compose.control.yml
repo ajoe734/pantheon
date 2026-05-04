@@ -115,7 +115,7 @@ services:
     ports:
       - "${GOVERNANCE_PORT:-38082}:8082"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/health', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -165,7 +165,7 @@ services:
     ports:
       - "${TELEMETRY_PORT:-38083}:8083"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8083/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8083/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -201,7 +201,7 @@ services:
     ports:
       - "${INCIDENTS_PORT:-38090}:8090"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -237,7 +237,7 @@ services:
     ports:
       - "${POSTMORTEMS_PORT:-38091}:8091"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -305,7 +305,7 @@ services:
     ports:
       - "${BFF_PORT:-38001}:8001"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -334,7 +334,7 @@ services:
     ports:
       - "${PERSONA_PORT:-38002}:8002"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -360,7 +360,7 @@ services:
     ports:
       - "${EVALUATION_PORT:-38084}:8084"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8084/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8084/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -386,7 +386,7 @@ services:
     ports:
       - "${FEEDBACK_PORT:-38085}:8085"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8085/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8085/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -418,7 +418,7 @@ services:
     ports:
       - "${MEMORY_PORT:-38086}:8086"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8086/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8086/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -446,7 +446,7 @@ services:
     ports:
       - "${REGISTRY_PORT:-38087}:8087"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8087/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8087/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -472,7 +472,7 @@ services:
     ports:
       - "${OPTIMIZER_PORT:-38088}:8088"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8088/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8088/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -502,7 +502,7 @@ services:
     ports:
       - "${PROMOTION_PORT:-38089}:8089"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8089/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8089/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -534,7 +534,7 @@ services:
     ports:
       - "${CAPITAL_PORT:-38092}:8092"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8092/health', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8092/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -557,7 +557,7 @@ services:
     ports:
       - "${EVOLUTION_PORT:-38093}:8093"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8093/health', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8093/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -576,7 +576,7 @@ services:
     ports:
       - "${LINEAGE_PORT:-38094}:8094"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8094/__health__', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8094/readyz', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10

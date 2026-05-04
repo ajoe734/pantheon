@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SERVICE_DIR = Path(__file__).resolve().parent
@@ -84,6 +85,24 @@ class DeployableInternalApiTests(unittest.TestCase):
         response = self.client.get("/__health__")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["service"], "runtime-manager")
+
+    def test_standard_readyz_allows_optional_control_plane_urls_to_be_absent(self):
+        with patch.dict(
+            os.environ,
+            {
+                "PANTHEON_CONSULTATION_API_URL": "",
+                "PANTHEON_DEPLOYMENT_API_URL": "",
+                "PANTHEON_GOVERNANCE_APPROVAL_API_URL": "",
+            },
+        ):
+            response = self.client.get("/readyz")
+
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 200, payload)
+        self.assertEqual(payload["service"], "runtime-manager")
+        self.assertTrue(payload["ready"])
+        self.assertFalse(payload["dependencies"]["deployment"]["configured"])
+        self.assertTrue(payload["dependencies"]["deployment"]["optional"])
 
     def test_legacy_pause_route_drives_in_process_service(self):
         binding = self._deploy()
