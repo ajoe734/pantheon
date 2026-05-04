@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-04 12:31:06
+Last updated: 2026-05-04 12:43:16
 
 ## Objective
 
@@ -37,13 +37,13 @@ Last updated: 2026-05-04 12:31:06
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Started implementation: surveying service enforcement state; enforcement is wired but docker-compose.control.yml still defaults posture to dev; wave4 will harden the staging compose defaults to production and fix source_search_posture ENFORCED_MODES gap
+- `Claude`: execution, control-plane, governance-review; next: Supervisor resumed SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4 for finalize after successful dispatch.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Implementing crawler policy/lifecycle registry, scheduled search refresh, BFF ops freshness, and durable-only cutoff tests.
-- `Codex2`: integration, status-system, schema, acceptance; next: Supervisor auto-started SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E after successful dispatch.
+- `Codex`: integration, status-system, schema, acceptance; next: Auto-reassigned ownership from Claude to Codex after repeated Claude terminal: {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1777874400,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_dis. Task returned to todo until Codex starts a fresh run.
+- `Codex2`: integration, status-system, schema, acceptance; next: Codex2 picked up wave2; validating partial policy/lifecycle work and adding crawler-indexer cutoff tests.
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
 - `Claude2`: execution, control-plane, governance-review; next: No active assignment
-- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Supervisor re-dispatched FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT; task remains in progress.
+- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 
 ## Delivery Layers
 
@@ -51,19 +51,19 @@ Last updated: 2026-05-04 12:31:06
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY` | Blueprint production hardening follow-up 2026-05-04 | Make execution sandbox/canary activation-ready while live stays gated | Gemini2 | todo | `SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD`, `SVC-BLUEPRINT-PAPER-BRACKET-BASELINE` | 把 execution / pantheon-lean 從 paper smoke 補到 sandbox/canary activation-ready：test-key adapter、order cancel readback reconcile smoke、canary/live promotion gate，以及 no-real-capital evidence。 |
-| `SVC-BFF-HA-LB-DEFER-TRACKING` | Blueprint production hardening follow-up 2026-05-04 | Record BFF HA/LB as explicit deferred topology item | Codex | todo | `SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT` | 只把 BFF HA/LB 明確記為 deferred，不實作 replicas/LB；避免未來把 staging dual-VM 誤讀成 BFF HA 已完成。 |
+| `SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY` | Blueprint production hardening follow-up 2026-05-04 | Make execution sandbox/canary activation-ready while live stays gated | Codex2 | todo | `SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD`, `SVC-BLUEPRINT-PAPER-BRACKET-BASELINE` | 把 execution / pantheon-lean 從 paper smoke 補到 sandbox/canary activation-ready：test-key adapter、order cancel readback reconcile smoke、canary/live promotion gate，以及 no-real-capital evidence。 |
+| `SVC-BFF-HA-LB-DEFER-TRACKING` | Blueprint production hardening follow-up 2026-05-04 | Record BFF HA/LB as explicit deferred topology item | Codex2 | todo | `SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT` | 只把 BFF HA/LB 明確記為 deferred，不實作 replicas/LB；避免未來把 staging dual-VM 誤讀成 BFF HA 已完成。 |
 | `SVC-BFF-IDP-STAGING-INTEGRATION-HARDENING` | Blueprint production hardening follow-up 2026-05-04 | Harden BFF OIDC/JWKS staging IdP integration | Codex2 | todo | `SVC-BFF-AUTH-FACADE-HARDENING`, `SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4` | 把 BFF enterprise IdP 從 env-capable 補到 staging-ready：OIDC discovery/JWKS rotation/error policy、claim-to-role/MFA mapping、negative tests 與 staging env smoke。 |
-| `FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT` | Blueprint production hardening follow-up 2026-05-04 | Close frontend staging repo hygiene and publish readiness | Gemini2 | in_progress | `SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF` | 把 front-ai-trading-system 從 production route guard pass 推到 repo hygiene/publish closeout：清理或歸檔 dirty coordination/docs/handoff、確認 dev/demo module 不進 staging-live route graph、必要時提交並準備 push。 |
+| `FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT` | Blueprint production hardening follow-up 2026-05-04 | Close frontend staging repo hygiene and publish readiness | Codex | todo | `SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF` | 把 front-ai-trading-system 從 production route guard pass 推到 repo hygiene/publish closeout：清理或歸檔 dirty coordination/docs/handoff、確認 dev/demo module 不進 staging-live route graph、必要時提交並準備 push。 |
 
 ### External / Upstream Integration Work
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4` | Blueprint production hardening follow-up 2026-05-04 | Hard-enforce Postgres ownership for staging/prod | Claude | in_progress | `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3` | 把 Postgres ownership 從 env-gated adoption 推到 staging/prod hard enforcement：staging/prod 不允許 governance/capital/memory/source/search/consultation/reconciliation 回落到 JSON/JSONL；dev baseline 可保留。 |
-| `SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2` | Blueprint production hardening follow-up 2026-05-04 | Upgrade source/search to crawler-indexer platform baseline | Codex | in_progress | `SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER` | 把 source/search 從 bounded connector/indexer 推到下一層 platform：crawler/indexer policy registry、connector lifecycle、scheduled refresh、license/rate/PIT/audit guard，以及 durable-only search cutoff。 |
-| `SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E` | Blueprint production hardening follow-up 2026-05-04 | Close OSS/research/learning activation-ready E2E wiring | Codex2 | in_progress | `SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE` | 補齊 OSS/research/learning activation-ready 端到端串接：Qlib/TRL/RL/W&B scaffold 都能在 offline/test/smoke 模式跑通；production online/live activation 仍 fail-closed。 |
-| `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` | Blueprint production hardening follow-up 2026-05-04 | Make OpenClaw broker adapter activation-ready without live enablement | Claude | todo | `SVC-BLUEPRINT-OPENCLAW-READY-FACADE` | 把 OpenClaw facade 往 ready-to-enable adapter 推進：完成 broker adapter interface、sandbox/paper contract smoke、session lifecycle evidence；live broker execution 仍 gate closed。 |
+| `SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4` | Blueprint production hardening follow-up 2026-05-04 | Hard-enforce Postgres ownership for staging/prod | Claude | review_approved | `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3` | 把 Postgres ownership 從 env-gated adoption 推到 staging/prod hard enforcement：staging/prod 不允許 governance/capital/memory/source/search/consultation/reconciliation 回落到 JSON/JSONL；dev baseline 可保留。 |
+| `SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2` | Blueprint production hardening follow-up 2026-05-04 | Upgrade source/search to crawler-indexer platform baseline | Codex2 | in_progress | `SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER` | 把 source/search 從 bounded connector/indexer 推到下一層 platform：crawler/indexer policy registry、connector lifecycle、scheduled refresh、license/rate/PIT/audit guard，以及 durable-only search cutoff。 |
+| `SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E` | Blueprint production hardening follow-up 2026-05-04 | Close OSS/research/learning activation-ready E2E wiring | Codex2 | review | `SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE` | 補齊 OSS/research/learning activation-ready 端到端串接：Qlib/TRL/RL/W&B scaffold 都能在 offline/test/smoke 模式跑通；production online/live activation 仍 fail-closed。 |
+| `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` | Blueprint production hardening follow-up 2026-05-04 | Make OpenClaw broker adapter activation-ready without live enablement | Codex | todo | `SVC-BLUEPRINT-OPENCLAW-READY-FACADE` | 把 OpenClaw facade 往 ready-to-enable adapter 推進：完成 broker adapter interface、sandbox/paper contract smoke、session lifecycle evidence；live broker execution 仍 gate closed。 |
 
 ## Recently Executed Tasks
 
@@ -97,20 +97,23 @@ Last updated: 2026-05-04 12:31:06
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4` | Blueprint production hardening follow-up 2026-05-04 | Hard-enforce Postgres ownership for staging/prod | 把 Postgres ownership 從 env-gated adoption 推到 staging/prod hard enforcement：staging/prod 不允許 governance/capital/memory/source/search/consultation/reconciliation 回落到 JSON/JSONL；dev baseline 可保留。 | Claude | Codex | in_progress | `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3` | 2026-05-04 12:29:50 | Started implementation: surveying service enforcement state; enforcement is wired but docker-compose.control.yml still defaults posture to dev; wave4 will harden the staging compose defaults to production and fix source_search_posture ENFORCED_MODES gap |
-| `SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2` | Blueprint production hardening follow-up 2026-05-04 | Upgrade source/search to crawler-indexer platform baseline | 把 source/search 從 bounded connector/indexer 推到下一層 platform：crawler/indexer policy registry、connector lifecycle、scheduled refresh、license/rate/PIT/audit guard，以及 durable-only search cutoff。 | Codex | Claude | in_progress | `SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER` | 2026-05-04 12:30:31 | Implementing crawler policy/lifecycle registry, scheduled search refresh, BFF ops freshness, and durable-only cutoff tests. |
-| `SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E` | Blueprint production hardening follow-up 2026-05-04 | Close OSS/research/learning activation-ready E2E wiring | 補齊 OSS/research/learning activation-ready 端到端串接：Qlib/TRL/RL/W&B scaffold 都能在 offline/test/smoke 模式跑通；production online/live activation 仍 fail-closed。 | Codex2 | Codex | in_progress | `SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE` | 2026-05-04 12:31:06 | Supervisor auto-started SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E after successful dispatch. |
-| `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` | Blueprint production hardening follow-up 2026-05-04 | Make OpenClaw broker adapter activation-ready without live enablement | 把 OpenClaw facade 往 ready-to-enable adapter 推進：完成 broker adapter interface、sandbox/paper contract smoke、session lifecycle evidence；live broker execution 仍 gate closed。 | Claude | Codex2 | todo | `SVC-BLUEPRINT-OPENCLAW-READY-FACADE` | 2026-05-04 12:26:26 | Assignment created |
-| `SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY` | Blueprint production hardening follow-up 2026-05-04 | Make execution sandbox/canary activation-ready while live stays gated | 把 execution / pantheon-lean 從 paper smoke 補到 sandbox/canary activation-ready：test-key adapter、order cancel readback reconcile smoke、canary/live promotion gate，以及 no-real-capital evidence。 | Gemini2 | Claude2 | todo | `SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD`, `SVC-BLUEPRINT-PAPER-BRACKET-BASELINE` | 2026-05-04 12:28:33 | Helper-claimed by Gemini2 while Claude2 is dispatch-paused. |
-| `SVC-BFF-HA-LB-DEFER-TRACKING` | Blueprint production hardening follow-up 2026-05-04 | Record BFF HA/LB as explicit deferred topology item | 只把 BFF HA/LB 明確記為 deferred，不實作 replicas/LB；避免未來把 staging dual-VM 誤讀成 BFF HA 已完成。 | Codex | Claude | todo | `SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT` | 2026-05-04 12:26:37 | Assignment created |
+| `SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4` | Blueprint production hardening follow-up 2026-05-04 | Hard-enforce Postgres ownership for staging/prod | 把 Postgres ownership 從 env-gated adoption 推到 staging/prod hard enforcement：staging/prod 不允許 governance/capital/memory/source/search/consultation/reconciliation 回落到 JSON/JSONL；dev baseline 可保留。 | Claude | Codex | review_approved | `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3` | 2026-05-04 12:41:51 | Supervisor resumed SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4 for finalize after successful dispatch. |
+| `SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2` | Blueprint production hardening follow-up 2026-05-04 | Upgrade source/search to crawler-indexer platform baseline | 把 source/search 從 bounded connector/indexer 推到下一層 platform：crawler/indexer policy registry、connector lifecycle、scheduled refresh、license/rate/PIT/audit guard，以及 durable-only search cutoff。 | Codex2 | Claude | in_progress | `SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER` | 2026-05-04 12:43:16 | Codex2 picked up wave2; validating partial policy/lifecycle work and adding crawler-indexer cutoff tests. |
+| `SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E` | Blueprint production hardening follow-up 2026-05-04 | Close OSS/research/learning activation-ready E2E wiring | 補齊 OSS/research/learning activation-ready 端到端串接：Qlib/TRL/RL/W&B scaffold 都能在 offline/test/smoke 模式跑通；production online/live activation 仍 fail-closed。 | Codex2 | Codex | review | `SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE` | 2026-05-04 12:39:29 | Ready for review. Commit 5818e8f3 adds task evidence and updates OSS activation docs/maturity records; runtime code already satisfied E2E acceptance. Verification: smoke_oss_activation_ready_matrix 16/16 passed with registry/governance/broker/live writes false; focused pytest set passed 51 in 30.47s. Production paper/canary/live and W&B online SDK paths remain fail-closed by default. |
+| `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` | Blueprint production hardening follow-up 2026-05-04 | Make OpenClaw broker adapter activation-ready without live enablement | 把 OpenClaw facade 往 ready-to-enable adapter 推進：完成 broker adapter interface、sandbox/paper contract smoke、session lifecycle evidence；live broker execution 仍 gate closed。 | Codex | Codex2 | todo | `SVC-BLUEPRINT-OPENCLAW-READY-FACADE` | 2026-05-04 12:41:57 | Auto-reassigned ownership from Claude to Codex after repeated Claude terminal: {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1777874400,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_dis. Task returned to todo until Codex starts a fresh run. |
+| `SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY` | Blueprint production hardening follow-up 2026-05-04 | Make execution sandbox/canary activation-ready while live stays gated | 把 execution / pantheon-lean 從 paper smoke 補到 sandbox/canary activation-ready：test-key adapter、order cancel readback reconcile smoke、canary/live promotion gate，以及 no-real-capital evidence。 | Codex2 | Claude | todo | `SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD`, `SVC-BLUEPRINT-PAPER-BRACKET-BASELINE` | 2026-05-04 12:32:28 | Ownership updated |
+| `SVC-BFF-HA-LB-DEFER-TRACKING` | Blueprint production hardening follow-up 2026-05-04 | Record BFF HA/LB as explicit deferred topology item | 只把 BFF HA/LB 明確記為 deferred，不實作 replicas/LB；避免未來把 staging dual-VM 誤讀成 BFF HA 已完成。 | Codex2 | Codex | todo | `SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT` | 2026-05-04 12:40:24 | Helper-claimed by Codex2 while Codex completes higher-priority work. |
 | `SVC-BFF-IDP-STAGING-INTEGRATION-HARDENING` | Blueprint production hardening follow-up 2026-05-04 | Harden BFF OIDC/JWKS staging IdP integration | 把 BFF enterprise IdP 從 env-capable 補到 staging-ready：OIDC discovery/JWKS rotation/error policy、claim-to-role/MFA mapping、negative tests 與 staging env smoke。 | Codex2 | Claude | todo | `SVC-BFF-AUTH-FACADE-HARDENING`, `SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4` | 2026-05-04 12:26:42 | Assignment created |
-| `FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT` | Blueprint production hardening follow-up 2026-05-04 | Close frontend staging repo hygiene and publish readiness | 把 front-ai-trading-system 從 production route guard pass 推到 repo hygiene/publish closeout：清理或歸檔 dirty coordination/docs/handoff、確認 dev/demo module 不進 staging-live route graph、必要時提交並準備 push。 | Gemini2 | Codex | in_progress | `SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF` | 2026-05-04 12:31:00 | Supervisor re-dispatched FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT; task remains in progress. |
+| `FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT` | Blueprint production hardening follow-up 2026-05-04 | Close frontend staging repo hygiene and publish readiness | 把 front-ai-trading-system 從 production route guard pass 推到 repo hygiene/publish closeout：清理或歸檔 dirty coordination/docs/handoff、確認 dev/demo module 不進 staging-live route graph、必要時提交並準備 push。 | Codex | Claude | todo | `SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF` | 2026-05-04 12:36:48 | Supervisor preempted FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
 | `SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY` | Claude2 | Gemini2 | Helper-claimed by Gemini2 while Claude2 is dispatch-paused. | pending | 2026-05-04 12:28:33 |
+| `SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E` | Codex2 | Codex | Ready for review. Commit 5818e8f3 adds task evidence and updates OSS activation docs/maturity records; runtime code already satisfied E2E acceptance. Verification: smoke_oss_activation_ready_matrix 16/16 passed with registry/governance/broker/live writes false; focused pytest set passed 51 in 30.47s. Production paper/canary/live and W&B online SDK paths remain fail-closed by default. | pending | 2026-05-04 12:39:29 |
+| `SVC-BFF-HA-LB-DEFER-TRACKING` | Codex | Codex2 | Helper-claimed by Codex2 while Codex completes higher-priority work. | pending | 2026-05-04 12:40:24 |
+| `SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4` | Codex | Claude | Review approved: Wave 4 hard enforcement matches acceptance; focused posture, compose, source/search, and BFF cutoff checks passed. Owner should finalize with task closeout. | pending | 2026-05-04 12:41:33 |
 
 ## Blockers
 
@@ -122,7 +125,7 @@ Last updated: 2026-05-04 12:31:06
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| _(none)_ | - | - | - |
+| `SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4` | Codex | Reviewer acceptance: no blocking findings. Verified Wave 4 commit 6a23986a keeps dev compose fallback while control/staging compose default to production/postgres.<br>Verification run: python3 -m pytest services/foundation/tests/test_persistence_posture.py services/test_source_search_posture.py -v; docker compose -f docker-compose.control.yml config --quiet; docker compose -f docker-compose.control.yml -f docker-compose.staging-full.yml config --quiet; docker compose config environment spot-checks; source/search and BFF cutoff contract tests. | - |
 
 ## Lovable Coordination
 
@@ -193,23 +196,23 @@ Last updated: 2026-05-04 12:31:06
 
 ## Latest Checkpoints
 
-- 2026-05-04 12:29:47 Orchestrator: PreToolUse: Bash
-- 2026-05-04 12:29:48 Orchestrator: PostToolUse: Bash
-- 2026-05-04 12:29:50 Orchestrator: PreToolUse: Bash
-- 2026-05-04 12:29:50 Claude: `SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4` Started implementation: surveying service enforcement state; enforcement is wired but docker-compose.control.yml still defaults posture to dev; wave4 will harden the staging compose defaults to production and fix source_search_posture ENFORCED_MODES gap
-- 2026-05-04 12:29:55 Orchestrator: PostToolUse: Bash
-- 2026-05-04 12:29:57 Orchestrator: PreToolUse: Read
-- 2026-05-04 12:29:57 Orchestrator: PostToolUse: Read
-- 2026-05-04 12:30:31 Codex: `SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2` Implementing crawler policy/lifecycle registry, scheduled search refresh, BFF ops freshness, and durable-only cutoff tests.
-- 2026-05-04 12:30:59 Orchestrator: `FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT` Dropped orphaned worker after its queue event disappeared; open tasks will be redispatched.
-- 2026-05-04 12:30:59 Orchestrator: `FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT` Wake-up queued for supervisor: owned_in_progress_dispatch
-- 2026-05-04 12:30:59 Orchestrator: `SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E` Wake-up queued for supervisor: owned_ready_dispatch
-- 2026-05-04 12:30:59 Orchestrator: `FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT` Worker started via gemini: owned_in_progress_dispatch
-- 2026-05-04 12:30:59 Orchestrator: PreToolUse: Read
-- 2026-05-04 12:31:00 Gemini2: `FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT` Supervisor re-dispatched FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT; task remains in progress.
-- 2026-05-04 12:31:00 Orchestrator: PostToolUse: Read
-- 2026-05-04 12:31:03 Orchestrator: PreToolUse: Bash
-- 2026-05-04 12:31:03 Orchestrator: PostToolUse: Bash
-- 2026-05-04 12:31:05 Orchestrator: `FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT` Supervisor re-dispatched FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT; task remains in progress.
-- 2026-05-04 12:31:05 Orchestrator: `SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E` Worker started via codex: owned_ready_dispatch
-- 2026-05-04 12:31:06 Codex2: `SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E` Supervisor auto-started SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E after successful dispatch.
+- 2026-05-04 12:42:06 Orchestrator: `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` Auto-reassigned ownership from Claude to Codex after repeated Claude terminal: {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1777874400,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_dis. Task returned to todo until Codex starts a fresh run.
+- 2026-05-04 12:42:08 Orchestrator: PreToolUse: Read
+- 2026-05-04 12:42:08 Orchestrator: PostToolUse: Read
+- 2026-05-04 12:42:08 Orchestrator: PreToolUse: Read
+- 2026-05-04 12:42:09 Orchestrator: PostToolUse: Read
+- 2026-05-04 12:42:14 Orchestrator: PreToolUse: Read
+- 2026-05-04 12:42:14 Orchestrator: PreToolUse: Read
+- 2026-05-04 12:42:15 Orchestrator: PostToolUse: Read
+- 2026-05-04 12:42:15 Orchestrator: PostToolUse: Read
+- 2026-05-04 12:42:44 Orchestrator: PreToolUse: Bash
+- 2026-05-04 12:42:45 Orchestrator: PostToolUse: Bash
+- 2026-05-04 12:42:46 Orchestrator: PreToolUse: Bash
+- 2026-05-04 12:42:51 Orchestrator: PostToolUse: Bash
+- 2026-05-04 12:42:59 Orchestrator: PreToolUse: Bash
+- 2026-05-04 12:43:00 Orchestrator: PostToolUse: Bash
+- 2026-05-04 12:43:01 Orchestrator: PreToolUse: Bash
+- 2026-05-04 12:43:04 Orchestrator: PostToolUse: Bash
+- 2026-05-04 12:43:10 Orchestrator: `SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E` Dispatch pause for claude2 expired at 2026-05-04 12:43:01; dispatch is enabled again.
+- 2026-05-04 12:43:14 Orchestrator: PreToolUse: Bash
+- 2026-05-04 12:43:16 Codex2: `SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2` Codex2 picked up wave2; validating partial policy/lifecycle work and adding crawler-indexer cutoff tests.
