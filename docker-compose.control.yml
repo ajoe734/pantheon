@@ -16,6 +16,9 @@ x-pantheon-compose-contract:
   topology: staging-vm1-control-plane
   external_runtime_manager_url_env: PANTHEON_RUNTIME_MANAGER_URL
   secret_boundary: no-broker-or-exchange-secrets
+  bff_ha_lb_topology: deferred
+  operator_bff_instances: 1
+  bff_load_balancer: none
 
 services:
   postgres:
@@ -244,6 +247,9 @@ services:
       start_period: 5s
 
   operator-bff:
+    # Current staging baseline intentionally runs one operator-bff instance on
+    # VM1. BFF replicas and a BFF load balancer remain deferred by
+    # BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md.
     build:
       context: .
       dockerfile: services/control-plane/bff/Dockerfile

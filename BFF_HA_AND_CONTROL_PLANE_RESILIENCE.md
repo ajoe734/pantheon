@@ -1,25 +1,34 @@
 # BFF_HA_AND_CONTROL_PLANE_RESILIENCE
 
-Last updated: 2026-04-29
+Last updated: 2026-05-04
 Status: canonical BFF high availability and control plane resilience policy for Pantheon
 Tier: L1 Platform Architecture & Policy
 Scope: BFF high availability, control-plane isolation from execution, degradation strategies, and secondary operator control paths
 Conflict rule: this document defines control-plane resilience; it overrides general HA mentions in planning docs
 
-## 0. 2026-04-29 scope disposition
+## 0. 2026-05-04 active topology disposition
 
-The multi-replica plus load-balancer BFF production topology is explicitly deferred
-and must not be materialized as current execution work.
+The multi-replica plus load-balancer BFF production topology is explicitly
+deferred and must not be materialized as current execution work.
 
 Reason: the operator frontend is expected to have low concurrent human usage, so a
 dedicated HA topology for the UI aggregation layer is not worth pulling into the
-current service-layer implementation wave. The current single-VM baseline may run
-one `operator-bff` replica as long as the non-BFF runtime/control safety paths
-remain reachable and active runtimes do not depend on BFF availability.
+current service-layer implementation wave.
+
+Current baseline:
+
+- dev single-VM and staging-live VM1/VM2 topologies may run exactly one
+  `operator-bff` instance on the control host.
+- staging-live dual-VM separation proves control-plane/execution-plane
+  separation only; it is not evidence that BFF HA/LB is complete.
+- no current compose contract should add `operator-bff` replicas, a second BFF
+  service, or a BFF load-balancer tier for this deferred item.
+- the single BFF instance is acceptable only while non-BFF runtime/control safety
+  paths remain reachable and active runtimes do not depend on BFF availability.
 
 Re-entry gate: reopen BFF HA topology only if operator concurrency, availability
-SLOs, external customer access, or audit requirements make BFF outage a material
-business or safety risk.
+SLOs, external customer access, audit requirements, or emergency-control latency
+make BFF outage a material business or safety risk.
 
 ## 1. 目的
 
@@ -36,12 +45,16 @@ business or safety risk.
 
 ## 2. 結論摘要
 
-### 2.1 BFF 是唯一 aggregation point，但不是單 instance
+### 2.1 BFF 是唯一 aggregation point；現行拓撲可單 instance
 Pantheon 可接受：
 - BFF 作為唯一 frontend aggregation point
+- dev / staging-live 現行 baseline 使用單一 `operator-bff` instance
+- BFF HA/LB production topology 依第 0 節明確 deferred
 
 Pantheon 不可接受：
-- 單機單實例 BFF
+- 把 staging-live dual-VM 誤讀為 BFF HA 已完成
+- 未經 re-entry gate 就加入 BFF replicas / LB
+- active runtime、kill switch、或 emergency control 只能依賴 BFF
 
 ### 2.2 BFF 掛掉不應影響 active runtime
 BFF 屬 control plane / UI plane。
@@ -58,17 +71,21 @@ BFF 屬 control plane / UI plane。
 
 ---
 
-## 3. HA 原則
+## 3. HA 原則（future topology）
+
+本節描述 re-entry gate 開啟後的 future BFF HA topology，不是目前
+dev / staging-live baseline 的實作要求。
 
 ## 3.1 Stateless
 BFF 必須盡量 stateless。  
 不得把 canonical state 放在本機記憶體。
 
 ## 3.2 Multi-replica
-至少 2 replicas。
+future HA topology 至少 2 replicas。現行 baseline 不加入 replicas。
 
 ## 3.3 LB 前置
-必須放在 load balancer 後。
+future HA topology 必須放在 load balancer 後。現行 baseline 不加入 BFF
+load balancer。
 
 ## 3.4 Shared backing store
 session / notification cursor / cache 若需要共享，必須外置。
@@ -159,11 +176,14 @@ BFF 自身必須輸出：
 ## 8. v1 決策
 
 1. BFF 可作唯一 frontend aggregation point
-2. BFF 不得單實例
+2. dev / staging-live 現行 baseline 可維持單一 `operator-bff` instance
+   until the BFF HA/LB re-entry gate opens
 3. BFF 故障屬 control-plane 風險，不得影響 active runtimes
 4. 必須有 operator 後備控制路徑
 5. BFF 不可成為 kill-switch 唯一路徑
 6. degraded mode 必須能局部失效，而非全站一起死
+7. staging-live dual-VM 不代表 BFF HA 已完成；compose 不應為此任務新增
+   BFF replicas 或 LB
 
 ---
 

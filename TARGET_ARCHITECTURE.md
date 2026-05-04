@@ -1,6 +1,6 @@
 # Pantheon Target Architecture
 
-Last updated: 2026-04-09
+Last updated: 2026-05-04
 Status: canonical platform architecture for Pantheon
 Tier: L1 Platform Architecture & Policy
 Scope: cross-plane architecture, lifecycle model, object ownership, and end-to-end governed flow
@@ -175,6 +175,8 @@ Already established:
 - research ingest / normalize / replicate chain
 - registry, promotion, and artifact-loader contracts
 - feedback, telemetry, evaluator, optimizer, and several OSS adapters
+- dev single-VM and staging-live VM1/VM2 topology separation, with BFF HA/LB
+  explicitly deferred rather than treated as completed by the dual-VM split
 
 Still to be completed as platform truth:
 
@@ -183,6 +185,8 @@ Still to be completed as platform truth:
 - telemetry and lineage edge alignment
 - runtime-manager and capital-pool control surface
 - incident, postmortem, BFF, and consultation surfaces
+- production BFF HA/LB topology after the re-entry gate in
+  `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md` is met
 
 ## 8. Detailed Policy References
 

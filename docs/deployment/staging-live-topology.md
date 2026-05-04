@@ -60,6 +60,8 @@ Staging-live VM1:
 - telemetry ingest for VM2: `http://10.140.0.4:38083`
 - live broker scope: enabled by the control stack default for staging-live
 - broker credentials: not present on VM1; only the VM2 execution env owns them.
+- BFF HA/LB scope: intentionally deferred; VM1 currently runs one
+  `operator-bff` instance and no BFF load balancer.
 
 Staging-live VM2:
 
@@ -90,6 +92,22 @@ Staging-live VM2:
   to Lovable or browser config.
 - staging VM1 may call VM2 through internal IPs. Lovable must call staging VM1
   through a public HTTPS BFF ingress.
+
+## BFF HA/LB Boundary
+
+The staging-live dual-VM topology separates the control plane from the execution
+plane. It does not complete BFF high availability.
+
+For the current staging baseline:
+
+- `docker-compose.control.yml` runs one `operator-bff` instance on VM1.
+- Caddy/HTTPS ingress terminates browser traffic for that single BFF upstream;
+  it is not a multi-replica BFF load-balancer topology.
+- do not add `deploy.replicas`, a second BFF service, or a BFF load balancer to
+  the staging compose files until `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md`
+  re-entry conditions are met.
+- BFF outage remains a control-plane/UI outage; active runtimes and emergency
+  control paths must remain reachable without BFF.
 
 ## Compose Contract Verification
 
