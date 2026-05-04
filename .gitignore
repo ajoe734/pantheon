@@ -6,7 +6,10 @@ __pycache__/
 .claude/settings.local.json
 .llm-inbox/*.runtime.md
 .orchestrator/config.local.json
+.orchestrator/.tmp_*
 .orchestrator/backups/
+.orchestrator/bin/cloudflared
+.orchestrator/chair-reviews/
 .orchestrator/logs/
 .orchestrator/planning-state.json
 .orchestrator/planning-state.lock

@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "P0-CTX-002-SIDECAR-REVIEW",
+  "archived_at": "2026-05-01T07:08:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-CTX-002-SIDECAR-REVIEW",
+    "title": "Prepare P0-CTX-002 review packet and evidence summary",
+    "summary_zh": "平行支援 P0-CTX-002，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Pantheon P0 Paper Loop",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "P0-CTX-001"
+    ],
+    "artifacts": [
+      "support/sidecars/P0-CTX-002/P0-CTX-002-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: review packet artifact committed at 684a6dd, closeout note added at 29f582f. All 3 ACs verified by reviewer Claude against e9a5e1b, 6 bootstrap tests confirmed, 4 reviewer focus areas resolved, no canonical truth modified. Sidecar constraint honored throughout.",
+    "last_update": "2026-05-01T07:08:19Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "P0-CTX-002",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：review packet 準確完整，三項 AC 均驗證通過，6 個測試確認存在，SD-P0-03 對齊正確，行為不變量文件正確。",
+      "無 canonical truth 被此 sidecar 修改。",
+      "四個 reviewer focus areas 均已解決：fail-closed 覆蓋率正確、context fallback 語義清晰、live guard 403 語意正確、paper stage 無 context 符合 SD-P0-03 §10 政策。",
+      "Owner Claude2 可依 task-closeout-finalization.md 執行 done 收尾。"
+    ],
+    "review_file": "support/reviews/P0-CTX-002-SIDECAR-REVIEW-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T07:08:19Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "29f582fc3e81c19803163e141f7615bc7f65268c",
+      "commit_subject": "P0-CTX-002-SIDECAR-REVIEW: finalize closeout note",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "-> done transition": "all 3 ACs verified against e9a5e1b, 6 tests confirmed,",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "P0-CTX-002-SIDECAR-REVIEW",
+        "Reviewer": "Claude",
+        "Verification": "artifact 684a6dd present; review_notes_zh confirms AC coverage; sidecar mutates_canonical=false honored"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 110,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 32,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-CTX-002-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review packet ready: AC-1/2/3 all pass, 6 tests documented, behavioral invariants summarized, SD-P0-03 alignment verified. Reviewer focus areas identified in §7 of the packet. No canonical truth modified.",
+      "status": "done",
+      "created_at": "2026-05-01T06:51:36Z",
+      "resolved_at": "2026-05-01T07:03:34Z"
+    },
+    {
+      "task_id": "P0-CTX-002-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: all 3 ACs verified against commit e9a5e1b, 6 tests confirmed, SD-P0-03 alignment correct, 4 focus areas resolved. Returning to Claude2 for closeout.",
+      "status": "done",
+      "created_at": "2026-05-01T07:03:34Z",
+      "resolved_at": "2026-05-01T07:08:19Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "task_id": "P0-CTX-002",
+  "archived_at": "2026-05-01T07:08:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-CTX-002",
+    "title": "Wire runtime_bootstrap.py to manifest/env runtime context",
+    "summary_zh": "讓 runtime_bootstrap.py 能讀 launch manifest/env，paper role 帶 context 啟動，live role 仍 fail-closed。",
+    "phase": "Pantheon P0 Paper Loop",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "P0-CTX-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_p0_sd/SD-P0-03_RuntimeBinding_Context_Propagation.md"
+    ],
+    "acceptance": [
+      "paper role receives runtime context",
+      "staging/prod missing binding fails closed and live remains health-only"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-05-01T03:58:17Z",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Closeout complete: implementation commit e9a5e1b verified (6 bootstrap + 20 focused tests pass); Codex review artifact committed in d28ddb6; SD-P0-03 implementation evidence in place; AC-CTX-002/005/007 satisfied; paper role receives context, staging/live fail-closed, live sidecar health-only.",
+    "last_update": "2026-05-01T07:08:12Z",
+    "review_notes_zh": [
+      "審查通過：runtime_bootstrap.py 會從 --launch-manifest 或 env 載入 PantheonRuntimeContext，paper role 啟動時會把 context 傳入 paper runtime。",
+      "審查通過：staging/canary/live/prod managed paper runtime 缺少 context 會 fail-closed，live sidecar 仍維持 health-only 並封鎖 broker/order/bracket 操作。",
+      "驗證：pytest services/execution/lean_runtime/test_runtime_bootstrap.py -v 通過 6 tests；pytest services/execution/lean_runtime/test_runtime_context.py services/execution/lean_runtime/test_runtime_bootstrap.py services/execution/lean_runtime/test_paper_runtime.py -q 通過 20 tests。",
+      "後續：owner Claude 需依 closeout finalization 建立/確認 task-scoped commit 後執行 done 收尾。"
+    ],
+    "review_file": "support/sidecars/P0-CTX-002/P0-CTX-002-REVIEW-CODEX.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T07:08:12Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "d28ddb62972506cf4b073cd4c3b1ae4459a50352",
+      "commit_subject": "P0-CTX-002: closeout — add Codex review artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "P0-CTX-002",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 110,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 31,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-CTX-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-01T06:32:02Z",
+      "resolved_at": "2026-05-01T06:43:38Z"
+    },
+    {
+      "task_id": "P0-CTX-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete: runtime_bootstrap.py wired to PantheonRuntimeContext via --launch-manifest or env vars; paper role dispatches with context; staging/live fail-closed (SystemExit 2); live sidecar is health-only. Paper runtime RuntimeBindingResolver uses context as pre-loaded binding fallback. 6 tests pass. SD-P0-03 updated to implemented with evidence. Commit: e9a5e1b.",
+      "status": "done",
+      "created_at": "2026-05-01T06:45:38Z",
+      "resolved_at": "2026-05-01T06:52:10Z"
+    },
+    {
+      "task_id": "P0-CTX-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: runtime_bootstrap manifest/env context wiring meets acceptance; verified 6 bootstrap tests and 20 focused context/bootstrap/paper-runtime tests. Returning to Claude for closeout.",
+      "status": "done",
+      "created_at": "2026-05-01T06:52:10Z",
+      "resolved_at": "2026-05-01T07:08:12Z"
+    }
+  ],
+  "blockers": []
+}

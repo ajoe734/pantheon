@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "P0-STATE-001",
+  "archived_at": "2026-05-01T04:21:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-STATE-001",
+    "title": "Add artifact/deployment/runtime invariant tests",
+    "summary_zh": "鎖住 artifact_state/deployment_stage/runtime_state 分離與 cross-state invariants。",
+    "phase": "Pantheon P0 Paper Loop",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_sa/SA-12_state_machine_gap_analysis.md"
+    ],
+    "acceptance": [
+      "paper/live/canary are not accepted artifact_state values",
+      "deployment requires approved artifact, DeploymentPlan, RuntimeBinding, and matching stage"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-05-01T03:58:17Z",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Finalized P0-STATE-001 after Claude approval. Committed task-scoped invariant tests and SA-12/review artifacts in 9e77ad7. Verification rerun: pytest services/registry/test_service.py services/deployment/test_service.py -q (56 passed); python3 -m unittest discover -s . -p 'test_*.py' in services/control-plane/governance (101 passed); python3 -m unittest test_runtime_manager in services/runtime-manager (46 passed).",
+    "last_update": "2026-05-01T04:21:45Z",
+    "review_notes_zh": [
+      "審查通過：acceptance criteria 全數滿足",
+      "203 tests (56+101+46) 全綠",
+      "paper/canary/live 已被三層拒絕為 artifact_state",
+      "RuntimeBinding stage 與 DeploymentPlan target_stage 一致性已驗證",
+      "SA-12 sec.16 所有 required invariant tests 存在"
+    ],
+    "review_file": ".orchestrator/chair-reviews/P0-STATE-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T04:21:45Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "9e77ad7b2caca3f0c75ce1a84109ca6f9eb0cd4b",
+      "commit_subject": "P0-STATE-001 add state invariant tests",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "P0-STATE-001",
+        "Reviewer": "Claude",
+        "Verification": "pytest services/registry/test_service.py services/deployment/test_service.py -q (56 passed); python3 -m unittest discover -s . -p 'test_*.py' in services/control-plane/governance (101 passed); python3 -m unittest test_runtime_manager in services/runtime-manager (46 passed)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 85,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-STATE-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: added invariant tests for artifact_state/deployment_stage/runtime binding separation. Verification: pytest services/registry/test_service.py services/deployment/test_service.py -q; unittest test_deployment_plan.py from governance dir; unittest services/runtime-manager/test_runtime_manager.py.",
+      "status": "done",
+      "created_at": "2026-05-01T04:03:42Z",
+      "resolved_at": "2026-05-01T04:16:17Z"
+    },
+    {
+      "task_id": "P0-STATE-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all acceptance criteria verified. paper/canary/live rejected as artifact_state at registry/deployment/governance layers. RuntimeBinding stage matches DeploymentPlan target. 203 tests pass. Returned to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-01T04:16:17Z",
+      "resolved_at": "2026-05-01T04:21:45Z"
+    }
+  ],
+  "blockers": []
+}

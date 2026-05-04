@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "P0-BFF-CMD-001",
+  "archived_at": "2026-05-01T06:22:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-BFF-CMD-001",
+    "title": "Split BFF read and command contracts",
+    "summary_zh": "把 BFF read API 與 command API 正式分層，命令必須有 actor/trace/idempotency/RBAC/audit。",
+    "phase": "Pantheon P0 Paper Loop",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "depends_on": [
+      "P0-STATE-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_sa/SA-13_contract_schema_gap_analysis.md",
+      "docs/04/pantheon_sa/SA-15_governance_boundary_gap_analysis.md"
+    ],
+    "acceptance": [
+      "read contract remains GET-only",
+      "runtime/deployment/approval/incident commands require actor_ref, trace_id, idempotency_key, RBAC/policy, and audit"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-05-01T03:58:17Z",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Done: split BFF read/command contracts finalized in commit 66b7c71. Verification: python3 -m pytest services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/test_cw03_committee_board_contract.py -q -> 19 passed in 10.65s. Scope: BFF_API_CONTRACT.md remains GET-only; BFF_COMMAND_API_CONTRACT.md governs command admission with actor/trace/idempotency/RBAC-policy/audit; SA-13/SA-15 disposition and Claude review artifact recorded.",
+    "last_update": "2026-05-01T06:22:08Z",
+    "review_notes_zh": [
+      "Approved: BFF read/command split acceptance criteria met; BFF_API_CONTRACT.md scoped read-only, BFF_COMMAND_API_CONTRACT.md created with all six admission controls, all four command classes verified in test_runtime_deployment_approval_incident_commands_record_foundation_controls, SA-13 §4.5 and SA-15 §6.6 disposition sections close the gap.",
+      "Verification: python3 -m pytest services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/test_cw03_committee_board_contract.py -q -> 19 passed.",
+      "Scope note: command-to-event mapping, domain error catalog expansion, and cross-repo OpenAPI CI remain downstream P1 work (SA-13 §8 / §14)."
+    ],
+    "review_file": ".orchestrator/reviews/P0-BFF-CMD-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T06:22:08Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "66b7c71b8b63a8ff449d985dc648184d981f3d16",
+      "commit_subject": "P0-BFF-CMD-001 split BFF read and command contracts",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "P0-BFF-CMD-001",
+        "Reviewer": "Claude",
+        "Verification": "python3 -m pytest services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/test_cw03_committee_board_contract.py -q -> 19 passed in 10.65s"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 105,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 22,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-BFF-CMD-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: split BFF read contract from BFF_COMMAND_API_CONTRACT, enforced non-empty X-Idempotency-Key on operator command admission, added actor/trace/idempotency/RBAC-policy/audit regression coverage, and updated SA-13/SA-15 disposition. Verification: python3 -m pytest services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/test_cw03_committee_board_contract.py -q (19 passed); git diff --check scoped BFF/SA files.",
+      "status": "done",
+      "created_at": "2026-05-01T06:12:38Z",
+      "resolved_at": "2026-05-01T06:17:22Z"
+    },
+    {
+      "task_id": "P0-BFF-CMD-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: BFF read/command split meets acceptance; BFF_API_CONTRACT.md is GET-only, BFF_COMMAND_API_CONTRACT.md governs command admission with actor/trace/idempotency/RBAC/audit, all four command classes verified by tests (19 passed). Returned to Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-05-01T06:17:22Z",
+      "resolved_at": "2026-05-01T06:22:08Z"
+    }
+  ],
+  "blockers": []
+}

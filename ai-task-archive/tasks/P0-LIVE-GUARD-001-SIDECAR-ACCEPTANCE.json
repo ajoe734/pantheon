@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "P0-LIVE-GUARD-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-05-01T05:59:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-LIVE-GUARD-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare P0-LIVE-GUARD-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 P0-LIVE-GUARD-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Pantheon P0 Paper Loop",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "P0-BOOT-001"
+    ],
+    "artifacts": [
+      "support/sidecars/P0-LIVE-GUARD-001/P0-LIVE-GUARD-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete. Acceptance packet (support/sidecars/P0-LIVE-GUARD-001/P0-LIVE-GUARD-001-SIDECAR-ACCEPTANCE.md) verified against runtime_bootstrap.py, bootstrap_contract.py, and executor.py. Packet covers AC-LIVE-001 (live fail-closed) and AC-LIVE-002 (bracket logged-only). No canonical truth modified. Task-scoped commit: 65e36fa. Reviewer (Codex) confirmed packet is accurate sidecar support material.",
+    "last_update": "2026-05-01T05:59:15Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "P0-LIVE-GUARD-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Acceptance packet verified against runtime_bootstrap.py, bootstrap_contract.py, executor.py, and focused live bootstrap tests. Approved as sidecar support material; parent P0-LIVE-GUARD-001 still needs behavioural live sidecar and bracket logged-only regression tests before mainline closure."
+    ],
+    "review_file": "support/sidecars/P0-LIVE-GUARD-001/P0-LIVE-GUARD-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T05:59:15Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "65e36faf401cd5cc87f568841c337842474513fe",
+      "commit_subject": "P0-LIVE-GUARD-001-SIDECAR-ACCEPTANCE: finalize acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "P0-LIVE-GUARD-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Verification": "acceptance packet covers all parent task AC (live"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 104,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 19,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-LIVE-GUARD-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Acceptance packet ready for review. Artifact: support/sidecars/P0-LIVE-GUARD-001/P0-LIVE-GUARD-001-SIDECAR-ACCEPTANCE.md. Covers: live fail-closed checklist (bootstrap_contract.py, runtime_bootstrap.py), bracket logged-only checklist (executor.py), dependency map, gap analysis, and suggested test cases LIVE-TEST-001 to LIVE-TEST-005. Verification: 2 unittest cases (test_live_role_defaults_to_health_only, test_live_broker_activation_flag_is_rejected) pass. Commit: 9ef5037.",
+      "status": "done",
+      "created_at": "2026-05-01T05:45:24Z",
+      "resolved_at": "2026-05-01T05:54:15Z"
+    },
+    {
+      "task_id": "P0-LIVE-GUARD-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review approved: packet is accurate sidecar support material and is returned to Claude2 for task-scoped closeout; parent owner should use it as guidance, not canonical truth.",
+      "status": "done",
+      "created_at": "2026-05-01T05:54:15Z",
+      "resolved_at": "2026-05-01T05:59:15Z"
+    }
+  ],
+  "blockers": []
+}

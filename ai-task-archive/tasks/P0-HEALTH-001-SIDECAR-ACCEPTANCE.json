@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "P0-HEALTH-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-05-01T05:36:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-HEALTH-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare P0-HEALTH-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 P0-HEALTH-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Pantheon P0 Paper Loop",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "P0-CI-BRIDGE-001"
+    ],
+    "artifacts": [
+      "support/sidecars/P0-HEALTH-001/P0-HEALTH-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Done: finalized approved support-only acceptance packet in task-scoped commit 2a689ff. Verification: rg legacy __health__ inventory remained 10 control / 5 exec / 0 default / 0 remote-dev; rg confirmed standard /healthz /livez /readyz /metrics helper coverage; scripts/check_health_endpoints.py remains absent as expected parent-task work. No canonical truth, compose, runtime, registry/governance, or CI implementation changed.",
+    "last_update": "2026-05-01T05:36:19Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "P0-HEALTH-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Approved: sidecar stayed support-only and did not change canonical/runtime/compose/CI truth.",
+      "Verified SD-P0-06 mapping: TP-CI-004, AC-CI-009, INV-CI-009, HEALTH-003/004, and staged warn/fail behavior match the packet.",
+      "Verified inventory: docker-compose.control.yml has 10 legacy __health__ occurrences, docker-compose.exec.yml has 5, docker-compose.yml and docker-compose.remote-dev.yml have 0.",
+      "Verified services/foundation/health.py exposes /healthz, /livez, /readyz, and /metrics; scripts/check_health_endpoints.py is still missing as expected parent-task work.",
+      "Owner closeout note: support/sidecars/P0-HEALTH-001/P0-HEALTH-001-SIDECAR-ACCEPTANCE.md is currently the sidecar artifact and should be included in the task-scoped finalization commit if still uncommitted."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T05:36:19Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "2a689ff173486c3252397a5a8ee732940bfeb376",
+      "commit_subject": "P0-HEALTH-001-SIDECAR-ACCEPTANCE finalize support packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "P0-HEALTH-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Verification": "rg legacy health endpoints in compose files; rg standard helper endpoints in services/foundation/health.py and tests; confirmed scripts/check_health_endpoints.py remains absent as expected parent work; git diff --cached --check."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 98,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 16,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-HEALTH-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Acceptance packet ready: mapped P0-HEALTH-001 to SD-P0-06 TP-CI-004/AC-CI-009/INV-CI-009, inventoried current compose legacy __health__ counts, and scoped parent deliverables for check_health_endpoints report/fail modes.",
+      "status": "done",
+      "created_at": "2026-05-01T05:27:34Z",
+      "resolved_at": "2026-05-01T05:31:14Z"
+    },
+    {
+      "task_id": "P0-HEALTH-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: sidecar acceptance packet maps P0-HEALTH-001 to SD-P0-06 TP-CI-004/AC-CI-009/INV-CI-009, verifies current __health__ inventory, and stays support-only. Codex2 should finalize with a task-scoped commit and done closeout.",
+      "status": "done",
+      "created_at": "2026-05-01T05:31:14Z",
+      "resolved_at": "2026-05-01T05:36:19Z"
+    }
+  ],
+  "blockers": []
+}

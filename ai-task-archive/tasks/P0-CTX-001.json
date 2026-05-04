@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "task_id": "P0-CTX-001",
+  "archived_at": "2026-05-01T06:17:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-CTX-001",
+    "title": "Add PantheonRuntimeContext model and validation",
+    "summary_zh": "新增 runtime context model，支援 manifest/env source modes，並驗證必要欄位與 secret rejection。",
+    "phase": "Pantheon P0 Paper Loop",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "depends_on": [
+      "P0-BOOT-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_p0_sd/SD-P0-03_RuntimeBinding_Context_Propagation.md"
+    ],
+    "acceptance": [
+      "manifest and dev env source modes load context",
+      "stage mismatch, missing binding in managed runtime, and raw secrets are rejected"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-05-01T03:58:17Z",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "P0-CTX-001 closeout complete: PantheonRuntimeContext model and validation reviewed/approved, task-scoped commit aef648c created. Verification: pytest -q services/execution/lean_runtime/test_bootstrap_contract.py services/execution/lean_runtime/test_runtime_context.py (19 passed); python3 -m unittest services.execution.lean_runtime.test_runtime_context (11 passed); pytest -q services/execution/lean_runtime (35 passed).",
+    "last_update": "2026-05-01T06:17:26Z",
+    "review_notes_zh": [
+      "Approved: P0-CTX-001 model/validation acceptance is met; manifest and env source modes load RuntimeContext and enforce stage, managed-binding, raw-secret, and official bridge validation.",
+      "Verification: pytest -q services/execution/lean_runtime/test_bootstrap_contract.py services/execution/lean_runtime/test_runtime_context.py -> 19 passed; python3 -m unittest services.execution.lean_runtime.test_runtime_context -> 11 passed; pytest -q services/execution/lean_runtime -> 35 passed.",
+      "Interop check: RuntimeBootstrapRequest bridge.path=/workspace/lean and bridge.source_path=pantheon/lean now materialize PantheonRuntimeContext.bridge.path=pantheon/lean.",
+      "Scope note: bootstrap wiring, PantheonAlgoBase attachment, and telemetry are downstream P0-CTX-002/P0-LEAN-CTX-001/P0-TEL-001 work."
+    ],
+    "review_file": ".orchestrator/reviews/P0-CTX-001-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T06:17:26Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "aef648c0e82be2c8ae601cbf0dd94e3b14320e9f",
+      "commit_subject": "P0-CTX-001: add runtime context model",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "P0-CTX-001",
+        "Reviewer": "Codex",
+        "Verification": "pytest -q services/execution/lean_runtime/test_bootstrap_contract.py services/execution/lean_runtime/test_runtime_context.py (19 passed); python3 -m unittest services.execution.lean_runtime.test_runtime_context (11 passed); pytest -q services/execution/lean_runtime (35 passed)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 112,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 21,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-CTX-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: added services/execution/lean_runtime/runtime_context.py and test_runtime_context.py. Verification: python3 -m pytest services/execution/lean_runtime -q (26 passed).",
+      "status": "done",
+      "created_at": "2026-05-01T05:33:10Z",
+      "resolved_at": "2026-05-01T05:37:37Z"
+    },
+    {
+      "task_id": "P0-CTX-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review needs changes: raw secret detection is too permissive because _keys/_path suffixes are globally whitelisted; api_keys/PANTHEON_API_KEYS-style raw secret inputs can pass. Narrow the secret-reference allowlist and add regression tests before approval.",
+      "status": "done",
+      "created_at": "2026-05-01T05:37:37Z",
+      "resolved_at": "2026-05-01T05:37:37Z"
+    },
+    {
+      "task_id": "P0-CTX-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Narrowed runtime-context secret reference allowlist by removing global _keys/_path suffix exemptions; added regression tests proving api_keys/PANTHEON_API_KEYS and private_key_path/PANTHEON_PRIVATE_KEY_PATH are rejected while explicit secret reference fields remain allowed. Verified with pytest -q services/execution/lean_runtime/test_runtime_context.py.",
+      "status": "done",
+      "created_at": "2026-05-01T05:42:37Z",
+      "resolved_at": "2026-05-01T05:49:01Z"
+    },
+    {
+      "task_id": "P0-CTX-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review blocked: from_mapping/from_manifest normalizes runtime_context before secret validation, so a launch manifest with {'runtime_context': <valid context>, 'broker_secret': 'plain-secret'} is accepted. This violates SD-P0-03 raw broker secret failure behavior and README_P0_SD_INDEX hard invariant that no broker secret may appear in launch manifest. Focused pytest passes (pytest -q services/execution/lean_runtime/test_runtime_context.py: 9 passed), but add a regression test for wrapper-level raw secret rejection and validate the original manifest payload before dropping wrapper fields.",
+      "status": "done",
+      "created_at": "2026-05-01T05:49:01Z",
+      "resolved_at": "2026-05-01T05:49:01Z"
+    },
+    {
+      "task_id": "P0-CTX-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review-ready after blocking fix: from_mapping now scans the original manifest payload before runtime_context normalization, so wrapper-level raw broker secrets are rejected. Added regression test_runtime_context_rejects_wrapper_manifest_raw_secrets. Verification: pytest -q services/execution/lean_runtime/test_runtime_context.py (10 passed).",
+      "status": "done",
+      "created_at": "2026-05-01T05:53:46Z",
+      "resolved_at": "2026-05-01T06:00:03Z"
+    },
+    {
+      "task_id": "P0-CTX-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review blocker: PantheonRuntimeContext.from_mapping rejects the actual RuntimeBootstrapRequest.to_dict() launch manifest from P0-BOOT-001 because bridge.path is /workspace/lean and is chosen before bridge.source_path=pantheon/lean, then validation compares bridge.path to PANTHEON_LEAN_SOURCE_PATH. Add bootstrap-manifest interop coverage and normalize bridge.source_path for the context bridge path while preserving secret rejection. Verification: pytest -q services/execution/lean_runtime/test_runtime_context.py passed; ad hoc RuntimeBootstrapRequest.to_dict() repro fails with RuntimeContextError bridge.path must be 'pantheon/lean', got '/workspace/lean'.",
+      "status": "done",
+      "created_at": "2026-05-01T06:00:03Z",
+      "resolved_at": "2026-05-01T06:00:03Z"
+    },
+    {
+      "task_id": "P0-CTX-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review-ready after bootstrap manifest interop fix: RuntimeContext now prefers bridge.source_path over runtime bridge.path, preserves bridge.path fallback and raw-secret rejection. Verification: pytest -q services/execution/lean_runtime/test_bootstrap_contract.py services/execution/lean_runtime/test_runtime_context.py passed; ad hoc RuntimeBootstrapRequest.to_dict() repro maps /workspace/lean to pantheon/lean.",
+      "status": "done",
+      "created_at": "2026-05-01T06:06:17Z",
+      "resolved_at": "2026-05-01T06:13:13Z"
+    },
+    {
+      "task_id": "P0-CTX-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: runtime context model and validation satisfy P0-CTX-001 acceptance; tests pass and bridge.source_path interop is verified. Returned to Codex2 for closeout/finalization.",
+      "status": "done",
+      "created_at": "2026-05-01T06:13:13Z",
+      "resolved_at": "2026-05-01T06:17:26Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "task_id": "SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE",
+  "archived_at": "2026-05-04T01:26:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE",
+    "title": "Complete OSS research learning pre-activation integration without enabling gates",
+    "summary_zh": "把 research、policy-learning、research-worker-gateway、Qlib/TRL/RL/W&B dormant scaffolds 做到 activation-ready：interface、schema、offline smoke、BFF read-only aggregation 與 fail-closed adapter 串接完成，但 gate 仍關閉。",
+    "phase": "Blueprint gap execution wave 2026-05-03",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4",
+      "SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE"
+    ],
+    "artifacts": [
+      "services/research",
+      "services/policy-learning",
+      "services/research-worker-gateway",
+      "services/control-plane/bff",
+      "DEFERRED_OSS_ACTIVATION_MAP.md",
+      "RESEARCH_BACKEND_MATURITY_MATRIX.md"
+    ],
+    "acceptance": [
+      "offline smoke 可跑；BFF 可 read-only 顯示 pre-activation capability/status；缺 gate 或 production secret 時所有 activation path fail closed；不得啟用 Qlib/TRL/RL/W&B online 或 paper/canary/live"
+    ],
+    "next": "Owner closeout complete. Task-scoped commit 68fa21f6 contains all deliverables: TRL worker subprocess path fix, OSS pre-activation scaffolds (research/policy-learning/research-worker-gateway/BFF), DEFERRED_OSS_ACTIVATION_MAP.md, RESEARCH_BACKEND_MATURITY_MATRIX.md. Re-ran full 51-test suite (test_smoke_oss_activation_ready_matrix, test_smoke_openclaw_activation_ready_e2e, bff contract, research/policy-learning/gateway tests) — all passed. Fail-closed posture and no-online-activation acceptance criteria confirmed.",
+    "last_update": "2026-05-04T01:26:10Z",
+    "review_notes_zh": [
+      "審核通過：OSS pre-activation surfaces 保持 read-only，production/paper/canary/live、registry/governance/broker/capital paths 仍 fail-closed。",
+      "驗證通過：聚焦 smoke/contract suite 51 passed，包含 OSS activation matrix、OpenClaw e2e、BFF aggregate、research/policy-learning/gateway gate tests。"
+    ],
+    "review_file": "support/reviews/SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-04T01:26:10Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "68fa21f638c9bfeb1411dca4f2594da262ff90f0",
+      "commit_subject": "SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE: fix TRL worker subprocess path",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "research-worker-gateway dispatches it as a subprocess": "add the repo root",
+        "- offline smoke (all 16 matrix rows pass, including enabled": "trl:offline)",
+        "- fail-closed posture when gate absent": "all default rows rejected correctly",
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 267,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 19,
+      "behind": 12,
+      "push_status": "diverged"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete. Fixed TRL worker.py subprocess path issue (services.evaluation import failed when dispatched by the gateway). All 47 smoke/contract tests pass: 16/16 OSS activation matrix rows (including enabled:trl:offline), 3 BFF contract tests, 6 OpenClaw e2e tests, 22 gateway rejection/dispatch tests. fail-closed posture and no-online-activation acceptance criteria verified. Commit 68fa21f6 staged.",
+      "status": "done",
+      "created_at": "2026-05-04T01:19:10Z",
+      "resolved_at": "2026-05-04T01:24:01Z"
+    },
+    {
+      "task_id": "SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved by Codex. Verified fail-closed OSS pre-activation closure and 51 focused smoke/contract tests passed; owner Claude should perform closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-04T01:24:01Z",
+      "resolved_at": "2026-05-04T01:26:10Z"
+    }
+  ],
+  "blockers": []
+}

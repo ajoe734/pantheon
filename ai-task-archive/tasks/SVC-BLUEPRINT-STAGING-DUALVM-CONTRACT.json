@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT",
+  "archived_at": "2026-05-03T13:37:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT",
+    "title": "Make dev single-VM and staging dual-VM topology explicit",
+    "summary_zh": "把 dev default compose 保持 single-VM baseline 但把 staging contract 明確收斂成 VM1 control/BFF 與 VM2 execution/broker 分離。補 compose config、env example、runbook 與 smoke，避免 default compose 被誤解成 staging topology。",
+    "phase": "Blueprint gap execution wave 2026-05-03",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docker-compose.yml",
+      "docker-compose.control.yml",
+      "docker-compose.exec.yml",
+      "docker-compose.staging-full.yml",
+      "docs/deployment/staging-live-topology.md",
+      "docs/deployment/nonprod-ci-cd.md"
+    ],
+    "acceptance": [
+      "docker compose config 能分別驗證 dev/control/exec/staging；staging 文件與 env 明確要求 control VM 與 execution VM 分離；default compose 只標示 dev baseline"
+    ],
+    "next": "Finalized split staging contract in commit 73afde0. Verified validate_split_topology, dev/control/exec/staging compose config renders, script syntax, nonprod deploy dry-runs, workflow YAML parse, and staged diff check. Review approved by Claude; VM1 remains control/non-execution only and VM2 owns execution/broker secrets.",
+    "last_update": "2026-05-03T13:37:11Z",
+    "review_notes_zh": [
+      "審查通過：四組 compose 配置獨立可驗證；staging VM1/VM2 分離在 compose、env、文件層均明確執行；default compose 清楚標示為 dev single-VM baseline；validate_split_topology.sh 覆蓋所有必要斷言",
+      "後續追蹤：健康端點不一致（/health、/__health__、/readyz）已在 SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE 處理，非本任務 blocker"
+    ],
+    "review_file": "docs/deployment/svc-blueprint-staging-dualvm-contract-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-03T13:37:11Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "73afde07c303d44e1ceb7605f8879827977f8949",
+      "commit_subject": "SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT: finalize split staging contract",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 529,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 5,
+      "behind": 12,
+      "push_status": "diverged"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Auto-reassigned SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT away from sidecar-only lane Gemini; owner Gemini -> Codex2. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-05-03T12:56:09Z",
+      "resolved_at": "2026-05-03T13:02:07Z"
+    },
+    {
+      "task_id": "SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: staging-full is VM1 non-execution overlay with no VM1 broker/runtime/execution services or broker/exchange/provider secrets; validation covers dev/control/exec/staging renders. Verified: bash scripts/validate_split_topology.sh; docker compose config --quiet for docker-compose.yml, docker-compose.control.yml, docker-compose.exec.yml, and control+staging-full; bash -n scripts/validate_split_topology.sh scripts/deploy_nonprod_vm.sh; deploy_nonprod_vm staging-live/all --dry-run; jq checks for forbidden staging services/secrets.",
+      "status": "done",
+      "created_at": "2026-05-03T13:24:36Z",
+      "resolved_at": "2026-05-03T13:29:35Z"
+    },
+    {
+      "task_id": "SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: dev single-VM baseline and staging dual-VM split contract correctly enforced at compose, env, and doc layers. All four configs render independently. VM1 excludes all execution/broker services and secrets. Default compose labeled as dev-only baseline. Validation script covers all required assertions. Return to owner for finalization.",
+      "status": "done",
+      "created_at": "2026-05-03T13:29:35Z",
+      "resolved_at": "2026-05-03T13:37:11Z"
+    }
+  ],
+  "blockers": []
+}

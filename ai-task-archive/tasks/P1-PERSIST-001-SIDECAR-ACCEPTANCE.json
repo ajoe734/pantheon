@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "P1-PERSIST-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-05-01T08:34:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P1-PERSIST-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare P1-PERSIST-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 P1-PERSIST-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "P1 Wave 5",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "P0-CI-BOUNDED-001"
+    ],
+    "artifacts": [
+      "support/sidecars/P1-PERSIST-001/P1-PERSIST-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: incorporated Codex non-blocking corrections (reconciliation-drift pg_store correction, source-ingest/search health wiring acknowledgment, AC-3 verdict update). Task-scoped commit 2a72854. No canonical truth modified. Acceptance packet ready for use by P1-PERSIST-001 parent owner (Codex).",
+    "last_update": "2026-05-01T08:34:13Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "P1-PERSIST-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Approved support-only packet; non-blocking corrections captured in review file: reconciliation-drift already has Postgres store support, and source-ingest/search already call source_search_posture and surface it in health dependencies."
+    ],
+    "review_file": "support/reviews/P1-PERSIST-001-SIDECAR-ACCEPTANCE-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T08:34:13Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "2a72854d9779bb4396e630f3fffc64c310bd6b3a",
+      "commit_subject": "P1-PERSIST-001-SIDECAR-ACCEPTANCE state closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "- AC-1.3": "corrected reconciliation-drift assessment — PostgresReconciliationDriftStore",
+        "- AC-3": "updated verdict to reflect that source-ingest and search already wire",
+        "- Section 6": "added existing coverage entries for reconciliation-drift pg store",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "P1-PERSIST-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Verification": "acceptance packet self-checklist items all checked; no canonical"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 115,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P1-PERSIST-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Acceptance packet prepared for P1-PERSIST-001. Packet maps all 3 ACs to current code state, identifies gaps (no generalized persistence posture module, no startup fail-fast for governance/capital/incident/promotion services, health endpoints not wired), lists required deliverables with file-level specificity, defines 6 hard invariants, and inventories existing coverage to preserve. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-05-01T08:10:03Z",
+      "resolved_at": "2026-05-01T08:29:13Z"
+    },
+    {
+      "task_id": "P1-PERSIST-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Approved support-only acceptance packet with non-blocking corrections in Codex review file; owner Claude2 should finalize.",
+      "status": "done",
+      "created_at": "2026-05-01T08:29:13Z",
+      "resolved_at": "2026-05-01T08:34:13Z"
+    }
+  ],
+  "blockers": []
+}

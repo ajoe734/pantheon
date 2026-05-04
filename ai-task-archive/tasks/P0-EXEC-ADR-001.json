@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "P0-EXEC-ADR-001",
+  "archived_at": "2026-05-01T04:16:31Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-EXEC-ADR-001",
+    "title": "Land official pantheon/lean bridge ADR and repo mapping",
+    "summary_zh": "正式落地 current bridge = pantheon/lean / ajoe734/pantheon-lean.git，並標記 lean-platform 非 P0 target。",
+    "phase": "Pantheon P0 Paper Loop",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/SUPERVISOR_PLANNING_P0_NEXT_DEV_WORK.md",
+      "docs/04/pantheon_p0_sd/SD-P0-01_ADR_EXEC_Official_Pantheon_LEAN_Bridge.md"
+    ],
+    "acceptance": [
+      ".gitmodules/docs/task packets name pantheon/lean as current bridge",
+      "lean-platform is not-current-runtime or migration-only"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-05-01T03:58:17Z",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Finalized P0-EXEC-ADR-001 after Claude approval. Task-scoped commit d01515b landed .gitmodules canonical pantheon/lean comment, SD-P0-01 ADR, supervisor P0 planning doc, and Claude review artifact. Verification: git config .gitmodules path/url; PantheonAlgoBase exists; docker-compose.exec.yml points to /workspace/lean/Launcher/config.json; ADR and supervisor docs mark pantheon/lean current and lean-platform not-current-runtime/migration-only.",
+    "last_update": "2026-05-01T04:16:31Z",
+    "review_notes_zh": [
+      "審查通過：五項驗收標準全數滿足",
+      ".gitmodules 正確標註 canonical path",
+      "ADR 與 SUPERVISOR doc 一致指向 pantheon/lean",
+      "lean-platform 明確標記 not-current-runtime",
+      "PantheonAlgoBase 存在、compose 路徑正確"
+    ],
+    "review_file": ".orchestrator/chair-reviews/P0-EXEC-ADR-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T04:16:31Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "d01515ba7b8af84bc81560bcb146920b4587e318",
+      "commit_subject": "P0-EXEC-ADR-001 land official lean bridge ADR",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "P0-EXEC-ADR-001",
+        "Reviewer": "Claude",
+        "Verification": "git config --file .gitmodules checked submodule.lean path/url; confirmed PantheonAlgoBase exists; confirmed docker-compose.exec.yml references /workspace/lean/Launcher/config.json; confirmed ADR and supervisor docs name pantheon/lean and mark lean-platform migration-only/not-current-runtime."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 69,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-EXEC-ADR-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: landed official pantheon/lean bridge ADR mapping, added task-packet target metadata, labeled lean-platform not-current-runtime/migration-only, and verified .gitmodules path/url, PantheonAlgoBase path, and compose runtime path.",
+      "status": "done",
+      "created_at": "2026-05-01T04:06:15Z",
+      "resolved_at": "2026-05-01T04:09:57Z"
+    },
+    {
+      "task_id": "P0-EXEC-ADR-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all acceptance criteria verified. .gitmodules names pantheon/lean, lean-platform labeled not-current-runtime in ADR and SUPERVISOR doc, PantheonAlgoBase exists, compose path confirmed. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-01T04:09:57Z",
+      "resolved_at": "2026-05-01T04:16:32Z"
+    }
+  ],
+  "blockers": []
+}

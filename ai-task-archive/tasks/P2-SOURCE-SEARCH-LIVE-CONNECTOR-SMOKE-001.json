@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "task_id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001",
+  "archived_at": "2026-05-02T14:35:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001",
+    "title": "Source/search live connector credentialed smoke",
+    "summary_zh": "對 source/search 非下單外部資料源做 bounded live/test credential smoke：news/social/alpha DB 或 allowlisted HTTP/feed connector -> SourceRecord/EvidenceBundle -> durable index -> BFF/SearchGateway query；禁止 broker/Lean/order 路由。",
+    "phase": "P2 Wave 8 External Activation",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "P1-SOURCE-001",
+      "P1-SEARCH-001",
+      "P2-OSS-ACTIVATE-001"
+    ],
+    "artifacts": [
+      "services/source_ingestion",
+      "services/search",
+      "services/control-plane/bff",
+      "services/openclaw-gateway-adapter",
+      "docs/deployment/source-search-prod-hardening.md",
+      "docs/deployment/external-data-integration-materialization-audit.md"
+    ],
+    "acceptance": [
+      "Bounded live/test connector smoke ingests at least one governed external source through SourceRecord and EvidenceBundle with entitlement license PIT and available_time preserved",
+      "Search index and BFF/SearchGateway readback prove durable citation/evidence refs without caller-supplied document normal path",
+      "No connector can route directly to Lean broker order-capable execution paper/canary/live deployment or capital binding"
+    ],
+    "next": "Owner closeout: bounded source/search live connector smoke landed; Codex review approved; live feed dependency_missing evidence recorded; task closed.",
+    "last_update": "2026-05-02T14:35:44Z",
+    "task_class": "execution",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：bounded live/test connector harness、SourceRecord/EvidenceBundle治理欄位、durable SearchGateway readback、BFF/OpenClaw adjacent no-order-routing checks均通過。",
+      "限制已明確記錄：本工作區未配置credentialed live feed，source_search_live_connector_smoke.json只記dependency_missing，不宣稱外部供應商實證。"
+    ],
+    "review_file": "support/reviews/P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-02T14:35:44Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "405284b4ddad569af83cb869bdf1065aef2031ea",
+      "commit_subject": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001: closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "- scripts/run_source_search_live_connector_smoke.py": "bounded",
+        "- scripts/test_run_source_search_live_connector_smoke.py": "harness",
+        "- docs/deployment/source-search-prod-hardening.md": "documents the",
+        "- docs/deployment/source-connector-framework.md": "clarifies",
+        "- docs/contracts/evidence_bundle.schema.json": "add available_time",
+        "- focused smoke/governance/E2E slice": "4 passed",
+        "- external source/schema/script slice": "11 passed",
+        "- source/search service slice": "140 passed",
+        "- BFF/OpenClaw-adjacent slice": "86 passed",
+        "- py_compile + git diff --check": "passed",
+        "Residual": "no credentialed live provider feed configured in this",
+        "LLM-Agent": "Claude",
+        "Task-ID": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 198,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 4,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-01T17:35:16Z",
+      "resolved_at": "2026-05-01T17:41:29Z"
+    },
+    {
+      "task_id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Chair reassigned owner from Claude to Claude2: Claude is occupied in finalize mode; Claude2 is idle with matching capability lane. All three dependencies (P1-SOURCE-001, P1-SEARCH-001, P2-OSS-ACTIVATE-001) are done; task is immediately runnable.. Task returned to todo for a fresh run.",
+      "status": "done",
+      "created_at": "2026-05-01T17:41:29Z",
+      "resolved_at": "2026-05-02T12:33:34Z"
+    },
+    {
+      "task_id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001",
+      "from": "Claude2",
+      "to": "Gemini2",
+      "message": "Helper-claimed by Gemini2 while Claude2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-02T13:00:20Z",
+      "resolved_at": "2026-05-02T13:05:38Z"
+    },
+    {
+      "task_id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001",
+      "from": "Codex",
+      "to": "Gemini2",
+      "message": "Helper-claimed by Gemini2 while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-02T13:16:25Z",
+      "resolved_at": "2026-05-02T13:21:44Z"
+    },
+    {
+      "task_id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-02T13:27:09Z",
+      "resolved_at": "2026-05-02T13:32:28Z"
+    },
+    {
+      "task_id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "End-to-end integration test added (test_source_search_end_to_end_durable_readback): bounded external feed → SourceRecord/EvidenceBundle (PIT, entitlement, governance) → shared durable evidence store → search index refresh → SearchGateway durable query with citation refs. adapter_state='durable' asserted (no caller-supplied document path). Governance/no-Lean-broker-route enforcement preserved. 138 source+search tests pass. dependency_missing evidence written for the live feed target. Ready for review.",
+      "status": "done",
+      "created_at": "2026-05-02T14:04:00Z",
+      "resolved_at": "2026-05-02T14:19:09Z"
+    },
+    {
+      "task_id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-05-02T14:19:09Z",
+      "resolved_at": "2026-05-02T14:25:33Z"
+    },
+    {
+      "task_id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Codex review approved; bounded source/search live-test connector smoke evidence accepted and returned to Claude for owner closeout.",
+      "status": "done",
+      "created_at": "2026-05-02T14:25:33Z",
+      "resolved_at": "2026-05-02T14:35:44Z"
+    }
+  ],
+  "blockers": []
+}
