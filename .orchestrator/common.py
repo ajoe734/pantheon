@@ -306,8 +306,29 @@ def refresh_claude_oauth_tokens(env: dict[str, str] | None = None, *, timeout: f
 def claude_auth_ready(binary: str | None, *, env: dict[str, str] | None = None, refresh_if_needed: bool = True) -> bool:
     if not binary:
         return False
-    if claude_oauth_token_from_env(env):
-        return True
+    env_token = claude_oauth_token_from_env(env)
+    if env_token:
+        loaded = load_claude_oauth_tokens(env)
+        if not loaded:
+            return True
+        _, oauth, _ = loaded
+        stored_token = str(oauth.get("accessToken") or "").strip()
+        if stored_token and stored_token != env_token:
+            if not claude_oauth_token_expired(oauth):
+                if env is not None:
+                    env["CLAUDE_CODE_OAUTH_TOKEN"] = stored_token
+            return True
+        if stored_token and stored_token == env_token and not claude_oauth_token_expired(oauth):
+            return True
+        if not refresh_if_needed:
+            return False
+        refreshed = refresh_claude_oauth_tokens(env)
+        if refreshed and not claude_oauth_token_expired(refreshed, skew_seconds=0):
+            refreshed_token = str(refreshed.get("accessToken") or "").strip()
+            if refreshed_token.startswith("sk-ant-") and env is not None:
+                env["CLAUDE_CODE_OAUTH_TOKEN"] = refreshed_token
+            return True
+        return False
     status = run_command([binary, "auth", "status"], env=env)
     if status.returncode != 0 or not status.stdout:
         return False

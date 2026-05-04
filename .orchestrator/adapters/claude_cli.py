@@ -53,8 +53,13 @@ def _spawn_env(config: dict | None = None, provider_id: str | None = None) -> di
     return env
 
 
-def _claude_auth_ready(cli: str | None, *, env: dict[str, str] | None = None) -> bool:
-    return shared_claude_auth_ready(cli, env=env)
+def _claude_auth_ready(
+    cli: str | None,
+    *,
+    env: dict[str, str] | None = None,
+    refresh_if_needed: bool = True,
+) -> bool:
+    return shared_claude_auth_ready(cli, env=env, refresh_if_needed=refresh_if_needed)
 
 
 def _configured_claude_cli(config: dict | None = None, provider_id: str | None = None) -> str | None:
@@ -73,7 +78,7 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
     def capability(self, agent_id: str) -> DeliveryCapability:
         provider_id = _provider_key(self.config, agent_id=agent_id)
         cli = _configured_claude_cli(self.config, provider_id)
-        auth_ready = _claude_auth_ready(cli, env=_spawn_env(self.config, provider_id))
+        auth_ready = _claude_auth_ready(cli, env=_spawn_env(self.config, provider_id), refresh_if_needed=False)
         if cli and auth_ready:
             return DeliveryCapability(
                 adapter=self.name,

@@ -501,7 +501,7 @@ def _claude_provider_report(
     provider_settings = config.get("providers", {}).get(provider_id, {}) or {}
     runtime_env = _provider_runtime_env(config, provider_id)
     provider_binary = _configured_provider_binary(config, provider_id, "runtime", "claude")
-    provider_auth_ready = claude_auth_ready(provider_binary, env=runtime_env)
+    provider_auth_ready = claude_auth_ready(provider_binary, env=runtime_env, refresh_if_needed=False)
     provider_home = str((provider_settings.get("runtime", {}) or {}).get("home") or "").strip()
     credentials_path = claude_credentials_path(runtime_env)
     installed = bool(provider_binary or claude_path or claude_local or credentials_path.exists())

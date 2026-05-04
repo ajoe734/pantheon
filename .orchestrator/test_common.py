@@ -94,10 +94,76 @@ class ClaudeAuthTests(unittest.TestCase):
     def test_claude_auth_ready_accepts_long_lived_oauth_token_env(self) -> None:
         env = {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-test-token"}
 
-        with mock.patch.object(common, "run_command") as run_command:
+        with (
+            mock.patch.object(common, "load_claude_oauth_tokens", return_value=None),
+            mock.patch.object(common, "run_command") as run_command,
+        ):
             self.assertTrue(common.claude_auth_ready("claude", env=env))
 
         run_command.assert_not_called()
+
+    def test_claude_auth_ready_refreshes_expired_env_oauth_token(self) -> None:
+        env = {"HOME": "/tmp/test-home", "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-old"}
+        expired_oauth = {
+            "accessToken": "sk-ant-oat01-old",
+            "refreshToken": "old-refresh",
+            "expiresAt": 1,
+            "scopes": ["user:profile"],
+        }
+        refreshed_oauth = {
+            "accessToken": "sk-ant-oat01-new",
+            "refreshToken": "new-refresh",
+            "expiresAt": int(common.time.time() * 1000) + 3_600_000,
+            "scopes": ["user:profile", "user:inference"],
+        }
+        with (
+            mock.patch.object(common, "load_claude_oauth_tokens", return_value=({}, expired_oauth, Path("/tmp/.credentials.json"))),
+            mock.patch.object(common, "refresh_claude_oauth_tokens", return_value=refreshed_oauth) as refresh,
+            mock.patch.object(common, "run_command") as run_command,
+        ):
+            self.assertTrue(common.claude_auth_ready("claude", env=env))
+
+        refresh.assert_called_once_with(env)
+        run_command.assert_not_called()
+        self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "sk-ant-oat01-new")
+
+    def test_claude_auth_ready_prefers_fresh_credentials_over_stale_env_token(self) -> None:
+        env = {"HOME": "/tmp/test-home", "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-old"}
+        fresh_oauth = {
+            "accessToken": "sk-ant-oat01-new",
+            "refreshToken": "new-refresh",
+            "expiresAt": int(common.time.time() * 1000) + 3_600_000,
+            "scopes": ["user:profile", "user:inference"],
+        }
+        with (
+            mock.patch.object(common, "load_claude_oauth_tokens", return_value=({}, fresh_oauth, Path("/tmp/.credentials.json"))),
+            mock.patch.object(common, "refresh_claude_oauth_tokens") as refresh,
+            mock.patch.object(common, "run_command") as run_command,
+        ):
+            self.assertTrue(common.claude_auth_ready("claude", env=env))
+
+        refresh.assert_not_called()
+        run_command.assert_not_called()
+        self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "sk-ant-oat01-new")
+
+    def test_claude_auth_ready_accepts_distinct_long_lived_env_token_when_oauth_expired(self) -> None:
+        env = {"HOME": "/tmp/test-home", "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-long-lived"}
+        expired_oauth = {
+            "accessToken": "sk-ant-oat01-expired",
+            "refreshToken": "old-refresh",
+            "expiresAt": 1,
+            "scopes": ["user:profile"],
+        }
+        with (
+            mock.patch.object(common, "load_claude_oauth_tokens", return_value=({}, expired_oauth, Path("/tmp/.credentials.json"))),
+            mock.patch.object(common, "refresh_claude_oauth_tokens") as refresh,
+            mock.patch.object(common, "run_command") as run_command,
+        ):
+            self.assertTrue(common.claude_auth_ready("claude", env=env))
+
+        refresh.assert_not_called()
+        run_command.assert_not_called()
+        self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "sk-ant-oat01-long-lived")
 
     def test_claude_auth_ready_refreshes_expired_oauth(self) -> None:
         env = {"HOME": "/tmp/test-home"}
