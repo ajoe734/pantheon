@@ -45,6 +45,7 @@ from models import (
     ActionCommandStatus,
     ApproveMutationCommandPayload,
     AuditContext,
+    BffActionCatalogResponse,
     BffErrorEnvelope,
     BffErrorPayload,
     CommandReceipt,
@@ -61,12 +62,14 @@ from models import (
     ObjectType,
     OperatorCommand,
     OperatorIdentity,
+    EVIDENCE_CAPABILITY_MAP,
     RecordSponsorDecisionCommandPayload,
     RejectMutationCommandPayload,
     StalenessWarning,
     TargetObject,
     utc_now,
 )
+from action_catalog import get_action_catalog, get_catalog_entry
 from command_queue import CommandStore
 from command_executor import execute_command_with_status
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
@@ -113,6 +116,7 @@ if _cors_origins:
             "Authorization",
             "Cache-Control",
             "Content-Type",
+            "X-Confirm-Token",
             "Idempotency-Key",
             "Last-Event-ID",
             "X-Correlation-Id",
@@ -328,6 +332,8 @@ def _bff_error(
     reason: str,
     precondition_failed: Optional[str] = None,
     suggestion: Optional[str] = None,
+    details_extra: Optional[Dict[str, Any]] = None,
+    correlation_id: Optional[str] = None,
     foundation_error: Optional[ErrorEnvelope] = None,
     policy_decision: Optional[PolicyDecision] = None,
     audit_action: Optional[AuditAction] = None,
@@ -344,6 +350,17 @@ def _bff_error(
         )
     )
     detail = body.model_dump()
+    error_payload = detail.get("error") if isinstance(detail.get("error"), dict) else {}
+    error_details = error_payload.get("details") if isinstance(error_payload.get("details"), dict) else None
+    if error_details is not None:
+        if details_extra:
+            for key, value in details_extra.items():
+                if value is not None:
+                    error_details[key] = value
+        clean_correlation_id = str(correlation_id or "").strip()
+        if clean_correlation_id:
+            error_details["correlationId"] = clean_correlation_id
+            detail["correlationId"] = clean_correlation_id
     if foundation_error is not None:
         detail["foundation_error"] = foundation_error.to_dict()
     if policy_decision is not None:
@@ -513,6 +530,11 @@ def _extract_error_fields(exc: HTTPException) -> Dict[str, Any]:
     detail = exc.detail if isinstance(exc.detail, dict) else {}
     error = detail.get("error") if isinstance(detail.get("error"), dict) else {}
     details = error.get("details") if isinstance(error.get("details"), dict) else {}
+    details_extra = {
+        key: value
+        for key, value in details.items()
+        if key not in {"reason", "precondition_failed", "suggestion"} and value is not None
+    }
     code_value = error.get("code") or ErrorCode.INVALID_PARAMS.value
     try:
         code = ErrorCode(code_value)
@@ -525,6 +547,8 @@ def _extract_error_fields(exc: HTTPException) -> Dict[str, Any]:
         "reason": details.get("reason") or str(exc.detail),
         "precondition_failed": details.get("precondition_failed"),
         "suggestion": details.get("suggestion"),
+        "details_extra": details_extra,
+        "correlation_id": detail.get("correlationId") or details_extra.get("correlationId"),
     }
 
 
@@ -554,6 +578,7 @@ def _foundation_bff_error(
             details={
                 "reason": fields["reason"],
                 "precondition_failed": fields["precondition_failed"],
+                **fields["details_extra"],
             },
         )
         audit_action = AuditAction.record(
@@ -574,6 +599,8 @@ def _foundation_bff_error(
             fields["reason"],
             precondition_failed=fields["precondition_failed"],
             suggestion=fields["suggestion"],
+            details_extra=fields["details_extra"],
+            correlation_id=fields["correlation_id"],
             foundation_error=foundation_error,
             policy_decision=policy_decision,
             audit_action=audit_action,
@@ -587,6 +614,7 @@ def _foundation_bff_error(
             details={
                 "reason": fields["reason"],
                 "precondition_failed": fields["precondition_failed"],
+                **fields["details_extra"],
             },
         )
     else:
@@ -600,6 +628,7 @@ def _foundation_bff_error(
             details={
                 "reason": fields["reason"],
                 "precondition_failed": fields["precondition_failed"],
+                **fields["details_extra"],
             },
         )
     audit_action = AuditAction.record(
@@ -619,6 +648,8 @@ def _foundation_bff_error(
         fields["reason"],
         precondition_failed=fields["precondition_failed"],
         suggestion=fields["suggestion"],
+        details_extra=fields["details_extra"],
+        correlation_id=fields["correlation_id"],
         foundation_error=foundation_error,
         audit_action=audit_action,
     )
@@ -985,6 +1016,143 @@ def _reject_body_idempotency_key(payload: Dict[str, Any]) -> None:
             precondition_failed="body_idempotency_key",
             suggestion="Remove idempotencyKey from the body and set the Idempotency-Key header",
         )
+
+
+_CONFIRM_TOKEN_FIELDS = (
+    "confirmToken",
+    "confirm_token",
+    "confirmationToken",
+    "confirmation_token",
+)
+_APPROVAL_EVIDENCE_FIELDS = (
+    "approvalId",
+    "approval_id",
+    "approvalDecisionId",
+    "approval_decision_id",
+)
+_TWO_MAN_EVIDENCE_FIELDS = (
+    "twoManSignatureId",
+    "two_man_signature_id",
+    "twoManApprovalId",
+    "two_man_approval_id",
+    "secondOperatorId",
+    "second_operator_id",
+    "secondOperatorSignature",
+    "second_operator_signature",
+)
+
+
+def _precondition_value_present(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, set, dict)):
+        return bool(value)
+    return True
+
+
+def _precondition_field_present(
+    payload: Dict[str, Any],
+    params: Dict[str, Any],
+    aliases: tuple[str, ...],
+) -> bool:
+    for source in (payload, params):
+        for alias in aliases:
+            if alias in source and _precondition_value_present(source.get(alias)):
+                return True
+    return False
+
+
+def _final_precondition_details(
+    *,
+    cmd: OperatorCommand,
+    kind: str,
+) -> Dict[str, Any]:
+    return {
+        "actionId": cmd.command.value,
+        "entityType": cmd.target.type.value,
+        "entityId": cmd.target.id,
+        "kind": kind,
+    }
+
+
+def _final_precondition_error(
+    *,
+    cmd: OperatorCommand,
+    status_code: int,
+    code: ErrorCode,
+    message: str,
+    reason: str,
+    kind: str,
+    correlation_id: Optional[str],
+    suggestion: str,
+) -> HTTPException:
+    return _bff_error(
+        status_code=status_code,
+        code=code,
+        message=message,
+        reason=reason,
+        precondition_failed=kind,
+        suggestion=suggestion,
+        details_extra=_final_precondition_details(cmd=cmd, kind=kind),
+        correlation_id=correlation_id,
+    )
+
+
+def _require_final_command_preconditions(
+    *,
+    cmd: OperatorCommand,
+    payload: Dict[str, Any],
+    confirm_token: Optional[str],
+    correlation_id: Optional[str],
+) -> None:
+    entry = get_catalog_entry(cmd.command.value)
+    if entry is None:
+        return
+
+    params = dict(cmd.params)
+    if getattr(entry, "requires_confirm_token", False):
+        if not (
+            _precondition_value_present(confirm_token)
+            or _precondition_field_present(payload, params, _CONFIRM_TOKEN_FIELDS)
+        ):
+            raise _final_precondition_error(
+                cmd=cmd,
+                status_code=428,
+                code=ErrorCode.CONFIRM_TOKEN_REQUIRED,
+                message="Confirmation token is required before this action can be accepted",
+                reason="CONFIRM_TOKEN_MISSING",
+                kind="confirm_token",
+                correlation_id=correlation_id,
+                suggestion="Retry with X-Confirm-Token or confirmToken after the operator confirmation step",
+            )
+
+    if getattr(entry, "requires_approval", False):
+        if not _precondition_field_present(payload, params, _APPROVAL_EVIDENCE_FIELDS):
+            raise _final_precondition_error(
+                cmd=cmd,
+                status_code=409,
+                code=ErrorCode.APPROVAL_REQUIRED,
+                message="Approval evidence is required before this action can be accepted",
+                reason="APPROVAL_EVIDENCE_MISSING",
+                kind="approval",
+                correlation_id=correlation_id,
+                suggestion="Attach approvalId from the governance approval flow before retrying",
+            )
+
+    if getattr(entry, "requires_two_man", False):
+        if not _precondition_field_present(payload, params, _TWO_MAN_EVIDENCE_FIELDS):
+            raise _final_precondition_error(
+                cmd=cmd,
+                status_code=409,
+                code=ErrorCode.TWO_MAN_REQUIRED,
+                message="Two-man authorization is required before this action can be accepted",
+                reason="TWO_MAN_SIGNATURE_MISSING",
+                kind="two_man",
+                correlation_id=correlation_id,
+                suggestion="Attach a second authorized operator signature before retrying",
+            )
 
 
 def _normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorCommand:
@@ -1756,6 +1924,13 @@ def _mutation_review_projection(
     proposed_changes.setdefault("downstream_plane", (decision.get("execution_result") or {}).get("plane"))
     proposed_changes.setdefault("change_details", [])
 
+    # Apply evidence redaction based on derived capabilities for this identity.
+    try:
+        capabilities = _capabilities_for_identity(identity)
+    except Exception:
+        capabilities = None
+    evidence_refs, redacted_count = read_store.redact_evidence_refs(identity, evidence_refs, capabilities=capabilities)
+
     risk_assessment.setdefault(
         "risk_summary",
         decision.get("notes") or decision.get("rationale") or "",
@@ -1787,6 +1962,11 @@ def _mutation_review_projection(
                 "followthrough_note": first_rollback.get("reason"),
             }
 
+    meta = {**_snapshot_meta(snapshot_at), "surfaces": {"mutation_review": surface_state}}
+    # Attach supporting_counts including redaction telemetry
+    meta.setdefault("supporting_counts", {})
+    meta["supporting_counts"]["redacted_evidence_count"] = redacted_count
+
     return {
         "decision_id": decision.get("decision_id") or decision.get("id"),
         "target_type": decision.get("target_type"),
@@ -1806,12 +1986,7 @@ def _mutation_review_projection(
         "evidence_refs": evidence_refs,
         "rollback_followthrough": rollback_followthrough,
         "allowedActions": allowed_actions,
-        "meta": {
-            **_snapshot_meta(snapshot_at),
-            "surfaces": {
-                "mutation_review": surface_state,
-            },
-        },
+        "meta": meta,
     }
 
 
@@ -2035,6 +2210,26 @@ def _cw04_memo_projection(
     allowed_actions = _cw04_allowed_actions(memo, identity=identity, surface_state=surface_state)
     hide_memo_content = surface_state == "unavailable"
 
+    # Prepare evidence refs and redact where appropriate
+    evidence_refs = [] if hide_memo_content else json.loads(json.dumps(memo.get("evidence_refs") or []))
+    try:
+        capabilities = _capabilities_for_identity(identity)
+    except Exception:
+        capabilities = None
+    evidence_refs, redacted_count = read_store.redact_evidence_refs(identity, evidence_refs, capabilities=capabilities)
+
+    meta = {
+        "snapshot_at": snapshot_at,
+        "staleness": _cw04_memo_staleness(surface_state, snapshot_at=snapshot_at),
+        "surfaces": {
+            "redteam_memo": {
+                "state": surface_state,
+            },
+        },
+    }
+    meta.setdefault("supporting_counts", {})
+    meta["supporting_counts"]["redacted_evidence_count"] = redacted_count
+
     return {
         "object_ref": json.loads(json.dumps(memo.get("object_ref") or {})),
         "memo_id": memo.get("memo_id"),
@@ -2047,21 +2242,13 @@ def _cw04_memo_projection(
         "session_to_memo_mapping": json.loads(json.dumps(memo.get("session_to_memo_mapping") or {})),
         "summary": None if hide_memo_content else memo.get("summary"),
         "recommendations": [] if hide_memo_content else list(memo.get("recommendations") or []),
-        "evidence_refs": [] if hide_memo_content else json.loads(json.dumps(memo.get("evidence_refs") or [])),
+        "evidence_refs": evidence_refs,
         "published_at": memo.get("published_at"),
         "created_at": memo.get("created_at"),
         "supersedes_memo_id": memo.get("supersedes_memo_id"),
         "superseded_by_memo_id": memo.get("superseded_by_memo_id"),
         "allowedActions": allowed_actions,
-        "meta": {
-            "snapshot_at": snapshot_at,
-            "staleness": _cw04_memo_staleness(surface_state, snapshot_at=snapshot_at),
-            "surfaces": {
-                "redteam_memo": {
-                    "state": surface_state,
-                },
-            },
-        },
+        "meta": meta,
     }
 
 
@@ -2269,6 +2456,57 @@ def _require_read_role(identity: OperatorIdentity) -> None:
             precondition_failed="role_check",
             suggestion="Escalate to a user with operator, approver, admin, or reviewer role",
         )
+
+
+# Role -> capability mapping (best-effort). In production, prefer capability snapshots
+# supplied by the auth service. This map is intentionally conservative.
+_ROLE_CAPABILITY_MAP = {
+    "admin": list(EVIDENCE_CAPABILITY_MAP.values()),
+    "approver": [
+        "approval.read",
+        "postmortem.read",
+        "policy.read",
+    ],
+    "operator": [
+        "runtime.read",
+        "risk.incident.read",
+        "risk.alert.read",
+        "artifact.read",
+    ],
+    "reviewer": [
+        "approval.read",
+        "strategy.view",
+        "persona.view",
+    ],
+    "analyst": [
+        "metric.read",
+        "job.read",
+        "audit.read",
+    ],
+    "viewer": [],
+}
+
+
+def _capabilities_for_identity(identity: OperatorIdentity) -> List[str]:
+    """Derive a best-effort capability set from operator roles.
+
+    This is a fallback for deployments where explicit capability claims
+    are not provided by upstream auth. It is intentionally permissive for
+    admin and conservative for other roles.
+    """
+    caps: List[str] = []
+    for role in identity.roles:
+        mapped = _ROLE_CAPABILITY_MAP.get(role)
+        if mapped:
+            caps.extend(mapped)
+    # Deduplicate while preserving order
+    seen = set()
+    result: List[str] = []
+    for c in caps:
+        if c not in seen:
+            seen.add(c)
+            result.append(c)
+    return result
 
 
 def _read_surface_state() -> str:
@@ -12188,11 +12426,18 @@ def get_consultation_evidence(
             f"No consultation session with id {session_id}",
         )
 
+    try:
+        capabilities = _capabilities_for_identity(identity)
+    except Exception:
+        capabilities = None
+    evidence, redacted_count = read_store.redact_evidence_refs(identity, evidence, capabilities=capabilities)
+
     return {
         "data": evidence,
         "meta": {
             "total": len(evidence),
             "staleness": _meta_staleness(),
+            "supporting_counts": {"redacted_evidence_count": redacted_count},
         },
     }
 
@@ -12426,6 +12671,7 @@ async def submit_final_command(
     x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
     x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
     x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+    x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
@@ -12464,6 +12710,12 @@ async def submit_final_command(
         validator = _VALIDATORS.get(cmd.command)
         if validator:
             validator(cmd.params, identity)
+        _require_final_command_preconditions(
+            cmd=cmd,
+            payload=payload,
+            confirm_token=x_confirm_token,
+            correlation_id=foundation_context["trace_context"].correlation_id,
+        )
     except HTTPException as exc:
         raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
 
@@ -12559,6 +12811,21 @@ async def submit_final_command(
         status=CommandStatus.SUBMITTED,
         staleness_warning=staleness_warning,
     )
+
+
+@app.get("/bff/actions", response_model=BffActionCatalogResponse)
+async def get_action_catalog_endpoint(
+    authorization: Optional[str] = Header(default=None),
+):
+    """
+    Return the canonical backend action catalog.
+
+    The frontend maps each entry into an ActionDescriptor and never
+    invents action truth independently.  High-risk entries carry
+    approval / confirm_token / two_man / cooldown governance metadata.
+    """
+    _extract_identity(authorization)
+    return get_action_catalog()
 
 
 @app.get("/api/v1/operator/commands/{command_id}", response_model=CommandStatusResponse)
@@ -12808,14 +13075,44 @@ async def degraded_control_guidance():
 # Each buffer is a deque of (event_id, event_dict) tuples, keeping the last N events.
 _MAX_EVENTS = 500
 
-_runtime_events: deque = deque(maxlen=_MAX_EVENTS)
-_incident_events: deque = deque(maxlen=_MAX_EVENTS)
-_kill_switch_events: deque = deque(maxlen=_MAX_EVENTS)
+SSE_CHANNELS = {
+    "approval", "ask", "artifact", "runtime", "mcp", "skill", "channel", "tool",
+    "ranking", "rebalance", "evolution", "research", "signal", "inbox",
+    "journal", "postmortem", "loop", "sentinel", "intervention", "audit", "system"
+}
 
-# Subscribers (asyncio.Queue) for each stream type
-_runtime_subscribers: list[asyncio.Queue] = []
+
+class SseReplayUnavailableError(Exception):
+    pass
+
+
+# Centralized SSE buffers and subscribers
+_sse_buffers: Dict[str, deque] = {
+    channel: deque(maxlen=_MAX_EVENTS) for channel in SSE_CHANNELS
+}
+_sse_subscribers: Dict[str, list[asyncio.Queue]] = {
+    channel: [] for channel in SSE_CHANNELS
+}
+
+# Compatibility aliases for existing code
+_runtime_events = _sse_buffers["runtime"]
+_runtime_subscribers = _sse_subscribers["runtime"]
+_incident_events = _sse_buffers["journal"]  # Map incident to journal as per catalog? 
+# Wait, 'incident' is NOT in the new catalog! 
+# 'journal' or 'system' or 'audit' might be it.
+# The task brief catalog doesn't have 'incident'.
+# But existing routes use 'incident'.
+# I'll keep 'incident' for compatibility if it's not in the catalog.
+_incident_events = deque(maxlen=_MAX_EVENTS)
 _incident_subscribers: list[asyncio.Queue] = []
-_kill_switch_subscribers: list[asyncio.Queue] = []
+
+_kill_switch_events = _sse_buffers["system"]
+_kill_switch_subscribers = _sse_subscribers["system"]
+
+_approval_events = _sse_buffers["approval"]
+_approval_subscribers = _sse_subscribers["approval"]
+_ask_events = _sse_buffers["ask"]
+_ask_subscribers = _sse_subscribers["ask"]
 
 
 def _make_event_id(prefix: str = "evt") -> str:
@@ -12862,8 +13159,8 @@ def _replay_from(buffer: deque, last_event_id: Optional[str]) -> list[dict]:
         elif eid == last_event_id:
             found = True
     if not found:
-        # Client requested an event ID we no longer have — return full buffer
-        return [evt for _, evt in buffer]
+        # Client requested an event ID we no longer have
+        raise SseReplayUnavailableError(f"Event ID {last_event_id} is no longer in the buffer")
     return result
 
 
@@ -12894,6 +13191,40 @@ async def _sse_stream(
             subscribers.remove(q)
 
 
+def _handle_sse_stream(
+    buffer: deque,
+    subscribers: list[asyncio.Queue],
+    last_event_id: Optional[str],
+    extra_headers: Optional[Dict[str, str]] = None,
+) -> StreamingResponse:
+    """Helper to create a StreamingResponse with replay error handling."""
+    try:
+        # Check if replay is possible before starting the stream
+        _replay_from(buffer, last_event_id)
+    except SseReplayUnavailableError as exc:
+        raise _bff_error(
+            status_code=409,
+            code=ErrorCode.SSE_REPLAY_UNAVAILABLE,
+            message=str(exc),
+            reason="SSE_REPLAY_HISTORY_MISSING",
+            suggestion="Resync canonical state via GET routes before reconnecting to the stream",
+        ) from exc
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    if extra_headers:
+        headers.update(extra_headers)
+
+    return StreamingResponse(
+        _sse_stream(buffer, subscribers, last_event_id),
+        media_type="text/event-stream",
+        headers=headers,
+    )
+
+
 @app.get("/api/v1/runtime/{runtime_id}/events/stream")
 async def stream_runtime_events(
     runtime_id: str,
@@ -12908,15 +13239,7 @@ async def stream_runtime_events(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    return StreamingResponse(
-        _sse_stream(_runtime_events, _runtime_subscribers, last_event_id),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return _handle_sse_stream(_runtime_events, _runtime_subscribers, last_event_id)
 
 
 @app.get("/api/v1/incidents/stream")
@@ -12932,15 +13255,7 @@ async def stream_incident_events(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    return StreamingResponse(
-        _sse_stream(_incident_events, _incident_subscribers, last_event_id),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return _handle_sse_stream(_incident_events, _incident_subscribers, last_event_id)
 
 
 @app.get("/api/v1/kill-switch/updates")
@@ -12956,24 +13271,81 @@ async def stream_kill_switch_events(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    return StreamingResponse(
-        _sse_stream(_kill_switch_events, _kill_switch_subscribers, last_event_id),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return _handle_sse_stream(_kill_switch_events, _kill_switch_subscribers, last_event_id)
+
+
+@app.get("/api/v1/approvals/stream")
+async def stream_approval_events(
+    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """AP-SSE: Server-Sent Events stream for approval decisions and lifecycle.
+
+    Supports reconnection via ``?last_event_id=`` to replay missed events.
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    return _handle_sse_stream(_approval_events, _approval_subscribers, last_event_id)
+
+
+@app.get("/api/v1/agora/ask/stream")
+async def stream_ask_events(
+    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """AK-SSE: Server-Sent Events stream for Agora ask session messages and tool calls.
+
+    Supports reconnection via ``?last_event_id=`` to replay missed events.
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    return _handle_sse_stream(_ask_events, _ask_subscribers, last_event_id)
 
 
 # --------------------------------------------------------------------------- #
 # SSE Publish Helpers (for internal use / testing / admin injection)
 # --------------------------------------------------------------------------- #
 
+@app.get("/api/v1/stream/{channel}")
+async def stream_generic_events(
+    channel: str,
+    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF-SSE: Generic Server-Sent Events stream for any channel in the catalog.
+
+    Supports reconnection via ``?last_event_id=`` to replay missed events.
+    """
+    if channel not in SSE_CHANNELS:
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_REQUEST,
+            f"Unknown SSE channel: {channel}",
+            f"Channel must be one of {sorted(list(SSE_CHANNELS))}",
+        )
+
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    # Publish replay metadata in headers or a comment is not standard SSE,
+    # but we can return it in the initial stream response if we want.
+    # The brief says "Publish replay window metadata for channels where BFF can replay."
+    # We'll use a custom header for this.
+    
+    headers = {
+        "X-SSE-Replay-Supported": "true",
+        "X-SSE-Buffer-Size": str(_MAX_EVENTS),
+    }
+
+    return _handle_sse_stream(_sse_buffers[channel], _sse_subscribers[channel], last_event_id, extra_headers=headers)
+
+
 @app.post("/api/v1/internal/sse/publish")
 async def publish_sse_event(
     event_type: str = Query(..., description="Event type: runtime_state_changed, incident_created, etc."),
+    channel: Optional[str] = Query(default=None, description="Optional channel name; inferred from event_type if missing"),
     runtime_id: Optional[str] = Query(default=None),
     incident_id: Optional[str] = Query(default=None),
     payload: Dict[str, Any] = {},
@@ -12987,23 +13359,46 @@ async def publish_sse_event(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    if event_type.startswith("runtime"):
-        event_id = _publish_event(
-            _runtime_events, _runtime_subscribers, event_type,
-            {"runtime_id": runtime_id, **payload},
-        )
-    elif event_type.startswith("incident"):
+    # Infer channel if missing
+    if not channel:
+        if event_type.startswith("runtime"):
+            channel = "runtime"
+        elif event_type.startswith("incident"):
+            channel = "journal"  # Map incident to journal
+        elif event_type.startswith("kill_switch"):
+            channel = "system"
+        elif event_type.startswith("approval"):
+            channel = "approval"
+        elif event_type.startswith("ask"):
+            channel = "ask"
+        else:
+            channel = "system"  # Default
+
+    if channel == "journal" and event_type.startswith("incident"):
+        # Legacy incident support
         event_id = _publish_event(
             _incident_events, _incident_subscribers, event_type,
             {"incident_id": incident_id, **payload},
         )
-    elif event_type.startswith("kill_switch"):
-        event_id = _publish_event(
-            _kill_switch_events, _kill_switch_subscribers, event_type,
-            payload,
-        )
-    else:
-        raise _bff_error(400, ErrorCode.INVALID_REQUEST, "Unknown event type", f"Event type {event_type} not recognized")
+        # Also publish to the journal channel if it's different
+        if "journal" in _sse_buffers:
+            _publish_event(
+                _sse_buffers["journal"], _sse_subscribers["journal"], event_type,
+                {"incident_id": incident_id, **payload},
+            )
+        return {"event_id": event_id, "status": "published"}
+
+    if channel not in _sse_buffers:
+         raise _bff_error(400, ErrorCode.INVALID_REQUEST, f"Unknown SSE channel: {channel}", f"Channel must be one of {sorted(list(SSE_CHANNELS))}")
+
+    # For runtime channel, we might want to include runtime_id in the payload
+    if channel == "runtime" and runtime_id:
+        payload["runtime_id"] = runtime_id
+
+    event_id = _publish_event(
+        _sse_buffers[channel], _sse_subscribers[channel], event_type,
+        payload,
+    )
 
     return {"event_id": event_id, "status": "published"}
 
