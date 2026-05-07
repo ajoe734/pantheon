@@ -417,3 +417,252 @@ def test_bff_final_007_redact_evidence_refs_none_capabilities_is_noop() -> None:
 
     assert redacted_count == 0
     assert processed == refs
+
+
+# --------------------------------------------------------------------------- #
+# BFF-FINAL-007: endpoint-level insufficient-capability tests
+# --------------------------------------------------------------------------- #
+
+def test_bff_final_007_review_queue_redacts_evidence_refs_for_insufficient_capability() -> None:
+    """Review-queue items have review_summary.evidence_refs redacted for EvidenceKinds the operator lacks."""
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+        store.list_governance_review_queue_items = lambda **kwargs: [
+            {
+                "item_id": "gov-redact-001",
+                "item_type": "DeploymentPlan",
+                "risk_level": "medium",
+                "status": "pending",
+                "submitted_at": "2026-05-07T10:00:00Z",
+                "submitted_by": "orchestrator",
+                "governance_outcome": "pending",
+                "allowedActions": {
+                    "canReview": True,
+                    "canForwardToApproval": False,
+                    "canRequestChanges": True,
+                    "canEscalate": False,
+                },
+                "review_summary": {
+                    "risk_assessment": "Test item for evidence redaction",
+                    "evidence_refs": [
+                        {"ref_id": "ref-alert-ev", "type": "alert"},     # risk.alert.read → operator has this
+                        {"ref_id": "ref-metric-ev", "type": "metric"},   # metric.read → operator lacks this
+                        {"ref_id": "ref-strategy-ev", "type": "strategy"},  # strategy.view → operator lacks this
+                    ],
+                    "linked_approval_decision_id": None,
+                },
+            }
+        ]
+        store.dataset_source = lambda dataset: (
+            "service_store" if dataset == "governance_review_queue_items" else "missing"
+        )
+        bff_main.read_store = store
+        client = TestClient(bff_main.app)
+
+        try:
+            response = client.get(
+                "/api/v1/operator/governance/review-queue",
+                headers={"Authorization": OPERATOR_TOKEN},
+            )
+            assert response.status_code == 200, response.text
+            payload = response.json()
+
+            assert len(payload["items"]) == 1
+            ev_refs = payload["items"][0]["review_summary"]["evidence_refs"]
+            assert len(ev_refs) == 3
+
+            # Alert ref passes through (operator has risk.alert.read)
+            assert ev_refs[0] == {"ref_id": "ref-alert-ev", "type": "alert"}
+
+            # Metric ref is replaced with RedactedEvidenceRef
+            assert ev_refs[1]["redacted"] is True
+            assert ev_refs[1]["required_capability"] == "metric.read"
+            assert ev_refs[1]["ref_id"] == "ref-metric-ev"
+            assert ev_refs[1]["reason"] == "insufficient_capability"
+
+            # Strategy ref is replaced with RedactedEvidenceRef
+            assert ev_refs[2]["redacted"] is True
+            assert ev_refs[2]["required_capability"] == "strategy.view"
+            assert ev_refs[2]["ref_id"] == "ref-strategy-ev"
+
+            # Redacted evidence count telemetry
+            assert payload["meta"]["redacted_evidence_count"] == 2
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_bff_final_007_knowledge_evidence_list_redacts_items_for_insufficient_capability() -> None:
+    """Knowledge evidence list replaces items with RedactedEvidenceRef when operator lacks the required capability."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        evidence_store = root / "evidence_refs.json"
+        evidence_store.write_text(
+            json.dumps(
+                {
+                    "evref-alert-cap-001": {
+                        "ref_id": "evref-alert-cap-001",
+                        "evidence_type": "alert",
+                        "link_type": "supporting_evidence",
+                        "source_document": {"title": "Alert Evidence", "source_type": "alert"},
+                        "credibility": {"tier": "primary", "verified": True},
+                        "linked_object_summary": {"entity_type": "runtime", "entity_ref": "rt-001"},
+                        "resolved_link": {"availability": "available", "route_href": "/alerts/001"},
+                        "route_href": "/knowledge/evidence/evref-alert-cap-001",
+                        "created_at": "2026-05-07T10:00:00Z",
+                    },
+                    "evref-metric-cap-001": {
+                        "ref_id": "evref-metric-cap-001",
+                        "evidence_type": "metric",
+                        "link_type": "supporting_evidence",
+                        "source_document": {"title": "Metric Evidence", "source_type": "metric"},
+                        "credibility": {"tier": "secondary", "verified": False},
+                        "linked_object_summary": {"entity_type": "runtime", "entity_ref": "rt-002"},
+                        "resolved_link": {"availability": "available", "route_href": "/metrics/001"},
+                        "route_href": "/knowledge/evidence/evref-metric-cap-001",
+                        "created_at": "2026-05-07T10:01:00Z",
+                    },
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        tracked_env = {"PANTHEON_BFF_EVIDENCE_REF_STORE": os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE")}
+        os.environ["PANTHEON_BFF_EVIDENCE_REF_STORE"] = str(evidence_store)
+
+        original_store = bff_main.read_store
+        bff_main.read_store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=True,
+        )
+        client = TestClient(bff_main.app)
+
+        try:
+            response = client.get(
+                "/api/v1/knowledge/evidence",
+                headers={"Authorization": OPERATOR_TOKEN},
+            )
+            assert response.status_code == 200, response.text
+            payload = response.json()
+
+            ev_refs = payload["evidence_refs"]
+            assert len(ev_refs) == 2
+
+            ref_by_id = {r["ref_id"]: r for r in ev_refs}
+
+            # Alert item passes through (operator has risk.alert.read)
+            alert_item = ref_by_id["evref-alert-cap-001"]
+            assert "source_document" in alert_item
+            assert not alert_item.get("redacted")
+
+            # Metric item is replaced with RedactedEvidenceRef (operator lacks metric.read)
+            metric_item = ref_by_id["evref-metric-cap-001"]
+            assert metric_item["redacted"] is True
+            assert metric_item["required_capability"] == "metric.read"
+            assert metric_item["reason"] == "insufficient_capability"
+
+            # Redacted evidence count telemetry
+            assert payload["meta"]["redacted_evidence_count"] == 1
+        finally:
+            bff_main.read_store = original_store
+            for key, value in tracked_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+
+def test_bff_final_007_knowledge_evidence_detail_redacts_linked_decisions_for_insufficient_capability() -> None:
+    """Evidence detail redacts linked_decisions entries when operator lacks the required capability."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        evidence_store = root / "evidence_refs.json"
+        detail_ref_id = "evref-detail-redact-001"
+        evidence_store.write_text(
+            json.dumps(
+                {
+                    detail_ref_id: {
+                        "ref_id": detail_ref_id,
+                        "link_type": "citation",
+                        "source_document": {
+                            "title": "Detail Test Evidence",
+                            "source_type": "external_paper",
+                        },
+                        "credibility": {"tier": "secondary", "verified": False},
+                        "resolved_link": {
+                            "availability": "external",
+                            "route_href": "https://example.com",
+                        },
+                        "linked_decisions": [
+                            {
+                                "ref_id": "rt-001",
+                                "entity_type": "runtime",
+                                "entity_ref": "rt-001",
+                                "display_label": "Runtime binding",
+                                "route_href": "/runtimes/rt-001",
+                                "type": "runtime",      # runtime.read → operator HAS this
+                            },
+                            {
+                                "ref_id": "strat-001",
+                                "entity_type": "strategy_spec",
+                                "entity_ref": "strat-001",
+                                "display_label": "Strategy",
+                                "route_href": "/strategies/strat-001",
+                                "type": "strategy",     # strategy.view → operator LACKS this
+                            },
+                        ],
+                        "source_note_context": None,
+                        "source_memory_context": None,
+                        "created_at": "2026-05-07T10:00:00Z",
+                    }
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        tracked_env = {"PANTHEON_BFF_EVIDENCE_REF_STORE": os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE")}
+        os.environ["PANTHEON_BFF_EVIDENCE_REF_STORE"] = str(evidence_store)
+
+        original_store = bff_main.read_store
+        bff_main.read_store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=True,
+        )
+        client = TestClient(bff_main.app)
+
+        try:
+            response = client.get(
+                f"/api/v1/knowledge/evidence/{detail_ref_id}",
+                headers={"Authorization": OPERATOR_TOKEN},
+            )
+            assert response.status_code == 200, response.text
+            detail = response.json()
+
+            linked_decisions = detail["linked_decisions"]
+            assert len(linked_decisions) == 2
+
+            # Runtime decision passes through (operator has runtime.read)
+            runtime_dec = linked_decisions[0]
+            assert runtime_dec.get("entity_ref") == "rt-001"
+            assert not runtime_dec.get("redacted")
+
+            # Strategy decision is replaced with RedactedEvidenceRef
+            strategy_dec = linked_decisions[1]
+            assert strategy_dec["redacted"] is True
+            assert strategy_dec["required_capability"] == "strategy.view"
+            assert strategy_dec["ref_id"] == "strat-001"
+
+            # Redacted evidence count telemetry
+            assert detail["meta"]["redacted_evidence_count"] == 1
+        finally:
+            bff_main.read_store = original_store
+            for key, value in tracked_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value

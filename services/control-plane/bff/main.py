@@ -2697,6 +2697,28 @@ _ROLE_CAPABILITY_MAP = {
 }
 
 
+_ENTITY_TYPE_EVIDENCE_KIND: Dict[str, str] = {
+    "strategy_spec": "strategy",
+    "strategy": "strategy",
+    "persona": "persona",
+    "deployment_plan": "deployment",
+    "deployment": "deployment",
+    "runtime": "runtime",
+    "runtime_binding": "runtime",
+    "alert": "alert",
+    "incident": "incident",
+    "job": "job",
+    "audit": "audit",
+    "metric": "metric",
+    "policy": "policy",
+    "approval": "approval",
+    "artifact": "artifact",
+    "signal": "signal",
+    "journal": "journal",
+    "postmortem": "postmortem",
+}
+
+
 def _capabilities_for_identity(identity: OperatorIdentity) -> List[str]:
     """Derive a best-effort capability set from operator roles.
 
@@ -10575,9 +10597,18 @@ async def list_evidence_refs(
         page_items, next_page_token = _page_slice(evidence_refs, page_token, page_size)
         has_more = next_page_token is not None
 
-    return {
-        "evidence_refs": [
-            {
+    try:
+        capabilities = _capabilities_for_identity(identity)
+    except Exception:
+        capabilities = None
+    processed_items, redacted_count = redact_evidence_refs(identity, list(page_items), capabilities=capabilities)
+
+    evidence_refs_response = []
+    for item in processed_items:
+        if item.get("redacted"):
+            evidence_refs_response.append(item)
+        else:
+            evidence_refs_response.append({
                 "ref_id": item.get("ref_id"),
                 "source_document": json.loads(json.dumps(item.get("source_document") or {})),
                 "link_type": item.get("link_type"),
@@ -10585,9 +10616,10 @@ async def list_evidence_refs(
                 "linked_object_summary": json.loads(json.dumps(item.get("linked_object_summary") or {})),
                 "resolved_link": json.loads(json.dumps(item.get("resolved_link") or {})),
                 "route_href": item.get("route_href"),
-            }
-            for item in page_items
-        ],
+            })
+
+    return {
+        "evidence_refs": evidence_refs_response,
         "pagination": {
             "page_size": page_size,
             "next_page_token": next_page_token,
@@ -10596,6 +10628,7 @@ async def list_evidence_refs(
         "meta": {
             **_snapshot_meta(snapshot_at),
             "surfaces": {"evidence_refs_list": surface_state},
+            "redacted_evidence_count": redacted_count,
         },
     }
 
@@ -10624,13 +10657,40 @@ async def get_evidence_ref_detail(
         has_data=True,
     )
 
+    try:
+        capabilities = _capabilities_for_identity(identity)
+    except Exception:
+        capabilities = None
+    raw_linked_decisions = json.loads(json.dumps(evidence_ref.get("linked_decisions") or []))
+    # Annotate linked decisions with evidence_type derived from entity_type for redaction.
+    # Pass-through decisions are restored to their original form (without annotation).
+    annotated_decisions = []
+    for dec in raw_linked_decisions:
+        entity_type = str(dec.get("entity_type") or "").strip()
+        ev_kind = _ENTITY_TYPE_EVIDENCE_KIND.get(entity_type)
+        if ev_kind:
+            dec_copy = dict(dec)
+            dec_copy["evidence_type"] = ev_kind
+            if not dec_copy.get("ref_id") and not dec_copy.get("id"):
+                dec_copy["ref_id"] = dec_copy.get("entity_ref") or ""
+            annotated_decisions.append(dec_copy)
+        else:
+            annotated_decisions.append(dec)
+    processed_decisions, redacted_count = redact_evidence_refs(identity, annotated_decisions, capabilities=capabilities)
+    linked_decisions = []
+    for orig, proc in zip(raw_linked_decisions, processed_decisions):
+        if proc.get("redacted"):
+            linked_decisions.append(proc)
+        else:
+            linked_decisions.append(orig)
+
     return {
         "ref_id": evidence_ref.get("ref_id"),
         "source_document": json.loads(json.dumps(evidence_ref.get("source_document") or {})),
         "link_type": evidence_ref.get("link_type"),
         "credibility": json.loads(json.dumps(evidence_ref.get("credibility") or {})),
         "resolved_link": json.loads(json.dumps(evidence_ref.get("resolved_link") or {})),
-        "linked_decisions": json.loads(json.dumps(evidence_ref.get("linked_decisions") or [])),
+        "linked_decisions": linked_decisions,
         "source_note_context": json.loads(json.dumps(evidence_ref.get("source_note_context"))),
         "source_memory_context": json.loads(json.dumps(evidence_ref.get("source_memory_context"))),
         "created_at": evidence_ref.get("created_at"),
@@ -10641,6 +10701,7 @@ async def get_evidence_ref_detail(
                 "resolved_link": detail_surface,
                 "linked_decisions": detail_surface,
             },
+            "redacted_evidence_count": redacted_count,
         },
     }
 
@@ -11336,8 +11397,26 @@ async def list_governance_review_queue(
         "allowedActions": allowed_actions_surface,
     }
 
+    try:
+        capabilities = _capabilities_for_identity(identity)
+    except Exception:
+        capabilities = None
+    total_redacted = 0
+    redacted_items = []
+    for item in items:
+        item_copy = json.loads(json.dumps(item))
+        review_summary = item_copy.get("review_summary") or {}
+        raw_refs = list(review_summary.get("evidence_refs") or [])
+        if raw_refs:
+            processed_refs, count = redact_evidence_refs(identity, raw_refs, capabilities=capabilities)
+            review_summary["evidence_refs"] = processed_refs
+            total_redacted += count
+            item_copy["review_summary"] = review_summary
+        redacted_items.append(item_copy)
+    meta["redacted_evidence_count"] = total_redacted
+
     return {
-        "items": items,
+        "items": redacted_items,
         "page_info": {
             "next_page_token": next_page_token,
         },

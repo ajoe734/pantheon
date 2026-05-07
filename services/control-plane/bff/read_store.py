@@ -7755,6 +7755,9 @@ class ReadSurfaceStore:
         route_href = evidence_ref.get("route_href") or self._kw03_route_href(ref_id)
         payload = {
             "ref_id": ref_id,
+            # evidence_type carries the EvidenceKind for capability redaction in main.py.
+            # It is stripped from the public API response by the endpoint's re-projection.
+            "evidence_type": evidence_ref.get("evidence_type") or evidence_ref.get("type") or None,
             "display_label": evidence_ref.get("display_label") or source_document.get("title") or linked_display_label or ref_id,
             "route_href": route_href,
             "source_document": {
