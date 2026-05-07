@@ -205,6 +205,30 @@ class CommandResponse(BaseModel, Generic[T]):
     meta: Optional[Dict[str, Any]] = None
 
 
+class DecisionJournalEntryDTO(BaseModel):
+    id: str
+    title: str
+    body: str = ""
+    tags: List[str] = Field(default_factory=list)
+    linkedStrategyIds: List[str] = Field(default_factory=list)
+    linkedPersonaIds: List[str] = Field(default_factory=list)
+    visibility: str = "private"
+    createdAt: str = Field(default_factory=utc_now)
+    updatedAt: str = Field(default_factory=utc_now)
+    version: int = 1
+    canonicalWriteAuthority: str = "agora_journal_service"
+    persistenceMode: str = "bff_local_dev_store"
+
+
+class JournalEntryMergePatch(BaseModel):
+    title: Optional[str] = None
+    body: Optional[str] = None
+    tags: Optional[List[str]] = None
+    linkedStrategyIds: Optional[List[str]] = None
+    linkedPersonaIds: Optional[List[str]] = None
+    visibility: Optional[str] = None
+
+
 class CommandStatusResponse(BaseModel):
     command_id: str
     type: CommandType

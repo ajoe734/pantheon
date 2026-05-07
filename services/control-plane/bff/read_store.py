@@ -4816,6 +4816,9 @@ class ReadSurfaceStore:
         "consult_memos": "consult_memos",
         "trainer_replays": "trainer_replays",
         "trainer_controls": "trainer_controls",
+        "decision_journal_entries": "decision_journal_entries",
+        "decision_journal_idempotency": "decision_journal_idempotency",
+        "agora_journal_audit_events": "agora_journal_audit_events",
     }
 
     def __init__(
@@ -6640,6 +6643,185 @@ class ReadSurfaceStore:
         if local_payload not in (None, "", [], {}):
             return "local_snapshot"
         return "missing"
+
+    def _decision_journal_records(self) -> Dict[str, Dict[str, Any]]:
+        local_key = self._LOCAL_DATA_KEYS.get("decision_journal_entries", "decision_journal_entries")
+        records = self._data.get(local_key)
+        if not isinstance(records, dict):
+            records = {}
+            self._data[local_key] = records
+        return records
+
+    def _decision_journal_idempotency_records(self) -> Dict[str, Dict[str, Any]]:
+        local_key = self._LOCAL_DATA_KEYS.get(
+            "decision_journal_idempotency",
+            "decision_journal_idempotency",
+        )
+        records = self._data.get(local_key)
+        if not isinstance(records, dict):
+            records = {}
+            self._data[local_key] = records
+        return records
+
+    def _agora_journal_audit_records(self) -> Dict[str, Dict[str, Any]]:
+        local_key = self._LOCAL_DATA_KEYS.get(
+            "agora_journal_audit_events",
+            "agora_journal_audit_events",
+        )
+        records = self._data.get(local_key)
+        if not isinstance(records, dict):
+            records = {}
+            self._data[local_key] = records
+        return records
+
+    @staticmethod
+    def _project_decision_journal_entry(record: Dict[str, Any]) -> Dict[str, Any]:
+        entry_id = str(record.get("id") or record.get("entry_id") or "").strip()
+        timestamp = _utc_now_rfc3339()
+        return {
+            "id": entry_id,
+            "title": str(record.get("title") or "").strip(),
+            "body": str(record.get("body") or ""),
+            "tags": list(record.get("tags") or []),
+            "linkedStrategyIds": list(
+                record.get("linkedStrategyIds")
+                or record.get("linked_strategy_ids")
+                or []
+            ),
+            "linkedPersonaIds": list(
+                record.get("linkedPersonaIds")
+                or record.get("linked_persona_ids")
+                or []
+            ),
+            "visibility": str(record.get("visibility") or "private").strip() or "private",
+            "createdAt": str(record.get("createdAt") or record.get("created_at") or timestamp),
+            "updatedAt": str(record.get("updatedAt") or record.get("updated_at") or timestamp),
+            "version": int(record.get("version") or 1),
+            "canonicalWriteAuthority": "agora_journal_service",
+            "persistenceMode": str(record.get("persistenceMode") or "bff_local_dev_store"),
+        }
+
+    @staticmethod
+    def _decision_journal_diff(
+        before: Dict[str, Any],
+        after: Dict[str, Any],
+        fields: List[str],
+    ) -> Dict[str, Any]:
+        changes = []
+        for field in fields:
+            if before.get(field) == after.get(field):
+                continue
+            changes.append(
+                {
+                    "field": field,
+                    "before": json.loads(json.dumps(before.get(field))),
+                    "after": json.loads(json.dumps(after.get(field))),
+                }
+            )
+        return {
+            "changedFields": [change["field"] for change in changes],
+            "changes": changes,
+            "before": json.loads(json.dumps(before)),
+            "after": json.loads(json.dumps(after)),
+        }
+
+    def patch_decision_journal_entry(
+        self,
+        entry_id: str,
+        *,
+        patch: Dict[str, Any],
+        actor_id: str,
+        correlation_id: Optional[str],
+        idempotency_key: str,
+        request_hash: str,
+        patched_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Apply a journal merge patch through the explicit BFF-local dev path.
+
+        Canonical journal write ownership remains outside the BFF. Until an
+        Agora journal service adapter is wired, this method persists only a
+        local degraded/dev projection plus replayable audit evidence.
+        """
+        clean_entry_id = str(entry_id or "").strip()
+        if not clean_entry_id:
+            return None
+
+        idem_records = self._decision_journal_idempotency_records()
+        existing_idem = idem_records.get(idempotency_key)
+        if isinstance(existing_idem, dict):
+            if existing_idem.get("request_hash") != request_hash:
+                return {
+                    "status": "conflict",
+                    "existing_patch_id": existing_idem.get("patch_id"),
+                    "entry": existing_idem.get("entry"),
+                    "audit": existing_idem.get("audit"),
+                }
+            if isinstance(existing_idem.get("entry"), dict) and isinstance(existing_idem.get("audit"), dict):
+                return {
+                    "status": "replayed",
+                    "entry": json.loads(json.dumps(existing_idem["entry"])),
+                    "audit": json.loads(json.dumps(existing_idem["audit"])),
+                }
+
+        records = self._decision_journal_records()
+        stored = records.get(clean_entry_id)
+        if not isinstance(stored, dict):
+            return None
+
+        timestamp = patched_at or _utc_now_rfc3339()
+        before = self._project_decision_journal_entry(stored)
+        after = json.loads(json.dumps(before))
+        changed_candidate_fields = [
+            "title",
+            "body",
+            "tags",
+            "linkedStrategyIds",
+            "linkedPersonaIds",
+            "visibility",
+        ]
+        for field in changed_candidate_fields:
+            if field not in patch:
+                continue
+            value = patch[field]
+            if value is None and field in {"tags", "linkedStrategyIds", "linkedPersonaIds"}:
+                after[field] = []
+            elif value is not None:
+                after[field] = json.loads(json.dumps(value))
+
+        after["updatedAt"] = timestamp
+        after["version"] = int(before.get("version") or 0) + 1
+        after["canonicalWriteAuthority"] = "agora_journal_service"
+        after["persistenceMode"] = "bff_local_dev_store"
+
+        diff = self._decision_journal_diff(before, after, changed_candidate_fields)
+        audit_id = f"aud-agora-journal-{uuid.uuid4().hex[:12]}"
+        audit = {
+            "auditId": audit_id,
+            "action": "agora.journal.merge_patch",
+            "target": {"type": "DecisionJournalEntry", "id": clean_entry_id},
+            "actorId": actor_id,
+            "correlationId": correlation_id,
+            "idempotencyKey": idempotency_key,
+            "recordedAt": timestamp,
+            "canonicalWriteAuthority": "agora_journal_service",
+            "persistenceMode": "bff_local_dev_store",
+            "degraded": True,
+            "diff": diff,
+        }
+
+        records[clean_entry_id] = json.loads(json.dumps(after))
+        audit_records = self._agora_journal_audit_records()
+        audit_records[audit_id] = json.loads(json.dumps(audit))
+        idem_records[idempotency_key] = {
+            "idempotency_key": idempotency_key,
+            "request_hash": request_hash,
+            "patch_id": audit_id,
+            "status": "succeeded",
+            "entry": json.loads(json.dumps(after)),
+            "audit": json.loads(json.dumps(audit)),
+        }
+        self._save()
+        return {"status": "updated", "entry": after, "audit": audit}
 
     @staticmethod
     def _project_canonical_deployment_plan(
