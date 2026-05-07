@@ -666,3 +666,75 @@ def test_bff_final_007_knowledge_evidence_detail_redacts_linked_decisions_for_in
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = value
+
+
+def test_bff_final_007_evidence_detail_redacts_self_for_insufficient_capability() -> None:
+    """Direct evidence detail endpoint returns RedactedEvidenceRef when operator lacks the EvidenceKind capability."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        evidence_store = root / "evidence_refs.json"
+        detail_ref_id = "evref-metric-redact-self-001"
+        evidence_store.write_text(
+            json.dumps(
+                {
+                    detail_ref_id: {
+                        "ref_id": detail_ref_id,
+                        "evidence_type": "metric",   # metric.read → operator LACKS this
+                        "link_type": "supporting",
+                        "source_document": {
+                            "title": "Metric Evidence Detail",
+                            "source_type": "internal_metric",
+                        },
+                        "credibility": {"tier": "primary", "verified": True},
+                        "resolved_link": {
+                            "availability": "internal",
+                            "route_href": "/metrics/metric-001",
+                        },
+                        "linked_decisions": [],
+                        "source_note_context": None,
+                        "source_memory_context": None,
+                        "created_at": "2026-05-07T10:00:00Z",
+                    }
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        tracked_env = {"PANTHEON_BFF_EVIDENCE_REF_STORE": os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE")}
+        os.environ["PANTHEON_BFF_EVIDENCE_REF_STORE"] = str(evidence_store)
+
+        original_store = bff_main.read_store
+        bff_main.read_store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=True,
+        )
+        client = TestClient(bff_main.app)
+
+        try:
+            response = client.get(
+                f"/api/v1/knowledge/evidence/{detail_ref_id}",
+                headers={"Authorization": OPERATOR_TOKEN},
+            )
+            assert response.status_code == 200, response.text
+            detail = response.json()
+
+            # The detail ref itself is redacted
+            assert detail["redacted"] is True
+            assert detail["ref_id"] == detail_ref_id
+            assert detail["required_capability"] == "metric.read"
+            assert detail["reason"] == "insufficient_capability"
+
+            # Redaction telemetry
+            assert detail["meta"]["redacted_evidence_count"] == 1
+
+            # Sensitive detail fields must not appear
+            assert "source_document" not in detail
+            assert "resolved_link" not in detail
+        finally:
+            bff_main.read_store = original_store
+            for key, value in tracked_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value

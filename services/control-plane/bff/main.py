@@ -10661,6 +10661,27 @@ async def get_evidence_ref_detail(
         capabilities = _capabilities_for_identity(identity)
     except Exception:
         capabilities = None
+
+    # Check if the evidence ref itself requires capability redaction before exposing any detail.
+    ev_kind_raw = str(evidence_ref.get("evidence_type") or "").strip()
+    if ev_kind_raw:
+        [self_processed], _ = redact_evidence_refs(
+            identity, [{"ref_id": ref_id, "evidence_type": ev_kind_raw}], capabilities=capabilities
+        )
+        if self_processed.get("redacted"):
+            return {
+                **self_processed,
+                "meta": {
+                    **_snapshot_meta(snapshot_at),
+                    "surfaces": {
+                        "evidence_ref_detail": detail_surface,
+                        "resolved_link": detail_surface,
+                        "linked_decisions": detail_surface,
+                    },
+                    "redacted_evidence_count": 1,
+                },
+            }
+
     raw_linked_decisions = json.loads(json.dumps(evidence_ref.get("linked_decisions") or []))
     # Annotate linked decisions with evidence_type derived from entity_type for redaction.
     # Pass-through decisions are restored to their original form (without annotation).

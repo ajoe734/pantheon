@@ -7820,6 +7820,8 @@ class ReadSurfaceStore:
 
         return {
             "ref_id": projected.get("ref_id"),
+            # evidence_type is used by main.py for top-level capability redaction; not exposed in the API response.
+            "evidence_type": projected.get("evidence_type"),
             "display_label": projected.get("display_label"),
             "route_href": projected.get("route_href"),
             "source_document": {
