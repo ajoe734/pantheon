@@ -38,11 +38,27 @@ canonical control-plane authorities. The BFF does not become a canonical store.
 
 | Route | Method | Purpose |
 |---|---:|---|
-| `/api/v1/operator/commands` | POST | Submit a governed operator command and receive a command receipt. |
+| `/bff/v1/commands` | POST | Submit a governed operator command (final contract); returns `CommandResponse<T>`. |
+| `/api/v1/operator/commands` | POST | Legacy command submission; returns `CommandSubmissionResponse`. Kept for adapter compatibility. |
 | `/api/v1/operator/commands/{command_id}` | GET | Poll command status, result, error, and audit record. |
 
 The status route is a read projection of command state. It is not a retry or
 mutation endpoint.
+
+### Final vs Legacy Route
+
+The final contract route `/bff/v1/commands` is the authoritative command surface for new
+frontend integrations. The legacy `/api/v1/operator/commands` remains active to avoid
+breaking existing adapters and must not be silently removed; use an explicit migration
+test when retiring it.
+
+Key differences:
+
+| Dimension | `/bff/v1/commands` (final) | `/api/v1/operator/commands` (legacy) |
+|---|---|---|
+| Idempotency header | `Idempotency-Key` (canonical); `X-Idempotency-Key` accepted as alias | `X-Idempotency-Key` only |
+| Body `idempotencyKey` | Rejected with 400 `INVALID_REQUEST` | Not checked |
+| Response shape | `CommandResponse<T>` with `status` and `data` | `CommandSubmissionResponse` with flat `receipt_id` |
 
 ## 4. Required Admission Controls
 
@@ -52,22 +68,34 @@ Every accepted command must persist:
 |---|---|
 | Actor | `actor_ref` from authenticated operator identity; anonymous commands are rejected. |
 | Trace | non-empty `trace_id` and `correlation_id`; `X-Trace-Id` may be supplied by caller, otherwise BFF generates one. |
-| Idempotency | non-empty `X-Idempotency-Key`; duplicate key with same request returns the original receipt; same key with different request returns conflict. |
+| Idempotency | non-empty idempotency key from header; duplicate key with same request returns the original receipt; same key with different request returns conflict. On final routes, `Idempotency-Key` is canonical and `X-Idempotency-Key` is a temporary compatibility alias; body-level `idempotencyKey` is rejected. |
 | RBAC / policy | command-specific validator must produce a policy decision (`allow` or `deny`) tied to actor, target, action, environment, and trace. |
 | Audit | non-empty `audit_context.reason`; accepted, denied, validation-failed, and idempotency-conflict commands emit an audit action. |
 | Target | typed target reference (`target.type`, `target.id`) matching the command class. |
 
 ## 5. Request Shape
 
-Headers:
+Headers (final `/bff/v1/commands` route):
+
+```http
+Authorization: Bearer <operator-token>
+Idempotency-Key: <stable-client-retry-key>
+X-Idempotency-Key: <compatibility alias — accepted when Idempotency-Key is absent>
+X-Trace-Id: <optional-trace-id>
+X-Correlation-Id: <optional-correlation-id>
+X-Request-Id: <optional-request-id>
+X-MFA-Token: <required for MFA-gated commands when not already session-bound>
+```
+
+`Idempotency-Key` takes precedence over `X-Idempotency-Key` when both are present.
+`idempotencyKey` in the request body is rejected with 400 `INVALID_REQUEST` on final routes.
+
+Headers (legacy `/api/v1/operator/commands` route):
 
 ```http
 Authorization: Bearer <operator-token>
 X-Idempotency-Key: <stable-client-retry-key>
 X-Trace-Id: <optional-trace-id>
-X-Correlation-Id: <optional-correlation-id>
-X-Request-Id: <optional-request-id>
-X-MFA-Token: <required for MFA-gated commands when not already session-bound>
 ```
 
 Body:
@@ -178,8 +206,15 @@ python3 -m pytest services/control-plane/bff/test_governance_command_submission.
 
 This test set verifies:
 
-- missing `X-Idempotency-Key` is rejected with foundation error and audit action
-- duplicate idempotency key with identical request replays the original receipt
+- `Idempotency-Key` header is accepted on `/bff/v1/commands` (final route)
+- `X-Idempotency-Key` is accepted as a compatibility alias on the final route
+- `Idempotency-Key` takes precedence over `X-Idempotency-Key` when both are present
+- `idempotencyKey` in the request body is rejected with 400 `INVALID_REQUEST`
+- missing idempotency key returns 400 `INVALID_PARAMS` with `precondition_failed=idempotency_key`
+- duplicate idempotency key with identical request replays the original `CommandResponse`
+- same key with different body returns 409 `IDEMPOTENCY_CONFLICT`
+- `/bff/v1/commands` response shape is `CommandResponse<T>` with `status` and `data`
+- legacy `/api/v1/operator/commands` is unaffected and returns `CommandSubmissionResponse`
 - runtime, deployment, approval, and incident command classes persist actor,
   trace, idempotency, policy decision, and audit evidence
 - the existing committee command path still uses the shared operator command

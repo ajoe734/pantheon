@@ -505,3 +505,286 @@ def test_submit_command_accepts_record_sponsor_decision_published_payload() -> N
             bff_main.command_store = original_store
             bff_main.read_store = original_read_store
             bff_main._process_command_stub = original_worker
+
+
+# --------------------------------------------------------------------------- #
+# BFF-FINAL-002: /bff/v1/commands — idempotency and command envelope tests
+# --------------------------------------------------------------------------- #
+
+_FINAL_BODY = {
+    "command": "ApproveDecision",
+    "target": {"type": "ApprovalDecision", "id": "appr-final-001"},
+    "params": {"decision_id": "appr-final-001"},
+    "audit_context": {"reason": "Final contract test"},
+}
+
+
+def test_bff_v1_commands_accepts_idempotency_key_header() -> None:
+    """Idempotency-Key header is accepted on the final contract route."""
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.command_store
+        original_worker = bff_main._process_command_stub
+        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        bff_main._process_command_stub = _noop_process_command
+        client = TestClient(bff_main.app)
+
+        try:
+            response = client.post(
+                "/bff/v1/commands",
+                headers={
+                    "Authorization": APPROVER_TOKEN,
+                    "Idempotency-Key": "final-key-001",
+                },
+                json=_FINAL_BODY,
+            )
+            assert response.status_code == 202, response.text
+            payload = response.json()
+            assert payload["status"] in ("accepted", "queued", "completed")
+            assert "data" in payload
+        finally:
+            bff_main.command_store = original_store
+            bff_main._process_command_stub = original_worker
+
+
+def test_bff_v1_commands_accepts_x_idempotency_key_as_alias() -> None:
+    """X-Idempotency-Key is accepted as a compatibility alias on the final route."""
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.command_store
+        original_worker = bff_main._process_command_stub
+        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        bff_main._process_command_stub = _noop_process_command
+        client = TestClient(bff_main.app)
+
+        try:
+            response = client.post(
+                "/bff/v1/commands",
+                headers={
+                    "Authorization": APPROVER_TOKEN,
+                    "X-Idempotency-Key": "final-alias-key-001",
+                },
+                json=_FINAL_BODY,
+            )
+            assert response.status_code == 202, response.text
+            payload = response.json()
+            assert "data" in payload
+        finally:
+            bff_main.command_store = original_store
+            bff_main._process_command_stub = original_worker
+
+
+def test_bff_v1_commands_canonical_key_takes_precedence_over_alias() -> None:
+    """When both headers are present, Idempotency-Key takes precedence."""
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.command_store
+        original_worker = bff_main._process_command_stub
+        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        bff_main._process_command_stub = _noop_process_command
+        client = TestClient(bff_main.app)
+
+        try:
+            response = client.post(
+                "/bff/v1/commands",
+                headers={
+                    "Authorization": APPROVER_TOKEN,
+                    "Idempotency-Key": "canonical-key-001",
+                    "X-Idempotency-Key": "alias-key-should-be-ignored",
+                },
+                json=_FINAL_BODY,
+            )
+            assert response.status_code == 202, response.text
+
+            records = bff_main.command_store._get_all_commands()
+            assert len(records) == 1
+            foundation = records[0]["foundation"]
+            assert foundation["idempotency_record"]["idempotency_key"] == "canonical-key-001"
+        finally:
+            bff_main.command_store = original_store
+            bff_main._process_command_stub = original_worker
+
+
+def test_bff_v1_commands_rejects_missing_idempotency_key() -> None:
+    """Both Idempotency-Key and X-Idempotency-Key absent → 400 INVALID_PARAMS."""
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.command_store
+        original_worker = bff_main._process_command_stub
+        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        bff_main._process_command_stub = _noop_process_command
+        client = TestClient(bff_main.app)
+
+        try:
+            response = client.post(
+                "/bff/v1/commands",
+                headers={"Authorization": APPROVER_TOKEN},
+                json=_FINAL_BODY,
+            )
+            assert response.status_code == 400, response.text
+            detail = response.json()["detail"]
+            assert detail["error"]["code"] == "INVALID_PARAMS"
+            assert detail["error"]["details"]["precondition_failed"] == "idempotency_key"
+            assert bff_main.command_store._get_all_commands() == []
+        finally:
+            bff_main.command_store = original_store
+            bff_main._process_command_stub = original_worker
+
+
+def test_bff_v1_commands_rejects_body_idempotency_key() -> None:
+    """idempotencyKey in the request body → 400 INVALID_REQUEST on the final route."""
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.command_store
+        original_worker = bff_main._process_command_stub
+        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        bff_main._process_command_stub = _noop_process_command
+        client = TestClient(bff_main.app)
+
+        body_with_key = {**_FINAL_BODY, "idempotencyKey": "should-be-in-header"}
+
+        try:
+            response = client.post(
+                "/bff/v1/commands",
+                headers={
+                    "Authorization": APPROVER_TOKEN,
+                    "Idempotency-Key": "final-key-body-reject",
+                },
+                json=body_with_key,
+            )
+            assert response.status_code == 400, response.text
+            detail = response.json()["detail"]
+            assert detail["error"]["code"] == "INVALID_REQUEST"
+            assert detail["error"]["details"]["precondition_failed"] == "body_idempotency_key"
+            assert bff_main.command_store._get_all_commands() == []
+        finally:
+            bff_main.command_store = original_store
+            bff_main._process_command_stub = original_worker
+
+
+def test_bff_v1_commands_replay_returns_command_response() -> None:
+    """Same Idempotency-Key + same body → identical CommandResponse replay."""
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.command_store
+        original_worker = bff_main._process_command_stub
+        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        bff_main._process_command_stub = _noop_process_command
+        client = TestClient(bff_main.app)
+
+        headers = {
+            "Authorization": APPROVER_TOKEN,
+            "Idempotency-Key": "final-replay-key-001",
+        }
+        # Provide a fixed timestamp so both requests compute identical request hashes
+        # regardless of when they execute (audit_context.timestamp is auto-generated otherwise).
+        stable_body = {
+            **_FINAL_BODY,
+            "audit_context": {"reason": "Final contract test", "timestamp": "2026-05-07T12:00:00Z"},
+        }
+
+        try:
+            first = client.post("/bff/v1/commands", headers=headers, json=stable_body)
+            second = client.post("/bff/v1/commands", headers=headers, json=stable_body)
+
+            assert first.status_code == 202, first.text
+            assert second.status_code == 202, second.text
+
+            first_data = first.json()
+            second_data = second.json()
+            assert "data" in first_data
+            assert "data" in second_data
+            assert first_data["data"]["receipt_id"] == second_data["data"]["receipt_id"]
+
+            records = bff_main.command_store._get_all_commands()
+            assert len(records) == 1
+        finally:
+            bff_main.command_store = original_store
+            bff_main._process_command_stub = original_worker
+
+
+def test_bff_v1_commands_conflict_returns_idempotency_conflict() -> None:
+    """Same Idempotency-Key + different body → 409 IDEMPOTENCY_CONFLICT."""
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.command_store
+        original_worker = bff_main._process_command_stub
+        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        bff_main._process_command_stub = _noop_process_command
+        client = TestClient(bff_main.app)
+
+        headers = {
+            "Authorization": APPROVER_TOKEN,
+            "Idempotency-Key": "final-conflict-key-001",
+        }
+        # Use fixed timestamps so only the reason differs, guaranteeing different hashes.
+        body_a = {**_FINAL_BODY, "audit_context": {"reason": "First payload", "timestamp": "2026-05-07T12:00:00Z"}}
+        body_b = {**_FINAL_BODY, "audit_context": {"reason": "Conflicting payload", "timestamp": "2026-05-07T12:00:00Z"}}
+
+        try:
+            first = client.post("/bff/v1/commands", headers=headers, json=body_a)
+            assert first.status_code == 202, first.text
+
+            second = client.post("/bff/v1/commands", headers=headers, json=body_b)
+            assert second.status_code == 409, second.text
+            detail = second.json()["detail"]
+            assert detail["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+        finally:
+            bff_main.command_store = original_store
+            bff_main._process_command_stub = original_worker
+
+
+def test_bff_v1_commands_returns_command_response_envelope() -> None:
+    """Response shape is CommandResponse with status and data fields."""
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.command_store
+        original_worker = bff_main._process_command_stub
+        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        bff_main._process_command_stub = _noop_process_command
+        client = TestClient(bff_main.app)
+
+        try:
+            response = client.post(
+                "/bff/v1/commands",
+                headers={
+                    "Authorization": APPROVER_TOKEN,
+                    "Idempotency-Key": "final-envelope-key-001",
+                },
+                json=_FINAL_BODY,
+            )
+            assert response.status_code == 202, response.text
+            payload = response.json()
+            assert "status" in payload
+            assert payload["status"] in ("accepted", "queued", "completed")
+            assert "data" in payload
+            assert payload["data"] is not None
+            assert "receipt_id" in payload["data"]
+        finally:
+            bff_main.command_store = original_store
+            bff_main._process_command_stub = original_worker
+
+
+def test_legacy_api_v1_commands_unaffected_by_final_contract() -> None:
+    """The legacy /api/v1/operator/commands route still uses X-Idempotency-Key and returns CommandSubmissionResponse."""
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.command_store
+        original_worker = bff_main._process_command_stub
+        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        bff_main._process_command_stub = _noop_process_command
+        client = TestClient(bff_main.app)
+
+        try:
+            response = client.post(
+                "/api/v1/operator/commands",
+                headers={
+                    "Authorization": APPROVER_TOKEN,
+                    "X-Idempotency-Key": "legacy-key-001",
+                },
+                json={
+                    "command": "ApproveDecision",
+                    "target": {"type": "ApprovalDecision", "id": "appr-legacy-001"},
+                    "params": {"decision_id": "appr-legacy-001"},
+                    "audit_context": {"reason": "Legacy path test"},
+                },
+            )
+            assert response.status_code == 202, response.text
+            payload = response.json()
+            # Legacy route returns receipt_id at top level (CommandSubmissionResponse shape)
+            assert "receipt_id" in payload
+            assert "status" in payload
+        finally:
+            bff_main.command_store = original_store
+            bff_main._process_command_stub = original_worker

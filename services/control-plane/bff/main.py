@@ -113,6 +113,7 @@ if _cors_origins:
             "Authorization",
             "Cache-Control",
             "Content-Type",
+            "Idempotency-Key",
             "Last-Event-ID",
             "X-Correlation-Id",
             "X-Idempotency-Key",
@@ -944,6 +945,46 @@ def _require_operator_command_idempotency_key(value: Optional[str]) -> str:
         precondition_failed="idempotency_key",
         suggestion="Retry with X-Idempotency-Key set to a stable client retry key",
     )
+
+
+def _resolve_final_idempotency_key(
+    idempotency_key: Optional[str],
+    x_idempotency_key: Optional[str],
+) -> str:
+    """Prefer Idempotency-Key (RFC); accept X-Idempotency-Key as a compatibility alias."""
+    canonical = str(idempotency_key or "").strip()
+    if canonical:
+        return canonical
+    alias = str(x_idempotency_key or "").strip()
+    if alias:
+        return alias
+    raise _bff_error(
+        400,
+        ErrorCode.INVALID_PARAMS,
+        "Idempotency-Key is required for operator commands",
+        (
+            "Final contract routes require a non-empty Idempotency-Key header; "
+            "X-Idempotency-Key is accepted as a temporary compatibility alias"
+        ),
+        precondition_failed="idempotency_key",
+        suggestion="Retry with Idempotency-Key set to a stable client retry key",
+    )
+
+
+def _reject_body_idempotency_key(payload: Dict[str, Any]) -> None:
+    """Reject final-contract payloads that carry idempotencyKey in the body."""
+    if "idempotencyKey" in payload:
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_REQUEST,
+            "idempotencyKey must not appear in the request body",
+            (
+                "Final contract routes require idempotency via the Idempotency-Key header, "
+                "not the request body"
+            ),
+            precondition_failed="body_idempotency_key",
+            suggestion="Remove idempotencyKey from the body and set the Idempotency-Key header",
+        )
 
 
 def _normalize_operator_command_payload(payload: Dict[str, Any]) -> OperatorCommand:
@@ -12368,6 +12409,150 @@ async def submit_command(
     background_tasks.add_task(_process_command_stub, command_id)
 
     return _project_command_submission_response(
+        command_id=command_id,
+        command=cmd.command,
+        accepted_at=submitted_at,
+        status=CommandStatus.SUBMITTED,
+        staleness_warning=staleness_warning,
+    )
+
+
+@app.post("/bff/v1/commands", status_code=202)
+async def submit_final_command(
+    background_tasks: BackgroundTasks,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """
+    Submit an operator command (final BFF contract).
+
+    Idempotency-Key is the required header; X-Idempotency-Key is accepted as a
+    temporary compatibility alias when Idempotency-Key is absent.
+    idempotencyKey in the request body is rejected.
+    Returns CommandResponse<T> wrapping the command receipt.
+    """
+    # 1. Authenticate
+    identity = _extract_identity(authorization, mfa_token=x_mfa_token)
+    cmd = _normalize_operator_command_payload(payload)
+
+    # Resolve idempotency key before building foundation context so the key is
+    # present in the trace from the start.
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+
+    foundation_context = _build_foundation_command_context(
+        cmd=cmd,
+        identity=identity,
+        raw_payload=payload,
+        trace_id=x_trace_id,
+        correlation_id=x_correlation_id,
+        request_id=x_request_id,
+        idempotency_key=resolved_key,
+    )
+
+    # 2. Precondition validation
+    try:
+        _reject_body_idempotency_key(payload)
+        _validate_audit_context(cmd)
+        _ensure_live_broker_scope_allowed(cmd, payload)
+        _validate_drawer_runtime_target(cmd)
+        validator = _VALIDATORS.get(cmd.command)
+        if validator:
+            validator(cmd.params, identity)
+    except HTTPException as exc:
+        raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
+
+    stored_params = _stored_command_params(cmd, identity)
+
+    # 3. Idempotency replay / conflict check
+    duplicate = command_store.get_command_by_idempotency_key(
+        foundation_context["idempotency_record"].idempotency_key
+    )
+    if duplicate:
+        duplicate_record = (duplicate.get("foundation") or {}).get("idempotency_record") or {}
+        if duplicate_record.get("request_hash") != foundation_context["idempotency_record"].request_hash:
+            raise _foundation_idempotency_conflict_error(
+                foundation_context=foundation_context,
+                existing_command_id=str(duplicate.get("command_id") or ""),
+            )
+        return _project_final_command_response(
+            command_id=duplicate["command_id"],
+            command=cmd.command,
+            accepted_at=duplicate.get("submitted_at") or utc_now(),
+            status=CommandStatus(duplicate.get("status") or CommandStatus.SUBMITTED.value),
+            staleness_warning=None,
+        )
+
+    # 4. Concurrent modification check
+    active = command_store.get_active_commands_for_target(cmd.target.type.value, cmd.target.id)
+    if active:
+        error = _bff_error(
+            409, ErrorCode.CONCURRENT_MODIFICATION,
+            "A command is already in flight for this target",
+            f"Command {active[0]['command_id']} is currently {active[0]['status']}",
+            precondition_failed="concurrent_safety",
+            suggestion="Wait for the in-flight command to complete or time out before retrying",
+        )
+        raise _foundation_bff_error(error, foundation_context=foundation_context)
+
+    # 5. Degraded mode check
+    staleness_warning = _check_read_surface_state()
+
+    # 6. Persist command
+    command_envelope: CommandEnvelope = foundation_context["command_envelope"]
+    idempotency_record: IdempotencyRecord = foundation_context["idempotency_record"]
+    idempotency_record = idempotency_record.with_status(
+        "succeeded",
+        result_ref=f"command:{command_envelope.command_id}",
+    )
+    foundation_context["idempotency_record"] = idempotency_record
+    command_id = command_envelope.command_id
+    submitted_at = utc_now()
+
+    raw_token = None
+    if authorization and authorization.startswith("Bearer "):
+        raw_token = authorization[len("Bearer "):]
+    mfa_token = x_mfa_token or ("000000" if identity.mfa_verified else None)
+
+    audit_record = {
+        "operator_id": identity.operator_id,
+        "roles_at_submission": identity.roles,
+        "mfa_verified": identity.mfa_verified,
+        "reason": cmd.audit_context.reason,
+        "incident_id": cmd.audit_context.incident_id,
+        "preconditions_checked": [
+            "authentication", "authorization", "params_shape", "concurrent_safety"
+        ],
+        "timestamp": submitted_at,
+        "staleness_warning": staleness_warning.model_dump() if staleness_warning else None,
+        "auth_token": raw_token,
+        "mfa_token": mfa_token,
+        "foundation": _serialize_foundation_context(foundation_context),
+    }
+
+    command_store.submit_command(
+        command_id=command_id,
+        command_type=cmd.command,
+        target=cmd.target,
+        submitted_at=submitted_at,
+        params=stored_params,
+        audit_context=audit_record,
+        foundation_context=_serialize_foundation_context(foundation_context),
+    )
+
+    log.info(
+        "Accepted final-contract command %s (%s) for %s:%s by operator %s",
+        command_id, cmd.command.value, cmd.target.type.value, cmd.target.id, identity.operator_id,
+    )
+
+    background_tasks.add_task(_process_command_stub, command_id)
+
+    return _project_final_command_response(
         command_id=command_id,
         command=cmd.command,
         accepted_at=submitted_at,
