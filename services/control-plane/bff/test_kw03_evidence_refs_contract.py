@@ -356,3 +356,64 @@ def test_kw03_list_rejects_linked_entity_ref_without_type() -> None:
         assert response.status_code == 400, response.text
         payload = response.json()
         assert payload["detail"]["error"]["details"]["precondition_failed"] == "linked_entity_ref"
+
+
+# --------------------------------------------------------------------------- #
+# BFF-FINAL-007: Evidence redaction capability enforcement tests
+# --------------------------------------------------------------------------- #
+
+def test_bff_final_007_redact_evidence_refs_insufficient_capability() -> None:
+    """Refs for evidence kinds the operator lacks capability for are replaced by RedactedEvidenceRef."""
+    OperatorIdentity = read_store_module.OperatorIdentity
+    _redact = read_store_module.redact_evidence_refs
+
+    # operator role: has risk.alert.read, risk.incident.read, runtime.read, artifact.read
+    # does NOT have metric.read or job.read
+    identity = OperatorIdentity(operator_id="op-test-007", roles=["operator"])
+    caps = ["risk.alert.read", "risk.incident.read", "runtime.read", "artifact.read"]
+
+    refs = [
+        {"ref_id": "ref-alert-001", "type": "alert"},    # risk.alert.read → passes
+        {"ref_id": "ref-metric-001", "type": "metric"},  # metric.read → redacted
+        {"ref_id": "ref-job-001", "type": "job"},         # job.read → redacted
+    ]
+
+    processed, redacted_count = _redact(identity, refs, capabilities=caps)
+
+    assert redacted_count == 2
+    assert len(processed) == 3
+
+    # Alert ref passes through unchanged (operator has risk.alert.read)
+    assert processed[0] == refs[0]
+
+    # Metric ref is replaced by a redacted envelope
+    metric_ref = processed[1]
+    assert metric_ref["redacted"] is True
+    assert metric_ref["required_capability"] == "metric.read"
+    assert metric_ref["reason"] == "insufficient_capability"
+    assert metric_ref["ref_id"] == "ref-metric-001"
+    assert metric_ref["kind"] == "metric"
+
+    # Job ref is replaced by a redacted envelope
+    job_ref = processed[2]
+    assert job_ref["redacted"] is True
+    assert job_ref["required_capability"] == "job.read"
+    assert job_ref["ref_id"] == "ref-job-001"
+    assert job_ref["kind"] == "job"
+
+
+def test_bff_final_007_redact_evidence_refs_none_capabilities_is_noop() -> None:
+    """When capabilities=None, redaction is a no-op (backwards-compatible)."""
+    OperatorIdentity = read_store_module.OperatorIdentity
+    _redact = read_store_module.redact_evidence_refs
+
+    identity = OperatorIdentity(operator_id="op-test-007", roles=["operator"])
+    refs = [
+        {"ref_id": "ref-metric-001", "type": "metric"},
+        {"ref_id": "ref-alert-001", "type": "alert"},
+    ]
+
+    processed, redacted_count = _redact(identity, refs, capabilities=None)
+
+    assert redacted_count == 0
+    assert processed == refs

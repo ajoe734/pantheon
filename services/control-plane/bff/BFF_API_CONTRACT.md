@@ -480,8 +480,14 @@ Each composed view returns `meta.surfaces` showing the status of each sub-surfac
 | SSE Endpoint | Data Stream | Reconnection |
 |---|---|---|
 | `GET /api/v1/runtime/{runtime_id}/events/stream` | Runtime state changes | `?last_event_id=` |
-| `GET /api/v1/incidents/stream` | Active incident events | `?last_event_id=` |
+| `GET /api/v1/incidents/stream` | Active incident events (Legacy) | `?last_event_id=` |
 | `GET /api/v1/kill-switch/updates` | Kill-switch state changes | `?last_event_id=` |
+| `GET /api/v1/approvals/stream` | Approval lifecycle events | `?last_event_id=` |
+| `GET /api/v1/agora/ask/stream` | Ask session events | `?last_event_id=` |
+| `GET /api/v1/stream/{channel}` | Generic stream for any catalog channel | `?last_event_id=` |
+
+**Channel Catalog**:
+`approval, ask, artifact, runtime, mcp, skill, channel, tool, ranking, rebalance, evolution, research, signal, inbox, journal, postmortem, loop, sentinel, intervention, audit, system`
 
 ### 11.3 Stream Event Shape
 
@@ -499,20 +505,72 @@ Each composed view returns `meta.surfaces` showing the status of each sub-surfac
 }
 ```
 
-Event types:
-- `runtime_state_changed`: Runtime binding state transition
-- `incident_created`: New incident case
-- `incident_updated`: Incident status change
-- `kill_switch_activated`: Kill switch engaged
-- `kill_switch_deactivated`: Kill switch released
+**New Event Types**:
 
-### 11.4 SSE Headers
+- **Approval**:
+  - `approval.created`: New approval request submitted
+  - `approval.stage.changed`: Approval moved to next review stage
+  - `approval.decided`: Approval reached terminal state (approved/rejected)
+  - `approval.sla.escalated`: Approval breached SLA threshold
+
+- **Ask**:
+  - `ask.session.started`: New Agora ask session initialized
+  - `ask.message.delta`: Real-time token streaming for ask responses
+  - `ask.tool.called`: Persona calling a tool/skill
+  - `ask.message.completed`: Full message content delivered
+  - `ask.session.completed`: Session finished successfully
+  - `ask.session.failed`: Session terminated with error
+
+### 11.4 Replay and Resync
+
+BFF maintains an in-memory buffer of the last 500 events per channel.
+
+- If `last_event_id` is found in the buffer, BFF replays all events after that ID before streaming new events.
+- If `last_event_id` is provided but **not found** in the buffer (due to buffer rotation or server restart), BFF returns **HTTP 409** with `SSE_REPLAY_UNAVAILABLE`.
+- In case of 409, the client **must** resync full canonical state via the channel-specific resync routes (advertised in `X-SSE-Resync-Routes`) before reconnecting.
+
+**Channel-specific resync routes**:
+
+| Channel | Resync Routes |
+|---|---|
+| `approval` | `GET /bff/approvals`, `GET /bff/v5/interventions` |
+| `ask` | `GET /bff/agora/ask/sessions/{id}` |
+| All others | No canonical resync route; reconnect with `last_event_id=` omitted |
+
+**SSE_REPLAY_UNAVAILABLE error shape** (HTTP 409):
+```json
+{
+  "error": {
+    "code": "SSE_REPLAY_UNAVAILABLE",
+    "message": "Event ID <id> is no longer in the buffer",
+    "details": {
+      "reason": "SSE_REPLAY_HISTORY_MISSING",
+      "channel": "<channel>",
+      "lastEventId": "<id>",
+      "replaySupported": true,
+      "replayWindowEvents": 500,
+      "replayStore": "in-memory",
+      "resyncRoutes": ["<resync-route>", ...]
+    }
+  }
+}
+```
+
+**BFF HA note**: replay store is single-replica in-memory only. Multi-replica shared replay store is out of scope.
+
+### 11.5 SSE Headers
 
 ```
 Content-Type: text/event-stream
 Cache-Control: no-cache
 Connection: keep-alive
 X-Accel-Buffering: no
+X-SSE-Channel: <channel>
+X-SSE-Replay-Supported: true
+X-SSE-Replay-Window-Events: 500
+X-SSE-Buffer-Size: 500
+X-SSE-Replay-Store: in-memory
+X-SSE-Resync-Routes: <comma-separated resync routes>   (approval and ask channels only)
 ```
 
 ---
@@ -561,8 +619,8 @@ This ensures the BFF remains on the control/UI plane and never becomes a source 
 | Evolution (EV) | EV-01 to EV-04 | 4 |
 | **Canonical v1 Subtotal** | | **33** |
 | Composed views | 9 | 9 |
-| SSE streams | 3 | 3 |
-| **Total v1 endpoints** | | **45** |
+| SSE streams (runtime, incidents, kill-switch, approvals, ask, generic) | 6 | 6 |
+| **Total v1 endpoints** | | **48** |
 
 ---
 

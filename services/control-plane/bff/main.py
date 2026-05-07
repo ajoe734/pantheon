@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -45,6 +46,7 @@ from models import (
     ActionCommandStatus,
     ApproveMutationCommandPayload,
     AuditContext,
+    SseEventEnvelope,
     BffActionCatalogResponse,
     BffErrorEnvelope,
     BffErrorPayload,
@@ -57,8 +59,10 @@ from models import (
     CommandSubmissionResponse,
     CommandStatusResponse,
     CommandType,
+    DecisionJournalEntryDTO,
     ErrorCode,
     ErrorDetail,
+    JournalEntryMergePatch,
     ObjectType,
     OperatorCommand,
     OperatorIdentity,
@@ -78,7 +82,7 @@ from source_search_ops_client import (
     SourceIngestCommandClient,
     SourceSearchOpsClientError,
 )
-from read_store import ReadSurfaceStore
+from read_store import ReadSurfaceStore, redact_evidence_refs
 from settings_store import SettingsStore
 
 logging.basicConfig(level=logging.INFO)
@@ -1018,6 +1022,212 @@ def _reject_body_idempotency_key(payload: Dict[str, Any]) -> None:
         )
 
 
+_JOURNAL_MERGE_PATCH_CONTENT_TYPE = "application/merge-patch+json"
+_JOURNAL_PATCH_FIELDS = {
+    "title",
+    "body",
+    "tags",
+    "linkedStrategyIds",
+    "linkedPersonaIds",
+    "visibility",
+}
+_JOURNAL_TAG_RE = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$")
+_JOURNAL_WRITE_ROLES = {"operator", "reviewer", "approver", "admin"}
+_JOURNAL_VISIBILITY_CAPABILITY = {
+    "private": "agora.journal.write.private",
+    "team": "agora.journal.write.team",
+    "committee": "agora.journal.write.committee",
+    "public": "agora.journal.write.public",
+}
+_JOURNAL_VISIBILITY_ROLES = {
+    "private": {"operator", "reviewer", "approver", "admin"},
+    "team": {"operator", "reviewer", "approver", "admin"},
+    "committee": {"reviewer", "approver", "admin"},
+    "public": {"admin"},
+}
+
+
+def _stable_json_hash(payload: Dict[str, Any]) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _require_journal_write_role(identity: OperatorIdentity) -> None:
+    if _JOURNAL_WRITE_ROLES.intersection(identity.roles):
+        return
+    raise _bff_error(
+        403,
+        ErrorCode.INSUFFICIENT_ROLE,
+        "Agora journal patch requires operator-level role",
+        "Operator does not hold a role allowed to patch journal entries",
+        precondition_failed="role_check",
+        suggestion="Escalate to an operator, reviewer, approver, or admin",
+    )
+
+
+def _require_merge_patch_content_type(content_type: Optional[str]) -> None:
+    media_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    if media_type == _JOURNAL_MERGE_PATCH_CONTENT_TYPE:
+        return
+    raise _bff_error(
+        415,
+        ErrorCode.INVALID_REQUEST,
+        "Agora journal patch requires application/merge-patch+json",
+        "JSON Merge Patch endpoints reject non-merge-patch content types",
+        precondition_failed="content_type",
+        suggestion="Retry with Content-Type: application/merge-patch+json",
+        details_extra={"requiredContentType": _JOURNAL_MERGE_PATCH_CONTENT_TYPE},
+    )
+
+
+def _journal_visibility_allowed(identity: OperatorIdentity, visibility: str) -> bool:
+    return bool(_JOURNAL_VISIBILITY_ROLES.get(visibility, set()).intersection(identity.roles))
+
+
+def _journal_validation_error(
+    *,
+    message: str,
+    reason: str,
+    field: str,
+    status_code: int = 422,
+    details_extra: Optional[Dict[str, Any]] = None,
+) -> HTTPException:
+    return _bff_error(
+        status_code,
+        ErrorCode.INVALID_PARAMS,
+        message,
+        reason,
+        precondition_failed=f"journal_patch.{field}",
+        suggestion="Submit a JSON Merge Patch body containing only valid journal fields",
+        details_extra={"field": field, **(details_extra or {})},
+    )
+
+
+def _validate_journal_merge_patch_payload(
+    payload: Dict[str, Any],
+    identity: OperatorIdentity,
+) -> Dict[str, Any]:
+    unknown_fields = sorted(set(payload) - _JOURNAL_PATCH_FIELDS)
+    if unknown_fields:
+        raise _journal_validation_error(
+            message="Agora journal patch contains unsupported fields",
+            reason=f"Unsupported fields: {', '.join(unknown_fields)}",
+            field="fields",
+            status_code=400,
+            details_extra={"unsupportedFields": unknown_fields},
+        )
+    if not any(field in payload for field in _JOURNAL_PATCH_FIELDS):
+        raise _journal_validation_error(
+            message="Agora journal patch must include at least one editable field",
+            reason="The merge patch body did not contain any journal entry fields",
+            field="fields",
+            status_code=400,
+        )
+
+    try:
+        patch_model = JournalEntryMergePatch(**payload)
+    except ValidationError as exc:
+        raise _journal_validation_error(
+            message="Agora journal patch has invalid field types",
+            reason=str(exc),
+            field="payload",
+        ) from exc
+
+    patch = patch_model.model_dump(exclude_unset=True)
+
+    if "title" in patch:
+        title = patch["title"]
+        if title is None or not str(title).strip():
+            raise _journal_validation_error(
+                message="Journal entry title is required when patched",
+                reason="title must be a non-empty string",
+                field="title",
+            )
+        title = str(title).strip()
+        if len(title) > 160:
+            raise _journal_validation_error(
+                message="Journal entry title is too long",
+                reason="title must be 1-160 characters",
+                field="title",
+                details_extra={"maxLength": 160},
+            )
+        patch["title"] = title
+
+    if "body" in patch:
+        body = "" if patch["body"] is None else str(patch["body"])
+        if len(body) > 20000:
+            raise _journal_validation_error(
+                message="Journal entry body is too long",
+                reason="body must be at most 20000 characters",
+                field="body",
+                details_extra={"maxLength": 20000},
+            )
+        patch["body"] = body
+
+    for list_field in ("linkedStrategyIds", "linkedPersonaIds"):
+        if list_field not in patch or patch[list_field] is None:
+            continue
+        cleaned = [str(item).strip() for item in patch[list_field]]
+        if any(not item for item in cleaned):
+            raise _journal_validation_error(
+                message=f"{list_field} cannot contain empty ids",
+                reason=f"{list_field} entries must be non-empty strings",
+                field=list_field,
+            )
+        patch[list_field] = cleaned
+
+    if "tags" in patch and patch["tags"] is not None:
+        tags = [str(tag).strip() for tag in patch["tags"]]
+        invalid_tags = [tag for tag in tags if not _JOURNAL_TAG_RE.fullmatch(tag)]
+        if invalid_tags:
+            raise _journal_validation_error(
+                message="Journal entry tags must be lowercase slug or dot.case",
+                reason="tags must match lowercase dot.case or slug form",
+                field="tags",
+                details_extra={"invalidTags": invalid_tags},
+            )
+        patch["tags"] = tags
+
+    if "visibility" in patch:
+        visibility = patch["visibility"]
+        if visibility is None:
+            raise _journal_validation_error(
+                message="Journal entry visibility cannot be null",
+                reason="visibility must be a supported scope",
+                field="visibility",
+            )
+        visibility = str(visibility).strip().lower()
+        required_capability = _JOURNAL_VISIBILITY_CAPABILITY.get(visibility)
+        if not required_capability:
+            raise _journal_validation_error(
+                message="Journal entry visibility is unsupported",
+                reason="visibility must be private, team, committee, or public",
+                field="visibility",
+                details_extra={"allowedValues": sorted(_JOURNAL_VISIBILITY_CAPABILITY)},
+            )
+        if not _journal_visibility_allowed(identity, visibility):
+            raise _bff_error(
+                403,
+                ErrorCode.INSUFFICIENT_ROLE,
+                "Operator lacks capability for requested journal visibility",
+                f"visibility={visibility} requires {required_capability}",
+                precondition_failed="journal_patch.visibility",
+                suggestion="Choose a narrower visibility or escalate to an authorized operator",
+                details_extra={
+                    "field": "visibility",
+                    "requiredCapability": required_capability,
+                },
+            )
+        patch["visibility"] = visibility
+
+    return patch
+
+
 _CONFIRM_TOKEN_FIELDS = (
     "confirmToken",
     "confirm_token",
@@ -1929,7 +2139,7 @@ def _mutation_review_projection(
         capabilities = _capabilities_for_identity(identity)
     except Exception:
         capabilities = None
-    evidence_refs, redacted_count = read_store.redact_evidence_refs(identity, evidence_refs, capabilities=capabilities)
+    evidence_refs, redacted_count = redact_evidence_refs(identity, evidence_refs, capabilities=capabilities)
 
     risk_assessment.setdefault(
         "risk_summary",
@@ -2216,7 +2426,7 @@ def _cw04_memo_projection(
         capabilities = _capabilities_for_identity(identity)
     except Exception:
         capabilities = None
-    evidence_refs, redacted_count = read_store.redact_evidence_refs(identity, evidence_refs, capabilities=capabilities)
+    evidence_refs, redacted_count = redact_evidence_refs(identity, evidence_refs, capabilities=capabilities)
 
     meta = {
         "snapshot_at": snapshot_at,
@@ -12430,7 +12640,7 @@ def get_consultation_evidence(
         capabilities = _capabilities_for_identity(identity)
     except Exception:
         capabilities = None
-    evidence, redacted_count = read_store.redact_evidence_refs(identity, evidence, capabilities=capabilities)
+    evidence, redacted_count = redact_evidence_refs(identity, evidence, capabilities=capabilities)
 
     return {
         "data": evidence,
@@ -12813,6 +13023,101 @@ async def submit_final_command(
     )
 
 
+@app.patch("/bff/agora/journal/{entry_id}")
+async def patch_agora_journal_entry(
+    entry_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+    content_type: Optional[str] = Header(default=None, alias="Content-Type"),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """Apply JSON Merge Patch to an Agora decision journal entry facade."""
+    identity = _extract_identity(authorization, mfa_token=x_mfa_token)
+    _require_journal_write_role(identity)
+    _require_merge_patch_content_type(content_type)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    _reject_body_idempotency_key(payload)
+    patch = _validate_journal_merge_patch_payload(payload, identity)
+
+    correlation_id = str(x_correlation_id or x_trace_id or "").strip() or None
+    request_hash = _stable_json_hash(
+        {
+            "route": "PATCH /bff/agora/journal/{id}",
+            "entry_id": entry_id,
+            "patch": patch,
+        }
+    )
+    result = read_store.patch_decision_journal_entry(
+        entry_id,
+        patch=patch,
+        actor_id=identity.operator_id,
+        correlation_id=correlation_id,
+        idempotency_key=resolved_key,
+        request_hash=request_hash,
+    )
+    if result is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Agora journal entry not found",
+            f"DecisionJournalEntry {entry_id} is not available in the journal store",
+            precondition_failed="journal_entry",
+            suggestion="Refresh the journal list and retry against an existing entry",
+            details_extra={"entryId": entry_id},
+            correlation_id=correlation_id,
+        )
+    if result.get("status") == "conflict":
+        raise _bff_error(
+            409,
+            ErrorCode.IDEMPOTENCY_CONFLICT,
+            "Idempotency key was already used with a different journal patch",
+            f"idempotency_key={resolved_key} is already bound to another journal patch",
+            precondition_failed="idempotency_conflict",
+            suggestion="Reuse the original payload for this key or submit with a new Idempotency-Key",
+            details_extra={
+                "idempotencyKey": resolved_key,
+                "existingPatchId": result.get("existing_patch_id"),
+            },
+            correlation_id=correlation_id,
+        )
+
+    entry = DecisionJournalEntryDTO(**(result.get("entry") or {}))
+    audit = dict(result.get("audit") or {})
+    if result.get("status") == "updated":
+        _publish_event(
+            _sse_buffers["journal"],
+            _sse_subscribers["journal"],
+            "journal.entry.updated",
+            {
+                "entryId": entry.id,
+                "auditId": audit.get("auditId"),
+                "changedFields": ((audit.get("diff") or {}).get("changedFields") or []),
+                "correlationId": correlation_id,
+            },
+        )
+
+    return CommandResponse[DecisionJournalEntryDTO](
+        status=ActionCommandStatus.COMPLETED,
+        data=entry,
+        meta={
+            "audit": audit,
+            "idempotency": {
+                "idempotencyKey": resolved_key,
+                "replayed": result.get("status") == "replayed",
+            },
+            "requestId": str(x_request_id or "").strip() or None,
+            "canonicalWriteAuthority": "agora_journal_service",
+            "persistenceMode": "bff_local_dev_store",
+            "degraded": True,
+        },
+    )
+
+
 @app.get("/bff/actions", response_model=BffActionCatalogResponse)
 async def get_action_catalog_endpoint(
     authorization: Optional[str] = Header(default=None),
@@ -13075,10 +13380,49 @@ async def degraded_control_guidance():
 # Each buffer is a deque of (event_id, event_dict) tuples, keeping the last N events.
 _MAX_EVENTS = 500
 
-SSE_CHANNELS = {
-    "approval", "ask", "artifact", "runtime", "mcp", "skill", "channel", "tool",
-    "ranking", "rebalance", "evolution", "research", "signal", "inbox",
-    "journal", "postmortem", "loop", "sentinel", "intervention", "audit", "system"
+SSE_CHANNEL_CATALOG = (
+    "approval",
+    "ask",
+    "artifact",
+    "runtime",
+    "mcp",
+    "skill",
+    "channel",
+    "tool",
+    "ranking",
+    "rebalance",
+    "evolution",
+    "research",
+    "signal",
+    "inbox",
+    "journal",
+    "postmortem",
+    "loop",
+    "sentinel",
+    "intervention",
+    "audit",
+    "system",
+)
+SSE_CHANNELS = set(SSE_CHANNEL_CATALOG)
+
+SSE_APPROVAL_EVENT_TYPES = {
+    "approval.created",
+    "approval.stage.changed",
+    "approval.decided",
+    "approval.sla.escalated",
+}
+SSE_ASK_EVENT_TYPES = {
+    "ask.session.started",
+    "ask.message.delta",
+    "ask.tool.called",
+    "ask.message.completed",
+    "ask.session.completed",
+    "ask.session.failed",
+}
+
+_SSE_RESYNC_ROUTES: Dict[str, tuple[str, ...]] = {
+    "approval": ("/bff/approvals", "/bff/v5/interventions"),
+    "ask": ("/bff/agora/ask/sessions/{id}",),
 }
 
 
@@ -13088,21 +13432,15 @@ class SseReplayUnavailableError(Exception):
 
 # Centralized SSE buffers and subscribers
 _sse_buffers: Dict[str, deque] = {
-    channel: deque(maxlen=_MAX_EVENTS) for channel in SSE_CHANNELS
+    channel: deque(maxlen=_MAX_EVENTS) for channel in SSE_CHANNEL_CATALOG
 }
 _sse_subscribers: Dict[str, list[asyncio.Queue]] = {
-    channel: [] for channel in SSE_CHANNELS
+    channel: [] for channel in SSE_CHANNEL_CATALOG
 }
 
-# Compatibility aliases for existing code
+# Compatibility aliases for existing stream routes.
 _runtime_events = _sse_buffers["runtime"]
 _runtime_subscribers = _sse_subscribers["runtime"]
-_incident_events = _sse_buffers["journal"]  # Map incident to journal as per catalog? 
-# Wait, 'incident' is NOT in the new catalog! 
-# 'journal' or 'system' or 'audit' might be it.
-# The task brief catalog doesn't have 'incident'.
-# But existing routes use 'incident'.
-# I'll keep 'incident' for compatibility if it's not in the catalog.
 _incident_events = deque(maxlen=_MAX_EVENTS)
 _incident_subscribers: list[asyncio.Queue] = []
 
@@ -13128,15 +13466,28 @@ def _sse_format(event: dict) -> str:
     )
 
 
+def _sse_replay_headers(channel: str) -> Dict[str, str]:
+    headers = {
+        "X-SSE-Channel": channel,
+        "X-SSE-Replay-Supported": "true",
+        "X-SSE-Replay-Window-Events": str(_MAX_EVENTS),
+        "X-SSE-Buffer-Size": str(_MAX_EVENTS),
+        "X-SSE-Replay-Store": "in-memory",
+    }
+    resync_routes = _SSE_RESYNC_ROUTES.get(channel, ())
+    if resync_routes:
+        headers["X-SSE-Resync-Routes"] = ",".join(resync_routes)
+    return headers
+
+
 def _publish_event(buffer: deque, subscribers: list[asyncio.Queue], event_type: str, data: dict) -> str:
     """Publish an event to the buffer and notify all subscribers."""
     event_id = _make_event_id()
-    event = {
-        "id": event_id,
-        "type": event_type,
-        "timestamp": utc_now(),
-        "data": data,
-    }
+    event = SseEventEnvelope[Dict[str, Any]](
+        id=event_id,
+        type=event_type,
+        data=dict(data or {}),
+    ).model_dump(mode="json")
     buffer.append((event_id, event))
     # Notify subscribers
     for q in list(subscribers):
@@ -13192,6 +13543,7 @@ async def _sse_stream(
 
 
 def _handle_sse_stream(
+    channel: str,
     buffer: deque,
     subscribers: list[asyncio.Queue],
     last_event_id: Optional[str],
@@ -13208,12 +13560,21 @@ def _handle_sse_stream(
             message=str(exc),
             reason="SSE_REPLAY_HISTORY_MISSING",
             suggestion="Resync canonical state via GET routes before reconnecting to the stream",
+            details_extra={
+                "channel": channel,
+                "lastEventId": last_event_id,
+                "replaySupported": True,
+                "replayWindowEvents": _MAX_EVENTS,
+                "replayStore": "in-memory",
+                "resyncRoutes": list(_SSE_RESYNC_ROUTES.get(channel, ())),
+            },
         ) from exc
 
     headers = {
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
         "X-Accel-Buffering": "no",
+        **_sse_replay_headers(channel),
     }
     if extra_headers:
         headers.update(extra_headers)
@@ -13239,7 +13600,7 @@ async def stream_runtime_events(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    return _handle_sse_stream(_runtime_events, _runtime_subscribers, last_event_id)
+    return _handle_sse_stream("runtime", _runtime_events, _runtime_subscribers, last_event_id)
 
 
 @app.get("/api/v1/incidents/stream")
@@ -13255,7 +13616,7 @@ async def stream_incident_events(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    return _handle_sse_stream(_incident_events, _incident_subscribers, last_event_id)
+    return _handle_sse_stream("incident", _incident_events, _incident_subscribers, last_event_id)
 
 
 @app.get("/api/v1/kill-switch/updates")
@@ -13271,7 +13632,7 @@ async def stream_kill_switch_events(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    return _handle_sse_stream(_kill_switch_events, _kill_switch_subscribers, last_event_id)
+    return _handle_sse_stream("system", _kill_switch_events, _kill_switch_subscribers, last_event_id)
 
 
 @app.get("/api/v1/approvals/stream")
@@ -13286,7 +13647,7 @@ async def stream_approval_events(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    return _handle_sse_stream(_approval_events, _approval_subscribers, last_event_id)
+    return _handle_sse_stream("approval", _approval_events, _approval_subscribers, last_event_id)
 
 
 @app.get("/api/v1/agora/ask/stream")
@@ -13301,7 +13662,7 @@ async def stream_ask_events(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    return _handle_sse_stream(_ask_events, _ask_subscribers, last_event_id)
+    return _handle_sse_stream("ask", _ask_events, _ask_subscribers, last_event_id)
 
 
 # --------------------------------------------------------------------------- #
@@ -13329,17 +13690,7 @@ async def stream_generic_events(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    # Publish replay metadata in headers or a comment is not standard SSE,
-    # but we can return it in the initial stream response if we want.
-    # The brief says "Publish replay window metadata for channels where BFF can replay."
-    # We'll use a custom header for this.
-    
-    headers = {
-        "X-SSE-Replay-Supported": "true",
-        "X-SSE-Buffer-Size": str(_MAX_EVENTS),
-    }
-
-    return _handle_sse_stream(_sse_buffers[channel], _sse_subscribers[channel], last_event_id, extra_headers=headers)
+    return _handle_sse_stream(channel, _sse_buffers[channel], _sse_subscribers[channel], last_event_id)
 
 
 @app.post("/api/v1/internal/sse/publish")
@@ -13348,7 +13699,7 @@ async def publish_sse_event(
     channel: Optional[str] = Query(default=None, description="Optional channel name; inferred from event_type if missing"),
     runtime_id: Optional[str] = Query(default=None),
     incident_id: Optional[str] = Query(default=None),
-    payload: Dict[str, Any] = {},
+    payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
 ):
     """Internal helper to publish SSE events for testing and integration.
@@ -13374,30 +13725,37 @@ async def publish_sse_event(
         else:
             channel = "system"  # Default
 
+    event_payload = dict(payload or {})
+
     if channel == "journal" and event_type.startswith("incident"):
         # Legacy incident support
         event_id = _publish_event(
             _incident_events, _incident_subscribers, event_type,
-            {"incident_id": incident_id, **payload},
+            {"incident_id": incident_id, **event_payload},
         )
         # Also publish to the journal channel if it's different
         if "journal" in _sse_buffers:
             _publish_event(
                 _sse_buffers["journal"], _sse_subscribers["journal"], event_type,
-                {"incident_id": incident_id, **payload},
+                {"incident_id": incident_id, **event_payload},
             )
         return {"event_id": event_id, "status": "published"}
 
     if channel not in _sse_buffers:
-         raise _bff_error(400, ErrorCode.INVALID_REQUEST, f"Unknown SSE channel: {channel}", f"Channel must be one of {sorted(list(SSE_CHANNELS))}")
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_REQUEST,
+            f"Unknown SSE channel: {channel}",
+            f"Channel must be one of {list(SSE_CHANNEL_CATALOG)}",
+        )
 
     # For runtime channel, we might want to include runtime_id in the payload
     if channel == "runtime" and runtime_id:
-        payload["runtime_id"] = runtime_id
+        event_payload["runtime_id"] = runtime_id
 
     event_id = _publish_event(
         _sse_buffers[channel], _sse_subscribers[channel], event_type,
-        payload,
+        event_payload,
     )
 
     return {"event_id": event_id, "status": "published"}
