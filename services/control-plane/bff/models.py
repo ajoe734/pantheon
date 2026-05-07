@@ -220,7 +220,158 @@ class CommandStatusResponse(BaseModel):
 # Operator token / identity (extracted from Bearer token in real deployments)
 # --------------------------------------------------------------------------- #
 
+class SseEventEnvelope(BaseModel, Generic[T]):
+    id: str
+    type: str
+    timestamp: str = Field(default_factory=utc_now)
+    data: T
+
+
+class ApprovalCreatedPayload(BaseModel):
+    approval_id: str
+    target_type: ObjectType
+    target_id: str
+    requester_id: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ApprovalStageChangedPayload(BaseModel):
+    approval_id: str
+    previous_stage: str
+    current_stage: str
+    actor_id: str
+
+
+class ApprovalDecidedPayload(BaseModel):
+    approval_id: str
+    outcome: str
+    decided_by: str
+    reason: Optional[str] = None
+
+
+class ApprovalSlaEscalatedPayload(BaseModel):
+    approval_id: str
+    severity: str
+    message: str
+
+
+class AskSessionStartedPayload(BaseModel):
+    session_id: str
+    persona_id: str
+    context: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AskMessageDeltaPayload(BaseModel):
+    session_id: str
+    message_id: str
+    delta: str
+
+
+class AskToolCalledPayload(BaseModel):
+    session_id: str
+    tool_name: str
+    call_id: str
+    arguments: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AskMessageCompletedPayload(BaseModel):
+    session_id: str
+    message_id: str
+    full_content: str
+
+
+class AskSessionCompletedPayload(BaseModel):
+    session_id: str
+    outcome: str = "success"
+
+
+class AskSessionFailedPayload(BaseModel):
+    session_id: str
+    error_code: str
+    error_message: str
+
+
 class OperatorIdentity(BaseModel):
     operator_id: str
     roles: List[str]
     mfa_verified: bool = False
+
+
+# --------------------------------------------------------------------------- #
+# Action catalog models (BFF-FINAL-004)
+# --------------------------------------------------------------------------- #
+
+class RiskLevel(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class BffActionCatalogEntry(BaseModel):
+    action_id: str
+    entity_type: str
+    endpoint: str
+    method: str = "POST"
+    risk_level: RiskLevel
+    requires_approval: bool = False
+    requires_confirm_token: bool = False
+    requires_two_man: bool = False
+    cooldown_seconds: int = 0
+    idempotency_required: bool = True
+    required_roles: List[str] = Field(default_factory=list)
+    description: str = ""
+
+
+class BffActionCatalogResponse(BaseModel):
+    catalog: List[BffActionCatalogEntry]
+    version: str = "v1"
+    generated_at: str = Field(default_factory=utc_now)
+
+
+class EvidenceKind(str, Enum):
+    alert = "alert"
+    incident = "incident"
+    job = "job"
+    audit = "audit"
+    metric = "metric"
+    strategy = "strategy"
+    persona = "persona"
+    deployment = "deployment"
+    runtime = "runtime"
+    policy = "policy"
+    approval = "approval"
+    artifact = "artifact"
+    signal = "signal"
+    journal = "journal"
+    postmortem = "postmortem"
+
+
+# Backend capability map for evidence kinds
+EVIDENCE_CAPABILITY_MAP: Dict[str, str] = {
+    "alert": "risk.alert.read",
+    "incident": "risk.incident.read",
+    "job": "job.read",
+    "audit": "audit.read",
+    "metric": "metric.read",
+    "strategy": "strategy.view",
+    "persona": "persona.view",
+    "deployment": "deployment.read",
+    "runtime": "runtime.read",
+    "policy": "policy.read",
+    "approval": "approval.read",
+    "artifact": "artifact.read",
+    "signal": "agora.signal.read",
+    "journal": "agora.journal.read",
+    "postmortem": "postmortem.read",
+}
+
+
+class RedactedEvidenceRef(BaseModel):
+    ref_id: str
+    kind: Optional[EvidenceKind] = None
+    required_capability: str
+    reason: str = "insufficient_capability"
+    redacted: bool = True
+    display_label: Optional[str] = None
+    redacted_count: Optional[int] = None

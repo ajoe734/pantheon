@@ -78,6 +78,64 @@ def _model_to_data(model: Any) -> Dict[str, Any]:
     return json.loads(model.json())
 
 
+# Evidence redaction support
+from models import EvidenceKind, RedactedEvidenceRef, EVIDENCE_CAPABILITY_MAP, OperatorIdentity
+
+
+def redact_evidence_refs(
+    identity: OperatorIdentity,
+    evidence_refs: List[Dict[str, Any]],
+    capabilities: Optional[List[str]] = None,
+) -> tuple[List[Dict[str, Any]], int]:
+    """Return a processed list of evidence refs where entries the operator
+    lacks capability for are replaced by RedactedEvidenceRef dicts.
+
+    If `capabilities` is None, this function is a no-op and returns the
+    original refs (backwards-compatible behavior).
+    """
+    processed: List[Dict[str, Any]] = []
+    redacted_count = 0
+
+    if capabilities is None:
+        # Backwards-compatible: do not redact when capabilities are not supplied
+        return list(evidence_refs), 0
+
+    caps = set(capabilities)
+
+    for ref in evidence_refs:
+        if not isinstance(ref, dict):
+            processed.append(ref)
+            continue
+        # Determine kind from common fields
+        kind_key = (
+            str(ref.get("evidence_type") or "").strip()
+            or str(ref.get("type") or "").strip()
+            or str(ref.get("ref_type") or "").strip()
+            or str(ref.get("link_type") or "").strip()
+        )
+        required = None
+        if kind_key:
+            required = EVIDENCE_CAPABILITY_MAP.get(kind_key)
+        if required and required not in caps:
+            redacted_count += 1
+            ref_id = str(ref.get("ref_id") or ref.get("id") or "")
+            try:
+                ek = EvidenceKind(kind_key)
+            except Exception:
+                ek = None
+            redacted = RedactedEvidenceRef(
+                ref_id=ref_id,
+                kind=ek,
+                required_capability=required,
+                reason="insufficient_capability",
+            )
+            processed.append(redacted.model_dump())
+            continue
+        processed.append(ref)
+
+    return processed, redacted_count
+
+
 _CONSULTATION_DATA_DIR_ENVS = (
     "PANTHEON_BFF_CONSULTATION_DATA_DIR",
     "PANTHEON_CONSULTATION_DATA_DIR",
