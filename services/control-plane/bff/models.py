@@ -3,9 +3,12 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar
 
 from pydantic import BaseModel, Field
+
+
+T = TypeVar("T")
 
 
 def utc_now() -> str:
@@ -62,6 +65,12 @@ class CommandReceiptStatus(str, Enum):
     FAILED = "failed"
 
 
+class ActionCommandStatus(str, Enum):
+    ACCEPTED = "accepted"
+    QUEUED = "queued"
+    COMPLETED = "completed"
+
+
 class CommandRoutingPath(str, Enum):
     DIRECT = "direct"
     FALLBACK = "fallback"
@@ -72,6 +81,7 @@ class CommandRoutingPath(str, Enum):
 # --------------------------------------------------------------------------- #
 
 class ErrorCode(str, Enum):
+    INVALID_REQUEST = "INVALID_REQUEST"
     INVALID_TOKEN = "INVALID_TOKEN"
     INSUFFICIENT_ROLE = "INSUFFICIENT_ROLE"
     OBJECT_NOT_FOUND = "OBJECT_NOT_FOUND"
@@ -79,6 +89,11 @@ class ErrorCode(str, Enum):
     CONCURRENT_MODIFICATION = "CONCURRENT_MODIFICATION"
     DOWNSTREAM_UNAVAILABLE = "DOWNSTREAM_UNAVAILABLE"
     PRECONDITION_NOT_MET = "PRECONDITION_NOT_MET"
+    CONFIRM_TOKEN_REQUIRED = "CONFIRM_TOKEN_REQUIRED"
+    APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
+    TWO_MAN_REQUIRED = "TWO_MAN_REQUIRED"
+    IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
+    SSE_REPLAY_UNAVAILABLE = "SSE_REPLAY_UNAVAILABLE"
     MFA_REQUIRED = "MFA_REQUIRED"
     INVALID_PARAMS = "INVALID_PARAMS"
 
@@ -89,13 +104,21 @@ class ErrorDetail(BaseModel):
     suggestion: Optional[str] = None
 
 
-class BFFError(BaseModel):
+class BffErrorPayload(BaseModel):
     code: ErrorCode
     message: str
     details: Optional[ErrorDetail] = None
 
 
-class ErrorResponse(BaseModel):
+class BffErrorEnvelope(BaseModel):
+    error: BffErrorPayload
+
+
+class BFFError(BffErrorPayload):
+    pass
+
+
+class ErrorResponse(BffErrorEnvelope):
     error: BFFError
 
 
@@ -174,6 +197,12 @@ class CommandSubmissionResponse(BaseModel):
     error_message: Optional[str] = None
     staleness_warning: Optional[StalenessWarning] = None
     receipt: Optional[CommandReceipt] = None
+
+
+class CommandResponse(BaseModel, Generic[T]):
+    status: ActionCommandStatus
+    data: T
+    meta: Optional[Dict[str, Any]] = None
 
 
 class CommandStatusResponse(BaseModel):

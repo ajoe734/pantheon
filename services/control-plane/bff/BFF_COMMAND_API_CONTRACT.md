@@ -1,6 +1,6 @@
 # BFF Command API Contract (v1)
 
-Last updated: 2026-05-01
+Last updated: 2026-05-07
 Status: canonical - governed BFF command facade contract for P0 command admission
 Tier: L2 Planning & Execution (paired with `BFF_API_CONTRACT.md`)
 Scope: command admission, receipt, idempotency, RBAC/policy, trace, and audit requirements for BFF-routed operator commands
@@ -122,8 +122,41 @@ Accepted commands return HTTP 202:
 }
 ```
 
-Rejected commands return the standard BFF error envelope plus foundation error,
-policy decision when applicable, and audit action evidence.
+Final frontend-facing command routes use:
+
+```json
+{
+  "status": "accepted",
+  "data": {
+    "receipt_id": "cmd-...",
+    "command": "ApproveDecision"
+  },
+  "meta": {}
+}
+```
+
+Contract rules:
+
+- `CommandResponse<T>.data` is required.
+- `ActionCommandStatus` is exactly `accepted`, `queued`, or `completed`.
+- `requires_approval`, `requires_confirm_token`, and `requires_two_man` are
+  not success statuses. Missing preconditions must be returned as non-2xx
+  errors.
+- The legacy `/api/v1/operator/commands` response remains
+  `CommandSubmissionResponse` until that route is explicitly migrated; new
+  final-contract routes should use the final `CommandResponse<T>` adapter.
+
+Rejected commands return a non-2xx `BffErrorEnvelope` plus foundation error,
+policy decision when applicable, and audit action evidence. Canonical BFF error
+codes include:
+
+| Code | Intended Use |
+|---|---|
+| `CONFIRM_TOKEN_REQUIRED` | Operator confirmation token is missing or expired. |
+| `APPROVAL_REQUIRED` | Required approval evidence is absent. |
+| `TWO_MAN_REQUIRED` | A second authorized operator decision/signature is required. |
+| `IDEMPOTENCY_CONFLICT` | Same idempotency key was reused with a different payload. |
+| `SSE_REPLAY_UNAVAILABLE` | Requested SSE replay window is no longer available. |
 
 ## 7. Command Classes
 

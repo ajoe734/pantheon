@@ -42,11 +42,14 @@ from services.foundation import (  # noqa: E402
 from services.foundation.health import register_fastapi_health_routes  # noqa: E402
 
 from models import (
+    ActionCommandStatus,
     ApproveMutationCommandPayload,
     AuditContext,
-    BFFError,
+    BffErrorEnvelope,
+    BffErrorPayload,
     CommandReceipt,
     CommandReceiptStatus,
+    CommandResponse,
     CommandResultMeta,
     CommandRoutingPath,
     CommandStatus,
@@ -55,7 +58,6 @@ from models import (
     CommandType,
     ErrorCode,
     ErrorDetail,
-    ErrorResponse,
     ObjectType,
     OperatorCommand,
     OperatorIdentity,
@@ -329,8 +331,8 @@ def _bff_error(
     policy_decision: Optional[PolicyDecision] = None,
     audit_action: Optional[AuditAction] = None,
 ) -> HTTPException:
-    body = ErrorResponse(
-        error=BFFError(
+    body = BffErrorEnvelope(
+        error=BffErrorPayload(
             code=code,
             message=message,
             details=ErrorDetail(
@@ -635,7 +637,7 @@ def _foundation_idempotency_conflict_error(
     )
     foundation_error = ErrorEnvelope(
         error_id=foundation_id("err"),
-        error_code=ErrorCode.CONCURRENT_MODIFICATION.value,
+        error_code=ErrorCode.IDEMPOTENCY_CONFLICT.value,
         message=message,
         error_kind=ErrorKind.IDEMPOTENCY_CONFLICT,
         trace=command_envelope.trace,
@@ -658,7 +660,7 @@ def _foundation_idempotency_conflict_error(
     )
     return _bff_error(
         409,
-        ErrorCode.CONCURRENT_MODIFICATION,
+        ErrorCode.IDEMPOTENCY_CONFLICT,
         message,
         reason,
         precondition_failed="idempotency_conflict",
@@ -5984,6 +5986,12 @@ _COMMAND_RECEIPT_STATUS_MAP = {
     CommandStatus.TIMEOUT.value: CommandReceiptStatus.FAILED,
 }
 
+_ACTION_COMMAND_STATUS_MAP = {
+    CommandStatus.SUBMITTED.value: ActionCommandStatus.ACCEPTED,
+    CommandStatus.PROCESSING.value: ActionCommandStatus.QUEUED,
+    CommandStatus.EXECUTED.value: ActionCommandStatus.COMPLETED,
+}
+
 
 def _expected_completion_at(accepted_at: str, estimated_processing_time_ms: int) -> Optional[str]:
     if not accepted_at or estimated_processing_time_ms < 0:
@@ -6030,6 +6038,37 @@ def _project_command_submission_response(
         staleness_warning=staleness_warning,
         receipt=receipt,
     )
+
+
+def _action_command_status_from_command_status(status: CommandStatus) -> ActionCommandStatus:
+    try:
+        return _ACTION_COMMAND_STATUS_MAP[status.value]
+    except KeyError as exc:
+        raise ValueError(
+            f"Command status {status.value!r} cannot be projected as a successful CommandResponse"
+        ) from exc
+
+
+def _project_final_command_response(
+    *,
+    command_id: str,
+    command: CommandType,
+    accepted_at: str,
+    status: CommandStatus,
+    staleness_warning: Optional[StalenessWarning],
+) -> CommandResponse[Dict[str, Any]]:
+    final_status = _action_command_status_from_command_status(status)
+    legacy_payload = _project_command_submission_response(
+        command_id=command_id,
+        command=command,
+        accepted_at=accepted_at,
+        status=status,
+        staleness_warning=staleness_warning,
+    ).model_dump()
+    legacy_payload["status"] = final_status.value
+    if isinstance(legacy_payload.get("receipt"), dict):
+        legacy_payload["receipt"]["status"] = final_status.value
+    return CommandResponse[Dict[str, Any]](status=final_status, data=legacy_payload)
 
 
 # --------------------------------------------------------------------------- #

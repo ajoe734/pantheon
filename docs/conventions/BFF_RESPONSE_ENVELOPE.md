@@ -1,7 +1,7 @@
 # BFF Response Envelope
 
 Status: draft-canonical
-Last updated: 2026-04-22
+Last updated: 2026-05-07
 Source of truth inputs:
 - `docs/reviews/Pantheon_Response_to_System_Design_Open_Questions.md`
 - `docs/reviews/Pantheon_Response_to_System_Design_Followup_Questions.md`
@@ -128,6 +128,36 @@ Example:
     }
   }
 }
+```
+
+## Command response and error primitives
+
+Final BFF command-facing routes use a small response primitive:
+
+```json
+{
+  "status": "accepted",
+  "data": {},
+  "meta": {}
+}
+```
+
+Rules:
+
+- `CommandResponse<T>.data` is required.
+- `ActionCommandStatus` is limited to `accepted`, `queued`, and `completed`.
+- `requires_approval`, `requires_confirm_token`, and `requires_two_man` are
+  precondition failures, not success statuses.
+- Missing preconditions return non-2xx `BffErrorEnvelope` responses.
+
+Canonical precondition and command-transport error codes include:
+
+```text
+CONFIRM_TOKEN_REQUIRED
+APPROVAL_REQUIRED
+TWO_MAN_REQUIRED
+IDEMPOTENCY_CONFLICT
+SSE_REPLAY_UNAVAILABLE
 ```
 
 ## Freshness and degradation rule
