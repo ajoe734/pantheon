@@ -514,6 +514,7 @@ def test_submit_command_accepts_record_sponsor_decision_published_payload() -> N
 _FINAL_BODY = {
     "command": "ApproveDecision",
     "target": {"type": "ApprovalDecision", "id": "appr-final-001"},
+    "approvalId": "approval-final-001",
     "params": {"decision_id": "appr-final-001"},
     "audit_context": {"reason": "Final contract test"},
 }
