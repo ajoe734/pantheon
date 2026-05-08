@@ -13667,6 +13667,1401 @@ async def patch_agora_journal_entry(
     )
 
 
+# --------------------------------------------------------------------------- #
+# Agora Core BFF Compatibility (BFF-LUV-GAP-006)
+# --------------------------------------------------------------------------- #
+
+_AGORA_CORE_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+_AGORA_SIGNAL_DECISIONS = {"agree", "disagree", "flag_suspicious"}
+_AGORA_EVIDENCE_ALLOWED_MIMES = {
+    "application/pdf",
+    "text/markdown",
+    "text/plain",
+    "text/csv",
+    "image/png",
+    "image/jpeg",
+}
+_AGORA_EVIDENCE_MAX_FILES = 12
+_AGORA_EVIDENCE_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024
+_AGORA_EVIDENCE_MAX_TOTAL_SIZE_BYTES = 100 * 1024 * 1024
+
+
+def _agora_core_idempotency_check(
+    resolved_key: str,
+    request_hash: str,
+) -> Optional[Dict[str, Any]]:
+    existing = _AGORA_CORE_BFF_IDEMPOTENCY.get(resolved_key)
+    if existing is None:
+        return None
+    if existing.get("request_hash") != request_hash:
+        raise _bff_error(
+            409,
+            ErrorCode.IDEMPOTENCY_CONFLICT,
+            "Idempotency key was already used with a different payload",
+            f"Key {resolved_key!r} is bound to a different Agora request hash",
+            precondition_failed="idempotency_conflict",
+            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+        )
+    return existing.get("result")
+
+
+def _agora_response_payload(value: Any) -> Dict[str, Any]:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if isinstance(value, dict):
+        return json.loads(json.dumps(value))
+    return {"data": json.loads(json.dumps(value))}
+
+
+def _agora_list_response(
+    *,
+    dataset: str,
+    surface_key: str,
+    items: List[Dict[str, Any]],
+    page_token: Optional[str],
+    page_size: int,
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    total = len(items)
+    page_items, next_page_token = _page_slice(items, page_token, page_size)
+    return {
+        "data": page_items,
+        "items": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta(dataset, surface_key, snapshot_at=snapshot_at, total=total),
+    }
+
+
+def _agora_record_id(record: Dict[str, Any], fields: List[str]) -> str:
+    for field in fields:
+        clean = str(record.get(field) or "").strip()
+        if clean:
+            return clean
+    return ""
+
+
+def _agora_string_list(raw: Any) -> List[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return _dedupe_nonblank_strings(_split_claim_string(raw))
+    if isinstance(raw, (list, tuple, set)):
+        return _dedupe_nonblank_strings(list(raw))
+    return _dedupe_nonblank_strings([raw])
+
+
+def _agora_required_text(payload: Dict[str, Any], *fields: str) -> str:
+    for field in fields:
+        clean = str(payload.get(field) or "").strip()
+        if clean:
+            return clean
+    label = fields[0] if fields else "value"
+    raise _bff_error(
+        422,
+        ErrorCode.INVALID_PARAMS,
+        f"{label} is required",
+        f"Agora request requires a non-empty {label}",
+        precondition_failed=label,
+    )
+
+
+def _agora_signal_feedback_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    decision = str(payload.get("decision") or "").strip()
+    if decision not in _AGORA_SIGNAL_DECISIONS:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Signal feedback decision is invalid",
+            "decision must be one of agree, disagree, or flag_suspicious",
+            precondition_failed="signal_feedback.decision",
+        )
+    try:
+        confidence = int(payload.get("confidence"))
+    except (TypeError, ValueError) as exc:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Signal feedback confidence is invalid",
+            "confidence must be an integer from 1 to 5",
+            precondition_failed="signal_feedback.confidence",
+        ) from exc
+    if confidence < 1 or confidence > 5:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Signal feedback confidence is invalid",
+            "confidence must be an integer from 1 to 5",
+            precondition_failed="signal_feedback.confidence",
+        )
+    reason = str(payload.get("reason") or "").strip() or None
+    if (decision == "disagree" and confidence >= 4 and not reason) or (
+        decision == "flag_suspicious" and not reason
+    ):
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Signal feedback reason is required",
+            "reason is required for high-confidence disagree and flag_suspicious feedback",
+            precondition_failed="signal_feedback.reason",
+        )
+    try:
+        edit_window_seconds = int(payload.get("editWindowSeconds") or payload.get("edit_window_seconds") or 30)
+    except (TypeError, ValueError) as exc:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Signal feedback edit window is invalid",
+            "editWindowSeconds must be a positive integer",
+            precondition_failed="signal_feedback.editWindowSeconds",
+        ) from exc
+    return {
+        "decision": decision,
+        "confidence": confidence,
+        "reason": reason,
+        "edit_window_seconds": max(1, edit_window_seconds),
+    }
+
+
+def _agora_evidence_files_from_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    raw_files = payload.get("files")
+    if raw_files is None and any(key in payload for key in ("fileName", "filename", "name")):
+        raw_files = [payload]
+    if not isinstance(raw_files, list):
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Evidence files are required",
+            "Committee evidence upload requires a files array.",
+            precondition_failed="committee_evidence.files",
+            suggestion="Send {\"files\": [{fileName, mimeType, sizeBytes, metadata}]}",
+        )
+    return [item for item in raw_files if isinstance(item, dict)]
+
+
+def _agora_validate_evidence_files(
+    *,
+    existing_files: List[Dict[str, Any]],
+    incoming_files: List[Dict[str, Any]],
+) -> None:
+    violations: List[Dict[str, Any]] = []
+    if not incoming_files:
+        violations.append({"code": "missing_metadata", "field": "files"})
+    if len(existing_files) + len(incoming_files) > _AGORA_EVIDENCE_MAX_FILES:
+        violations.append({"code": "too_many_files"})
+
+    total_size = 0
+    for existing in existing_files:
+        try:
+            total_size += int(existing.get("sizeBytes") or existing.get("size_bytes") or 0)
+        except (TypeError, ValueError):
+            continue
+
+    for item in incoming_files:
+        file_name = str(item.get("fileName") or item.get("filename") or item.get("name") or "").strip()
+        mime_type = str(item.get("mimeType") or item.get("mime_type") or "").strip()
+        raw_size = item.get("sizeBytes")
+        if raw_size is None:
+            raw_size = item.get("size_bytes")
+        try:
+            size_bytes = int(raw_size)
+        except (TypeError, ValueError):
+            size_bytes = -1
+        total_size += max(size_bytes, 0)
+
+        if size_bytes < 0:
+            violations.append({"code": "missing_metadata", "fileName": file_name, "field": "sizeBytes"})
+        elif size_bytes > _AGORA_EVIDENCE_MAX_FILE_SIZE_BYTES:
+            violations.append({"code": "file_too_large", "fileName": file_name})
+        if mime_type not in _AGORA_EVIDENCE_ALLOWED_MIMES:
+            violations.append({"code": "mime_not_allowed", "fileName": file_name})
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        missing = [
+            key
+            for key in ("source", "title", "uploadedBy", "createdAt")
+            if not str(metadata.get(key) or "").strip()
+        ]
+        if missing:
+            violations.append({"code": "missing_metadata", "fileName": file_name, "fields": missing})
+
+    if total_size > _AGORA_EVIDENCE_MAX_TOTAL_SIZE_BYTES:
+        violations.append({"code": "total_too_large"})
+
+    if violations:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Committee evidence upload rejected",
+            "One or more committee evidence files failed server-side validation.",
+            precondition_failed="committee_evidence.files",
+            suggestion="Check file count, file size, MIME type, and required metadata before retrying.",
+            details_extra={"violations": violations},
+        )
+
+
+def _agora_persona_lab_commit_payload(draft_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    payload_draft = str(payload.get("personaDraftId") or payload.get("persona_draft_id") or draft_id).strip()
+    if payload_draft and payload_draft != draft_id:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Persona draft id mismatch",
+            "personaDraftId in the request body must match the draftId route parameter.",
+            precondition_failed="personaDraftId",
+        )
+    raw_runs = payload.get("evaluationRunIds") or payload.get("evaluation_run_ids") or []
+    if not isinstance(raw_runs, list):
+        raw_runs = [raw_runs]
+    evaluation_run_ids = _dedupe_nonblank_strings(raw_runs)
+    if not evaluation_run_ids:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "evaluationRunIds are required",
+            "Persona lab commit requires at least one evaluation run id before handoff.",
+            precondition_failed="evaluationRunIds",
+        )
+    change_summary = str(payload.get("changeSummary") or payload.get("change_summary") or "").strip()
+    if not change_summary:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "changeSummary is required",
+            "Persona lab commit requires a concise change summary for management review.",
+            precondition_failed="changeSummary",
+        )
+    priority = str(payload.get("priority") or "normal").strip().lower()
+    if priority not in {"low", "normal", "high", "urgent"}:
+        priority = "normal"
+    return {
+        "personaDraftId": draft_id,
+        "basePersonaId": str(payload.get("basePersonaId") or payload.get("base_persona_id") or "").strip() or None,
+        "evaluationRunIds": evaluation_run_ids,
+        "changeSummary": change_summary,
+        "requestedRoutePolicyId": (
+            str(payload.get("requestedRoutePolicyId") or payload.get("requested_route_policy_id") or "").strip()
+            or None
+        ),
+        "priority": priority,
+    }
+
+
+def _agora_get_insight(insight_id: str) -> Optional[Dict[str, Any]]:
+    getter = getattr(read_store, "get_insight_card", None)
+    if callable(getter):
+        item = getter(insight_id)
+        if item:
+            return item
+    for item in read_store.list_agora_insights():
+        if _agora_record_id(item, ["insight_id", "id"]) == insight_id:
+            return item
+    return None
+
+
+def _agora_submit_command(
+    *,
+    entity_type: ObjectType,
+    entity_id: str,
+    action_id: str,
+    resolved_key: str,
+    identity: OperatorIdentity,
+    payload: Dict[str, Any],
+    command_type: CommandType,
+) -> Dict[str, Any]:
+    staleness_warning = _check_read_surface_state()
+    command_id = str(uuid.uuid4())
+    submitted_at = utc_now()
+    target = TargetObject(type=entity_type, id=entity_id)
+    request_payload = {
+        "entity_type": entity_type.value,
+        "entity_id": entity_id,
+        "action_id": action_id,
+        "payload": payload,
+    }
+    idempotency_record = IdempotencyRecord.reserve(
+        idempotency_key=resolved_key,
+        operation_type=f"bff.{command_type.value}",
+        target_ref=f"{entity_type.value}:{entity_id}",
+        request_payload=request_payload,
+        trace_id=command_id,
+    )
+    audit_record = {
+        "operator_id": identity.operator_id,
+        "roles_at_submission": identity.roles,
+        "action_id": action_id,
+        "preconditions_checked": ["authentication", "authorization", "idempotency"],
+        "timestamp": submitted_at,
+        "idempotency_key": resolved_key,
+        "command_id": command_id,
+    }
+    command_store.submit_command(
+        command_id=command_id,
+        command_type=command_type,
+        target=target,
+        submitted_at=submitted_at,
+        params={"action_id": action_id, **payload},
+        audit_context=audit_record,
+        foundation_context={"idempotency_record": idempotency_record.to_dict()},
+    )
+    audit = read_store.record_agora_audit_event({
+        "action": f"agora.{action_id}",
+        "targetType": entity_type.value,
+        "targetId": entity_id,
+        "commandId": command_id,
+        "actorId": identity.operator_id,
+        "recordedAt": submitted_at,
+        "idempotencyKey": resolved_key,
+    })
+    result = _agora_response_payload(
+        _project_final_command_response(
+            command_id=command_id,
+            command=command_type,
+            accepted_at=submitted_at,
+            status=CommandStatus.SUBMITTED,
+            staleness_warning=staleness_warning,
+        )
+    )
+    meta = result.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+        result["meta"] = meta
+    meta["audit"] = audit
+    return result
+
+
+def _agora_action_command(
+    *,
+    route: str,
+    entity_type: ObjectType,
+    entity_id: str,
+    action_id: str,
+    resolved_key: str,
+    identity: OperatorIdentity,
+    payload: Dict[str, Any],
+    command_type: CommandType,
+) -> Dict[str, Any]:
+    request_hash = _stable_json_hash({
+        "route": route,
+        "entity_type": entity_type.value,
+        "entity_id": entity_id,
+        "action_id": action_id,
+        "payload": payload,
+    })
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    result = _agora_submit_command(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        action_id=action_id,
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=payload,
+        command_type=command_type,
+    )
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/agora/daily")
+async def bff_agora_daily(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: Agora daily brief assembled from current read surfaces."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    signals = read_store.list_agora_signals()
+    watchlist = read_store.list_agora_watchlist()
+    journal = read_store.list_decision_journal_entries()
+    research_tasks = read_store.list_research_tickets(statuses=["new", "triaged", "open", "in_progress"])
+    pending_signals = [
+        item for item in signals
+        if str(item.get("reviewStatus") or item.get("review_status") or "").strip() == "pending_trader_review"
+    ]
+    brief = {
+        "id": f"agora-daily-{snapshot_at[:10]}",
+        "date": snapshot_at[:10],
+        "generatedAt": snapshot_at,
+        "kpis": {
+            "watchlistMoveCount": len(watchlist),
+            "signalReviewQueue": len(pending_signals),
+            "personaBriefCount": len(journal),
+            "researchQuestionCount": len(research_tasks),
+        },
+        "sections": {
+            "signals": signals[:5],
+            "watchlist": watchlist[:5],
+            "journal": journal[:5],
+            "research_tasks": research_tasks[:5],
+        },
+    }
+    meta = _read_surface_meta("agora_signals", "agora_daily", snapshot_at=snapshot_at)
+    meta["surfaces"]["watchlist"] = _dataset_surface_status("agora_watchlist", snapshot_at=snapshot_at)
+    meta["surfaces"]["research_tasks"] = _dataset_surface_status("research_tickets", snapshot_at=snapshot_at)
+    return {"data": brief, "items": [brief], "meta": meta}
+
+
+@app.get("/bff/agora/signals")
+async def bff_agora_signals(
+    review_status: Optional[str] = Query(default=None, alias="reviewStatus"),
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: Agora signal review queue."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    items = read_store.list_agora_signals(review_status=review_status or status)
+    return _agora_list_response(
+        dataset="agora_signals",
+        surface_key="agora_signal_list",
+        items=items,
+        page_token=page_token,
+        page_size=page_size,
+        snapshot_at=snapshot_at,
+    )
+
+
+@app.get("/bff/agora/signals/{signalId}")
+async def bff_agora_signal_detail(
+    signalId: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: Agora signal detail."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    signal = read_store.get_agora_signal(signalId)
+    if not signal:
+        surface = _dataset_surface_status("agora_signals", snapshot_at=snapshot_at)
+        _raise_if_read_surface_unavailable(surface, label="Agora signal")
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Agora signal not found",
+            f"Agora signal {signalId} does not exist",
+            precondition_failed="signal_id",
+        )
+    return {
+        "data": signal,
+        "meta": _read_surface_meta("agora_signals", "agora_signal_detail", snapshot_at=snapshot_at),
+    }
+
+
+@app.post("/bff/agora/signals/{signalId}/feedback")
+async def bff_agora_signal_feedback(
+    signalId: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: record trader feedback for an Agora signal."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    feedback_payload = _agora_signal_feedback_payload(payload)
+    request_hash = _stable_json_hash({
+        "route": "POST /bff/agora/signals/{signalId}/feedback",
+        "signalId": signalId,
+        "payload": feedback_payload,
+    })
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    feedback = read_store.record_agora_signal_feedback(
+        signalId,
+        decision=feedback_payload["decision"],
+        confidence=feedback_payload["confidence"],
+        reason=feedback_payload["reason"],
+        actor_id=identity.operator_id,
+        edit_window_seconds=feedback_payload["edit_window_seconds"],
+        recorded_at=utc_now(),
+    )
+    if feedback is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Agora signal not found",
+            f"Agora signal {signalId} does not exist",
+            precondition_failed="signal_id",
+        )
+    command = _agora_submit_command(
+        entity_type=ObjectType.AGORA_SIGNAL,
+        entity_id=signalId,
+        action_id="feedback",
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=feedback_payload,
+        command_type=CommandType.AGORA_SIGNAL_FEEDBACK,
+    )
+    _publish_event(
+        _sse_buffers["signal"],
+        _sse_subscribers["signal"],
+        "agora.signal.feedback_recorded",
+        {"signalId": signalId, "feedbackId": feedback.get("feedbackId"), "decision": feedback.get("decision")},
+    )
+    result = {
+        "status": ActionCommandStatus.COMPLETED.value,
+        "data": {
+            "feedback": feedback,
+            "signal": read_store.get_agora_signal(signalId),
+        },
+        "meta": {
+            "command": command.get("data"),
+            "audit": (command.get("meta") or {}).get("audit"),
+            "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
+        },
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/agora/watchlist")
+async def bff_agora_watchlist(
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: Agora watchlist assets for daily KPIs."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    return _agora_list_response(
+        dataset="agora_watchlist",
+        surface_key="agora_watchlist",
+        items=read_store.list_agora_watchlist(),
+        page_token=page_token,
+        page_size=page_size,
+        snapshot_at=snapshot_at,
+    )
+
+
+@app.get("/bff/agora/sessions")
+async def bff_agora_sessions(
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: Agora ask/session list."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    return _agora_list_response(
+        dataset="agora_sessions",
+        surface_key="agora_session_list",
+        items=read_store.list_agora_sessions(status=status),
+        page_token=page_token,
+        page_size=page_size,
+        snapshot_at=snapshot_at,
+    )
+
+
+@app.post("/bff/agora/sessions", status_code=201)
+async def bff_create_agora_session(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: create an Agora ask/session record."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/agora/sessions", "payload": payload})
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    snapshot_at = utc_now()
+    session_id = str(payload.get("sessionId") or payload.get("session_id") or f"agora-sess-{uuid.uuid4().hex[:10]}")
+    title = str(payload.get("title") or "Untitled Agora session").strip()
+    result = {
+        "data": read_store.create_agora_session(
+            session_id=session_id,
+            title=title,
+            actor_id=identity.operator_id,
+            payload=payload,
+            created_at=snapshot_at,
+        ),
+        "meta": {"snapshot_at": snapshot_at},
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/agora/sessions/{sessionId}")
+async def bff_agora_session_detail(
+    sessionId: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: Agora ask/session detail."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    session = read_store.get_agora_session(sessionId)
+    if not session:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Agora session not found",
+            f"Agora session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    return {
+        "data": session,
+        "meta": _read_surface_meta("agora_sessions", "agora_session_detail", snapshot_at=snapshot_at),
+    }
+
+
+@app.get("/bff/agora/sessions/{sessionId}/messages")
+async def bff_agora_session_messages(
+    sessionId: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: messages for an Agora session."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    messages = read_store.list_agora_session_messages(sessionId)
+    if messages is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Agora session not found",
+            f"Agora session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    return {
+        "data": messages,
+        "items": messages,
+        "page_info": {"next_page_token": None, "total": len(messages)},
+        "meta": _read_surface_meta("agora_sessions", "agora_session_messages", snapshot_at=snapshot_at),
+    }
+
+
+@app.post("/bff/agora/sessions/{sessionId}/messages", status_code=201)
+async def bff_create_agora_session_message(
+    sessionId: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: append a message to an Agora session."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    content = _agora_required_text(payload, "content", "body", "message")
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({
+        "route": "POST /bff/agora/sessions/{sessionId}/messages",
+        "sessionId": sessionId,
+        "payload": payload,
+    })
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    snapshot_at = utc_now()
+    message_id = str(payload.get("id") or payload.get("messageId") or f"agora-msg-{uuid.uuid4().hex[:10]}")
+    message = read_store.append_agora_session_message(
+        sessionId,
+        message_id=message_id,
+        content=content,
+        actor_id=identity.operator_id,
+        payload=payload,
+        created_at=snapshot_at,
+    )
+    if message is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Agora session not found",
+            f"Agora session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    _publish_event(
+        _sse_buffers["ask"],
+        _sse_subscribers["ask"],
+        "agora.session.message_created",
+        {"sessionId": sessionId, "messageId": message.get("id")},
+    )
+    result = {"data": message, "meta": {"snapshot_at": snapshot_at}}
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.post("/bff/agora/committee/{sessionId}/evidence-pack", status_code=201)
+async def bff_create_agora_committee_evidence_pack(
+    sessionId: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: create or refresh a committee evidence pack for an Agora session."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({
+        "route": "POST /bff/agora/committee/{sessionId}/evidence-pack",
+        "sessionId": sessionId,
+        "payload": payload,
+    })
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    if not read_store.get_agora_session(sessionId):
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Agora committee session not found",
+            f"Agora committee session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    snapshot_at = utc_now()
+    pack = read_store.create_agora_committee_evidence_pack(
+        sessionId,
+        payload=payload,
+        actor_id=identity.operator_id,
+        created_at=snapshot_at,
+    )
+    audit = read_store.record_agora_audit_event({
+        "action": "agora.committee.evidence_pack.created",
+        "targetType": "AgoraCommitteeEvidencePack",
+        "targetId": pack.get("id"),
+        "sessionId": sessionId,
+        "actorId": identity.operator_id,
+        "recordedAt": snapshot_at,
+        "idempotencyKey": resolved_key,
+    })
+    result = {
+        "data": pack,
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "audit": audit,
+            "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
+        },
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.post("/bff/agora/committee/{sessionId}/evidence-pack/files", status_code=201)
+async def bff_upload_agora_committee_evidence_files(
+    sessionId: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: attach validated file metadata to a committee evidence pack."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    files = _agora_evidence_files_from_payload(payload)
+    request_hash = _stable_json_hash({
+        "route": "POST /bff/agora/committee/{sessionId}/evidence-pack/files",
+        "sessionId": sessionId,
+        "payload": payload,
+    })
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    existing_pack = read_store.get_agora_committee_evidence_pack(sessionId)
+    existing_files = list((existing_pack or {}).get("uploadedFiles") or [])
+    _agora_validate_evidence_files(existing_files=existing_files, incoming_files=files)
+    snapshot_at = utc_now()
+    pack = read_store.append_agora_committee_evidence_files(
+        sessionId,
+        files=files,
+        actor_id=identity.operator_id,
+        uploaded_at=snapshot_at,
+    )
+    if pack is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Agora committee session not found",
+            f"Agora committee session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    new_files = list(pack.pop("newFiles", []))
+    audit = read_store.record_agora_audit_event({
+        "action": "agora.committee.evidence_pack.files_uploaded",
+        "targetType": "AgoraCommitteeEvidencePack",
+        "targetId": pack.get("id"),
+        "sessionId": sessionId,
+        "fileIds": [item.get("id") for item in new_files],
+        "actorId": identity.operator_id,
+        "recordedAt": snapshot_at,
+        "idempotencyKey": resolved_key,
+    })
+    result = {
+        "data": pack,
+        "items": new_files,
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "audit": audit,
+            "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
+        },
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.post("/bff/agora/messages/{messageId}/actions/{actionId}", status_code=202)
+async def bff_agora_message_action(
+    messageId: str,
+    actionId: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: route an Agora message action through command admission."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    if not read_store.get_agora_message(messageId):
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Agora message not found",
+            f"Agora message {messageId} does not exist",
+            precondition_failed="message_id",
+        )
+    return _agora_action_command(
+        route="POST /bff/agora/messages/{messageId}/actions/{actionId}",
+        entity_type=ObjectType.AGORA_MESSAGE,
+        entity_id=messageId,
+        action_id=actionId,
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=payload,
+        command_type=CommandType.AGORA_MESSAGE_ACTION,
+    )
+
+
+@app.get("/bff/agora/notes")
+async def bff_agora_notes(
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: Agora notebook/research notes."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    return _agora_list_response(
+        dataset="research_notes",
+        surface_key="agora_note_list",
+        items=read_store.list_agora_notes(),
+        page_token=page_token,
+        page_size=page_size,
+        snapshot_at=snapshot_at,
+    )
+
+
+@app.post("/bff/agora/notes", status_code=201)
+async def bff_create_agora_note(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: create an Agora notebook/research note."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    body = _agora_required_text(payload, "body", "content")
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/agora/notes", "payload": payload})
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    snapshot_at = utc_now()
+    note_id = str(payload.get("id") or payload.get("note_id") or f"note-agora-{uuid.uuid4().hex[:10]}")
+    result = {
+        "data": read_store.create_agora_note(
+            note_id=note_id,
+            title=str(payload.get("title") or "").strip() or None,
+            body=body,
+            actor_id=identity.operator_id,
+            payload=payload,
+            created_at=snapshot_at,
+        ),
+        "meta": {"snapshot_at": snapshot_at},
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/agora/journal")
+async def bff_agora_journal(
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: Agora decision journal list."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    return _agora_list_response(
+        dataset="decision_journal_entries",
+        surface_key="agora_journal_list",
+        items=read_store.list_decision_journal_entries(),
+        page_token=page_token,
+        page_size=page_size,
+        snapshot_at=snapshot_at,
+    )
+
+
+@app.post("/bff/agora/journal", status_code=201)
+async def bff_create_agora_journal_entry(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: create an Agora decision journal entry."""
+    identity = _extract_identity(authorization)
+    _require_journal_write_role(identity)
+    _reject_body_idempotency_key(payload)
+    title = _agora_required_text(payload, "title")
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/agora/journal", "payload": payload})
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    body = str(payload.get("body") or "").strip()
+    if not body:
+        body_parts = [
+            str(payload.get(field) or "").strip()
+            for field in ("context", "decision", "rationale")
+            if str(payload.get(field) or "").strip()
+        ]
+        body = "\n\n".join(body_parts)
+    snapshot_at = utc_now()
+    entry_id = str(payload.get("id") or payload.get("entryId") or f"journal-agora-{uuid.uuid4().hex[:10]}")
+    visibility = str(payload.get("visibility") or "private").strip()
+    if visibility not in _JOURNAL_VISIBILITY_ROLES:
+        visibility = "private"
+    if not _journal_visibility_allowed(identity, visibility):
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "Journal visibility is not allowed",
+            f"Role set cannot create a {visibility} journal entry",
+            precondition_failed="journal.visibility",
+        )
+    entry = read_store.create_decision_journal_entry(
+        entry_id=entry_id,
+        title=title,
+        body=body,
+        tags=_agora_string_list(payload.get("tags")),
+        linked_strategy_ids=_agora_string_list(payload.get("linkedStrategyIds") or payload.get("linked_strategy_ids")),
+        linked_persona_ids=_agora_string_list(payload.get("linkedPersonaIds") or payload.get("linked_persona_ids")),
+        visibility=visibility,
+        actor_id=identity.operator_id,
+        created_at=snapshot_at,
+    )
+    audit = read_store.record_agora_audit_event({
+        "action": "agora.journal.create",
+        "targetType": "DecisionJournalEntry",
+        "targetId": entry_id,
+        "actorId": identity.operator_id,
+        "recordedAt": snapshot_at,
+        "idempotencyKey": resolved_key,
+    })
+    result = {"data": entry, "meta": {"snapshot_at": snapshot_at, "audit": audit}}
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/agora/insights")
+async def bff_agora_insights(
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: Agora insight inbox."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    return _agora_list_response(
+        dataset="insight_cards",
+        surface_key="agora_insight_list",
+        items=read_store.list_agora_insights(),
+        page_token=page_token,
+        page_size=page_size,
+        snapshot_at=snapshot_at,
+    )
+
+
+@app.post("/bff/agora/insights", status_code=201)
+async def bff_create_agora_insight(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: create an Agora insight card."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    summary = _agora_required_text(payload, "summary", "title")
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/agora/insights", "payload": payload})
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    snapshot_at = utc_now()
+    insight_id = str(payload.get("id") or payload.get("insight_id") or f"ins-agora-{uuid.uuid4().hex[:10]}")
+    result = {
+        "data": read_store.create_agora_insight(
+            insight_id=insight_id,
+            summary=summary,
+            actor_id=identity.operator_id,
+            payload=payload,
+            created_at=snapshot_at,
+        ),
+        "meta": {"snapshot_at": snapshot_at},
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.post("/bff/agora/insights/{insightId}/actions/{actionId}", status_code=202)
+async def bff_agora_insight_action(
+    insightId: str,
+    actionId: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: route an Agora insight action through command admission."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    if not _agora_get_insight(insightId):
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Agora insight not found",
+            f"Agora insight {insightId} does not exist",
+            precondition_failed="insight_id",
+        )
+    return _agora_action_command(
+        route="POST /bff/agora/insights/{insightId}/actions/{actionId}",
+        entity_type=ObjectType.AGORA_INSIGHT,
+        entity_id=insightId,
+        action_id=actionId,
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=payload,
+        command_type=CommandType.AGORA_INSIGHT_ACTION,
+    )
+
+
+@app.get("/bff/agora/memory")
+async def bff_agora_memory(
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: Agora institutional memory review list."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    return _agora_list_response(
+        dataset="institutional_memory_entries",
+        surface_key="agora_memory_list",
+        items=read_store.list_agora_memory(),
+        page_token=page_token,
+        page_size=page_size,
+        snapshot_at=snapshot_at,
+    )
+
+
+@app.post("/bff/agora/memory/{memoryId}/actions/{actionId}", status_code=202)
+async def bff_agora_memory_action(
+    memoryId: str,
+    actionId: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: route an Agora memory action through command admission."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    if not read_store.get_agora_memory_entry(memoryId):
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Agora memory entry not found",
+            f"Agora memory entry {memoryId} does not exist",
+            precondition_failed="memory_id",
+        )
+    return _agora_action_command(
+        route="POST /bff/agora/memory/{memoryId}/actions/{actionId}",
+        entity_type=ObjectType.AGORA_MEMORY,
+        entity_id=memoryId,
+        action_id=actionId,
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=payload,
+        command_type=CommandType.AGORA_MEMORY_ACTION,
+    )
+
+
+@app.get("/bff/agora/training-examples")
+async def bff_agora_training_examples(
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: Agora training examples."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    return _agora_list_response(
+        dataset="agora_training_examples",
+        surface_key="agora_training_example_list",
+        items=read_store.list_agora_training_examples(),
+        page_token=page_token,
+        page_size=page_size,
+        snapshot_at=snapshot_at,
+    )
+
+
+@app.post("/bff/agora/training-examples", status_code=201)
+async def bff_create_agora_training_example(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: create an Agora training example."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/agora/training-examples", "payload": payload})
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    snapshot_at = utc_now()
+    example_id = str(payload.get("id") or payload.get("trainingExampleId") or f"trn-agora-{uuid.uuid4().hex[:10]}")
+    result = {
+        "data": read_store.create_agora_training_example(
+            example_id=example_id,
+            payload=payload,
+            actor_id=identity.operator_id,
+            created_at=snapshot_at,
+        ),
+        "meta": {"snapshot_at": snapshot_at},
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/research/tasks")
+async def bff_agora_research_tasks(
+    status: Optional[str] = None,
+    owner: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: Agora-compatible research task list backed by research tickets."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    statuses = _split_csv_query(status)
+    tasks = read_store.list_research_tickets(statuses=statuses or None, owner=owner)
+    return _agora_list_response(
+        dataset="research_tickets",
+        surface_key="research_task_list",
+        items=tasks,
+        page_token=page_token,
+        page_size=page_size,
+        snapshot_at=snapshot_at,
+    )
+
+
+@app.post("/bff/memory/{memoryId}/actions/quarantine", status_code=202)
+async def bff_memory_quarantine_action(
+    memoryId: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: execute-plans compatibility alias for memory quarantine."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    if not read_store.get_agora_memory_entry(memoryId):
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Memory entry not found",
+            f"Memory entry {memoryId} does not exist",
+            precondition_failed="memory_id",
+        )
+    return _agora_action_command(
+        route="POST /bff/memory/{memoryId}/actions/quarantine",
+        entity_type=ObjectType.AGORA_MEMORY,
+        entity_id=memoryId,
+        action_id="quarantine",
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=payload,
+        command_type=CommandType.AGORA_MEMORY_ACTION,
+    )
+
+
+@app.post("/bff/insights/{insightId}/actions/attach-strategy", status_code=202)
+async def bff_insight_attach_strategy_action(
+    insightId: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: execute-plans compatibility alias for attaching an insight to a strategy."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    if not _agora_get_insight(insightId):
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Insight not found",
+            f"Insight {insightId} does not exist",
+            precondition_failed="insight_id",
+        )
+    return _agora_action_command(
+        route="POST /bff/insights/{insightId}/actions/attach-strategy",
+        entity_type=ObjectType.AGORA_INSIGHT,
+        entity_id=insightId,
+        action_id="attach-strategy",
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=payload,
+        command_type=CommandType.AGORA_INSIGHT_ACTION,
+    )
+
+
+@app.get("/bff/agora/handoffs")
+async def bff_agora_handoffs(
+    status: Optional[str] = None,
+    handoff_type: Optional[str] = Query(default=None, alias="handoffType"),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: Agora handoff queue records created by workbench actions."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    items = read_store.list_agora_handoffs(status=status, handoff_type=handoff_type)
+    return _agora_list_response(
+        dataset="agora_handoffs",
+        surface_key="agora_handoff_list",
+        items=items,
+        page_token=page_token,
+        page_size=page_size,
+        snapshot_at=snapshot_at,
+    )
+
+
+@app.post("/bff/agora/persona-lab/{draftId}/actions/submit-commit", status_code=202)
+async def bff_agora_persona_lab_submit_commit(
+    draftId: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: submit a persona-lab sandbox draft as a management handoff."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    commit_payload = _agora_persona_lab_commit_payload(draftId, payload)
+    request_hash = _stable_json_hash({
+        "route": "POST /bff/agora/persona-lab/{draftId}/actions/submit-commit",
+        "draftId": draftId,
+        "payload": commit_payload,
+    })
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    snapshot_at = utc_now()
+    handoff_id = f"handoff-persona-{uuid.uuid4().hex[:12]}"
+    base_persona_id = commit_payload.get("basePersonaId") or draftId
+    handoff = read_store.create_agora_handoff(
+        handoff_id=handoff_id,
+        handoff_type="trainer_feedback_to_persona_update",
+        source_route=f"/agora/persona-lab/{draftId}",
+        source_entity={"type": "persona_draft", "id": draftId},
+        destination_route=f"/personas/{base_persona_id}/management-review",
+        destination_queue="persona",
+        priority=str(commit_payload.get("priority") or "normal"),
+        payload={
+            "personaDraftId": commit_payload["personaDraftId"],
+            "basePersonaId": commit_payload.get("basePersonaId"),
+            "evaluationRunIds": commit_payload["evaluationRunIds"],
+            "changeSummary": commit_payload["changeSummary"],
+            "requestedRoutePolicyId": commit_payload.get("requestedRoutePolicyId"),
+        },
+        actor_id=identity.operator_id,
+        created_at=snapshot_at,
+    )
+    command = _agora_submit_command(
+        entity_type=ObjectType.PERSONA,
+        entity_id=str(base_persona_id),
+        action_id="submit-commit",
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=commit_payload,
+        command_type=CommandType.PERSONA_ACTION,
+    )
+    _publish_event(
+        _sse_buffers["ask"],
+        _sse_subscribers["ask"],
+        "agora.persona_lab.handoff_submitted",
+        {"draftId": draftId, "handoffId": handoff_id, "basePersonaId": base_persona_id},
+    )
+    result = {
+        "status": ActionCommandStatus.ACCEPTED.value,
+        "data": handoff,
+        "meta": {
+            "command": command.get("data"),
+            "audit": (command.get("meta") or {}).get("audit"),
+            "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
+        },
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
 @app.get("/bff/actions", response_model=BffActionCatalogResponse)
 async def get_action_catalog_endpoint(
     authorization: Optional[str] = Header(default=None),
@@ -16863,6 +18258,604 @@ async def stream_generic_events(
 
 
 # --------------------------------------------------------------------------- #
+# Evolution Programs, Experiments, Jobs, Events (BFF-LUV-GAP-004)
+# --------------------------------------------------------------------------- #
+
+_EVOL_EXP_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+
+
+def _evol_exp_bff_idempotency_check(
+    resolved_key: str,
+    request_hash: str,
+) -> Optional[Dict[str, Any]]:
+    existing = _EVOL_EXP_BFF_IDEMPOTENCY.get(resolved_key)
+    if existing is None:
+        return None
+    if existing.get("request_hash") != request_hash:
+        raise _bff_error(
+            409,
+            ErrorCode.IDEMPOTENCY_CONFLICT,
+            "Idempotency key was already used with a different payload",
+            f"Key {resolved_key!r} is bound to a different request hash",
+            precondition_failed="idempotency_conflict",
+            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+        )
+    return existing.get("result")
+
+
+def _evol_exp_bff_action_command(
+    entity_type: ObjectType,
+    entity_id: str,
+    action_id: str,
+    resolved_key: str,
+    identity: Any,
+    payload: Dict[str, Any],
+    command_type: CommandType,
+) -> Dict[str, Any]:
+    request_hash = _stable_json_hash({
+        "entity_type": entity_type.value,
+        "entity_id": entity_id,
+        "action_id": action_id,
+        "payload": payload,
+    })
+    cached = _evol_exp_bff_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    staleness_warning = _check_read_surface_state()
+    command_id = str(uuid.uuid4())
+    submitted_at = utc_now()
+    target = TargetObject(type=entity_type, id=entity_id)
+    audit_record = {
+        "operator_id": identity.operator_id,
+        "roles_at_submission": identity.roles,
+        "action_id": action_id,
+        "preconditions_checked": ["authentication", "authorization", "idempotency"],
+        "timestamp": submitted_at,
+    }
+    idempotency_record = IdempotencyRecord.reserve(
+        idempotency_key=resolved_key,
+        operation_type=f"bff.{command_type.value}",
+        target_ref=f"{entity_type.value}:{entity_id}",
+        request_payload={
+            "entity_type": entity_type.value,
+            "entity_id": entity_id,
+            "action_id": action_id,
+            "payload": payload,
+        },
+        trace_id=command_id,
+    )
+    command_store.submit_command(
+        command_id=command_id,
+        command_type=command_type,
+        target=target,
+        submitted_at=submitted_at,
+        params={"action_id": action_id, **payload},
+        audit_context=audit_record,
+        foundation_context={"idempotency_record": idempotency_record.to_dict()},
+    )
+    result = _project_final_command_response(
+        command_id=command_id,
+        command=command_type,
+        accepted_at=submitted_at,
+        status=CommandStatus.SUBMITTED,
+        staleness_warning=staleness_warning,
+    )
+    _EVOL_EXP_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+# -- Evolution Programs ------------------------------------------------------
+
+@app.get("/bff/evolution-programs")
+async def bff_list_evolution_programs(
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: evolution program list."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    programs = read_store.list_evolution_programs(status=status)
+    total = len(programs)
+    page_items, next_page_token = _page_slice(programs, page_token, page_size)
+    return {
+        "data": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta(
+            "evolution_programs", "evolution_program_list",
+            snapshot_at=snapshot_at, total=total,
+        ),
+    }
+
+
+@app.post("/bff/evolution-programs", status_code=201)
+async def bff_create_evolution_program(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: create evolution program — Idempotency-Key required."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/evolution-programs", "payload": payload})
+    cached = _evol_exp_bff_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise _bff_error(
+            422, ErrorCode.INVALID_PARAMS, "name is required",
+            "Evolution program name must be a non-empty string",
+            precondition_failed="name",
+        )
+    snapshot_at = utc_now()
+    program_id = f"evp-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+    result = read_store.create_evolution_program(
+        program_id=program_id,
+        name=name,
+        actor_id=identity.operator_id,
+        created_at=snapshot_at,
+        params=payload.get("params") or {},
+    )
+    _EVOL_EXP_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/evolution-programs/{program_id}")
+async def bff_get_evolution_program(
+    program_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: evolution program detail."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    program = read_store.get_evolution_program(program_id)
+    if not program:
+        surface = _dataset_surface_status("evolution_programs", snapshot_at=snapshot_at)
+        _raise_if_read_surface_unavailable(surface, label="Evolution program")
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Evolution program not found",
+            f"Evolution program {program_id} does not exist",
+        )
+    return {
+        "data": program,
+        "meta": _read_surface_meta("evolution_programs", "evolution_program_detail", snapshot_at=snapshot_at),
+    }
+
+
+@app.patch("/bff/evolution-programs/{program_id}")
+async def bff_patch_evolution_program(
+    program_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: patch evolution program — Idempotency-Key required."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash(
+        {"route": "PATCH /bff/evolution-programs/{program_id}", "program_id": program_id, "payload": payload}
+    )
+    cached = _evol_exp_bff_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    program = read_store.get_evolution_program(program_id)
+    if not program:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Evolution program not found",
+            f"Evolution program {program_id} does not exist",
+        )
+    snapshot_at = utc_now()
+    updated = read_store.patch_evolution_program(
+        program_id,
+        patch={k: payload[k] for k in ("name", "status", "params") if k in payload},
+        actor_id=identity.operator_id,
+        updated_at=snapshot_at,
+    ) or dict(program)
+    result = {"data": updated, "meta": {"snapshot_at": snapshot_at}}
+    _EVOL_EXP_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/evolution-programs/{program_id}/runs")
+async def bff_list_evolution_program_runs(
+    program_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list runs for an evolution program."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    program = read_store.get_evolution_program(program_id)
+    if not program:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Evolution program not found",
+            f"Evolution program {program_id} does not exist",
+        )
+    runs = read_store.list_evolution_program_runs(program_id)
+    return {
+        "data": runs,
+        "page_info": {"total": len(runs)},
+        "meta": _read_surface_meta("evolution_programs", "evolution_program_runs", snapshot_at=snapshot_at),
+    }
+
+
+@app.get("/bff/evolution-programs/{program_id}/candidates")
+async def bff_list_evolution_program_candidates(
+    program_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list candidates for an evolution program."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    program = read_store.get_evolution_program(program_id)
+    if not program:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Evolution program not found",
+            f"Evolution program {program_id} does not exist",
+        )
+    candidates = read_store.list_evolution_program_candidates(program_id)
+    return {
+        "data": candidates,
+        "page_info": {"total": len(candidates)},
+        "meta": _read_surface_meta("evolution_programs", "evolution_program_candidates", snapshot_at=snapshot_at),
+    }
+
+
+@app.post("/bff/evolution-programs/{program_id}/actions/{action_id}", status_code=202)
+async def bff_evolution_program_action(
+    program_id: str,
+    action_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: evolution program action."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    program = read_store.get_evolution_program(program_id)
+    if not program:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Evolution program not found",
+            f"Evolution program {program_id} does not exist",
+        )
+    return _evol_exp_bff_action_command(
+        entity_type=ObjectType.EVOLUTION_PROGRAM,
+        entity_id=program_id,
+        action_id=action_id,
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=payload,
+        command_type=CommandType.EVOLUTION_PROGRAM_ACTION,
+    )
+
+
+# -- Experiments -------------------------------------------------------------
+
+@app.get("/bff/experiments")
+async def bff_list_experiments(
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: experiment list."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    items = read_store.list_experiments_bff(status=status)
+    total = len(items)
+    page_items, next_page_token = _page_slice(items, page_token, page_size)
+    return {
+        "data": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta("experiments", "experiment_list", snapshot_at=snapshot_at, total=total),
+    }
+
+
+@app.post("/bff/experiments", status_code=201)
+async def bff_create_experiment(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: create experiment — Idempotency-Key required."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/experiments", "payload": payload})
+    cached = _evol_exp_bff_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    name = str(payload.get("name") or payload.get("experiment_name") or "").strip()
+    if not name:
+        raise _bff_error(
+            422, ErrorCode.INVALID_PARAMS, "name is required",
+            "Experiment name must be a non-empty string",
+            precondition_failed="name",
+        )
+    result = read_store.create_experiment_bff(
+        name=name,
+        actor_id=identity.operator_id,
+        created_at=utc_now(),
+        params=payload,
+    )
+    _EVOL_EXP_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/experiments/{experiment_id}")
+async def bff_get_experiment(
+    experiment_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: experiment detail."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    item = read_store.get_experiment_bff(experiment_id)
+    if not item:
+        surface = _dataset_surface_status("experiments", snapshot_at=snapshot_at)
+        _raise_if_read_surface_unavailable(surface, label="Experiment")
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Experiment not found",
+            f"Experiment {experiment_id} does not exist",
+        )
+    return {
+        "data": item,
+        "meta": _read_surface_meta("experiments", "experiment_detail", snapshot_at=snapshot_at),
+    }
+
+
+@app.post("/bff/experiments/{experiment_id}/actions/{action_id}", status_code=202)
+async def bff_experiment_action(
+    experiment_id: str,
+    action_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: experiment action."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    item = read_store.get_experiment_bff(experiment_id)
+    if not item:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Experiment not found",
+            f"Experiment {experiment_id} does not exist",
+        )
+    return _evol_exp_bff_action_command(
+        entity_type=ObjectType.EXPERIMENT,
+        entity_id=experiment_id,
+        action_id=action_id,
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=payload,
+        command_type=CommandType.EXPERIMENT_ACTION,
+    )
+
+
+@app.get("/bff/experiments/{experiment_id}/logs")
+async def bff_get_experiment_logs(
+    experiment_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: experiment logs."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    item = read_store.get_experiment_bff(experiment_id)
+    if not item:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Experiment not found",
+            f"Experiment {experiment_id} does not exist",
+        )
+    logs = read_store.get_experiment_logs(experiment_id)
+    return {
+        "data": logs,
+        "meta": _read_surface_meta("experiments", "experiment_logs", snapshot_at=snapshot_at),
+    }
+
+
+@app.get("/bff/experiments/{experiment_id}/metrics")
+async def bff_get_experiment_metrics(
+    experiment_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: experiment metrics."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    item = read_store.get_experiment_bff(experiment_id)
+    if not item:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Experiment not found",
+            f"Experiment {experiment_id} does not exist",
+        )
+    metrics = read_store.get_experiment_metrics(experiment_id)
+    return {
+        "data": metrics,
+        "meta": _read_surface_meta("experiments", "experiment_metrics", snapshot_at=snapshot_at),
+    }
+
+
+@app.get("/bff/experiments/{experiment_id}/artifacts")
+async def bff_get_experiment_artifacts(
+    experiment_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: experiment artifacts."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    item = read_store.get_experiment_bff(experiment_id)
+    if not item:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Experiment not found",
+            f"Experiment {experiment_id} does not exist",
+        )
+    artifacts = read_store.get_experiment_artifacts(experiment_id)
+    return {
+        "data": artifacts,
+        "meta": _read_surface_meta("experiments", "experiment_artifacts", snapshot_at=snapshot_at),
+    }
+
+
+# -- Jobs --------------------------------------------------------------------
+
+@app.get("/bff/jobs")
+async def bff_list_jobs(
+    status: Optional[str] = None,
+    job_type: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: job list."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    jobs = read_store.list_jobs_bff(status=status, job_type=job_type)
+    total = len(jobs)
+    page_items, next_page_token = _page_slice(jobs, page_token, page_size)
+    return {
+        "data": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta("jobs", "job_list", snapshot_at=snapshot_at, total=total),
+    }
+
+
+@app.get("/bff/jobs/{job_id}")
+async def bff_get_job(
+    job_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: job detail."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    job = read_store.get_job_bff(job_id)
+    if not job:
+        surface = _dataset_surface_status("jobs", snapshot_at=snapshot_at)
+        _raise_if_read_surface_unavailable(surface, label="Job")
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Job not found",
+            f"Job {job_id} does not exist",
+        )
+    return {
+        "data": job,
+        "meta": _read_surface_meta("jobs", "job_detail", snapshot_at=snapshot_at),
+    }
+
+
+@app.get("/bff/jobs/{job_id}/logs")
+async def bff_get_job_logs(
+    job_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: job logs."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    job = read_store.get_job_bff(job_id)
+    if not job:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Job not found",
+            f"Job {job_id} does not exist",
+        )
+    logs = read_store.get_job_logs_bff(job_id)
+    return {
+        "data": logs,
+        "meta": _read_surface_meta("jobs", "job_logs", snapshot_at=snapshot_at),
+    }
+
+
+@app.post("/bff/jobs/{job_id}/actions/{action_id}", status_code=202)
+async def bff_job_action(
+    job_id: str,
+    action_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: job action."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    job = read_store.get_job_bff(job_id)
+    if not job:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Job not found",
+            f"Job {job_id} does not exist",
+        )
+    return _evol_exp_bff_action_command(
+        entity_type=ObjectType.JOB,
+        entity_id=job_id,
+        action_id=action_id,
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=payload,
+        command_type=CommandType.JOB_ACTION,
+    )
+
+
+# -- Events list -------------------------------------------------------------
+
+@app.get("/bff/events")
+async def bff_list_events(
+    event_type: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: event list (paginated telemetry/audit feed)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    events = read_store.list_events_bff(event_type=event_type, page_size=page_size)
+    total = len(events)
+    page_items, next_page_token = _page_slice(events, page_token, page_size)
+    return {
+        "data": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta("events", "event_list", snapshot_at=snapshot_at, total=total),
+    }
+
+
+# --------------------------------------------------------------------------- #
 # Execute-Plans SSE Compatibility Aliases (BFF-LUV-GAP-010)
 # --------------------------------------------------------------------------- #
 
@@ -18724,6 +20717,788 @@ async def bff_command_confirmation(
         }
     _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": req_hash, "result": result}
     return result
+
+
+# --------------------------------------------------------------------------- #
+# BFF-LUV-GAP-004: Evolution Programs, Experiments, Jobs, Events
+# --------------------------------------------------------------------------- #
+
+_GOV_BFF_EVOLUTION_PROGRAM_OVERLAY: Dict[str, Dict[str, Any]] = {}
+_GOV_BFF_EXPERIMENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
+_GOV_BFF_JOB_OVERLAY: Dict[str, Dict[str, Any]] = {}
+
+
+def _get_bff_evolution_program(program_id: str) -> Optional[Dict[str, Any]]:
+    return _GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.get(program_id)
+
+
+def _list_bff_evolution_programs(*, status: Optional[str] = None) -> List[Dict[str, Any]]:
+    programs = list(_GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.values())
+    if status:
+        requested = {s.strip().lower() for s in status.split(",") if s.strip()}
+        programs = [p for p in programs if str(p.get("status") or "").lower() in requested]
+    return sorted(programs, key=lambda p: str(p.get("created_at") or ""), reverse=True)
+
+
+def _get_bff_experiment(experiment_id: str) -> Optional[Dict[str, Any]]:
+    overlay = _GOV_BFF_EXPERIMENT_OVERLAY.get(experiment_id)
+    if overlay:
+        return overlay
+    return read_store.get_research_experiment(experiment_id)
+
+
+def _list_bff_experiments(*, status: Optional[str] = None) -> List[Dict[str, Any]]:
+    items = list(read_store.list_research_experiments())
+    seen = {str(e.get("experiment_id") or e.get("id") or "") for e in items}
+    for eid, exp in _GOV_BFF_EXPERIMENT_OVERLAY.items():
+        if eid not in seen:
+            items.append(dict(exp))
+    if status:
+        requested = {s.strip().lower() for s in status.split(",") if s.strip()}
+        items = [e for e in items if str(e.get("status") or "").lower() in requested]
+    return sorted(items, key=lambda e: str(e.get("created_at") or e.get("queued_at") or ""), reverse=True)
+
+
+def _get_bff_job(job_id: str) -> Optional[Dict[str, Any]]:
+    return _GOV_BFF_JOB_OVERLAY.get(job_id)
+
+
+def _list_bff_jobs(*, status: Optional[str] = None) -> List[Dict[str, Any]]:
+    jobs = list(_GOV_BFF_JOB_OVERLAY.values())
+    if status:
+        requested = {s.strip().lower() for s in status.split(",") if s.strip()}
+        jobs = [j for j in jobs if str(j.get("status") or "").lower() in requested]
+    return sorted(jobs, key=lambda j: str(j.get("created_at") or j.get("submitted_at") or ""), reverse=True)
+
+
+# -- Evolution Programs ------------------------------------------------------
+
+@app.get("/bff/evolution-programs")
+async def bff_list_evolution_programs(
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list evolution programs (execute-plans compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    programs = _list_bff_evolution_programs(status=status)
+    surface = _dataset_surface_status(
+        "evolution_decisions",
+        snapshot_at=snapshot_at,
+        has_data=bool(programs) or None,
+    )
+    if surface.get("status") == "unavailable" and not programs:
+        next_page_token = None
+    else:
+        programs, next_page_token = _page_slice(programs, page_token, page_size)
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {"evolution_programs": surface}
+    return {
+        "items": programs,
+        "page_info": {"next_page_token": next_page_token},
+        "meta": meta,
+    }
+
+
+@app.post("/bff/evolution-programs", status_code=201)
+async def bff_create_evolution_program(
+    request: Request,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: create an evolution program record."""
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    payload: Dict[str, Any] = {}
+    try:
+        payload = await request.json()
+    except Exception:
+        pass
+    _reject_body_idempotency_key(payload)
+
+    existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
+    req_hash = _stable_json_hash(payload)
+    if existing is not None:
+        if existing.get("request_hash") != req_hash:
+            raise _bff_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key already used with a different payload",
+                f"Key {resolved_key!r} is bound to a different request hash",
+                precondition_failed="idempotency_conflict",
+                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+            )
+        return existing["result"]
+
+    program_id = str(payload.get("program_id") or payload.get("id") or uuid.uuid4())
+    created_at = utc_now()
+    result = {
+        "id": program_id,
+        "program_id": program_id,
+        "name": payload.get("name") or "Untitled Evolution Program",
+        "status": "active",
+        "created_at": created_at,
+        "updated_at": created_at,
+        "created_by": identity.operator_id,
+        "description": payload.get("description") or "",
+        "config": payload.get("config") or {},
+        "artifact_links": [],
+        "meta": {"idempotency_key": resolved_key},
+    }
+    _GOV_BFF_EVOLUTION_PROGRAM_OVERLAY[program_id] = result
+    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": req_hash, "result": result}
+    return result
+
+
+@app.get("/bff/evolution-programs/{programId}")
+async def bff_get_evolution_program(
+    programId: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: get a specific evolution program by ID."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    clean_id = programId.strip()
+    program = _get_bff_evolution_program(clean_id)
+    if not program:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Evolution program not found",
+            f"Evolution program {programId} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    return {
+        "data": program,
+        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+    }
+
+
+@app.patch("/bff/evolution-programs/{programId}")
+async def bff_patch_evolution_program(
+    programId: str,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: update an evolution program."""
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+
+    clean_id = programId.strip()
+    program = _get_bff_evolution_program(clean_id)
+    if not program:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Evolution program not found",
+            f"Evolution program {programId} does not exist",
+        )
+
+    patch: Dict[str, Any] = {}
+    try:
+        patch = await request.json()
+    except Exception:
+        pass
+
+    allowed_fields = {"name", "description", "status", "config"}
+    updated = dict(program)
+    for field in allowed_fields:
+        if field in patch:
+            updated[field] = patch[field]
+    updated["updated_at"] = utc_now()
+    _GOV_BFF_EVOLUTION_PROGRAM_OVERLAY[clean_id] = updated
+
+    snapshot_at = utc_now()
+    return {
+        "data": updated,
+        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+    }
+
+
+@app.get("/bff/evolution-programs/{programId}/runs")
+async def bff_list_evolution_program_runs(
+    programId: str,
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list evolution decision runs for a program."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    clean_id = programId.strip()
+    program = _get_bff_evolution_program(clean_id)
+    if not program:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Evolution program not found",
+            f"Evolution program {programId} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    decisions = read_store.list_evolution_decisions(status=status)
+    runs = [
+        {
+            "run_id": str(d.get("id") or d.get("decision_id") or ""),
+            "program_id": clean_id,
+            "status": d.get("status") or "pending",
+            "action_type": d.get("action_type") or "",
+            "risk_level": d.get("risk_level") or "",
+            "created_at": d.get("created_at") or "",
+            "artifact_links": d.get("artifact_links") or [],
+        }
+        for d in decisions
+        if not d.get("program_id") or d.get("program_id") == clean_id
+    ]
+
+    surface = _dataset_surface_status("evolution_decisions", snapshot_at=snapshot_at)
+    if surface.get("status") == "unavailable":
+        runs = []
+        next_page_token = None
+    else:
+        runs, next_page_token = _page_slice(runs, page_token, page_size)
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {"evolution_runs": surface}
+    return {
+        "items": runs,
+        "page_info": {"next_page_token": next_page_token},
+        "meta": meta,
+    }
+
+
+@app.get("/bff/evolution-programs/{programId}/candidates")
+async def bff_list_evolution_program_candidates(
+    programId: str,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list evolution candidates for a program."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    clean_id = programId.strip()
+    program = _get_bff_evolution_program(clean_id)
+    if not program:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Evolution program not found",
+            f"Evolution program {programId} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    candidates: List[Dict[str, Any]] = []
+    for cand in program.get("candidates") or []:
+        candidates.append(dict(cand))
+
+    candidates, next_page_token = _page_slice(candidates, page_token, page_size)
+    meta = _snapshot_meta(snapshot_at)
+    return {
+        "items": candidates,
+        "page_info": {"next_page_token": next_page_token},
+        "meta": meta,
+    }
+
+
+@app.post("/bff/evolution-programs/{programId}/actions/{actionId}", status_code=202)
+async def bff_evolution_program_action(
+    programId: str,
+    actionId: str,
+    request: Request,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: submit an action against an evolution program."""
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    payload: Dict[str, Any] = {}
+    try:
+        payload = await request.json()
+    except Exception:
+        pass
+    clean_id = programId.strip()
+    program = _get_bff_evolution_program(clean_id)
+    if not program:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Evolution program not found",
+            f"Evolution program {programId} does not exist",
+        )
+    return _gov_bff_action_command(
+        ObjectType.EVOLUTION_PROGRAM, clean_id, actionId, resolved_key, identity, payload,
+        CommandType.EVOLUTION_PROGRAM_ACTION,
+    )
+
+
+# -- Experiments -------------------------------------------------------------
+
+@app.get("/bff/experiments")
+async def bff_list_experiments_compat(
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list experiments (execute-plans compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    items = _list_bff_experiments(status=status)
+    source = read_store.dataset_source("research_experiments")
+    surface = _dataset_surface_status("research_experiments", snapshot_at=snapshot_at, source=source)
+    if surface.get("status") == "unavailable" and not _GOV_BFF_EXPERIMENT_OVERLAY:
+        items = []
+        next_page_token = None
+    else:
+        items, next_page_token = _page_slice(items, page_token, page_size)
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {"experiments": surface}
+    return {
+        "items": items,
+        "page_info": {"next_page_token": next_page_token},
+        "meta": meta,
+    }
+
+
+@app.post("/bff/experiments", status_code=201)
+async def bff_create_experiment_compat(
+    request: Request,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: create an experiment (execute-plans compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    payload: Dict[str, Any] = {}
+    try:
+        payload = await request.json()
+    except Exception:
+        pass
+    _reject_body_idempotency_key(payload)
+
+    existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
+    req_hash = _stable_json_hash(payload)
+    if existing is not None:
+        if existing.get("request_hash") != req_hash:
+            raise _bff_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key already used with a different payload",
+                f"Key {resolved_key!r} is bound to a different request hash",
+                precondition_failed="idempotency_conflict",
+                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+            )
+        return existing["result"]
+
+    experiment_id = str(payload.get("experiment_id") or payload.get("id") or uuid.uuid4())
+    created_at = utc_now()
+    result = {
+        "id": experiment_id,
+        "experiment_id": experiment_id,
+        "name": payload.get("name") or payload.get("experiment_name") or "Untitled Experiment",
+        "status": "queued",
+        "created_at": created_at,
+        "queued_at": created_at,
+        "updated_at": created_at,
+        "created_by": identity.operator_id,
+        "description": payload.get("description") or "",
+        "config": payload.get("config") or {},
+        "artifact_links": [],
+        "logs": [],
+        "metrics": {},
+        "meta": {"idempotency_key": resolved_key},
+    }
+    _GOV_BFF_EXPERIMENT_OVERLAY[experiment_id] = result
+    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": req_hash, "result": result}
+    return result
+
+
+@app.get("/bff/experiments/{experimentId}")
+async def bff_get_experiment_compat(
+    experimentId: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: get a specific experiment by ID."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    clean_id = experimentId.strip()
+    experiment = _get_bff_experiment(clean_id)
+    if not experiment:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Experiment not found",
+            f"Experiment {experimentId} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    return {
+        "data": experiment,
+        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+    }
+
+
+@app.post("/bff/experiments/{experimentId}/actions/{actionId}", status_code=202)
+async def bff_experiment_action(
+    experimentId: str,
+    actionId: str,
+    request: Request,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: submit an action against an experiment."""
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    payload: Dict[str, Any] = {}
+    try:
+        payload = await request.json()
+    except Exception:
+        pass
+    clean_id = experimentId.strip()
+    experiment = _get_bff_experiment(clean_id)
+    if not experiment:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Experiment not found",
+            f"Experiment {experimentId} does not exist",
+        )
+    return _gov_bff_action_command(
+        ObjectType.EXPERIMENT, clean_id, actionId, resolved_key, identity, payload,
+        CommandType.EXPERIMENT_ACTION,
+    )
+
+
+@app.get("/bff/experiments/{experimentId}/logs")
+async def bff_get_experiment_logs(
+    experimentId: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: get logs for a specific experiment."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    clean_id = experimentId.strip()
+    experiment = _get_bff_experiment(clean_id)
+    if not experiment:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Experiment not found",
+            f"Experiment {experimentId} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    logs = list(experiment.get("logs") or [])
+    return {
+        "experiment_id": clean_id,
+        "logs": logs,
+        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+    }
+
+
+@app.get("/bff/experiments/{experimentId}/metrics")
+async def bff_get_experiment_metrics(
+    experimentId: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: get metrics for a specific experiment."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    clean_id = experimentId.strip()
+    experiment = _get_bff_experiment(clean_id)
+    if not experiment:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Experiment not found",
+            f"Experiment {experimentId} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    metrics = dict(experiment.get("metrics") or {})
+    return {
+        "experiment_id": clean_id,
+        "metrics": metrics,
+        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+    }
+
+
+@app.get("/bff/experiments/{experimentId}/artifacts")
+async def bff_get_experiment_artifacts(
+    experimentId: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: get artifact links for a specific experiment."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    clean_id = experimentId.strip()
+    experiment = _get_bff_experiment(clean_id)
+    if not experiment:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Experiment not found",
+            f"Experiment {experimentId} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    artifacts = list(experiment.get("artifact_links") or [])
+    return {
+        "experiment_id": clean_id,
+        "artifacts": artifacts,
+        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+    }
+
+
+# -- Jobs --------------------------------------------------------------------
+
+@app.get("/bff/jobs")
+async def bff_list_jobs(
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list background jobs (execute-plans compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    jobs = _list_bff_jobs(status=status)
+    surface = _dataset_surface_status(
+        "jobs",
+        snapshot_at=snapshot_at,
+        has_data=bool(jobs) or None,
+    )
+    if surface.get("status") == "unavailable" and not jobs:
+        next_page_token = None
+    else:
+        jobs, next_page_token = _page_slice(jobs, page_token, page_size)
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {"jobs": surface}
+    return {
+        "items": jobs,
+        "page_info": {"next_page_token": next_page_token},
+        "meta": meta,
+    }
+
+
+@app.get("/bff/jobs/{jobId}")
+async def bff_get_job(
+    jobId: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: get a specific job by ID."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    clean_id = jobId.strip()
+    job = _get_bff_job(clean_id)
+    if not job:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Job not found",
+            f"Job {jobId} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    return {
+        "data": job,
+        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+    }
+
+
+@app.get("/bff/jobs/{jobId}/logs")
+async def bff_get_job_logs(
+    jobId: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: get logs for a specific job."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    clean_id = jobId.strip()
+    job = _get_bff_job(clean_id)
+    if not job:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Job not found",
+            f"Job {jobId} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    logs = list(job.get("logs") or [])
+    return {
+        "job_id": clean_id,
+        "status": job.get("status") or "unknown",
+        "progress": job.get("progress") or {},
+        "logs": logs,
+        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+    }
+
+
+@app.post("/bff/jobs/{jobId}/actions/{actionId}", status_code=202)
+async def bff_job_action(
+    jobId: str,
+    actionId: str,
+    request: Request,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: submit an action against a background job."""
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    payload: Dict[str, Any] = {}
+    try:
+        payload = await request.json()
+    except Exception:
+        pass
+    clean_id = jobId.strip()
+    job = _get_bff_job(clean_id)
+    if not job:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Job not found",
+            f"Job {jobId} does not exist",
+        )
+    return _gov_bff_action_command(
+        ObjectType.JOB, clean_id, actionId, resolved_key, identity, payload,
+        CommandType.JOB_ACTION,
+    )
+
+
+# -- Events list (non-stream) ------------------------------------------------
+
+@app.get("/bff/events")
+async def bff_list_events(
+    event_type: Optional[str] = None,
+    actor: Optional[str] = None,
+    target_type: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=500),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list recent system/audit events (execute-plans compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    action_types = [event_type] if event_type else None
+    events = read_store.list_governance_audit_events(
+        actor=actor,
+        action_types=action_types,
+        target_type=target_type,
+    )
+    surface = _dataset_surface_status("audit_log", snapshot_at=snapshot_at)
+    if surface.get("status") == "unavailable":
+        events = []
+        next_page_token = None
+    else:
+        events, next_page_token = _page_slice(events, page_token, page_size)
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {"events": surface}
+    return {
+        "items": events,
+        "page_info": {"next_page_token": next_page_token},
+        "meta": meta,
+    }
+
+
+_BFF_GAP004_ROUTE_PATHS = {
+    "/bff/evolution-programs",
+    "/bff/evolution-programs/{}",
+    "/bff/evolution-programs/{}/runs",
+    "/bff/evolution-programs/{}/candidates",
+    "/bff/evolution-programs/{}/actions/{}",
+    "/bff/experiments",
+    "/bff/experiments/{}",
+    "/bff/experiments/{}/actions/{}",
+    "/bff/experiments/{}/logs",
+    "/bff/experiments/{}/metrics",
+    "/bff/experiments/{}/artifacts",
+    "/bff/jobs",
+    "/bff/jobs/{}",
+    "/bff/jobs/{}/logs",
+    "/bff/jobs/{}/actions/{}",
+    "/bff/events",
+}
+
+
+def _bff_gap004_route_path_key(path: str) -> str:
+    return re.sub(r"\{[^}/]+\}", "{}", path)
+
+
+def _bff_gap004_route_methods(route: Any) -> List[str]:
+    return sorted(
+        method
+        for method in getattr(route, "methods", set())
+        if method not in {"HEAD", "OPTIONS"}
+    )
+
+
+def _prefer_latest_bff_gap004_routes() -> None:
+    """Keep the task-scoped GAP-004 handlers authoritative.
+
+    Earlier execute-plans slices registered placeholder handlers for the same
+    compatibility paths. FastAPI matches the first route, so prune the shadowed
+    registrations and keep the latest GAP-004 route for each method/path key.
+    """
+    preferred: Dict[tuple[str, str], Any] = {}
+    for route in app.router.routes:
+        path_key = _bff_gap004_route_path_key(getattr(route, "path", ""))
+        if path_key not in _BFF_GAP004_ROUTE_PATHS:
+            continue
+        for method in _bff_gap004_route_methods(route):
+            preferred[(method, path_key)] = route
+
+    if not preferred:
+        return
+
+    pruned = []
+    for route in app.router.routes:
+        path_key = _bff_gap004_route_path_key(getattr(route, "path", ""))
+        methods = _bff_gap004_route_methods(route)
+        route_keys = [(method, path_key) for method in methods if path_key in _BFF_GAP004_ROUTE_PATHS]
+        if route_keys and all(preferred.get(key) is not route for key in route_keys):
+            continue
+        pruned.append(route)
+    app.router.routes[:] = pruned
+
+
+_prefer_latest_bff_gap004_routes()
 
 
 if __name__ == "__main__":

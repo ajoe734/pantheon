@@ -26,195 +26,1307 @@
     ]
   },
   "entries": [
-    {"method": "GET", "path": "/health", "family": "health", "status": "implemented"},
-    {"method": "GET", "path": "/bff/actions", "family": "final-contract", "status": "implemented"},
-    {"method": "GET", "path": "/bff/approvals", "family": "final-contract", "status": "implemented"},
-    {"method": "POST", "path": "/bff/v1/commands", "family": "final-contract", "status": "implemented"},
-    {"method": "GET", "path": "/bff/v5/interventions", "family": "v5-interventions", "status": "implemented"},
-    {"method": "POST", "path": "/bff/v5/interventions/{id}/remediate", "family": "v5-interventions", "status": "implemented"},
-    {"method": "POST", "path": "/bff/v5/interventions/{id}/two-man-sign", "family": "v5-interventions", "status": "superseded_with_reason", "task_id": "BFF-LUV-GAP-011", "reason": "Superseded by POST /bff/v5/interventions/{id}/remediate + RemediateSentinelIntervention, which is already a two-man guarded surface requiring two_man_signature_id. A separate two-man-sign step is redundant; callers should submit remediate with the second-operator signature directly."},
-
-    {"method": "POST", "path": "/bff/mcp-servers/{id}/import-tools", "family": "mcp-final", "status": "implemented"},
-    {"method": "POST", "path": "/bff/mcp-tools/{id}/{action}", "family": "mcp-final", "status": "implemented"},
-    {"method": "POST", "path": "/bff/mcp-tools/{id}/grant", "family": "mcp-final", "status": "implemented_by_alias", "covered_by": "POST /bff/mcp-tools/{id}/{action}", "proof": "test_execute_plans_mcp_tool_alias_actions_prove_concrete_verbs"},
-    {"method": "POST", "path": "/bff/mcp-tools/{id}/revoke", "family": "mcp-final", "status": "implemented_by_alias", "covered_by": "POST /bff/mcp-tools/{id}/{action}", "proof": "test_execute_plans_mcp_tool_alias_actions_prove_concrete_verbs"},
-    {"method": "POST", "path": "/bff/mcp-tools/{id}/disable", "family": "mcp-final", "status": "implemented_by_alias", "covered_by": "POST /bff/mcp-tools/{id}/{action}", "proof": "test_execute_plans_mcp_tool_alias_actions_prove_concrete_verbs"},
-    {"method": "POST", "path": "/bff/mcp-tools/{id}/test", "family": "mcp-final", "status": "implemented_by_alias", "covered_by": "POST /bff/mcp-tools/{id}/{action}", "proof": "test_execute_plans_mcp_tool_alias_actions_prove_concrete_verbs"},
-    {"method": "POST", "path": "/bff/v1/mcp/servers/{id}/import-tools", "family": "mcp-final", "status": "implemented"},
-    {"method": "POST", "path": "/bff/v1/mcp/servers/{id}/tools/{toolId}/actions/{actionId}", "family": "mcp-final", "status": "implemented"},
-
-    {"method": "POST", "path": "/bff/{resource}/{id}/actions/{actionId}", "family": "generic-actions", "status": "superseded_with_reason", "reason": "Part 06 generic action admission is not a standalone Pantheon route; it is superseded by explicit family action routes plus /bff/actions and /bff/v1/commands."},
-
-    {"method": "GET", "path": "/bff/strategies", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "POST", "path": "/bff/strategies", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "GET", "path": "/bff/strategies/{strategyId}", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "PATCH", "path": "/bff/strategies/{strategyId}", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "GET", "path": "/bff/strategies/{strategyId}/specs", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "POST", "path": "/bff/strategies/{strategyId}/specs", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "GET", "path": "/bff/strategies/{strategyId}/experiments", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "GET", "path": "/bff/strategies/{strategyId}/artifacts", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "GET", "path": "/bff/strategies/{strategyId}/lineage", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "GET", "path": "/bff/strategies/{strategyId}/audit", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "POST", "path": "/bff/strategies/{strategyId}/actions/{actionId}", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "POST", "path": "/bff/strategies/{strategyId}/dry-run", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "GET", "path": "/bff/personas", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "POST", "path": "/bff/personas", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "GET", "path": "/bff/personas/{personaId}", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "PATCH", "path": "/bff/personas/{personaId}", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "GET", "path": "/bff/personas/{personaId}/route-policy", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "GET", "path": "/bff/personas/{personaId}/activity", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "GET", "path": "/bff/personas/{personaId}/evaluations", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "GET", "path": "/bff/personas/{personaId}/memory", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "GET", "path": "/bff/personas/{personaId}/audit", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "POST", "path": "/bff/personas/{personaId}/actions/{actionId}", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "POST", "path": "/bff/personas/{personaId}/test-prompt", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "GET", "path": "/bff/search", "family": "strategy-persona", "status": "missing", "task_id": "BFF-LUV-GAP-002"},
-    {"method": "GET", "path": "/bff/types", "family": "strategy-persona", "status": "deferred_with_task", "task_id": "BFF-LUV-GAP-002"},
-
-    {"method": "GET", "path": "/bff/capital-pools", "family": "capital-ranking-rebalance", "status": "implemented", "task_id": "BFF-LUV-GAP-003"},
-    {"method": "POST", "path": "/bff/capital-pools", "family": "capital-ranking-rebalance", "status": "implemented", "task_id": "BFF-LUV-GAP-003"},
-    {"method": "GET", "path": "/bff/capital-pools/{poolId}", "family": "capital-ranking-rebalance", "status": "implemented", "task_id": "BFF-LUV-GAP-003"},
-    {"method": "PATCH", "path": "/bff/capital-pools/{poolId}", "family": "capital-ranking-rebalance", "status": "implemented", "task_id": "BFF-LUV-GAP-003"},
-    {"method": "POST", "path": "/bff/capital-pools/{poolId}/actions/{actionId}", "family": "capital-ranking-rebalance", "status": "implemented", "task_id": "BFF-LUV-GAP-003"},
-    {"method": "GET", "path": "/bff/ranking/formulas", "family": "capital-ranking-rebalance", "status": "implemented", "task_id": "BFF-LUV-GAP-003"},
-    {"method": "POST", "path": "/bff/ranking/formulas", "family": "capital-ranking-rebalance", "status": "implemented", "task_id": "BFF-LUV-GAP-003"},
-    {"method": "GET", "path": "/bff/ranking/formulas/{formulaId}", "family": "capital-ranking-rebalance", "status": "implemented", "task_id": "BFF-LUV-GAP-003"},
-    {"method": "PATCH", "path": "/bff/ranking/formulas/{formulaId}", "family": "capital-ranking-rebalance", "status": "implemented", "task_id": "BFF-LUV-GAP-003"},
-    {"method": "POST", "path": "/bff/ranking/formulas/{formulaId}/actions/{actionId}", "family": "capital-ranking-rebalance", "status": "implemented", "task_id": "BFF-LUV-GAP-003"},
-    {"method": "GET", "path": "/bff/rebalances", "family": "capital-ranking-rebalance", "status": "implemented", "task_id": "BFF-LUV-GAP-003"},
-    {"method": "POST", "path": "/bff/rebalances", "family": "capital-ranking-rebalance", "status": "implemented", "task_id": "BFF-LUV-GAP-003"},
-    {"method": "GET", "path": "/bff/rebalances/{rebalanceId}", "family": "capital-ranking-rebalance", "status": "implemented", "task_id": "BFF-LUV-GAP-003"},
-    {"method": "POST", "path": "/bff/rebalances/{rebalanceId}/actions/{actionId}", "family": "capital-ranking-rebalance", "status": "implemented", "task_id": "BFF-LUV-GAP-003"},
-    {"method": "GET", "path": "/bff/rankings", "family": "capital-ranking-rebalance", "status": "implemented", "task_id": "BFF-LUV-GAP-003"},
-    {"method": "GET", "path": "/bff/rankings/{rankingId}", "family": "capital-ranking-rebalance", "status": "implemented", "task_id": "BFF-LUV-GAP-003"},
-    {"method": "POST", "path": "/bff/rankings/{rankingId}/actions/{actionId}", "family": "capital-ranking-rebalance", "status": "implemented", "task_id": "BFF-LUV-GAP-003"},
-
-    {"method": "GET", "path": "/bff/evolution-programs", "family": "evolution-experiment-jobs-events", "status": "missing", "task_id": "BFF-LUV-GAP-004"},
-    {"method": "POST", "path": "/bff/evolution-programs", "family": "evolution-experiment-jobs-events", "status": "missing", "task_id": "BFF-LUV-GAP-004"},
-    {"method": "GET", "path": "/bff/evolution-programs/{programId}", "family": "evolution-experiment-jobs-events", "status": "missing", "task_id": "BFF-LUV-GAP-004"},
-    {"method": "PATCH", "path": "/bff/evolution-programs/{programId}", "family": "evolution-experiment-jobs-events", "status": "missing", "task_id": "BFF-LUV-GAP-004"},
-    {"method": "GET", "path": "/bff/evolution-programs/{programId}/runs", "family": "evolution-experiment-jobs-events", "status": "missing", "task_id": "BFF-LUV-GAP-004"},
-    {"method": "GET", "path": "/bff/evolution-programs/{programId}/candidates", "family": "evolution-experiment-jobs-events", "status": "missing", "task_id": "BFF-LUV-GAP-004"},
-    {"method": "POST", "path": "/bff/evolution-programs/{programId}/actions/{actionId}", "family": "evolution-experiment-jobs-events", "status": "missing", "task_id": "BFF-LUV-GAP-004"},
-    {"method": "GET", "path": "/bff/experiments", "family": "evolution-experiment-jobs-events", "status": "missing", "task_id": "BFF-LUV-GAP-004"},
-    {"method": "POST", "path": "/bff/experiments", "family": "evolution-experiment-jobs-events", "status": "missing", "task_id": "BFF-LUV-GAP-004"},
-    {"method": "GET", "path": "/bff/experiments/{experimentId}", "family": "evolution-experiment-jobs-events", "status": "missing", "task_id": "BFF-LUV-GAP-004"},
-    {"method": "POST", "path": "/bff/experiments/{experimentId}/actions/{actionId}", "family": "evolution-experiment-jobs-events", "status": "missing", "task_id": "BFF-LUV-GAP-004"},
-    {"method": "GET", "path": "/bff/experiments/{experimentId}/logs", "family": "evolution-experiment-jobs-events", "status": "missing", "task_id": "BFF-LUV-GAP-004"},
-    {"method": "GET", "path": "/bff/experiments/{experimentId}/metrics", "family": "evolution-experiment-jobs-events", "status": "missing", "task_id": "BFF-LUV-GAP-004"},
-    {"method": "GET", "path": "/bff/experiments/{experimentId}/artifacts", "family": "evolution-experiment-jobs-events", "status": "missing", "task_id": "BFF-LUV-GAP-004"},
-    {"method": "GET", "path": "/bff/jobs", "family": "evolution-experiment-jobs-events", "status": "missing", "task_id": "BFF-LUV-GAP-004"},
-    {"method": "GET", "path": "/bff/jobs/{jobId}", "family": "evolution-experiment-jobs-events", "status": "missing", "task_id": "BFF-LUV-GAP-004"},
-    {"method": "GET", "path": "/bff/jobs/{jobId}/logs", "family": "evolution-experiment-jobs-events", "status": "missing", "task_id": "BFF-LUV-GAP-004"},
-    {"method": "POST", "path": "/bff/jobs/{jobId}/actions/{actionId}", "family": "evolution-experiment-jobs-events", "status": "missing", "task_id": "BFF-LUV-GAP-004"},
-    {"method": "GET", "path": "/bff/events", "family": "evolution-experiment-jobs-events", "status": "missing", "task_id": "BFF-LUV-GAP-004"},
-    {"method": "GET", "path": "/bff/events/stream", "family": "sse-compatibility", "status": "implemented_by_alias", "task_id": "BFF-LUV-GAP-010", "covered_by": "GET /api/v1/stream/{channel}", "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"},
-
-    {"method": "GET", "path": "/bff/reviews", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "POST", "path": "/bff/reviews", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "GET", "path": "/bff/reviews/{reviewId}", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "POST", "path": "/bff/reviews/{reviewId}/actions/{actionId}", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "GET", "path": "/bff/reviews/{reviewId}/validators", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "GET", "path": "/bff/reviews/{reviewId}/audit", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "GET", "path": "/bff/approvals/{approvalId}/evidence", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "GET", "path": "/bff/deployments", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "GET", "path": "/bff/deployments/{deploymentId}", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "POST", "path": "/bff/deployments/{deploymentId}/actions/{actionId}", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "GET", "path": "/bff/runtimes", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "GET", "path": "/bff/runtimes/{runtimeId}", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "POST", "path": "/bff/runtimes/{runtimeId}/actions/{actionId}", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "GET", "path": "/bff/risk/alerts", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "GET", "path": "/bff/risk/alerts/{alertId}", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "POST", "path": "/bff/risk/alerts/{alertId}/actions/{actionId}", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "GET", "path": "/bff/incidents", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "POST", "path": "/bff/incidents", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "GET", "path": "/bff/incidents/{incidentId}", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "POST", "path": "/bff/incidents/{incidentId}/actions/{actionId}", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "GET", "path": "/bff/alerts", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "GET", "path": "/bff/audit/events", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "GET", "path": "/bff/audit/entities/{entityType}/{entityId}", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "GET", "path": "/bff/audit/export", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-    {"method": "POST", "path": "/bff/command-confirmations", "family": "governance-runtime-risk-audit", "status": "implemented", "task_id": "BFF-LUV-GAP-005"},
-
-    {"method": "GET", "path": "/bff/agora/daily", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "GET", "path": "/bff/agora/signals", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "GET", "path": "/bff/agora/signals/{signalId}", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "POST", "path": "/bff/agora/signals/{signalId}/feedback", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "GET", "path": "/bff/agora/watchlist", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "GET", "path": "/bff/agora/sessions", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "POST", "path": "/bff/agora/sessions", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "GET", "path": "/bff/agora/sessions/{sessionId}", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "GET", "path": "/bff/agora/sessions/{sessionId}/messages", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "POST", "path": "/bff/agora/sessions/{sessionId}/messages", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "POST", "path": "/bff/agora/messages/{messageId}/actions/{actionId}", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "GET", "path": "/bff/agora/notes", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "POST", "path": "/bff/agora/notes", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "GET", "path": "/bff/agora/journal", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "POST", "path": "/bff/agora/journal", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "PATCH", "path": "/bff/agora/journal/{id}", "family": "agora-core", "status": "implemented"},
-    {"method": "GET", "path": "/bff/agora/insights", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "POST", "path": "/bff/agora/insights", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "POST", "path": "/bff/agora/insights/{insightId}/actions/{actionId}", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "GET", "path": "/bff/agora/memory", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "POST", "path": "/bff/agora/memory/{memoryId}/actions/{actionId}", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "GET", "path": "/bff/agora/training-examples", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "POST", "path": "/bff/agora/training-examples", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "GET", "path": "/bff/research/tasks", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "POST", "path": "/bff/memory/{memoryId}/actions/quarantine", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-    {"method": "POST", "path": "/bff/insights/{insightId}/actions/attach-strategy", "family": "agora-core", "status": "missing", "task_id": "BFF-LUV-GAP-006"},
-
-    {"method": "POST", "path": "/bff/agora/committee/{sessionId}/evidence-pack", "family": "agora-extended", "status": "missing", "task_id": "BFF-LUV-GAP-007"},
-    {"method": "POST", "path": "/bff/agora/committee/{sessionId}/evidence-pack/files", "family": "agora-extended", "status": "missing", "task_id": "BFF-LUV-GAP-007"},
-    {"method": "POST", "path": "/bff/agora/persona-lab/{draftId}/actions/submit-commit", "family": "agora-extended", "status": "missing", "task_id": "BFF-LUV-GAP-007"},
-    {"method": "GET", "path": "/bff/agora/alerts", "family": "agora-extended", "status": "deferred_with_task", "task_id": "BFF-LUV-GAP-007"},
-    {"method": "GET", "path": "/bff/agora/channels", "family": "agora-extended", "status": "deferred_with_task", "task_id": "BFF-LUV-GAP-007"},
-    {"method": "GET", "path": "/bff/agora/committee-sessions", "family": "agora-extended", "status": "deferred_with_task", "task_id": "BFF-LUV-GAP-007"},
-    {"method": "GET", "path": "/bff/agora/decision-journal", "family": "agora-extended", "status": "deferred_with_task", "task_id": "BFF-LUV-GAP-007"},
-    {"method": "GET", "path": "/bff/agora/evaluations", "family": "agora-extended", "status": "deferred_with_task", "task_id": "BFF-LUV-GAP-007"},
-    {"method": "GET", "path": "/bff/agora/incoming", "family": "agora-extended", "status": "deferred_with_task", "task_id": "BFF-LUV-GAP-007"},
-    {"method": "GET", "path": "/bff/agora/persona-drafts", "family": "agora-extended", "status": "deferred_with_task", "task_id": "BFF-LUV-GAP-007"},
-    {"method": "GET", "path": "/bff/agora/skill-drafts", "family": "agora-extended", "status": "deferred_with_task", "task_id": "BFF-LUV-GAP-007"},
-    {"method": "GET", "path": "/bff/agora/research-tasks", "family": "agora-extended", "status": "deferred_with_task", "task_id": "BFF-LUV-GAP-007"},
-    {"method": "GET", "path": "/bff/agora/market-notes", "family": "agora-extended", "status": "deferred_with_task", "task_id": "BFF-LUV-GAP-007"},
-    {"method": "GET", "path": "/bff/agora/markets", "family": "agora-extended", "status": "deferred_with_task", "task_id": "BFF-LUV-GAP-007"},
-    {"method": "GET", "path": "/bff/agora/assets/{id}/context", "family": "agora-extended", "status": "deferred_with_task", "task_id": "BFF-LUV-GAP-007"},
-    {"method": "GET", "path": "/bff/agora/personas/available", "family": "agora-extended", "status": "deferred_with_task", "task_id": "BFF-LUV-GAP-007"},
-    {"method": "GET", "path": "/bff/agora/handoffs", "family": "agora-extended", "status": "deferred_with_task", "task_id": "BFF-LUV-GAP-007"},
-
-    {"method": "GET", "path": "/bff/tools", "family": "tools-mcp-skills", "status": "implemented", "task_id": "BFF-LUV-GAP-008", "commit": "777533ee"},
-    {"method": "POST", "path": "/bff/tools", "family": "tools-mcp-skills", "status": "implemented", "task_id": "BFF-LUV-GAP-008", "commit": "777533ee"},
-    {"method": "GET", "path": "/bff/tools/{toolId}", "family": "tools-mcp-skills", "status": "implemented", "task_id": "BFF-LUV-GAP-008", "commit": "777533ee"},
-    {"method": "PATCH", "path": "/bff/tools/{toolId}", "family": "tools-mcp-skills", "status": "implemented", "task_id": "BFF-LUV-GAP-008", "commit": "777533ee"},
-    {"method": "POST", "path": "/bff/tools/{toolId}/actions/{actionId}", "family": "tools-mcp-skills", "status": "implemented", "task_id": "BFF-LUV-GAP-008", "commit": "777533ee"},
-    {"method": "GET", "path": "/bff/mcp/servers", "family": "tools-mcp-skills", "status": "implemented", "task_id": "BFF-LUV-GAP-008", "commit": "777533ee"},
-    {"method": "POST", "path": "/bff/mcp/servers", "family": "tools-mcp-skills", "status": "implemented", "task_id": "BFF-LUV-GAP-008", "commit": "777533ee"},
-    {"method": "GET", "path": "/bff/mcp/servers/{serverId}", "family": "tools-mcp-skills", "status": "implemented", "task_id": "BFF-LUV-GAP-008", "commit": "777533ee"},
-    {"method": "POST", "path": "/bff/mcp/servers/{serverId}/actions/{actionId}", "family": "tools-mcp-skills", "status": "implemented", "task_id": "BFF-LUV-GAP-008", "commit": "777533ee"},
-    {"method": "GET", "path": "/bff/mcp/servers/{serverId}/tools", "family": "tools-mcp-skills", "status": "implemented", "task_id": "BFF-LUV-GAP-008", "commit": "777533ee"},
-    {"method": "POST", "path": "/bff/mcp/tools/{toolId}/actions/{actionId}", "family": "tools-mcp-skills", "status": "implemented", "task_id": "BFF-LUV-GAP-008", "commit": "777533ee"},
-    {"method": "GET", "path": "/bff/skills", "family": "tools-mcp-skills", "status": "implemented", "task_id": "BFF-LUV-GAP-008", "commit": "777533ee"},
-    {"method": "POST", "path": "/bff/skills", "family": "tools-mcp-skills", "status": "implemented", "task_id": "BFF-LUV-GAP-008", "commit": "777533ee"},
-    {"method": "GET", "path": "/bff/skills/{skillId}", "family": "tools-mcp-skills", "status": "implemented", "task_id": "BFF-LUV-GAP-008", "commit": "777533ee"},
-    {"method": "PATCH", "path": "/bff/skills/{skillId}", "family": "tools-mcp-skills", "status": "implemented", "task_id": "BFF-LUV-GAP-008", "commit": "777533ee"},
-    {"method": "POST", "path": "/bff/skills/{skillId}/actions/{actionId}", "family": "tools-mcp-skills", "status": "implemented", "task_id": "BFF-LUV-GAP-008", "commit": "777533ee"},
-    {"method": "POST", "path": "/bff/skills/{skillId}/sandbox-eval", "family": "tools-mcp-skills", "status": "implemented", "task_id": "BFF-LUV-GAP-008", "commit": "777533ee"},
-
-    {"method": "GET", "path": "/bff/me", "family": "session-auth-me", "status": "implemented", "task_id": "BFF-LUV-GAP-009"},
-
-    {"method": "GET", "path": "/bff/sse/notifications", "family": "sse-compatibility", "status": "implemented_by_alias", "task_id": "BFF-LUV-GAP-010", "covered_by": "GET /api/v1/stream/{channel}", "proof": "test_execute_plans_sse_alias_uses_same_envelope_shape_as_generic_stream"},
-    {"method": "GET", "path": "/bff/sse/command-center/kpi", "family": "sse-compatibility", "status": "implemented_by_alias", "task_id": "BFF-LUV-GAP-010", "covered_by": "GET /api/v1/stream/{channel}", "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"},
-    {"method": "GET", "path": "/bff/sse/command-center/events", "family": "sse-compatibility", "status": "implemented_by_alias", "task_id": "BFF-LUV-GAP-010", "covered_by": "GET /api/v1/stream/{channel}", "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"},
-    {"method": "GET", "path": "/bff/sse/jobs/{jobId}/progress", "family": "sse-compatibility", "status": "implemented_by_alias", "task_id": "BFF-LUV-GAP-010", "covered_by": "GET /api/v1/stream/{channel}", "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"},
-    {"method": "GET", "path": "/bff/sse/alerts", "family": "sse-compatibility", "status": "implemented_by_alias", "task_id": "BFF-LUV-GAP-010", "covered_by": "GET /api/v1/stream/{channel}", "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"},
-    {"method": "GET", "path": "/bff/sse/incidents/{incidentId}/timeline", "family": "sse-compatibility", "status": "implemented_by_alias", "task_id": "BFF-LUV-GAP-010", "covered_by": "GET /api/v1/stream/{channel}", "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"},
-    {"method": "GET", "path": "/bff/sse/deployment/events", "family": "sse-compatibility", "status": "implemented_by_alias", "task_id": "BFF-LUV-GAP-010", "covered_by": "GET /api/v1/stream/{channel}", "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"},
-    {"method": "GET", "path": "/bff/sse/review/updates", "family": "sse-compatibility", "status": "implemented_by_alias", "task_id": "BFF-LUV-GAP-010", "covered_by": "GET /api/v1/approvals/stream", "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"},
-    {"method": "GET", "path": "/bff/sse/agora/signals", "family": "sse-compatibility", "status": "implemented_by_alias", "task_id": "BFF-LUV-GAP-010", "covered_by": "GET /api/v1/stream/{channel}", "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"},
-    {"method": "GET", "path": "/bff/sse/agora/sessions/{sessionId}", "family": "sse-compatibility", "status": "implemented_by_alias", "task_id": "BFF-LUV-GAP-010", "covered_by": "GET /api/v1/agora/ask/stream", "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"},
-    {"method": "GET", "path": "/bff/realtime", "family": "sse-compatibility", "status": "superseded_with_reason", "reason": "The bare realtime reference is a frontend abstraction and is superseded by /bff/events/stream plus /bff/sse/* compatibility routes."},
-
-    {"method": "GET", "path": "/bff/v5/loop-runs", "family": "execute-plans-cutover-smoke", "status": "deferred_with_task", "task_id": "BFF-LUV-GAP-012"},
-    {"method": "GET", "path": "/bff/v5/sentinel/findings", "family": "execute-plans-cutover-smoke", "status": "deferred_with_task", "task_id": "BFF-LUV-GAP-012"},
-    {"method": "GET", "path": "/bff/v5/execution/persona-health", "family": "execute-plans-cutover-smoke", "status": "deferred_with_task", "task_id": "BFF-LUV-GAP-012"}
+    {
+      "method": "GET",
+      "path": "/health",
+      "family": "health",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/actions",
+      "family": "final-contract",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/approvals",
+      "family": "final-contract",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/v1/commands",
+      "family": "final-contract",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/v5/interventions",
+      "family": "v5-interventions",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/v5/interventions/{id}/remediate",
+      "family": "v5-interventions",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/v5/interventions/{id}/two-man-sign",
+      "family": "v5-interventions",
+      "status": "superseded_with_reason",
+      "task_id": "BFF-LUV-GAP-011",
+      "reason": "Superseded by POST /bff/v5/interventions/{id}/remediate + RemediateSentinelIntervention, which is already a two-man guarded surface requiring two_man_signature_id. A separate two-man-sign step is redundant; callers should submit remediate with the second-operator signature directly."
+    },
+    {
+      "method": "POST",
+      "path": "/bff/mcp-servers/{id}/import-tools",
+      "family": "mcp-final",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/mcp-tools/{id}/{action}",
+      "family": "mcp-final",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/mcp-tools/{id}/grant",
+      "family": "mcp-final",
+      "status": "implemented_by_alias",
+      "covered_by": "POST /bff/mcp-tools/{id}/{action}",
+      "proof": "test_execute_plans_mcp_tool_alias_actions_prove_concrete_verbs"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/mcp-tools/{id}/revoke",
+      "family": "mcp-final",
+      "status": "implemented_by_alias",
+      "covered_by": "POST /bff/mcp-tools/{id}/{action}",
+      "proof": "test_execute_plans_mcp_tool_alias_actions_prove_concrete_verbs"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/mcp-tools/{id}/disable",
+      "family": "mcp-final",
+      "status": "implemented_by_alias",
+      "covered_by": "POST /bff/mcp-tools/{id}/{action}",
+      "proof": "test_execute_plans_mcp_tool_alias_actions_prove_concrete_verbs"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/mcp-tools/{id}/test",
+      "family": "mcp-final",
+      "status": "implemented_by_alias",
+      "covered_by": "POST /bff/mcp-tools/{id}/{action}",
+      "proof": "test_execute_plans_mcp_tool_alias_actions_prove_concrete_verbs"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/v1/mcp/servers/{id}/import-tools",
+      "family": "mcp-final",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/v1/mcp/servers/{id}/tools/{toolId}/actions/{actionId}",
+      "family": "mcp-final",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/{resource}/{id}/actions/{actionId}",
+      "family": "generic-actions",
+      "status": "superseded_with_reason",
+      "reason": "Part 06 generic action admission is not a standalone Pantheon route; it is superseded by explicit family action routes plus /bff/actions and /bff/v1/commands."
+    },
+    {
+      "method": "GET",
+      "path": "/bff/strategies",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/strategies",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/strategies/{strategyId}",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/strategies/{strategyId}",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/strategies/{strategyId}/specs",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/strategies/{strategyId}/specs",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/strategies/{strategyId}/experiments",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/strategies/{strategyId}/artifacts",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/strategies/{strategyId}/lineage",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/strategies/{strategyId}/audit",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/strategies/{strategyId}/actions/{actionId}",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/strategies/{strategyId}/dry-run",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/personas",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/personas",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/personas/{personaId}",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/personas/{personaId}",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/personas/{personaId}/route-policy",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/personas/{personaId}/activity",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/personas/{personaId}/evaluations",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/personas/{personaId}/memory",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/personas/{personaId}/audit",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/personas/{personaId}/actions/{actionId}",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/personas/{personaId}/test-prompt",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/search",
+      "family": "strategy-persona",
+      "status": "missing",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/types",
+      "family": "strategy-persona",
+      "status": "deferred_with_task",
+      "task_id": "BFF-LUV-GAP-002"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/capital-pools",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-003"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/capital-pools",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-003"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/capital-pools/{poolId}",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-003"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/capital-pools/{poolId}",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-003"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/capital-pools/{poolId}/actions/{actionId}",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-003"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/ranking/formulas",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-003"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/ranking/formulas",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-003"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/ranking/formulas/{formulaId}",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-003"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/ranking/formulas/{formulaId}",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-003"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/ranking/formulas/{formulaId}/actions/{actionId}",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-003"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/rebalances",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-003"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/rebalances",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-003"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/rebalances/{rebalanceId}",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-003"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/rebalances/{rebalanceId}/actions/{actionId}",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-003"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/rankings",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-003"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/rankings/{rankingId}",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-003"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/rankings/{rankingId}/actions/{actionId}",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-003"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/evolution-programs",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-004",
+      "commit": "BFF-LUV-GAP-004"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/evolution-programs",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-004",
+      "commit": "BFF-LUV-GAP-004"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/evolution-programs/{programId}",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-004",
+      "commit": "BFF-LUV-GAP-004"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/evolution-programs/{programId}",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-004",
+      "commit": "BFF-LUV-GAP-004"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/evolution-programs/{programId}/runs",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-004",
+      "commit": "BFF-LUV-GAP-004"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/evolution-programs/{programId}/candidates",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-004",
+      "commit": "BFF-LUV-GAP-004"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/evolution-programs/{programId}/actions/{actionId}",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-004",
+      "commit": "BFF-LUV-GAP-004"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/experiments",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-004",
+      "commit": "BFF-LUV-GAP-004"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/experiments",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-004",
+      "commit": "BFF-LUV-GAP-004"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/experiments/{experimentId}",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-004",
+      "commit": "BFF-LUV-GAP-004"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/experiments/{experimentId}/actions/{actionId}",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-004",
+      "commit": "BFF-LUV-GAP-004"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/experiments/{experimentId}/logs",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-004",
+      "commit": "BFF-LUV-GAP-004"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/experiments/{experimentId}/metrics",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-004",
+      "commit": "BFF-LUV-GAP-004"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/experiments/{experimentId}/artifacts",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-004",
+      "commit": "BFF-LUV-GAP-004"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/jobs",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-004",
+      "commit": "BFF-LUV-GAP-004"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/jobs/{jobId}",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-004",
+      "commit": "BFF-LUV-GAP-004"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/jobs/{jobId}/logs",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-004",
+      "commit": "BFF-LUV-GAP-004"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/jobs/{jobId}/actions/{actionId}",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-004",
+      "commit": "BFF-LUV-GAP-004"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/events",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-004",
+      "commit": "BFF-LUV-GAP-004"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/events/stream",
+      "family": "sse-compatibility",
+      "status": "implemented_by_alias",
+      "task_id": "BFF-LUV-GAP-010",
+      "covered_by": "GET /api/v1/stream/{channel}",
+      "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/reviews",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/reviews",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/reviews/{reviewId}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/reviews/{reviewId}/actions/{actionId}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/reviews/{reviewId}/validators",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/reviews/{reviewId}/audit",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/approvals/{approvalId}/evidence",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/deployments",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/deployments/{deploymentId}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/deployments/{deploymentId}/actions/{actionId}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/runtimes",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/runtimes/{runtimeId}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/runtimes/{runtimeId}/actions/{actionId}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/risk/alerts",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/risk/alerts/{alertId}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/risk/alerts/{alertId}/actions/{actionId}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/incidents",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/incidents",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/incidents/{incidentId}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/incidents/{incidentId}/actions/{actionId}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/alerts",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/audit/events",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/audit/entities/{entityType}/{entityId}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/audit/export",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/command-confirmations",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-005"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/daily",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/signals",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/signals/{signalId}",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/signals/{signalId}/feedback",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/watchlist",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/sessions",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/sessions",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/sessions/{sessionId}",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/sessions/{sessionId}/messages",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/sessions/{sessionId}/messages",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/messages/{messageId}/actions/{actionId}",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/notes",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/notes",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/journal",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/journal",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/agora/journal/{id}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/insights",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/insights",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/insights/{insightId}/actions/{actionId}",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/memory",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/memory/{memoryId}/actions/{actionId}",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/training-examples",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/training-examples",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/research/tasks",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/memory/{memoryId}/actions/quarantine",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/insights/{insightId}/actions/attach-strategy",
+      "family": "agora-core",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-006"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/committee/{sessionId}/evidence-pack",
+      "family": "agora-extended",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/committee/{sessionId}/evidence-pack/files",
+      "family": "agora-extended",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/persona-lab/{draftId}/actions/submit-commit",
+      "family": "agora-extended",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/alerts",
+      "family": "agora-extended",
+      "status": "implemented_by_alias",
+      "covered_by": "GET /bff/risk/alerts",
+      "proof": "test_bff_governance_runtime_risk_audit_contract"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/channels",
+      "family": "agora-extended",
+      "status": "superseded_with_reason",
+      "reason": "Historical Agora channel administration is superseded by the explicit tools/MCP/skills and session surfaces; execute-plans active source no longer calls a channel registry route."
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/committee-sessions",
+      "family": "agora-extended",
+      "status": "implemented_by_alias",
+      "covered_by": "GET /bff/agora/sessions",
+      "proof": "test_agora_daily_signals_sessions_and_research_task_reads"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/decision-journal",
+      "family": "agora-extended",
+      "status": "implemented_by_alias",
+      "covered_by": "GET /bff/agora/journal",
+      "proof": "test_agora_note_journal_insight_and_training_creation"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/evaluations",
+      "family": "agora-extended",
+      "status": "superseded_with_reason",
+      "reason": "Historical global Agora evaluations are superseded by persona-scoped evaluation surfaces and the active persona-lab submit-commit handoff gate."
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/incoming",
+      "family": "agora-extended",
+      "status": "implemented_by_alias",
+      "covered_by": "GET /bff/agora/handoffs",
+      "proof": "test_persona_lab_submit_commit_creates_management_handoff"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/persona-drafts",
+      "family": "agora-extended",
+      "status": "superseded_with_reason",
+      "reason": "Historical persona draft browsing is superseded by the active persona-lab submit-commit route plus management-side persona review surfaces."
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/skill-drafts",
+      "family": "agora-extended",
+      "status": "superseded_with_reason",
+      "reason": "Historical skill draft browsing is superseded by the BFF tools/MCP/skills compatibility routes owned by BFF-LUV-GAP-008."
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/research-tasks",
+      "family": "agora-extended",
+      "status": "implemented_by_alias",
+      "covered_by": "GET /bff/research/tasks",
+      "proof": "test_agora_daily_signals_sessions_and_research_task_reads"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/market-notes",
+      "family": "agora-extended",
+      "status": "implemented_by_alias",
+      "covered_by": "GET /bff/agora/notes",
+      "proof": "test_agora_note_journal_insight_and_training_creation"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/markets",
+      "family": "agora-extended",
+      "status": "implemented_by_alias",
+      "covered_by": "GET /bff/agora/watchlist",
+      "proof": "test_agora_daily_signals_sessions_and_research_task_reads"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/assets/{id}/context",
+      "family": "agora-extended",
+      "status": "superseded_with_reason",
+      "reason": "Historical asset context is superseded by explicit evidence refs, research artifacts, and Agora committee evidence-pack DTOs."
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/personas/available",
+      "family": "agora-extended",
+      "status": "implemented_by_alias",
+      "covered_by": "GET /bff/personas",
+      "proof": "test_bff_strategy_persona_contract"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/handoffs",
+      "family": "agora-extended",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/tools",
+      "family": "tools-mcp-skills",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-008",
+      "commit": "777533ee"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/tools",
+      "family": "tools-mcp-skills",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-008",
+      "commit": "777533ee"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/tools/{toolId}",
+      "family": "tools-mcp-skills",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-008",
+      "commit": "777533ee"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/tools/{toolId}",
+      "family": "tools-mcp-skills",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-008",
+      "commit": "777533ee"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/tools/{toolId}/actions/{actionId}",
+      "family": "tools-mcp-skills",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-008",
+      "commit": "777533ee"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/mcp/servers",
+      "family": "tools-mcp-skills",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-008",
+      "commit": "777533ee"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/mcp/servers",
+      "family": "tools-mcp-skills",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-008",
+      "commit": "777533ee"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/mcp/servers/{serverId}",
+      "family": "tools-mcp-skills",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-008",
+      "commit": "777533ee"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/mcp/servers/{serverId}/actions/{actionId}",
+      "family": "tools-mcp-skills",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-008",
+      "commit": "777533ee"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/mcp/servers/{serverId}/tools",
+      "family": "tools-mcp-skills",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-008",
+      "commit": "777533ee"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/mcp/tools/{toolId}/actions/{actionId}",
+      "family": "tools-mcp-skills",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-008",
+      "commit": "777533ee"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/skills",
+      "family": "tools-mcp-skills",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-008",
+      "commit": "777533ee"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/skills",
+      "family": "tools-mcp-skills",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-008",
+      "commit": "777533ee"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/skills/{skillId}",
+      "family": "tools-mcp-skills",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-008",
+      "commit": "777533ee"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/skills/{skillId}",
+      "family": "tools-mcp-skills",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-008",
+      "commit": "777533ee"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/skills/{skillId}/actions/{actionId}",
+      "family": "tools-mcp-skills",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-008",
+      "commit": "777533ee"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/skills/{skillId}/sandbox-eval",
+      "family": "tools-mcp-skills",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-008",
+      "commit": "777533ee"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/me",
+      "family": "session-auth-me",
+      "status": "implemented",
+      "task_id": "BFF-LUV-GAP-009"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/sse/notifications",
+      "family": "sse-compatibility",
+      "status": "implemented_by_alias",
+      "task_id": "BFF-LUV-GAP-010",
+      "covered_by": "GET /api/v1/stream/{channel}",
+      "proof": "test_execute_plans_sse_alias_uses_same_envelope_shape_as_generic_stream"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/sse/command-center/kpi",
+      "family": "sse-compatibility",
+      "status": "implemented_by_alias",
+      "task_id": "BFF-LUV-GAP-010",
+      "covered_by": "GET /api/v1/stream/{channel}",
+      "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/sse/command-center/events",
+      "family": "sse-compatibility",
+      "status": "implemented_by_alias",
+      "task_id": "BFF-LUV-GAP-010",
+      "covered_by": "GET /api/v1/stream/{channel}",
+      "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/sse/jobs/{jobId}/progress",
+      "family": "sse-compatibility",
+      "status": "implemented_by_alias",
+      "task_id": "BFF-LUV-GAP-010",
+      "covered_by": "GET /api/v1/stream/{channel}",
+      "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/sse/alerts",
+      "family": "sse-compatibility",
+      "status": "implemented_by_alias",
+      "task_id": "BFF-LUV-GAP-010",
+      "covered_by": "GET /api/v1/stream/{channel}",
+      "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/sse/incidents/{incidentId}/timeline",
+      "family": "sse-compatibility",
+      "status": "implemented_by_alias",
+      "task_id": "BFF-LUV-GAP-010",
+      "covered_by": "GET /api/v1/stream/{channel}",
+      "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/sse/deployment/events",
+      "family": "sse-compatibility",
+      "status": "implemented_by_alias",
+      "task_id": "BFF-LUV-GAP-010",
+      "covered_by": "GET /api/v1/stream/{channel}",
+      "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/sse/review/updates",
+      "family": "sse-compatibility",
+      "status": "implemented_by_alias",
+      "task_id": "BFF-LUV-GAP-010",
+      "covered_by": "GET /api/v1/approvals/stream",
+      "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/sse/agora/signals",
+      "family": "sse-compatibility",
+      "status": "implemented_by_alias",
+      "task_id": "BFF-LUV-GAP-010",
+      "covered_by": "GET /api/v1/stream/{channel}",
+      "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/sse/agora/sessions/{sessionId}",
+      "family": "sse-compatibility",
+      "status": "implemented_by_alias",
+      "task_id": "BFF-LUV-GAP-010",
+      "covered_by": "GET /api/v1/agora/ask/stream",
+      "proof": "test_execute_plans_sse_compatibility_aliases_share_replay_headers"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/realtime",
+      "family": "sse-compatibility",
+      "status": "superseded_with_reason",
+      "reason": "The bare realtime reference is a frontend abstraction and is superseded by /bff/events/stream plus /bff/sse/* compatibility routes."
+    },
+    {
+      "method": "GET",
+      "path": "/bff/v5/loop-runs",
+      "family": "execute-plans-cutover-smoke",
+      "status": "deferred_with_task",
+      "task_id": "BFF-LUV-GAP-012"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/v5/sentinel/findings",
+      "family": "execute-plans-cutover-smoke",
+      "status": "deferred_with_task",
+      "task_id": "BFF-LUV-GAP-012"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/v5/execution/persona-health",
+      "family": "execute-plans-cutover-smoke",
+      "status": "deferred_with_task",
+      "task_id": "BFF-LUV-GAP-012"
+    }
   ]
 }

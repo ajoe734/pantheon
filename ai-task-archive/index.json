@@ -1,12 +1,19 @@
 {
   "version": 1,
-  "updated_at": "2026-05-08T03:51:30Z",
+  "updated_at": "2026-05-08T17:21:28Z",
   "counts": {
-    "total": 926,
-    "completed": 910,
+    "total": 933,
+    "completed": 917,
     "superseded": 16
   },
   "recent_terminal_ids": [
+    "BFF-LUV-GAP-010",
+    "BFF-LUV-GAP-003",
+    "BFF-LUV-GAP-002",
+    "BFF-LUV-GAP-005",
+    "BFF-LUV-GAP-011",
+    "BFF-LUV-GAP-008",
+    "BFF-LUV-GAP-009",
     "BFF-FINAL-010",
     "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
     "BFF-FINAL-009",
@@ -19,13 +26,6 @@
     "BFF-FINAL-008",
     "BFF-FINAL-003",
     "BFF-FINAL-004",
-    "BFF-FINAL-002",
-    "BFF-FINAL-001",
-    "SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY",
-    "SVC-BFF-HA-LB-DEFER-TRACKING",
-    "SVC-BFF-IDP-STAGING-INTEGRATION-HARDENING",
-    "SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2",
-    "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY",
-    "FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT"
+    "BFF-FINAL-002"
   ]
 }

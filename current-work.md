@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-08 11:51:30
+Last updated: 2026-05-09 01:53:27
 
 ## Objective
 
@@ -39,11 +39,11 @@ Last updated: 2026-05-08 11:51:30
 
 - `Claude`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: No active assignment
-- `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
+- `Codex`: integration, status-system, schema, acceptance; next: Supervisor auto-started BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF after successful dispatch.
+- `Codex2`: integration, status-system, schema, acceptance; next: Registry/report/focused tests are complete. Full BFF suite is blocked by in-progress BFF-LUV-GAP-003 worktree failures in action_catalog and capital/ranking/rebalance tests.
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
 - `Claude2`: execution, control-plane, governance-review; next: No active assignment
-- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
+- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Handoff packet prepared and updated. Ready for review.
 
 ## Delivery Layers
 
@@ -51,7 +51,16 @@ Last updated: 2026-05-08 11:51:30
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - | - |
+| `BFF-LUV-GAP-001` | BFF Execute-Plans Contract Gap 2026-05-08 | Build execute-plans BFF contract registry | Codex2 | blocked | - | 建立 execute-plans BFF route registry 與 coverage test，讓後續缺口可被 supervisor 追蹤。 |
+| `BFF-LUV-GAP-004` | BFF Execute-Plans Contract Gap 2026-05-08 | Implement evolution experiment jobs and events BFF compatibility | Codex | review | - | 補上 evolution、experiments、jobs、events route families。 |
+| `BFF-LUV-GAP-006` | BFF Execute-Plans Contract Gap 2026-05-08 | Implement Agora core BFF compatibility | Codex | review | - | 補上 Part 06 與 src/lib/v3 目前引用的 Agora core /bff routes。 |
+| `BFF-LUV-GAP-007` | BFF Execute-Plans Contract Gap 2026-05-08 | Reconcile extended Agora and FULL-spec routes | Codex | review | - | 整理 FULL spec 與長尾 Agora routes，實作 active source refs 並標記歷史 routes 的 disposition。 |
+| `BFF-LUV-GAP-012` | BFF Execute-Plans Contract Gap 2026-05-08 | Run execute-plans BFF cutover smoke | Codex | todo | `BFF-LUV-GAP-001`, `BFF-LUV-GAP-002`, `BFF-LUV-GAP-003`, `BFF-LUV-GAP-004`, `BFF-LUV-GAP-005`, `BFF-LUV-GAP-006`, `BFF-LUV-GAP-007`, `BFF-LUV-GAP-008`, `BFF-LUV-GAP-009`, `BFF-LUV-GAP-010`, `BFF-LUV-GAP-011` | 所有缺口完成或有 disposition 後，對 execute-plans repo 跑 live/hybrid BFF cutover smoke。 |
+| `BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-006] Prepare BFF-LUV-GAP-006 BFF and frontend handoff packet | Codex2 | review_approved | - | 平行支援 BFF-LUV-GAP-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
+| `BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-010] Prepare BFF-LUV-GAP-010 BFF and frontend handoff packet | Codex | todo | - | 平行支援 BFF-LUV-GAP-010，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
+| `BFF-LUV-GAP-007-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-007] Prepare BFF-LUV-GAP-007 BFF and frontend handoff packet | Codex2 | todo | - | 平行支援 BFF-LUV-GAP-007，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
+| `BFF-LUV-GAP-004-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-004] Prepare BFF-LUV-GAP-004 BFF and frontend handoff packet | Gemini2 | review | - | 平行支援 BFF-LUV-GAP-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
+| `BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-001] Prepare BFF-LUV-GAP-001 BFF and frontend handoff packet | Codex | in_progress | - | 平行支援 BFF-LUV-GAP-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -61,11 +70,18 @@ Last updated: 2026-05-08 11:51:30
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-08 11:51:30
-- Terminal tasks archived: `926` total, `910` completed, `16` superseded
+- Archive updated: 2026-05-09 01:21:28
+- Terminal tasks archived: `933` total, `917` completed, `16` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `BFF-LUV-GAP-010` | BFF Execute-Plans Contract Gap 2026-05-08 | Implement SSE compatibility routes for execute-plans | Codex2 | completed | 2026-05-09 01:21:28 | `ai-task-archive/tasks/BFF-LUV-GAP-010.json` |
+| `BFF-LUV-GAP-003` | BFF Execute-Plans Contract Gap 2026-05-08 | Implement capital ranking and rebalance BFF compatibility | Codex2 | completed | 2026-05-09 01:05:59 | `ai-task-archive/tasks/BFF-LUV-GAP-003.json` |
+| `BFF-LUV-GAP-002` | BFF Execute-Plans Contract Gap 2026-05-08 | Implement strategy and persona BFF compatibility | Claude | completed | 2026-05-09 01:00:32 | `ai-task-archive/tasks/BFF-LUV-GAP-002.json` |
+| `BFF-LUV-GAP-005` | BFF Execute-Plans Contract Gap 2026-05-08 | Implement governance runtime risk incident and audit BFF compatibility | Codex2 | completed | 2026-05-09 00:46:36 | `ai-task-archive/tasks/BFF-LUV-GAP-005.json` |
+| `BFF-LUV-GAP-011` | BFF Execute-Plans Contract Gap 2026-05-08 | Resolve v5 two-man-sign alias decision | Claude | completed | 2026-05-09 00:43:10 | `ai-task-archive/tasks/BFF-LUV-GAP-011.json` |
+| `BFF-LUV-GAP-008` | BFF Execute-Plans Contract Gap 2026-05-08 | Implement tools MCP and skills BFF compatibility | Claude | completed | 2026-05-09 00:39:55 | `ai-task-archive/tasks/BFF-LUV-GAP-008.json` |
+| `BFF-LUV-GAP-009` | BFF Execute-Plans Contract Gap 2026-05-08 | Implement session auth tenant and bff me contract | Codex2 | completed | 2026-05-09 00:13:51 | `ai-task-archive/tasks/BFF-LUV-GAP-009.json` |
 | `BFF-FINAL-010` | BFF Final Contract 2026-05-07 | Verify and hand off final BFF contract | Claude | completed | 2026-05-08 11:51:30 | `ai-task-archive/tasks/BFF-FINAL-010.json` |
 | `BFF-FINAL-010-SIDECAR-BFF-HANDOFF` | BFF Final Contract 2026-05-07 | Prepare BFF-FINAL-010 BFF and frontend handoff packet | Claude2 | completed | 2026-05-08 11:04:22 | `ai-task-archive/tasks/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.json` |
 | `BFF-FINAL-009` | BFF Final Contract 2026-05-07 | Implement v5 interventions contract | Claude | completed | 2026-05-08 11:00:32 | `ai-task-archive/tasks/BFF-FINAL-009.json` |
@@ -79,36 +95,43 @@ Last updated: 2026-05-08 11:51:30
 | `BFF-FINAL-003` | BFF Final Contract 2026-05-07 | Close out final precondition errors | Codex2 | completed | 2026-05-07 21:43:51 | `ai-task-archive/tasks/BFF-FINAL-003.json` |
 | `BFF-FINAL-004` | BFF Final Contract 2026-05-07 | Publish backend canonical BFF action catalog | Claude | completed | 2026-05-07 21:30:07 | `ai-task-archive/tasks/BFF-FINAL-004.json` |
 | `BFF-FINAL-002` | BFF Final Contract 2026-05-07 | Align idempotency and command response envelope | Codex2 | completed | 2026-05-07 21:14:44 | `ai-task-archive/tasks/BFF-FINAL-002.json` |
-| `BFF-FINAL-001` | BFF Final Contract 2026-05-07 | Implement final BFF contract primitives | Codex | completed | 2026-05-07 20:43:07 | `ai-task-archive/tasks/BFF-FINAL-001.json` |
-| `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` | Blueprint production hardening follow-up 2026-05-04 | Make OpenClaw broker adapter activation-ready without live enablement | Codex2 | completed | 2026-05-04 13:58:05 | `ai-task-archive/tasks/SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY.json` |
-| `SVC-BFF-HA-LB-DEFER-TRACKING` | Blueprint production hardening follow-up 2026-05-04 | Record BFF HA/LB as explicit deferred topology item | Codex | completed | 2026-05-04 13:28:20 | `ai-task-archive/tasks/SVC-BFF-HA-LB-DEFER-TRACKING.json` |
-| `SVC-BFF-IDP-STAGING-INTEGRATION-HARDENING` | Blueprint production hardening follow-up 2026-05-04 | Harden BFF OIDC/JWKS staging IdP integration | Codex2 | completed | 2026-05-04 13:25:24 | `ai-task-archive/tasks/SVC-BFF-IDP-STAGING-INTEGRATION-HARDENING.json` |
-| `SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2` | Blueprint production hardening follow-up 2026-05-04 | Upgrade source/search to crawler-indexer platform baseline | Codex | completed | 2026-05-04 13:16:48 | `ai-task-archive/tasks/SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2.json` |
-| `SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY` | Blueprint production hardening follow-up 2026-05-04 | Make execution sandbox/canary activation-ready while live stays gated | Codex2 | completed | 2026-05-04 13:10:52 | `ai-task-archive/tasks/SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY.json` |
-| `FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT` | Blueprint production hardening follow-up 2026-05-04 | Close frontend staging repo hygiene and publish readiness | Codex | completed | 2026-05-04 12:58:50 | `ai-task-archive/tasks/FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
+| `BFF-LUV-GAP-001` | BFF Execute-Plans Contract Gap 2026-05-08 | Build execute-plans BFF contract registry | 建立 execute-plans BFF route registry 與 coverage test，讓後續缺口可被 supervisor 追蹤。 | Codex2 | Claude | blocked | - | 2026-05-08 23:54:20 | Registry/report/focused tests are complete. Full BFF suite is blocked by in-progress BFF-LUV-GAP-003 worktree failures in action_catalog and capital/ranking/rebalance tests. |
+| `BFF-LUV-GAP-004` | BFF Execute-Plans Contract Gap 2026-05-08 | Implement evolution experiment jobs and events BFF compatibility | 補上 evolution、experiments、jobs、events route families。 | Codex | Codex2 | review | - | 2026-05-09 01:48:29 | Implemented evolution programs, experiments, jobs, and events BFF compatibility. Verification: GAP-004 contract 29 passed; execute-plans registry + SSE 17 passed; GAP-005 regression 4 passed; py_compile main/test passed. |
+| `BFF-LUV-GAP-006` | BFF Execute-Plans Contract Gap 2026-05-08 | Implement Agora core BFF compatibility | 補上 Part 06 與 src/lib/v3 目前引用的 Agora core /bff routes。 | Codex | Gemini2 | review | - | 2026-05-09 01:52:41 | Chair reassigned review from Codex2 to Gemini2: Codex2 has failed twice on this review dispatch; Codex is the owner and Claude/Claude2 are quota-paused, while Gemini2 is available and has no ownership conflict. |
+| `BFF-LUV-GAP-007` | BFF Execute-Plans Contract Gap 2026-05-08 | Reconcile extended Agora and FULL-spec routes | 整理 FULL spec 與長尾 Agora routes，實作 active source refs 並標記歷史 routes 的 disposition。 | Codex | Codex2 | review | - | 2026-05-09 01:40:14 | Implemented active Agora extended routes for committee evidence packs and persona-lab submit-commit, added Agora handoff/evidence overlay storage, marked FULL-only Agora families as implemented aliases or superseded in the registry, and documented dispositions in the task artifact. Verification: python3 -m pytest services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 14 passed, 2 pre-existing datetime.utcnow warnings; python3 services/control-plane/bff/contract_snapshots/report_execute_plans_bff_coverage.py -> agora-extended 4 implemented, 8 alias, 0 missing, 0 deferred, 5 superseded. |
+| `BFF-LUV-GAP-012` | BFF Execute-Plans Contract Gap 2026-05-08 | Run execute-plans BFF cutover smoke | 所有缺口完成或有 disposition 後，對 execute-plans repo 跑 live/hybrid BFF cutover smoke。 | Codex | Claude | todo | `BFF-LUV-GAP-001`, `BFF-LUV-GAP-002`, `BFF-LUV-GAP-003`, `BFF-LUV-GAP-004`, `BFF-LUV-GAP-005`, `BFF-LUV-GAP-006`, `BFF-LUV-GAP-007`, `BFF-LUV-GAP-008`, `BFF-LUV-GAP-009`, `BFF-LUV-GAP-010`, `BFF-LUV-GAP-011` | 2026-05-08 23:38:13 | Assignment created |
+| `BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-006] Prepare BFF-LUV-GAP-006 BFF and frontend handoff packet | 平行支援 BFF-LUV-GAP-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Codex2 | Codex | review_approved | - | 2026-05-09 01:33:16 | Approved support-only BFF handoff packet for BFF-LUV-GAP-006; parent owner absorbed the checklist into implementation evidence and focused BFF verification remains green. |
+| `BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-010] Prepare BFF-LUV-GAP-010 BFF and frontend handoff packet | 平行支援 BFF-LUV-GAP-010，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Codex | Codex2 | todo | - | 2026-05-09 01:20:00 | Auto-reassigned ownership from Gemini2 to Codex after repeated Gemini2 capacity/429: status: 429,. Task returned to todo until Codex starts a fresh run. |
+| `BFF-LUV-GAP-007-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-007] Prepare BFF-LUV-GAP-007 BFF and frontend handoff packet | 平行支援 BFF-LUV-GAP-007，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Codex2 | Codex | todo | - | 2026-05-09 01:37:03 | Auto-reassigned ownership from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex2 starts a fresh run. |
+| `BFF-LUV-GAP-004-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-004] Prepare BFF-LUV-GAP-004 BFF and frontend handoff packet | 平行支援 BFF-LUV-GAP-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Gemini2 | Codex | review | - | 2026-05-09 01:38:41 | Handoff packet prepared and updated. Ready for review. |
+| `BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-001] Prepare BFF-LUV-GAP-001 BFF and frontend handoff packet | 平行支援 BFF-LUV-GAP-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Codex | Codex2 | in_progress | - | 2026-05-09 01:53:27 | Supervisor auto-started BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF after successful dispatch. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - |
+| `BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF` | Codex | Codex2 | Approved support-only BFF handoff packet for BFF-LUV-GAP-006; parent owner absorbed the checklist into implementation evidence and focused BFF verification remains green. | pending | 2026-05-09 01:33:16 |
+| `BFF-LUV-GAP-004-SIDECAR-BFF-HANDOFF` | Gemini2 | Codex | Handoff packet prepared and updated. Ready for review. | pending | 2026-05-09 01:38:41 |
+| `BFF-LUV-GAP-007` | Codex | Codex2 | Implemented active Agora extended routes for committee evidence packs and persona-lab submit-commit, added Agora handoff/evidence overlay storage, marked FULL-only Agora families as implemented aliases or superseded in the registry, and documented dispositions in the task artifact. Verification: python3 -m pytest services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 14 passed, 2 pre-existing datetime.utcnow warnings; python3 services/control-plane/bff/contract_snapshots/report_execute_plans_bff_coverage.py -> agora-extended 4 implemented, 8 alias, 0 missing, 0 deferred, 5 superseded. | pending | 2026-05-09 01:40:14 |
+| `BFF-LUV-GAP-004` | Codex | Codex2 | Implemented evolution programs, experiments, jobs, and events BFF compatibility. Verification: GAP-004 contract 29 passed; execute-plans registry + SSE 17 passed; GAP-005 regression 4 passed; py_compile main/test passed. | pending | 2026-05-09 01:48:29 |
+| `BFF-LUV-GAP-006` | Codex2 | Gemini2 | Chair reassigned review from Codex2 to Gemini2: Codex2 has failed twice on this review dispatch; Codex is the owner and Claude/Claude2 are quota-paused, while Gemini2 is available and has no ownership conflict. | pending | 2026-05-09 01:52:41 |
 
 ## Blockers
 
 | Task | Owner | Waiting For | Message | Status |
 |---|---|---|---|---|
-| _(none)_ | - | - | - | - |
+| `BFF-LUV-GAP-001` | Codex2 | Claude2 | Registry/report/focused tests are complete. Full BFF suite is blocked by in-progress BFF-LUV-GAP-003 worktree failures in action_catalog and capital/ranking/rebalance tests. | open |
 
 ## Review Notes
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| _(none)_ | - | - | - |
+| `BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF` | Codex | Sidecar packet is support-only and scoped under support/sidecars; it does not redefine canonical route truth.<br>Parent artifact now records absorption of the packet checklist into BFF-LUV-GAP-006 implementation evidence.<br>Focused verification rerun from parent artifact: python3 -m pytest services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py services/control-plane/bff/test_action_catalog.py services/control-plane/bff/test_agora_journal_merge_patch.py -q -> 25 passed, 6 pre-existing datetime.utcnow warnings. | - |
 
 ## Lovable Coordination
 
@@ -179,23 +202,23 @@ Last updated: 2026-05-08 11:51:30
 
 ## Latest Checkpoints
 
-- 2026-05-08 11:50:14 Orchestrator: `BFF-FINAL-010` Worker superseded after task responsibility moved to another agent.
-- 2026-05-08 11:50:14 Orchestrator: `BFF-FINAL-010` Wake-up queued for supervisor: owned_finalize_dispatch
-- 2026-05-08 11:50:14 Orchestrator: `BFF-FINAL-010` Worker started via claude_cli: owned_finalize_dispatch
-- 2026-05-08 11:50:14 Claude: `BFF-FINAL-010` Supervisor resumed BFF-FINAL-010 for finalize after successful dispatch.
-- 2026-05-08 11:50:17 Orchestrator: SessionStart: SessionStart
-- 2026-05-08 11:50:17 Orchestrator: `BFF-FINAL-010` Supervisor resumed BFF-FINAL-010 for finalize after successful dispatch.
-- 2026-05-08 11:50:27 Orchestrator: PreToolUse: Read
-- 2026-05-08 11:50:28 Orchestrator: PostToolUse: Read
-- 2026-05-08 11:50:28 Orchestrator: PreToolUse: Read
-- 2026-05-08 11:50:28 Orchestrator: PostToolUse: Read
-- 2026-05-08 11:50:35 Orchestrator: PreToolUse: Read
-- 2026-05-08 11:50:35 Orchestrator: PostToolUse: Read
-- 2026-05-08 11:50:35 Orchestrator: PreToolUse: Read
-- 2026-05-08 11:50:36 Orchestrator: PostToolUse: Read
-- 2026-05-08 11:50:46 Orchestrator: PreToolUse: Bash
-- 2026-05-08 11:50:46 Orchestrator: PostToolUse: Bash
-- 2026-05-08 11:50:59 Orchestrator: PreToolUse: Bash
-- 2026-05-08 11:50:59 Orchestrator: PostToolUse: Bash
-- 2026-05-08 11:51:30 Orchestrator: PreToolUse: Bash
-- 2026-05-08 11:51:30 Claude: `BFF-FINAL-010` Owner finalization complete. All four delivery artifacts committed at HEAD 8be8d9b0: runtime_code_commit=d39496c4 (457 BFF tests verified by Codex), backend_commit=325197f1 (delivery-metadata anchor), runtime+metadata separation explicit. No BFF runtime changes after d39496c4. Worktree dirty files (.orchestrator/*.py, lean) are unrelated to task scope. State archived.
+- 2026-05-09 01:51:42 Orchestrator: `BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF` Wake-up queued for supervisor: owned_ready_dispatch
+- 2026-05-09 01:51:42 Orchestrator: `BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF` Auto-created sidecar BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF for BFF-LUV-GAP-001 (bff_handoff_packet) while utilization remained below threshold.
+- 2026-05-09 01:51:42 Orchestrator: utilization 0.14 stayed below threshold 0.50; created 1 visible sidecar task(s)
+- 2026-05-09 01:51:42 Orchestrator: `BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF` Worker started via copilot_local: owned_ready_dispatch
+- 2026-05-09 01:51:42 Copilot: `BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF` Supervisor auto-started BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF after successful dispatch.
+- 2026-05-09 01:52:01 Orchestrator: `BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF` Supervisor auto-started BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF after successful dispatch.
+- 2026-05-09 01:52:26 Orchestrator: `BFF-LUV-GAP-007-SIDECAR-BFF-HANDOFF` Dispatch pause for gemini expired at 2026-05-09 01:52:03; dispatch is enabled again.
+- 2026-05-09 01:52:27 Orchestrator: `BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF` Paused new dispatches for copilot until 2026-05-09 02:07:27 after terminal quota failure: 402 You have no quota
+- 2026-05-09 01:52:41 Orchestrator: `BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF` Auto-reassigned ownership from Copilot to Codex after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Codex starts a fresh run.
+- 2026-05-09 01:52:41 Orchestrator: `OPS-CHAIR-REVIEW` Idle capacity remains, but sidecars must avoid parents with existing support, stuck review, or terminal state.
+- 2026-05-09 01:52:55 Orchestrator: `BFF-LUV-GAP-006` Chair reassigned review from Codex2 to Gemini2: Codex2 has failed twice on this review dispatch; Codex is the owner and Claude/Claude2 are quota-paused, while Gemini2 is available and has no ownership conflict.
+- 2026-05-09 01:52:55 Orchestrator: `BFF-LUV-GAP-006` Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-09 01:52:55 Orchestrator: `BFF-LUV-GAP-004` Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-09 01:52:55 Orchestrator: `BFF-LUV-GAP-006` Worker started via gemini: review_ready_dispatch
+- 2026-05-09 01:52:55 Orchestrator: `BFF-LUV-GAP-004` Worker started via codex: review_ready_dispatch
+- 2026-05-09 01:52:55 Orchestrator: `BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF` Worker superseded after task responsibility moved to another agent.
+- 2026-05-09 01:53:26 Orchestrator: Chair review worker exited; supervisor will validate the review artifacts.
+- 2026-05-09 01:53:26 Orchestrator: `BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF` Wake-up queued for supervisor: owned_ready_dispatch
+- 2026-05-09 01:53:26 Orchestrator: `BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF` Worker started via codex: owned_ready_dispatch
+- 2026-05-09 01:53:27 Codex: `BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF` Supervisor auto-started BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF after successful dispatch.

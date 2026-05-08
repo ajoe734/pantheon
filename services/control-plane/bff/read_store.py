@@ -4836,6 +4836,8 @@ class ReadSurfaceStore:
         "agora_signal_feedback": "agora_signal_feedback",
         "agora_watchlist": "agora_watchlist",
         "agora_sessions": "agora_sessions",
+        "agora_committee_evidence_packs": "agora_committee_evidence_packs",
+        "agora_handoffs": "agora_handoffs",
         "agora_training_examples": "agora_training_examples",
         "agora_audit_events": "agora_audit_events",
         "ranking_formulas": "ranking_formulas",
@@ -6865,6 +6867,590 @@ class ReadSurfaceStore:
         self._save()
         return {"status": "updated", "entry": after, "audit": audit}
 
+    def list_decision_journal_entries(self) -> List[Dict[str, Any]]:
+        entries = [
+            self._project_decision_journal_entry(record)
+            for record in self._decision_journal_records().values()
+            if isinstance(record, dict)
+        ]
+        entries.sort(
+            key=lambda entry: (
+                _parse_rfc3339(entry.get("updatedAt"))
+                or _parse_rfc3339(entry.get("createdAt"))
+                or datetime.min
+            ),
+            reverse=True,
+        )
+        return json.loads(json.dumps(entries))
+
+    def create_decision_journal_entry(
+        self,
+        *,
+        entry_id: str,
+        title: str,
+        body: str,
+        tags: List[str],
+        linked_strategy_ids: List[str],
+        linked_persona_ids: List[str],
+        visibility: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        timestamp = created_at or _utc_now_rfc3339()
+        record = {
+            "id": entry_id,
+            "title": title,
+            "body": body,
+            "tags": list(tags),
+            "linkedStrategyIds": list(linked_strategy_ids),
+            "linkedPersonaIds": list(linked_persona_ids),
+            "visibility": visibility,
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+            "version": 1,
+            "createdBy": actor_id,
+            "canonicalWriteAuthority": "agora_journal_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        self._decision_journal_records()[entry_id] = json.loads(json.dumps(record))
+        self._save()
+        return self._project_decision_journal_entry(record)
+
+    def _agora_record_map(
+        self,
+        dataset: str,
+        id_fields: List[str],
+    ) -> Dict[str, Dict[str, Any]]:
+        records: Dict[str, Dict[str, Any]] = {}
+        for record in self._read_dataset_records(dataset):
+            if not isinstance(record, dict):
+                continue
+            key = _record_key(record, id_fields)
+            if key:
+                records[key] = json.loads(json.dumps(record))
+        for key, record in self._local_overlay_records(dataset).items():
+            if isinstance(record, dict):
+                record_key = _record_key(record, id_fields) or str(key)
+                records[record_key] = json.loads(json.dumps(record))
+        return records
+
+    @staticmethod
+    def _recent_sort_value(record: Dict[str, Any]) -> datetime:
+        return (
+            _parse_rfc3339(record.get("updated_at"))
+            or _parse_rfc3339(record.get("updatedAt"))
+            or _parse_rfc3339(record.get("created_at"))
+            or _parse_rfc3339(record.get("createdAt"))
+            or datetime.min
+        )
+
+    def list_agora_signals(self, *, review_status: Optional[str] = None) -> List[Dict[str, Any]]:
+        signals = list(self._agora_record_map("agora_signals", ["signal_id", "id"]).values())
+        if review_status:
+            requested = str(review_status).strip().lower()
+            signals = [
+                signal
+                for signal in signals
+                if str(signal.get("reviewStatus") or signal.get("review_status") or "").strip().lower() == requested
+            ]
+        signals.sort(key=self._recent_sort_value, reverse=True)
+        return json.loads(json.dumps(signals))
+
+    def get_agora_signal(self, signal_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not signal_id:
+            return None
+        return self._agora_record_map("agora_signals", ["signal_id", "id"]).get(str(signal_id))
+
+    def record_agora_signal_feedback(
+        self,
+        signal_id: str,
+        *,
+        decision: str,
+        confidence: int,
+        reason: Optional[str],
+        actor_id: str,
+        edit_window_seconds: int,
+        recorded_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        signal = self.get_agora_signal(signal_id)
+        if signal is None:
+            return None
+
+        timestamp = recorded_at or _utc_now_rfc3339()
+        feedback_records = self._ensure_local_overlay_records("agora_signal_feedback")
+        latest_key: Optional[str] = None
+        latest_ts: Optional[datetime] = None
+        timestamp_dt = _parse_rfc3339(timestamp)
+        for key, record in feedback_records.items():
+            if not isinstance(record, dict):
+                continue
+            if record.get("signalId") != signal_id or record.get("actorId") != actor_id:
+                continue
+            recorded_dt = _parse_rfc3339(record.get("updatedAt") or record.get("createdAt"))
+            if recorded_dt is None or timestamp_dt is None:
+                continue
+            if (timestamp_dt - recorded_dt).total_seconds() > edit_window_seconds:
+                continue
+            if latest_ts is None or recorded_dt > latest_ts:
+                latest_key = str(key)
+                latest_ts = recorded_dt
+
+        feedback_id = latest_key or f"sigfb-{uuid.uuid4().hex[:12]}"
+        existing = feedback_records.get(feedback_id) if latest_key else None
+        feedback = {
+            "id": feedback_id,
+            "feedbackId": feedback_id,
+            "signalId": signal_id,
+            "decision": decision,
+            "confidence": confidence,
+            "reason": reason,
+            "actorId": actor_id,
+            "createdAt": (existing or {}).get("createdAt") or timestamp,
+            "updatedAt": timestamp,
+            "editWindowSeconds": edit_window_seconds,
+        }
+        feedback_records[feedback_id] = json.loads(json.dumps(feedback))
+
+        signal_records = self._ensure_local_overlay_records("agora_signals")
+        signal_copy = json.loads(json.dumps(signal))
+        signal_copy["reviewStatus"] = decision
+        signal_copy["latestFeedbackId"] = feedback_id
+        signal_copy["updatedAt"] = timestamp
+        signal_records[signal_id] = signal_copy
+        self._save()
+        return json.loads(json.dumps(feedback))
+
+    def list_agora_watchlist(self) -> List[Dict[str, Any]]:
+        items = list(self._agora_record_map("agora_watchlist", ["watchlist_id", "id", "symbol"]).values())
+        items.sort(key=lambda item: str(item.get("symbol") or item.get("id") or ""))
+        return json.loads(json.dumps(items))
+
+    def list_agora_sessions(self, *, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        sessions = list(self._agora_record_map("agora_sessions", ["sessionId", "session_id", "id"]).values())
+        if status:
+            requested = str(status).strip().lower()
+            sessions = [s for s in sessions if str(s.get("status") or "").strip().lower() == requested]
+        sessions.sort(key=self._recent_sort_value, reverse=True)
+        return json.loads(json.dumps(sessions))
+
+    def get_agora_session(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not session_id:
+            return None
+        return self._agora_record_map("agora_sessions", ["sessionId", "session_id", "id"]).get(str(session_id))
+
+    def create_agora_session(
+        self,
+        *,
+        session_id: str,
+        title: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        timestamp = created_at or _utc_now_rfc3339()
+        session = {
+            "id": session_id,
+            "sessionId": session_id,
+            "title": title,
+            "mode": payload.get("mode") or payload.get("sessionType") or "quick_ask",
+            "status": payload.get("status") or "active",
+            "participants": json.loads(json.dumps(payload.get("participants") or [])),
+            "contextRefs": json.loads(json.dumps(payload.get("contextRefs") or payload.get("context_refs") or [])),
+            "messages": json.loads(json.dumps(payload.get("messages") or [])),
+            "createdBy": actor_id,
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+        }
+        self._ensure_local_overlay_records("agora_sessions")[session_id] = json.loads(json.dumps(session))
+        self._save()
+        return json.loads(json.dumps(session))
+
+    def list_agora_session_messages(self, session_id: str) -> Optional[List[Dict[str, Any]]]:
+        session = self.get_agora_session(session_id)
+        if session is None:
+            return None
+        messages = [item for item in (session.get("messages") or []) if isinstance(item, dict)]
+        messages.sort(key=lambda item: str(item.get("createdAt") or item.get("created_at") or ""))
+        return json.loads(json.dumps(messages))
+
+    def append_agora_session_message(
+        self,
+        session_id: str,
+        *,
+        message_id: str,
+        content: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        session = self.get_agora_session(session_id)
+        if session is None:
+            return None
+        timestamp = created_at or _utc_now_rfc3339()
+        message = {
+            "id": message_id,
+            "sessionId": session_id,
+            "sender": payload.get("sender") or {"type": "operator", "id": actor_id},
+            "role": payload.get("role") or "user",
+            "content": content,
+            "language": payload.get("language") or "zh-TW",
+            "attachments": json.loads(json.dumps(payload.get("attachments") or [])),
+            "citations": json.loads(json.dumps(payload.get("citations") or [])),
+            "annotations": json.loads(json.dumps(payload.get("annotations") or [])),
+            "createdAt": timestamp,
+        }
+        session = json.loads(json.dumps(session))
+        session.setdefault("messages", []).append(message)
+        session["updatedAt"] = timestamp
+        self._ensure_local_overlay_records("agora_sessions")[session_id] = session
+        self._save()
+        return json.loads(json.dumps(message))
+
+    def get_agora_message(self, message_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not message_id:
+            return None
+        for session in self.list_agora_sessions():
+            for message in session.get("messages") or []:
+                if isinstance(message, dict) and str(message.get("id") or "") == str(message_id):
+                    return json.loads(json.dumps(message))
+        return None
+
+    @staticmethod
+    def _agora_session_target(session: Optional[Dict[str, Any]]) -> Dict[str, str]:
+        session = session or {}
+        target = session.get("targetEntity") if isinstance(session.get("targetEntity"), dict) else None
+        if target is None:
+            target = session.get("targetObject") if isinstance(session.get("targetObject"), dict) else None
+        target = target or {}
+        target_type = str(
+            target.get("type")
+            or session.get("targetEntityType")
+            or session.get("target_type")
+            or "artifact"
+        ).strip() or "artifact"
+        target_id = str(
+            target.get("id")
+            or session.get("targetEntityId")
+            or session.get("target_id")
+            or session.get("sessionId")
+            or session.get("id")
+            or ""
+        ).strip()
+        return {"type": target_type, "id": target_id}
+
+    def get_agora_committee_evidence_pack(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not session_id:
+            return None
+        records = self._agora_record_map(
+            "agora_committee_evidence_packs",
+            ["id", "packId", "sessionId", "session_id"],
+        )
+        for record in records.values():
+            if str(record.get("sessionId") or record.get("session_id") or "") == str(session_id):
+                return json.loads(json.dumps(record))
+        return None
+
+    def create_agora_committee_evidence_pack(
+        self,
+        session_id: str,
+        *,
+        payload: Dict[str, Any],
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        timestamp = created_at or _utc_now_rfc3339()
+        existing = self.get_agora_committee_evidence_pack(session_id)
+        target = payload.get("targetEntity") if isinstance(payload.get("targetEntity"), dict) else {}
+        session_target = self._agora_session_target(self.get_agora_session(session_id))
+        target_type = str(
+            payload.get("targetEntityType")
+            or payload.get("target_entity_type")
+            or target.get("type")
+            or session_target.get("type")
+            or "artifact"
+        ).strip() or "artifact"
+        target_id = str(
+            payload.get("targetEntityId")
+            or payload.get("target_entity_id")
+            or target.get("id")
+            or session_target.get("id")
+            or session_id
+        ).strip() or session_id
+        pack_id = str(
+            payload.get("id")
+            or payload.get("packId")
+            or (existing or {}).get("id")
+            or f"evpack-{uuid.uuid4().hex[:12]}"
+        )
+        pack = {
+            "id": pack_id,
+            "packId": pack_id,
+            "sessionId": session_id,
+            "targetEntityType": target_type,
+            "targetEntityId": target_id,
+            "uploadedFiles": json.loads(json.dumps((existing or {}).get("uploadedFiles") or [])),
+            "linkedEntities": json.loads(json.dumps(payload.get("linkedEntities") or payload.get("linked_entities") or [])),
+            "notes": str(payload.get("notes") or ""),
+            "createdBy": (existing or {}).get("createdBy") or actor_id,
+            "createdAt": (existing or {}).get("createdAt") or timestamp,
+            "updatedAt": timestamp,
+            "canonicalWriteAuthority": "agora_committee_evidence_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        records = self._ensure_local_overlay_records("agora_committee_evidence_packs")
+        records[pack_id] = json.loads(json.dumps(pack))
+        self._save()
+        return json.loads(json.dumps(pack))
+
+    def append_agora_committee_evidence_files(
+        self,
+        session_id: str,
+        *,
+        files: List[Dict[str, Any]],
+        actor_id: str,
+        uploaded_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        session = self.get_agora_session(session_id)
+        if session is None:
+            return None
+        timestamp = uploaded_at or _utc_now_rfc3339()
+        pack = self.get_agora_committee_evidence_pack(session_id)
+        if pack is None:
+            session_target = self._agora_session_target(session)
+            pack = self.create_agora_committee_evidence_pack(
+                session_id,
+                payload={
+                    "targetEntityType": session_target["type"],
+                    "targetEntityId": session_target["id"] or session_id,
+                    "linkedEntities": [],
+                    "notes": "",
+                },
+                actor_id=actor_id,
+                created_at=timestamp,
+            )
+        uploaded_files = list(pack.get("uploadedFiles") or [])
+        new_files: List[Dict[str, Any]] = []
+        for item in files:
+            file_id = str(item.get("id") or item.get("fileId") or f"evfile-{uuid.uuid4().hex[:12]}")
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            record = {
+                "id": file_id,
+                "fileName": str(item.get("fileName") or item.get("filename") or item.get("name") or ""),
+                "mimeType": str(item.get("mimeType") or item.get("mime_type") or ""),
+                "sizeBytes": int(item.get("sizeBytes") or item.get("size_bytes") or 0),
+                "storageUrl": str(item.get("storageUrl") or item.get("storage_url") or f"bff://agora/committee/{session_id}/evidence/{file_id}"),
+                "extractedTextStatus": str(item.get("extractedTextStatus") or item.get("extracted_text_status") or "not_started"),
+                "metadata": json.loads(json.dumps(metadata)),
+                "uploadedBy": metadata.get("uploadedBy") or actor_id,
+                "createdAt": metadata.get("createdAt") or timestamp,
+            }
+            uploaded_files.append(record)
+            new_files.append(record)
+        pack = json.loads(json.dumps(pack))
+        pack["uploadedFiles"] = uploaded_files
+        pack["updatedAt"] = timestamp
+        records = self._ensure_local_overlay_records("agora_committee_evidence_packs")
+        records[str(pack["id"])] = pack
+        self._save()
+        result = json.loads(json.dumps(pack))
+        result["newFiles"] = json.loads(json.dumps(new_files))
+        return result
+
+    def list_agora_notes(self) -> List[Dict[str, Any]]:
+        notes = self._read_dataset_records("research_notes")
+        notes.sort(key=self._recent_sort_value, reverse=True)
+        return json.loads(json.dumps(notes))
+
+    def create_agora_note(
+        self,
+        *,
+        note_id: str,
+        title: Optional[str],
+        body: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        timestamp = created_at or _utc_now_rfc3339()
+        note = {
+            "id": note_id,
+            "note_id": note_id,
+            "title": title,
+            "body": body,
+            "attachment_type": payload.get("attachment_type") or "free_standing",
+            "attachment_ref": json.loads(json.dumps(payload.get("attachment_ref"))),
+            "owner_ref": payload.get("owner_ref") or {"owner_type": "operator", "owner_id": actor_id},
+            "tags": list(payload.get("tags") or []),
+            "linked_evidence_refs": list(payload.get("linked_evidence_refs") or payload.get("linkedEvidenceRefs") or []),
+            "linked_memory_anchors": list(payload.get("linked_memory_anchors") or payload.get("linkedMemoryAnchors") or []),
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+        }
+        self._ensure_local_overlay_records("research_notes")[note_id] = json.loads(json.dumps(note))
+        self._save()
+        return json.loads(json.dumps(note))
+
+    def list_agora_insights(self) -> List[Dict[str, Any]]:
+        insights = self._read_dataset_records("insight_cards")
+        insights.sort(key=self._recent_sort_value, reverse=True)
+        return json.loads(json.dumps(insights))
+
+    def create_agora_insight(
+        self,
+        *,
+        insight_id: str,
+        summary: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        timestamp = created_at or _utc_now_rfc3339()
+        insight = {
+            "id": insight_id,
+            "insight_id": insight_id,
+            "summary": summary,
+            "scope": payload.get("scope") or "global",
+            "scope_ref": payload.get("scope_ref") or payload.get("scopeRef"),
+            "status": payload.get("status") or "classified",
+            "confidence": json.loads(json.dumps(payload.get("confidence") or {})),
+            "tags": list(payload.get("tags") or []),
+            "source_ref": payload.get("source_ref") or payload.get("sourceRef") or f"agora:{insight_id}",
+            "supporting_evidence_refs": json.loads(
+                json.dumps(payload.get("supporting_evidence_refs") or payload.get("supportingEvidenceRefs") or [])
+            ),
+            "linked_sources": json.loads(json.dumps(payload.get("linked_sources") or payload.get("linkedSources") or [])),
+            "aggregation_provenance": {
+                "created_by": actor_id,
+                "aggregated_at": timestamp,
+                **(payload.get("aggregation_provenance") or {}),
+            },
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+        self._ensure_local_overlay_records("insight_cards")[insight_id] = json.loads(json.dumps(insight))
+        self._save()
+        return json.loads(json.dumps(insight))
+
+    def list_agora_memory(self) -> List[Dict[str, Any]]:
+        entries = self._read_dataset_records("institutional_memory_entries")
+        entries.sort(key=self._recent_sort_value, reverse=True)
+        return json.loads(json.dumps(entries))
+
+    def get_agora_memory_entry(self, memory_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not memory_id:
+            return None
+        return self._agora_record_map("institutional_memory_entries", ["entry_id", "id"]).get(str(memory_id))
+
+    def list_agora_training_examples(self) -> List[Dict[str, Any]]:
+        examples = list(self._agora_record_map("agora_training_examples", ["trainingExampleId", "example_id", "id"]).values())
+        examples.sort(key=self._recent_sort_value, reverse=True)
+        return json.loads(json.dumps(examples))
+
+    def create_agora_training_example(
+        self,
+        *,
+        example_id: str,
+        payload: Dict[str, Any],
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        timestamp = created_at or _utc_now_rfc3339()
+        example = {
+            "id": example_id,
+            "trainingExampleId": example_id,
+            "source": payload.get("source") or "agora",
+            "personaId": payload.get("personaId") or payload.get("persona_id"),
+            "input": json.loads(json.dumps(payload.get("input") or {})),
+            "expected": json.loads(json.dumps(payload.get("expected") or {})),
+            "labels": list(payload.get("labels") or []),
+            "status": payload.get("status") or "draft",
+            "createdBy": actor_id,
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+        }
+        self._ensure_local_overlay_records("agora_training_examples")[example_id] = json.loads(json.dumps(example))
+        self._save()
+        return json.loads(json.dumps(example))
+
+    def record_agora_audit_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        timestamp = str(event.get("recordedAt") or event.get("timestamp") or _utc_now_rfc3339())
+        event_id = str(event.get("auditId") or event.get("eventId") or f"aud-agora-{uuid.uuid4().hex[:12]}")
+        record = {
+            "auditId": event_id,
+            "recordedAt": timestamp,
+            **json.loads(json.dumps(event)),
+        }
+        records = self._ensure_local_overlay_records("agora_audit_events")
+        records[event_id] = record
+        self._save()
+        return json.loads(json.dumps(record))
+
+    def list_agora_handoffs(
+        self,
+        *,
+        status: Optional[str] = None,
+        handoff_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        items = list(self._agora_record_map("agora_handoffs", ["id", "handoffId"]).values())
+        if status:
+            requested = str(status).strip().lower()
+            items = [item for item in items if str(item.get("status") or "").strip().lower() == requested]
+        if handoff_type:
+            requested_type = str(handoff_type).strip()
+            items = [item for item in items if str(item.get("handoffType") or "") == requested_type]
+        items.sort(key=self._recent_sort_value, reverse=True)
+        return json.loads(json.dumps(items))
+
+    def create_agora_handoff(
+        self,
+        *,
+        handoff_id: str,
+        handoff_type: str,
+        source_route: str,
+        source_entity: Dict[str, Any],
+        destination_route: str,
+        destination_queue: str,
+        priority: str,
+        payload: Dict[str, Any],
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        timestamp = created_at or _utc_now_rfc3339()
+        due_dt = (_parse_rfc3339(timestamp) or datetime.now(timezone.utc)) + timedelta(
+            hours={"low": 168, "normal": 48, "high": 24, "urgent": 4}.get(priority, 48)
+        )
+        due_at = due_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        record = {
+            "id": handoff_id,
+            "handoffId": handoff_id,
+            "handoffType": handoff_type,
+            "status": "submitted",
+            "source": {
+                "app": "agora",
+                "route": source_route,
+                "entity": json.loads(json.dumps(source_entity)),
+            },
+            "destination": {
+                "app": "management",
+                "route": destination_route,
+                "queue": destination_queue,
+            },
+            "priority": priority,
+            "slaDueAt": due_at,
+            "rerouteCount": 0,
+            "payload": json.loads(json.dumps(payload)),
+            "createdBy": {"type": "operator", "id": actor_id},
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+            "canonicalWriteAuthority": "agora_handoff_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        records = self._ensure_local_overlay_records("agora_handoffs")
+        records[handoff_id] = json.loads(json.dumps(record))
+        self._save()
+        return json.loads(json.dumps(record))
+
     @staticmethod
     def _project_canonical_deployment_plan(
         raw: Dict[str, Any],
@@ -7471,6 +8057,266 @@ class ReadSurfaceStore:
         if not ranking_id:
             return None
         return self._local_overlay_records("rankings").get(ranking_id)
+
+    # ------------------------------------------------------------------ #
+    # Evolution programs (BFF-LUV-GAP-004)
+    # ------------------------------------------------------------------ #
+
+    def list_evolution_programs(
+        self,
+        status: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        items = list((self._local_fallback("evolution_programs") or {}).values())
+        if status:
+            items = [i for i in items if i.get("status") == status]
+        return sorted(items, key=lambda x: str(x.get("created_at") or ""), reverse=True)
+
+    def get_evolution_program(self, program_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not program_id:
+            return None
+        return (self._local_fallback("evolution_programs") or {}).get(program_id)
+
+    def create_evolution_program(
+        self,
+        *,
+        program_id: str,
+        name: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        programs = self._local_fallback("evolution_programs")
+        if programs is None:
+            programs = self._data.setdefault("evolution_programs", {})
+        timestamp = created_at or _utc_now_rfc3339()
+        record: Dict[str, Any] = {
+            "id": program_id,
+            "program_id": program_id,
+            "name": name,
+            "status": "active",
+            "params": params or {},
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+        }
+        programs[program_id] = record
+        self._save()
+        return record
+
+    def patch_evolution_program(
+        self,
+        program_id: str,
+        *,
+        patch: Dict[str, Any],
+        actor_id: str,
+        updated_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        programs = self._local_fallback("evolution_programs")
+        if programs is None:
+            programs = self._data.get("evolution_programs")
+        if not programs:
+            return None
+        record = programs.get(program_id)
+        if record is None:
+            return None
+        timestamp = updated_at or _utc_now_rfc3339()
+        for field in ("name", "status", "params"):
+            if field in patch:
+                record[field] = patch[field]
+        record["updated_at"] = timestamp
+        record["updated_by"] = actor_id
+        self._save()
+        return record
+
+    def list_evolution_program_runs(self, program_id: str) -> List[Dict[str, Any]]:
+        """Return synthetic run projections for an evolution program."""
+        if not self.get_evolution_program(program_id):
+            return []
+        all_decisions = self.list_evolution_decisions()
+        related = [d for d in all_decisions if d.get("program_id") == program_id]
+        return [
+            {
+                "run_id": d.get("decision_id", d.get("id", "")),
+                "program_id": program_id,
+                "status": d.get("status", "unknown"),
+                "started_at": d.get("created_at"),
+                "completed_at": d.get("resolved_at"),
+                "score": d.get("score"),
+                "artifact_ref": d.get("artifact_ref"),
+            }
+            for d in related
+        ]
+
+    def list_evolution_program_candidates(self, program_id: str) -> List[Dict[str, Any]]:
+        """Return candidate projections for an evolution program."""
+        if not self.get_evolution_program(program_id):
+            return []
+        all_decisions = self.list_evolution_decisions(status="pending")
+        related = [d for d in all_decisions if d.get("program_id") == program_id]
+        return [
+            {
+                "candidate_id": d.get("decision_id", d.get("id", "")),
+                "program_id": program_id,
+                "status": "pending",
+                "score": d.get("score"),
+                "proposed_at": d.get("created_at"),
+            }
+            for d in related
+        ]
+
+    # ------------------------------------------------------------------ #
+    # Experiments BFF compat (BFF-LUV-GAP-004)
+    # ------------------------------------------------------------------ #
+
+    def list_experiments_bff(
+        self,
+        status: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        items = self.list_research_experiments(status=status)
+        return [self._project_experiment_bff(e) for e in items]
+
+    def get_experiment_bff(self, experiment_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        item = self.get_research_experiment(experiment_id)
+        if item is None:
+            return None
+        return self._project_experiment_bff(item)
+
+    def create_experiment_bff(
+        self,
+        *,
+        name: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        timestamp = created_at or _utc_now_rfc3339()
+        import uuid as _uuid
+        exp_id = f"exp-bff-{timestamp[:10].replace('-','')}-{_uuid.uuid4().hex[:8]}"
+        return self.create_research_experiment(
+            ticket_id=f"ticket-{exp_id}",
+            experiment_name=name,
+            strategy_selector=params.get("strategy_selector") if params else {},
+            parameter_set=params.get("parameter_set") if params else {},
+            run_config=params.get("run_config", {"mode": "paper"}) if params else {"mode": "paper"},
+            launch_context={},
+        )
+
+    @staticmethod
+    def _project_experiment_bff(experiment: Dict[str, Any]) -> Dict[str, Any]:
+        exp_id = str(experiment.get("experiment_id") or experiment.get("id") or "")
+        return {
+            "id": exp_id,
+            "experiment_id": exp_id,
+            "name": experiment.get("experiment_name", experiment.get("name", "")),
+            "status": experiment.get("status", "unknown"),
+            "created_at": experiment.get("queued_at", experiment.get("created_at")),
+            "updated_at": experiment.get("updated_at"),
+            "artifact_ref": experiment.get("artifact_ref"),
+            "links": {
+                "self": f"/bff/experiments/{exp_id}",
+                "logs": f"/bff/experiments/{exp_id}/logs",
+                "metrics": f"/bff/experiments/{exp_id}/metrics",
+                "artifacts": f"/bff/experiments/{exp_id}/artifacts",
+            },
+        }
+
+    def get_experiment_logs(self, experiment_id: str) -> List[Dict[str, Any]]:
+        experiment = self.get_research_experiment(experiment_id)
+        if not experiment:
+            return []
+        return list(experiment.get("logs") or [])
+
+    def get_experiment_metrics(self, experiment_id: str) -> Dict[str, Any]:
+        experiment = self.get_research_experiment(experiment_id)
+        if not experiment:
+            return {}
+        return dict(experiment.get("metrics") or {})
+
+    def get_experiment_artifacts(self, experiment_id: str) -> List[Dict[str, Any]]:
+        experiment = self.get_research_experiment(experiment_id)
+        if not experiment:
+            return []
+        artifact_ref = experiment.get("artifact_ref")
+        if not artifact_ref:
+            return []
+        return [{"artifact_ref": artifact_ref, "experiment_id": experiment_id}]
+
+    # ------------------------------------------------------------------ #
+    # Jobs BFF compat (BFF-LUV-GAP-004)
+    # ------------------------------------------------------------------ #
+
+    def list_jobs_bff(
+        self,
+        status: Optional[str] = None,
+        job_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        items = list((self._local_fallback("bff_jobs") or {}).values())
+        if status:
+            items = [i for i in items if i.get("status") == status]
+        if job_type:
+            items = [i for i in items if i.get("job_type") == job_type]
+        return sorted(items, key=lambda x: str(x.get("created_at") or ""), reverse=True)
+
+    def get_job_bff(self, job_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not job_id:
+            return None
+        return (self._local_fallback("bff_jobs") or {}).get(job_id)
+
+    def get_job_logs_bff(self, job_id: str) -> List[Dict[str, Any]]:
+        job = self.get_job_bff(job_id)
+        if not job:
+            return []
+        return list(job.get("logs") or [])
+
+    # ------------------------------------------------------------------ #
+    # Events list BFF compat (BFF-LUV-GAP-004)
+    # ------------------------------------------------------------------ #
+
+    def list_events_bff(
+        self,
+        event_type: Optional[str] = None,
+        page_size: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Return recent events from telemetry/audit as a paginated list."""
+        telemetry_raw = self.list_telemetry_events()
+        telemetry = [
+            {
+                "event_id": e.get("id", ""),
+                "event_type": event_type or e.get("type", "telemetry"),
+                "occurred_at": e.get("timestamp"),
+                "entity_type": "runtime",
+                "entity_id": e.get("runtime_id", ""),
+                "summary": f"Telemetry snapshot for runtime {e.get('runtime_id', '')}",
+            }
+            for e in telemetry_raw
+            if not event_type or e.get("type") == event_type
+        ]
+        audit: List[Dict[str, Any]] = []
+        try:
+            raw_audit = self.list_governance_audit_events(
+                actor=None,
+                action_types=None,
+                target_type=None,
+                from_ts=None,
+                to_ts=None,
+            )
+            audit = [
+                {
+                    "event_id": e.get("event_id", e.get("id", "")),
+                    "event_type": e.get("action_type", "audit"),
+                    "occurred_at": e.get("timestamp"),
+                    "entity_type": e.get("target_type"),
+                    "entity_id": e.get("target_id", ""),
+                    "summary": e.get("summary", ""),
+                }
+                for e in raw_audit
+                if not event_type or e.get("action_type") == event_type
+            ]
+        except Exception:
+            pass
+        combined = telemetry + audit
+        combined.sort(key=lambda x: str(x.get("occurred_at") or ""), reverse=True)
+        return combined[:page_size]
 
     def get_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not persona_id:
@@ -9705,23 +10551,54 @@ class ReadSurfaceStore:
         include_snapshot_fallback: bool = True,
         include_local_fallback: bool = True,
     ) -> List[Dict[str, Any]]:
+        overlay = self._local_overlay_records(dataset)
+
+        def _with_overlay(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            if not overlay:
+                return records
+            merged: Dict[str, Dict[str, Any]] = {}
+            for index, record in enumerate(records):
+                if not isinstance(record, dict):
+                    continue
+                key = _record_key(
+                    record,
+                    [
+                        "id",
+                        "entry_id",
+                        "note_id",
+                        "insight_id",
+                        "ticket_id",
+                        "session_id",
+                        "sessionId",
+                        "packId",
+                        "handoffId",
+                        "trainingExampleId",
+                        "example_id",
+                    ],
+                ) or str(index)
+                merged[key] = record
+            for key, record in overlay.items():
+                if isinstance(record, dict):
+                    merged[str(key)] = record
+            return list(merged.values())
+
         if self._consultation_service_dataset_available(dataset):
             service_records = self._consultation_service_records(dataset)
             if service_records is not None:
-                return service_records
+                return _with_overlay(service_records)
         if dataset in ServiceBackedReadAdapter._DATASETS:
             available, records = self._service.list_records(
                 dataset,
                 include_snapshot_fallback=include_snapshot_fallback,
             )
             if available:
-                return list(records)
+                return _with_overlay(list(records))
         local_payload = self._local_fallback(dataset) if include_local_fallback else None
         if isinstance(local_payload, dict):
-            return [record for record in local_payload.values() if isinstance(record, dict)]
+            return _with_overlay([record for record in local_payload.values() if isinstance(record, dict)])
         if isinstance(local_payload, list):
-            return [record for record in local_payload if isinstance(record, dict)]
-        return []
+            return _with_overlay([record for record in local_payload if isinstance(record, dict)])
+        return _with_overlay([])
 
     def get_research_search_index(self) -> Optional[Dict[str, Any]]:
         adapter: Optional[Dict[str, Any]] = None

@@ -55,6 +55,9 @@ class CommandType(str, Enum):
     RUNTIME_ACTION = "RuntimeAction"
     RISK_ALERT_ACTION = "RiskAlertAction"
     INCIDENT_ACTION = "IncidentAction"
+    EVOLUTION_PROGRAM_ACTION = "EvolutionProgramAction"
+    EXPERIMENT_ACTION = "ExperimentAction"
+    JOB_ACTION = "JobAction"
 
 
 class ObjectType(str, Enum):
@@ -85,6 +88,9 @@ class ObjectType(str, Enum):
     DEPLOYMENT = "Deployment"
     RISK_ALERT = "RiskAlert"
     INCIDENT = "Incident"
+    EVOLUTION_PROGRAM = "EvolutionProgram"
+    EXPERIMENT = "Experiment"
+    JOB = "Job"
 
 
 class CommandStatus(str, Enum):
