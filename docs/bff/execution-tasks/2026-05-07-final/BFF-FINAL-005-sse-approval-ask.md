@@ -73,3 +73,16 @@ Likely files:
 python -m pytest services/control-plane/bff/test_pkt005_sse_substrate_contract.py -q
 python -m pytest services/control-plane/bff -k "sse or event" -q
 ```
+
+## Delivery Notes
+
+- Implementation committed in c57ed825 (bundled with BFF-FINAL-007 commit).
+- 21-channel SSE catalog: approval, ask, artifact, runtime, mcp, skill, channel, tool, ranking, rebalance, evolution, research, signal, inbox, journal, postmortem, loop, sentinel, intervention, audit, system.
+- Approval resync routes: `/bff/approvals`, `/bff/v5/interventions`.
+- Ask resync route: `/bff/agora/ask/sessions/{id}`.
+- Per-channel `X-SSE-*` replay metadata headers implemented.
+- `SSE_REPLAY_UNAVAILABLE` 409 with resync metadata for replay-beyond-window.
+- `SseEventEnvelope` model and approval/ask event type sets in `models.py`.
+- BFF_API_CONTRACT.md sections 11.2-11.5 and section 14 SSE count updated.
+- Reviewer (Codex) approved 2026-05-08: "Focused SSE suites passed."
+- Final closeout verification: `pytest test_pkt005_sse_substrate_contract.py -q` → 8 passed; `pytest -k 'sse or event' -q` → 21 passed.
