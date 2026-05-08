@@ -22,6 +22,7 @@ STAGING_CONTROL_REMOTE_DIR="${STAGING_CONTROL_REMOTE_DIR:-/home/edna/code/panthe
 STAGING_EXEC_VM="${STAGING_EXEC_VM:-pantheon-exec-vm2-20260424}"
 STAGING_EXEC_ZONE="${STAGING_EXEC_ZONE:-asia-east1-a}"
 STAGING_EXEC_REMOTE_DIR="${STAGING_EXEC_REMOTE_DIR:-/home/edna/code/pantheon}"
+STAGING_EXEC_HEALTH_URL="${STAGING_EXEC_HEALTH_URL:-http://10.140.0.5:28081}"
 
 DEPLOY_ENV=""
 COMPONENT="auto"
@@ -54,6 +55,7 @@ Environment overrides:
   DEV_VM DEV_ZONE DEV_REMOTE_DIR
   STAGING_CONTROL_VM STAGING_CONTROL_ZONE STAGING_CONTROL_REMOTE_DIR
   STAGING_EXEC_VM STAGING_EXEC_ZONE STAGING_EXEC_REMOTE_DIR
+  STAGING_EXEC_HEALTH_URL
 EOF
 }
 
@@ -143,6 +145,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "sha=${DEPLOY_SHA}"
   info "allow_dirty=${ALLOW_DIRTY}"
   info "allow_example_env=${ALLOW_EXAMPLE_ENV}"
+  info "staging_exec_health_url=${STAGING_EXEC_HEALTH_URL}"
   exit 0
 fi
 
@@ -163,6 +166,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
   command_prefix+=" PANTHEON_ALLOW_DIRTY_DEPLOY=$(shell_quote "$ALLOW_DIRTY")"
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
+  command_prefix+=" PANTHEON_STAGING_EXEC_HEALTH_URL=$(shell_quote "$STAGING_EXEC_HEALTH_URL")"
   command_prefix+=" bash -s"
 
   info "ssh ${vm} (${zone}) component=${remote_component} sha=${DEPLOY_SHA}"
@@ -180,6 +184,22 @@ info() {
 error() {
   echo "[remote-deploy] ERROR: $*" >&2
   exit 1
+}
+
+curl_with_retry() {
+  local url="$1"
+  local attempts="${2:-12}"
+  local delay="${3:-5}"
+  local i
+
+  for ((i = 1; i <= attempts; i++)); do
+    if curl -fsS "$url" >/dev/null; then
+      return 0
+    fi
+    sleep "$delay"
+  done
+
+  curl -fsS "$url" >/dev/null
 }
 
 snapshot_remote_state() {
@@ -300,8 +320,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_LIVE_BROKER_ENABLED=false \
     PANTHEON_BFF_CORS_ORIGINS=https://pantheon-ai-system-front-dev.lovable.app \
       docker compose -p pantheon -f docker-compose.yml up -d --build
-    curl -fsS http://127.0.0.1:18001/health >/dev/null
-    curl -fsS http://127.0.0.1:18001/readyz >/dev/null
+    curl_with_retry http://127.0.0.1:18001/health
+    curl_with_retry http://127.0.0.1:18001/readyz
     ;;
 
   exec)
@@ -310,10 +330,10 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     env_file="$(real_env_or_example env/prod-exec.env env/prod-exec.env.example)"
     docker compose --env-file "$env_file" -p pantheon-exec -f docker-compose.exec.yml config --quiet
     COMPOSE_BAKE=false docker compose --env-file "$env_file" -p pantheon-exec -f docker-compose.exec.yml up -d --build
-    curl -fsS http://127.0.0.1:28081/__health__ >/dev/null
-    curl -fsS http://127.0.0.1:28097/__health__ >/dev/null
-    curl -fsS http://127.0.0.1:28098/__health__ >/dev/null
-    curl -fsS http://127.0.0.1:28110/__health__ >/dev/null
+    curl_with_retry http://127.0.0.1:28081/__health__
+    curl_with_retry http://127.0.0.1:28097/__health__
+    curl_with_retry http://127.0.0.1:28098/__health__
+    curl_with_retry http://127.0.0.1:28110/__health__
     ;;
 
   control)
@@ -325,8 +345,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_ENV=staging-live \
     PANTHEON_LIVE_BROKER_ENABLED=true \
       docker compose --env-file "$env_file" -p pantheon-control -f docker-compose.control.yml up -d --build
-    curl -fsS http://127.0.0.1:38001/health >/dev/null
-    curl -fsS http://10.140.0.5:28081/__health__ >/dev/null
+    curl_with_retry http://127.0.0.1:38001/health
+    curl_with_retry "${PANTHEON_STAGING_EXEC_HEALTH_URL%/}/__health__"
     ;;
 
   *)
