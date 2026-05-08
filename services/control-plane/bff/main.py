@@ -1628,11 +1628,25 @@ def _derive_drawer_execution_params(
     }
 
 
-def _stored_command_params(cmd: OperatorCommand, identity: OperatorIdentity) -> Dict[str, Any]:
+def _stored_command_params(
+    cmd: OperatorCommand,
+    identity: OperatorIdentity,
+    raw_payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     if cmd.command in _DRAWER_RUNTIME_COMMANDS:
         return dict(cmd.params)
     del identity
-    return dict(cmd.params)
+    params = dict(cmd.params)
+    if cmd.command == CommandType.REMEDIATE_SENTINEL_INTERVENTION and raw_payload:
+        # Normalize any top-level two-man alias from the raw payload into the
+        # canonical params key so the executor always receives two_man_signature_id.
+        if not str(params.get("two_man_signature_id") or "").strip():
+            for alias in _TWO_MAN_EVIDENCE_FIELDS:
+                val = str(raw_payload.get(alias) or "").strip()
+                if val:
+                    params["two_man_signature_id"] = val
+                    break
+    return params
 
 
 def _resolve_execution_params_for_record(record: Dict[str, Any]) -> Dict[str, Any]:
@@ -12926,7 +12940,7 @@ async def submit_command(
             validator(cmd.params, identity)
     except HTTPException as exc:
         raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
-    stored_params = _stored_command_params(cmd, identity)
+    stored_params = _stored_command_params(cmd, identity, raw_payload=payload)
 
     duplicate = command_store.get_command_by_idempotency_key(
         foundation_context["idempotency_record"].idempotency_key
@@ -13082,7 +13096,7 @@ async def submit_final_command(
     except HTTPException as exc:
         raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
 
-    stored_params = _stored_command_params(cmd, identity)
+    stored_params = _stored_command_params(cmd, identity, raw_payload=payload)
 
     # 3. Idempotency replay / conflict check
     duplicate = command_store.get_command_by_idempotency_key(

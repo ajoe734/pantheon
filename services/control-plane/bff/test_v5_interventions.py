@@ -469,3 +469,88 @@ def test_bff_v1_commands_remediate_sentinel_invalid_action_returns_422() -> None
         assert response.status_code == 422, response.text
         error = response.json()["detail"]["error"]
         assert error["code"] == "INVALID_PARAMS"
+
+
+# --------------------------------------------------------------------------- #
+# 9. Regression: v1/commands two-man top-level alias propagates to stored params
+# --------------------------------------------------------------------------- #
+
+def test_bff_v1_commands_remediate_sentinel_top_level_two_man_propagates_to_stored_params() -> None:
+    """
+    Regression: twoManSignatureId supplied at the top level of a v1/commands
+    RemediateSentinelIntervention payload must be normalized into the stored
+    command params so the executor always receives a non-empty two_man_signature_id.
+
+    Without the fix the precondition gate accepted the command but stored_params
+    contained only cmd.params (which had no two-man field), leaving the executor
+    with an empty two_man_signature_id downstream.
+    """
+    idem_key = "remediate-v1-two-man-propagation-001"
+    with _isolated_client() as client:
+        response = client.post(
+            "/bff/v1/commands",
+            headers={
+                "Authorization": ADMIN_MFA_TOKEN,
+                "Idempotency-Key": idem_key,
+                "X-Confirm-Token": "confirm-propagation-001",
+                "X-Correlation-Id": "corr-propagation-001",
+            },
+            json={
+                "command": "RemediateSentinelIntervention",
+                "target": {"type": "SentinelIntervention", "id": "intv-v1-propagation-001"},
+                # twoManSignatureId is at the top level, NOT inside params
+                "twoManSignatureId": "tms-propagation-sig-001",
+                "approvalId": "approval-propagation-001",
+                "params": {
+                    "intervention_id": "intv-v1-propagation-001",
+                    "remediation_action": "resolve",
+                },
+                "audit_context": {"reason": "two-man propagation regression test"},
+            },
+        )
+        assert response.status_code == 202, response.text
+
+        # Retrieve the stored command and verify the two-man evidence was propagated
+        stored = bff_main.command_store.get_command_by_idempotency_key(idem_key)
+        assert stored is not None, "Command should be stored after 202 acceptance"
+        stored_params = stored.get("params") or {}
+        assert stored_params.get("two_man_signature_id") == "tms-propagation-sig-001", (
+            f"Expected two_man_signature_id='tms-propagation-sig-001' in stored params, "
+            f"got: {stored_params}"
+        )
+
+
+def test_bff_v1_commands_remediate_sentinel_second_operator_alias_propagates() -> None:
+    """Regression: secondOperatorId alias at the top level also propagates to stored params."""
+    idem_key = "remediate-v1-second-operator-propagation-001"
+    with _isolated_client() as client:
+        response = client.post(
+            "/bff/v1/commands",
+            headers={
+                "Authorization": ADMIN_MFA_TOKEN,
+                "Idempotency-Key": idem_key,
+                "X-Confirm-Token": "confirm-second-op-001",
+                "X-Correlation-Id": "corr-second-op-001",
+            },
+            json={
+                "command": "RemediateSentinelIntervention",
+                "target": {"type": "SentinelIntervention", "id": "intv-v1-second-op-001"},
+                # Using the secondOperatorId alias instead of twoManSignatureId
+                "secondOperatorId": "op-second-sig-001",
+                "approvalId": "approval-second-op-001",
+                "params": {
+                    "intervention_id": "intv-v1-second-op-001",
+                    "remediation_action": "resolve",
+                },
+                "audit_context": {"reason": "secondOperatorId propagation regression test"},
+            },
+        )
+        assert response.status_code == 202, response.text
+
+        stored = bff_main.command_store.get_command_by_idempotency_key(idem_key)
+        assert stored is not None
+        stored_params = stored.get("params") or {}
+        assert stored_params.get("two_man_signature_id") == "op-second-sig-001", (
+            f"Expected two_man_signature_id='op-second-sig-001' in stored params, "
+            f"got: {stored_params}"
+        )

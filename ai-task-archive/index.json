@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-08T02:29:29Z",
+  "updated_at": "2026-05-08T02:38:45Z",
   "counts": {
-    "total": 922,
-    "completed": 906,
+    "total": 923,
+    "completed": 907,
     "superseded": 16
   },
   "recent_terminal_ids": [
+    "BFF-FINAL-006-SIDECAR-BFF-HANDOFF",
     "BFF-FINAL-006",
     "BFF-FINAL-SIDECAR-GEMINI-SMOKE-MATRIX",
     "BFF-FINAL-009-SIDECAR-BFF-HANDOFF",
@@ -25,7 +26,6 @@
     "FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT",
     "SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E",
     "SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4",
-    "SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS",
-    "SVC-BLUEPRINT-PAPER-BRACKET-BASELINE"
+    "SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS"
   ]
 }

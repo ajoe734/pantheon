@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-08 10:34:18
+Last updated: 2026-05-08 10:46:14
 
 ## Objective
 
@@ -37,12 +37,12 @@ Last updated: 2026-05-08 10:34:18
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: All review-requested changes implemented. Role/shape validator added + fail-open stub removed. 80 tests pass (commit 32574279). Please re-review and approve.
+- `Claude`: execution, control-plane, governance-review; next: Fixed top-level two-man alias propagation in /bff/v1/commands: modified _stored_command_params to normalize twoManSignatureId/secondOperatorId from raw payload into stored params for RemediateSentinelIntervention; added 2 regression tests. 82 tests pass.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 - `Codex`: integration, status-system, schema, acceptance; next: Restored to active board. Final verification remains gated on BFF-FINAL-006, BFF-FINAL-007, and BFF-FINAL-009 completion; support-only sidecars may run before final lock.
-- `Codex2`: integration, status-system, schema, acceptance; next: Codex review approved after support packet refresh; Codex2 should finalize the sidecar to done with a task-scoped commit.
+- `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: BFF-FINAL-010 handoff packet ready at support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md (commit 5d21d6c7). Covers: full route catalog (001-009), pre-010 blockers (BFF-006 closeout pending, BFF-009 R1/R2 role-enforcement and fail-closed executor fixes), frontend integration checklist, parent acceptance evidence checklist, and 6 explicitly deferred items. No canonical code modified.
+- `Claude2`: execution, control-plane, governance-review; next: Handoff packet updated (pass 2). BFF-FINAL-006 now shown as done/commit 08ac4543. BFF-FINAL-009 R1/R2 resolved per 32574279; new R3 (v1 two-man alias propagation) documented in §3b with concrete fix spec, §10 acceptance checklist checkboxes updated, §9f frontend checklist updated, §11 D3 note refreshed. No canonical code modified.
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 
 ## Delivery Layers
@@ -51,10 +51,9 @@ Last updated: 2026-05-08 10:34:18
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `BFF-FINAL-009` | BFF Final Contract 2026-05-07 | Implement v5 interventions contract | Claude | review | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003` | 實作 /bff/v5/interventions 的 HIQ Sentinel remediation 與 two-man command semantics。 |
+| `BFF-FINAL-009` | BFF Final Contract 2026-05-07 | Implement v5 interventions contract | Claude | in_progress | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003` | 實作 /bff/v5/interventions 的 HIQ Sentinel remediation 與 two-man command semantics。 |
 | `BFF-FINAL-010` | BFF Final Contract 2026-05-07 | Verify and hand off final BFF contract | Codex | todo | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003`, `BFF-FINAL-004`, `BFF-FINAL-005`, `BFF-FINAL-006`, `BFF-FINAL-007`, `BFF-FINAL-008`, `BFF-FINAL-009` | 跑完整 contract verification cleanup pass delivery note 與 coordination response 讓 execute-plans 可消費。 |
 | `BFF-FINAL-010-SIDECAR-BFF-HANDOFF` | BFF Final Contract 2026-05-07 | [Sidecar] [Parent BFF-FINAL-010] Prepare BFF-FINAL-010 BFF and frontend handoff packet | Claude2 | review | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003`, `BFF-FINAL-004`, `BFF-FINAL-005` | 平行支援 BFF-FINAL-010，先整理 final backend/frontend handoff skeleton，不修改 canonical code。 |
-| `BFF-FINAL-006-SIDECAR-BFF-HANDOFF` | BFF Final Contract 2026-05-07 | [Sidecar] [Auto] [Parent BFF-FINAL-006] Prepare BFF-FINAL-006 BFF and frontend handoff packet | Codex2 | review_approved | `BFF-FINAL-001`, `BFF-FINAL-002` | 平行支援 BFF-FINAL-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -64,11 +63,12 @@ Last updated: 2026-05-08 10:34:18
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-08 10:29:29
-- Terminal tasks archived: `922` total, `906` completed, `16` superseded
+- Archive updated: 2026-05-08 10:38:45
+- Terminal tasks archived: `923` total, `907` completed, `16` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `BFF-FINAL-006-SIDECAR-BFF-HANDOFF` | BFF Final Contract 2026-05-07 | Prepare BFF-FINAL-006 BFF and frontend handoff packet | Codex2 | completed | 2026-05-08 10:38:45 | `ai-task-archive/tasks/BFF-FINAL-006-SIDECAR-BFF-HANDOFF.json` |
 | `BFF-FINAL-006` | BFF Final Contract 2026-05-07 | Implement MCP server tool import contract | Codex | completed | 2026-05-08 10:29:29 | `ai-task-archive/tasks/BFF-FINAL-006.json` |
 | `BFF-FINAL-SIDECAR-GEMINI-SMOKE-MATRIX` | BFF Final Contract 2026-05-07 | BFF final smoke and CI matrix sidecar | Codex2 | completed | 2026-05-08 10:27:54 | `ai-task-archive/tasks/BFF-FINAL-SIDECAR-GEMINI-SMOKE-MATRIX.json` |
 | `BFF-FINAL-009-SIDECAR-BFF-HANDOFF` | BFF Final Contract 2026-05-07 | Prepare BFF-FINAL-009 BFF and frontend handoff packet | Claude2 | completed | 2026-05-08 10:27:04 | `ai-task-archive/tasks/BFF-FINAL-009-SIDECAR-BFF-HANDOFF.json` |
@@ -88,24 +88,20 @@ Last updated: 2026-05-08 10:34:18
 | `SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E` | Blueprint production hardening follow-up 2026-05-04 | Close OSS/research/learning activation-ready E2E wiring | Codex2 | completed | 2026-05-04 12:50:19 | `ai-task-archive/tasks/SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E.json` |
 | `SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4` | Blueprint production hardening follow-up 2026-05-04 | Hard-enforce Postgres ownership for staging/prod | Claude | completed | 2026-05-04 12:44:21 | `ai-task-archive/tasks/SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4.json` |
 | `SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS` | Blueprint gap execution wave 2026-05-03 | Add operator fallback drills while BFF HA remains deferred | Codex2 | completed | 2026-05-04 10:36:58 | `ai-task-archive/tasks/SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS.json` |
-| `SVC-BLUEPRINT-PAPER-BRACKET-BASELINE` | Blueprint gap execution wave 2026-05-03 | Implement deterministic paper bracket order semantics under fail-closed live guards | Claude | completed | 2026-05-04 10:17:37 | `ai-task-archive/tasks/SVC-BLUEPRINT-PAPER-BRACKET-BASELINE.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `BFF-FINAL-009` | BFF Final Contract 2026-05-07 | Implement v5 interventions contract | 實作 /bff/v5/interventions 的 HIQ Sentinel remediation 與 two-man command semantics。 | Claude | Codex | review | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003` | 2026-05-08 10:34:18 | All review-requested changes implemented. Role/shape validator added + fail-open stub removed. 80 tests pass (commit 32574279). Please re-review and approve. |
+| `BFF-FINAL-009` | BFF Final Contract 2026-05-07 | Implement v5 interventions contract | 實作 /bff/v5/interventions 的 HIQ Sentinel remediation 與 two-man command semantics。 | Claude | Codex | in_progress | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003` | 2026-05-08 10:46:14 | Fixed top-level two-man alias propagation in /bff/v1/commands: modified _stored_command_params to normalize twoManSignatureId/secondOperatorId from raw payload into stored params for RemediateSentinelIntervention; added 2 regression tests. 82 tests pass. |
 | `BFF-FINAL-010` | BFF Final Contract 2026-05-07 | Verify and hand off final BFF contract | 跑完整 contract verification cleanup pass delivery note 與 coordination response 讓 execute-plans 可消費。 | Codex | Codex2 | todo | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003`, `BFF-FINAL-004`, `BFF-FINAL-005`, `BFF-FINAL-006`, `BFF-FINAL-007`, `BFF-FINAL-008`, `BFF-FINAL-009` | 2026-05-08 09:48:00 | Restored to active board. Final verification remains gated on BFF-FINAL-006, BFF-FINAL-007, and BFF-FINAL-009 completion; support-only sidecars may run before final lock. |
-| `BFF-FINAL-010-SIDECAR-BFF-HANDOFF` | BFF Final Contract 2026-05-07 | [Sidecar] [Parent BFF-FINAL-010] Prepare BFF-FINAL-010 BFF and frontend handoff packet | 平行支援 BFF-FINAL-010，先整理 final backend/frontend handoff skeleton，不修改 canonical code。 | Claude2 | Codex | review | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003`, `BFF-FINAL-004`, `BFF-FINAL-005` | 2026-05-08 10:32:53 | BFF-FINAL-010 handoff packet ready at support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md (commit 5d21d6c7). Covers: full route catalog (001-009), pre-010 blockers (BFF-006 closeout pending, BFF-009 R1/R2 role-enforcement and fail-closed executor fixes), frontend integration checklist, parent acceptance evidence checklist, and 6 explicitly deferred items. No canonical code modified. |
-| `BFF-FINAL-006-SIDECAR-BFF-HANDOFF` | BFF Final Contract 2026-05-07 | [Sidecar] [Auto] [Parent BFF-FINAL-006] Prepare BFF-FINAL-006 BFF and frontend handoff packet | 平行支援 BFF-FINAL-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Codex2 | Codex | review_approved | `BFF-FINAL-001`, `BFF-FINAL-002` | 2026-05-08 10:32:45 | Codex review approved after support packet refresh; Codex2 should finalize the sidecar to done with a task-scoped commit. |
+| `BFF-FINAL-010-SIDECAR-BFF-HANDOFF` | BFF Final Contract 2026-05-07 | [Sidecar] [Parent BFF-FINAL-010] Prepare BFF-FINAL-010 BFF and frontend handoff packet | 平行支援 BFF-FINAL-010，先整理 final backend/frontend handoff skeleton，不修改 canonical code。 | Claude2 | Codex | review | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003`, `BFF-FINAL-004`, `BFF-FINAL-005` | 2026-05-08 10:46:09 | Handoff packet updated (pass 2). BFF-FINAL-006 now shown as done/commit 08ac4543. BFF-FINAL-009 R1/R2 resolved per 32574279; new R3 (v1 two-man alias propagation) documented in §3b with concrete fix spec, §10 acceptance checklist checkboxes updated, §9f frontend checklist updated, §11 D3 note refreshed. No canonical code modified. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| `BFF-FINAL-006-SIDECAR-BFF-HANDOFF` | Codex | Codex2 | Codex review approved after support packet refresh; Codex2 should finalize the sidecar to done with a task-scoped commit. | pending | 2026-05-08 10:32:45 |
-| `BFF-FINAL-010-SIDECAR-BFF-HANDOFF` | Claude2 | Codex | BFF-FINAL-010 handoff packet ready at support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md (commit 5d21d6c7). Covers: full route catalog (001-009), pre-010 blockers (BFF-006 closeout pending, BFF-009 R1/R2 role-enforcement and fail-closed executor fixes), frontend integration checklist, parent acceptance evidence checklist, and 6 explicitly deferred items. No canonical code modified. | pending | 2026-05-08 10:32:53 |
-| `BFF-FINAL-009` | Claude | Codex | All review-requested changes implemented. Role/shape validator added + fail-open stub removed. 80 tests pass (commit 32574279). Please re-review and approve. | pending | 2026-05-08 10:34:18 |
+| `BFF-FINAL-010-SIDECAR-BFF-HANDOFF` | Claude2 | Codex | Handoff packet updated (pass 2). BFF-FINAL-006 now shown as done/commit 08ac4543. BFF-FINAL-009 R1/R2 resolved per 32574279; new R3 (v1 two-man alias propagation) documented in §3b with concrete fix spec, §10 acceptance checklist checkboxes updated, §9f frontend checklist updated, §11 D3 note refreshed. No canonical code modified. | pending | 2026-05-08 10:46:09 |
 
 ## Blockers
 
@@ -117,7 +113,7 @@ Last updated: 2026-05-08 10:34:18
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| `BFF-FINAL-006-SIDECAR-BFF-HANDOFF` | Codex | 已核准：handoff packet 僅更新 support artifact，未修改 canonical truth 或 runtime。<br>Reviewer refresh 已補上 parent BFF-FINAL-006 目前已落地的 artifact、routes 與 focused pytest 結果，避免 creation-time route gap 被誤讀為現況。 | support/sidecars/BFF-FINAL-006/BFF-FINAL-006-SIDECAR-BFF-HANDOFF.md |
+| _(none)_ | - | - | - |
 
 ## Lovable Coordination
 
@@ -188,23 +184,23 @@ Last updated: 2026-05-08 10:34:18
 
 ## Latest Checkpoints
 
-- 2026-05-08 10:33:02 Orchestrator: PostToolUse: Bash
-- 2026-05-08 10:33:08 Orchestrator: Stop: Stop
-- 2026-05-08 10:33:09 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-08 10:33:16 Orchestrator: PostToolUse: Bash
-- 2026-05-08 10:33:21 Orchestrator: PreToolUse: Bash
-- 2026-05-08 10:33:34 Orchestrator: PostToolUse: Bash
-- 2026-05-08 10:33:38 Orchestrator: PreToolUse: TodoWrite
-- 2026-05-08 10:33:38 Orchestrator: PostToolUse: TodoWrite
-- 2026-05-08 10:33:41 Orchestrator: PreToolUse: Bash
-- 2026-05-08 10:33:41 Orchestrator: PostToolUse: Bash
-- 2026-05-08 10:33:44 Orchestrator: PreToolUse: Bash
-- 2026-05-08 10:33:44 Orchestrator: PostToolUse: Bash
-- 2026-05-08 10:33:53 Orchestrator: PreToolUse: Bash
-- 2026-05-08 10:33:53 Orchestrator: PostToolUse: Bash
-- 2026-05-08 10:33:58 Orchestrator: PreToolUse: Bash
-- 2026-05-08 10:34:08 Orchestrator: PreToolUse: Bash
-- 2026-05-08 10:34:09 Claude: `BFF-FINAL-009` Implemented all reviewer-requested changes: (1) approver/admin role gate added to both _validate_remediate_sentinel_intervention (wired into _VALIDATORS and the remediate endpoint); (2) fail-open stub fallback removed — downstream errors fail closed; (3) 12 new regression tests covering role 403, shape 422, and fail-closed propagation. Commit 32574279. Handing off to Codex for re-review.
-- 2026-05-08 10:34:12 Orchestrator: PostToolUse: Bash
-- 2026-05-08 10:34:17 Orchestrator: PreToolUse: Bash
-- 2026-05-08 10:34:18 Claude: `BFF-FINAL-009` Handoff to Codex: All review-requested changes implemented. Role/shape validator added + fail-open stub removed. 80 tests pass (commit 32574279). Please re-review and approve.
+- 2026-05-08 10:45:27 Orchestrator: PreToolUse: Edit
+- 2026-05-08 10:45:27 Orchestrator: PostToolUse: Edit
+- 2026-05-08 10:45:33 Orchestrator: PreToolUse: Edit
+- 2026-05-08 10:45:33 Orchestrator: PostToolUse: Edit
+- 2026-05-08 10:45:34 Orchestrator: PreToolUse: Edit
+- 2026-05-08 10:45:34 Orchestrator: PostToolUse: Edit
+- 2026-05-08 10:45:37 Orchestrator: PreToolUse: Bash
+- 2026-05-08 10:45:40 Orchestrator: PreToolUse: Edit
+- 2026-05-08 10:45:40 Orchestrator: PostToolUse: Edit
+- 2026-05-08 10:45:53 Orchestrator: PreToolUse: Edit
+- 2026-05-08 10:45:53 Orchestrator: PostToolUse: Edit
+- 2026-05-08 10:46:00 Orchestrator: PreToolUse: Bash
+- 2026-05-08 10:46:00 Claude2: `BFF-FINAL-010-SIDECAR-BFF-HANDOFF` Updated handoff packet per Codex reopen: BFF-FINAL-006 marked done (commit 08ac4543), BFF-FINAL-009 R1/R2 resolved (commit 32574279); new R3 blocker (v1 two-man alias propagation) documented in §3b, §10, and §9f. Deferred notes updated accordingly.
+- 2026-05-08 10:46:03 Orchestrator: PostToolUse: Bash
+- 2026-05-08 10:46:04 Orchestrator: PostToolUse: Bash
+- 2026-05-08 10:46:09 Orchestrator: PreToolUse: Bash
+- 2026-05-08 10:46:09 Claude2: `BFF-FINAL-010-SIDECAR-BFF-HANDOFF` Handoff to Codex: Handoff packet updated (pass 2). BFF-FINAL-006 now shown as done/commit 08ac4543. BFF-FINAL-009 R1/R2 resolved per 32574279; new R3 (v1 two-man alias propagation) documented in §3b with concrete fix spec, §10 acceptance checklist checkboxes updated, §9f frontend checklist updated, §11 D3 note refreshed. No canonical code modified.
+- 2026-05-08 10:46:12 Orchestrator: PostToolUse: Bash
+- 2026-05-08 10:46:14 Orchestrator: PreToolUse: Bash
+- 2026-05-08 10:46:14 Claude: `BFF-FINAL-009` Fixed top-level two-man alias propagation in /bff/v1/commands: modified _stored_command_params to normalize twoManSignatureId/secondOperatorId from raw payload into stored params for RemediateSentinelIntervention; added 2 regression tests. 82 tests pass.

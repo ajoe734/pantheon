@@ -23,7 +23,7 @@ runtime/registry/governance code.
 
 ## 1. Source Snapshot
 
-Inputs read for this sidecar pass (2026-05-08):
+Inputs read for this sidecar pass (2026-05-08, updated 2026-05-08 pass 2):
 
 - `.orchestrator/task-briefs/bff_final_010_sidecar_bff_handoff.md`
 - `ai-status.json`
@@ -51,37 +51,33 @@ Inputs read for this sidecar pass (2026-05-08):
 | BFF-FINAL-003 | Precondition errors | ✅ **done** | Final non-2xx precondition error surface |
 | BFF-FINAL-004 | Canonical action catalog | ✅ **done** | `GET /bff/actions`, 20 CommandType entries |
 | BFF-FINAL-005 | SSE approval and ask channels | ✅ **done** | 21-channel catalog; approval/ask event types |
-| BFF-FINAL-006 | MCP server tool import contract | ⚠️ **review_approved** | Closeout pending (Codex); implementation in HEAD |
+| BFF-FINAL-006 | MCP server tool import contract | ✅ **done** | Closeout commit `08ac4543`; 6 MCP import tests pass |
 | BFF-FINAL-007 | Evidence redaction | ✅ **done** | EvidenceKind capability gate, `RedactedEvidenceRef` |
 | BFF-FINAL-008 | Agora journal merge patch | ✅ **done** | `PATCH /bff/agora/journal/{id}` final contract |
-| BFF-FINAL-009 | v5 interventions contract | ⚠️ **in_progress** | Reviewer (Codex) returned with two required fixes |
+| BFF-FINAL-009 | v5 interventions contract | ⚠️ **in_progress** | R1/R2 resolved (commit `32574279`); new R3 blocker: v1 two-man alias propagation |
 
-**BFF-FINAL-010 is blocked until both BFF-FINAL-006 closeout and BFF-FINAL-009 fixes are complete.**
+**BFF-FINAL-010 is blocked until BFF-FINAL-009 R3 fix is complete.**
 
 ---
 
 ## 3. Pre-010 Gaps That Must Close Before BFF-FINAL-010
 
-### 3a. BFF-FINAL-006: closeout pending
+### 3a. BFF-FINAL-006: ✅ closed (commit 08ac4543)
 
-BFF-FINAL-006 is `review_approved`.  The parent owner (Codex) must:
+BFF-FINAL-006 is `done`.  Closeout commit `08ac4543` ("BFF-FINAL-006 record MCP import contract
+closeout") landed on 2026-05-08.  Verification: `test_mcp_tool_import.py` (6 passed),
+`test_final_contract_primitives.py` (5 passed).  This gate is cleared for BFF-FINAL-010.
 
-- create a task-scoped commit for `docs/bff/execution-tasks/2026-05-07-final/BFF-FINAL-006-mcp-tool-import.md`
-  and `services/control-plane/bff/test_mcp_tool_import.py` (currently untracked)
-- run `AI_NAME=Codex ./scripts/ai-status.sh done BFF-FINAL-006 "..."` to close the task
+### 3b. BFF-FINAL-009: R1 and R2 resolved; new R3 blocker remains
 
-BFF-FINAL-010 cannot declare "all BFF tests pass" until BFF-FINAL-006 closeout is recorded.
-
-### 3b. BFF-FINAL-009: two required fixes from Codex review
-
-The Codex review on BFF-FINAL-009 returned two concrete blocking issues:
+R1 and R2 were implemented by Claude in commit `32574279` (role validator added, fail-open stub
+removed) and verified with 80 passing tests.  A subsequent Codex re-review found a third issue:
 
 | # | Issue | Required fix |
 |---|-------|-------------|
-| R1 | `RemediateSentinelIntervention` is cataloged with `required_roles=[approver]` but neither `/bff/v5/interventions/{id}/remediate` nor `/bff/v1/commands` enforces a role validator — a viewer-authenticated caller can receive 202 | Add role/shape validation and regression tests |
-| R2 | `command_executor` catches downstream sentinel POST failures and returns `status=remediated, stub=True` when `PANTHEON_INTERNAL_API_URL` is configured but unreachable — this is fail-open for a critical remediation | Gate or remove the stub fallback so production/downstream failures fail closed |
+| R3 | `/bff/v1/commands` accepts top-level `twoManSignatureId`/`secondOperatorId` in the request body but stores only `cmd.params`, so an accepted `RemediateSentinelIntervention` can execute with an empty `two_man_signature_id` downstream | Normalize the supported two-man aliases from the top-level payload into stored/executor params (or reject unless they are present inside `params`); add a regression covering an accepted v1 `RemediateSentinelIntervention` where top-level `twoManSignatureId` propagates through to stored/executor params |
 
-BFF-FINAL-010 acceptance criterion "remediation guarded" and "all BFF tests pass" depend on both fixes.
+BFF-FINAL-010 acceptance criterion "remediation guarded" and "all BFF tests pass" depend on R3.
 
 ### 3c. BFF-FINAL-009: incomplete routes (documented in BFF-009 sidecar)
 
@@ -140,7 +136,7 @@ Required: `Content-Type: application/merge-patch+json`, `Idempotency-Key` header
 | Method | Path | Status | Auth |
 |--------|------|--------|------|
 | `GET` | `/bff/v5/interventions` | ✅ delivered | operator |
-| `POST` | `/bff/v5/interventions/{id}/remediate` | ✅ delivered (pending R1/R2 fixes) | operator + MFA + confirm token + two-man |
+| `POST` | `/bff/v5/interventions/{id}/remediate` | ✅ delivered (pending R3 alias fix) | operator + MFA + confirm token + two-man |
 | `GET` | `/bff/approvals` | ✅ delivered | operator |
 | `POST` | `/bff/v5/interventions/{id}/decision` | ❌ not implemented | — |
 | `POST` | `/bff/v5/interventions/{id}/two-man-sign` | ❌ not implemented | — |
@@ -237,7 +233,7 @@ Resync routes on reconnect:
 
 **SSE emission gaps to note:**
 - `sentinel` and `intervention` channels are declared but the delivered `/remediate` handler does not yet emit events (gap noted in BFF-009 sidecar).
-- Resolution is pending BFF-FINAL-009 review fix.
+- This remains a post-R3 follow-up; it is not blocking BFF-FINAL-009 acceptance itself.
 
 ---
 
@@ -347,8 +343,9 @@ Frontend must:
 - [ ] UI recognises `InterventionKind` values: `hiq_sentinel`, `risk_breach`, `strategy_drift`, `loop_anomaly`.
 - [ ] UI recognises `InterventionStatus` values: `pending`, `remediated`, `dismissed`, `escalated`.
 - [ ] Remediation sends all three required preconditions: `Idempotency-Key`, `X-Confirm-Token`, and `twoManSignatureId`.
-- [ ] UI subscribes to `sentinel` and `intervention` channels for real-time updates (events not yet emitted — see gap below).
-- [ ] Decision and two-man-sign routes are not yet available; UI should hide or disable those flows until BFF-FINAL-009 delivers them.
+- [ ] UI subscribes to `sentinel` and `intervention` channels for real-time updates (events not yet emitted — deferred, see §11 D3).
+- [ ] Decision and two-man-sign routes are not yet available; UI should hide or disable those flows until a follow-on task delivers them (deferred, see §11 D1/D2).
+- [ ] Remediation payload sends `twoManSignatureId` inside the `params` object (not as a top-level key); this is required once the R3 alias fix lands in BFF-FINAL-009.
 
 ### 9g. Evidence redaction
 
@@ -364,16 +361,18 @@ These map directly to the acceptance criteria in `ai-status.json`:
 
 ### "All BFF tests pass"
 
-- [ ] BFF-FINAL-006 closeout commit lands and `test_mcp_tool_import.py` passes in CI.
-- [ ] BFF-FINAL-009 R1 fix (role enforcement on remediate) passes new regression tests.
-- [ ] BFF-FINAL-009 R2 fix (fail-closed executor stub) passes new regression tests.
+- [x] BFF-FINAL-006 closeout commit `08ac4543` landed; `test_mcp_tool_import.py` 6 passed.
+- [x] BFF-FINAL-009 R1 fix (role enforcement on remediate) — resolved in commit `32574279`.
+- [x] BFF-FINAL-009 R2 fix (fail-closed executor stub) — resolved in commit `32574279`.
+- [ ] BFF-FINAL-009 R3 fix (v1 two-man alias propagation into stored/executor params) — outstanding.
 - [ ] Full suite command: `python3 -m pytest services/control-plane/bff -q` shows 0 failures.
 
 ### "Cleanup pass complete"
 
 - [ ] No unresolved `TODO`, `FIXME`, or `STUB` comments added by BFF-FINAL tasks remain in production paths.
 - [ ] `_V5_INTERVENTIONS_STORE` and other dev-local stubs are gated by `PANTHEON_ENV=dev` or equivalent.
-- [ ] `command_executor.py` stub fallback (`stub=True` path) is removed or guarded fail-closed.
+- [x] `command_executor.py` stub fallback (`stub=True` path) removed in commit `32574279`.
+- [ ] v1 command handler normalizes top-level two-man aliases into `cmd.params` (R3 — outstanding).
 - [ ] `datetime.utcnow()` deprecation warnings in `read_store.py` (36 existing) are pre-existing and known; do not block closeout but should be filed as a follow-up.
 
 ### "Delivery note written"
@@ -398,7 +397,7 @@ These are gaps the parent owner should explicitly mark as deferred rather than s
 |---|------|----------------|
 | D1 | `POST /bff/v5/interventions/{id}/decision` | Not in BFF-FINAL-009 acceptance; may land in a follow-on task |
 | D2 | `POST /bff/v5/interventions/{id}/two-man-sign` | Same as D1 |
-| D3 | SSE event emission from `/remediate` | Post-fix task for BFF-FINAL-009; BFF-FINAL-010 should gate on R1/R2 only |
+| D3 | SSE event emission from `/remediate` | Post-R3 follow-up; BFF-FINAL-010 gates on R3 alias fix, not SSE emission |
 | D4 | Read projection for MCP tools (`GET /bff/mcp-tools`, `GET /bff/mcp-servers/{id}/tools`) | BFF-FINAL-006 did not add these; flagged in BFF-006 sidecar §3b |
 | D5 | `datetime.utcnow()` deprecation warnings in `read_store.py` | Pre-existing; 36 warnings; no functional impact |
 | D6 | Multi-replica SSE replay store | BFF HA policy explicitly defers this per BFF-FINAL-005 |
@@ -407,22 +406,18 @@ These are gaps the parent owner should explicitly mark as deferred rather than s
 
 ## 12. Verification Commands Used For This Sidecar
 
-No runtime tests were run.  This sidecar only creates a support handoff packet and must not
-mutate the in-progress parent implementation.
+No runtime tests were run.  This sidecar only creates and updates a support handoff packet; it
+must not mutate the in-progress parent implementation.
 
-Reference reading commands:
+Reference reading commands (pass 2, 2026-05-08):
 
 ```bash
-cat ai-status.json | python3 -m json.tool
-cat docs/bff/execution-tasks/2026-05-07-final/BFF-FINAL-001-contract-foundation.md
-cat docs/bff/execution-tasks/2026-05-07-final/BFF-FINAL-004-action-catalog.md
-cat docs/bff/execution-tasks/2026-05-07-final/BFF-FINAL-005-sse-approval-ask.md
-cat docs/bff/execution-tasks/2026-05-07-final/BFF-FINAL-006-mcp-tool-import.md
-cat docs/bff/execution-tasks/2026-05-07-final/BFF-FINAL-008-agora-journal-merge-patch.md
-cat docs/bff/execution-tasks/2026-05-07-final/BFF-FINAL-009-v5-interventions.md
-cat support/sidecars/BFF-FINAL-006/BFF-FINAL-006-SIDECAR-BFF-HANDOFF.md
-cat support/sidecars/BFF-FINAL-009/BFF-FINAL-009-SIDECAR-BFF-HANDOFF.md
-python3 -c "import json; d=json.load(open('ai-task-archive/tasks/BFF-FINAL-007.json')); print(d['task']['status'])"
+# Confirm BFF-FINAL-006 done status and closeout commit
+python3 -c "import json; d=json.load(open('ai-task-archive/tasks/BFF-FINAL-006.json')); print(d['task']['status'], d['task']['delivery']['commit'])"
+# -> done  08ac454332fe17a0b31af4d574c9f10464fcb91f
+
+# Confirm BFF-FINAL-009 current state and R3 blocker in ai-status.json handoffs
+python3 -m json.tool ai-status.json | grep -A5 '"BFF-FINAL-009"'
 ```
 
 ---
