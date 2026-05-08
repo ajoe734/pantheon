@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-08T17:53:27Z",
+  "updated_at": "2026-05-08T18:02:50Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -121,16 +121,16 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
+      "status": "reviewing",
       "current_task_ids": [
         "BFF-LUV-GAP-004",
         "BFF-LUV-GAP-006",
         "BFF-LUV-GAP-007",
-        "BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF"
+        "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Supervisor auto-started BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF after successful dispatch.",
-      "last_update": "2026-05-08T17:53:27Z"
+      "next": "Review packet refreshed for BFF-LUV-GAP-007: artifact now includes verification commands/results. Focused pytest remains green: python3 -m pytest services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 14 passed, 2 pre-existing datetime.utcnow warnings; coverage report -> agora-extended 4 implemented, 8 alias, 0 missing, 0 deferred, 5 superseded.",
+      "last_update": "2026-05-08T18:00:15Z"
     },
     {
       "name": "Codex2",
@@ -221,7 +221,7 @@
       "summary_zh": "補上 evolution、experiments、jobs、events route families。",
       "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
       "owner": "Codex",
-      "reviewer": "Codex2",
+      "reviewer": "Gemini2",
       "status": "review",
       "depends_on": [],
       "artifacts": [
@@ -232,8 +232,8 @@
         "experiment routes covered",
         "job and event routes covered"
       ],
-      "next": "Implemented evolution programs, experiments, jobs, and events BFF compatibility. Verification: GAP-004 contract 29 passed; execute-plans registry + SSE 17 passed; GAP-005 regression 4 passed; py_compile main/test passed.",
-      "last_update": "2026-05-08T17:48:29Z"
+      "next": "Ownership updated",
+      "last_update": "2026-05-08T17:55:41Z"
     },
     {
       "id": "BFF-LUV-GAP-006",
@@ -241,7 +241,7 @@
       "summary_zh": "補上 Part 06 與 src/lib/v3 目前引用的 Agora core /bff routes。",
       "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
       "owner": "Codex",
-      "reviewer": "Gemini2",
+      "reviewer": "Codex2",
       "status": "review",
       "depends_on": [],
       "artifacts": [
@@ -252,8 +252,8 @@
         "notes journal insights routes covered",
         "memory training routes covered"
       ],
-      "next": "Chair reassigned review from Codex2 to Gemini2: Codex2 has failed twice on this review dispatch; Codex is the owner and Claude/Claude2 are quota-paused, while Gemini2 is available and has no ownership conflict.",
-      "last_update": "2026-05-08T17:52:41Z"
+      "next": "Auto-reassigned review from Gemini2 to Codex2 after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.",
+      "last_update": "2026-05-08T17:58:14Z"
     },
     {
       "id": "BFF-LUV-GAP-007",
@@ -272,8 +272,8 @@
         "persona lab route covered",
         "FULL-only route families have registry disposition"
       ],
-      "next": "Implemented active Agora extended routes for committee evidence packs and persona-lab submit-commit, added Agora handoff/evidence overlay storage, marked FULL-only Agora families as implemented aliases or superseded in the registry, and documented dispositions in the task artifact. Verification: python3 -m pytest services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 14 passed, 2 pre-existing datetime.utcnow warnings; python3 services/control-plane/bff/contract_snapshots/report_execute_plans_bff_coverage.py -> agora-extended 4 implemented, 8 alias, 0 missing, 0 deferred, 5 superseded.",
-      "last_update": "2026-05-08T17:40:14Z"
+      "next": "Review packet refreshed for BFF-LUV-GAP-007: artifact now includes verification commands/results. Focused pytest remains green: python3 -m pytest services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 14 passed, 2 pre-existing datetime.utcnow warnings; coverage report -> agora-extended 4 implemented, 8 alias, 0 missing, 0 deferred, 5 superseded.",
+      "last_update": "2026-05-08T18:00:15Z"
     },
     {
       "id": "BFF-LUV-GAP-012",
@@ -346,7 +346,7 @@
       "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
       "owner": "Codex",
       "reviewer": "Codex2",
-      "status": "todo",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
         "support/sidecars/BFF-LUV-GAP-010/BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF.md"
@@ -356,8 +356,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Auto-reassigned ownership from Gemini2 to Codex after repeated Gemini2 capacity/429: status: 429,. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-05-08T17:20:00Z",
+      "next": "Preparing handoff packet for reviewer Codex2.",
+      "last_update": "2026-05-08T17:56:59Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "BFF-LUV-GAP-010",
@@ -424,7 +424,7 @@
       "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
       "owner": "Codex",
       "reviewer": "Codex2",
-      "status": "in_progress",
+      "status": "todo",
       "depends_on": [],
       "artifacts": [
         "support/sidecars/BFF-LUV-GAP-001/BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF.md"
@@ -434,8 +434,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Supervisor auto-started BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF after successful dispatch.",
-      "last_update": "2026-05-08T17:53:27Z",
+      "next": "Supervisor preempted BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
+      "last_update": "2026-05-08T18:02:50Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "BFF-LUV-GAP-001",
@@ -664,8 +664,9 @@
       "from": "Codex",
       "to": "Codex2",
       "message": "Implemented active Agora extended routes for committee evidence packs and persona-lab submit-commit, added Agora handoff/evidence overlay storage, marked FULL-only Agora families as implemented aliases or superseded in the registry, and documented dispositions in the task artifact. Verification: python3 -m pytest services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 14 passed, 2 pre-existing datetime.utcnow warnings; python3 services/control-plane/bff/contract_snapshots/report_execute_plans_bff_coverage.py -> agora-extended 4 implemented, 8 alias, 0 missing, 0 deferred, 5 superseded.",
-      "status": "pending",
-      "created_at": "2026-05-08T17:40:14Z"
+      "status": "done",
+      "created_at": "2026-05-08T17:40:14Z",
+      "resolved_at": "2026-05-08T18:00:15Z"
     },
     {
       "task_id": "BFF-LUV-GAP-004",
@@ -680,8 +681,33 @@
       "from": "Codex2",
       "to": "Gemini2",
       "message": "Chair reassigned review from Codex2 to Gemini2: Codex2 has failed twice on this review dispatch; Codex is the owner and Claude/Claude2 are quota-paused, while Gemini2 is available and has no ownership conflict.",
+      "status": "done",
+      "created_at": "2026-05-08T17:52:41Z",
+      "resolved_at": "2026-05-08T17:58:14Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Preparing handoff packet for reviewer Codex2.",
       "status": "pending",
-      "created_at": "2026-05-08T17:52:41Z"
+      "created_at": "2026-05-08T17:56:59Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-006",
+      "from": "Gemini2",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Gemini2 to Codex2 after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "pending",
+      "created_at": "2026-05-08T17:58:14Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-007",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review packet refreshed for BFF-LUV-GAP-007: artifact now includes verification commands/results. Focused pytest remains green: python3 -m pytest services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 14 passed, 2 pre-existing datetime.utcnow warnings; coverage report -> agora-extended 4 implemented, 8 alias, 0 missing, 0 deferred, 5 superseded.",
+      "status": "pending",
+      "created_at": "2026-05-08T18:00:15Z"
     }
   ],
   "blockers": [
@@ -745,9 +771,9 @@
       "active": 4,
       "blocked": 0,
       "done": 0,
-      "review": 3,
+      "review": 4,
       "review_approved": 0,
-      "todo": 3
+      "todo": 2
     },
     "Codex2": {
       "total": 3,
