@@ -6621,7 +6621,7 @@ class ReadSurfaceStore:
         return self._local_dataset(dataset)
 
     def _local_overlay_records(self, dataset: str) -> Dict[str, Dict[str, Any]]:
-        if not self._allow_local_snapshot_fallback and dataset not in self._local_overlay_write_datasets:
+        if dataset not in self._local_overlay_write_datasets:
             return {}
         records = self._local_dataset(dataset)
         if isinstance(records, dict):

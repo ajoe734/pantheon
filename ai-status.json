@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-08T18:02:50Z",
+  "updated_at": "2026-05-08T23:19:47Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -123,14 +123,12 @@
       ],
       "status": "reviewing",
       "current_task_ids": [
-        "BFF-LUV-GAP-004",
-        "BFF-LUV-GAP-006",
-        "BFF-LUV-GAP-007",
-        "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF"
+        "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF",
+        "BFF-LUV-GAP-007-SIDECAR-BFF-HANDOFF"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Review packet refreshed for BFF-LUV-GAP-007: artifact now includes verification commands/results. Focused pytest remains green: python3 -m pytest services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 14 passed, 2 pre-existing datetime.utcnow warnings; coverage report -> agora-extended 4 implemented, 8 alias, 0 missing, 0 deferred, 5 superseded.",
-      "last_update": "2026-05-08T18:00:15Z"
+      "next": "Chairman flagged this sidecar review as stale on 2026-05-08T22:59:11Z. Please review the support-only handoff packet and either approve it or return concrete issues; keep BFF-LUV-GAP-001 mainline refresh unblocked.",
+      "last_update": "2026-05-08T23:03:19Z"
     },
     {
       "name": "Codex2",
@@ -140,13 +138,14 @@
         "schema",
         "acceptance"
       ],
-      "status": "blocked",
+      "status": "reviewing",
       "current_task_ids": [
-        "BFF-LUV-GAP-001"
+        "BFF-LUV-GAP-001",
+        "BFF-LUV-GAP-001-UNBLOCK"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Registry/report/focused tests are complete. Full BFF suite is blocked by in-progress BFF-LUV-GAP-003 worktree failures in action_catalog and capital/ranking/rebalance tests.",
-      "last_update": "2026-05-08T15:54:20Z"
+      "next": "Ready for review. Cleared stale BFF-LUV-GAP-003 blocker by revalidating BFF-LUV-GAP-001, adding the revalidation note, and handing BFF-LUV-GAP-001 to Gemini2 review. Verification: coverage report passed; registry pytest 5 passed; GAP-003 contract 24 passed; full BFF suite 552 passed. Narrow code fix: service-backed read surfaces no longer merge seeded local snapshot records unless the dataset was written through the current store.",
+      "last_update": "2026-05-08T23:19:47Z"
     },
     {
       "name": "Copilot",
@@ -183,13 +182,11 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "reviewing",
-      "current_task_ids": [
-        "BFF-LUV-GAP-004-SIDECAR-BFF-HANDOFF"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/gemini2-research-runtime",
-      "next": "Handoff packet prepared and updated. Ready for review.",
-      "last_update": "2026-05-08T17:38:41Z"
+      "next": "",
+      "last_update": "2026-05-08T18:08:00Z"
     }
   ],
   "tasks": [
@@ -199,8 +196,8 @@
       "summary_zh": "建立 execute-plans BFF route registry 與 coverage test，讓後續缺口可被 supervisor 追蹤。",
       "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
       "owner": "Codex2",
-      "reviewer": "Claude",
-      "status": "blocked",
+      "reviewer": "Gemini2",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
         "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/BFF-LUV-GAP-001-contract-registry.md",
@@ -211,9 +208,8 @@
         "missing routes map to BFF-LUV-GAP-002..012",
         "full BFF tests pass"
       ],
-      "next": "Registry/report/focused tests are complete. Full BFF suite is blocked by in-progress BFF-LUV-GAP-003 worktree failures in action_catalog and capital/ranking/rebalance tests.",
-      "last_update": "2026-05-08T15:54:20Z",
-      "waiting_for": "Claude2"
+      "next": "Ready for review after stale blocker refresh. BFF-LUV-GAP-003 is archived done and revalidated: coverage report passed with 178 entries and no implemented rows missing live routes; registry pytest 5 passed; GAP-003 contract 24 passed; full BFF suite 552 passed. Reviewer reassigned from Claude to Gemini2 because chair review recorded Claude provider pause until 2026-05-09T12:50:00Z.",
+      "last_update": "2026-05-08T23:19:29Z"
     },
     {
       "id": "BFF-LUV-GAP-004",
@@ -222,7 +218,7 @@
       "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
       "owner": "Codex",
       "reviewer": "Gemini2",
-      "status": "review",
+      "status": "done",
       "depends_on": [],
       "artifacts": [
         "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/BFF-LUV-GAP-004-evolution-experiment-jobs-events.md"
@@ -232,8 +228,8 @@
         "experiment routes covered",
         "job and event routes covered"
       ],
-      "next": "Ownership updated",
-      "last_update": "2026-05-08T17:55:41Z"
+      "next": "Task finalized and committed.",
+      "last_update": "2026-05-08T18:08:00Z"
     },
     {
       "id": "BFF-LUV-GAP-006",
@@ -242,7 +238,7 @@
       "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
       "owner": "Codex",
       "reviewer": "Codex2",
-      "status": "review",
+      "status": "done",
       "depends_on": [],
       "artifacts": [
         "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/BFF-LUV-GAP-006-agora-core.md"
@@ -262,7 +258,7 @@
       "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
       "owner": "Codex",
       "reviewer": "Codex2",
-      "status": "review",
+      "status": "done",
       "depends_on": [],
       "artifacts": [
         "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/BFF-LUV-GAP-007-agora-extended-full-spec.md"
@@ -315,7 +311,7 @@
       "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
       "owner": "Codex2",
       "reviewer": "Codex",
-      "status": "review_approved",
+      "status": "done",
       "depends_on": [],
       "artifacts": [
         "support/sidecars/BFF-LUV-GAP-006/BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF.md"
@@ -345,7 +341,7 @@
       "summary_zh": "平行支援 BFF-LUV-GAP-010，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
       "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
       "owner": "Codex",
-      "reviewer": "Codex2",
+      "reviewer": "Gemini",
       "status": "review",
       "depends_on": [],
       "artifacts": [
@@ -356,8 +352,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Preparing handoff packet for reviewer Codex2.",
-      "last_update": "2026-05-08T17:56:59Z",
+      "next": "Chairman flagged this sidecar review as stale on 2026-05-08T22:59:11Z. Please review the support-only handoff packet and either approve it or return concrete issues; keep BFF-LUV-GAP-001 mainline refresh unblocked.",
+      "last_update": "2026-05-08T23:03:19Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "BFF-LUV-GAP-010",
@@ -370,9 +366,9 @@
       "title": "Prepare BFF-LUV-GAP-007 BFF and frontend handoff packet",
       "summary_zh": "平行支援 BFF-LUV-GAP-007，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
       "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
-      "owner": "Codex2",
-      "reviewer": "Codex",
-      "status": "todo",
+      "owner": "Codex",
+      "reviewer": "Gemini2",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
         "support/sidecars/BFF-LUV-GAP-007/BFF-LUV-GAP-007-SIDECAR-BFF-HANDOFF.md"
@@ -382,8 +378,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Auto-reassigned ownership from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex2 starts a fresh run.",
-      "last_update": "2026-05-08T17:37:03Z",
+      "next": "Chairman flagged this sidecar review as stale on 2026-05-08T22:59:11Z. Please review the support-only handoff packet and either approve it or return concrete issues; do not block BFF-LUV-GAP-001 mainline refresh.",
+      "last_update": "2026-05-08T23:02:43Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "BFF-LUV-GAP-007",
@@ -398,7 +394,7 @@
       "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
       "owner": "Gemini2",
       "reviewer": "Codex",
-      "status": "review",
+      "status": "done",
       "depends_on": [],
       "artifacts": [
         "support/sidecars/BFF-LUV-GAP-004/BFF-LUV-GAP-004-SIDECAR-BFF-HANDOFF.md"
@@ -418,30 +414,28 @@
       "auto_created_by": "supervisor-underutilization"
     },
     {
-      "id": "BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare BFF-LUV-GAP-001 BFF and frontend handoff packet",
-      "summary_zh": "平行支援 BFF-LUV-GAP-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+      "id": "BFF-LUV-GAP-001-UNBLOCK",
+      "title": "Unblock BFF-LUV-GAP-001 stale execute-plans registry verification",
+      "summary_zh": "根據 chairman 2026-05-08T22:59:11Z 決策，重新驗證 BFF-LUV-GAP-001 的 execute-plans registry 與測試，清掉指向已完成 BFF-LUV-GAP-003 的 stale blocker。",
       "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
-        "support/sidecars/BFF-LUV-GAP-001/BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF.md"
+        "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/BFF-LUV-GAP-001-contract-registry.md",
+        "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/INDEX.md",
+        ".orchestrator/chair-reviews/20260508-225340-codex2.md",
+        ".orchestrator/chair-reviews/20260508-225340-codex2.json"
       ],
       "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
+        "rerun execute-plans coverage report",
+        "rerun focused BFF registry pytest",
+        "update BFF-LUV-GAP-001 status from stale blocker to review or current blocker",
+        "do not start BFF-LUV-GAP-012 until BFF-LUV-GAP-001 is resolved"
       ],
-      "next": "Supervisor preempted BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
-      "last_update": "2026-05-08T18:02:50Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "BFF-LUV-GAP-001",
-      "helper_kind": "bff_handoff_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
+      "next": "Ready for review. Cleared stale BFF-LUV-GAP-003 blocker by revalidating BFF-LUV-GAP-001, adding the revalidation note, and handing BFF-LUV-GAP-001 to Gemini2 review. Verification: coverage report passed; registry pytest 5 passed; GAP-003 contract 24 passed; full BFF suite 552 passed. Narrow code fix: service-backed read surfaces no longer merge seeded local snapshot records unless the dataset was written through the current store.",
+      "last_update": "2026-05-08T23:19:47Z"
     }
   ],
   "handoffs": [
@@ -555,9 +549,9 @@
     },
     {
       "task_id": "BFF-LUV-GAP-007",
-      "from": "Claude",
+      "from": "Codex",
       "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
       "status": "done",
       "created_at": "2026-05-08T16:39:18Z",
       "resolved_at": "2026-05-08T16:54:38Z"
@@ -582,12 +576,12 @@
     },
     {
       "task_id": "BFF-LUV-GAP-007",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
       "status": "done",
       "created_at": "2026-05-08T16:54:38Z",
-      "resolved_at": "2026-05-08T16:56:37Z"
+      "resolved_at": "2026-05-08T17:03:18Z"
     },
     {
       "task_id": "BFF-LUV-GAP-006",
@@ -648,16 +642,18 @@
       "from": "Codex",
       "to": "Codex2",
       "message": "Approved support-only BFF handoff packet for BFF-LUV-GAP-006; parent owner absorbed the checklist into implementation evidence and focused BFF verification remains green.",
-      "status": "pending",
-      "created_at": "2026-05-08T17:33:16Z"
+      "status": "done",
+      "created_at": "2026-05-08T17:33:16Z",
+      "resolved_at": "2026-05-08T18:04:36Z"
     },
     {
       "task_id": "BFF-LUV-GAP-004-SIDECAR-BFF-HANDOFF",
       "from": "Gemini2",
       "to": "Codex",
       "message": "Handoff packet prepared and updated. Ready for review.",
-      "status": "pending",
-      "created_at": "2026-05-08T17:38:41Z"
+      "status": "done",
+      "created_at": "2026-05-08T17:38:41Z",
+      "resolved_at": "2026-05-08T17:38:41Z"
     },
     {
       "task_id": "BFF-LUV-GAP-007",
@@ -673,8 +669,9 @@
       "from": "Codex",
       "to": "Codex2",
       "message": "Implemented evolution programs, experiments, jobs, and events BFF compatibility. Verification: GAP-004 contract 29 passed; execute-plans registry + SSE 17 passed; GAP-005 regression 4 passed; py_compile main/test passed.",
-      "status": "pending",
-      "created_at": "2026-05-08T17:48:29Z"
+      "status": "done",
+      "created_at": "2026-05-08T17:48:29Z",
+      "resolved_at": "2026-05-08T18:08:00Z"
     },
     {
       "task_id": "BFF-LUV-GAP-006",
@@ -683,31 +680,66 @@
       "message": "Chair reassigned review from Codex2 to Gemini2: Codex2 has failed twice on this review dispatch; Codex is the owner and Claude/Claude2 are quota-paused, while Gemini2 is available and has no ownership conflict.",
       "status": "done",
       "created_at": "2026-05-08T17:52:41Z",
-      "resolved_at": "2026-05-08T17:58:14Z"
+      "resolved_at": "2026-05-08T18:04:36Z"
     },
     {
       "task_id": "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF",
       "from": "Codex",
       "to": "Codex2",
       "message": "Preparing handoff packet for reviewer Codex2.",
-      "status": "pending",
-      "created_at": "2026-05-08T17:56:59Z"
+      "status": "done",
+      "created_at": "2026-05-08T17:56:59Z",
+      "resolved_at": "2026-05-08T23:03:19Z"
     },
     {
       "task_id": "BFF-LUV-GAP-006",
       "from": "Gemini2",
       "to": "Codex2",
       "message": "Auto-reassigned review from Gemini2 to Codex2 after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.",
-      "status": "pending",
-      "created_at": "2026-05-08T17:58:14Z"
+      "status": "done",
+      "created_at": "2026-05-08T17:58:14Z",
+      "resolved_at": "2026-05-08T18:04:36Z"
     },
     {
       "task_id": "BFF-LUV-GAP-007",
       "from": "Codex",
       "to": "Codex2",
       "message": "Review packet refreshed for BFF-LUV-GAP-007: artifact now includes verification commands/results. Focused pytest remains green: python3 -m pytest services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 14 passed, 2 pre-existing datetime.utcnow warnings; coverage report -> agora-extended 4 implemented, 8 alias, 0 missing, 0 deferred, 5 superseded.",
+      "status": "done",
+      "created_at": "2026-05-08T18:00:15Z",
+      "resolved_at": "2026-05-08T18:04:36Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-007-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Gemini2",
+      "message": "Chairman flagged this sidecar review as stale on 2026-05-08T22:59:11Z. Please review the support-only handoff packet and either approve it or return concrete issues; do not block BFF-LUV-GAP-001 mainline refresh.",
       "status": "pending",
-      "created_at": "2026-05-08T18:00:15Z"
+      "created_at": "2026-05-08T23:02:43Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Chairman flagged this sidecar review as stale on 2026-05-08T22:59:11Z. Please review the support-only handoff packet and either approve it or return concrete issues; keep BFF-LUV-GAP-001 mainline refresh unblocked.",
+      "status": "pending",
+      "created_at": "2026-05-08T23:03:19Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-001",
+      "from": "Codex2",
+      "to": "Gemini2",
+      "message": "Ready for review after stale blocker refresh. BFF-LUV-GAP-003 is archived done and revalidated: coverage report passed with 178 entries and no implemented rows missing live routes; registry pytest 5 passed; GAP-003 contract 24 passed; full BFF suite 552 passed. Reviewer reassigned from Claude to Gemini2 because chair review recorded Claude provider pause until 2026-05-09T12:50:00Z.",
+      "status": "pending",
+      "created_at": "2026-05-08T23:19:29Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-001-UNBLOCK",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review. Cleared stale BFF-LUV-GAP-003 blocker by revalidating BFF-LUV-GAP-001, adding the revalidation note, and handing BFF-LUV-GAP-001 to Gemini2 review. Verification: coverage report passed; registry pytest 5 passed; GAP-003 contract 24 passed; full BFF suite 552 passed. Narrow code fix: service-backed read surfaces no longer merge seeded local snapshot records unless the dataset was written through the current store.",
+      "status": "pending",
+      "created_at": "2026-05-08T23:19:47Z"
     }
   ],
   "blockers": [
@@ -716,8 +748,9 @@
       "owner": "Codex2",
       "waiting_for": "Claude2",
       "message": "Registry/report/focused tests are complete. Full BFF suite is blocked by in-progress BFF-LUV-GAP-003 worktree failures in action_catalog and capital/ranking/rebalance tests.",
-      "status": "open",
-      "created_at": "2026-05-08T15:54:20Z"
+      "status": "resolved",
+      "created_at": "2026-05-08T15:54:20Z",
+      "resolved_at": "2026-05-08T23:19:11Z"
     }
   ],
   "workload": {
@@ -759,30 +792,30 @@
     },
     "Gemini2": {
       "total": 1,
-      "active": 1,
+      "active": 0,
       "blocked": 0,
-      "done": 0,
-      "review": 1,
+      "done": 1,
+      "review": 0,
       "review_approved": 0,
       "todo": 0
     },
     "Codex": {
       "total": 6,
-      "active": 4,
+      "active": 2,
       "blocked": 0,
-      "done": 0,
-      "review": 4,
+      "done": 3,
+      "review": 2,
       "review_approved": 0,
-      "todo": 2
+      "todo": 1
     },
     "Codex2": {
       "total": 3,
-      "active": 1,
-      "blocked": 1,
-      "done": 0,
-      "review": 0,
-      "review_approved": 1,
-      "todo": 1
+      "active": 2,
+      "blocked": 0,
+      "done": 1,
+      "review": 2,
+      "review_approved": 0,
+      "todo": 0
     },
     "Copilot": {
       "total": 0,
