@@ -13,15 +13,15 @@ REMOTE_USER="${REMOTE_USER:-edna}"
 
 DEV_VM="${DEV_VM:-pantheon-dev-vm1}"
 DEV_ZONE="${DEV_ZONE:-asia-east1-b}"
-DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/home/lupin/code/pantheon}"
+DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/home/edna/code/pantheon}"
 
 STAGING_CONTROL_VM="${STAGING_CONTROL_VM:-pantheon-taiwan}"
 STAGING_CONTROL_ZONE="${STAGING_CONTROL_ZONE:-asia-east1-b}"
-STAGING_CONTROL_REMOTE_DIR="${STAGING_CONTROL_REMOTE_DIR:-/home/lupin/code/pantheon}"
+STAGING_CONTROL_REMOTE_DIR="${STAGING_CONTROL_REMOTE_DIR:-/home/edna/code/pantheon}"
 
 STAGING_EXEC_VM="${STAGING_EXEC_VM:-pantheon-exec-vm2-20260424}"
 STAGING_EXEC_ZONE="${STAGING_EXEC_ZONE:-asia-east1-a}"
-STAGING_EXEC_REMOTE_DIR="${STAGING_EXEC_REMOTE_DIR:-/home/lupin/code/pantheon}"
+STAGING_EXEC_REMOTE_DIR="${STAGING_EXEC_REMOTE_DIR:-/home/edna/code/pantheon}"
 
 DEPLOY_ENV=""
 COMPONENT="auto"
@@ -320,12 +320,11 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     snapshot_remote_state pantheon-control docker-compose.control.yml
     prepare_deploy_worktree
     env_file="$(real_env_or_example env/prod-control.env env/prod-control.env.example)"
-    compose_files=(-f docker-compose.control.yml -f docker-compose.staging-full.yml)
-    docker compose --env-file "$env_file" -p pantheon-control "${compose_files[@]}" config --quiet
+    docker compose --env-file "$env_file" -p pantheon-control -f docker-compose.control.yml config --quiet
     COMPOSE_BAKE=false \
     PANTHEON_ENV=staging-live \
     PANTHEON_LIVE_BROKER_ENABLED=true \
-      docker compose --env-file "$env_file" -p pantheon-control "${compose_files[@]}" up -d --build
+      docker compose --env-file "$env_file" -p pantheon-control -f docker-compose.control.yml up -d --build
     curl -fsS http://127.0.0.1:38001/health >/dev/null
     curl -fsS http://10.140.0.5:28081/__health__ >/dev/null
     ;;

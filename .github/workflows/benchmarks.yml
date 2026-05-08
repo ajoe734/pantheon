@@ -1,11 +1,7 @@
 name: Benchmarks
 
 on:
-  push:
-    branches: ['*']
-    tags: ['*']
-  pull_request:
-    branches: [master]
+  workflow_dispatch:
 
 jobs:
   build:

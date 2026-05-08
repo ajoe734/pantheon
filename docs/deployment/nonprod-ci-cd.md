@@ -1,6 +1,6 @@
 # Nonprod CI/CD
 
-Status date: 2026-05-03
+Status date: 2026-05-02
 
 This is the repo-local CI/CD operating record for Pantheon dev and
 staging-live.
@@ -11,7 +11,8 @@ missing GitHub Actions deployment lane:
 - CI remains `Pantheon Stage 0 CI`.
 - Image publishing remains `Publish images to Artifact Registry`.
 - Dev deployment is automatic after push-triggered image publishing succeeds on
-  the deployment branch. The current GitHub default branch is
+  the deployment branch and the published commit changes at least one runtime
+  deploy target. The current GitHub default branch is
   `backend-dev-publish-20260429`; the workflows also accept `master` and `main`
   while the repo branch naming is being cleaned up.
 - Staging-live deployment is manual and should be protected by GitHub
@@ -37,7 +38,7 @@ The script SSHes to the target VM through `gcloud compute ssh`, snapshots the
 current human-facing remote checkout, prepares a managed clean deploy worktree
 under `~/pantheon-ci-deploy`, starts the expected Compose stack from the pinned
 commit, and runs health checks. This keeps CI deploys from overwriting operator
-or agent work in `/home/lupin/code/pantheon`.
+or agent work in `/home/edna/code/pantheon`.
 
 For private repository fetches on the VM, GitHub Actions passes its short-lived
 `GITHUB_TOKEN` only to the deploy SSH session. The token is used as a temporary
@@ -70,9 +71,11 @@ Emergency flags:
 
 Automatic dev deploy runs after a push-triggered
 `Publish images to Artifact Registry` run completes successfully on the
-deployment branch. The current GitHub default branch is
-`backend-dev-publish-20260429`; `master` and `main` are also included in the
-workflow triggers during the branch cleanup period.
+deployment branch and `scripts/ci_stage0.py detect-changes` finds at least one
+runtime deploy target for the published commit. Pure CI/CD or documentation
+commits leave a skip notice and do not SSH to the VM. The current GitHub default
+branch is `backend-dev-publish-20260429`; `master` and `main` are also included
+in the workflow triggers during the branch cleanup period.
 Manual image-publish runs do not auto-deploy dev; use the manual deploy entry
 when that is desired.
 
@@ -107,14 +110,13 @@ Use:
 - `environment=staging-live`
 - `component=all` for normal promotion
 - `component=exec` only for VM2 execution changes
-- `component=control` only for VM1 control/BFF/non-execution backend changes
+- `component=control` only for VM1 control/BFF changes
 - `ref=<verified commit sha>` for pinned promotion
 
 Target:
 
 - VM1: `pantheon-taiwan`, compose project `pantheon-control`,
-  `docker-compose.control.yml` for the base control stack and
-  `docker-compose.staging-full.yml` for the full non-execution staging surface
+  `docker-compose.control.yml`
 - VM2: `pantheon-exec-vm2-20260424`, compose project `pantheon-exec`,
   `docker-compose.exec.yml`
 - public BFF: `https://pantheon-staging-bff.34.81.225.122.sslip.io`
@@ -122,7 +124,7 @@ Target:
 Normal full deploy order:
 
 1. VM2 execution stack
-2. VM1 control stack plus the full non-execution staging overlay
+2. VM1 control stack
 3. VM1 to VM2 runtime-manager reachability
 4. public staging BFF health
 5. staging Lovable CORS preflight
@@ -135,9 +137,7 @@ env/prod-control.env
 ```
 
 Do not place broker/TWS/exchange secrets in GitHub variables, Lovable env vars,
-or VM1 control env. VM2 remains the broker-secret boundary. The
-`docker-compose.staging-full.yml` overlay must not add the root dev `broker`
-sidecar back to VM1.
+or VM1 control env. VM2 remains the broker-secret boundary.
 
 ## Required GitHub Configuration
 
