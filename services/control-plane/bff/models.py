@@ -391,6 +391,25 @@ EVIDENCE_CAPABILITY_MAP: Dict[str, str] = {
 }
 
 
+# Maps source_document.source_type values to EvidenceKind strings so refs
+# that carry no explicit evidence_type still get capability-gated.
+SOURCE_TYPE_TO_EVIDENCE_KIND: Dict[str, str] = {
+    "postmortem": "postmortem",
+    "incident_report": "incident",
+    "audit_log": "audit",
+    "experiment_artifact": "artifact",
+    "alert": "alert",
+    "metric": "metric",
+    "internal_metric": "metric",
+    "runtime_snapshot": "runtime",
+    "deployment_log": "deployment",
+    "strategy_spec": "strategy",
+    "journal_entry": "journal",
+    "agora_signal": "signal",
+    "policy_document": "policy",
+}
+
+
 class RedactedEvidenceRef(BaseModel):
     ref_id: str
     kind: Optional[EvidenceKind] = None

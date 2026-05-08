@@ -738,3 +738,123 @@ def test_bff_final_007_evidence_detail_redacts_self_for_insufficient_capability(
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = value
+
+
+def test_bff_final_007_redact_evidence_refs_source_type_only_insufficient_capability() -> None:
+    """Refs with only source_document.source_type (no evidence_type) are capability-gated via SOURCE_TYPE_TO_EVIDENCE_KIND."""
+    OperatorIdentity = read_store_module.OperatorIdentity
+    _redact = read_store_module.redact_evidence_refs
+
+    # Operator lacks postmortem.read and audit.read
+    identity = OperatorIdentity(operator_id="op-test-007b", roles=["operator"])
+    caps = ["risk.alert.read", "metric.read"]
+
+    refs = [
+        # No evidence_type; kind derived from source_document.source_type=postmortem
+        {
+            "ref_id": "ref-postmortem-source-001",
+            "source_document": {"title": "Incident Post-Mortem", "source_type": "postmortem"},
+        },
+        # No evidence_type; kind derived from source_document.source_type=audit_log
+        {
+            "ref_id": "ref-audit-source-001",
+            "source_document": {"title": "Audit Log Q1", "source_type": "audit_log"},
+        },
+        # No evidence_type; source_type=metric → operator HAS metric.read → passes
+        {
+            "ref_id": "ref-metric-source-001",
+            "source_document": {"title": "Metric Export", "source_type": "metric"},
+        },
+    ]
+
+    processed, redacted_count = _redact(identity, refs, capabilities=caps)
+
+    assert redacted_count == 2
+    assert len(processed) == 3
+
+    pm_ref = processed[0]
+    assert pm_ref["redacted"] is True
+    assert pm_ref["required_capability"] == "postmortem.read"
+    assert pm_ref["ref_id"] == "ref-postmortem-source-001"
+    assert pm_ref["kind"] == "postmortem"
+
+    audit_ref = processed[1]
+    assert audit_ref["redacted"] is True
+    assert audit_ref["required_capability"] == "audit.read"
+    assert audit_ref["ref_id"] == "ref-audit-source-001"
+    assert audit_ref["kind"] == "audit"
+
+    # Metric passes through
+    assert processed[2] == refs[2]
+
+
+def test_bff_final_007_evidence_detail_redacts_source_type_only_ref() -> None:
+    """Evidence detail endpoint redacts a ref that has source_document.source_type=postmortem but no evidence_type."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        evidence_store = root / "evidence_refs.json"
+        detail_ref_id = "evref-postmortem-source-type-only-001"
+        evidence_store.write_text(
+            json.dumps(
+                {
+                    detail_ref_id: {
+                        "ref_id": detail_ref_id,
+                        # No evidence_type field — kind must be inferred from source_type
+                        "link_type": "supporting",
+                        "source_document": {
+                            "title": "Post-Mortem Report: Outage 2026-04",
+                            "source_type": "postmortem",
+                        },
+                        "credibility": {"tier": "primary", "verified": True},
+                        "resolved_link": {
+                            "availability": "internal",
+                            "route_href": "/postmortems/pm-2026-04",
+                        },
+                        "linked_decisions": [],
+                        "source_note_context": None,
+                        "source_memory_context": None,
+                        "created_at": "2026-05-07T10:00:00Z",
+                    }
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        tracked_env = {"PANTHEON_BFF_EVIDENCE_REF_STORE": os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE")}
+        os.environ["PANTHEON_BFF_EVIDENCE_REF_STORE"] = str(evidence_store)
+
+        original_store = bff_main.read_store
+        bff_main.read_store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=True,
+        )
+        client = TestClient(bff_main.app)
+
+        try:
+            response = client.get(
+                f"/api/v1/knowledge/evidence/{detail_ref_id}",
+                headers={"Authorization": OPERATOR_TOKEN},  # operator lacks postmortem.read
+            )
+            assert response.status_code == 200, response.text
+            detail = response.json()
+
+            # The detail ref itself is redacted via source_type derivation
+            assert detail["redacted"] is True
+            assert detail["ref_id"] == detail_ref_id
+            assert detail["required_capability"] == "postmortem.read"
+            assert detail["reason"] == "insufficient_capability"
+
+            # Redaction telemetry
+            assert detail["meta"]["redacted_evidence_count"] == 1
+
+            # Sensitive detail fields must not leak
+            assert "source_document" not in detail
+            assert "resolved_link" not in detail
+        finally:
+            bff_main.read_store = original_store
+            for key, value in tracked_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value

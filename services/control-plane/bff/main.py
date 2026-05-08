@@ -67,6 +67,7 @@ from models import (
     OperatorCommand,
     OperatorIdentity,
     EVIDENCE_CAPABILITY_MAP,
+    SOURCE_TYPE_TO_EVIDENCE_KIND,
     RecordSponsorDecisionCommandPayload,
     RejectMutationCommandPayload,
     StalenessWarning,
@@ -10664,6 +10665,13 @@ async def get_evidence_ref_detail(
 
     # Check if the evidence ref itself requires capability redaction before exposing any detail.
     ev_kind_raw = str(evidence_ref.get("evidence_type") or "").strip()
+    # Fall back to source_document.source_type so refs without an explicit
+    # evidence_type field are still capability-gated.
+    if not ev_kind_raw:
+        _src_doc = evidence_ref.get("source_document")
+        if isinstance(_src_doc, dict):
+            _source_type = str(_src_doc.get("source_type") or "").strip()
+            ev_kind_raw = SOURCE_TYPE_TO_EVIDENCE_KIND.get(_source_type, "")
     if ev_kind_raw:
         [self_processed], _ = redact_evidence_refs(
             identity, [{"ref_id": ref_id, "evidence_type": ev_kind_raw}], capabilities=capabilities

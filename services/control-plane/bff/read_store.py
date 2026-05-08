@@ -79,7 +79,13 @@ def _model_to_data(model: Any) -> Dict[str, Any]:
 
 
 # Evidence redaction support
-from models import EvidenceKind, RedactedEvidenceRef, EVIDENCE_CAPABILITY_MAP, OperatorIdentity
+from models import (
+    EvidenceKind,
+    RedactedEvidenceRef,
+    EVIDENCE_CAPABILITY_MAP,
+    SOURCE_TYPE_TO_EVIDENCE_KIND,
+    OperatorIdentity,
+)
 
 
 def redact_evidence_refs(
@@ -106,13 +112,20 @@ def redact_evidence_refs(
         if not isinstance(ref, dict):
             processed.append(ref)
             continue
-        # Determine kind from common fields
+        # Determine kind from common fields first.
         kind_key = (
             str(ref.get("evidence_type") or "").strip()
             or str(ref.get("type") or "").strip()
             or str(ref.get("ref_type") or "").strip()
             or str(ref.get("link_type") or "").strip()
         )
+        # Fall back to source_document.source_type so refs that carry no
+        # explicit evidence_type still get capability-gated.
+        if not kind_key:
+            src_doc = ref.get("source_document")
+            if isinstance(src_doc, dict):
+                source_type = str(src_doc.get("source_type") or "").strip()
+                kind_key = SOURCE_TYPE_TO_EVIDENCE_KIND.get(source_type, "")
         required = None
         if kind_key:
             required = EVIDENCE_CAPABILITY_MAP.get(kind_key)
