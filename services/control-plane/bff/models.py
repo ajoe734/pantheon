@@ -50,6 +50,11 @@ class CommandType(str, Enum):
     TOOL_ACTION = "ToolAction"
     MCP_SERVER_ACTION = "McpServerAction"
     SKILL_ACTION = "SkillAction"
+    REVIEW_ACTION = "ReviewAction"
+    DEPLOYMENT_ACTION = "DeploymentAction"
+    RUNTIME_ACTION = "RuntimeAction"
+    RISK_ALERT_ACTION = "RiskAlertAction"
+    INCIDENT_ACTION = "IncidentAction"
 
 
 class ObjectType(str, Enum):
@@ -76,6 +81,10 @@ class ObjectType(str, Enum):
     TOOL = "Tool"
     MCP_SERVER = "McpServer"
     SKILL = "Skill"
+    REVIEW = "Review"
+    DEPLOYMENT = "Deployment"
+    RISK_ALERT = "RiskAlert"
+    INCIDENT = "Incident"
 
 
 class CommandStatus(str, Enum):
