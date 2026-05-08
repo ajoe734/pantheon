@@ -14498,6 +14498,91 @@ def _handle_sse_stream(
     )
 
 
+_FRONTEND_SSE_SCHEMA_VERSION = 1
+
+
+def _frontend_sse_event(
+    *,
+    channel: str,
+    event_type: str,
+    payload: Optional[Dict[str, Any]] = None,
+    event_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    return {
+        "schemaVersion": _FRONTEND_SSE_SCHEMA_VERSION,
+        "id": event_id or _make_event_id("evt-bff"),
+        "channel": channel,
+        "type": event_type,
+        "occurredAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "payload": payload or {},
+    }
+
+
+def _frontend_sse_format(event: Dict[str, Any]) -> str:
+    return f"id: {event['id']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+
+async def _frontend_bff_event_stream(channels: tuple[str, ...]) -> AsyncGenerator[str, None]:
+    """Compatibility event stream used by the Lovable operator shell.
+
+    Browser EventSource cannot attach Authorization headers. Until the shell has
+    a cookie-backed SSE auth path, this endpoint only emits non-sensitive BFF
+    liveness events instead of replaying privileged domain event buffers.
+    """
+    channel_list = list(channels) if channels else ["system"]
+    yield _frontend_sse_format(
+        _frontend_sse_event(
+            channel="system",
+            event_type="system.connected",
+            payload={"channels": channel_list, "transport": "sse"},
+        )
+    )
+
+    while True:
+        await asyncio.sleep(15.0)
+        yield _frontend_sse_format(
+            _frontend_sse_event(
+                channel="system",
+                event_type="system.heartbeat",
+                payload={"channels": channel_list},
+            )
+        )
+
+
+@app.get("/bff/events/stream")
+async def stream_bff_events(
+    channels: Optional[str] = Query(default=None),
+    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+    last_event_id_camel: Optional[str] = Query(default=None, alias="lastEventId"),
+):
+    """BFF-wide SSE stream for the frontend shell.
+
+    ``lastEventId`` is accepted for the browser client, but this transitional
+    liveness stream does not replay privileged domain events.
+    """
+    del last_event_id, last_event_id_camel
+
+    requested = tuple(
+        channel.strip()
+        for channel in (channels or "system").split(",")
+        if channel.strip()
+    )
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+        "X-SSE-Channel": "bff",
+        "X-SSE-Replay-Supported": "false",
+        "X-SSE-Replay-Store": "liveness-only",
+        "X-SSE-Resync-Routes": "/health,/readyz",
+    }
+    return StreamingResponse(
+        _frontend_bff_event_stream(requested),
+        media_type="text/event-stream",
+        headers=headers,
+    )
+
+
 @app.get("/api/v1/runtime/{runtime_id}/events/stream")
 async def stream_runtime_events(
     runtime_id: str,

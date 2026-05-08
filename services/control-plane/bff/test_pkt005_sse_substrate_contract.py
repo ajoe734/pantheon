@@ -196,6 +196,29 @@ def test_approval_and_ask_stream_routes_publish_replay_metadata_headers() -> Non
         assert response.headers["X-SSE-Resync-Routes"] == resync
 
 
+def test_bff_events_stream_matches_lovable_shell_schema_without_auth() -> None:
+    response = asyncio.run(
+        bff_main.stream_bff_events(
+            channels="system,loop",
+            last_event_id=None,
+            last_event_id_camel=None,
+        )
+    )
+
+    assert response.media_type == "text/event-stream"
+    assert response.headers["X-SSE-Channel"] == "bff"
+    assert response.headers["X-SSE-Replay-Supported"] == "false"
+
+    first_chunk = asyncio.run(anext(response.body_iterator))
+    assert "event:" not in first_chunk
+    data_line = next(line for line in first_chunk.splitlines() if line.startswith("data: "))
+    payload = json.loads(data_line.removeprefix("data: "))
+    assert payload["schemaVersion"] == 1
+    assert payload["channel"] == "system"
+    assert payload["type"] == "system.connected"
+    assert payload["payload"]["channels"] == ["system", "loop"]
+
+
 def test_internal_publish_infers_approval_and_ask_channels() -> None:
     client = TestClient(bff_main.app)
 
