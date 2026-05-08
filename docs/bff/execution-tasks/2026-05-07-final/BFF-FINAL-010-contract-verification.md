@@ -61,12 +61,13 @@ Findings:
 python3 -m pytest services/control-plane/bff -q --tb=no
 ```
 
-Results (HEAD `7a1953d0`, 2026-05-08):
+Results (runtime code `d39496c4`, delivery metadata `4e1f7e47`, 2026-05-08):
 
 - **457 passed, 0 failures, 36 warnings** (pre-existing `utcnow()` deprecation in `read_store.py`)
-- Runtime: 187.48s (re-confirmed at delivery closeout commit)
+- Runtime: 187.48s (confirmed against runtime code at `d39496c4`)
 
-> `7a1953d0` adds delivery artifacts only; BFF runtime code unchanged from prior commit `d39496c4`.
+> BFF runtime code last changed at `d39496c4`. Delivery metadata commits `7a1953d0` and
+> `4e1f7e47` add delivery artifacts only; no runtime code changes in those commits.
 
 Focused pre-010 gate checks:
 

@@ -71,7 +71,7 @@ Applied to all read surfaces that include `evidence_refs`. Delivered by BFF-FINA
 | BFF-FINAL-007 | ✅ done | — |
 | BFF-FINAL-008 | ✅ done | — |
 | BFF-FINAL-009 | ✅ done | `c0eb50cf` |
-| BFF-FINAL-010 | ✅ done | `7a1953d0` (this delivery — adds delivery artifacts; runtime code unchanged from `d39496c4`) |
+| BFF-FINAL-010 | ✅ done | delivery metadata: `4e1f7e47`; runtime code: `d39496c4` (delivery artifacts only, no runtime changes) |
 
 ## Verification Evidence
 
@@ -79,11 +79,11 @@ Applied to all read surfaces that include `evidence_refs`. Delivered by BFF-FINA
 python3 -m pytest services/control-plane/bff -q --tb=no
 ```
 
-Result (HEAD `7a1953d0`, 2026-05-08): **457 passed, 0 failures, 36 warnings**
+Result (runtime code at `d39496c4`, delivery metadata at `4e1f7e47`, 2026-05-08): **457 passed, 0 failures, 36 warnings**
 
-> Note: `7a1953d0` adds delivery artifacts only (DELIVERY_NOTE, CONTRACT_LOCK, coordination
-> response, contract-verification doc). BFF runtime code is unchanged from prior commit
-> `d39496c4`. Tests were re-confirmed at `7a1953d0` (187.48s).
+> BFF runtime code last changed at `d39496c4`. Delivery artifact commits (`7a1953d0`, `4e1f7e47`)
+> add only delivery metadata (DELIVERY_NOTE, CONTRACT_LOCK, coordination response,
+> contract-verification doc). Tests confirmed at `d39496c4` (187.48s).
 
 Warnings are pre-existing `datetime.utcnow()` deprecation notices in `read_store.py`; no
 functional impact.
