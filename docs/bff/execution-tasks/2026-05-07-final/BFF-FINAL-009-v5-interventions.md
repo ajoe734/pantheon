@@ -59,10 +59,15 @@ Files changed:
 ## Verification
 
 ```bash
-python3 -m pytest services/control-plane/bff/test_v5_interventions.py -v
+python3 -m pytest services/control-plane/bff/test_v5_interventions.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/test_final_precondition_errors.py services/control-plane/bff/test_action_catalog.py -q
 python3 -m pytest services/control-plane/bff -q
 ```
 
-Results:
-- 14 focused v5 intervention tests passed
-- 439 total BFF tests passed (36 existing deprecation warnings from read_store.py)
+Results (post-R2, commit 11dd738f):
+- 82 focused tests passed (v5 interventions, command executor, governance submission, precondition errors, action catalog)
+- 457 total BFF tests passed (36 existing deprecation warnings from read_store.py)
+
+R1 fixes (commit 32574279): approver role gate + fail-closed executor (no stub fallback)
+R2 fixes (commit 11dd738f): top-level two-man alias normalization into stored params for RemediateSentinelIntervention
+
+Reviewer: Codex — review_approved 2026-05-08T02:54:01Z
