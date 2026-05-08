@@ -112,3 +112,17 @@ tools-mcp-skills: 17 implemented, 0 missing
 Route registration verified: all 17 tools-mcp-skills routes confirmed in app route table.
 Contract snapshot verified: all 17 rows now show status=implemented.
 
+### Closeout (2026-05-08)
+
+Reviewer: Codex | Status: review_approved → done
+
+Closeout verification re-run on 2026-05-08:
+```
+python3 -m pytest test_execute_plans_contract_registry.py test_bff_session_auth_me_contract.py test_bff_auth_facade.py -q
+# 76 passed
+
+python3 contract_snapshots/report_execute_plans_bff_coverage.py | grep tools-mcp-skills
+# tools-mcp-skills | 17 | 0 | 0 | 0 | 0
+```
+All acceptance criteria met. Task closed.
+
