@@ -2,7 +2,7 @@ feature_id: BFF-2026-05-07-final
 type: backend-delivery
 status: delivered
 delivery_date: "2026-05-08"
-backend_commit: 4e1f7e471b2b0981d00d743fd8512f0aa9e9e947
+backend_commit: 325197f1dc9f21d724ae7cc7d9d4e1238350924f
 runtime_code_commit: d39496c4ee83af66a98e42bf5c8788814c370c09
 working_tree_only: false
 verified_runtime_ref: pantheon-bff@d39496c4ee83af66a98e42bf5c8788814c370c09
@@ -124,8 +124,8 @@ deferred_items:
 
 followup_expectation: >-
   All nine BFF-FINAL contracts are implemented and verified. The full BFF test suite passes
-  (457 passed, 0 failures) against runtime code at d39496c4; delivery metadata last updated
-  at 4e1f7e47. The cleanup pass confirms no unresolved
+  (457 passed, 0 failures) against runtime code at d39496c4; delivery metadata prior anchor
+  at 325197f1 (the commit containing these artifacts is the final delivery commit). The cleanup pass confirms no unresolved
   TODO/FIXME/STUB in BFF-FINAL production paths. Known stubs are env-gated and appropriate for
   paper/dev operation. Frontend consumers should consult the sidecar handoff packet at
   support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md for the complete route
