@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-08T02:32:17Z",
+  "updated_at": "2026-05-08T02:34:18Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,13 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
+      "status": "reviewing",
       "current_task_ids": [
         "BFF-FINAL-009"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Supervisor re-dispatched BFF-FINAL-009; task remains in progress.",
-      "last_update": "2026-05-08T02:27:29Z"
+      "next": "All review-requested changes implemented. Role/shape validator added + fail-open stub removed. 80 tests pass (commit 32574279). Please re-review and approve.",
+      "last_update": "2026-05-08T02:34:18Z"
     },
     {
       "name": "Gemini",
@@ -139,13 +139,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "reviewing",
+      "status": "finalize",
       "current_task_ids": [
         "BFF-FINAL-006-SIDECAR-BFF-HANDOFF"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "BFF-FINAL-006 sidecar handoff packet prepared at support/sidecars/BFF-FINAL-006/BFF-FINAL-006-SIDECAR-BFF-HANDOFF.md; ready for Codex review.",
-      "last_update": "2026-05-08T02:14:32Z"
+      "next": "Codex review approved after support packet refresh; Codex2 should finalize the sidecar to done with a task-scoped commit.",
+      "last_update": "2026-05-08T02:32:45Z"
     },
     {
       "name": "Copilot",
@@ -168,13 +168,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
+      "status": "reviewing",
       "current_task_ids": [
         "BFF-FINAL-010-SIDECAR-BFF-HANDOFF"
       ],
       "branch": "feat/claude2-execution-control",
-      "next": "Handoff packet drafted at support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md; covers complete route surface, pre-010 gaps (BFF-006 closeout pending, BFF-009 R1/R2 review fixes), frontend checklist, and parent acceptance evidence checklist.",
-      "last_update": "2026-05-08T02:32:17Z"
+      "next": "BFF-FINAL-010 handoff packet ready at support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md (commit 5d21d6c7). Covers: full route catalog (001-009), pre-010 blockers (BFF-006 closeout pending, BFF-009 R1/R2 role-enforcement and fail-closed executor fixes), frontend integration checklist, parent acceptance evidence checklist, and 6 explicitly deferred items. No canonical code modified.",
+      "last_update": "2026-05-08T02:32:53Z"
     },
     {
       "name": "Gemini2",
@@ -199,7 +199,7 @@
       "phase": "BFF Final Contract 2026-05-07",
       "owner": "Claude",
       "reviewer": "Codex",
-      "status": "in_progress",
+      "status": "review",
       "depends_on": [
         "BFF-FINAL-001",
         "BFF-FINAL-002",
@@ -216,8 +216,8 @@
         "remediation guarded",
         "two-man semantics tested"
       ],
-      "next": "Supervisor re-dispatched BFF-FINAL-009; task remains in progress.",
-      "last_update": "2026-05-08T02:27:29Z"
+      "next": "All review-requested changes implemented. Role/shape validator added + fail-open stub removed. 80 tests pass (commit 32574279). Please re-review and approve.",
+      "last_update": "2026-05-08T02:34:18Z"
     },
     {
       "id": "BFF-FINAL-010",
@@ -260,7 +260,7 @@
       "phase": "BFF Final Contract 2026-05-07",
       "owner": "Claude2",
       "reviewer": "Codex",
-      "status": "in_progress",
+      "status": "review",
       "depends_on": [
         "BFF-FINAL-001",
         "BFF-FINAL-002",
@@ -276,8 +276,8 @@
         "parent gaps explicit",
         "no canonical code edits"
       ],
-      "next": "Handoff packet drafted at support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md; covers complete route surface, pre-010 gaps (BFF-006 closeout pending, BFF-009 R1/R2 review fixes), frontend checklist, and parent acceptance evidence checklist.",
-      "last_update": "2026-05-08T02:32:17Z",
+      "next": "BFF-FINAL-010 handoff packet ready at support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md (commit 5d21d6c7). Covers: full route catalog (001-009), pre-010 blockers (BFF-006 closeout pending, BFF-009 R1/R2 role-enforcement and fail-closed executor fixes), frontend integration checklist, parent acceptance evidence checklist, and 6 explicitly deferred items. No canonical code modified.",
+      "last_update": "2026-05-08T02:32:53Z",
       "task_class": "sidecar",
       "helper_parent": "BFF-FINAL-010",
       "helper_kind": "bff_handoff_packet",
@@ -291,7 +291,7 @@
       "phase": "BFF Final Contract 2026-05-07",
       "owner": "Codex2",
       "reviewer": "Codex",
-      "status": "review",
+      "status": "review_approved",
       "depends_on": [
         "BFF-FINAL-001",
         "BFF-FINAL-002"
@@ -304,14 +304,19 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "BFF-FINAL-006 sidecar handoff packet prepared at support/sidecars/BFF-FINAL-006/BFF-FINAL-006-SIDECAR-BFF-HANDOFF.md; ready for Codex review.",
-      "last_update": "2026-05-08T02:14:32Z",
+      "next": "Codex review approved after support packet refresh; Codex2 should finalize the sidecar to done with a task-scoped commit.",
+      "last_update": "2026-05-08T02:32:45Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "BFF-FINAL-006",
       "helper_kind": "bff_handoff_packet",
       "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "已核准：handoff packet 僅更新 support artifact，未修改 canonical truth 或 runtime。",
+        "Reviewer refresh 已補上 parent BFF-FINAL-006 目前已落地的 artifact、routes 與 focused pytest 結果，避免 creation-time route gap 被誤讀為現況。"
+      ],
+      "review_file": "support/sidecars/BFF-FINAL-006/BFF-FINAL-006-SIDECAR-BFF-HANDOFF.md"
     }
   ],
   "handoffs": [
@@ -338,8 +343,9 @@
       "from": "Codex2",
       "to": "Codex",
       "message": "BFF-FINAL-006 sidecar handoff packet prepared at support/sidecars/BFF-FINAL-006/BFF-FINAL-006-SIDECAR-BFF-HANDOFF.md; ready for Codex review.",
-      "status": "pending",
-      "created_at": "2026-05-08T02:14:32Z"
+      "status": "done",
+      "created_at": "2026-05-08T02:14:32Z",
+      "resolved_at": "2026-05-08T02:32:45Z"
     },
     {
       "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
@@ -394,6 +400,30 @@
       "status": "done",
       "created_at": "2026-05-08T02:28:14Z",
       "resolved_at": "2026-05-08T02:28:41Z"
+    },
+    {
+      "task_id": "BFF-FINAL-006-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Codex review approved after support packet refresh; Codex2 should finalize the sidecar to done with a task-scoped commit.",
+      "status": "pending",
+      "created_at": "2026-05-08T02:32:45Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "BFF-FINAL-010 handoff packet ready at support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md (commit 5d21d6c7). Covers: full route catalog (001-009), pre-010 blockers (BFF-006 closeout pending, BFF-009 R1/R2 role-enforcement and fail-closed executor fixes), frontend integration checklist, parent acceptance evidence checklist, and 6 explicitly deferred items. No canonical code modified.",
+      "status": "pending",
+      "created_at": "2026-05-08T02:32:53Z"
+    },
+    {
+      "task_id": "BFF-FINAL-009",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All review-requested changes implemented. Role/shape validator added + fail-open stub removed. 80 tests pass (commit 32574279). Please re-review and approve.",
+      "status": "pending",
+      "created_at": "2026-05-08T02:34:18Z"
     }
   ],
   "blockers": [],
@@ -412,18 +442,18 @@
       "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Claude2": {
       "total": 1,
       "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Gemini": {
       "total": 0,
@@ -454,11 +484,11 @@
     },
     "Codex2": {
       "total": 1,
-      "active": 1,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 1,
-      "review_approved": 0,
+      "review": 0,
+      "review_approved": 1,
       "todo": 0
     },
     "Copilot": {
