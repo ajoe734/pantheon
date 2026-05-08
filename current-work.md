@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-04 13:58:06
+Last updated: 2026-05-08 10:32:17
 
 ## Objective
 
@@ -37,12 +37,12 @@ Last updated: 2026-05-04 13:58:06
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: No active assignment
+- `Claude`: execution, control-plane, governance-review; next: Supervisor re-dispatched BFF-FINAL-009; task remains in progress.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: No active assignment
-- `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
+- `Codex`: integration, status-system, schema, acceptance; next: Restored to active board. Final verification remains gated on BFF-FINAL-006, BFF-FINAL-007, and BFF-FINAL-009 completion; support-only sidecars may run before final lock.
+- `Codex2`: integration, status-system, schema, acceptance; next: BFF-FINAL-006 sidecar handoff packet prepared at support/sidecars/BFF-FINAL-006/BFF-FINAL-006-SIDECAR-BFF-HANDOFF.md; ready for Codex review.
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: No active assignment
+- `Claude2`: execution, control-plane, governance-review; next: Handoff packet drafted at support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md; covers complete route surface, pre-010 gaps (BFF-006 closeout pending, BFF-009 R1/R2 review fixes), frontend checklist, and parent acceptance evidence checklist.
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 
 ## Delivery Layers
@@ -51,7 +51,10 @@ Last updated: 2026-05-04 13:58:06
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - | - |
+| `BFF-FINAL-009` | BFF Final Contract 2026-05-07 | Implement v5 interventions contract | Claude | in_progress | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003` | 實作 /bff/v5/interventions 的 HIQ Sentinel remediation 與 two-man command semantics。 |
+| `BFF-FINAL-010` | BFF Final Contract 2026-05-07 | Verify and hand off final BFF contract | Codex | todo | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003`, `BFF-FINAL-004`, `BFF-FINAL-005`, `BFF-FINAL-006`, `BFF-FINAL-007`, `BFF-FINAL-008`, `BFF-FINAL-009` | 跑完整 contract verification cleanup pass delivery note 與 coordination response 讓 execute-plans 可消費。 |
+| `BFF-FINAL-010-SIDECAR-BFF-HANDOFF` | BFF Final Contract 2026-05-07 | [Sidecar] [Parent BFF-FINAL-010] Prepare BFF-FINAL-010 BFF and frontend handoff packet | Claude2 | in_progress | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003`, `BFF-FINAL-004`, `BFF-FINAL-005` | 平行支援 BFF-FINAL-010，先整理 final backend/frontend handoff skeleton，不修改 canonical code。 |
+| `BFF-FINAL-006-SIDECAR-BFF-HANDOFF` | BFF Final Contract 2026-05-07 | [Sidecar] [Auto] [Parent BFF-FINAL-006] Prepare BFF-FINAL-006 BFF and frontend handoff packet | Codex2 | review | `BFF-FINAL-001`, `BFF-FINAL-002` | 平行支援 BFF-FINAL-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -61,11 +64,21 @@ Last updated: 2026-05-04 13:58:06
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-04 13:58:05
-- Terminal tasks archived: `912` total, `896` completed, `16` superseded
+- Archive updated: 2026-05-08 10:29:29
+- Terminal tasks archived: `922` total, `906` completed, `16` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `BFF-FINAL-006` | BFF Final Contract 2026-05-07 | Implement MCP server tool import contract | Codex | completed | 2026-05-08 10:29:29 | `ai-task-archive/tasks/BFF-FINAL-006.json` |
+| `BFF-FINAL-SIDECAR-GEMINI-SMOKE-MATRIX` | BFF Final Contract 2026-05-07 | BFF final smoke and CI matrix sidecar | Codex2 | completed | 2026-05-08 10:27:54 | `ai-task-archive/tasks/BFF-FINAL-SIDECAR-GEMINI-SMOKE-MATRIX.json` |
+| `BFF-FINAL-009-SIDECAR-BFF-HANDOFF` | BFF Final Contract 2026-05-07 | Prepare BFF-FINAL-009 BFF and frontend handoff packet | Claude2 | completed | 2026-05-08 10:27:04 | `ai-task-archive/tasks/BFF-FINAL-009-SIDECAR-BFF-HANDOFF.json` |
+| `BFF-FINAL-007` | BFF Final Contract 2026-05-07 | Complete evidence redaction contract | Claude2 | completed | 2026-05-08 08:57:25 | `ai-task-archive/tasks/BFF-FINAL-007.json` |
+| `BFF-FINAL-005` | BFF Final Contract 2026-05-07 | Close out SSE approval and ask channels | Claude | completed | 2026-05-08 08:40:38 | `ai-task-archive/tasks/BFF-FINAL-005.json` |
+| `BFF-FINAL-008` | BFF Final Contract 2026-05-07 | Add Agora journal merge patch store | Codex | completed | 2026-05-07 22:01:35 | `ai-task-archive/tasks/BFF-FINAL-008.json` |
+| `BFF-FINAL-003` | BFF Final Contract 2026-05-07 | Close out final precondition errors | Codex2 | completed | 2026-05-07 21:43:51 | `ai-task-archive/tasks/BFF-FINAL-003.json` |
+| `BFF-FINAL-004` | BFF Final Contract 2026-05-07 | Publish backend canonical BFF action catalog | Claude | completed | 2026-05-07 21:30:07 | `ai-task-archive/tasks/BFF-FINAL-004.json` |
+| `BFF-FINAL-002` | BFF Final Contract 2026-05-07 | Align idempotency and command response envelope | Codex2 | completed | 2026-05-07 21:14:44 | `ai-task-archive/tasks/BFF-FINAL-002.json` |
+| `BFF-FINAL-001` | BFF Final Contract 2026-05-07 | Implement final BFF contract primitives | Codex | completed | 2026-05-07 20:43:07 | `ai-task-archive/tasks/BFF-FINAL-001.json` |
 | `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` | Blueprint production hardening follow-up 2026-05-04 | Make OpenClaw broker adapter activation-ready without live enablement | Codex2 | completed | 2026-05-04 13:58:05 | `ai-task-archive/tasks/SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY.json` |
 | `SVC-BFF-HA-LB-DEFER-TRACKING` | Blueprint production hardening follow-up 2026-05-04 | Record BFF HA/LB as explicit deferred topology item | Codex | completed | 2026-05-04 13:28:20 | `ai-task-archive/tasks/SVC-BFF-HA-LB-DEFER-TRACKING.json` |
 | `SVC-BFF-IDP-STAGING-INTEGRATION-HARDENING` | Blueprint production hardening follow-up 2026-05-04 | Harden BFF OIDC/JWKS staging IdP integration | Codex2 | completed | 2026-05-04 13:25:24 | `ai-task-archive/tasks/SVC-BFF-IDP-STAGING-INTEGRATION-HARDENING.json` |
@@ -76,27 +89,21 @@ Last updated: 2026-05-04 13:58:06
 | `SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4` | Blueprint production hardening follow-up 2026-05-04 | Hard-enforce Postgres ownership for staging/prod | Claude | completed | 2026-05-04 12:44:21 | `ai-task-archive/tasks/SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4.json` |
 | `SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS` | Blueprint gap execution wave 2026-05-03 | Add operator fallback drills while BFF HA remains deferred | Codex2 | completed | 2026-05-04 10:36:58 | `ai-task-archive/tasks/SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS.json` |
 | `SVC-BLUEPRINT-PAPER-BRACKET-BASELINE` | Blueprint gap execution wave 2026-05-03 | Implement deterministic paper bracket order semantics under fail-closed live guards | Claude | completed | 2026-05-04 10:17:37 | `ai-task-archive/tasks/SVC-BLUEPRINT-PAPER-BRACKET-BASELINE.json` |
-| `SVC-BLUEPRINT-OPENCLAW-READY-FACADE` | Blueprint gap execution wave 2026-05-03 | Make OpenClaw adapter activation-ready while live broker remains gated | Codex | completed | 2026-05-04 10:04:05 | `ai-task-archive/tasks/SVC-BLUEPRINT-OPENCLAW-READY-FACADE.json` |
-| `SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD` | Blueprint gap execution wave 2026-05-03 | Complete pantheon-lean runtime kernel scaffold without live activation | Claude | completed | 2026-05-04 10:03:38 | `ai-task-archive/tasks/SVC-BLUEPRINT-PANTHEON-LEAN-KERNEL-SCAFFOLD.json` |
-| `SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF` | Blueprint gap execution wave 2026-05-03 | Replace frontend demo auth and demo islands with BFF-backed staging paths | Codex2 | completed | 2026-05-04 09:52:51 | `ai-task-archive/tasks/SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF.json` |
-| `SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER` | Blueprint gap execution wave 2026-05-03 | Upgrade source/search into bounded autonomous connector and indexer platform | Codex | completed | 2026-05-04 09:45:26 | `ai-task-archive/tasks/SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER.json` |
-| `SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE` | Blueprint gap execution wave 2026-05-03 | Complete OSS research learning pre-activation integration without enabling gates | Claude | completed | 2026-05-04 09:26:10 | `ai-task-archive/tasks/SVC-BLUEPRINT-OSS-PREACTIVATION-CLOSURE.json` |
-| `SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE` | Blueprint gap execution wave 2026-05-03 | Finalize health readiness probe standard across active services | Codex | completed | 2026-05-04 09:06:42 | `ai-task-archive/tasks/SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE.json` |
-| `SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3` | Blueprint gap execution wave 2026-05-03 | Move remaining production owner stores off JSONL baseline | Claude | completed | 2026-05-04 09:05:46 | `ai-task-archive/tasks/SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3.json` |
-| `SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4` | Blueprint gap execution wave 2026-05-03 | Cut BFF staging/prod reads over to service-backed clients | Codex | completed | 2026-05-04 09:03:32 | `ai-task-archive/tasks/SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4.json` |
-| `ORCH-AUTOWORKER-READINESS-RECOVERY` | Orchestrator runtime cleanup 2026-05-03 | Recover and document auto worker readiness | Codex | completed | 2026-05-03 21:50:17 | `ai-task-archive/tasks/ORCH-AUTOWORKER-READINESS-RECOVERY.json` |
-| `ORCH-COORDINATION-QUEUE-TRIAGE-REPLAY-POLICY` | Orchestrator runtime cleanup 2026-05-03 | Triage isolated coordination queue before replay | Codex | completed | 2026-05-03 21:49:29 | `ai-task-archive/tasks/ORCH-COORDINATION-QUEUE-TRIAGE-REPLAY-POLICY.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
+| `BFF-FINAL-009` | BFF Final Contract 2026-05-07 | Implement v5 interventions contract | 實作 /bff/v5/interventions 的 HIQ Sentinel remediation 與 two-man command semantics。 | Claude | Codex | in_progress | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003` | 2026-05-08 10:27:29 | Supervisor re-dispatched BFF-FINAL-009; task remains in progress. |
+| `BFF-FINAL-010` | BFF Final Contract 2026-05-07 | Verify and hand off final BFF contract | 跑完整 contract verification cleanup pass delivery note 與 coordination response 讓 execute-plans 可消費。 | Codex | Codex2 | todo | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003`, `BFF-FINAL-004`, `BFF-FINAL-005`, `BFF-FINAL-006`, `BFF-FINAL-007`, `BFF-FINAL-008`, `BFF-FINAL-009` | 2026-05-08 09:48:00 | Restored to active board. Final verification remains gated on BFF-FINAL-006, BFF-FINAL-007, and BFF-FINAL-009 completion; support-only sidecars may run before final lock. |
+| `BFF-FINAL-010-SIDECAR-BFF-HANDOFF` | BFF Final Contract 2026-05-07 | [Sidecar] [Parent BFF-FINAL-010] Prepare BFF-FINAL-010 BFF and frontend handoff packet | 平行支援 BFF-FINAL-010，先整理 final backend/frontend handoff skeleton，不修改 canonical code。 | Claude2 | Codex | in_progress | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003`, `BFF-FINAL-004`, `BFF-FINAL-005` | 2026-05-08 10:32:17 | Handoff packet drafted at support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md; covers complete route surface, pre-010 gaps (BFF-006 closeout pending, BFF-009 R1/R2 review fixes), frontend checklist, and parent acceptance evidence checklist. |
+| `BFF-FINAL-006-SIDECAR-BFF-HANDOFF` | BFF Final Contract 2026-05-07 | [Sidecar] [Auto] [Parent BFF-FINAL-006] Prepare BFF-FINAL-006 BFF and frontend handoff packet | 平行支援 BFF-FINAL-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Codex2 | Codex | review | `BFF-FINAL-001`, `BFF-FINAL-002` | 2026-05-08 10:14:32 | BFF-FINAL-006 sidecar handoff packet prepared at support/sidecars/BFF-FINAL-006/BFF-FINAL-006-SIDECAR-BFF-HANDOFF.md; ready for Codex review. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - |
+| `BFF-FINAL-006-SIDECAR-BFF-HANDOFF` | Codex2 | Codex | BFF-FINAL-006 sidecar handoff packet prepared at support/sidecars/BFF-FINAL-006/BFF-FINAL-006-SIDECAR-BFF-HANDOFF.md; ready for Codex review. | pending | 2026-05-08 10:14:32 |
 
 ## Blockers
 
@@ -179,45 +186,12 @@ Last updated: 2026-05-04 13:58:06
 
 ## Latest Checkpoints
 
-- 2026-05-04 13:50:49 Orchestrator: `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` Worker suspended for approval apr-20260504T054440Z-94287da8
-- 2026-05-04 13:50:49 Orchestrator: `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` Worker suspended for approval apr-20260504T054440Z-94287da8
-- 2026-05-04 13:51:54 Orchestrator: `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` Worker suspended for approval apr-20260504T054440Z-94287da8
-- 2026-05-04 13:51:54 Orchestrator: `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` Worker suspended for approval apr-20260504T054440Z-94287da8
-- 2026-05-04 13:52:17 Orchestrator: Temporarily added Claude allow rule: Bash(git add \
-  OPENCLAW_RUNTIME_CONTRACT.md \
-  scripts/smoke_openclaw_activation_ready_e2e.py \
-  scripts/test_smoke_openclaw_activation_ready_e2e.py \
-  services/control-plane/bff/main.py \
-  services/control-plane/bff/openclaw_ops_client.py \
-  services/control-plane/bff/read_store.py \
-  services/control-plane/bff/test_openclaw_ops_surface.py \
-  services/openclaw-gateway-adapter/main.py \
-  services/openclaw-gateway-adapter/paper_broker_adapter.py \
-  services/openclaw-gateway-adapter/test_main.py \
-  services/openclaw-gateway-adapter/test_sandbox_paper_smoke.py)
-- 2026-05-04 13:52:17 Orchestrator: `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` Approval allow for Bash (apr-20260504T054440Z-94287da8)
-- 2026-05-04 13:53:00 Orchestrator: `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` Resumed worker after approval apr-20260504T054440Z-94287da8
-- 2026-05-04 13:53:09 Orchestrator: SessionStart: SessionStart
-- 2026-05-04 13:53:11 Orchestrator: PreToolUse: Bash
-- 2026-05-04 13:53:12 Orchestrator: Removed temporary Claude allow rule: Bash(git add \
-  OPENCLAW_RUNTIME_CONTRACT.md \
-  scripts/smoke_openclaw_activation_ready_e2e.py \
-  scripts/test_smoke_openclaw_activation_ready_e2e.py \
-  services/control-plane/bff/main.py \
-  services/control-plane/bff/openclaw_ops_client.py \
-  services/control-plane/bff/read_store.py \
-  services/control-plane/bff/test_openclaw_ops_surface.py \
-  services/openclaw-gateway-adapter/main.py \
-  services/openclaw-gateway-adapter/paper_broker_adapter.py \
-  services/openclaw-gateway-adapter/test_main.py \
-  services/openclaw-gateway-adapter/test_sandbox_paper_smoke.py)
-- 2026-05-04 13:53:12 Orchestrator: PostToolUse: Bash
-- 2026-05-04 13:53:15 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-04 13:54:07 Orchestrator: `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` Paused new dispatches for claude until 2026-05-04 14:09:07 after authentication failure: Authentication failure
-- 2026-05-04 13:54:12 Orchestrator: `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` Auto-reassigned ownership from Claude to Codex2 after repeated Claude auth: Authentication failure
-- 2026-05-04 13:54:12 Orchestrator: `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` Wake-up queued for supervisor: owned_finalize_dispatch
-- 2026-05-04 13:54:12 Orchestrator: `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` Worker started via codex: owned_finalize_dispatch
-- 2026-05-04 13:54:13 Codex2: `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` Supervisor resumed SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY for finalize after successful dispatch.
-- 2026-05-04 13:54:20 Orchestrator: `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` Supervisor resumed SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY for finalize after successful dispatch.
-- 2026-05-04 13:54:20 Orchestrator: `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` Worker superseded after task responsibility moved to another agent.
-- 2026-05-04 13:58:05 Codex2: `SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY` Owner finalized reviewed broker adapter readiness scope in commit ca55e3c8. Verified: python3 -m pytest services/openclaw-gateway-adapter -q (219 passed); python3 -m pytest services/control-plane/bff/test_openclaw_ops_surface.py -q (9 passed); python3 -m pytest scripts/test_smoke_openclaw_activation_ready_e2e.py -q (3 passed). Live/canary remain fail-closed and BFF exposes read-only readiness only.
+- 2026-05-08 10:31:43 Orchestrator: PreToolUse: TodoWrite
+- 2026-05-08 10:31:53 Orchestrator: PostToolUse: TodoWrite
+- 2026-05-08 10:31:56 Orchestrator: PreToolUse: Read
+- 2026-05-08 10:31:57 Orchestrator: PostToolUse: Read
+- 2026-05-08 10:32:08 Orchestrator: PreToolUse: Write
+- 2026-05-08 10:32:08 Orchestrator: PostToolUse: Write
+- 2026-05-08 10:32:15 Orchestrator: PreToolUse: Bash
+- 2026-05-08 10:32:17 Orchestrator: PreToolUse: Edit
+- 2026-05-08 10:32:17 Claude2: `BFF-FINAL-010-SIDECAR-BFF-HANDOFF` Handoff packet drafted at support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md; covers complete route surface, pre-010 gaps (BFF-006 closeout pending, BFF-009 R1/R2 review fixes), frontend checklist, and parent acceptance evidence checklist.

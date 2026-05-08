@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-04T05:58:06Z",
+  "updated_at": "2026-05-08T02:32:17Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,11 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "working",
+      "current_task_ids": [
+        "BFF-FINAL-009"
+      ],
       "branch": "feat/claude-execution-control",
-      "next": "",
-      "last_update": "2026-05-04T05:42:38Z"
+      "next": "Supervisor re-dispatched BFF-FINAL-009; task remains in progress.",
+      "last_update": "2026-05-08T02:27:29Z"
     },
     {
       "name": "Gemini",
@@ -111,7 +113,7 @@
       "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
       "next": "",
-      "last_update": "2026-05-03T12:44:35Z"
+      "last_update": "2026-05-08T02:09:43Z"
     },
     {
       "name": "Codex",
@@ -121,11 +123,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "BFF-FINAL-010"
+      ],
       "branch": "feat/codex-collab-system",
-      "next": "",
-      "last_update": "2026-05-04T05:26:16Z"
+      "next": "Restored to active board. Final verification remains gated on BFF-FINAL-006, BFF-FINAL-007, and BFF-FINAL-009 completion; support-only sidecars may run before final lock.",
+      "last_update": "2026-05-08T02:27:38Z"
     },
     {
       "name": "Codex2",
@@ -135,11 +139,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "reviewing",
+      "current_task_ids": [
+        "BFF-FINAL-006-SIDECAR-BFF-HANDOFF"
+      ],
       "branch": "feat/codex-collab-system",
-      "next": "",
-      "last_update": "2026-05-04T05:54:13Z"
+      "next": "BFF-FINAL-006 sidecar handoff packet prepared at support/sidecars/BFF-FINAL-006/BFF-FINAL-006-SIDECAR-BFF-HANDOFF.md; ready for Codex review.",
+      "last_update": "2026-05-08T02:14:32Z"
     },
     {
       "name": "Copilot",
@@ -162,11 +168,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "working",
+      "current_task_ids": [
+        "BFF-FINAL-010-SIDECAR-BFF-HANDOFF"
+      ],
       "branch": "feat/claude2-execution-control",
-      "next": "",
-      "last_update": "2026-05-04T04:26:31Z"
+      "next": "Handoff packet drafted at support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md; covers complete route surface, pre-010 gaps (BFF-006 closeout pending, BFF-009 R1/R2 review fixes), frontend checklist, and parent acceptance evidence checklist.",
+      "last_update": "2026-05-08T02:32:17Z"
     },
     {
       "name": "Gemini2",
@@ -183,7 +191,129 @@
       "last_update": "2026-05-04T04:28:33Z"
     }
   ],
-  "tasks": [],
+  "tasks": [
+    {
+      "id": "BFF-FINAL-009",
+      "title": "Implement v5 interventions contract",
+      "summary_zh": "實作 /bff/v5/interventions 的 HIQ Sentinel remediation 與 two-man command semantics。",
+      "phase": "BFF Final Contract 2026-05-07",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "depends_on": [
+        "BFF-FINAL-001",
+        "BFF-FINAL-002",
+        "BFF-FINAL-003"
+      ],
+      "artifacts": [
+        "docs/bff/execution-tasks/2026-05-07-final/BFF-FINAL-009-v5-interventions.md",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/models.py",
+        "services/control-plane/bff/command_executor.py"
+      ],
+      "acceptance": [
+        "canonical v5 route present",
+        "remediation guarded",
+        "two-man semantics tested"
+      ],
+      "next": "Supervisor re-dispatched BFF-FINAL-009; task remains in progress.",
+      "last_update": "2026-05-08T02:27:29Z"
+    },
+    {
+      "id": "BFF-FINAL-010",
+      "title": "Verify and hand off final BFF contract",
+      "summary_zh": "跑完整 contract verification cleanup pass delivery note 與 coordination response 讓 execute-plans 可消費。",
+      "phase": "BFF Final Contract 2026-05-07",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "BFF-FINAL-001",
+        "BFF-FINAL-002",
+        "BFF-FINAL-003",
+        "BFF-FINAL-004",
+        "BFF-FINAL-005",
+        "BFF-FINAL-006",
+        "BFF-FINAL-007",
+        "BFF-FINAL-008",
+        "BFF-FINAL-009"
+      ],
+      "artifacts": [
+        "docs/bff/execution-tasks/2026-05-07-final/BFF-FINAL-010-contract-verification.md",
+        "services/control-plane/bff/test_*",
+        "docs/pantheon-delivery/BFF-2026-05-07-final",
+        ".coordination/responses/BFF-2026-05-07-final-backend-delivery.yaml"
+      ],
+      "acceptance": [
+        "all BFF tests pass",
+        "cleanup pass complete",
+        "delivery note written",
+        "coordination response emitted"
+      ],
+      "next": "Restored to active board. Final verification remains gated on BFF-FINAL-006, BFF-FINAL-007, and BFF-FINAL-009 completion; support-only sidecars may run before final lock.",
+      "last_update": "2026-05-08T01:48:00Z"
+    },
+    {
+      "id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
+      "title": "Prepare BFF-FINAL-010 BFF and frontend handoff packet",
+      "summary_zh": "平行支援 BFF-FINAL-010，先整理 final backend/frontend handoff skeleton，不修改 canonical code。",
+      "phase": "BFF Final Contract 2026-05-07",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "depends_on": [
+        "BFF-FINAL-001",
+        "BFF-FINAL-002",
+        "BFF-FINAL-003",
+        "BFF-FINAL-004",
+        "BFF-FINAL-005"
+      ],
+      "artifacts": [
+        "support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md"
+      ],
+      "acceptance": [
+        "handoff skeleton prepared",
+        "parent gaps explicit",
+        "no canonical code edits"
+      ],
+      "next": "Handoff packet drafted at support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md; covers complete route surface, pre-010 gaps (BFF-006 closeout pending, BFF-009 R1/R2 review fixes), frontend checklist, and parent acceptance evidence checklist.",
+      "last_update": "2026-05-08T02:32:17Z",
+      "task_class": "sidecar",
+      "helper_parent": "BFF-FINAL-010",
+      "helper_kind": "bff_handoff_packet",
+      "auto_created_by": "Codex",
+      "mutates_canonical": false
+    },
+    {
+      "id": "BFF-FINAL-006-SIDECAR-BFF-HANDOFF",
+      "title": "Prepare BFF-FINAL-006 BFF and frontend handoff packet",
+      "summary_zh": "平行支援 BFF-FINAL-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+      "phase": "BFF Final Contract 2026-05-07",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "review",
+      "depends_on": [
+        "BFF-FINAL-001",
+        "BFF-FINAL-002"
+      ],
+      "artifacts": [
+        "support/sidecars/BFF-FINAL-006/BFF-FINAL-006-SIDECAR-BFF-HANDOFF.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "BFF-FINAL-006 sidecar handoff packet prepared at support/sidecars/BFF-FINAL-006/BFF-FINAL-006-SIDECAR-BFF-HANDOFF.md; ready for Codex review.",
+      "last_update": "2026-05-08T02:14:32Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "BFF-FINAL-006",
+      "helper_kind": "bff_handoff_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
+    }
+  ],
   "handoffs": [
     {
       "task_id": "LUV-REVIEW-007",
@@ -193,6 +323,77 @@
       "status": "done",
       "created_at": "2026-04-17T11:50:38Z",
       "resolved_at": "2026-04-17T12:39:53Z"
+    },
+    {
+      "task_id": "BFF-FINAL-009",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Helper-claimed by Claude2 while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-08T01:56:06Z",
+      "resolved_at": "2026-05-08T01:56:32Z"
+    },
+    {
+      "task_id": "BFF-FINAL-006-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "BFF-FINAL-006 sidecar handoff packet prepared at support/sidecars/BFF-FINAL-006/BFF-FINAL-006-SIDECAR-BFF-HANDOFF.md; ready for Codex review.",
+      "status": "pending",
+      "created_at": "2026-05-08T02:14:32Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T02:22:58Z",
+      "resolved_at": "2026-05-08T02:23:50Z"
+    },
+    {
+      "task_id": "BFF-FINAL-009",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete: GET /bff/v5/interventions, POST /bff/v5/interventions/{id}/remediate, GET /bff/approvals. Two-man preconditions enforced (TWO_MAN_REQUIRED/APPROVAL_REQUIRED/CONFIRM_TOKEN_REQUIRED). RemediateSentinelIntervention in action catalog and command executor. 14 focused tests pass; 439 total BFF tests pass. Commit: e2d1a99b.",
+      "status": "done",
+      "created_at": "2026-05-08T02:23:25Z",
+      "resolved_at": "2026-05-08T02:27:08Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Helper-claimed by Claude2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T02:23:49Z",
+      "resolved_at": "2026-05-08T02:24:15Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T02:26:24Z",
+      "resolved_at": "2026-05-08T02:26:51Z"
+    },
+    {
+      "task_id": "BFF-FINAL-009",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review requested changes: RemediateSentinelIntervention is cataloged with required_roles=[approver] but neither /bff/v5/interventions/{id}/remediate nor /bff/v1/commands enforces a validator for it, so a viewer-authenticated caller can receive 202 with arbitrary approval/two-man strings. Also command_executor catches downstream sentinel POST failures and returns status=remediated stub=True when PANTHEON_INTERNAL_API_URL is configured but unreachable; this is fail-open for a critical remediation. Please add role/shape validation plus regression tests and gate/remove the stub fallback so production/downstream failures fail closed.",
+      "status": "done",
+      "created_at": "2026-05-08T02:27:08Z",
+      "resolved_at": "2026-05-08T02:27:08Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Helper-claimed by Claude2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T02:28:14Z",
+      "resolved_at": "2026-05-08T02:28:41Z"
     }
   ],
   "blockers": [],
@@ -207,22 +408,22 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 0,
-      "active": 0,
+      "total": 1,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Claude2": {
-      "total": 0,
-      "active": 0,
+      "total": 1,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Gemini": {
       "total": 0,
@@ -243,20 +444,20 @@
       "todo": 0
     },
     "Codex": {
-      "total": 0,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Codex2": {
-      "total": 0,
-      "active": 0,
+      "total": 1,
+      "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
       "todo": 0
     },
