@@ -786,6 +786,9 @@ _REJECT_MUTATION_REQUIRED = {"decision_id"}
 _RECORD_SPONSOR_DECISION_REQUIRED = {"committee_id", "sponsor_decision", "rationale_ref"}
 _VALID_SPONSOR_DECISIONS = {"approved", "rejected", "conditional"}
 
+_REMEDIATE_SENTINEL_REQUIRED = {"intervention_id", "remediation_action"}
+_VALID_REMEDIATION_ACTIONS = {"resolve", "dismiss", "escalate"}
+
 _EXECUTE_EVO_REQUIRED = {"evolution_decision_id", "action_type"}
 _VALID_EVO_ACTION_TYPES = {"freeze", "retrain", "mutate", "retire"}
 
@@ -2640,6 +2643,34 @@ def _validate_reject_mutation(params: Dict[str, Any], identity: OperatorIdentity
         )
 
 
+def _validate_remediate_sentinel_intervention(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    missing = _REMEDIATE_SENTINEL_REQUIRED - params.keys()
+    if missing:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Missing required params for RemediateSentinelIntervention",
+            f"Missing fields: {sorted(missing)}",
+        )
+    remediation_action = str(params.get("remediation_action") or "").strip()
+    if remediation_action not in _VALID_REMEDIATION_ACTIONS:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Invalid remediation_action value",
+            f"remediation_action must be one of {sorted(_VALID_REMEDIATION_ACTIONS)}",
+        )
+    if not {"approver", "admin"}.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "RemediateSentinelIntervention requires 'approver' or 'admin' role",
+            "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with approver or admin role",
+        )
+
+
 _VALIDATORS = {
     CommandType.APPROVE_DEPLOYMENT: _validate_approve_deployment,
     CommandType.APPROVE_DECISION: _validate_approve_decision,
@@ -2661,6 +2692,7 @@ _VALIDATORS = {
     CommandType.APPROVE_MUTATION: _validate_approve_mutation,
     CommandType.REJECT_MUTATION: _validate_reject_mutation,
     CommandType.RECORD_SPONSOR_DECISION: _validate_record_sponsor_decision,
+    CommandType.REMEDIATE_SENTINEL_INTERVENTION: _validate_remediate_sentinel_intervention,
 }
 
 # --------------------------------------------------------------------------- #
@@ -13905,6 +13937,7 @@ async def remediate_v5_intervention(
     try:
         _reject_body_idempotency_key(payload)
         _validate_audit_context(cmd)
+        _validate_remediate_sentinel_intervention(merged_params, identity)
         _require_final_command_preconditions(
             cmd=cmd,
             payload={**payload, "intervention_id": intervention_id},

@@ -601,24 +601,13 @@ def _execute_remediate_sentinel_intervention(
         "operator_note": params.get("operator_note") or params.get("reason") or "",
     }
     url = _internal_url(f"/api/internal/v1/sentinel/interventions/{intervention_id}/remediate")
-    try:
-        body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
-    except Exception:
-        # Sentinel endpoint may be unavailable in dev/paper; surface structured stub result.
-        body = {
-            "intervention_id": intervention_id,
-            "status": "remediated",
-            "remediated_at": _utc_now(),
-            "two_man_signature_id": two_man_signature_id,
-            "stub": True,
-        }
+    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
     return {
         "command_id": command_id,
         "intervention_id": body.get("intervention_id", intervention_id),
-        "status": body.get("status", "remediated"),
-        "remediated_at": body.get("remediated_at", _utc_now()),
+        "status": body.get("status"),
+        "remediated_at": body.get("remediated_at"),
         "two_man_signature_id": body.get("two_man_signature_id", two_man_signature_id),
-        "stub": body.get("stub", False),
     }
 
 

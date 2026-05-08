@@ -331,3 +331,141 @@ def test_remediate_sentinel_intervention_command_type_present() -> None:
     """CommandType must include RemediateSentinelIntervention."""
     from models import CommandType
     assert CommandType.REMEDIATE_SENTINEL_INTERVENTION.value == "RemediateSentinelIntervention"
+
+
+# --------------------------------------------------------------------------- #
+# 7. Role enforcement — approver gate
+# --------------------------------------------------------------------------- #
+
+VIEWER_TOKEN = "Bearer op-viewer:viewer"
+
+
+def test_remediate_v5_intervention_insufficient_role_returns_403() -> None:
+    """A caller without approver/admin role must receive 403 INSUFFICIENT_ROLE on the remediate endpoint."""
+    with _isolated_client() as client:
+        response = client.post(
+            "/bff/v5/interventions/intv-role-check-001/remediate",
+            headers={
+                "Authorization": OPERATOR_TOKEN,  # operator role, not approver
+                "Idempotency-Key": "remediate-role-check-op-001",
+                "X-Confirm-Token": "confirm-role-001",
+                "X-Correlation-Id": "corr-role-check-001",
+            },
+            json={
+                "reason": "Sentinel remediation role check",
+                "remediation_action": "resolve",
+                "approvalId": "approval-role-001",
+                "twoManSignatureId": "tms-role-001",
+            },
+        )
+        assert response.status_code == 403, response.text
+        error = response.json()["detail"]["error"]
+        assert error["code"] == "INSUFFICIENT_ROLE"
+        assert error["details"]["precondition_failed"] == "role_check"
+
+
+def test_remediate_v5_intervention_viewer_role_returns_403() -> None:
+    """A viewer-only caller must receive 403 INSUFFICIENT_ROLE on the remediate endpoint."""
+    with _isolated_client() as client:
+        response = client.post(
+            "/bff/v5/interventions/intv-role-check-002/remediate",
+            headers={
+                "Authorization": VIEWER_TOKEN,
+                "Idempotency-Key": "remediate-role-check-viewer-001",
+                "X-Confirm-Token": "confirm-role-002",
+                "X-Correlation-Id": "corr-role-check-002",
+            },
+            json={
+                "reason": "Sentinel remediation viewer check",
+                "remediation_action": "resolve",
+                "approvalId": "approval-role-002",
+                "twoManSignatureId": "tms-role-002",
+            },
+        )
+        assert response.status_code == 403, response.text
+        error = response.json()["detail"]["error"]
+        assert error["code"] == "INSUFFICIENT_ROLE"
+
+
+def test_bff_v1_commands_remediate_sentinel_insufficient_role_returns_403() -> None:
+    """RemediateSentinelIntervention via /bff/v1/commands enforces approver role gate."""
+    with _isolated_client() as client:
+        response = client.post(
+            "/bff/v1/commands",
+            headers={
+                "Authorization": OPERATOR_TOKEN,  # operator, not approver
+                "Idempotency-Key": "remediate-v1-role-check-001",
+                "X-Confirm-Token": "confirm-v1-role-001",
+                "X-Correlation-Id": "corr-v1-role-check-001",
+            },
+            json={
+                "command": "RemediateSentinelIntervention",
+                "target": {"type": "SentinelIntervention", "id": "intv-v1-role-001"},
+                "approvalId": "approval-v1-role-001",
+                "twoManSignatureId": "tms-v1-role-001",
+                "params": {
+                    "intervention_id": "intv-v1-role-001",
+                    "remediation_action": "resolve",
+                },
+                "audit_context": {"reason": "v1 role check test"},
+            },
+        )
+        assert response.status_code == 403, response.text
+        error = response.json()["detail"]["error"]
+        assert error["code"] == "INSUFFICIENT_ROLE"
+        assert error["details"]["precondition_failed"] == "role_check"
+
+
+# --------------------------------------------------------------------------- #
+# 8. Shape validation — invalid remediation_action
+# --------------------------------------------------------------------------- #
+
+def test_remediate_v5_intervention_invalid_action_returns_422() -> None:
+    """An invalid remediation_action value must return 422 INVALID_PARAMS."""
+    with _isolated_client() as client:
+        response = client.post(
+            "/bff/v5/interventions/intv-shape-001/remediate",
+            headers={
+                "Authorization": APPROVER_TOKEN,
+                "Idempotency-Key": "remediate-shape-001",
+                "X-Confirm-Token": "confirm-shape-001",
+                "X-Correlation-Id": "corr-shape-001",
+            },
+            json={
+                "reason": "Shape validation check",
+                "remediation_action": "invalid_action",
+                "approvalId": "approval-shape-001",
+                "twoManSignatureId": "tms-shape-001",
+            },
+        )
+        assert response.status_code == 422, response.text
+        error = response.json()["detail"]["error"]
+        assert error["code"] == "INVALID_PARAMS"
+
+
+def test_bff_v1_commands_remediate_sentinel_invalid_action_returns_422() -> None:
+    """RemediateSentinelIntervention via /bff/v1/commands rejects invalid remediation_action."""
+    with _isolated_client() as client:
+        response = client.post(
+            "/bff/v1/commands",
+            headers={
+                "Authorization": APPROVER_TOKEN,
+                "Idempotency-Key": "remediate-v1-shape-001",
+                "X-Confirm-Token": "confirm-v1-shape-001",
+                "X-Correlation-Id": "corr-v1-shape-001",
+            },
+            json={
+                "command": "RemediateSentinelIntervention",
+                "target": {"type": "SentinelIntervention", "id": "intv-v1-shape-001"},
+                "approvalId": "approval-v1-shape-001",
+                "twoManSignatureId": "tms-v1-shape-001",
+                "params": {
+                    "intervention_id": "intv-v1-shape-001",
+                    "remediation_action": "invalid_action",
+                },
+                "audit_context": {"reason": "v1 shape check test"},
+            },
+        )
+        assert response.status_code == 422, response.text
+        error = response.json()["detail"]["error"]
+        assert error["code"] == "INVALID_PARAMS"

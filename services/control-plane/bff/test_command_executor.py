@@ -24,6 +24,7 @@ from command_executor import (
     _execute_approve_mutation,
     _execute_evolution_action,
     _execute_reject_mutation,
+    _execute_remediate_sentinel_intervention,
 )
 
 
@@ -483,6 +484,88 @@ class TestExecuteCommandWithStatus(unittest.TestCase):
         self.assertIsNone(result)
         self.assertIsNotNone(error)
         self.assertEqual(error["code"], "DOWNSTREAM_UNAVAILABLE")
+
+
+class TestRemediateSentinelInterventionExecutor(unittest.TestCase):
+    def setUp(self):
+        os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
+
+    @patch("command_executor._post_json")
+    def test_remediate_sentinel_success(self, mock_post):
+        """Executor forwards to sentinel endpoint and returns structured result."""
+        mock_post.return_value = {
+            "intervention_id": "intv-exec-001",
+            "status": "remediated",
+            "remediated_at": "2026-05-08T10:00:00Z",
+            "two_man_signature_id": "tms-exec-001",
+        }
+        result = _execute_remediate_sentinel_intervention("cmd-sentinel-001", {
+            "intervention_id": "intv-exec-001",
+            "remediation_action": "resolve",
+            "two_man_signature_id": "tms-exec-001",
+        })
+        self.assertEqual(result["command_id"], "cmd-sentinel-001")
+        self.assertEqual(result["intervention_id"], "intv-exec-001")
+        self.assertEqual(result["status"], "remediated")
+        self.assertNotIn("stub", result)
+        mock_post.assert_called_once()
+        call_url = mock_post.call_args[0][0]
+        self.assertIn("intv-exec-001", call_url)
+        self.assertIn("/sentinel/interventions/", call_url)
+
+    @patch("command_executor._post_json")
+    def test_remediate_sentinel_downstream_failure_propagates(self, mock_post):
+        """Downstream failure must propagate — no stub result returned."""
+        import urllib.error
+        mock_post.side_effect = urllib.error.URLError("Connection refused")
+        with self.assertRaises(urllib.error.URLError):
+            _execute_remediate_sentinel_intervention("cmd-sentinel-fail-001", {
+                "intervention_id": "intv-fail-001",
+                "remediation_action": "resolve",
+                "two_man_signature_id": "tms-fail-001",
+            })
+
+    @patch("command_executor._post_json")
+    def test_remediate_sentinel_downstream_failure_returns_failed_status(self, mock_post):
+        """execute_command_with_status must return FAILED (not EXECUTED with stub) on downstream error."""
+        import urllib.error
+        mock_post.side_effect = urllib.error.URLError("Connection refused")
+        status, result, error = execute_command_with_status(
+            "cmd-sentinel-fail-002",
+            CommandType.REMEDIATE_SENTINEL_INTERVENTION,
+            {
+                "intervention_id": "intv-fail-002",
+                "remediation_action": "resolve",
+                "two_man_signature_id": "tms-fail-002",
+            },
+        )
+        self.assertEqual(status, CommandStatus.FAILED)
+        self.assertIsNone(result)
+        self.assertIsNotNone(error)
+        self.assertEqual(error["code"], "DOWNSTREAM_UNAVAILABLE")
+
+    def test_remediate_sentinel_missing_intervention_id_raises(self):
+        """Executor raises ValueError when intervention_id is absent."""
+        with self.assertRaises(ValueError):
+            _execute_remediate_sentinel_intervention("cmd-sentinel-bad-001", {
+                "remediation_action": "resolve",
+                "two_man_signature_id": "tms-bad-001",
+            })
+
+    @patch("command_executor._post_json")
+    def test_remediate_sentinel_result_has_no_stub_field(self, mock_post):
+        """Successful result must not carry a stub flag."""
+        mock_post.return_value = {
+            "intervention_id": "intv-nostub-001",
+            "status": "remediated",
+            "remediated_at": "2026-05-08T10:00:00Z",
+        }
+        result = _execute_remediate_sentinel_intervention("cmd-nostub-001", {
+            "intervention_id": "intv-nostub-001",
+            "remediation_action": "resolve",
+            "two_man_signature_id": "tms-nostub-001",
+        })
+        self.assertNotIn("stub", result)
 
 
 if __name__ == "__main__":
