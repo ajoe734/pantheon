@@ -23,7 +23,7 @@ runtime/registry/governance code.
 
 ## 1. Source Snapshot
 
-Inputs read for this sidecar pass (2026-05-08, updated 2026-05-08 pass 3):
+Inputs read for this sidecar pass (2026-05-08, updated 2026-05-08 closeout):
 
 - `.orchestrator/task-briefs/bff_final_010_sidecar_bff_handoff.md`
 - `ai-status.json`
@@ -54,7 +54,7 @@ Inputs read for this sidecar pass (2026-05-08, updated 2026-05-08 pass 3):
 | BFF-FINAL-006 | MCP server tool import contract | ✅ **done** | Closeout commit `08ac4543`; 6 MCP import tests pass |
 | BFF-FINAL-007 | Evidence redaction | ✅ **done** | EvidenceKind capability gate, `RedactedEvidenceRef` |
 | BFF-FINAL-008 | Agora journal merge patch | ✅ **done** | `PATCH /bff/agora/journal/{id}` final contract |
-| BFF-FINAL-009 | v5 interventions contract | ⚠️ **in_progress** | R1/R2/R3 resolved (commits `32574279`, `11dd738f`); pending Codex review / final approval |
+| BFF-FINAL-009 | v5 interventions contract | ✅ **done** | R1/R2/R3 resolved (commits `32574279`, `11dd738f`); closeout commit `c0eb50cf` |
 
 ---
 
@@ -66,7 +66,7 @@ BFF-FINAL-006 is `done`.  Closeout commit `08ac4543` ("BFF-FINAL-006 record MCP 
 closeout") landed on 2026-05-08.  Verification: `test_mcp_tool_import.py` (6 passed),
 `test_final_contract_primitives.py` (5 passed).  This gate is cleared for BFF-FINAL-010.
 
-### 3b. BFF-FINAL-009: R1, R2, and R3 all resolved; pending Codex review
+### 3b. BFF-FINAL-009: R1, R2, and R3 all resolved; done (closeout commit c0eb50cf)
 
 R1 and R2 were implemented by Claude in commit `32574279` (role validator added, fail-open stub
 removed) and verified with 80 passing tests.  A subsequent Codex re-review found a third issue,
@@ -76,7 +76,8 @@ which was then implemented in commit `11dd738f`:
 |---|-------|--------|
 | R3 | `/bff/v1/commands` accepted top-level `twoManSignatureId`/`secondOperatorId` but stored only `cmd.params`, losing the alias downstream | ✅ Fixed in `11dd738f`: `_stored_command_params` now normalizes top-level aliases into `params["two_man_signature_id"]` for `RemediateSentinelIntervention`; two regression tests added and passing |
 
-BFF-FINAL-009 is now pending Codex review and final approval.  Once approved, BFF-FINAL-010 may proceed.
+BFF-FINAL-009 is `done`.  Closeout commit `c0eb50cf` landed on 2026-05-08.
+This gate is cleared for BFF-FINAL-010.
 
 ### 3c. BFF-FINAL-009: incomplete routes (documented in BFF-009 sidecar)
 
@@ -364,7 +365,9 @@ These map directly to the acceptance criteria in `ai-status.json`:
 - [x] BFF-FINAL-009 R1 fix (role enforcement on remediate) — resolved in commit `32574279`.
 - [x] BFF-FINAL-009 R2 fix (fail-closed executor stub) — resolved in commit `32574279`.
 - [x] BFF-FINAL-009 R3 fix (v1 two-man alias propagation into stored/executor params) — implemented in commit `11dd738f`.
-- [ ] Full suite command: `python3 -m pytest services/control-plane/bff -q` shows 0 failures.
+- [x] BFF-FINAL-009 Codex review approval recorded in `ai-status.json`; full BFF suite passed (457, 36 pre-existing warnings).
+- [x] BFF-FINAL-009 `done` closeout complete — closeout commit `c0eb50cf` (2026-05-08).
+- [ ] Full suite command: `python3 -m pytest services/control-plane/bff -q` shows 0 failures (run as part of BFF-FINAL-010 verification).
 
 ### "Cleanup pass complete"
 
@@ -408,20 +411,24 @@ These are gaps the parent owner should explicitly mark as deferred rather than s
 No runtime tests were run.  This sidecar only creates and updates a support handoff packet; it
 must not mutate the in-progress parent implementation.
 
-Reference reading commands (pass 3, 2026-05-08):
+Reference reading commands (closeout, 2026-05-08):
 
 ```bash
 # Confirm BFF-FINAL-006 done status and closeout commit
 python3 -c "import json; d=json.load(open('ai-task-archive/tasks/BFF-FINAL-006.json')); print(d['task']['status'], d['task']['delivery']['commit'])"
 # -> done  08ac454332fe17a0b31af4d574c9f10464fcb91f
 
-# Confirm BFF-FINAL-009 current state in ai-status.json
-python3 -m json.tool ai-status.json | grep -A5 '"BFF-FINAL-009"'
+# Confirm BFF-FINAL-009 done status in archive
+python3 -c "import json; d=json.load(open('ai-task-archive/tasks/BFF-FINAL-009.json')); print(d['task']['status'], d['task']['delivery']['commit'])"
+# -> done  c0eb50cf3b9844807d790086b9ed23e47c2cf95e
 
 # Confirm R3 commit subject and changed files
 git show --stat 11dd738f
 # -> BFF-FINAL-009: normalize top-level two-man aliases into stored params
 ```
+
+BFF-FINAL-010 final verification gate: BFF-FINAL-009 is `done` (closeout commit `c0eb50cf`).
+BFF-FINAL-010 may proceed with its own verification pass.
 
 ---
 
