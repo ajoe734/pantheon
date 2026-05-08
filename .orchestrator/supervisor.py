@@ -85,7 +85,8 @@ WORKER_FAILURE_PATTERNS = (
     re.compile(r"^(?:Error|error|fatal):", re.IGNORECASE),
 )
 WORKER_FAILURE_FALSE_POSITIVE_PATTERNS = (
-    re.compile(r"^(?:result|error|audit):\s+Optional\[Dict\[str,\s*Any\]\]\s*=\s*None$", re.IGNORECASE),
+    re.compile(r"^(?:result|error|audit):\s+Optional\[Dict\[str,\s*Any\]\]\s*=\s*None,?$", re.IGNORECASE),
+    re.compile(r"^error:\s+BFF?[A-Za-z0-9_]*Error[A-Za-z0-9_]*,?$", re.IGNORECASE),
     re.compile(r"^error:\s+[A-Za-z_][A-Za-z0-9_<>{}\[\], :|?]+?\|\s*null$", re.IGNORECASE),
     re.compile(r"^[+-]?\s*console\.error\(", re.IGNORECASE),
 )
@@ -141,10 +142,26 @@ def clear_supervisor_pid(config: dict[str, Any]) -> None:
         path.unlink(missing_ok=True)
 
 
-def iter_matching_supervisor_pids() -> list[int]:
+def cmdline_is_supervisor_process(parts: list[str]) -> bool:
     current_script = str(Path(__file__).resolve())
     current_script_name = str(Path(__file__).name)
     current_script_rel = ".orchestrator/supervisor.py"
+    if not parts:
+        return False
+    executable = Path(parts[0]).name
+    if parts[0] in {current_script, current_script_rel}:
+        return True
+    if not executable.startswith("python"):
+        return False
+    return any(
+        part == current_script
+        or part == current_script_rel
+        or part.endswith(f"/{current_script_name}")
+        for part in parts[1:]
+    )
+
+
+def iter_matching_supervisor_pids() -> list[int]:
     current_repo_root = str(THIS_DIR.parent.resolve())
     matches: list[int] = []
     for proc_dir in Path("/proc").iterdir():
@@ -163,13 +180,7 @@ def iter_matching_supervisor_pids() -> list[int]:
             proc_cwd = str((proc_dir / "cwd").resolve())
         except OSError:
             proc_cwd = ""
-        script_matches = any(
-            part == current_script
-            or part == current_script_rel
-            or part.endswith(f"/{current_script_name}")
-            for part in parts
-        )
-        if script_matches and proc_cwd == current_repo_root:
+        if cmdline_is_supervisor_process(parts) and proc_cwd == current_repo_root:
             matches.append(pid)
     return sorted(matches)
 
@@ -2459,6 +2470,15 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
             continue
         if '"ts":' in stripped and '"type":' in stripped:
             continue
+        try:
+            stream_payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            stream_payload = None
+        if isinstance(stream_payload, dict):
+            message = stream_payload.get("message")
+            role = message.get("role") if isinstance(message, dict) else None
+            if stream_payload.get("type") == "user" or role == "user":
+                continue
         if SEARCH_RESULT_JSON_FIELD_PATTERN.search(stripped):
             continue
         if JSON_FIELD_LINE_PATTERN.search(stripped):
@@ -5415,6 +5435,8 @@ def higher_priority_ready_task_exists(
     for task_id, task in task_map.items():
         if task_id == current_task_id:
             continue
+        if task_is_sidecar(task) and not task_is_sidecar(current_task or {}):
+            continue
         task_status = str(task.get("status") or "").lower()
         candidate_priority = None
         if task_status in review_statuses and task.get(reviewer_field) == agent_name:
@@ -5624,6 +5646,11 @@ def dispatch_ready_tasks(
     helper_settings = helper_claim_settings(config)
     seen = state.setdefault("seen_event_keys", {})
     failure_loop_agents = failure_loop_agents_for_task_map(config, state, task_map)
+    blocked_sidecar_parents = {
+        str(item).strip()
+        for item in (chair_rotation_state(state).get("sidecar_blocked_parents", []) or [])
+        if str(item).strip()
+    }
 
     changed = False
     normalized = False
@@ -5651,12 +5678,19 @@ def dispatch_ready_tasks(
             continue
         if agent_id in active_agents or agent_id in pending_agents:
             continue
+        target_has_primary_work = agent_has_dispatchable_primary_work(config, status, target_agent, task_map)
 
         candidates: list[tuple[int, int, dict[str, Any], str]] = []
         for index, task in enumerate(tasks):
             task_id = str(task.get(task_id_field) or "")
             if not task_id:
                 continue
+            if task_is_sidecar(task):
+                if target_has_primary_work:
+                    continue
+                helper_parent = str(task.get("helper_parent") or "").strip()
+                if helper_parent and helper_parent in blocked_sidecar_parents:
+                    continue
             task_status = str(task.get("status") or "").lower()
             task_owner = task.get(owner_field)
             task_reviewer = task.get(reviewer_field)
@@ -5696,6 +5730,7 @@ def dispatch_ready_tasks(
                 dependencies_satisfied(task, task_map, dependency_done_statuses)
                 and task_id not in active_task_ids
                 and task_id not in pending_task_ids
+                and (not task_is_sidecar(task) or owner_paused)
                 and choose_helper_claim_agent(
                     config,
                     task=task,

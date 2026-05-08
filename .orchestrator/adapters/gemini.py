@@ -44,6 +44,7 @@ def _provider_env(config: dict | None = None, provider_id: str | None = None) ->
             if value is None:
                 continue
             env[str(key)] = os.path.expanduser(str(value))
+    env.setdefault("GEMINI_CLI_TRUST_WORKSPACE", "true")
     return env
 
 

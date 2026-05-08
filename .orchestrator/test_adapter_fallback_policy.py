@@ -243,6 +243,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertEqual(env["ORCH_PROVIDER"], "gemini2")
         self.assertEqual(env["GEMINI_CLI_HOME"], str(root / "gemini2-home"))
         self.assertEqual(env["GOOGLE_CLOUD_PROJECT"], "gemini2-project")
+        self.assertEqual(env["GEMINI_CLI_TRUST_WORKSPACE"], "true")
         self.assertEqual(env["ORCH_TASK_ID"], "T-GEMINI2")
         self.assertEqual(env["ORCH_REASON"], "owned_ready_dispatch")
 
