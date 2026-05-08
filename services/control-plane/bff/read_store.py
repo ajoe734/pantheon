@@ -4851,6 +4851,7 @@ class ReadSurfaceStore:
     ) -> None:
         self._path = Path(storage_path)
         self._data: Dict[str, Any] = {}
+        self._local_overlay_write_datasets: set[str] = set()
         if allow_local_snapshot_fallback is None:
             allow_local_snapshot_fallback = False
         self._allow_local_snapshot_fallback = allow_local_snapshot_fallback
@@ -6617,6 +6618,23 @@ class ReadSurfaceStore:
             return None
         return self._local_dataset(dataset)
 
+    def _local_overlay_records(self, dataset: str) -> Dict[str, Dict[str, Any]]:
+        if not self._allow_local_snapshot_fallback and dataset not in self._local_overlay_write_datasets:
+            return {}
+        records = self._local_dataset(dataset)
+        if isinstance(records, dict):
+            return records
+        return {}
+
+    def _ensure_local_overlay_records(self, dataset: str) -> Dict[str, Dict[str, Any]]:
+        self._local_overlay_write_datasets.add(dataset)
+        key = self._LOCAL_DATA_KEYS.get(dataset, dataset)
+        records = self._data.get(key)
+        if not isinstance(records, dict):
+            records = {}
+            self._data[key] = records
+        return records
+
     def dataset_source(
         self,
         dataset: str,
@@ -6662,6 +6680,8 @@ class ReadSurfaceStore:
             if available:
                 return self._service.source(dataset)
         local_payload = self._local_fallback(dataset) if include_local_fallback else None
+        if include_local_fallback and local_payload in (None, "", [], {}):
+            local_payload = self._local_overlay_records(dataset)
         if local_payload not in (None, "", [], {}):
             return "local_snapshot"
         return "missing"
@@ -7063,11 +7083,18 @@ class ReadSurfaceStore:
         status: Optional[str] = None,
         risk_policy_ref: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        local_pools = self._local_overlay_records("capital_pools")
         available, raw_pools = self._canonical.list_records("capital_pools")
         if available:
-            pools = [self._project_canonical_capital_pool(pool) for pool in raw_pools]
+            pools_by_id = {
+                str(pool.get("pool_id") or pool.get("id") or ""): pool
+                for pool in (self._project_canonical_capital_pool(pool) for pool in raw_pools)
+            }
+            for pool_id, pool in local_pools.items():
+                pools_by_id[str(pool.get("pool_id") or pool.get("id") or pool_id)] = pool
+            pools = [pool for key, pool in pools_by_id.items() if key]
         else:
-            pools = list((self._local_fallback("capital_pools") or {}).values())
+            pools = list(local_pools.values())
         if status:
             pools = [p for p in pools if p.get("status") == status]
         if risk_policy_ref:
@@ -7202,10 +7229,13 @@ class ReadSurfaceStore:
     def get_capital_pool(self, pool_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not pool_id:
             return None
+        local_pool = self._local_overlay_records("capital_pools").get(pool_id)
+        if local_pool is not None:
+            return local_pool
         available, raw = self._canonical.capital_pool(pool_id)
         if available:
             return self._project_canonical_capital_pool(raw) if raw else None
-        return (self._local_fallback("capital_pools") or {}).get(pool_id)
+        return None
 
     def create_capital_pool(
         self,
@@ -7218,9 +7248,7 @@ class ReadSurfaceStore:
         params: Optional[Dict[str, Any]] = None,
         status: str = "draft",
     ) -> Dict[str, Any]:
-        pools = self._local_fallback("capital_pools")
-        if pools is None:
-            pools = self._data.setdefault("capital_pools", {})
+        pools = self._ensure_local_overlay_records("capital_pools")
         timestamp = created_at or _utc_now_rfc3339()
         record = {
             "id": pool_id,
@@ -7245,14 +7273,14 @@ class ReadSurfaceStore:
         actor_id: str,
         updated_at: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        pools = self._local_fallback("capital_pools")
-        if pools is None:
-            pools = self._data.get("capital_pools")
-        if not pools:
-            return None
+        pools = self._ensure_local_overlay_records("capital_pools")
         record = pools.get(pool_id)
         if record is None:
-            return None
+            existing = self.get_capital_pool(pool_id)
+            if existing is None:
+                return None
+            record = dict(existing)
+            pools[pool_id] = record
         timestamp = updated_at or _utc_now_rfc3339()
         for field in ("name", "status", "risk_policy_ref", "params"):
             if field in patch:
@@ -7312,7 +7340,7 @@ class ReadSurfaceStore:
         self,
         status: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        items = list((self._local_fallback("ranking_formulas") or {}).values())
+        items = list(self._local_overlay_records("ranking_formulas").values())
         if status:
             items = [i for i in items if i.get("status") == status]
         return sorted(items, key=lambda x: x.get("id", ""))
@@ -7320,7 +7348,7 @@ class ReadSurfaceStore:
     def get_ranking_formula(self, formula_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not formula_id:
             return None
-        return (self._local_fallback("ranking_formulas") or {}).get(formula_id)
+        return self._local_overlay_records("ranking_formulas").get(formula_id)
 
     def create_ranking_formula(
         self,
@@ -7331,11 +7359,7 @@ class ReadSurfaceStore:
         created_at: Optional[str] = None,
         params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        formulas = self._local_fallback("ranking_formulas")
-        if formulas is None:
-            if not self._allow_local_snapshot_fallback:
-                self._data.setdefault("ranking_formulas", {})
-            formulas = self._data.setdefault("ranking_formulas", {})
+        formulas = self._ensure_local_overlay_records("ranking_formulas")
         timestamp = created_at or _utc_now_rfc3339()
         formula_id = f"rf-{timestamp[:10].replace('-', '')}-{len(formulas) + 1:03d}"
         while formula_id in formulas:
@@ -7363,11 +7387,7 @@ class ReadSurfaceStore:
         actor_id: str,
         updated_at: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        formulas = self._local_fallback("ranking_formulas")
-        if formulas is None:
-            formulas = self._data.get("ranking_formulas")
-        if not formulas:
-            return None
+        formulas = self._local_overlay_records("ranking_formulas")
         record = formulas.get(formula_id)
         if record is None:
             return None
@@ -7389,7 +7409,7 @@ class ReadSurfaceStore:
         status: Optional[str] = None,
         pool_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        items = list((self._local_fallback("rebalances") or {}).values())
+        items = list(self._local_overlay_records("rebalances").values())
         if status:
             items = [i for i in items if i.get("status") == status]
         if pool_id:
@@ -7399,7 +7419,7 @@ class ReadSurfaceStore:
     def get_rebalance(self, rebalance_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not rebalance_id:
             return None
-        return (self._local_fallback("rebalances") or {}).get(rebalance_id)
+        return self._local_overlay_records("rebalances").get(rebalance_id)
 
     def create_rebalance(
         self,
@@ -7410,9 +7430,7 @@ class ReadSurfaceStore:
         params: Optional[Dict[str, Any]] = None,
         reason: Optional[str] = None,
     ) -> Dict[str, Any]:
-        rebalances = self._local_fallback("rebalances")
-        if rebalances is None:
-            rebalances = self._data.setdefault("rebalances", {})
+        rebalances = self._ensure_local_overlay_records("rebalances")
         timestamp = created_at or _utc_now_rfc3339()
         rebalance_id = f"rb-{timestamp[:10].replace('-', '')}-{len(rebalances) + 1:03d}"
         while rebalance_id in rebalances:
@@ -7444,7 +7462,7 @@ class ReadSurfaceStore:
         self,
         status: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        items = list((self._local_fallback("rankings") or {}).values())
+        items = list(self._local_overlay_records("rankings").values())
         if status:
             items = [i for i in items if i.get("status") == status]
         return sorted(items, key=lambda x: x.get("id", ""))
@@ -7452,7 +7470,7 @@ class ReadSurfaceStore:
     def get_ranking(self, ranking_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not ranking_id:
             return None
-        return (self._local_fallback("rankings") or {}).get(ranking_id)
+        return self._local_overlay_records("rankings").get(ranking_id)
 
     def get_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not persona_id:

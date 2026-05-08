@@ -62,4 +62,17 @@ Review-cycle fixes (2026-05-08, second revision):
 2. **POST/PATCH capital-pools persistence** — Added `create_capital_pool` and `patch_capital_pool` to `ReadSurfaceStore` (persists to `_data["capital_pools"]` and calls `_save()`). `bff_create_capital_pool` and `bff_patch_capital_pool` now delegate to these methods so GET detail returns the created/patched pool without 404.
 3. **Contract registry** — `contract_snapshots/execute_plans_bff_routes.json` now marks all 17 capital-ranking-rebalance rows as `"implemented"` (was `missing` / `deferred_with_task`).
 
-Verification: `pytest -q services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py` — **23 passed**.
+Review-cycle fixes (2026-05-08, third revision):
+1. **Default-store write-through reads** — `ReadSurfaceStore` now tracks local overlay datasets written by this store instance and exposes those records to `list/get/patch` for capital pools, ranking formulas, rebalances, and rankings without enabling broad local snapshot fallback.
+2. **Regression coverage** — Added a default `ReadSurfaceStore(path)` roundtrip test that creates and reads back capital pool, ranking formula, and rebalance records with `allow_local_snapshot_fallback=False`.
+
+Verification:
+- `pytest -q services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py` — **24 passed**.
+- `pytest -q services/control-plane/bff/test_execute_plans_contract_registry.py` — **5 passed**.
+
+Closeout finalization (2026-05-08):
+- Reviewer approval recorded by Codex: capital-pools, ranking formulas, rebalances, and full-spec rankings BFF compatibility surfaces are present; writes require `Idempotency-Key`; action routes submit final command envelopes with idempotency conflict handling; default `ReadSurfaceStore` write-through now reads task-created pool/formula/rebalance records without broad local fallback.
+- Verification rerun by owner:
+  - `pytest -q services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py` — **24 passed**.
+  - `pytest -q services/control-plane/bff/test_execute_plans_contract_registry.py` — **5 passed**.
+  - `pytest -q services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py` — **2 passed**.

@@ -377,6 +377,51 @@ def test_bff_ranking_action_404_for_unknown_entity() -> None:
 # Read store unit tests
 # ---------------------------------------------------------------------------
 
+def test_read_store_default_write_through_roundtrip() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        store = ReadSurfaceStore(os.path.join(td, "read_surfaces.json"))
+
+        pool = store.create_capital_pool(
+            pool_id="pool-write-through",
+            name="Write Through Pool",
+            actor_id="op-1",
+        )
+        assert store.get_capital_pool(pool["pool_id"])["name"] == "Write Through Pool"
+        assert [p["pool_id"] for p in store.list_capital_pools()] == ["pool-write-through"]
+        patched_pool = store.patch_capital_pool(
+            pool["pool_id"],
+            patch={"status": "active"},
+            actor_id="op-1",
+        )
+        assert patched_pool is not None
+        assert store.get_capital_pool(pool["pool_id"])["status"] == "active"
+
+        formula = store.create_ranking_formula(
+            name="Write Through Formula",
+            description="desc",
+            actor_id="op-1",
+        )
+        formula_id = formula["formula_id"]
+        assert store.get_ranking_formula(formula_id)["name"] == "Write Through Formula"
+        assert [f["formula_id"] for f in store.list_ranking_formulas()] == [formula_id]
+        patched_formula = store.patch_ranking_formula(
+            formula_id,
+            patch={"status": "inactive"},
+            actor_id="op-1",
+        )
+        assert patched_formula is not None
+        assert store.get_ranking_formula(formula_id)["status"] == "inactive"
+
+        rebalance = store.create_rebalance(
+            capital_pool_id=pool["pool_id"],
+            actor_id="op-1",
+            reason="write-through rebalance",
+        )
+        rebalance_id = rebalance["rebalance_id"]
+        assert store.get_rebalance(rebalance_id)["reason"] == "write-through rebalance"
+        assert [r["rebalance_id"] for r in store.list_rebalances(pool_id=pool["pool_id"])] == [rebalance_id]
+
+
 def test_read_store_ranking_formula_roundtrip() -> None:
     with tempfile.TemporaryDirectory() as td:
         store = ReadSurfaceStore(
