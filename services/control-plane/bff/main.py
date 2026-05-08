@@ -16868,7 +16868,7 @@ async def stream_generic_events(
 
 @app.get("/bff/events/stream")
 async def bff_events_stream_alias(
-    channel: str = Query(..., description="SSE channel name"),
+    channel: str = Query(default="system", description="SSE channel name"),
     last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
     authorization: Optional[str] = Header(default=None),
 ):

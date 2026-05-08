@@ -6,6 +6,7 @@ import os
 import sys
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -194,6 +195,125 @@ def test_approval_and_ask_stream_routes_publish_replay_metadata_headers() -> Non
         assert response.headers["X-SSE-Replay-Window-Events"] == "500"
         assert response.headers["X-SSE-Replay-Store"] == "in-memory"
         assert response.headers["X-SSE-Resync-Routes"] == resync
+
+
+def test_execute_plans_sse_compatibility_routes_are_registered() -> None:
+    registered_paths = {getattr(route, "path", "") for route in bff_main.app.routes}
+
+    assert {
+        "/bff/events/stream",
+        "/bff/sse/notifications",
+        "/bff/sse/command-center/kpi",
+        "/bff/sse/command-center/events",
+        "/bff/sse/jobs/{jobId}/progress",
+        "/bff/sse/alerts",
+        "/bff/sse/incidents/{incidentId}/timeline",
+        "/bff/sse/deployment/events",
+        "/bff/sse/review/updates",
+        "/bff/sse/agora/signals",
+        "/bff/sse/agora/sessions/{sessionId}",
+    }.issubset(registered_paths)
+
+
+def test_execute_plans_sse_compatibility_aliases_share_replay_headers() -> None:
+    route_factories = [
+        (
+            lambda: bff_main.bff_events_stream_alias(
+                channel="system", last_event_id=None, authorization=AUTH,
+            ),
+            "system",
+        ),
+        (lambda: bff_main.bff_sse_notifications_alias(last_event_id=None, authorization=AUTH), "inbox"),
+        (lambda: bff_main.bff_sse_cc_kpi_alias(last_event_id=None, authorization=AUTH), "ranking"),
+        (lambda: bff_main.bff_sse_cc_events_alias(last_event_id=None, authorization=AUTH), "loop"),
+        (
+            lambda: bff_main.bff_sse_job_progress_alias(
+                jobId="job-final-sse-001", last_event_id=None, authorization=AUTH,
+            ),
+            "tool",
+        ),
+        (lambda: bff_main.bff_sse_alerts_alias(last_event_id=None, authorization=AUTH), "sentinel"),
+        (
+            lambda: bff_main.bff_sse_incident_timeline_alias(
+                incidentId="inc-final-sse-001", last_event_id=None, authorization=AUTH,
+            ),
+            "journal",
+        ),
+        (lambda: bff_main.bff_sse_deployment_events_alias(last_event_id=None, authorization=AUTH), "artifact"),
+        (lambda: bff_main.bff_sse_review_updates_alias(last_event_id=None, authorization=AUTH), "approval"),
+        (lambda: bff_main.bff_sse_agora_signals_alias(last_event_id=None, authorization=AUTH), "signal"),
+        (
+            lambda: bff_main.bff_sse_agora_session_alias(
+                sessionId="ask-final-sse-001", last_event_id=None, authorization=AUTH,
+            ),
+            "ask",
+        ),
+    ]
+
+    for response_factory, expected_channel in route_factories:
+        response = asyncio.run(response_factory())
+        assert response.media_type == "text/event-stream"
+        assert response.headers["X-SSE-Channel"] == expected_channel
+        assert response.headers["X-SSE-Replay-Supported"] == "true"
+        assert response.headers["X-SSE-Replay-Window-Events"] == "500"
+        assert response.headers["X-SSE-Replay-Store"] == "in-memory"
+
+
+async def _first_sse_payload(response) -> dict:
+    iterator = response.body_iterator
+    try:
+        chunk = await anext(iterator)
+    finally:
+        if hasattr(iterator, "aclose"):
+            await iterator.aclose()
+    if isinstance(chunk, bytes):
+        chunk = chunk.decode()
+    data_line = next(line for line in chunk.splitlines() if line.startswith("data: "))
+    return json.loads(data_line.removeprefix("data: "))
+
+
+def test_execute_plans_sse_alias_uses_same_envelope_shape_as_generic_stream() -> None:
+    bff_main._publish_event(
+        bff_main._sse_buffers["inbox"],
+        bff_main._sse_subscribers["inbox"],
+        "inbox.notification.created",
+        {"notification_id": "note-final-sse-001"},
+    )
+
+    async def compare_alias_to_generic() -> tuple[dict, dict]:
+        generic_response = await bff_main.stream_generic_events(
+            channel="inbox", last_event_id=None, authorization=AUTH,
+        )
+        alias_response = await bff_main.bff_sse_notifications_alias(
+            last_event_id=None, authorization=AUTH,
+        )
+        return (
+            await _first_sse_payload(generic_response),
+            await _first_sse_payload(alias_response),
+        )
+
+    generic_payload, alias_payload = asyncio.run(compare_alias_to_generic())
+
+    assert alias_payload == generic_payload
+    assert set(alias_payload) == {"id", "type", "timestamp", "data"}
+    assert alias_payload["type"] == "inbox.notification.created"
+    assert alias_payload["data"] == {"notification_id": "note-final-sse-001"}
+
+
+def test_execute_plans_sse_aliases_return_replay_unavailable_envelope() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            bff_main.bff_sse_notifications_alias(
+                last_event_id="evt-final-sse-missing",
+                authorization=AUTH,
+            )
+        )
+
+    assert exc_info.value.status_code == 409
+    error = exc_info.value.detail["error"]
+    assert error["code"] == "SSE_REPLAY_UNAVAILABLE"
+    assert error["details"]["channel"] == "inbox"
+    assert error["details"]["lastEventId"] == "evt-final-sse-missing"
 
 
 def test_internal_publish_infers_approval_and_ask_channels() -> None:
