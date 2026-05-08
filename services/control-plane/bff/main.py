@@ -14223,6 +14223,1872 @@ async def list_bff_approvals(
     }
 
 
+# --------------------------------------------------------------------------- #
+# BFF Capital, Ranking, and Rebalance Compatibility (BFF-LUV-GAP-003)
+# --------------------------------------------------------------------------- #
+
+# In-process idempotency ledger for create/patch operations on these surfaces.
+# Maps idempotency_key -> {"request_hash": str, "result": dict}.
+_CAPITAL_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+
+
+def _capital_bff_idempotency_check(
+    resolved_key: str,
+    request_hash: str,
+) -> Optional[Dict[str, Any]]:
+    """Return cached result on replay or raise 409 on conflict."""
+    existing = _CAPITAL_BFF_IDEMPOTENCY.get(resolved_key)
+    if existing is None:
+        return None
+    if existing.get("request_hash") != request_hash:
+        raise _bff_error(
+            409,
+            ErrorCode.IDEMPOTENCY_CONFLICT,
+            "Idempotency key was already used with a different payload",
+            f"Key {resolved_key!r} is bound to a different request hash",
+            precondition_failed="idempotency_conflict",
+            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+        )
+    return existing.get("result")
+
+
+def _capital_bff_action_command(
+    entity_type: ObjectType,
+    entity_id: str,
+    action_id: str,
+    resolved_key: str,
+    identity: Any,
+    payload: Dict[str, Any],
+    command_type: CommandType,
+) -> Dict[str, Any]:
+    """Submit a resource action through the command store and return the receipt."""
+    staleness_warning = _check_read_surface_state()
+    command_id = str(uuid.uuid4())
+    submitted_at = utc_now()
+    target = TargetObject(type=entity_type, id=entity_id)
+    audit_record = {
+        "operator_id": identity.operator_id,
+        "roles_at_submission": identity.roles,
+        "action_id": action_id,
+        "preconditions_checked": ["authentication", "authorization", "idempotency"],
+        "timestamp": submitted_at,
+    }
+    idempotency_record = IdempotencyRecord.reserve(
+        idempotency_key=resolved_key,
+        operation_type=f"bff.{command_type.value}",
+        target_ref=f"{entity_type.value}:{entity_id}",
+        request_payload={
+            "entity_type": entity_type.value,
+            "entity_id": entity_id,
+            "action_id": action_id,
+            "payload": payload,
+        },
+        trace_id=command_id,
+    )
+    foundation_ctx = {
+        "idempotency_record": idempotency_record.to_dict(),
+    }
+    command_store.submit_command(
+        command_id=command_id,
+        command_type=command_type,
+        target=target,
+        submitted_at=submitted_at,
+        params={"action_id": action_id, **payload},
+        audit_context=audit_record,
+        foundation_context=foundation_ctx,
+    )
+    return _project_final_command_response(
+        command_id=command_id,
+        command=command_type,
+        accepted_at=submitted_at,
+        status=CommandStatus.SUBMITTED,
+        staleness_warning=staleness_warning,
+    )
+
+
+# -- Capital pools BFF -------------------------------------------------------
+
+@app.get("/bff/capital-pools")
+async def bff_list_capital_pools(
+    status: Optional[str] = None,
+    risk_policy_ref: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: capital pool list (CP-01 compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    pools = read_store.list_capital_pools(status=status, risk_policy_ref=risk_policy_ref)
+    total = len(pools)
+    page_items, next_page_token = _page_slice(pools, page_token, page_size)
+    return {
+        "data": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta(
+            "capital_pools", "capital_pool_list",
+            snapshot_at=snapshot_at, total=total,
+        ),
+    }
+
+
+@app.post("/bff/capital-pools", status_code=201)
+async def bff_create_capital_pool(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: create capital pool — Idempotency-Key required."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/capital-pools", "payload": payload})
+    cached = _capital_bff_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise _bff_error(
+            422, ErrorCode.INVALID_PARAMS, "name is required",
+            "Capital pool name must be a non-empty string",
+            precondition_failed="name",
+        )
+    snapshot_at = utc_now()
+    pool_id = f"pool-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+    result = {
+        "id": pool_id,
+        "pool_id": pool_id,
+        "name": name,
+        "status": "draft",
+        "risk_policy_ref": payload.get("risk_policy_ref"),
+        "params": payload.get("params") or {},
+        "created_at": snapshot_at,
+        "updated_at": snapshot_at,
+        "created_by": identity.operator_id,
+    }
+    _CAPITAL_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/capital-pools/{pool_id}")
+async def bff_get_capital_pool(
+    pool_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: capital pool detail (CP-02 compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    pool_surface = _dataset_surface_status("capital_pools", snapshot_at=snapshot_at)
+    pool = read_store.get_capital_pool(pool_id)
+    if not pool:
+        _raise_if_read_surface_unavailable(pool_surface, label="Capital pool")
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Capital pool not found",
+            f"Capital pool {pool_id} does not exist",
+        )
+    bindings = read_store.get_bindings_for_pool(pool_id)
+    data = dict(pool)
+    data["bindings"] = bindings
+    return {
+        "data": data,
+        "meta": _read_surface_meta(
+            "capital_pools", "capital_pool_detail",
+            snapshot_at=snapshot_at, surface=pool_surface,
+        ),
+    }
+
+
+@app.patch("/bff/capital-pools/{pool_id}")
+async def bff_patch_capital_pool(
+    pool_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: patch capital pool — Idempotency-Key required."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash(
+        {"route": "PATCH /bff/capital-pools/{pool_id}", "pool_id": pool_id, "payload": payload}
+    )
+    cached = _capital_bff_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    pool = read_store.get_capital_pool(pool_id)
+    if not pool:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Capital pool not found",
+            f"Capital pool {pool_id} does not exist",
+        )
+    snapshot_at = utc_now()
+    updated = dict(pool)
+    for field in ("name", "status", "risk_policy_ref", "params"):
+        if field in payload:
+            updated[field] = payload[field]
+    updated["updated_at"] = snapshot_at
+    result = {"data": updated, "meta": {"snapshot_at": snapshot_at}}
+    _CAPITAL_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.post("/bff/capital-pools/{pool_id}/actions/{action_id}", status_code=202)
+async def bff_capital_pool_action(
+    pool_id: str,
+    action_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: capital pool action — routes through command/precondition machinery."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    pool = read_store.get_capital_pool(pool_id)
+    if not pool:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Capital pool not found",
+            f"Capital pool {pool_id} does not exist",
+        )
+    return _capital_bff_action_command(
+        entity_type=ObjectType.CAPITAL_POOL,
+        entity_id=pool_id,
+        action_id=action_id,
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=payload,
+        command_type=CommandType.CAPITAL_POOL_ACTION,
+    )
+
+
+# -- Ranking formulas BFF ----------------------------------------------------
+
+@app.get("/bff/ranking/formulas")
+async def bff_list_ranking_formulas(
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: ranking formula list."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    items = read_store.list_ranking_formulas(status=status)
+    total = len(items)
+    page_items, next_page_token = _page_slice(items, page_token, page_size)
+    return {
+        "data": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta(
+            "ranking_formulas", "ranking_formula_list",
+            snapshot_at=snapshot_at, total=total,
+        ),
+    }
+
+
+@app.post("/bff/ranking/formulas", status_code=201)
+async def bff_create_ranking_formula(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: create ranking formula — Idempotency-Key required."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/ranking/formulas", "payload": payload})
+    cached = _capital_bff_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise _bff_error(
+            422, ErrorCode.INVALID_PARAMS, "name is required",
+            "Ranking formula name must be a non-empty string",
+            precondition_failed="name",
+        )
+    description = str(payload.get("description") or "").strip()
+    result = read_store.create_ranking_formula(
+        name=name,
+        description=description,
+        actor_id=identity.operator_id,
+        params=payload.get("params"),
+    )
+    _CAPITAL_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/ranking/formulas/{formula_id}")
+async def bff_get_ranking_formula(
+    formula_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: ranking formula detail."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    formula = read_store.get_ranking_formula(formula_id)
+    if not formula:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Ranking formula not found",
+            f"Ranking formula {formula_id} does not exist",
+        )
+    return {
+        "data": formula,
+        "meta": _read_surface_meta(
+            "ranking_formulas", "ranking_formula_detail",
+            snapshot_at=snapshot_at,
+        ),
+    }
+
+
+@app.patch("/bff/ranking/formulas/{formula_id}")
+async def bff_patch_ranking_formula(
+    formula_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: patch ranking formula — Idempotency-Key required."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash(
+        {"route": "PATCH /bff/ranking/formulas/{formula_id}", "formula_id": formula_id, "payload": payload}
+    )
+    cached = _capital_bff_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    formula = read_store.get_ranking_formula(formula_id)
+    if not formula:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Ranking formula not found",
+            f"Ranking formula {formula_id} does not exist",
+        )
+    updated = read_store.patch_ranking_formula(
+        formula_id, patch=payload, actor_id=identity.operator_id,
+    )
+    if not updated:
+        raise _bff_error(
+            503, ErrorCode.DOWNSTREAM_UNAVAILABLE,
+            "Ranking formula store unavailable",
+            "Unable to patch ranking formula at this time",
+        )
+    snapshot_at = utc_now()
+    result = {"data": updated, "meta": {"snapshot_at": snapshot_at}}
+    _CAPITAL_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.post("/bff/ranking/formulas/{formula_id}/actions/{action_id}", status_code=202)
+async def bff_ranking_formula_action(
+    formula_id: str,
+    action_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: ranking formula action — routes through command/precondition machinery."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    formula = read_store.get_ranking_formula(formula_id)
+    if not formula:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Ranking formula not found",
+            f"Ranking formula {formula_id} does not exist",
+        )
+    return _capital_bff_action_command(
+        entity_type=ObjectType.RANKING_FORMULA,
+        entity_id=formula_id,
+        action_id=action_id,
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=payload,
+        command_type=CommandType.RANKING_FORMULA_ACTION,
+    )
+
+
+# -- Rebalances BFF ----------------------------------------------------------
+
+@app.get("/bff/rebalances")
+async def bff_list_rebalances(
+    status: Optional[str] = None,
+    pool_id: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: rebalance list."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    items = read_store.list_rebalances(status=status, pool_id=pool_id)
+    total = len(items)
+    page_items, next_page_token = _page_slice(items, page_token, page_size)
+    return {
+        "data": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta(
+            "rebalances", "rebalance_list",
+            snapshot_at=snapshot_at, total=total,
+        ),
+    }
+
+
+@app.post("/bff/rebalances", status_code=202)
+async def bff_create_rebalance(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: create rebalance command — Idempotency-Key required; produces command/audit metadata."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/rebalances", "payload": payload})
+    cached = _capital_bff_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    capital_pool_id = str(payload.get("capital_pool_id") or "").strip()
+    if not capital_pool_id:
+        raise _bff_error(
+            422, ErrorCode.INVALID_PARAMS, "capital_pool_id is required",
+            "Rebalance must specify a capital_pool_id",
+            precondition_failed="capital_pool_id",
+        )
+    staleness_warning = _check_read_surface_state()
+    command_id = str(uuid.uuid4())
+    submitted_at = utc_now()
+    target = TargetObject(type=ObjectType.REBALANCE, id=capital_pool_id)
+    audit_record = {
+        "operator_id": identity.operator_id,
+        "roles_at_submission": identity.roles,
+        "preconditions_checked": ["authentication", "authorization", "idempotency"],
+        "timestamp": submitted_at,
+    }
+    idempotency_record = IdempotencyRecord.reserve(
+        idempotency_key=resolved_key,
+        operation_type=f"bff.{CommandType.REBALANCE_ACTION.value}",
+        target_ref=f"{ObjectType.REBALANCE.value}:{capital_pool_id}",
+        request_payload=payload,
+        trace_id=command_id,
+    )
+    command_store.submit_command(
+        command_id=command_id,
+        command_type=CommandType.REBALANCE_ACTION,
+        target=target,
+        submitted_at=submitted_at,
+        params={"capital_pool_id": capital_pool_id, **payload},
+        audit_context=audit_record,
+        foundation_context={"idempotency_record": idempotency_record.to_dict()},
+    )
+    rebalance = read_store.create_rebalance(
+        capital_pool_id=capital_pool_id,
+        actor_id=identity.operator_id,
+        created_at=submitted_at,
+        params=payload.get("params"),
+        reason=payload.get("reason"),
+    )
+    result = _project_final_command_response(
+        command_id=command_id,
+        command=CommandType.REBALANCE_ACTION,
+        accepted_at=submitted_at,
+        status=CommandStatus.SUBMITTED,
+        staleness_warning=staleness_warning,
+    )
+    combined = result.model_dump() if hasattr(result, "model_dump") else dict(result)
+    combined["rebalance_id"] = rebalance["rebalance_id"]
+    _CAPITAL_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": combined}
+    return combined
+
+
+@app.get("/bff/rebalances/{rebalance_id}")
+async def bff_get_rebalance(
+    rebalance_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: rebalance detail."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    rebalance = read_store.get_rebalance(rebalance_id)
+    if not rebalance:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Rebalance not found",
+            f"Rebalance {rebalance_id} does not exist",
+        )
+    return {
+        "data": rebalance,
+        "meta": _read_surface_meta(
+            "rebalances", "rebalance_detail",
+            snapshot_at=snapshot_at,
+        ),
+    }
+
+
+@app.post("/bff/rebalances/{rebalance_id}/actions/{action_id}", status_code=202)
+async def bff_rebalance_action(
+    rebalance_id: str,
+    action_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: rebalance action — routes through command/precondition machinery."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    rebalance = read_store.get_rebalance(rebalance_id)
+    if not rebalance:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Rebalance not found",
+            f"Rebalance {rebalance_id} does not exist",
+        )
+    return _capital_bff_action_command(
+        entity_type=ObjectType.REBALANCE,
+        entity_id=rebalance_id,
+        action_id=action_id,
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=payload,
+        command_type=CommandType.REBALANCE_ACTION,
+    )
+
+
+# -- Rankings BFF (full-spec long tail) ---------------------------------------
+
+@app.get("/bff/rankings")
+async def bff_list_rankings(
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: ranking list (full-spec long tail)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    items = read_store.list_rankings(status=status)
+    total = len(items)
+    page_items, next_page_token = _page_slice(items, page_token, page_size)
+    return {
+        "data": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta(
+            "rankings", "ranking_list",
+            snapshot_at=snapshot_at, total=total,
+        ),
+    }
+
+
+@app.get("/bff/rankings/{ranking_id}")
+async def bff_get_ranking(
+    ranking_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: ranking detail (full-spec long tail)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    ranking = read_store.get_ranking(ranking_id)
+    if not ranking:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Ranking not found",
+            f"Ranking {ranking_id} does not exist",
+        )
+    return {
+        "data": ranking,
+        "meta": _read_surface_meta(
+            "rankings", "ranking_detail",
+            snapshot_at=snapshot_at,
+        ),
+    }
+
+
+@app.post("/bff/rankings/{ranking_id}/actions/{action_id}", status_code=202)
+async def bff_ranking_action(
+    ranking_id: str,
+    action_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: ranking action (full-spec long tail) — routes through command/precondition machinery."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    ranking = read_store.get_ranking(ranking_id)
+    if not ranking:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Ranking not found",
+            f"Ranking {ranking_id} does not exist",
+        )
+    return _capital_bff_action_command(
+        entity_type=ObjectType.RANKING,
+        entity_id=ranking_id,
+        action_id=action_id,
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=payload,
+        command_type=CommandType.RANKING_ACTION,
+    )
+
+
+# -- Strategy and Persona BFF (BFF-LUV-GAP-002) -----------------------------
+#
+# Compatibility surfaces for execute-plans `Strategy` and `Persona` route
+# families. These routes project canonical Pantheon read-store data into the
+# DTO shape declared in execute-plans/src/lib/bff/types.ts. Action endpoints
+# route through the same command/precondition machinery used by capital-pool
+# actions (BFF-LUV-GAP-003) so high-risk operations honor the final BFF
+# envelope. New strategy/persona records created via these routes are kept
+# in an in-process write-through cache; durable persistence is delegated to
+# the canonical strategy_specs / personas read store backends.
+
+_STRATEGY_BFF_LIFECYCLE_MAP = {
+    "draft": "draft",
+    "candidate": "review",
+    "review": "review",
+    "approved": "approved",
+    "active": "deployed",
+    "deployed": "deployed",
+    "paused": "paused",
+    "retired": "retired",
+}
+
+_STRATEGY_BFF_RISK_MAP = {
+    "info": "info",
+    "low": "low",
+    "medium": "medium",
+    "moderate": "medium",
+    "high": "high",
+    "critical": "critical",
+}
+
+_STRATEGY_PERSONA_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+_STRATEGY_BFF_OVERLAY: Dict[str, Dict[str, Any]] = {}
+_PERSONA_BFF_OVERLAY: Dict[str, Dict[str, Any]] = {}
+
+
+def _strategy_persona_idempotency_check(
+    resolved_key: str,
+    request_hash: str,
+) -> Optional[Dict[str, Any]]:
+    existing = _STRATEGY_PERSONA_BFF_IDEMPOTENCY.get(resolved_key)
+    if existing is None:
+        return None
+    if existing.get("request_hash") != request_hash:
+        raise _bff_error(
+            409,
+            ErrorCode.IDEMPOTENCY_CONFLICT,
+            "Idempotency key was already used with a different payload",
+            f"Key {resolved_key!r} is bound to a different request hash",
+            precondition_failed="idempotency_conflict",
+            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+        )
+    return existing.get("result")
+
+
+def _strategy_persona_action_command(
+    *,
+    entity_type: ObjectType,
+    entity_id: str,
+    action_id: str,
+    resolved_key: str,
+    identity: OperatorIdentity,
+    payload: Dict[str, Any],
+    command_type: CommandType,
+) -> Dict[str, Any]:
+    """Submit a strategy / persona resource action through the command store
+    and return the final command envelope.
+
+    The /bff/strategies/{id}/actions/{actionId} and /bff/personas/{id}/actions/{actionId}
+    endpoints accept action ids declared in the canonical action catalog
+    (see action_catalog.py). Idempotency is enforced through the
+    `_STRATEGY_PERSONA_BFF_IDEMPOTENCY` ledger so callers receive a stable
+    receipt on safe retries.
+    """
+    request_hash = _stable_json_hash(
+        {
+            "route": f"POST /bff/{entity_type.value.lower()}/{{id}}/actions",
+            "entity_type": entity_type.value,
+            "entity_id": entity_id,
+            "action_id": action_id,
+            "payload": payload,
+        }
+    )
+    cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+
+    catalog_entry = get_catalog_entry(command_type.value)
+    staleness_warning = _check_read_surface_state()
+    command_id = str(uuid.uuid4())
+    submitted_at = utc_now()
+    target = TargetObject(type=entity_type, id=entity_id)
+    audit_record = {
+        "operator_id": identity.operator_id,
+        "roles_at_submission": identity.roles,
+        "action_id": action_id,
+        "preconditions_checked": ["authentication", "authorization", "idempotency"],
+        "timestamp": submitted_at,
+        "idempotency_key": resolved_key,
+        "request_hash": request_hash,
+        "catalog_entry": catalog_entry.action_id if catalog_entry else None,
+    }
+    foundation_ctx = {
+        "idempotency_record": {
+            "idempotency_key": resolved_key,
+            "request_hash": request_hash,
+            "operation_type": f"bff.{command_type.value}",
+            "target_ref": f"{entity_type.value}:{entity_id}",
+            "trace_id": None,
+        },
+    }
+    command_store.submit_command(
+        command_id=command_id,
+        command_type=command_type,
+        target=target,
+        submitted_at=submitted_at,
+        params={"action_id": action_id, **payload},
+        audit_context=audit_record,
+        foundation_context=foundation_ctx,
+    )
+    result = _project_final_command_response(
+        command_id=command_id,
+        command=command_type,
+        accepted_at=submitted_at,
+        status=CommandStatus.SUBMITTED,
+        staleness_warning=staleness_warning,
+    )
+    payload_dump: Dict[str, Any]
+    if hasattr(result, "model_dump"):
+        payload_dump = result.model_dump(mode="json")
+    elif isinstance(result, dict):
+        payload_dump = result
+    else:
+        payload_dump = {"data": result}
+    _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {
+        "request_hash": request_hash,
+        "result": payload_dump,
+    }
+    return payload_dump
+
+
+def _normalize_lifecycle_state(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    return _STRATEGY_BFF_LIFECYCLE_MAP.get(text, "draft")
+
+
+def _normalize_risk_level(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    return _STRATEGY_BFF_RISK_MAP.get(text, "medium")
+
+
+def _project_strategy_dto(
+    summary: Dict[str, Any],
+    *,
+    detail: Optional[Dict[str, Any]] = None,
+    overlay: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Project canonical strategy_spec data into execute-plans Strategy DTO."""
+    strategy_id = str(summary.get("strategy_id") or summary.get("id") or "")
+    title = summary.get("title") or summary.get("name") or strategy_id
+    lifecycle_raw = (detail or summary).get("lifecycle_state") or summary.get("lifecycle_state")
+    governance = (detail or {}).get("governance") if detail else {}
+    governance = governance if isinstance(governance, dict) else {}
+    market_scope = (detail or {}).get("market_scope") if detail else {}
+    market_scope = market_scope if isinstance(market_scope, dict) else {}
+    execution_profile = (detail or {}).get("execution_profile") if detail else {}
+    execution_profile = execution_profile if isinstance(execution_profile, dict) else {}
+    persona_ids: List[str] = []
+    if detail and isinstance(detail.get("persona_ids"), list):
+        persona_ids = [str(p) for p in detail.get("persona_ids") or [] if str(p).strip()]
+    capital_pool_id = str(
+        execution_profile.get("capital_pool_id")
+        or governance.get("capital_pool_id")
+        or summary.get("capital_pool_id")
+        or ""
+    )
+    alpha = str(
+        market_scope.get("alpha")
+        or summary.get("source_kind")
+        or summary.get("hypothesis_excerpt")
+        or ""
+    )
+    allowed = (detail or {}).get("allowedActions") or {}
+    available_actions: List[str] = []
+    if isinstance(allowed, dict):
+        available_actions = sorted([k for k, v in allowed.items() if v])
+    dto: Dict[str, Any] = {
+        "id": strategy_id,
+        "name": title,
+        "owner": summary.get("owner") or governance.get("owner") or "pantheon-bff",
+        "updatedAt": summary.get("last_modified_at")
+        or summary.get("updated_at")
+        or (detail or {}).get("created_at")
+        or utc_now(),
+        "state": _normalize_lifecycle_state(lifecycle_raw),
+        "risk": _normalize_risk_level(governance.get("risk_level")),
+        "alpha": alpha,
+        "capitalPoolId": capital_pool_id,
+        "personaIds": persona_ids,
+        "pnl30d": 0.0,
+        "sharpe": 0.0,
+        "drawdown": 0.0,
+        "availableActions": available_actions,
+        "labelKey": f"strategy.{strategy_id}" if strategy_id else None,
+        "lifecycleStatus": str(lifecycle_raw or ""),
+    }
+    if overlay:
+        for k, v in overlay.items():
+            if v is not None:
+                dto[k] = v
+    return dto
+
+
+def _project_persona_dto(
+    raw: Dict[str, Any],
+    *,
+    overlay: Optional[Dict[str, Any]] = None,
+    routed_strategies: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Project canonical persona data into execute-plans Persona DTO."""
+    persona_id = str(raw.get("persona_id") or raw.get("id") or "")
+    metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+    archetype = str(
+        metadata.get("archetype")
+        or raw.get("strategy_family")
+        or raw.get("mandate")
+        or "generalist"
+    )
+    dto: Dict[str, Any] = {
+        "id": persona_id,
+        "name": raw.get("name") or persona_id,
+        "owner": metadata.get("owner") or raw.get("owner") or "pantheon-bff",
+        "updatedAt": raw.get("updated_at") or raw.get("created_at") or utc_now(),
+        "state": _normalize_lifecycle_state(raw.get("lifecycle_state")),
+        "risk": _normalize_risk_level(metadata.get("risk_level")),
+        "archetype": archetype,
+        "routedStrategies": int(routed_strategies if routed_strategies is not None else 0),
+        "successRate": float(metadata.get("success_rate") or 0.0),
+        "labelKey": f"persona.{persona_id}" if persona_id else None,
+        "lifecycleStatus": str(raw.get("lifecycle_state") or ""),
+    }
+    if overlay:
+        for k, v in overlay.items():
+            if v is not None:
+                dto[k] = v
+    return dto
+
+
+def _strategy_routed_persona_count(strategy_id: str) -> int:
+    detail = read_store.get_strategy_spec_detail(strategy_id, version_selector="current")
+    if not detail:
+        return 0
+    persona_ids = detail.get("persona_ids") or []
+    if not isinstance(persona_ids, list):
+        return 0
+    return len([p for p in persona_ids if str(p).strip()])
+
+
+def _routed_strategies_for_persona(persona_id: str) -> int:
+    items = read_store.list_strategy_specs(persona_id=persona_id) or []
+    return len(items)
+
+
+def _list_strategy_summaries() -> List[Dict[str, Any]]:
+    """Combine canonical strategy_specs with overlay records created via /bff."""
+    items = list(read_store.list_strategy_specs() or [])
+    seen = {str(item.get("strategy_id") or "") for item in items}
+    for sid, overlay in _STRATEGY_BFF_OVERLAY.items():
+        if sid in seen:
+            continue
+        items.append({
+            "strategy_id": sid,
+            "title": overlay.get("name"),
+            "lifecycle_state": overlay.get("state") or "draft",
+            "last_modified_at": overlay.get("updatedAt"),
+            "owner": overlay.get("owner"),
+        })
+    return items
+
+
+def _list_persona_records() -> List[Dict[str, Any]]:
+    """Combine canonical personas with overlay records created via /bff."""
+    items = list(read_store.list_personas() or [])
+    seen = {str(item.get("id") or item.get("persona_id") or "") for item in items}
+    for pid, overlay in _PERSONA_BFF_OVERLAY.items():
+        if pid in seen:
+            continue
+        items.append({
+            "id": pid,
+            "persona_id": pid,
+            "name": overlay.get("name"),
+            "lifecycle_state": overlay.get("state") or "draft",
+            "updated_at": overlay.get("updatedAt"),
+            "metadata": {
+                "archetype": overlay.get("archetype"),
+                "owner": overlay.get("owner"),
+                "risk_level": overlay.get("risk"),
+            },
+        })
+    return items
+
+
+# ---------------- /bff/strategies routes ----------------
+
+@app.get("/bff/strategies")
+async def bff_list_strategies(
+    state: Optional[str] = None,
+    persona_id: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: strategy list (execute-plans Strategy DTO compatibility)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    summaries = _list_strategy_summaries()
+    if persona_id:
+        summaries = [
+            s for s in summaries
+            if persona_id in (s.get("persona_ids") or [])
+            or s.get("strategy_id") in _STRATEGY_BFF_OVERLAY
+        ]
+    items = []
+    for summary in summaries:
+        strategy_id = str(summary.get("strategy_id") or "")
+        detail = read_store.get_strategy_spec_detail(strategy_id, version_selector="current")
+        overlay = _STRATEGY_BFF_OVERLAY.get(strategy_id)
+        items.append(_project_strategy_dto(summary, detail=detail, overlay=overlay))
+    if state:
+        items = [s for s in items if s.get("state") == state]
+    total = len(items)
+    page_items, next_page_token = _page_slice(items, page_token, page_size)
+    return {
+        "data": page_items,
+        "items": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta(
+            "strategy_specs", "strategy_list",
+            snapshot_at=snapshot_at, total=total,
+        ),
+    }
+
+
+@app.post("/bff/strategies", status_code=201)
+async def bff_create_strategy(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: create strategy stub (execute-plans compatibility)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/strategies", "payload": payload})
+    cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise _bff_error(
+            422, ErrorCode.INVALID_PARAMS, "name is required",
+            "Strategy name must be a non-empty string",
+            precondition_failed="name",
+        )
+    snapshot_at = utc_now()
+    strategy_id = f"strategy-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+    overlay = {
+        "id": strategy_id,
+        "name": name,
+        "owner": str(payload.get("owner") or identity.operator_id),
+        "updatedAt": snapshot_at,
+        "state": _normalize_lifecycle_state(payload.get("state") or "draft"),
+        "risk": _normalize_risk_level(payload.get("risk")),
+        "alpha": str(payload.get("alpha") or ""),
+        "capitalPoolId": str(payload.get("capitalPoolId") or payload.get("capital_pool_id") or ""),
+        "personaIds": list(payload.get("personaIds") or payload.get("persona_ids") or []),
+        "pnl30d": float(payload.get("pnl30d") or 0.0),
+        "sharpe": float(payload.get("sharpe") or 0.0),
+        "drawdown": float(payload.get("drawdown") or 0.0),
+        "availableActions": ["edit", "submit", "retire"],
+        "labelKey": f"strategy.{strategy_id}",
+    }
+    _STRATEGY_BFF_OVERLAY[strategy_id] = overlay
+    result = {
+        "data": overlay,
+        "meta": {"snapshot_at": snapshot_at},
+    }
+    _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/strategies/{strategy_id}")
+async def bff_get_strategy(
+    strategy_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: strategy detail."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    overlay = _STRATEGY_BFF_OVERLAY.get(strategy_id)
+    summary = read_store.get_strategy_spec(strategy_id)
+    if not summary and not overlay:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Strategy not found",
+            f"Strategy {strategy_id} does not exist",
+        )
+    summary_for_dto = summary or {"strategy_id": strategy_id, "title": (overlay or {}).get("name")}
+    detail = read_store.get_strategy_spec_detail(strategy_id, version_selector="current")
+    dto = _project_strategy_dto(summary_for_dto, detail=detail, overlay=overlay)
+    return {
+        "data": dto,
+        "meta": _read_surface_meta(
+            "strategy_specs", "strategy_detail",
+            snapshot_at=snapshot_at,
+        ),
+    }
+
+
+@app.patch("/bff/strategies/{strategy_id}")
+async def bff_patch_strategy(
+    strategy_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: patch strategy overlay fields."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash(
+        {"route": "PATCH /bff/strategies/{strategy_id}", "id": strategy_id, "payload": payload}
+    )
+    cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    summary = read_store.get_strategy_spec(strategy_id)
+    overlay = _STRATEGY_BFF_OVERLAY.get(strategy_id)
+    if not summary and not overlay:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Strategy not found",
+            f"Strategy {strategy_id} does not exist",
+        )
+    snapshot_at = utc_now()
+    base = dict(overlay) if overlay else {}
+    if not base:
+        detail = read_store.get_strategy_spec_detail(strategy_id, version_selector="current")
+        base = _project_strategy_dto(summary or {"strategy_id": strategy_id}, detail=detail)
+    for field in (
+        "name", "owner", "state", "risk", "alpha",
+        "capitalPoolId", "personaIds", "pnl30d", "sharpe", "drawdown",
+        "availableActions",
+    ):
+        if field in payload:
+            base[field] = payload[field]
+    if "state" in payload:
+        base["state"] = _normalize_lifecycle_state(payload["state"])
+    if "risk" in payload:
+        base["risk"] = _normalize_risk_level(payload["risk"])
+    base["updatedAt"] = snapshot_at
+    base["id"] = strategy_id
+    _STRATEGY_BFF_OVERLAY[strategy_id] = base
+    result = {"data": base, "meta": {"snapshot_at": snapshot_at}}
+    _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+def _ensure_strategy_exists(strategy_id: str) -> None:
+    if read_store.get_strategy_spec(strategy_id) or strategy_id in _STRATEGY_BFF_OVERLAY:
+        return
+    raise _bff_error(
+        404, ErrorCode.OBJECT_NOT_FOUND,
+        "Strategy not found",
+        f"Strategy {strategy_id} does not exist",
+    )
+
+
+@app.get("/bff/strategies/{strategy_id}/specs")
+async def bff_list_strategy_specs(
+    strategy_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: spec versions for a strategy."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _ensure_strategy_exists(strategy_id)
+    snapshot_at = utc_now()
+    versions = read_store.list_strategy_spec_versions(strategy_id) or []
+    return {
+        "data": versions,
+        "items": versions,
+        "page_info": {"next_page_token": None, "total": len(versions)},
+        "meta": _read_surface_meta(
+            "strategy_specs", "strategy_spec_versions",
+            snapshot_at=snapshot_at, total=len(versions),
+        ),
+    }
+
+
+@app.post("/bff/strategies/{strategy_id}/specs", status_code=201)
+async def bff_create_strategy_spec(
+    strategy_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: create new spec version stub for a strategy."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    _ensure_strategy_exists(strategy_id)
+    request_hash = _stable_json_hash(
+        {"route": "POST /bff/strategies/{id}/specs", "id": strategy_id, "payload": payload}
+    )
+    cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    snapshot_at = utc_now()
+    spec_version_id = f"spec-{strategy_id}-{uuid.uuid4().hex[:8]}"
+    result = {
+        "data": {
+            "strategy_id": strategy_id,
+            "spec_version_id": spec_version_id,
+            "spec_version": str(payload.get("version") or "draft"),
+            "lifecycle_state": "draft",
+            "created_at": snapshot_at,
+            "created_by": identity.operator_id,
+            "params": payload.get("params") or {},
+        },
+        "meta": {"snapshot_at": snapshot_at},
+    }
+    _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/strategies/{strategy_id}/experiments")
+async def bff_list_strategy_experiments(
+    strategy_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: experiments related to a strategy."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _ensure_strategy_exists(strategy_id)
+    snapshot_at = utc_now()
+    raw = read_store.list_research_experiments() or []
+    items = [e for e in raw if (e.get("linked_strategy_id") or e.get("strategy_id")) == strategy_id]
+    return {
+        "data": items,
+        "items": items,
+        "page_info": {"next_page_token": None, "total": len(items)},
+        "meta": _read_surface_meta(
+            "research_experiments", "strategy_experiments",
+            snapshot_at=snapshot_at, total=len(items),
+        ),
+    }
+
+
+@app.get("/bff/strategies/{strategy_id}/artifacts")
+async def bff_list_strategy_artifacts(
+    strategy_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: artifacts produced for a strategy."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _ensure_strategy_exists(strategy_id)
+    snapshot_at = utc_now()
+    raw = read_store.list_research_artifacts() or []
+    items = [a for a in raw if (a.get("linked_strategy_id") or a.get("strategy_id")) == strategy_id]
+    return {
+        "data": items,
+        "items": items,
+        "page_info": {"next_page_token": None, "total": len(items)},
+        "meta": _read_surface_meta(
+            "research_artifacts", "strategy_artifacts",
+            snapshot_at=snapshot_at, total=len(items),
+        ),
+    }
+
+
+@app.get("/bff/strategies/{strategy_id}/lineage")
+async def bff_get_strategy_lineage(
+    strategy_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: lineage subgraph rooted at a strategy."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _ensure_strategy_exists(strategy_id)
+    snapshot_at = utc_now()
+    edges = read_store.list_lineage_edges() or []
+    nodes_seen: set[str] = set()
+    related = []
+    for edge in edges:
+        node_keys = (
+            str(edge.get("from_artifact_id") or edge.get("source_id") or ""),
+            str(edge.get("to_artifact_id") or edge.get("target_id") or ""),
+            str(edge.get("strategy_id") or ""),
+        )
+        if strategy_id in node_keys:
+            related.append(edge)
+            for key in node_keys:
+                if key:
+                    nodes_seen.add(key)
+    nodes_seen.add(strategy_id)
+    return {
+        "data": {
+            "strategy_id": strategy_id,
+            "edges": related,
+            "node_ids": sorted(nodes_seen),
+        },
+        "meta": _read_surface_meta(
+            "lineage_edges", "strategy_lineage",
+            snapshot_at=snapshot_at, total=len(related),
+        ),
+    }
+
+
+def _filter_audit_events_by_target(events: List[Dict[str, Any]], target_id: str) -> List[Dict[str, Any]]:
+    return [
+        event for event in events
+        if str(event.get("target_id") or event.get("subject_id") or event.get("entity_id") or "") == target_id
+    ]
+
+
+@app.get("/bff/strategies/{strategy_id}/audit")
+async def bff_get_strategy_audit(
+    strategy_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: audit trail for a strategy."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _ensure_strategy_exists(strategy_id)
+    snapshot_at = utc_now()
+    events = read_store.list_governance_audit_events(target_type="strategy") or []
+    filtered = _filter_audit_events_by_target(events, strategy_id)
+    return {
+        "data": filtered,
+        "items": filtered,
+        "page_info": {"next_page_token": None, "total": len(filtered)},
+        "meta": _read_surface_meta(
+            "governance_audit_events", "strategy_audit",
+            snapshot_at=snapshot_at, total=len(filtered),
+        ),
+    }
+
+
+@app.post("/bff/strategies/{strategy_id}/actions/{action_id}", status_code=202)
+async def bff_strategy_action(
+    strategy_id: str,
+    action_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: strategy action — routes through command/precondition machinery."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    _ensure_strategy_exists(strategy_id)
+    return _strategy_persona_action_command(
+        entity_type=ObjectType.STRATEGY,
+        entity_id=strategy_id,
+        action_id=action_id,
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=payload,
+        command_type=CommandType.STRATEGY_ACTION,
+    )
+
+
+@app.post("/bff/strategies/{strategy_id}/dry-run", status_code=202)
+async def bff_strategy_dry_run(
+    strategy_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: launch a strategy dry-run; returns a stub run handle."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    _ensure_strategy_exists(strategy_id)
+    request_hash = _stable_json_hash(
+        {"route": "POST /bff/strategies/{id}/dry-run", "id": strategy_id, "payload": payload}
+    )
+    cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    snapshot_at = utc_now()
+    run_id = f"dryrun-{strategy_id}-{uuid.uuid4().hex[:8]}"
+    result = {
+        "data": {
+            "run_id": run_id,
+            "strategy_id": strategy_id,
+            "status": "queued",
+            "started_at": snapshot_at,
+            "params": payload.get("params") or payload,
+            "requested_by": identity.operator_id,
+        },
+        "meta": {"snapshot_at": snapshot_at},
+    }
+    _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+# ---------------- /bff/personas routes ----------------
+
+@app.get("/bff/personas")
+async def bff_list_personas(
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: persona list (execute-plans Persona DTO compatibility)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    raw_personas = _list_persona_records()
+    items = []
+    for raw in raw_personas:
+        persona_id = str(raw.get("persona_id") or raw.get("id") or "")
+        overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
+        routed = _routed_strategies_for_persona(persona_id)
+        dto = _project_persona_dto(raw, overlay=overlay, routed_strategies=routed)
+        items.append(dto)
+    if state:
+        items = [p for p in items if p.get("state") == state]
+    if archetype:
+        items = [p for p in items if p.get("archetype") == archetype]
+    total = len(items)
+    page_items, next_page_token = _page_slice(items, page_token, page_size)
+    return {
+        "data": page_items,
+        "items": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta(
+            "personas", "persona_list",
+            snapshot_at=snapshot_at, total=total,
+        ),
+    }
+
+
+@app.post("/bff/personas", status_code=201)
+async def bff_create_persona(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: create persona stub (execute-plans compatibility)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/personas", "payload": payload})
+    cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise _bff_error(
+            422, ErrorCode.INVALID_PARAMS, "name is required",
+            "Persona name must be a non-empty string",
+            precondition_failed="name",
+        )
+    snapshot_at = utc_now()
+    persona_id = f"persona-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+    overlay = {
+        "id": persona_id,
+        "name": name,
+        "owner": str(payload.get("owner") or identity.operator_id),
+        "updatedAt": snapshot_at,
+        "state": _normalize_lifecycle_state(payload.get("state") or "draft"),
+        "risk": _normalize_risk_level(payload.get("risk")),
+        "archetype": str(payload.get("archetype") or "generalist"),
+        "routedStrategies": int(payload.get("routedStrategies") or 0),
+        "successRate": float(payload.get("successRate") or 0.0),
+        "labelKey": f"persona.{persona_id}",
+    }
+    _PERSONA_BFF_OVERLAY[persona_id] = overlay
+    result = {
+        "data": overlay,
+        "meta": {"snapshot_at": snapshot_at},
+    }
+    _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/personas/{persona_id}")
+async def bff_get_persona(
+    persona_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: persona detail."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
+    raw = read_store.get_persona(persona_id)
+    if not raw and not overlay:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Persona not found",
+            f"Persona {persona_id} does not exist",
+        )
+    base = raw or {"persona_id": persona_id, "name": (overlay or {}).get("name")}
+    routed = _routed_strategies_for_persona(persona_id)
+    dto = _project_persona_dto(base, overlay=overlay, routed_strategies=routed)
+    return {
+        "data": dto,
+        "meta": _read_surface_meta(
+            "personas", "persona_detail",
+            snapshot_at=snapshot_at,
+        ),
+    }
+
+
+@app.patch("/bff/personas/{persona_id}")
+async def bff_patch_persona(
+    persona_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: patch persona overlay fields."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash(
+        {"route": "PATCH /bff/personas/{persona_id}", "id": persona_id, "payload": payload}
+    )
+    cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    raw = read_store.get_persona(persona_id)
+    overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
+    if not raw and not overlay:
+        raise _bff_error(
+            404, ErrorCode.OBJECT_NOT_FOUND,
+            "Persona not found",
+            f"Persona {persona_id} does not exist",
+        )
+    snapshot_at = utc_now()
+    base = dict(overlay) if overlay else {}
+    if not base:
+        routed = _routed_strategies_for_persona(persona_id)
+        base = _project_persona_dto(raw or {"persona_id": persona_id}, routed_strategies=routed)
+    for field in (
+        "name", "owner", "state", "risk",
+        "archetype", "routedStrategies", "successRate",
+        "availableActions",
+    ):
+        if field in payload:
+            base[field] = payload[field]
+    if "state" in payload:
+        base["state"] = _normalize_lifecycle_state(payload["state"])
+    if "risk" in payload:
+        base["risk"] = _normalize_risk_level(payload["risk"])
+    base["updatedAt"] = snapshot_at
+    base["id"] = persona_id
+    _PERSONA_BFF_OVERLAY[persona_id] = base
+    result = {"data": base, "meta": {"snapshot_at": snapshot_at}}
+    _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+def _ensure_persona_exists(persona_id: str) -> None:
+    if read_store.get_persona(persona_id) or persona_id in _PERSONA_BFF_OVERLAY:
+        return
+    raise _bff_error(
+        404, ErrorCode.OBJECT_NOT_FOUND,
+        "Persona not found",
+        f"Persona {persona_id} does not exist",
+    )
+
+
+@app.get("/bff/personas/{persona_id}/route-policy")
+async def bff_get_persona_route_policy(
+    persona_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: persona route policy."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _ensure_persona_exists(persona_id)
+    snapshot_at = utc_now()
+    policy = None
+    fetcher = getattr(read_store, "get_route_policy_for_persona", None)
+    if callable(fetcher):
+        policy = fetcher(persona_id)
+    if not policy:
+        consult_policy = None
+        consult_fetcher = getattr(read_store, "get_persona_consult_policy", None)
+        if callable(consult_fetcher):
+            consult_policy = consult_fetcher(persona_id)
+        policy = {
+            "personaId": persona_id,
+            "version": "v1",
+            "rules": [],
+            "consult_policy": consult_policy,
+        }
+    return {
+        "data": policy,
+        "meta": _read_surface_meta(
+            "personas", "persona_route_policy",
+            snapshot_at=snapshot_at,
+        ),
+    }
+
+
+@app.get("/bff/personas/{persona_id}/activity")
+async def bff_get_persona_activity(
+    persona_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: persona activity (sessions + recent consultations)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _ensure_persona_exists(persona_id)
+    snapshot_at = utc_now()
+    sessions = read_store.get_sessions_for_persona(persona_id) or []
+    consultations: List[Dict[str, Any]] = []
+    consult_fetcher = getattr(read_store, "list_consultations_for_persona", None)
+    if callable(consult_fetcher):
+        consultations = consult_fetcher(persona_id) or []
+    activity = {
+        "personaId": persona_id,
+        "sessions": sessions,
+        "consultations": consultations,
+    }
+    return {
+        "data": activity,
+        "meta": _read_surface_meta(
+            "personas", "persona_activity",
+            snapshot_at=snapshot_at, total=len(sessions) + len(consultations),
+        ),
+    }
+
+
+@app.get("/bff/personas/{persona_id}/evaluations")
+async def bff_get_persona_evaluations(
+    persona_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: persona evaluations (teaching sessions stand in until evaluation runs ship)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _ensure_persona_exists(persona_id)
+    snapshot_at = utc_now()
+    teaching = read_store.get_teaching_sessions_for_persona(persona_id) or []
+    return {
+        "data": teaching,
+        "items": teaching,
+        "page_info": {"next_page_token": None, "total": len(teaching)},
+        "meta": _read_surface_meta(
+            "personas", "persona_evaluations",
+            snapshot_at=snapshot_at, total=len(teaching),
+        ),
+    }
+
+
+@app.get("/bff/personas/{persona_id}/memory")
+async def bff_get_persona_memory(
+    persona_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: persona memory updates."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _ensure_persona_exists(persona_id)
+    snapshot_at = utc_now()
+    memory: List[Dict[str, Any]] = []
+    fetcher = getattr(read_store, "list_memory_updates_for_persona", None)
+    if callable(fetcher):
+        memory = fetcher(persona_id) or []
+    return {
+        "data": memory,
+        "items": memory,
+        "page_info": {"next_page_token": None, "total": len(memory)},
+        "meta": _read_surface_meta(
+            "personas", "persona_memory",
+            snapshot_at=snapshot_at, total=len(memory),
+        ),
+    }
+
+
+@app.get("/bff/personas/{persona_id}/audit")
+async def bff_get_persona_audit(
+    persona_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: audit trail for a persona."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _ensure_persona_exists(persona_id)
+    snapshot_at = utc_now()
+    events = read_store.list_governance_audit_events(target_type="persona") or []
+    filtered = _filter_audit_events_by_target(events, persona_id)
+    return {
+        "data": filtered,
+        "items": filtered,
+        "page_info": {"next_page_token": None, "total": len(filtered)},
+        "meta": _read_surface_meta(
+            "governance_audit_events", "persona_audit",
+            snapshot_at=snapshot_at, total=len(filtered),
+        ),
+    }
+
+
+@app.post("/bff/personas/{persona_id}/actions/{action_id}", status_code=202)
+async def bff_persona_action(
+    persona_id: str,
+    action_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: persona action — routes through command/precondition machinery."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    _ensure_persona_exists(persona_id)
+    return _strategy_persona_action_command(
+        entity_type=ObjectType.PERSONA,
+        entity_id=persona_id,
+        action_id=action_id,
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=payload,
+        command_type=CommandType.PERSONA_ACTION,
+    )
+
+
+@app.post("/bff/personas/{persona_id}/test-prompt", status_code=202)
+async def bff_persona_test_prompt(
+    persona_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: send a test prompt to a persona; returns a stub trial handle."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    _ensure_persona_exists(persona_id)
+    request_hash = _stable_json_hash(
+        {"route": "POST /bff/personas/{id}/test-prompt", "id": persona_id, "payload": payload}
+    )
+    cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    prompt = str(payload.get("prompt") or "").strip()
+    if not prompt:
+        raise _bff_error(
+            422, ErrorCode.INVALID_PARAMS, "prompt is required",
+            "Persona test-prompt requires a non-empty prompt",
+            precondition_failed="prompt",
+        )
+    snapshot_at = utc_now()
+    trial_id = f"prompt-{persona_id}-{uuid.uuid4().hex[:8]}"
+    result = {
+        "data": {
+            "trial_id": trial_id,
+            "persona_id": persona_id,
+            "status": "queued",
+            "queued_at": snapshot_at,
+            "prompt": prompt,
+            "params": payload.get("params") or {},
+            "requested_by": identity.operator_id,
+        },
+        "meta": {"snapshot_at": snapshot_at},
+    }
+    _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+# ---------------- Platform helpers ----------------
+
+@app.get("/bff/search")
+async def bff_search(
+    q: str = Query(default=""),
+    types: Optional[str] = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: cross-entity search across strategies, personas, and capital pools."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    needle = q.strip().lower()
+    requested_types: Optional[set[str]] = None
+    if types:
+        requested_types = {t.strip().lower() for t in types.split(",") if t.strip()}
+
+    results: List[Dict[str, Any]] = []
+
+    def _match(text: Any) -> bool:
+        if not needle:
+            return True
+        return needle in str(text or "").lower()
+
+    if not requested_types or "strategy" in requested_types:
+        for summary in _list_strategy_summaries():
+            strategy_id = str(summary.get("strategy_id") or "")
+            name = summary.get("title") or strategy_id
+            if _match(strategy_id) or _match(name):
+                results.append({
+                    "id": strategy_id,
+                    "type": "strategy",
+                    "name": str(name),
+                    "state": _normalize_lifecycle_state(summary.get("lifecycle_state")),
+                    "owner": str(summary.get("owner") or "pantheon-bff"),
+                    "risk": "medium",
+                    "updatedAt": summary.get("last_modified_at") or snapshot_at,
+                })
+
+    if not requested_types or "persona" in requested_types:
+        for raw in _list_persona_records():
+            persona_id = str(raw.get("persona_id") or raw.get("id") or "")
+            name = raw.get("name") or persona_id
+            if _match(persona_id) or _match(name):
+                metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+                results.append({
+                    "id": persona_id,
+                    "type": "persona",
+                    "name": str(name),
+                    "state": _normalize_lifecycle_state(raw.get("lifecycle_state")),
+                    "owner": str(metadata.get("owner") or raw.get("owner") or "pantheon-bff"),
+                    "risk": _normalize_risk_level(metadata.get("risk_level")),
+                    "updatedAt": raw.get("updated_at") or raw.get("created_at") or snapshot_at,
+                })
+
+    if not requested_types or "capital_pool" in requested_types or "capitalPool" in requested_types:
+        for pool in (read_store.list_capital_pools() or []):
+            pool_id = str(pool.get("id") or pool.get("pool_id") or "")
+            name = pool.get("name") or pool_id
+            if _match(pool_id) or _match(name):
+                results.append({
+                    "id": pool_id,
+                    "type": "capital_pool",
+                    "name": str(name),
+                    "state": _normalize_lifecycle_state(pool.get("status")),
+                    "owner": str(pool.get("owner") or "pantheon-bff"),
+                    "risk": _normalize_risk_level(pool.get("risk_level")),
+                    "updatedAt": pool.get("updated_at") or pool.get("created_at") or snapshot_at,
+                })
+
+    capped = results[:limit]
+    return {
+        "data": capped,
+        "items": capped,
+        "page_info": {"next_page_token": None, "total": len(results), "returned": len(capped)},
+        "meta": _read_surface_meta(
+            "personas", "search",
+            snapshot_at=snapshot_at, total=len(capped),
+        ),
+    }
+
+
+@app.get("/bff/types")
+async def bff_types_compat(
+    authorization: Optional[str] = Header(default=None),
+):
+    """
+    Source-reference compatibility decision for /bff/types.
+
+    The execute-plans repo declares its DTO universe in
+    `src/lib/bff/types.ts`; the Pantheon BFF mirrors that shape for the
+    surfaces it serves. This endpoint returns the canonical compatibility
+    map so frontend tooling can validate that a Pantheon deployment
+    advertises the expected entity DTOs without scraping route inventories.
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return {
+        "data": {
+            "types_source": "execute-plans/src/lib/bff/types.ts",
+            "exported_entities": [
+                "Strategy", "Persona", "CapitalPool", "RankingFormula",
+                "Rebalance", "Deployment", "Runtime", "EvolutionProgram",
+                "ResearchExperiment", "Artifact", "Job", "Alert", "Incident",
+                "ApprovalRequest", "AuditEvent", "SearchResult",
+                "Tool", "McpServer", "McpTool", "Skill", "Channel",
+                "RoutePolicy", "PolicyVersion", "PermissionMatrix",
+                "MemoryUpdate", "EvolutionRun", "EvolutionCandidate",
+                "FitnessFormula", "MutationRule", "AllocationSimulation",
+                "PolicyViolation", "EvaluationRun", "ObjectVersion",
+                "FeatureSet", "PerformanceSeries", "Watcher",
+                "DecisionJournalEntry", "AllocationLimit", "PoolFreeze",
+                "DeploymentStage", "McpSecret", "PromotionRecord",
+                "MetricFreeze", "RebalanceOverride",
+            ],
+            "served_by": "pantheon-bff",
+            "compatibility_decision": "execute-plans/src/lib/bff/types.ts is the canonical TypeScript declaration; the Pantheon BFF projects to it for /bff/* surfaces.",
+        },
+        "meta": {"snapshot_at": utc_now()},
+    }
+
+
 _V5_INTERVENTIONS_STORE: List[Dict[str, Any]] = []
 
 
@@ -14974,6 +16840,115 @@ async def stream_generic_events(
     return _handle_sse_stream(channel, _sse_buffers[channel], _sse_subscribers[channel], last_event_id)
 
 
+# --------------------------------------------------------------------------- #
+# Execute-Plans SSE Compatibility Aliases (BFF-LUV-GAP-010)
+# --------------------------------------------------------------------------- #
+
+@app.get("/bff/events/stream")
+async def bff_events_stream_alias(
+    channel: str = Query(..., description="SSE channel name"),
+    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Alias for generic stream with Part 06 naming."""
+    return await stream_generic_events(channel, last_event_id, authorization)
+
+
+@app.get("/bff/sse/notifications")
+async def bff_sse_notifications_alias(
+    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Alias for inbox channel notifications."""
+    return await stream_generic_events("inbox", last_event_id, authorization)
+
+
+@app.get("/bff/sse/command-center/kpi")
+async def bff_sse_cc_kpi_alias(
+    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Alias for ranking channel KPI updates."""
+    return await stream_generic_events("ranking", last_event_id, authorization)
+
+
+@app.get("/bff/sse/command-center/events")
+async def bff_sse_cc_events_alias(
+    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Alias for loop channel system events."""
+    return await stream_generic_events("loop", last_event_id, authorization)
+
+
+@app.get("/bff/sse/jobs/{jobId}/progress")
+async def bff_sse_job_progress_alias(
+    jobId: str,
+    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Alias for tool channel job progress updates."""
+    # Note: substrate is channel-based; client filters by jobId in payload.
+    return await stream_generic_events("tool", last_event_id, authorization)
+
+
+@app.get("/bff/sse/alerts")
+async def bff_sse_alerts_alias(
+    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Alias for sentinel channel alerts."""
+    return await stream_generic_events("sentinel", last_event_id, authorization)
+
+
+@app.get("/bff/sse/incidents/{incidentId}/timeline")
+async def bff_sse_incident_timeline_alias(
+    incidentId: str,
+    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Alias for journal channel incident timeline events."""
+    # Maps to journal channel which aggregates incident events.
+    return await stream_generic_events("journal", last_event_id, authorization)
+
+
+@app.get("/bff/sse/deployment/events")
+async def bff_sse_deployment_events_alias(
+    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Alias for artifact channel deployment events."""
+    return await stream_generic_events("artifact", last_event_id, authorization)
+
+
+@app.get("/bff/sse/review/updates")
+async def bff_sse_review_updates_alias(
+    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Alias for approval channel review updates."""
+    return await stream_approval_events(last_event_id, authorization)
+
+
+@app.get("/bff/sse/agora/signals")
+async def bff_sse_agora_signals_alias(
+    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Alias for signal channel Agora signals."""
+    return await stream_generic_events("signal", last_event_id, authorization)
+
+
+@app.get("/bff/sse/agora/sessions/{sessionId}")
+async def bff_sse_agora_session_alias(
+    sessionId: str,
+    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Alias for ask channel Agora session messages."""
+    return await stream_ask_events(last_event_id, authorization)
+
+
 @app.post("/api/v1/internal/sse/publish")
 async def publish_sse_event(
     event_type: str = Query(..., description="Event type: runtime_state_changed, incident_created, etc."),
@@ -15040,6 +17015,708 @@ async def publish_sse_event(
     )
 
     return {"event_id": event_id, "status": "published"}
+
+
+# --------------------------------------------------------------------------- #
+# Tools, MCP servers, and Skills BFF compatibility (BFF-LUV-GAP-008)
+# --------------------------------------------------------------------------- #
+
+_TOOLS_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+_MCP_SERVER_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+_SKILLS_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+
+# In-memory registries for BFF-local dev/test state (not a durable store).
+_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {}
+_MCP_SERVER_REGISTRY: Dict[str, Dict[str, Any]] = {}
+_SKILL_REGISTRY: Dict[str, Dict[str, Any]] = {}
+
+
+def _tools_bff_idempotency_check(resolved_key: str, request_hash: str) -> Optional[Dict[str, Any]]:
+    existing = _TOOLS_BFF_IDEMPOTENCY.get(resolved_key)
+    if existing is None:
+        return None
+    if existing.get("request_hash") != request_hash:
+        raise _bff_error(
+            409, ErrorCode.IDEMPOTENCY_CONFLICT,
+            "Idempotency key was already used with a different payload",
+            f"Key {resolved_key!r} is bound to a different request hash",
+            precondition_failed="idempotency_conflict",
+            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+        )
+    return existing.get("result")
+
+
+def _skills_bff_idempotency_check(resolved_key: str, request_hash: str) -> Optional[Dict[str, Any]]:
+    existing = _SKILLS_BFF_IDEMPOTENCY.get(resolved_key)
+    if existing is None:
+        return None
+    if existing.get("request_hash") != request_hash:
+        raise _bff_error(
+            409, ErrorCode.IDEMPOTENCY_CONFLICT,
+            "Idempotency key was already used with a different payload",
+            f"Key {resolved_key!r} is bound to a different request hash",
+            precondition_failed="idempotency_conflict",
+            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+        )
+    return existing.get("result")
+
+
+def _mcp_server_bff_idempotency_check(resolved_key: str, request_hash: str) -> Optional[Dict[str, Any]]:
+    existing = _MCP_SERVER_BFF_IDEMPOTENCY.get(resolved_key)
+    if existing is None:
+        return None
+    if existing.get("request_hash") != request_hash:
+        raise _bff_error(
+            409, ErrorCode.IDEMPOTENCY_CONFLICT,
+            "Idempotency key was already used with a different payload",
+            f"Key {resolved_key!r} is bound to a different request hash",
+            precondition_failed="idempotency_conflict",
+            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+        )
+    return existing.get("result")
+
+
+def _tools_mcp_skills_action_command(
+    entity_type: ObjectType,
+    entity_id: str,
+    action_id: str,
+    resolved_key: str,
+    identity: Any,
+    payload: Dict[str, Any],
+    command_type: CommandType,
+    idempotency_store: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Submit a tool / MCP server / skill resource action through the command store."""
+    request_hash = _stable_json_hash({
+        "route": f"POST /bff/{entity_type.value.lower()}/{{id}}/actions",
+        "entity_type": entity_type.value,
+        "entity_id": entity_id,
+        "action_id": action_id,
+        "payload": payload,
+    })
+    existing = idempotency_store.get(resolved_key)
+    if existing is not None:
+        if existing.get("request_hash") != request_hash:
+            raise _bff_error(
+                409, ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key was already used with a different payload",
+                f"Key {resolved_key!r} is bound to a different request hash",
+                precondition_failed="idempotency_conflict",
+                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+            )
+        return existing["result"]
+
+    catalog_entry = get_catalog_entry(command_type.value)
+    staleness_warning = _check_read_surface_state()
+    command_id = str(uuid.uuid4())
+    submitted_at = utc_now()
+    target = TargetObject(type=entity_type, id=entity_id)
+    audit_record = {
+        "operator_id": identity.operator_id,
+        "roles_at_submission": identity.roles,
+        "action_id": action_id,
+        "preconditions_checked": ["authentication", "authorization", "idempotency"],
+        "timestamp": submitted_at,
+        "idempotency_key": resolved_key,
+        "request_hash": request_hash,
+        "catalog_entry": catalog_entry.action_id if catalog_entry else None,
+    }
+    foundation_ctx = {
+        "idempotency_record": {
+            "idempotency_key": resolved_key,
+            "request_hash": request_hash,
+            "operation_type": f"bff.{command_type.value}",
+            "target_ref": f"{entity_type.value}:{entity_id}",
+            "trace_id": None,
+        },
+    }
+    command_store.submit_command(
+        command_id=command_id,
+        command_type=command_type,
+        target=target,
+        submitted_at=submitted_at,
+        params={"action_id": action_id, **payload},
+        audit_context=audit_record,
+        foundation_context=foundation_ctx,
+    )
+    result = _project_final_command_response(
+        command_id=command_id,
+        command=command_type,
+        accepted_at=submitted_at,
+        status=CommandStatus.SUBMITTED,
+        staleness_warning=staleness_warning,
+    )
+    payload_dump: Dict[str, Any]
+    if hasattr(result, "model_dump"):
+        payload_dump = result.model_dump(mode="json")
+    elif isinstance(result, dict):
+        payload_dump = result
+    else:
+        payload_dump = {"data": result}
+    idempotency_store[resolved_key] = {"request_hash": request_hash, "result": payload_dump}
+    return payload_dump
+
+
+# ---------------- /bff/tools routes ----------------
+
+@app.get("/bff/tools")
+async def bff_list_tools(
+    status: Optional[str] = None,
+    tool_class: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: tool registry list (Part 06 compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    items = list(_TOOL_REGISTRY.values())
+    if status:
+        items = [t for t in items if t.get("status") == status]
+    if tool_class:
+        items = [t for t in items if t.get("tool_class") == tool_class]
+    total = len(items)
+    page_items, next_page_token = _page_slice(items, page_token, page_size)
+    return {
+        "data": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta("tools", "tool_list", snapshot_at=snapshot_at, total=total),
+    }
+
+
+@app.post("/bff/tools", status_code=201)
+async def bff_create_tool(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: create generic tool metadata record (Part 06 compatibility surface).
+
+    Note: MCP-sourced tools must be created via the import route
+    (POST /bff/v1/mcp/servers/{id}/import-tools). This route is for
+    non-MCP generic tool descriptors only; MCP tool standalone-create is
+    superseded by the import contract.
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/tools", "payload": payload})
+    cached = _tools_bff_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise _bff_error(
+            422, ErrorCode.INVALID_PARAMS, "name is required",
+            "Tool name must be a non-empty string",
+            precondition_failed="name",
+        )
+    snapshot_at = utc_now()
+    tool_id = f"tool-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+    result = {
+        "id": tool_id,
+        "tool_id": tool_id,
+        "name": name,
+        "status": "draft",
+        "tool_class": payload.get("tool_class") or "generic",
+        "description": payload.get("description") or "",
+        "input_schema": payload.get("input_schema") or {},
+        "output_schema": payload.get("output_schema") or {},
+        "mcp_sourced": False,
+        "created_at": snapshot_at,
+        "updated_at": snapshot_at,
+        "created_by": identity.operator_id,
+    }
+    _TOOL_REGISTRY[tool_id] = result
+    _TOOLS_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/tools/{tool_id}")
+async def bff_get_tool(
+    tool_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: tool detail (Part 06 compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    clean_id = str(tool_id or "").strip()
+    if not clean_id:
+        raise _bff_error(422, ErrorCode.INVALID_PARAMS, "tool_id is required", "tool_id path parameter must be a non-empty string", precondition_failed="tool_id")
+    record = _TOOL_REGISTRY.get(clean_id)
+    if record is None:
+        # Also search MCP tool registry for MCP-imported tools.
+        for reg_key, reg_record in _MCP_TOOL_REGISTRY.items():
+            if reg_record.get("tool_id") == clean_id:
+                record = {
+                    "id": clean_id,
+                    "tool_id": clean_id,
+                    "name": reg_record.get("name", clean_id),
+                    "status": reg_record.get("status", "imported"),
+                    "tool_class": reg_record.get("tool_class", ""),
+                    "mcp_sourced": True,
+                    "server_id": reg_record.get("server_id"),
+                    "updated_at": utc_now(),
+                }
+                break
+    if record is None:
+        raise _bff_error(404, ErrorCode.OBJECT_NOT_FOUND, "Tool not found", f"tool_id={clean_id!r} is not registered", precondition_failed="tool_id")
+    return record
+
+
+@app.patch("/bff/tools/{tool_id}")
+async def bff_patch_tool(
+    tool_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: patch generic tool metadata (Part 06 compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    clean_id = str(tool_id or "").strip()
+    if not clean_id:
+        raise _bff_error(422, ErrorCode.INVALID_PARAMS, "tool_id is required", "tool_id path parameter must be a non-empty string", precondition_failed="tool_id")
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "PATCH /bff/tools/{tool_id}", "id": clean_id, "payload": payload})
+    cached = _tools_bff_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    record = _TOOL_REGISTRY.get(clean_id)
+    if record is None:
+        raise _bff_error(404, ErrorCode.OBJECT_NOT_FOUND, "Tool not found", f"tool_id={clean_id!r} is not registered", precondition_failed="tool_id")
+    allowed_patches = {"name", "description", "status", "input_schema", "output_schema", "tool_class"}
+    for field in allowed_patches:
+        if field in payload:
+            record[field] = payload[field]
+    record["updated_at"] = utc_now()
+    _TOOLS_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": record}
+    return record
+
+
+@app.post("/bff/tools/{tool_id}/actions/{action_id}", status_code=202)
+async def bff_tool_action(
+    tool_id: str,
+    action_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: tool action — routes through command/precondition machinery."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    clean_id = str(tool_id or "").strip()
+    if not clean_id:
+        raise _bff_error(422, ErrorCode.INVALID_PARAMS, "tool_id is required", "tool_id path parameter must be a non-empty string", precondition_failed="tool_id")
+    return _tools_mcp_skills_action_command(
+        entity_type=ObjectType.TOOL,
+        entity_id=clean_id,
+        action_id=action_id,
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=payload,
+        command_type=CommandType.TOOL_ACTION,
+        idempotency_store=_TOOLS_BFF_IDEMPOTENCY,
+    )
+
+
+# ---------------- /bff/mcp/servers routes (Part 06 compatibility) ----------------
+# These routes provide the Part 06 MCP server management surface.
+# The final MCP import contract (/bff/v1/mcp/servers/{id}/import-tools and
+# /bff/mcp-servers/{id}/import-tools) is preserved and unaffected.
+
+@app.get("/bff/mcp/servers")
+async def bff_list_mcp_servers(
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: MCP server list (Part 06 compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    items = list(_MCP_SERVER_REGISTRY.values())
+    if status:
+        items = [s for s in items if s.get("status") == status]
+    total = len(items)
+    page_items, next_page_token = _page_slice(items, page_token, page_size)
+    return {
+        "data": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta("mcp_servers", "mcp_server_list", snapshot_at=snapshot_at, total=total),
+    }
+
+
+@app.post("/bff/mcp/servers", status_code=201)
+async def bff_create_mcp_server(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: register an MCP server connection record (Part 06 compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_mcp_tool_write_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/mcp/servers", "payload": payload})
+    cached = _mcp_server_bff_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise _bff_error(
+            422, ErrorCode.INVALID_PARAMS, "name is required",
+            "MCP server name must be a non-empty string",
+            precondition_failed="name",
+        )
+    snapshot_at = utc_now()
+    server_id = f"mcp-srv-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+    result = {
+        "id": server_id,
+        "server_id": server_id,
+        "name": name,
+        "status": "registered",
+        "endpoint": payload.get("endpoint") or "",
+        "server_version": payload.get("server_version") or "",
+        "governance": payload.get("governance") or {},
+        "created_at": snapshot_at,
+        "updated_at": snapshot_at,
+        "created_by": identity.operator_id,
+    }
+    _MCP_SERVER_REGISTRY[server_id] = result
+    _MCP_SERVER_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/mcp/servers/{server_id}")
+async def bff_get_mcp_server(
+    server_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: MCP server detail (Part 06 compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    clean_id = _validate_mcp_server_id(server_id)
+    record = _MCP_SERVER_REGISTRY.get(clean_id)
+    if record is None:
+        raise _bff_error(404, ErrorCode.OBJECT_NOT_FOUND, "MCP server not found", f"server_id={clean_id!r} is not registered", precondition_failed="server_id")
+    return record
+
+
+@app.post("/bff/mcp/servers/{server_id}/actions/{action_id}", status_code=202)
+async def bff_mcp_server_action(
+    server_id: str,
+    action_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: MCP server action (Part 06 compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_mcp_tool_write_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    clean_id = _validate_mcp_server_id(server_id)
+    return _tools_mcp_skills_action_command(
+        entity_type=ObjectType.MCP_SERVER,
+        entity_id=clean_id,
+        action_id=action_id,
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=payload,
+        command_type=CommandType.MCP_SERVER_ACTION,
+        idempotency_store=_MCP_SERVER_BFF_IDEMPOTENCY,
+    )
+
+
+@app.get("/bff/mcp/servers/{server_id}/tools")
+async def bff_list_mcp_server_tools(
+    server_id: str,
+    authorization: Optional[str] = Header(default=None),
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+):
+    """BFF: list imported tools for a given MCP server (Part 06 compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    clean_id = _validate_mcp_server_id(server_id)
+    snapshot_at = utc_now()
+    tools = [
+        {
+            "tool_id": rec["tool_id"],
+            "name": rec.get("name", rec["tool_id"]),
+            "tool_class": rec.get("tool_class", ""),
+            "status": rec.get("status", "imported"),
+            "server_id": rec.get("server_id", clean_id),
+            "action_count": rec.get("action_count", 0),
+            "schema_url": rec.get("schema_url"),
+        }
+        for key, rec in _MCP_TOOL_REGISTRY.items()
+        if rec.get("server_id") == clean_id
+    ]
+    total = len(tools)
+    page_items, next_page_token = _page_slice(tools, page_token, page_size)
+    return {
+        "data": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta("mcp_tools", "mcp_server_tool_list", snapshot_at=snapshot_at, total=total),
+    }
+
+
+@app.post("/bff/mcp/tools/{tool_id}/actions/{action_id}", status_code=202)
+async def bff_mcp_tool_action_compat(
+    tool_id: str,
+    action_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: Part 06 MCP tool action compatibility alias.
+
+    Delegates to the final MCP tool action route
+    (POST /bff/mcp-tools/{tool_id}/{action}) when action_id matches a
+    lifecycle verb, otherwise routes through the generic command machinery.
+    """
+    identity = _extract_identity(authorization)
+    _require_mcp_tool_write_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    clean_tool_id = str(tool_id or "").strip()
+    if not clean_tool_id:
+        raise _bff_error(422, ErrorCode.INVALID_PARAMS, "tool_id is required", "tool_id path parameter must be a non-empty string", precondition_failed="tool_id")
+    # If action_id is a final MCP lifecycle verb, delegate to the final route handler.
+    lifecycle_verbs = {v.value for v in McpToolActionVerb}
+    if action_id in lifecycle_verbs:
+        return await admit_mcp_tool_action_alias(
+            tool_id=clean_tool_id,
+            action=McpToolActionVerb(action_id),
+            payload=payload,
+            authorization=authorization,
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
+        )
+    # Generic command path for non-lifecycle actions.
+    return _tools_mcp_skills_action_command(
+        entity_type=ObjectType.TOOL,
+        entity_id=clean_tool_id,
+        action_id=action_id,
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=payload,
+        command_type=CommandType.TOOL_ACTION,
+        idempotency_store=_TOOLS_BFF_IDEMPOTENCY,
+    )
+
+
+# ---------------- /bff/skills routes ----------------
+
+@app.get("/bff/skills")
+async def bff_list_skills(
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: skill registry list (Part 06 compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    items = list(_SKILL_REGISTRY.values())
+    if status:
+        items = [s for s in items if s.get("status") == status]
+    total = len(items)
+    page_items, next_page_token = _page_slice(items, page_token, page_size)
+    return {
+        "data": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta("skills", "skill_list", snapshot_at=snapshot_at, total=total),
+    }
+
+
+@app.post("/bff/skills", status_code=201)
+async def bff_create_skill(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: create skill record (Part 06 compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/skills", "payload": payload})
+    cached = _skills_bff_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise _bff_error(
+            422, ErrorCode.INVALID_PARAMS, "name is required",
+            "Skill name must be a non-empty string",
+            precondition_failed="name",
+        )
+    snapshot_at = utc_now()
+    skill_id = f"skill-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+    result = {
+        "id": skill_id,
+        "skill_id": skill_id,
+        "name": name,
+        "status": "draft",
+        "description": payload.get("description") or "",
+        "sandbox_enabled": bool(payload.get("sandbox_enabled", True)),
+        "input_schema": payload.get("input_schema") or {},
+        "output_schema": payload.get("output_schema") or {},
+        "created_at": snapshot_at,
+        "updated_at": snapshot_at,
+        "created_by": identity.operator_id,
+    }
+    _SKILL_REGISTRY[skill_id] = result
+    _SKILLS_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/skills/{skill_id}")
+async def bff_get_skill(
+    skill_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: skill detail (Part 06 compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    clean_id = str(skill_id or "").strip()
+    if not clean_id:
+        raise _bff_error(422, ErrorCode.INVALID_PARAMS, "skill_id is required", "skill_id path parameter must be a non-empty string", precondition_failed="skill_id")
+    record = _SKILL_REGISTRY.get(clean_id)
+    if record is None:
+        raise _bff_error(404, ErrorCode.OBJECT_NOT_FOUND, "Skill not found", f"skill_id={clean_id!r} is not registered", precondition_failed="skill_id")
+    return record
+
+
+@app.patch("/bff/skills/{skill_id}")
+async def bff_patch_skill(
+    skill_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: patch skill record (Part 06 compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    clean_id = str(skill_id or "").strip()
+    if not clean_id:
+        raise _bff_error(422, ErrorCode.INVALID_PARAMS, "skill_id is required", "skill_id path parameter must be a non-empty string", precondition_failed="skill_id")
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "PATCH /bff/skills/{skill_id}", "id": clean_id, "payload": payload})
+    cached = _skills_bff_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    record = _SKILL_REGISTRY.get(clean_id)
+    if record is None:
+        raise _bff_error(404, ErrorCode.OBJECT_NOT_FOUND, "Skill not found", f"skill_id={clean_id!r} is not registered", precondition_failed="skill_id")
+    allowed_patches = {"name", "description", "status", "sandbox_enabled", "input_schema", "output_schema"}
+    for field in allowed_patches:
+        if field in payload:
+            record[field] = payload[field]
+    record["updated_at"] = utc_now()
+    _SKILLS_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": record}
+    return record
+
+
+@app.post("/bff/skills/{skill_id}/actions/{action_id}", status_code=202)
+async def bff_skill_action(
+    skill_id: str,
+    action_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: skill action — routes through command/precondition machinery."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    clean_id = str(skill_id or "").strip()
+    if not clean_id:
+        raise _bff_error(422, ErrorCode.INVALID_PARAMS, "skill_id is required", "skill_id path parameter must be a non-empty string", precondition_failed="skill_id")
+    return _tools_mcp_skills_action_command(
+        entity_type=ObjectType.SKILL,
+        entity_id=clean_id,
+        action_id=action_id,
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=payload,
+        command_type=CommandType.SKILL_ACTION,
+        idempotency_store=_SKILLS_BFF_IDEMPOTENCY,
+    )
+
+
+@app.post("/bff/skills/{skill_id}/sandbox-eval", status_code=202)
+async def bff_skill_sandbox_eval(
+    skill_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: submit a skill sandbox evaluation job.
+
+    Returns a job/command envelope and audit record.  The sandbox eval
+    executes the skill in an isolated context against the provided inputs
+    without touching live execution paths.
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    clean_id = str(skill_id or "").strip()
+    if not clean_id:
+        raise _bff_error(422, ErrorCode.INVALID_PARAMS, "skill_id is required", "skill_id path parameter must be a non-empty string", precondition_failed="skill_id")
+    request_hash = _stable_json_hash({"route": "POST /bff/skills/{id}/sandbox-eval", "id": clean_id, "payload": payload})
+    cached = _skills_bff_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    snapshot_at = utc_now()
+    job_id = f"sandbox-eval-{clean_id}-{uuid.uuid4().hex[:10]}"
+    audit_record = {
+        "operator_id": identity.operator_id,
+        "roles_at_submission": identity.roles,
+        "action_id": "sandbox-eval",
+        "skill_id": clean_id,
+        "timestamp": snapshot_at,
+        "idempotency_key": resolved_key,
+    }
+    result = {
+        "job_id": job_id,
+        "skill_id": clean_id,
+        "status": "queued",
+        "sandbox_mode": True,
+        "inputs": payload.get("inputs") or {},
+        "submitted_at": snapshot_at,
+        "submitted_by": identity.operator_id,
+        "audit": audit_record,
+        "meta": {
+            "estimated_processing_time_ms": 3000,
+            "next_poll_after_ms": 500,
+        },
+    }
+    _SKILLS_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
 
 
 if __name__ == "__main__":

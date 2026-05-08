@@ -37,6 +37,19 @@ class CommandType(str, Enum):
     REJECT_MUTATION = "RejectMutation"
     RECORD_SPONSOR_DECISION = "RecordSponsorDecision"
     REMEDIATE_SENTINEL_INTERVENTION = "RemediateSentinelIntervention"
+    CAPITAL_POOL_ACTION = "CapitalPoolAction"
+    RANKING_FORMULA_ACTION = "RankingFormulaAction"
+    REBALANCE_ACTION = "RebalanceAction"
+    RANKING_ACTION = "RankingAction"
+    STRATEGY_ACTION = "StrategyAction"
+    PERSONA_ACTION = "PersonaAction"
+    AGORA_SIGNAL_FEEDBACK = "AgoraSignalFeedback"
+    AGORA_MESSAGE_ACTION = "AgoraMessageAction"
+    AGORA_INSIGHT_ACTION = "AgoraInsightAction"
+    AGORA_MEMORY_ACTION = "AgoraMemoryAction"
+    TOOL_ACTION = "ToolAction"
+    MCP_SERVER_ACTION = "McpServerAction"
+    SKILL_ACTION = "SkillAction"
 
 
 class ObjectType(str, Enum):
@@ -51,6 +64,18 @@ class ObjectType(str, Enum):
     PERSONA_CAPITAL_BINDING = "PersonaCapitalBinding"
     COMMITTEE_BOARD = "CommitteeBoard"
     SENTINEL_INTERVENTION = "SentinelIntervention"
+    RANKING_FORMULA = "RankingFormula"
+    REBALANCE = "Rebalance"
+    RANKING = "Ranking"
+    STRATEGY = "Strategy"
+    PERSONA = "Persona"
+    AGORA_SIGNAL = "AgoraSignal"
+    AGORA_MESSAGE = "AgoraMessage"
+    AGORA_INSIGHT = "AgoraInsight"
+    AGORA_MEMORY = "AgoraMemory"
+    TOOL = "Tool"
+    MCP_SERVER = "McpServer"
+    SKILL = "Skill"
 
 
 class CommandStatus(str, Enum):
