@@ -4832,6 +4832,15 @@ class ReadSurfaceStore:
         "decision_journal_entries": "decision_journal_entries",
         "decision_journal_idempotency": "decision_journal_idempotency",
         "agora_journal_audit_events": "agora_journal_audit_events",
+        "agora_signals": "agora_signals",
+        "agora_signal_feedback": "agora_signal_feedback",
+        "agora_watchlist": "agora_watchlist",
+        "agora_sessions": "agora_sessions",
+        "agora_training_examples": "agora_training_examples",
+        "agora_audit_events": "agora_audit_events",
+        "ranking_formulas": "ranking_formulas",
+        "rebalances": "rebalances",
+        "rankings": "rankings",
     }
 
     def __init__(
@@ -7198,6 +7207,61 @@ class ReadSurfaceStore:
             return self._project_canonical_capital_pool(raw) if raw else None
         return (self._local_fallback("capital_pools") or {}).get(pool_id)
 
+    def create_capital_pool(
+        self,
+        *,
+        pool_id: str,
+        name: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+        risk_policy_ref: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+        status: str = "draft",
+    ) -> Dict[str, Any]:
+        pools = self._local_fallback("capital_pools")
+        if pools is None:
+            pools = self._data.setdefault("capital_pools", {})
+        timestamp = created_at or _utc_now_rfc3339()
+        record = {
+            "id": pool_id,
+            "pool_id": pool_id,
+            "name": name,
+            "status": status,
+            "risk_policy_ref": risk_policy_ref,
+            "params": params or {},
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+        }
+        pools[pool_id] = record
+        self._save()
+        return record
+
+    def patch_capital_pool(
+        self,
+        pool_id: str,
+        *,
+        patch: Dict[str, Any],
+        actor_id: str,
+        updated_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        pools = self._local_fallback("capital_pools")
+        if pools is None:
+            pools = self._data.get("capital_pools")
+        if not pools:
+            return None
+        record = pools.get(pool_id)
+        if record is None:
+            return None
+        timestamp = updated_at or _utc_now_rfc3339()
+        for field in ("name", "status", "risk_policy_ref", "params"):
+            if field in patch:
+                record[field] = patch[field]
+        record["updated_at"] = timestamp
+        record["updated_by"] = actor_id
+        self._save()
+        return record
+
     def get_binding(self, binding_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not binding_id:
             return None
@@ -7239,6 +7303,156 @@ class ReadSurfaceStore:
             for binding in (self._local_fallback("persona_bindings") or {}).values()
             if binding.get("persona_id") == persona_id
         ]
+
+    # ------------------------------------------------------------------ #
+    # Ranking formulas
+    # ------------------------------------------------------------------ #
+
+    def list_ranking_formulas(
+        self,
+        status: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        items = list((self._local_fallback("ranking_formulas") or {}).values())
+        if status:
+            items = [i for i in items if i.get("status") == status]
+        return sorted(items, key=lambda x: x.get("id", ""))
+
+    def get_ranking_formula(self, formula_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not formula_id:
+            return None
+        return (self._local_fallback("ranking_formulas") or {}).get(formula_id)
+
+    def create_ranking_formula(
+        self,
+        *,
+        name: str,
+        description: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        formulas = self._local_fallback("ranking_formulas")
+        if formulas is None:
+            if not self._allow_local_snapshot_fallback:
+                self._data.setdefault("ranking_formulas", {})
+            formulas = self._data.setdefault("ranking_formulas", {})
+        timestamp = created_at or _utc_now_rfc3339()
+        formula_id = f"rf-{timestamp[:10].replace('-', '')}-{len(formulas) + 1:03d}"
+        while formula_id in formulas:
+            formula_id = f"rf-{timestamp[:10].replace('-', '')}-{len(formulas) + 2:03d}"
+        record = {
+            "id": formula_id,
+            "formula_id": formula_id,
+            "name": name,
+            "description": description,
+            "status": "active",
+            "params": params or {},
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+        }
+        formulas[formula_id] = record
+        self._save()
+        return record
+
+    def patch_ranking_formula(
+        self,
+        formula_id: str,
+        *,
+        patch: Dict[str, Any],
+        actor_id: str,
+        updated_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        formulas = self._local_fallback("ranking_formulas")
+        if formulas is None:
+            formulas = self._data.get("ranking_formulas")
+        if not formulas:
+            return None
+        record = formulas.get(formula_id)
+        if record is None:
+            return None
+        timestamp = updated_at or _utc_now_rfc3339()
+        for field in ("name", "description", "status", "params"):
+            if field in patch:
+                record[field] = patch[field]
+        record["updated_at"] = timestamp
+        record["updated_by"] = actor_id
+        self._save()
+        return record
+
+    # ------------------------------------------------------------------ #
+    # Rebalances
+    # ------------------------------------------------------------------ #
+
+    def list_rebalances(
+        self,
+        status: Optional[str] = None,
+        pool_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        items = list((self._local_fallback("rebalances") or {}).values())
+        if status:
+            items = [i for i in items if i.get("status") == status]
+        if pool_id:
+            items = [i for i in items if i.get("capital_pool_id") == pool_id]
+        return sorted(items, key=lambda x: str(x.get("created_at") or ""), reverse=True)
+
+    def get_rebalance(self, rebalance_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not rebalance_id:
+            return None
+        return (self._local_fallback("rebalances") or {}).get(rebalance_id)
+
+    def create_rebalance(
+        self,
+        *,
+        capital_pool_id: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+        reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        rebalances = self._local_fallback("rebalances")
+        if rebalances is None:
+            rebalances = self._data.setdefault("rebalances", {})
+        timestamp = created_at or _utc_now_rfc3339()
+        rebalance_id = f"rb-{timestamp[:10].replace('-', '')}-{len(rebalances) + 1:03d}"
+        while rebalance_id in rebalances:
+            rebalance_id = f"rb-{timestamp[:10].replace('-', '')}-{len(rebalances) + 2:03d}"
+        record = {
+            "id": rebalance_id,
+            "rebalance_id": rebalance_id,
+            "capital_pool_id": capital_pool_id,
+            "status": "pending",
+            "reason": reason or "",
+            "params": params or {},
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+            "command_audit": {
+                "submitted_by": actor_id,
+                "submitted_at": timestamp,
+            },
+        }
+        rebalances[rebalance_id] = record
+        self._save()
+        return record
+
+    # ------------------------------------------------------------------ #
+    # Rankings (full-spec long tail)
+    # ------------------------------------------------------------------ #
+
+    def list_rankings(
+        self,
+        status: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        items = list((self._local_fallback("rankings") or {}).values())
+        if status:
+            items = [i for i in items if i.get("status") == status]
+        return sorted(items, key=lambda x: x.get("id", ""))
+
+    def get_ranking(self, ranking_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not ranking_id:
+            return None
+        return (self._local_fallback("rankings") or {}).get(ranking_id)
 
     def get_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not persona_id:

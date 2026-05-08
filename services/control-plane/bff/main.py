@@ -13,7 +13,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-from fastapi import Body, FastAPI, HTTPException, BackgroundTasks, Header, Query
+from fastapi import Body, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
@@ -2724,6 +2724,7 @@ _VALIDATORS = {
 # --------------------------------------------------------------------------- #
 
 _READ_ROLES = {"operator", "approver", "admin", "reviewer"}
+_WRITE_ROLES = {"operator", "approver", "admin", "reviewer"}
 
 
 def _require_read_role(identity: OperatorIdentity) -> None:
@@ -2733,6 +2734,18 @@ def _require_read_role(identity: OperatorIdentity) -> None:
             ErrorCode.INSUFFICIENT_ROLE,
             "Read access requires operator-level role",
             "Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator, approver, admin, or reviewer role",
+        )
+
+
+def _require_operator_role(identity: OperatorIdentity) -> None:
+    if not _WRITE_ROLES.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "Operator command access requires operator-level role",
+            "Operator does not hold the required command role",
             precondition_failed="role_check",
             suggestion="Escalate to a user with operator, approver, admin, or reviewer role",
         )
@@ -14262,6 +14275,15 @@ def _capital_bff_action_command(
     command_type: CommandType,
 ) -> Dict[str, Any]:
     """Submit a resource action through the command store and return the receipt."""
+    request_hash = _stable_json_hash({
+        "entity_type": entity_type.value,
+        "entity_id": entity_id,
+        "action_id": action_id,
+        "payload": payload,
+    })
+    cached = _capital_bff_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
     staleness_warning = _check_read_surface_state()
     command_id = str(uuid.uuid4())
     submitted_at = utc_now()
@@ -14297,13 +14319,15 @@ def _capital_bff_action_command(
         audit_context=audit_record,
         foundation_context=foundation_ctx,
     )
-    return _project_final_command_response(
+    result = _project_final_command_response(
         command_id=command_id,
         command=command_type,
         accepted_at=submitted_at,
         status=CommandStatus.SUBMITTED,
         staleness_warning=staleness_warning,
     )
+    _CAPITAL_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
 
 
 # -- Capital pools BFF -------------------------------------------------------
@@ -14358,17 +14382,14 @@ async def bff_create_capital_pool(
         )
     snapshot_at = utc_now()
     pool_id = f"pool-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
-    result = {
-        "id": pool_id,
-        "pool_id": pool_id,
-        "name": name,
-        "status": "draft",
-        "risk_policy_ref": payload.get("risk_policy_ref"),
-        "params": payload.get("params") or {},
-        "created_at": snapshot_at,
-        "updated_at": snapshot_at,
-        "created_by": identity.operator_id,
-    }
+    result = read_store.create_capital_pool(
+        pool_id=pool_id,
+        name=name,
+        actor_id=identity.operator_id,
+        created_at=snapshot_at,
+        risk_policy_ref=payload.get("risk_policy_ref"),
+        params=payload.get("params") or {},
+    )
     _CAPITAL_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
     return result
 
@@ -14430,11 +14451,12 @@ async def bff_patch_capital_pool(
             f"Capital pool {pool_id} does not exist",
         )
     snapshot_at = utc_now()
-    updated = dict(pool)
-    for field in ("name", "status", "risk_policy_ref", "params"):
-        if field in payload:
-            updated[field] = payload[field]
-    updated["updated_at"] = snapshot_at
+    updated = read_store.patch_capital_pool(
+        pool_id,
+        patch={k: payload[k] for k in ("name", "status", "risk_policy_ref", "params") if k in payload},
+        actor_id=identity.operator_id,
+        updated_at=snapshot_at,
+    ) or dict(pool)
     result = {"data": updated, "meta": {"snapshot_at": snapshot_at}}
     _CAPITAL_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
     return result
@@ -17716,6 +17738,991 @@ async def bff_skill_sandbox_eval(
         },
     }
     _SKILLS_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+# --------------------------------------------------------------------------- #
+# BFF Governance, Runtime, Risk, Incident, Audit Compatibility (BFF-LUV-GAP-005)
+# --------------------------------------------------------------------------- #
+
+# In-process idempotency ledger for action operations on these surfaces.
+_GOV_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+_GOV_BFF_INCIDENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
+
+
+def _bff_incident_matches_filters(
+    incident: Dict[str, Any],
+    *,
+    status: Optional[str],
+    severity: Optional[str],
+    affected_pool_id: Optional[str],
+) -> bool:
+    if status:
+        requested_statuses = {token.strip().lower() for token in status.split(",") if token.strip()}
+        if str(incident.get("status") or "").lower() not in requested_statuses:
+            return False
+    if severity and incident.get("severity") != severity:
+        return False
+    if affected_pool_id and incident.get("capital_pool_id") != affected_pool_id:
+        return False
+    return True
+
+
+def _list_bff_incidents(
+    *,
+    status: Optional[str] = None,
+    severity: Optional[str] = None,
+    affected_pool_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    incidents = list(read_store.list_incidents(status=status, severity=severity, affected_pool_id=affected_pool_id))
+    seen = {str(item.get("incident_id") or item.get("id") or "") for item in incidents}
+    for incident_id, incident in _GOV_BFF_INCIDENT_OVERLAY.items():
+        if incident_id in seen:
+            continue
+        if _bff_incident_matches_filters(
+            incident,
+            status=status,
+            severity=severity,
+            affected_pool_id=affected_pool_id,
+        ):
+            incidents.append(dict(incident))
+    return sorted(incidents, key=lambda item: str(item.get("created_at") or item.get("submitted_at") or ""), reverse=True)
+
+
+def _get_bff_incident(incident_id: str) -> Optional[Dict[str, Any]]:
+    incident = read_store.get_incident(incident_id)
+    if incident:
+        return incident
+    overlay = _GOV_BFF_INCIDENT_OVERLAY.get(incident_id)
+    return dict(overlay) if overlay else None
+
+
+def _gov_bff_action_command(
+    entity_type: ObjectType,
+    entity_id: str,
+    action_id: str,
+    resolved_key: str,
+    identity: Any,
+    payload: Dict[str, Any],
+    command_type: CommandType,
+) -> Dict[str, Any]:
+    """Submit a governance/risk/incident resource action through the command store."""
+    _reject_body_idempotency_key(payload)
+    request_hash = _stable_json_hash(
+        {"entity_type": entity_type.value, "entity_id": entity_id, "action_id": action_id, "payload": payload}
+    )
+    existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
+    if existing is not None:
+        if existing.get("request_hash") != request_hash:
+            raise _bff_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key was already used with a different payload",
+                f"Key {resolved_key!r} is bound to a different request hash",
+                precondition_failed="idempotency_conflict",
+                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+            )
+        return existing["result"]
+
+    staleness_warning = _check_read_surface_state()
+    catalog_entry = get_catalog_entry(command_type.value)
+    command_id = str(uuid.uuid4())
+    submitted_at = utc_now()
+    target = TargetObject(type=entity_type, id=entity_id)
+    audit_record = {
+        "operator_id": identity.operator_id,
+        "roles_at_submission": identity.roles,
+        "action_id": action_id,
+        "preconditions_checked": ["authentication", "authorization", "idempotency"],
+        "timestamp": submitted_at,
+        "idempotency_key": resolved_key,
+        "request_hash": request_hash,
+        "catalog_entry": catalog_entry.action_id if catalog_entry else None,
+    }
+    idempotency_record = IdempotencyRecord.reserve(
+        idempotency_key=resolved_key,
+        operation_type=f"bff.{command_type.value}",
+        target_ref=f"{entity_type.value}:{entity_id}",
+        request_payload={
+            "entity_type": entity_type.value,
+            "entity_id": entity_id,
+            "action_id": action_id,
+            "payload": payload,
+        },
+        trace_id=command_id,
+    )
+    foundation_ctx = {"idempotency_record": idempotency_record.to_dict()}
+    command_store.submit_command(
+        command_id=command_id,
+        command_type=command_type,
+        target=target,
+        submitted_at=submitted_at,
+        params={"action_id": action_id, **payload},
+        audit_context=audit_record,
+        foundation_context=foundation_ctx,
+    )
+    result = _project_final_command_response(
+        command_id=command_id,
+        command=command_type,
+        accepted_at=submitted_at,
+        status=CommandStatus.SUBMITTED,
+        staleness_warning=staleness_warning,
+    )
+    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+# -- Governance reviews ------------------------------------------------------
+
+@app.get("/bff/reviews")
+async def bff_list_reviews(
+    item_type: Optional[str] = None,
+    risk_level: Optional[str] = None,
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: governance review queue list (execute-plans compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    item_types = [v.strip() for v in item_type.split(",") if v.strip()] if item_type else None
+    risk_levels = [v.strip() for v in risk_level.split(",") if v.strip()] if risk_level else None
+    statuses = [v.strip() for v in status.split(",") if v.strip()] if status else None
+
+    items = read_store.list_governance_review_queue_items(
+        item_types=item_types,
+        risk_levels=risk_levels,
+        statuses=statuses,
+    )
+    review_queue_surface = _dataset_surface_status("governance_review_queue_items", snapshot_at=snapshot_at)
+    if review_queue_surface.get("status") == "unavailable":
+        items = []
+        next_page_token = None
+    else:
+        items, next_page_token = _page_slice(items, page_token, page_size)
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {"review_queue": review_queue_surface}
+    staleness = _meta_staleness()
+    if staleness is not None:
+        meta["staleness"] = staleness
+
+    return {
+        "items": items,
+        "page_info": {"next_page_token": next_page_token},
+        "meta": meta,
+    }
+
+
+@app.post("/bff/reviews", status_code=202)
+async def bff_create_review(
+    request: Request,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: submit a new governance review item."""
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    review_id = str(payload.get("review_id") or payload.get("id") or uuid.uuid4())
+    return _gov_bff_action_command(
+        ObjectType.REVIEW, review_id, "submit", resolved_key, identity, payload, CommandType.REVIEW_ACTION
+    )
+
+
+@app.get("/bff/reviews/{review_id}")
+async def bff_get_review(
+    review_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: get a specific governance review queue item by ID."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    items = read_store.list_governance_review_queue_items()
+    clean_id = review_id.strip()
+    match = next(
+        (item for item in items if str(item.get("item_id") or item.get("id") or "") == clean_id),
+        None,
+    )
+    if not match:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Review item not found",
+            f"Review {review_id} does not exist in the governance review queue",
+        )
+
+    return {
+        "data": match,
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "correlation_id": clean_id,
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.post("/bff/reviews/{review_id}/actions/{action_id}", status_code=202)
+async def bff_review_action(
+    review_id: str,
+    action_id: str,
+    request: Request,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: submit an action (approve/reject/escalate) against a governance review item."""
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    payload: Dict[str, Any] = {}
+    try:
+        payload = await request.json()
+    except Exception:
+        pass
+    clean_id = review_id.strip()
+    return _gov_bff_action_command(
+        ObjectType.REVIEW, clean_id, action_id, resolved_key, identity, payload, CommandType.REVIEW_ACTION
+    )
+
+
+@app.get("/bff/reviews/{review_id}/validators")
+async def bff_review_validators(
+    review_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list validators assigned to a governance review item."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    items = read_store.list_governance_review_queue_items()
+    clean_id = review_id.strip()
+    match = next(
+        (item for item in items if str(item.get("item_id") or item.get("id") or "") == clean_id),
+        None,
+    )
+    validators: List[Dict[str, Any]] = []
+    if match:
+        review_summary = match.get("review_summary") or {}
+        validators = review_summary.get("validators") or []
+
+    return {
+        "review_id": clean_id,
+        "validators": validators,
+        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+    }
+
+
+@app.get("/bff/reviews/{review_id}/audit")
+async def bff_review_audit(
+    review_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: get the audit trail for a governance review item."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    clean_id = review_id.strip()
+    events = read_store.list_governance_audit_events()
+    item_events = [
+        e for e in events
+        if str(e.get("target_id") or e.get("item_id") or "") == clean_id
+        and str(e.get("target_type") or "") in {"Review", "GovernanceReviewItem"}
+    ]
+
+    return {
+        "review_id": clean_id,
+        "events": item_events,
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "correlation_id": clean_id,
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+@app.get("/bff/approvals/{approval_id}/evidence")
+async def bff_approval_evidence(
+    approval_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: get evidence records attached to a governance approval decision."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    clean_id = approval_id.strip()
+    decision = read_store.get_approval_decision(clean_id)
+    if not decision:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Approval decision not found",
+            f"Approval {approval_id} does not exist",
+        )
+
+    raw_refs = list((decision.get("evidence_refs") or decision.get("evidence") or []))
+    try:
+        capabilities = _capabilities_for_identity(identity)
+    except Exception:
+        capabilities = None
+    processed_refs, redacted_count = redact_evidence_refs(identity, raw_refs, capabilities=capabilities)
+
+    return {
+        "approval_id": clean_id,
+        "evidence": processed_refs,
+        "correlation_id": decision.get("correlation_id") or decision.get("decision_id") or decision.get("id") or clean_id,
+        "audit_ref": decision.get("audit_ref") or {
+            "target_type": "ApprovalDecision",
+            "target_id": clean_id,
+            "href": f"/bff/audit/entities/ApprovalDecision/{clean_id}",
+        },
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "redacted_count": redacted_count,
+            "staleness": _meta_staleness(),
+        },
+    }
+
+
+# -- Deployments -------------------------------------------------------------
+
+@app.get("/bff/deployments")
+async def bff_list_deployments(
+    status: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list deployment plans (execute-plans compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    plans = read_store.list_deployment_plans()
+    if status:
+        requested_statuses = {v.strip().lower() for v in status.split(",") if v.strip()}
+        plans = [p for p in plans if str(p.get("status") or "").lower() in requested_statuses]
+
+    surface = _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at)
+    if surface.get("status") == "unavailable":
+        plans = []
+        next_page_token = None
+    else:
+        plans, next_page_token = _page_slice(plans, page_token, page_size)
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {"deployments": surface}
+    staleness = _meta_staleness()
+    if staleness is not None:
+        meta["staleness"] = staleness
+
+    return {
+        "items": plans,
+        "page_info": {"next_page_token": next_page_token},
+        "meta": meta,
+    }
+
+
+@app.get("/bff/deployments/{deployment_id}")
+async def bff_get_deployment(
+    deployment_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: get a deployment plan detail."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    clean_id = deployment_id.strip()
+    plan = read_store.get_deployment_plan(clean_id)
+    if not plan:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Deployment not found",
+            f"Deployment plan {deployment_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    decision = read_store.get_approval_decision(plan.get("approval_decision_id"))
+    review = read_store.get_review_summary(clean_id)
+
+    return {
+        "data": {
+            **plan,
+            "approval_decision": decision or {},
+            "review": review or {},
+        },
+        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+    }
+
+
+@app.post("/bff/deployments/{deployment_id}/actions/{action_id}", status_code=202)
+async def bff_deployment_action(
+    deployment_id: str,
+    action_id: str,
+    request: Request,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: submit an action against a deployment plan."""
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    payload: Dict[str, Any] = {}
+    try:
+        payload = await request.json()
+    except Exception:
+        pass
+    clean_id = deployment_id.strip()
+    plan = read_store.get_deployment_plan(clean_id)
+    if not plan:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Deployment not found",
+            f"Deployment plan {deployment_id} does not exist",
+        )
+    return _gov_bff_action_command(
+        ObjectType.DEPLOYMENT, clean_id, action_id, resolved_key, identity, payload, CommandType.DEPLOYMENT_ACTION
+    )
+
+
+# -- Runtimes ----------------------------------------------------------------
+
+@app.get("/bff/runtimes")
+async def bff_list_runtimes(
+    status: Optional[str] = None,
+    deployment_stage: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list runtime bindings (execute-plans compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    bindings = read_store.list_runtime_bindings()
+    if status:
+        requested_statuses = {v.strip().lower() for v in status.split(",") if v.strip()}
+        bindings = [b for b in bindings if str(b.get("status") or "").lower() in requested_statuses]
+    if deployment_stage:
+        requested_stages = {v.strip().lower() for v in deployment_stage.split(",") if v.strip()}
+        bindings = [
+            b for b in bindings
+            if str(b.get("deployment_stage") or b.get("deployment_mode") or "").lower() in requested_stages
+        ]
+
+    surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
+    if surface.get("status") == "unavailable":
+        bindings = []
+        next_page_token = None
+    else:
+        bindings, next_page_token = _page_slice(bindings, page_token, page_size)
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {"runtimes": surface}
+    staleness = _meta_staleness()
+    if staleness is not None:
+        meta["staleness"] = staleness
+
+    return {
+        "items": bindings,
+        "page_info": {"next_page_token": next_page_token},
+        "meta": meta,
+    }
+
+
+@app.get("/bff/runtimes/{runtime_id}")
+async def bff_get_runtime(
+    runtime_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: get a runtime binding detail by runtime_id."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    clean_id = runtime_id.strip()
+    binding = read_store.get_runtime_binding_by_runtime_id(clean_id)
+    if not binding:
+        # fall back to binding_id lookup
+        binding = read_store.get_runtime_binding(clean_id)
+    if not binding:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Runtime not found",
+            f"Runtime {runtime_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    return {
+        "data": binding,
+        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+    }
+
+
+@app.post("/bff/runtimes/{runtime_id}/actions/{action_id}", status_code=202)
+async def bff_runtime_action(
+    runtime_id: str,
+    action_id: str,
+    request: Request,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: submit an action against a runtime binding."""
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    payload: Dict[str, Any] = {}
+    try:
+        payload = await request.json()
+    except Exception:
+        pass
+    clean_id = runtime_id.strip()
+    binding = read_store.get_runtime_binding_by_runtime_id(clean_id)
+    if not binding:
+        binding = read_store.get_runtime_binding(clean_id)
+    if not binding:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Runtime not found",
+            f"Runtime {runtime_id} does not exist",
+        )
+    return _gov_bff_action_command(
+        ObjectType.RUNTIME_BINDING, clean_id, action_id, resolved_key, identity, payload, CommandType.RUNTIME_ACTION
+    )
+
+
+# -- Risk alerts -------------------------------------------------------------
+
+@app.get("/bff/risk/alerts")
+async def bff_list_risk_alerts(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list risk/operator alerts (execute-plans compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    return _build_operator_alerts_payload(snapshot_at)
+
+
+@app.get("/bff/risk/alerts/{alert_id}")
+async def bff_get_risk_alert(
+    alert_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: get a specific risk alert by ID."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    payload = _build_operator_alerts_payload(snapshot_at)
+    clean_id = alert_id.strip()
+    match = next(
+        (a for a in payload.get("alerts", []) if str(a.get("alert_id") or a.get("id") or "") == clean_id),
+        None,
+    )
+    if not match:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Risk alert not found",
+            f"Alert {alert_id} does not exist",
+        )
+    return {
+        "data": match,
+        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+    }
+
+
+@app.post("/bff/risk/alerts/{alert_id}/actions/{action_id}", status_code=202)
+async def bff_risk_alert_action(
+    alert_id: str,
+    action_id: str,
+    request: Request,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: submit an action against a risk alert."""
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    payload: Dict[str, Any] = {}
+    try:
+        payload = await request.json()
+    except Exception:
+        pass
+    clean_id = alert_id.strip()
+    return _gov_bff_action_command(
+        ObjectType.RISK_ALERT, clean_id, action_id, resolved_key, identity, payload, CommandType.RISK_ALERT_ACTION
+    )
+
+
+# -- Incidents ---------------------------------------------------------------
+
+@app.get("/bff/incidents")
+async def bff_list_incidents(
+    status: Optional[str] = None,
+    severity: Optional[str] = None,
+    affected_pool_id: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list incidents (execute-plans compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
+    incidents = _list_bff_incidents(status=status, severity=severity, affected_pool_id=affected_pool_id)
+    if surface.get("status") == "unavailable":
+        incidents = []
+        next_page_token = None
+    else:
+        incidents, next_page_token = _page_slice(incidents, page_token, page_size)
+
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {"incidents": surface}
+    staleness = _meta_staleness()
+    if staleness is not None:
+        meta["staleness"] = staleness
+
+    return {
+        "items": incidents,
+        "page_info": {"next_page_token": next_page_token},
+        "meta": meta,
+    }
+
+
+@app.post("/bff/incidents", status_code=201)
+async def bff_create_incident(
+    request: Request,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: create a new incident record."""
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    payload: Dict[str, Any] = {}
+    try:
+        payload = await request.json()
+    except Exception:
+        pass
+    _reject_body_idempotency_key(payload)
+
+    existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
+    req_hash = _stable_json_hash(payload)
+    if existing is not None:
+        if existing.get("request_hash") != req_hash:
+            raise _bff_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key already used with a different payload",
+                f"Key {resolved_key!r} is bound to a different request hash",
+                precondition_failed="idempotency_conflict",
+                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+            )
+        return existing["result"]
+
+    incident_id = str(payload.get("incident_id") or payload.get("id") or uuid.uuid4())
+    submitted_at = utc_now()
+    result = {
+        "id": incident_id,
+        "incident_id": incident_id,
+        "status": "open",
+        "submitted_at": submitted_at,
+        "created_at": submitted_at,
+        "updated_at": submitted_at,
+        "submitted_by": identity.operator_id,
+        "title": payload.get("title") or "Untitled Incident",
+        "severity": payload.get("severity") or "medium",
+        "capital_pool_id": payload.get("capital_pool_id") or payload.get("affected_pool_id"),
+        "runtime_id": payload.get("runtime_id"),
+        "correlation_id": payload.get("correlation_id") or incident_id,
+        "audit_ref": {
+            "target_type": "Incident",
+            "target_id": incident_id,
+            "href": f"/bff/audit/entities/Incident/{incident_id}",
+        },
+        "meta": {"idempotency_key": resolved_key},
+    }
+    _GOV_BFF_INCIDENT_OVERLAY[incident_id] = result
+    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": req_hash, "result": result}
+    return result
+
+
+@app.get("/bff/incidents/{incident_id}")
+async def bff_get_incident(
+    incident_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: get a specific incident by ID."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    clean_id = incident_id.strip()
+    incident = _get_bff_incident(clean_id)
+    if not incident:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Incident not found",
+            f"Incident {incident_id} does not exist",
+        )
+
+    snapshot_at = utc_now()
+    return {
+        "data": incident,
+        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+    }
+
+
+@app.post("/bff/incidents/{incident_id}/actions/{action_id}", status_code=202)
+async def bff_incident_action(
+    incident_id: str,
+    action_id: str,
+    request: Request,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: submit an action against an incident."""
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    payload: Dict[str, Any] = {}
+    try:
+        payload = await request.json()
+    except Exception:
+        pass
+    clean_id = incident_id.strip()
+    incident = _get_bff_incident(clean_id)
+    if not incident:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Incident not found",
+            f"Incident {incident_id} does not exist",
+        )
+    return _gov_bff_action_command(
+        ObjectType.INCIDENT, clean_id, action_id, resolved_key, identity, payload, CommandType.INCIDENT_ACTION
+    )
+
+
+# -- Alerts source-reference alias -------------------------------------------
+
+@app.get("/bff/alerts")
+async def bff_list_alerts(
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: source-reference compatibility alias for /bff/risk/alerts."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    return _build_operator_alerts_payload(snapshot_at)
+
+
+# -- Audit -------------------------------------------------------------------
+
+@app.get("/bff/audit/events")
+async def bff_list_audit_events(
+    actor: Optional[str] = None,
+    action_type: Optional[str] = None,
+    target_type: Optional[str] = None,
+    from_ts: Optional[str] = None,
+    to_ts: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=500),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list governance audit events (execute-plans compatibility surface)."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    action_types = [v.strip() for v in action_type.split(",") if v.strip()] if action_type else None
+
+    from_dt = _parse_rfc3339_header(from_ts) if from_ts else None
+    to_dt = _parse_rfc3339_header(to_ts) if to_ts else None
+
+    events = read_store.list_governance_audit_events(
+        actor=actor,
+        action_types=action_types,
+        target_type=target_type,
+        from_ts=from_dt,
+        to_ts=to_dt,
+    )
+
+    events, next_page_token = _page_slice(events, page_token, page_size)
+    return {
+        "events": events,
+        "page_info": {"next_page_token": next_page_token},
+        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+    }
+
+
+@app.get("/bff/audit/entities/{entity_type}/{entity_id}")
+async def bff_get_entity_audit(
+    entity_type: str,
+    entity_id: str,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=50, ge=1, le=500),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: get audit trail for a specific entity."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    clean_type = entity_type.strip()
+    clean_id = entity_id.strip()
+
+    events = read_store.list_governance_audit_events(target_type=clean_type)
+    entity_events = [
+        e for e in events
+        if str(e.get("target_id") or e.get("entity_id") or "") == clean_id
+    ]
+    entity_events, next_page_token = _page_slice(entity_events, page_token, page_size)
+
+    return {
+        "entity_type": clean_type,
+        "entity_id": clean_id,
+        "events": entity_events,
+        "page_info": {"next_page_token": next_page_token},
+        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+    }
+
+
+@app.get("/bff/audit/export")
+async def bff_audit_export(
+    actor: Optional[str] = None,
+    action_type: Optional[str] = None,
+    target_type: Optional[str] = None,
+    from_ts: Optional[str] = None,
+    to_ts: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: export governance audit events as a structured payload."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    action_types = [v.strip() for v in action_type.split(",") if v.strip()] if action_type else None
+    from_dt = _parse_rfc3339_header(from_ts) if from_ts else None
+    to_dt = _parse_rfc3339_header(to_ts) if to_ts else None
+
+    events = read_store.list_governance_audit_events(
+        actor=actor,
+        action_types=action_types,
+        target_type=target_type,
+        from_ts=from_dt,
+        to_ts=to_dt,
+    )
+
+    return {
+        "events": events,
+        "total": len(events),
+        "exported_at": snapshot_at,
+        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+    }
+
+
+# -- Command confirmations ---------------------------------------------------
+
+@app.post("/bff/command-confirmations", status_code=202)
+async def bff_command_confirmation(
+    request: Request,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """
+    BFF: submit a command confirmation token.
+
+    Clients that received a CONFIRM_TOKEN_REQUIRED precondition error must
+    resubmit with a valid confirm_token in the body alongside this route to
+    proceed past the confirmation gate.
+    """
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    payload: Dict[str, Any] = {}
+    try:
+        payload = await request.json()
+    except Exception:
+        pass
+
+    _reject_body_idempotency_key(payload)
+
+    confirm_token = str(payload.get("confirm_token") or "").strip()
+    if not confirm_token:
+        raise _bff_error(
+            400,
+            ErrorCode.CONFIRM_TOKEN_REQUIRED,
+            "confirm_token is required",
+            "Command confirmation requires a non-empty confirm_token in the request body",
+            precondition_failed="confirm_token_missing",
+            suggestion="Include the confirm_token issued by the original precondition error response",
+        )
+
+    original_command_id = str(payload.get("command_id") or "").strip()
+    if not original_command_id:
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_REQUEST,
+            "command_id is required",
+            "Command confirmation requires the original command_id being confirmed",
+            precondition_failed="command_id_missing",
+            suggestion="Include the command_id from the original command submission",
+        )
+
+    existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
+    req_hash = _stable_json_hash({"command_id": original_command_id, "confirm_token": confirm_token})
+    if existing is not None:
+        if existing.get("request_hash") != req_hash:
+            raise _bff_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key already used with a different payload",
+                f"Key {resolved_key!r} is bound to a different confirmation request",
+                precondition_failed="idempotency_conflict",
+                suggestion="Use a new Idempotency-Key or resubmit the original confirmation unchanged",
+            )
+        return existing["result"]
+
+    staleness_warning = _check_read_surface_state()
+    confirmation_id = str(uuid.uuid4())
+    confirmed_at = utc_now()
+    result = {
+        "confirmation_id": confirmation_id,
+        "command_id": original_command_id,
+        "status": "accepted",
+        "confirmed_at": confirmed_at,
+        "confirmed_by": identity.operator_id,
+    }
+    if staleness_warning is not None:
+        result["staleness_warning"] = {
+            "read_surface_state": staleness_warning.read_surface_state,
+            "message": staleness_warning.message,
+        }
+    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": req_hash, "result": result}
     return result
 
 
