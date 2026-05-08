@@ -2,10 +2,11 @@ feature_id: BFF-2026-05-07-final
 type: backend-delivery
 status: delivered
 delivery_date: "2026-05-08"
-backend_commit: d39496c4ee83af66a98e42bf5c8788814c370c09
+backend_commit: 7a1953d028ef4ae2898b6297552e6fb6990b7729
+runtime_code_commit: d39496c4ee83af66a98e42bf5c8788814c370c09
 working_tree_only: false
-verified_runtime_ref: pantheon-bff@d39496c4ee83af66a98e42bf5c8788814c370c09
-bff_contract_version: pantheon-bff@d39496c4ee83af66a98e42bf5c8788814c370c09
+verified_runtime_ref: pantheon-bff@7a1953d028ef4ae2898b6297552e6fb6990b7729
+bff_contract_version: pantheon-bff@7a1953d028ef4ae2898b6297552e6fb6990b7729
 test_result: "457 passed, 0 failures, 36 warnings"
 test_command: "python3 -m pytest services/control-plane/bff -q --tb=no"
 delivery_note_path: docs/pantheon-delivery/BFF-2026-05-07-final/DELIVERY_NOTE.md
@@ -123,7 +124,8 @@ deferred_items:
 
 followup_expectation: >-
   All nine BFF-FINAL contracts are implemented and verified. The full BFF test suite passes
-  (457 passed, 0 failures) at HEAD d39496c4. The cleanup pass confirms no unresolved
+  (457 passed, 0 failures) at HEAD 7a1953d0 (delivery closeout commit; runtime code unchanged
+  from d39496c4). The cleanup pass confirms no unresolved
   TODO/FIXME/STUB in BFF-FINAL production paths. Known stubs are env-gated and appropriate for
   paper/dev operation. Frontend consumers should consult the sidecar handoff packet at
   support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md for the complete route

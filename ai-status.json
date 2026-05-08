@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-08T02:46:14Z",
+  "updated_at": "2026-05-08T03:25:51Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -95,11 +95,11 @@
       ],
       "status": "working",
       "current_task_ids": [
-        "BFF-FINAL-009"
+        "BFF-FINAL-010"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Fixed top-level two-man alias propagation in /bff/v1/commands: modified _stored_command_params to normalize twoManSignatureId/secondOperatorId from raw payload into stored params for RemediateSentinelIntervention; added 2 regression tests. 82 tests pass.",
-      "last_update": "2026-05-08T02:46:14Z"
+      "next": "Reconciled delivery metadata: updated all four artifacts (DELIVERY_NOTE.md, CONTRACT_LOCK.json, coordination response YAML, contract-verification.md) to reference 7a1953d0 as backend_commit/verified_runtime_ref; added runtime_code_commit: d39496c4 field to distinguish delivery closeout commit from runtime code commit; re-confirmed 457 tests pass at HEAD 7a1953d0 (187.48s)",
+      "last_update": "2026-05-08T03:25:51Z"
     },
     {
       "name": "Gemini",
@@ -123,13 +123,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "waiting",
-      "current_task_ids": [
-        "BFF-FINAL-010"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/codex-collab-system",
-      "next": "Restored to active board. Final verification remains gated on BFF-FINAL-006, BFF-FINAL-007, and BFF-FINAL-009 completion; support-only sidecars may run before final lock.",
-      "last_update": "2026-05-08T02:27:38Z"
+      "next": "",
+      "last_update": "2026-05-08T01:48:00Z"
     },
     {
       "name": "Codex2",
@@ -166,13 +164,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "reviewing",
-      "current_task_ids": [
-        "BFF-FINAL-010-SIDECAR-BFF-HANDOFF"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude2-execution-control",
-      "next": "Handoff packet updated (pass 2). BFF-FINAL-006 now shown as done/commit 08ac4543. BFF-FINAL-009 R1/R2 resolved per 32574279; new R3 (v1 two-man alias propagation) documented in §3b with concrete fix spec, §10 acceptance checklist checkboxes updated, §9f frontend checklist updated, §11 D3 note refreshed. No canonical code modified.",
-      "last_update": "2026-05-08T02:46:09Z"
+      "next": "",
+      "last_update": "2026-05-08T03:02:06Z"
     },
     {
       "name": "Gemini2",
@@ -191,40 +187,13 @@
   ],
   "tasks": [
     {
-      "id": "BFF-FINAL-009",
-      "title": "Implement v5 interventions contract",
-      "summary_zh": "實作 /bff/v5/interventions 的 HIQ Sentinel remediation 與 two-man command semantics。",
-      "phase": "BFF Final Contract 2026-05-07",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "in_progress",
-      "depends_on": [
-        "BFF-FINAL-001",
-        "BFF-FINAL-002",
-        "BFF-FINAL-003"
-      ],
-      "artifacts": [
-        "docs/bff/execution-tasks/2026-05-07-final/BFF-FINAL-009-v5-interventions.md",
-        "services/control-plane/bff/main.py",
-        "services/control-plane/bff/models.py",
-        "services/control-plane/bff/command_executor.py"
-      ],
-      "acceptance": [
-        "canonical v5 route present",
-        "remediation guarded",
-        "two-man semantics tested"
-      ],
-      "next": "Fixed top-level two-man alias propagation in /bff/v1/commands: modified _stored_command_params to normalize twoManSignatureId/secondOperatorId from raw payload into stored params for RemediateSentinelIntervention; added 2 regression tests. 82 tests pass.",
-      "last_update": "2026-05-08T02:46:14Z"
-    },
-    {
       "id": "BFF-FINAL-010",
       "title": "Verify and hand off final BFF contract",
       "summary_zh": "跑完整 contract verification cleanup pass delivery note 與 coordination response 讓 execute-plans 可消費。",
       "phase": "BFF Final Contract 2026-05-07",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "todo",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "in_progress",
       "depends_on": [
         "BFF-FINAL-001",
         "BFF-FINAL-002",
@@ -248,39 +217,8 @@
         "delivery note written",
         "coordination response emitted"
       ],
-      "next": "Restored to active board. Final verification remains gated on BFF-FINAL-006, BFF-FINAL-007, and BFF-FINAL-009 completion; support-only sidecars may run before final lock.",
-      "last_update": "2026-05-08T01:48:00Z"
-    },
-    {
-      "id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare BFF-FINAL-010 BFF and frontend handoff packet",
-      "summary_zh": "平行支援 BFF-FINAL-010，先整理 final backend/frontend handoff skeleton，不修改 canonical code。",
-      "phase": "BFF Final Contract 2026-05-07",
-      "owner": "Claude2",
-      "reviewer": "Codex",
-      "status": "review",
-      "depends_on": [
-        "BFF-FINAL-001",
-        "BFF-FINAL-002",
-        "BFF-FINAL-003",
-        "BFF-FINAL-004",
-        "BFF-FINAL-005"
-      ],
-      "artifacts": [
-        "support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md"
-      ],
-      "acceptance": [
-        "handoff skeleton prepared",
-        "parent gaps explicit",
-        "no canonical code edits"
-      ],
-      "next": "Handoff packet updated (pass 2). BFF-FINAL-006 now shown as done/commit 08ac4543. BFF-FINAL-009 R1/R2 resolved per 32574279; new R3 (v1 two-man alias propagation) documented in §3b with concrete fix spec, §10 acceptance checklist checkboxes updated, §9f frontend checklist updated, §11 D3 note refreshed. No canonical code modified.",
-      "last_update": "2026-05-08T02:46:09Z",
-      "task_class": "sidecar",
-      "helper_parent": "BFF-FINAL-010",
-      "helper_kind": "bff_handoff_packet",
-      "auto_created_by": "Codex",
-      "mutates_canonical": false
+      "next": "Reconciled delivery metadata: updated all four artifacts (DELIVERY_NOTE.md, CONTRACT_LOCK.json, coordination response YAML, contract-verification.md) to reference 7a1953d0 as backend_commit/verified_runtime_ref; added runtime_code_commit: d39496c4 field to distinguish delivery closeout commit from runtime code commit; re-confirmed 457 tests pass at HEAD 7a1953d0 (187.48s)",
+      "last_update": "2026-05-08T03:25:51Z"
     }
   ],
   "handoffs": [
@@ -294,111 +232,31 @@
       "resolved_at": "2026-04-17T12:39:53Z"
     },
     {
-      "task_id": "BFF-FINAL-009",
-      "from": "Claude",
-      "to": "Claude2",
-      "message": "Helper-claimed by Claude2 while Claude is dispatch-paused.",
-      "status": "done",
-      "created_at": "2026-05-08T01:56:06Z",
-      "resolved_at": "2026-05-08T01:56:32Z"
-    },
-    {
-      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T02:22:58Z",
-      "resolved_at": "2026-05-08T02:23:50Z"
-    },
-    {
-      "task_id": "BFF-FINAL-009",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Implementation complete: GET /bff/v5/interventions, POST /bff/v5/interventions/{id}/remediate, GET /bff/approvals. Two-man preconditions enforced (TWO_MAN_REQUIRED/APPROVAL_REQUIRED/CONFIRM_TOKEN_REQUIRED). RemediateSentinelIntervention in action catalog and command executor. 14 focused tests pass; 439 total BFF tests pass. Commit: e2d1a99b.",
-      "status": "done",
-      "created_at": "2026-05-08T02:23:25Z",
-      "resolved_at": "2026-05-08T02:27:08Z"
-    },
-    {
-      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Claude2",
-      "message": "Helper-claimed by Claude2 while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T02:23:49Z",
-      "resolved_at": "2026-05-08T02:24:15Z"
-    },
-    {
-      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T02:26:24Z",
-      "resolved_at": "2026-05-08T02:26:51Z"
-    },
-    {
-      "task_id": "BFF-FINAL-009",
+      "task_id": "BFF-FINAL-010",
       "from": "Codex",
       "to": "Claude",
-      "message": "Review requested changes: RemediateSentinelIntervention is cataloged with required_roles=[approver] but neither /bff/v5/interventions/{id}/remediate nor /bff/v1/commands enforces a validator for it, so a viewer-authenticated caller can receive 202 with arbitrary approval/two-man strings. Also command_executor catches downstream sentinel POST failures and returns status=remediated stub=True when PANTHEON_INTERNAL_API_URL is configured but unreachable; this is fail-open for a critical remediation. Please add role/shape validation plus regression tests and gate/remove the stub fallback so production/downstream failures fail closed.",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
       "status": "done",
-      "created_at": "2026-05-08T02:27:08Z",
-      "resolved_at": "2026-05-08T02:27:08Z"
+      "created_at": "2026-05-08T03:00:40Z",
+      "resolved_at": "2026-05-08T03:01:03Z"
     },
     {
-      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Claude2",
-      "message": "Helper-claimed by Claude2 while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T02:28:14Z",
-      "resolved_at": "2026-05-08T02:28:41Z"
-    },
-    {
-      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
-      "from": "Claude2",
-      "to": "Codex",
-      "message": "BFF-FINAL-010 handoff packet ready at support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md (commit 5d21d6c7). Covers: full route catalog (001-009), pre-010 blockers (BFF-006 closeout pending, BFF-009 R1/R2 role-enforcement and fail-closed executor fixes), frontend integration checklist, parent acceptance evidence checklist, and 6 explicitly deferred items. No canonical code modified.",
-      "status": "done",
-      "created_at": "2026-05-08T02:32:53Z",
-      "resolved_at": "2026-05-08T02:43:26Z"
-    },
-    {
-      "task_id": "BFF-FINAL-009",
+      "task_id": "BFF-FINAL-010",
       "from": "Claude",
       "to": "Codex",
-      "message": "All review-requested changes implemented. Role/shape validator added + fail-open stub removed. 80 tests pass (commit 32574279). Please re-review and approve.",
+      "message": "Ready for review. All four BFF-FINAL-010 acceptance criteria met: (1) all BFF tests pass — 457 passed at HEAD 7a1953d0; (2) cleanup pass complete — no unresolved TODO/FIXME/STUB in production paths, known stubs (auth stub, _V5_INTERVENTIONS_STORE) are env-gated; (3) delivery note written at docs/pantheon-delivery/BFF-2026-05-07-final/DELIVERY_NOTE.md plus CONTRACT_LOCK.json and contract-verification artifact; (4) coordination response emitted at .coordination/responses/BFF-2026-05-07-final-backend-delivery.yaml in execute-plans-consumable shape. Closeout commit 7a1953d0.",
       "status": "done",
-      "created_at": "2026-05-08T02:34:18Z",
-      "resolved_at": "2026-05-08T02:40:26Z"
+      "created_at": "2026-05-08T03:13:32Z",
+      "resolved_at": "2026-05-08T03:20:07Z"
     },
     {
-      "task_id": "BFF-FINAL-009",
+      "task_id": "BFF-FINAL-010",
       "from": "Codex",
       "to": "Claude",
-      "message": "Review changes requested: /bff/v1/commands currently accepts top-level twoManSignatureId/secondOperatorId evidence but stores only cmd.params, so accepted RemediateSentinelIntervention commands can execute with an empty downstream two_man_signature_id. Normalize supported two-man aliases from top-level payload into stored/execution params, or reject this command unless the evidence is present in params; add a regression covering accepted v1 RemediateSentinelIntervention with top-level twoManSignatureId propagating to stored/executor params. Verification run before reopen: python3 -m pytest services/control-plane/bff/test_v5_interventions.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/test_final_precondition_errors.py services/control-plane/bff/test_action_catalog.py -q (80 passed).",
+      "message": "Request changes: full BFF suite passes at current HEAD 7a1953d0 (457 passed, 36 warnings in 217.07s), but delivery metadata is not internally consistent. DELIVERY_NOTE.md lists BFF-FINAL-010 closeout as d39496c4 and verification HEAD d39496c4, while the actual BFF-FINAL-010 artifact commit is 7a1953d0; CONTRACT_LOCK.json and the coordination response also publish d39496c4 as backend/verified refs. Please reconcile these artifacts by clearly distinguishing runtime-code ref from delivery/artifact closeout ref, or by updating published backend/verified refs to 7a1953d0, then hand off again.",
       "status": "done",
-      "created_at": "2026-05-08T02:40:26Z",
-      "resolved_at": "2026-05-08T02:40:26Z"
-    },
-    {
-      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Claude2",
-      "message": "Review changes requested: handoff packet blocker snapshot is stale. Update support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md to reflect current task truth: BFF-FINAL-006 is done/archived with closeout commit 08ac4543, and BFF-FINAL-009 is no longer blocked on original R1/R2 after 32574279; current blocker is the v1 two-man alias propagation issue recorded in ai-status. Also update parent acceptance checklist/deferred notes so BFF-FINAL-010 next steps are accurate.",
-      "status": "done",
-      "created_at": "2026-05-08T02:43:26Z",
-      "resolved_at": "2026-05-08T02:43:26Z"
-    },
-    {
-      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
-      "from": "Claude2",
-      "to": "Codex",
-      "message": "Handoff packet updated (pass 2). BFF-FINAL-006 now shown as done/commit 08ac4543. BFF-FINAL-009 R1/R2 resolved per 32574279; new R3 (v1 two-man alias propagation) documented in §3b with concrete fix spec, §10 acceptance checklist checkboxes updated, §9f frontend checklist updated, §11 D3 note refreshed. No canonical code modified.",
-      "status": "pending",
-      "created_at": "2026-05-08T02:46:09Z"
+      "created_at": "2026-05-08T03:20:07Z",
+      "resolved_at": "2026-05-08T03:20:07Z"
     }
   ],
   "blockers": [],
@@ -422,11 +280,11 @@
       "todo": 1
     },
     "Claude2": {
-      "total": 1,
-      "active": 1,
+      "total": 0,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 1,
+      "review": 0,
       "review_approved": 0,
       "todo": 0
     },
@@ -449,13 +307,13 @@
       "todo": 0
     },
     "Codex": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Codex2": {
       "total": 0,

@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-08 10:46:14
+Last updated: 2026-05-08 11:25:51
 
 ## Objective
 
@@ -37,12 +37,12 @@ Last updated: 2026-05-08 10:46:14
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Fixed top-level two-man alias propagation in /bff/v1/commands: modified _stored_command_params to normalize twoManSignatureId/secondOperatorId from raw payload into stored params for RemediateSentinelIntervention; added 2 regression tests. 82 tests pass.
+- `Claude`: execution, control-plane, governance-review; next: Reconciled delivery metadata: updated all four artifacts (DELIVERY_NOTE.md, CONTRACT_LOCK.json, coordination response YAML, contract-verification.md) to reference 7a1953d0 as backend_commit/verified_runtime_ref; added runtime_code_commit: d39496c4 field to distinguish delivery closeout commit from runtime code commit; re-confirmed 457 tests pass at HEAD 7a1953d0 (187.48s)
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Restored to active board. Final verification remains gated on BFF-FINAL-006, BFF-FINAL-007, and BFF-FINAL-009 completion; support-only sidecars may run before final lock.
+- `Codex`: integration, status-system, schema, acceptance; next: No active assignment
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: Handoff packet updated (pass 2). BFF-FINAL-006 now shown as done/commit 08ac4543. BFF-FINAL-009 R1/R2 resolved per 32574279; new R3 (v1 two-man alias propagation) documented in §3b with concrete fix spec, §10 acceptance checklist checkboxes updated, §9f frontend checklist updated, §11 D3 note refreshed. No canonical code modified.
+- `Claude2`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 
 ## Delivery Layers
@@ -51,9 +51,7 @@ Last updated: 2026-05-08 10:46:14
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `BFF-FINAL-009` | BFF Final Contract 2026-05-07 | Implement v5 interventions contract | Claude | in_progress | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003` | 實作 /bff/v5/interventions 的 HIQ Sentinel remediation 與 two-man command semantics。 |
-| `BFF-FINAL-010` | BFF Final Contract 2026-05-07 | Verify and hand off final BFF contract | Codex | todo | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003`, `BFF-FINAL-004`, `BFF-FINAL-005`, `BFF-FINAL-006`, `BFF-FINAL-007`, `BFF-FINAL-008`, `BFF-FINAL-009` | 跑完整 contract verification cleanup pass delivery note 與 coordination response 讓 execute-plans 可消費。 |
-| `BFF-FINAL-010-SIDECAR-BFF-HANDOFF` | BFF Final Contract 2026-05-07 | [Sidecar] [Parent BFF-FINAL-010] Prepare BFF-FINAL-010 BFF and frontend handoff packet | Claude2 | review | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003`, `BFF-FINAL-004`, `BFF-FINAL-005` | 平行支援 BFF-FINAL-010，先整理 final backend/frontend handoff skeleton，不修改 canonical code。 |
+| `BFF-FINAL-010` | BFF Final Contract 2026-05-07 | Verify and hand off final BFF contract | Claude | in_progress | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003`, `BFF-FINAL-004`, `BFF-FINAL-005`, `BFF-FINAL-006`, `BFF-FINAL-007`, `BFF-FINAL-008`, `BFF-FINAL-009` | 跑完整 contract verification cleanup pass delivery note 與 coordination response 讓 execute-plans 可消費。 |
 
 ### External / Upstream Integration Work
 
@@ -63,11 +61,13 @@ Last updated: 2026-05-08 10:46:14
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-08 10:38:45
-- Terminal tasks archived: `923` total, `907` completed, `16` superseded
+- Archive updated: 2026-05-08 11:04:22
+- Terminal tasks archived: `925` total, `909` completed, `16` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `BFF-FINAL-010-SIDECAR-BFF-HANDOFF` | BFF Final Contract 2026-05-07 | Prepare BFF-FINAL-010 BFF and frontend handoff packet | Claude2 | completed | 2026-05-08 11:04:22 | `ai-task-archive/tasks/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.json` |
+| `BFF-FINAL-009` | BFF Final Contract 2026-05-07 | Implement v5 interventions contract | Claude | completed | 2026-05-08 11:00:32 | `ai-task-archive/tasks/BFF-FINAL-009.json` |
 | `BFF-FINAL-006-SIDECAR-BFF-HANDOFF` | BFF Final Contract 2026-05-07 | Prepare BFF-FINAL-006 BFF and frontend handoff packet | Codex2 | completed | 2026-05-08 10:38:45 | `ai-task-archive/tasks/BFF-FINAL-006-SIDECAR-BFF-HANDOFF.json` |
 | `BFF-FINAL-006` | BFF Final Contract 2026-05-07 | Implement MCP server tool import contract | Codex | completed | 2026-05-08 10:29:29 | `ai-task-archive/tasks/BFF-FINAL-006.json` |
 | `BFF-FINAL-SIDECAR-GEMINI-SMOKE-MATRIX` | BFF Final Contract 2026-05-07 | BFF final smoke and CI matrix sidecar | Codex2 | completed | 2026-05-08 10:27:54 | `ai-task-archive/tasks/BFF-FINAL-SIDECAR-GEMINI-SMOKE-MATRIX.json` |
@@ -86,22 +86,18 @@ Last updated: 2026-05-08 10:46:14
 | `SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY` | Blueprint production hardening follow-up 2026-05-04 | Make execution sandbox/canary activation-ready while live stays gated | Codex2 | completed | 2026-05-04 13:10:52 | `ai-task-archive/tasks/SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY.json` |
 | `FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT` | Blueprint production hardening follow-up 2026-05-04 | Close frontend staging repo hygiene and publish readiness | Codex | completed | 2026-05-04 12:58:50 | `ai-task-archive/tasks/FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT.json` |
 | `SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E` | Blueprint production hardening follow-up 2026-05-04 | Close OSS/research/learning activation-ready E2E wiring | Codex2 | completed | 2026-05-04 12:50:19 | `ai-task-archive/tasks/SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E.json` |
-| `SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4` | Blueprint production hardening follow-up 2026-05-04 | Hard-enforce Postgres ownership for staging/prod | Claude | completed | 2026-05-04 12:44:21 | `ai-task-archive/tasks/SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4.json` |
-| `SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS` | Blueprint gap execution wave 2026-05-03 | Add operator fallback drills while BFF HA remains deferred | Codex2 | completed | 2026-05-04 10:36:58 | `ai-task-archive/tasks/SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `BFF-FINAL-009` | BFF Final Contract 2026-05-07 | Implement v5 interventions contract | 實作 /bff/v5/interventions 的 HIQ Sentinel remediation 與 two-man command semantics。 | Claude | Codex | in_progress | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003` | 2026-05-08 10:46:14 | Fixed top-level two-man alias propagation in /bff/v1/commands: modified _stored_command_params to normalize twoManSignatureId/secondOperatorId from raw payload into stored params for RemediateSentinelIntervention; added 2 regression tests. 82 tests pass. |
-| `BFF-FINAL-010` | BFF Final Contract 2026-05-07 | Verify and hand off final BFF contract | 跑完整 contract verification cleanup pass delivery note 與 coordination response 讓 execute-plans 可消費。 | Codex | Codex2 | todo | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003`, `BFF-FINAL-004`, `BFF-FINAL-005`, `BFF-FINAL-006`, `BFF-FINAL-007`, `BFF-FINAL-008`, `BFF-FINAL-009` | 2026-05-08 09:48:00 | Restored to active board. Final verification remains gated on BFF-FINAL-006, BFF-FINAL-007, and BFF-FINAL-009 completion; support-only sidecars may run before final lock. |
-| `BFF-FINAL-010-SIDECAR-BFF-HANDOFF` | BFF Final Contract 2026-05-07 | [Sidecar] [Parent BFF-FINAL-010] Prepare BFF-FINAL-010 BFF and frontend handoff packet | 平行支援 BFF-FINAL-010，先整理 final backend/frontend handoff skeleton，不修改 canonical code。 | Claude2 | Codex | review | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003`, `BFF-FINAL-004`, `BFF-FINAL-005` | 2026-05-08 10:46:09 | Handoff packet updated (pass 2). BFF-FINAL-006 now shown as done/commit 08ac4543. BFF-FINAL-009 R1/R2 resolved per 32574279; new R3 (v1 two-man alias propagation) documented in §3b with concrete fix spec, §10 acceptance checklist checkboxes updated, §9f frontend checklist updated, §11 D3 note refreshed. No canonical code modified. |
+| `BFF-FINAL-010` | BFF Final Contract 2026-05-07 | Verify and hand off final BFF contract | 跑完整 contract verification cleanup pass delivery note 與 coordination response 讓 execute-plans 可消費。 | Claude | Codex | in_progress | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003`, `BFF-FINAL-004`, `BFF-FINAL-005`, `BFF-FINAL-006`, `BFF-FINAL-007`, `BFF-FINAL-008`, `BFF-FINAL-009` | 2026-05-08 11:25:51 | Reconciled delivery metadata: updated all four artifacts (DELIVERY_NOTE.md, CONTRACT_LOCK.json, coordination response YAML, contract-verification.md) to reference 7a1953d0 as backend_commit/verified_runtime_ref; added runtime_code_commit: d39496c4 field to distinguish delivery closeout commit from runtime code commit; re-confirmed 457 tests pass at HEAD 7a1953d0 (187.48s) |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| `BFF-FINAL-010-SIDECAR-BFF-HANDOFF` | Claude2 | Codex | Handoff packet updated (pass 2). BFF-FINAL-006 now shown as done/commit 08ac4543. BFF-FINAL-009 R1/R2 resolved per 32574279; new R3 (v1 two-man alias propagation) documented in §3b with concrete fix spec, §10 acceptance checklist checkboxes updated, §9f frontend checklist updated, §11 D3 note refreshed. No canonical code modified. | pending | 2026-05-08 10:46:09 |
+| _(none)_ | - | - | - | - | - |
 
 ## Blockers
 
@@ -184,23 +180,23 @@ Last updated: 2026-05-08 10:46:14
 
 ## Latest Checkpoints
 
-- 2026-05-08 10:45:27 Orchestrator: PreToolUse: Edit
-- 2026-05-08 10:45:27 Orchestrator: PostToolUse: Edit
-- 2026-05-08 10:45:33 Orchestrator: PreToolUse: Edit
-- 2026-05-08 10:45:33 Orchestrator: PostToolUse: Edit
-- 2026-05-08 10:45:34 Orchestrator: PreToolUse: Edit
-- 2026-05-08 10:45:34 Orchestrator: PostToolUse: Edit
-- 2026-05-08 10:45:37 Orchestrator: PreToolUse: Bash
-- 2026-05-08 10:45:40 Orchestrator: PreToolUse: Edit
-- 2026-05-08 10:45:40 Orchestrator: PostToolUse: Edit
-- 2026-05-08 10:45:53 Orchestrator: PreToolUse: Edit
-- 2026-05-08 10:45:53 Orchestrator: PostToolUse: Edit
-- 2026-05-08 10:46:00 Orchestrator: PreToolUse: Bash
-- 2026-05-08 10:46:00 Claude2: `BFF-FINAL-010-SIDECAR-BFF-HANDOFF` Updated handoff packet per Codex reopen: BFF-FINAL-006 marked done (commit 08ac4543), BFF-FINAL-009 R1/R2 resolved (commit 32574279); new R3 blocker (v1 two-man alias propagation) documented in §3b, §10, and §9f. Deferred notes updated accordingly.
-- 2026-05-08 10:46:03 Orchestrator: PostToolUse: Bash
-- 2026-05-08 10:46:04 Orchestrator: PostToolUse: Bash
-- 2026-05-08 10:46:09 Orchestrator: PreToolUse: Bash
-- 2026-05-08 10:46:09 Claude2: `BFF-FINAL-010-SIDECAR-BFF-HANDOFF` Handoff to Codex: Handoff packet updated (pass 2). BFF-FINAL-006 now shown as done/commit 08ac4543. BFF-FINAL-009 R1/R2 resolved per 32574279; new R3 (v1 two-man alias propagation) documented in §3b with concrete fix spec, §10 acceptance checklist checkboxes updated, §9f frontend checklist updated, §11 D3 note refreshed. No canonical code modified.
-- 2026-05-08 10:46:12 Orchestrator: PostToolUse: Bash
-- 2026-05-08 10:46:14 Orchestrator: PreToolUse: Bash
-- 2026-05-08 10:46:14 Claude: `BFF-FINAL-009` Fixed top-level two-man alias propagation in /bff/v1/commands: modified _stored_command_params to normalize twoManSignatureId/secondOperatorId from raw payload into stored params for RemediateSentinelIntervention; added 2 regression tests. 82 tests pass.
+- 2026-05-08 11:21:00 Orchestrator: PostToolUse: Bash
+- 2026-05-08 11:21:00 Orchestrator: PostToolUse: Read
+- 2026-05-08 11:21:10 Orchestrator: PreToolUse: Read
+- 2026-05-08 11:21:10 Orchestrator: PostToolUse: Read
+- 2026-05-08 11:21:44 Orchestrator: PreToolUse: Bash
+- 2026-05-08 11:25:03 Orchestrator: PostToolUse: Bash
+- 2026-05-08 11:25:14 Orchestrator: PreToolUse: Edit
+- 2026-05-08 11:25:15 Orchestrator: PostToolUse: Edit
+- 2026-05-08 11:25:21 Orchestrator: PreToolUse: Edit
+- 2026-05-08 11:25:21 Orchestrator: PostToolUse: Edit
+- 2026-05-08 11:25:25 Orchestrator: PreToolUse: Edit
+- 2026-05-08 11:25:25 Orchestrator: PostToolUse: Edit
+- 2026-05-08 11:25:29 Orchestrator: PreToolUse: Edit
+- 2026-05-08 11:25:30 Orchestrator: PostToolUse: Edit
+- 2026-05-08 11:25:35 Orchestrator: PreToolUse: Edit
+- 2026-05-08 11:25:35 Orchestrator: PostToolUse: Edit
+- 2026-05-08 11:25:40 Orchestrator: PreToolUse: Edit
+- 2026-05-08 11:25:41 Orchestrator: PostToolUse: Edit
+- 2026-05-08 11:25:51 Orchestrator: PreToolUse: Bash
+- 2026-05-08 11:25:51 Claude: `BFF-FINAL-010` Reconciled delivery metadata: updated all four artifacts (DELIVERY_NOTE.md, CONTRACT_LOCK.json, coordination response YAML, contract-verification.md) to reference 7a1953d0 as backend_commit/verified_runtime_ref; added runtime_code_commit: d39496c4 field to distinguish delivery closeout commit from runtime code commit; re-confirmed 457 tests pass at HEAD 7a1953d0 (187.48s)
