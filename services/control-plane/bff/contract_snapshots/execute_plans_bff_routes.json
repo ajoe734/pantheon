@@ -32,7 +32,7 @@
     {"method": "POST", "path": "/bff/v1/commands", "family": "final-contract", "status": "implemented"},
     {"method": "GET", "path": "/bff/v5/interventions", "family": "v5-interventions", "status": "implemented"},
     {"method": "POST", "path": "/bff/v5/interventions/{id}/remediate", "family": "v5-interventions", "status": "implemented"},
-    {"method": "POST", "path": "/bff/v5/interventions/{id}/two-man-sign", "family": "v5-interventions", "status": "missing", "task_id": "BFF-LUV-GAP-011"},
+    {"method": "POST", "path": "/bff/v5/interventions/{id}/two-man-sign", "family": "v5-interventions", "status": "superseded_with_reason", "task_id": "BFF-LUV-GAP-011", "reason": "Superseded by POST /bff/v5/interventions/{id}/remediate + RemediateSentinelIntervention, which is already a two-man guarded surface requiring two_man_signature_id. A separate two-man-sign step is redundant; callers should submit remediate with the second-operator signature directly."},
 
     {"method": "POST", "path": "/bff/mcp-servers/{id}/import-tools", "family": "mcp-final", "status": "implemented"},
     {"method": "POST", "path": "/bff/mcp-tools/{id}/{action}", "family": "mcp-final", "status": "implemented"},
