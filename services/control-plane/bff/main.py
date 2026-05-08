@@ -249,12 +249,20 @@ def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
             operator_id=token,
             roles=inferred_roles,
             mfa_verified="mfa" in lowered,
+            claims={"sub": token, "roles": inferred_roles},
+            token_kind="stub",
         )
     parts = token.split(":")
     operator_id = parts[0] if parts else "unknown"
     roles = parts[1].split(",") if len(parts) > 1 else ["operator"]
     mfa_verified = len(parts) > 2 and parts[2] == "mfa"
-    return OperatorIdentity(operator_id=operator_id, roles=roles, mfa_verified=mfa_verified)
+    return OperatorIdentity(
+        operator_id=operator_id,
+        roles=roles,
+        mfa_verified=mfa_verified,
+        claims={"sub": operator_id, "roles": roles},
+        token_kind="stub",
+    )
 
 
 def _extract_identity_jwt(
@@ -340,6 +348,8 @@ def _extract_identity_jwt(
         operator_id=ctx.actor_id,
         roles=sorted(ctx.roles),
         mfa_verified=ctx.mfa_verified,
+        claims=dict(ctx.claims),
+        token_kind=ctx.token_kind,
     )
 
 
@@ -2799,6 +2809,365 @@ def _capabilities_for_identity(identity: OperatorIdentity) -> List[str]:
             seen.add(c)
             result.append(c)
     return result
+
+
+def _dedupe_nonblank_strings(values: List[Any]) -> List[str]:
+    result: List[str] = []
+    seen = set()
+    for value in values:
+        clean = str(value or "").strip()
+        if clean and clean not in seen:
+            seen.add(clean)
+            result.append(clean)
+    return result
+
+
+def _split_claim_string(value: str) -> List[str]:
+    clean = value.strip()
+    if not clean:
+        return []
+    separator_pattern = r"[\s,]+" if "," not in clean else r"\s*,\s*"
+    return [part.strip() for part in re.split(separator_pattern, clean) if part.strip()]
+
+
+def _claim_path_value(claims: Dict[str, Any], path: str) -> Any:
+    current: Any = claims
+    for part in path.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current
+
+
+def _claim_value_as_strings(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return _split_claim_string(value)
+    if isinstance(value, dict):
+        for key in ("id", "tenant_id", "tenantId", "value", "name"):
+            if value.get(key):
+                return [str(value[key]).strip()]
+        return []
+    if isinstance(value, (list, tuple, set)):
+        collected: List[Any] = []
+        for item in value:
+            collected.extend(_claim_value_as_strings(item))
+        return _dedupe_nonblank_strings(collected)
+    return [str(value).strip()]
+
+
+def _identity_claim_strings(identity: OperatorIdentity, paths: List[str]) -> List[str]:
+    values: List[Any] = []
+    claims = identity.claims if isinstance(identity.claims, dict) else {}
+    for path in paths:
+        values.extend(_claim_value_as_strings(_claim_path_value(claims, path)))
+    return _dedupe_nonblank_strings(values)
+
+
+def _first_nonblank(*values: Any) -> Optional[str]:
+    for value in values:
+        clean = str(value or "").strip()
+        if clean:
+            return clean
+    return None
+
+
+def _env_csv(name: str) -> List[str]:
+    return _dedupe_nonblank_strings(_split_claim_string(os.getenv(name, "")))
+
+
+def _normalize_locale(raw: Any) -> Optional[str]:
+    clean = str(raw or "").strip().replace("_", "-")
+    if not clean:
+        return None
+    if not re.fullmatch(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*", clean):
+        return None
+    parts = clean.split("-")
+    normalized: List[str] = []
+    for idx, part in enumerate(parts):
+        if idx == 0:
+            normalized.append(part.lower())
+        elif len(part) == 2:
+            normalized.append(part.upper())
+        elif len(part) == 4:
+            normalized.append(part.title())
+        else:
+            normalized.append(part)
+    return "-".join(normalized)
+
+
+def _preferred_locale_from_accept_language(accept_language: Optional[str]) -> Optional[str]:
+    for raw_part in str(accept_language or "").split(","):
+        locale_part = raw_part.split(";", 1)[0].strip()
+        resolved = _normalize_locale(locale_part)
+        if resolved:
+            return resolved
+    return None
+
+
+def _resolve_bff_me_locale(
+    identity: OperatorIdentity,
+    *,
+    x_locale: Optional[str],
+    accept_language: Optional[str],
+) -> Dict[str, Any]:
+    claim_locale = _first_nonblank(
+        *_identity_claim_strings(identity, ["locale", "preferred_locale", "preferredLanguage"])
+    )
+    default_locale = (
+        _normalize_locale(os.getenv("PANTHEON_BFF_DEFAULT_LOCALE"))
+        or _normalize_locale(os.getenv("PANTHEON_LOCALE"))
+        or "en-US"
+    )
+    requested = _normalize_locale(x_locale)
+    accepted = _preferred_locale_from_accept_language(accept_language)
+    resolved = requested or accepted or _normalize_locale(claim_locale) or default_locale
+    return {
+        "resolved": resolved,
+        "requested": requested,
+        "accept_language": accepted,
+        "default": default_locale,
+        "timezone": os.getenv("PANTHEON_TIMEZONE", "UTC"),
+    }
+
+
+def _flag_value(value: Any) -> Any:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    clean = str(value or "").strip()
+    lowered = clean.lower()
+    if lowered in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if lowered in {"0", "false", "no", "off", "disabled"}:
+        return False
+    return clean
+
+
+def _parse_feature_flags(raw: Any) -> Dict[str, Any]:
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        return {str(key): _flag_value(value) for key, value in raw.items() if str(key).strip()}
+    if isinstance(raw, (list, tuple, set)):
+        return {str(item).strip(): True for item in raw if str(item).strip()}
+    clean = str(raw or "").strip()
+    if not clean:
+        return {}
+    if clean.startswith("{"):
+        try:
+            parsed = json.loads(clean)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            return _parse_feature_flags(parsed)
+    flags: Dict[str, Any] = {}
+    for part in clean.split(","):
+        item = part.strip()
+        if not item:
+            continue
+        if "=" in item:
+            key, value = item.split("=", 1)
+            flags[key.strip()] = _flag_value(value)
+        else:
+            flags[item] = True
+    return {key: value for key, value in flags.items() if key}
+
+
+def _bff_me_feature_flags(identity: OperatorIdentity) -> Dict[str, Any]:
+    claims = identity.claims if isinstance(identity.claims, dict) else {}
+    flags = {
+        "executePlansBff": True,
+        "sessionAuthMe": True,
+    }
+    flags.update(_parse_feature_flags(_claim_path_value(claims, "feature_flags")))
+    flags.update(_parse_feature_flags(_claim_path_value(claims, "features")))
+    flags.update(_parse_feature_flags(os.getenv("PANTHEON_BFF_FEATURE_FLAGS")))
+    return flags
+
+
+def _epoch_claim_seconds(value: Any) -> Optional[float]:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _epoch_to_iso(value: Any) -> Optional[str]:
+    epoch = _epoch_claim_seconds(value)
+    if epoch is None:
+        clean = str(value or "").strip()
+        return clean or None
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _bff_me_session_payload(identity: OperatorIdentity, *, checked_at: str) -> Dict[str, Any]:
+    claims = identity.claims if isinstance(identity.claims, dict) else {}
+    exp = _epoch_claim_seconds(claims.get("exp"))
+    now = time.time()
+    freshness_seconds = max(0, int(exp - now)) if exp is not None else None
+    session_id = _first_nonblank(
+        claims.get("sid"),
+        claims.get("session_id"),
+        claims.get("jti"),
+        os.getenv("PANTHEON_SESSION_ID"),
+        f"bff-session-{identity.operator_id}",
+    )
+    return {
+        "id": session_id,
+        "authenticated": True,
+        "auth_mode": identity.token_kind,
+        "fresh": exp is None or exp > now,
+        "freshness_seconds_remaining": freshness_seconds,
+        "issued_at": _epoch_to_iso(claims.get("iat")),
+        "expires_at": _epoch_to_iso(claims.get("exp")),
+        "mfa_verified": identity.mfa_verified,
+        "checked_at": checked_at,
+    }
+
+
+def _bff_me_environment_payload() -> Dict[str, Any]:
+    scope = _foundation_environment_scope()
+    stub_auth = _bool_from_env(_BFF_AUTH_STUB_ENV)
+    auth_mode = "stub" if stub_auth else os.getenv("PANTHEON_BFF_AUTH_MODE", "strict").strip().lower() or "strict"
+    return {
+        "name": scope.name.value,
+        "deployment_stage": os.getenv("PANTHEON_DEPLOYMENT_STAGE", scope.name.value),
+        "region": scope.region,
+        "timezone": scope.timezone,
+        "auth_mode": auth_mode,
+        "strict_auth": not stub_auth and auth_mode == "strict",
+    }
+
+
+def _bff_me_user_payload(identity: OperatorIdentity) -> Dict[str, Any]:
+    claims = identity.claims if isinstance(identity.claims, dict) else {}
+    claim_caps = _identity_claim_strings(
+        identity,
+        ["capabilities", "permissions", "scp", "scope"],
+    )
+    capabilities = _dedupe_nonblank_strings([*claim_caps, *_capabilities_for_identity(identity)])
+    display_name = _first_nonblank(
+        claims.get("name"),
+        claims.get("preferred_username"),
+        claims.get("email"),
+        identity.operator_id,
+    )
+    return {
+        "id": identity.operator_id,
+        "operator_id": identity.operator_id,
+        "display_name": display_name,
+        "roles": identity.roles,
+        "capabilities": capabilities,
+        "mfa_verified": identity.mfa_verified,
+    }
+
+
+def _bff_me_tenant_payload(
+    identity: OperatorIdentity,
+    *,
+    requested_tenant: Optional[str],
+) -> Dict[str, Any]:
+    claim_default = _first_nonblank(
+        *_identity_claim_strings(
+            identity,
+            ["tenant_id", "tenantId", "tenant.id", "tid", "org_id", "organization.id"],
+        )
+    )
+    default_tenant = _first_nonblank(
+        os.getenv("PANTHEON_BFF_TENANT_ID"),
+        os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
+        os.getenv("PANTHEON_TENANT_ID"),
+        claim_default,
+        "pantheon-dev",
+    )
+    claim_allowed = _identity_claim_strings(
+        identity,
+        [
+            "allowed_tenants",
+            "allowedTenants",
+            "tenant_ids",
+            "tenantIds",
+            "tenants",
+            "tenant_id",
+            "tenantId",
+            "tenant.id",
+            "tid",
+            "org_id",
+        ],
+    )
+    allowed_tenants = claim_allowed or _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [default_tenant]
+    effective_tenant = _first_nonblank(requested_tenant, default_tenant) or "pantheon-dev"
+    if "*" not in allowed_tenants and effective_tenant not in allowed_tenants:
+        raise _bff_error(
+            403,
+            ErrorCode.INSUFFICIENT_ROLE,
+            "Tenant access denied",
+            "Requested tenant is outside the caller tenant scope",
+            precondition_failed="tenant_scope",
+            suggestion="Switch to an allowed tenant or request access from an administrator",
+            details_extra={
+                "tenantId": effective_tenant,
+                "allowedTenantIds": allowed_tenants,
+            },
+        )
+    return {
+        "id": effective_tenant,
+        "requested_id": str(requested_tenant or "").strip() or None,
+        "default_id": default_tenant,
+        "allowed_ids": allowed_tenants,
+        "scope": "global" if "*" in allowed_tenants else "tenant",
+    }
+
+
+@app.get("/bff/me")
+async def bff_me(
+    tenant_id: Optional[str] = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+    x_locale: Optional[str] = Header(default=None, alias="X-Locale"),
+    accept_language: Optional[str] = Header(default=None, alias="Accept-Language"),
+):
+    """BFF current-user/session DTO consumed by execute-plans."""
+    identity = _extract_identity(authorization, mfa_token=x_mfa_token)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    requested_tenant = _first_nonblank(x_tenant_id, x_pantheon_tenant, tenant_id)
+    tenant = _bff_me_tenant_payload(identity, requested_tenant=requested_tenant)
+    locale = _resolve_bff_me_locale(
+        identity,
+        x_locale=x_locale,
+        accept_language=accept_language,
+    )
+    user = _bff_me_user_payload(identity)
+    session = _bff_me_session_payload(identity, checked_at=snapshot_at)
+    data = {
+        "user": user,
+        "current_user": user,
+        "currentUser": user,
+        "tenant": tenant,
+        "tenant_id": tenant["id"],
+        "locale": locale,
+        "environment": _bff_me_environment_payload(),
+        "feature_flags": _bff_me_feature_flags(identity),
+        "session": session,
+        "roles": user["roles"],
+        "capabilities": user["capabilities"],
+    }
+    return {
+        "data": data,
+        "meta": {
+            "route": "GET /bff/me",
+            "contract": "BFF-LUV-GAP-009",
+            "snapshot_at": snapshot_at,
+        },
+    }
 
 
 def _read_surface_state() -> str:

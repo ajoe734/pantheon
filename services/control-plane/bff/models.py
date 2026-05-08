@@ -321,6 +321,8 @@ class OperatorIdentity(BaseModel):
     operator_id: str
     roles: List[str]
     mfa_verified: bool = False
+    claims: Dict[str, Any] = Field(default_factory=dict)
+    token_kind: str = "stub"
 
 
 # --------------------------------------------------------------------------- #
