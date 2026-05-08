@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-08T03:04:22Z",
+  "updated_at": "2026-05-08T03:51:30Z",
   "counts": {
-    "total": 925,
-    "completed": 909,
+    "total": 926,
+    "completed": 910,
     "superseded": 16
   },
   "recent_terminal_ids": [
+    "BFF-FINAL-010",
     "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
     "BFF-FINAL-009",
     "BFF-FINAL-006-SIDECAR-BFF-HANDOFF",
@@ -25,7 +26,6 @@
     "SVC-BFF-IDP-STAGING-INTEGRATION-HARDENING",
     "SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2",
     "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY",
-    "FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT",
-    "SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E"
+    "FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT"
   ]
 }

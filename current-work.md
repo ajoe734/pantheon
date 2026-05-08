@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-08 11:25:51
+Last updated: 2026-05-08 11:51:30
 
 ## Objective
 
@@ -37,7 +37,7 @@ Last updated: 2026-05-08 11:25:51
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Reconciled delivery metadata: updated all four artifacts (DELIVERY_NOTE.md, CONTRACT_LOCK.json, coordination response YAML, contract-verification.md) to reference 7a1953d0 as backend_commit/verified_runtime_ref; added runtime_code_commit: d39496c4 field to distinguish delivery closeout commit from runtime code commit; re-confirmed 457 tests pass at HEAD 7a1953d0 (187.48s)
+- `Claude`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 - `Codex`: integration, status-system, schema, acceptance; next: No active assignment
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
@@ -51,7 +51,7 @@ Last updated: 2026-05-08 11:25:51
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `BFF-FINAL-010` | BFF Final Contract 2026-05-07 | Verify and hand off final BFF contract | Claude | in_progress | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003`, `BFF-FINAL-004`, `BFF-FINAL-005`, `BFF-FINAL-006`, `BFF-FINAL-007`, `BFF-FINAL-008`, `BFF-FINAL-009` | 跑完整 contract verification cleanup pass delivery note 與 coordination response 讓 execute-plans 可消費。 |
+| _(none)_ | - | - | - | - | - | - |
 
 ### External / Upstream Integration Work
 
@@ -61,11 +61,12 @@ Last updated: 2026-05-08 11:25:51
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-08 11:04:22
-- Terminal tasks archived: `925` total, `909` completed, `16` superseded
+- Archive updated: 2026-05-08 11:51:30
+- Terminal tasks archived: `926` total, `910` completed, `16` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `BFF-FINAL-010` | BFF Final Contract 2026-05-07 | Verify and hand off final BFF contract | Claude | completed | 2026-05-08 11:51:30 | `ai-task-archive/tasks/BFF-FINAL-010.json` |
 | `BFF-FINAL-010-SIDECAR-BFF-HANDOFF` | BFF Final Contract 2026-05-07 | Prepare BFF-FINAL-010 BFF and frontend handoff packet | Claude2 | completed | 2026-05-08 11:04:22 | `ai-task-archive/tasks/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.json` |
 | `BFF-FINAL-009` | BFF Final Contract 2026-05-07 | Implement v5 interventions contract | Claude | completed | 2026-05-08 11:00:32 | `ai-task-archive/tasks/BFF-FINAL-009.json` |
 | `BFF-FINAL-006-SIDECAR-BFF-HANDOFF` | BFF Final Contract 2026-05-07 | Prepare BFF-FINAL-006 BFF and frontend handoff packet | Codex2 | completed | 2026-05-08 10:38:45 | `ai-task-archive/tasks/BFF-FINAL-006-SIDECAR-BFF-HANDOFF.json` |
@@ -85,13 +86,11 @@ Last updated: 2026-05-08 11:25:51
 | `SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2` | Blueprint production hardening follow-up 2026-05-04 | Upgrade source/search to crawler-indexer platform baseline | Codex | completed | 2026-05-04 13:16:48 | `ai-task-archive/tasks/SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2.json` |
 | `SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY` | Blueprint production hardening follow-up 2026-05-04 | Make execution sandbox/canary activation-ready while live stays gated | Codex2 | completed | 2026-05-04 13:10:52 | `ai-task-archive/tasks/SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY.json` |
 | `FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT` | Blueprint production hardening follow-up 2026-05-04 | Close frontend staging repo hygiene and publish readiness | Codex | completed | 2026-05-04 12:58:50 | `ai-task-archive/tasks/FRONT-STAGING-REPO-HYGIENE-PUBLISH-CLOSEOUT.json` |
-| `SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E` | Blueprint production hardening follow-up 2026-05-04 | Close OSS/research/learning activation-ready E2E wiring | Codex2 | completed | 2026-05-04 12:50:19 | `ai-task-archive/tasks/SVC-OSS-RESEARCH-LEARNING-ACTIVATION-READY-E2E.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `BFF-FINAL-010` | BFF Final Contract 2026-05-07 | Verify and hand off final BFF contract | 跑完整 contract verification cleanup pass delivery note 與 coordination response 讓 execute-plans 可消費。 | Claude | Codex | in_progress | `BFF-FINAL-001`, `BFF-FINAL-002`, `BFF-FINAL-003`, `BFF-FINAL-004`, `BFF-FINAL-005`, `BFF-FINAL-006`, `BFF-FINAL-007`, `BFF-FINAL-008`, `BFF-FINAL-009` | 2026-05-08 11:25:51 | Reconciled delivery metadata: updated all four artifacts (DELIVERY_NOTE.md, CONTRACT_LOCK.json, coordination response YAML, contract-verification.md) to reference 7a1953d0 as backend_commit/verified_runtime_ref; added runtime_code_commit: d39496c4 field to distinguish delivery closeout commit from runtime code commit; re-confirmed 457 tests pass at HEAD 7a1953d0 (187.48s) |
 
 ## Handoff Queue
 
@@ -180,23 +179,23 @@ Last updated: 2026-05-08 11:25:51
 
 ## Latest Checkpoints
 
-- 2026-05-08 11:21:00 Orchestrator: PostToolUse: Bash
-- 2026-05-08 11:21:00 Orchestrator: PostToolUse: Read
-- 2026-05-08 11:21:10 Orchestrator: PreToolUse: Read
-- 2026-05-08 11:21:10 Orchestrator: PostToolUse: Read
-- 2026-05-08 11:21:44 Orchestrator: PreToolUse: Bash
-- 2026-05-08 11:25:03 Orchestrator: PostToolUse: Bash
-- 2026-05-08 11:25:14 Orchestrator: PreToolUse: Edit
-- 2026-05-08 11:25:15 Orchestrator: PostToolUse: Edit
-- 2026-05-08 11:25:21 Orchestrator: PreToolUse: Edit
-- 2026-05-08 11:25:21 Orchestrator: PostToolUse: Edit
-- 2026-05-08 11:25:25 Orchestrator: PreToolUse: Edit
-- 2026-05-08 11:25:25 Orchestrator: PostToolUse: Edit
-- 2026-05-08 11:25:29 Orchestrator: PreToolUse: Edit
-- 2026-05-08 11:25:30 Orchestrator: PostToolUse: Edit
-- 2026-05-08 11:25:35 Orchestrator: PreToolUse: Edit
-- 2026-05-08 11:25:35 Orchestrator: PostToolUse: Edit
-- 2026-05-08 11:25:40 Orchestrator: PreToolUse: Edit
-- 2026-05-08 11:25:41 Orchestrator: PostToolUse: Edit
-- 2026-05-08 11:25:51 Orchestrator: PreToolUse: Bash
-- 2026-05-08 11:25:51 Claude: `BFF-FINAL-010` Reconciled delivery metadata: updated all four artifacts (DELIVERY_NOTE.md, CONTRACT_LOCK.json, coordination response YAML, contract-verification.md) to reference 7a1953d0 as backend_commit/verified_runtime_ref; added runtime_code_commit: d39496c4 field to distinguish delivery closeout commit from runtime code commit; re-confirmed 457 tests pass at HEAD 7a1953d0 (187.48s)
+- 2026-05-08 11:50:14 Orchestrator: `BFF-FINAL-010` Worker superseded after task responsibility moved to another agent.
+- 2026-05-08 11:50:14 Orchestrator: `BFF-FINAL-010` Wake-up queued for supervisor: owned_finalize_dispatch
+- 2026-05-08 11:50:14 Orchestrator: `BFF-FINAL-010` Worker started via claude_cli: owned_finalize_dispatch
+- 2026-05-08 11:50:14 Claude: `BFF-FINAL-010` Supervisor resumed BFF-FINAL-010 for finalize after successful dispatch.
+- 2026-05-08 11:50:17 Orchestrator: SessionStart: SessionStart
+- 2026-05-08 11:50:17 Orchestrator: `BFF-FINAL-010` Supervisor resumed BFF-FINAL-010 for finalize after successful dispatch.
+- 2026-05-08 11:50:27 Orchestrator: PreToolUse: Read
+- 2026-05-08 11:50:28 Orchestrator: PostToolUse: Read
+- 2026-05-08 11:50:28 Orchestrator: PreToolUse: Read
+- 2026-05-08 11:50:28 Orchestrator: PostToolUse: Read
+- 2026-05-08 11:50:35 Orchestrator: PreToolUse: Read
+- 2026-05-08 11:50:35 Orchestrator: PostToolUse: Read
+- 2026-05-08 11:50:35 Orchestrator: PreToolUse: Read
+- 2026-05-08 11:50:36 Orchestrator: PostToolUse: Read
+- 2026-05-08 11:50:46 Orchestrator: PreToolUse: Bash
+- 2026-05-08 11:50:46 Orchestrator: PostToolUse: Bash
+- 2026-05-08 11:50:59 Orchestrator: PreToolUse: Bash
+- 2026-05-08 11:50:59 Orchestrator: PostToolUse: Bash
+- 2026-05-08 11:51:30 Orchestrator: PreToolUse: Bash
+- 2026-05-08 11:51:30 Claude: `BFF-FINAL-010` Owner finalization complete. All four delivery artifacts committed at HEAD 8be8d9b0: runtime_code_commit=d39496c4 (457 BFF tests verified by Codex), backend_commit=325197f1 (delivery-metadata anchor), runtime+metadata separation explicit. No BFF runtime changes after d39496c4. Worktree dirty files (.orchestrator/*.py, lean) are unrelated to task scope. State archived.

@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "task_id": "BFF-FINAL-002",
+  "archived_at": "2026-05-07T13:14:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-FINAL-002",
+    "title": "Align idempotency and command response envelope",
+    "summary_zh": "實作 /bff/v1/commands final route、Idempotency-Key header 與 CommandResponse<T> 包裝。",
+    "phase": "BFF Final Contract 2026-05-07",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "terminal_outcome": "completed",
+    "depends_on": [
+      "BFF-FINAL-001"
+    ],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-07-final/BFF-FINAL-002-idempotency-command-envelope.md",
+      "docs/bff/execution-tasks/2026-05-07-final/BFF-FINAL-002-review.md",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/test_governance_command_submission.py",
+      "services/control-plane/bff/test_command_executor.py"
+    ],
+    "acceptance": [
+      "Idempotency-Key required",
+      "body-level idempotencyKey rejected",
+      "CommandResponse envelope tested"
+    ],
+    "next": "Archived dependency restored from completed commit 583ee340 so BFF-FINAL live dispatch can resolve prerequisites.",
+    "last_update": "2026-05-07T13:14:44Z",
+    "delivery": {
+      "commit_hash": "583ee340",
+      "recorded_at": "2026-05-07T13:14:44Z",
+      "verification": [
+        "python3 -m pytest services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/test_command_executor.py -q (42 passed)"
+      ],
+      "recovery_note": "Reconstructed terminal archive after live task board cleanup removed BFF-FINAL dependency truth."
+    }
+  },
+  "handoffs": [],
+  "blockers": []
+}

@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "task_id": "BFF-FINAL-010",
+  "archived_at": "2026-05-08T03:51:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-FINAL-010",
+    "title": "Verify and hand off final BFF contract",
+    "summary_zh": "跑完整 contract verification cleanup pass delivery note 與 coordination response 讓 execute-plans 可消費。",
+    "phase": "BFF Final Contract 2026-05-07",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-FINAL-001",
+      "BFF-FINAL-002",
+      "BFF-FINAL-003",
+      "BFF-FINAL-004",
+      "BFF-FINAL-005",
+      "BFF-FINAL-006",
+      "BFF-FINAL-007",
+      "BFF-FINAL-008",
+      "BFF-FINAL-009"
+    ],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-07-final/BFF-FINAL-010-contract-verification.md",
+      "services/control-plane/bff/test_*",
+      "docs/pantheon-delivery/BFF-2026-05-07-final",
+      ".coordination/responses/BFF-2026-05-07-final-backend-delivery.yaml"
+    ],
+    "acceptance": [
+      "all BFF tests pass",
+      "cleanup pass complete",
+      "delivery note written",
+      "coordination response emitted"
+    ],
+    "next": "Owner finalization complete. All four delivery artifacts committed at HEAD 8be8d9b0: runtime_code_commit=d39496c4 (457 BFF tests verified by Codex), backend_commit=325197f1 (delivery-metadata anchor), runtime+metadata separation explicit. No BFF runtime changes after d39496c4. Worktree dirty files (.orchestrator/*.py, lean) are unrelated to task scope. State archived.",
+    "last_update": "2026-05-08T03:51:30Z",
+    "review_notes_zh": [
+      "Full BFF suite passed at current HEAD 8be8d9b0: 457 passed, 36 warnings in 180.95s. Current BFF runtime tree has no changes after runtime_code_commit d39496c4. Delivery artifacts parse cleanly and consistently distinguish backend_commit 325197f1 as the prior delivery-metadata anchor from runtime_code_commit d39496c4; current HEAD 8be8d9b0 contains the final artifact update by convention."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-08T03:51:30Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "8be8d9b02928d5ec3caebe78f530104ac0f15586",
+      "commit_subject": "BFF-FINAL-010: advance backend_commit to 325197f1 — final delivery anchor",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "unchanged). Added explicit note in each artifact": "the git commit",
+        "- Delivery artifact commits": "7a1953d0 → 4e1f7e47 → 325197f1 → this commit",
+        "LLM-Agent": "Claude",
+        "Task-ID": "BFF-FINAL-010",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 20,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 58,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-FINAL-010",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T03:00:40Z",
+      "resolved_at": "2026-05-08T03:01:03Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Ready for review. All four BFF-FINAL-010 acceptance criteria met: (1) all BFF tests pass — 457 passed at HEAD 7a1953d0; (2) cleanup pass complete — no unresolved TODO/FIXME/STUB in production paths, known stubs (auth stub, _V5_INTERVENTIONS_STORE) are env-gated; (3) delivery note written at docs/pantheon-delivery/BFF-2026-05-07-final/DELIVERY_NOTE.md plus CONTRACT_LOCK.json and contract-verification artifact; (4) coordination response emitted at .coordination/responses/BFF-2026-05-07-final-backend-delivery.yaml in execute-plans-consumable shape. Closeout commit 7a1953d0.",
+      "status": "done",
+      "created_at": "2026-05-08T03:13:32Z",
+      "resolved_at": "2026-05-08T03:20:07Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Request changes: full BFF suite passes at current HEAD 7a1953d0 (457 passed, 36 warnings in 217.07s), but delivery metadata is not internally consistent. DELIVERY_NOTE.md lists BFF-FINAL-010 closeout as d39496c4 and verification HEAD d39496c4, while the actual BFF-FINAL-010 artifact commit is 7a1953d0; CONTRACT_LOCK.json and the coordination response also publish d39496c4 as backend/verified refs. Please reconcile these artifacts by clearly distinguishing runtime-code ref from delivery/artifact closeout ref, or by updating published backend/verified refs to 7a1953d0, then hand off again.",
+      "status": "done",
+      "created_at": "2026-05-08T03:20:07Z",
+      "resolved_at": "2026-05-08T03:20:07Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Re-handoff after reconciling delivery metadata refs (commit 4e1f7e47). Updated all four artifacts to clearly distinguish runtime-code ref (d39496c4) from delivery/artifact closeout ref (7a1953d0): DELIVERY_NOTE.md closeout commit + HEAD now 7a1953d0 with note that delivery commit adds artifacts only; CONTRACT_LOCK.json + coordination response YAML now publish backend_commit/verified_runtime_ref/bff_contract_version as 7a1953d0 plus a new runtime_code_commit: d39496c4 field; contract-verification.md HEAD now 7a1953d0 with re-confirmation note. Tests re-run at HEAD 7a1953d0: 457 passed, 0 failures, 36 warnings (187.48s).",
+      "status": "done",
+      "created_at": "2026-05-08T03:30:21Z",
+      "resolved_at": "2026-05-08T03:33:22Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Request changes: metadata reconciliation commit is current HEAD 4e1f7e47, but delivery artifacts still publish backend_commit/verified_runtime_ref/bff_contract_version as 7a1953d0. At 7a1953d0 the referenced coordination response and CONTRACT_LOCK still contain the old d39496c4 metadata, so the published version-lock tuple is not replay-verifiable. Please update the delivery note, CONTRACT_LOCK, coordination response, and contract-verification artifact to distinguish latest delivery-metadata commit 4e1f7e47 from runtime_code_commit d39496c4, or publish a new corrected delivery commit and pin all backend/verified refs to that commit before re-handoff.",
+      "status": "done",
+      "created_at": "2026-05-08T03:33:22Z",
+      "resolved_at": "2026-05-08T03:33:22Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Re-handoff (commit 325197f1). All four delivery artifacts now publish a consistent, replay-verifiable version-lock tuple: backend_commit=4e1f7e471b... (latest delivery-metadata commit at 4e1f7e47), verified_runtime_ref=pantheon-bff@d39496c4..., bff_contract_version=pantheon-bff@d39496c4..., runtime_code_commit=d39496c4... (BFF code last changed here). The separation is explicit: delivery metadata refs → 4e1f7e47, runtime code refs → d39496c4. 457 BFF tests confirmed passing at runtime code d39496c4.",
+      "status": "done",
+      "created_at": "2026-05-08T03:37:24Z",
+      "resolved_at": "2026-05-08T03:40:07Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Request changes: commit 325197f1 modified all four delivery artifacts, but the current artifacts still publish backend_commit/delivery metadata as 4e1f7e47 and omit 325197f1. At 4e1f7e47, CONTRACT_LOCK.json and the coordination response still publish the prior 7a1953d0 refs, so the current tuple is not replay-verifiable against the declared metadata ref. Please reconcile all four artifacts by explicitly separating runtime_code_commit d39496c4 from the actual published delivery artifact/lock commit, and remove or update latest metadata claims before re-handoff. No BFF runtime code changes were found after d39496c4.",
+      "status": "done",
+      "created_at": "2026-05-08T03:40:07Z",
+      "resolved_at": "2026-05-08T03:40:07Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Re-handoff (commit 8be8d9b0). Advanced backend_commit from stale 4e1f7e47 to 325197f1 across all four delivery artifacts. The tuple is now: runtime_code_commit=d39496c4 (BFF runtime code, 457 tests verified), backend_commit=325197f1 (the prior delivery-metadata anchor — the commit that pinned the refs). Added explicit note in all four artifacts: the git commit containing these artifacts (8be8d9b0) is the final delivery commit for this cycle. The self-referential bootstrap problem is resolved by convention: backend_commit references the prior delivery-metadata anchor; the actual final delivery commit is HEAD at reading time. Delivery artifact commit chain: 7a1953d0 → 4e1f7e47 → 325197f1 → 8be8d9b0 (this commit).",
+      "status": "done",
+      "created_at": "2026-05-08T03:45:15Z",
+      "resolved_at": "2026-05-08T03:50:14Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. Verified full BFF suite at HEAD 8be8d9b0 (457 passed, 36 warnings), JSON/YAML delivery artifacts parse, no services/control-plane/bff changes after runtime_code_commit d39496c4, and delivery metadata consistently separates prior metadata anchor 325197f1 from runtime ref d39496c4. Owner Claude should finalize via closeout spec.",
+      "status": "done",
+      "created_at": "2026-05-08T03:50:14Z",
+      "resolved_at": "2026-05-08T03:51:30Z"
+    }
+  ],
+  "blockers": []
+}

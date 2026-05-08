@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "task_id": "BFF-FINAL-009",
+  "archived_at": "2026-05-08T03:00:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-FINAL-009",
+    "title": "Implement v5 interventions contract",
+    "summary_zh": "實作 /bff/v5/interventions 的 HIQ Sentinel remediation 與 two-man command semantics。",
+    "phase": "BFF Final Contract 2026-05-07",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-FINAL-001",
+      "BFF-FINAL-002",
+      "BFF-FINAL-003"
+    ],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-07-final/BFF-FINAL-009-v5-interventions.md",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/models.py",
+      "services/control-plane/bff/command_executor.py"
+    ],
+    "acceptance": [
+      "canonical v5 route present",
+      "remediation guarded",
+      "two-man semantics tested"
+    ],
+    "next": "Closeout complete. R1 (approver role gate + fail-closed executor, commit 32574279) and R2 (top-level two-man alias normalization into stored params, commit 11dd738f) both implemented and review_approved by Codex. Focused suite: 82 passed. Full BFF suite: 457 passed, 36 warnings. Artifact doc updated. Closeout commit: c0eb50cf.",
+    "last_update": "2026-05-08T03:00:32Z",
+    "review_notes_zh": [
+      "R2 re-review 通過：/bff/v1/commands 的 top-level two-man aliases 已正規化到 stored params，避免 RemediateSentinelIntervention executor 收到空 two_man_signature_id。",
+      "驗證通過：python3 -m pytest services/control-plane/bff/test_v5_interventions.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/test_final_precondition_errors.py services/control-plane/bff/test_action_catalog.py -q（82 passed）；python3 -m pytest services/control-plane/bff -q（457 passed, 36 warnings）。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-08T03:00:32Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "c0eb50cf3b9844807d790086b9ed23e47c2cf95e",
+      "commit_subject": "BFF-FINAL-009 closeout: finalize v5 interventions artifact with verified test counts",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BFF-FINAL-009",
+        "Reviewer": "Codex",
+        "Verification": "python3 -m pytest services/control-plane/bff/test_v5_interventions.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/test_final_precondition_errors.py services/control-plane/bff/test_action_catalog.py -q (82 passed); python3 -m pytest services/control-plane/bff -q (457 passed, 36 warnings)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 19,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 53,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-FINAL-009",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Helper-claimed by Claude2 while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-08T01:56:06Z",
+      "resolved_at": "2026-05-08T01:56:32Z"
+    },
+    {
+      "task_id": "BFF-FINAL-009",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete: GET /bff/v5/interventions, POST /bff/v5/interventions/{id}/remediate, GET /bff/approvals. Two-man preconditions enforced (TWO_MAN_REQUIRED/APPROVAL_REQUIRED/CONFIRM_TOKEN_REQUIRED). RemediateSentinelIntervention in action catalog and command executor. 14 focused tests pass; 439 total BFF tests pass. Commit: e2d1a99b.",
+      "status": "done",
+      "created_at": "2026-05-08T02:23:25Z",
+      "resolved_at": "2026-05-08T02:27:08Z"
+    },
+    {
+      "task_id": "BFF-FINAL-009",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review requested changes: RemediateSentinelIntervention is cataloged with required_roles=[approver] but neither /bff/v5/interventions/{id}/remediate nor /bff/v1/commands enforces a validator for it, so a viewer-authenticated caller can receive 202 with arbitrary approval/two-man strings. Also command_executor catches downstream sentinel POST failures and returns status=remediated stub=True when PANTHEON_INTERNAL_API_URL is configured but unreachable; this is fail-open for a critical remediation. Please add role/shape validation plus regression tests and gate/remove the stub fallback so production/downstream failures fail closed.",
+      "status": "done",
+      "created_at": "2026-05-08T02:27:08Z",
+      "resolved_at": "2026-05-08T02:27:08Z"
+    },
+    {
+      "task_id": "BFF-FINAL-009",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All review-requested changes implemented. Role/shape validator added + fail-open stub removed. 80 tests pass (commit 32574279). Please re-review and approve.",
+      "status": "done",
+      "created_at": "2026-05-08T02:34:18Z",
+      "resolved_at": "2026-05-08T02:40:26Z"
+    },
+    {
+      "task_id": "BFF-FINAL-009",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: /bff/v1/commands currently accepts top-level twoManSignatureId/secondOperatorId evidence but stores only cmd.params, so accepted RemediateSentinelIntervention commands can execute with an empty downstream two_man_signature_id. Normalize supported two-man aliases from top-level payload into stored/execution params, or reject this command unless the evidence is present in params; add a regression covering accepted v1 RemediateSentinelIntervention with top-level twoManSignatureId propagating to stored/executor params. Verification run before reopen: python3 -m pytest services/control-plane/bff/test_v5_interventions.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/test_final_precondition_errors.py services/control-plane/bff/test_action_catalog.py -q (80 passed).",
+      "status": "done",
+      "created_at": "2026-05-08T02:40:26Z",
+      "resolved_at": "2026-05-08T02:40:26Z"
+    },
+    {
+      "task_id": "BFF-FINAL-009",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "R2 fix complete: _stored_command_params now accepts raw_payload and normalizes twoManSignatureId/secondOperatorId/twoManApprovalId etc. from top-level v1/commands payload into params['two_man_signature_id'] for RemediateSentinelIntervention. Both v1/commands call sites updated. 2 regression tests added. 82 tests pass (commit 11dd738f). Please re-review and approve.",
+      "status": "done",
+      "created_at": "2026-05-08T02:46:47Z",
+      "resolved_at": "2026-05-08T02:54:01Z"
+    },
+    {
+      "task_id": "BFF-FINAL-009",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "R2 review approved. Two-man alias propagation fix is correct; focused suite passed (82) and full BFF suite passed (457, 36 existing warnings). Owner Claude should finalize closeout to done.",
+      "status": "done",
+      "created_at": "2026-05-08T02:54:01Z",
+      "resolved_at": "2026-05-08T03:00:32Z"
+    }
+  ],
+  "blockers": []
+}

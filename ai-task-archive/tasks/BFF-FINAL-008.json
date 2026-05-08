@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "task_id": "BFF-FINAL-008",
+  "archived_at": "2026-05-07T14:01:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-FINAL-008",
+    "title": "Add Agora journal merge patch store",
+    "summary_zh": "實作 Agora journal JSON Merge Patch facade/store 與 focused merge-patch tests。",
+    "phase": "BFF Final Contract 2026-05-07",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "terminal_outcome": "completed",
+    "depends_on": [
+      "BFF-FINAL-001",
+      "BFF-FINAL-002"
+    ],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-07-final/BFF-FINAL-008-agora-journal-merge-patch.md",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/test_agora_journal_merge_patch.py"
+    ],
+    "acceptance": [
+      "merge patch endpoint/store present",
+      "audit diff semantics tested",
+      "final primitives and command route remain green"
+    ],
+    "next": "Archived dependency restored from completed commit fd782488 so BFF-FINAL live dispatch can resolve prerequisites.",
+    "last_update": "2026-05-07T14:01:35Z",
+    "delivery": {
+      "commit_hash": "fd782488",
+      "recorded_at": "2026-05-07T14:01:35Z",
+      "verification": [
+        "python3 -m pytest services/control-plane/bff/test_agora_journal_merge_patch.py -q",
+        "python3 -m pytest services/control-plane/bff -k \"journal or agora\" -q"
+      ],
+      "recovery_note": "Reconstructed terminal archive after live task board cleanup removed BFF-FINAL dependency truth."
+    }
+  },
+  "handoffs": [],
+  "blockers": []
+}

@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "BFF-FINAL-009-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-08T02:27:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-FINAL-009-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BFF-FINAL-009 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BFF-FINAL-009，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "BFF Final Contract 2026-05-07",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-FINAL-001",
+      "BFF-FINAL-002",
+      "BFF-FINAL-003"
+    ],
+    "artifacts": [
+      "support/sidecars/BFF-FINAL-009/BFF-FINAL-009-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: handoff packet committed at 75273f6a; reviewer (Claude) approved scope, remaining gaps (decision, two-man-sign, SSE emission) documented for parent owner. No canonical truth modified. Support artifact only.",
+    "last_update": "2026-05-08T02:27:04Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BFF-FINAL-009",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "支援文件符合 sidecar scope：只整理 BFF query gap、operator journey 與前端 handoff 材料，未修改 canonical/runtime/registry/governance truth。",
+      "路由交付狀態準確：GET /bff/v5/interventions 和 POST /remediate 已交付（對照 e2d1a99b commit 與 14 tests），decision 與 two-man-sign 端點確認尚未實作。",
+      "Section 7 驗證清單與 test_v5_interventions.py 中 14 個 test 吻合，remaining gaps 清單（decision、two-man-sign、SSE emission）仍在 BFF-FINAL-009 review 開放中。",
+      "Model 差異說明（Section 1）正確記錄實際 delivered shape vs. 原始 sidecar 建議，有助於前端消費者校準。",
+      "Frontend integration spec（Section 4）提供已交付路由的完整 request/response shape，Open Questions（Section 6）具體可操作。"
+    ],
+    "review_file": "support/sidecars/BFF-FINAL-009/BFF-FINAL-009-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-08T02:27:04Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "f9246c456d65c561b5249be6c513a05d8b3a093c",
+      "commit_subject": "BFF-FINAL-009-SIDECAR-BFF-HANDOFF: closeout finalization",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "BFF-FINAL-009-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude",
+        "Reviewer (Claude) approved scope at 2026-05-08T02": "25:32Z."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 18,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 20,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-FINAL-009-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Updated handoff packet committed (75273f6a). Audited BFF-FINAL-009 in_progress implementation: GET /bff/v5/interventions and POST /remediate are delivered and tested (13 tests pass); decision and two-man-sign routes + 5 models still missing; SSE emission gap noted. Section-by-section breakdown ready for review.",
+      "status": "done",
+      "created_at": "2026-05-08T02:13:13Z",
+      "resolved_at": "2026-05-08T02:25:32Z"
+    },
+    {
+      "task_id": "BFF-FINAL-009-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: handoff packet accurately reflects BFF-FINAL-009 delivery state. Scope compliant (support artifact only). Remaining gaps (decision, two-man-sign, SSE emission) documented for parent reviewer. Owner (Claude2) to proceed with closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-08T02:25:32Z",
+      "resolved_at": "2026-05-08T02:27:04Z"
+    }
+  ],
+  "blockers": []
+}

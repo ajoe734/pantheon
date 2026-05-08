@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "task_id": "BFF-FINAL-004",
+  "archived_at": "2026-05-07T13:30:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-FINAL-004",
+    "title": "Publish backend canonical BFF action catalog",
+    "summary_zh": "發布 canonical action catalog、風險分類與 /bff/actions endpoint contract。",
+    "phase": "BFF Final Contract 2026-05-07",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "terminal_outcome": "completed",
+    "depends_on": [
+      "BFF-FINAL-001"
+    ],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-07-final/BFF-FINAL-004-action-catalog.md",
+      "services/control-plane/bff/action_catalog.py",
+      "services/control-plane/bff/test_action_catalog.py"
+    ],
+    "acceptance": [
+      "canonical catalog covers CommandType values",
+      "risk classification tested",
+      "GET /bff/actions auth gate tested"
+    ],
+    "next": "Archived dependency restored from completed commit 0c414554 so BFF-FINAL live dispatch can resolve prerequisites.",
+    "last_update": "2026-05-07T13:30:07Z",
+    "delivery": {
+      "commit_hash": "0c414554",
+      "recorded_at": "2026-05-07T13:30:07Z",
+      "verification": [
+        "python3 -m pytest services/control-plane/bff/test_action_catalog.py -q (11 passed)"
+      ],
+      "recovery_note": "Reconstructed terminal archive after live task board cleanup removed BFF-FINAL dependency truth."
+    }
+  },
+  "handoffs": [],
+  "blockers": []
+}

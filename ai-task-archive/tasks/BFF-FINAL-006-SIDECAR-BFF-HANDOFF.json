@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "BFF-FINAL-006-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-08T02:38:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-FINAL-006-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BFF-FINAL-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BFF-FINAL-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "BFF Final Contract 2026-05-07",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-FINAL-001",
+      "BFF-FINAL-002"
+    ],
+    "artifacts": [
+      "support/sidecars/BFF-FINAL-006/BFF-FINAL-006-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized sidecar support packet with task-scoped commit 65684a48; verified python3 -m pytest services/control-plane/bff/test_mcp_tool_import.py -q (6 passed in 4.29s); no canonical truth/runtime changes included.",
+    "last_update": "2026-05-08T02:38:45Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BFF-FINAL-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已核准：handoff packet 僅更新 support artifact，未修改 canonical truth 或 runtime。",
+      "Reviewer refresh 已補上 parent BFF-FINAL-006 目前已落地的 artifact、routes 與 focused pytest 結果，避免 creation-time route gap 被誤讀為現況。"
+    ],
+    "review_file": "support/sidecars/BFF-FINAL-006/BFF-FINAL-006-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-08T02:38:45Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "65684a48f05555c1379e55a8491655103a932abb",
+      "commit_subject": "BFF-FINAL-006-SIDECAR-BFF-HANDOFF: add BFF handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-FINAL-006-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Verification": "python3 -m pytest services/control-plane/bff/test_mcp_tool_import.py -q (6 passed in 4.29s). Staged scope checked with git diff --cached --name-only; only support/sidecars/BFF-FINAL-006/BFF-FINAL-006-SIDECAR-BFF-HANDOFF.md was included."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 17,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 50,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-FINAL-006-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "BFF-FINAL-006 sidecar handoff packet prepared at support/sidecars/BFF-FINAL-006/BFF-FINAL-006-SIDECAR-BFF-HANDOFF.md; ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-05-08T02:14:32Z",
+      "resolved_at": "2026-05-08T02:32:45Z"
+    },
+    {
+      "task_id": "BFF-FINAL-006-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Codex review approved after support packet refresh; Codex2 should finalize the sidecar to done with a task-scoped commit.",
+      "status": "done",
+      "created_at": "2026-05-08T02:32:45Z",
+      "resolved_at": "2026-05-08T02:38:45Z"
+    }
+  ],
+  "blockers": []
+}

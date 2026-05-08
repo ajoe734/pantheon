@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "task_id": "BFF-FINAL-005",
+  "archived_at": "2026-05-08T00:40:38Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-FINAL-005",
+    "title": "Close out SSE approval and ask channels",
+    "summary_zh": "完成 SSE approval/ask channel delivery notes 與 focused SSE verification。",
+    "phase": "BFF Final Contract 2026-05-07",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "terminal_outcome": "completed",
+    "depends_on": [
+      "BFF-FINAL-001"
+    ],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-07-final/BFF-FINAL-005-sse-approval-ask.md",
+      "services/control-plane/bff/test_pkt005_sse_substrate_contract.py"
+    ],
+    "acceptance": [
+      "approval channel present",
+      "ask channel present",
+      "SSE replay/degradation tests passed"
+    ],
+    "next": "Archived dependency restored from completed commit 989db9ee so BFF-FINAL live dispatch can resolve prerequisites.",
+    "last_update": "2026-05-08T00:40:38Z",
+    "delivery": {
+      "commit_hash": "989db9ee",
+      "recorded_at": "2026-05-08T00:40:38Z",
+      "verification": [
+        "python3 -m pytest services/control-plane/bff/test_pkt005_sse_substrate_contract.py -q (8 passed)",
+        "python3 -m pytest services/control-plane/bff -k \"sse or event\" -q (21 passed)"
+      ],
+      "recovery_note": "Reconstructed terminal archive after live task board cleanup removed BFF-FINAL dependency truth."
+    }
+  },
+  "handoffs": [],
+  "blockers": []
+}

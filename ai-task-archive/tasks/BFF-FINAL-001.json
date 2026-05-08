@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "task_id": "BFF-FINAL-001",
+  "archived_at": "2026-05-07T12:43:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-FINAL-001",
+    "title": "Implement final BFF contract primitives",
+    "summary_zh": "建立 final BFF contract 基礎型別、ActionCommandStatus 與 CommandResponse envelope。",
+    "phase": "BFF Final Contract 2026-05-07",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "terminal_outcome": "completed",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-07-final/BFF-FINAL-001-contract-foundation.md",
+      "docs/bff/execution-tasks/2026-05-07-final/BFF-FINAL-001-review.md",
+      "services/control-plane/bff/models.py",
+      "services/control-plane/bff/test_final_contract_primitives.py"
+    ],
+    "acceptance": [
+      "final contract primitives present",
+      "CommandResponse envelope tested",
+      "legacy projections preserved"
+    ],
+    "next": "Archived dependency restored from completed commit 675860dc so BFF-FINAL live dispatch can resolve prerequisites.",
+    "last_update": "2026-05-07T12:43:07Z",
+    "delivery": {
+      "commit_hash": "675860dc",
+      "recorded_at": "2026-05-07T12:43:07Z",
+      "verification": [
+        "python3 -m pytest services/control-plane/bff/test_final_contract_primitives.py services/control-plane/bff/test_governance_command_submission.py -q (17 passed)",
+        "python3 -m pytest services/control-plane/bff -q (382 passed, existing warnings)"
+      ],
+      "recovery_note": "Reconstructed terminal archive after live task board cleanup removed BFF-FINAL dependency truth."
+    }
+  },
+  "handoffs": [],
+  "blockers": []
+}
