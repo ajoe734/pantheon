@@ -62,7 +62,20 @@ from models import (
     DecisionJournalEntryDTO,
     ErrorCode,
     ErrorDetail,
+    InterventionKind,
+    InterventionListResponse,
+    InterventionRecord,
+    InterventionStatus,
     JournalEntryMergePatch,
+    McpImportedTool,
+    McpRejectedTool,
+    McpToolActionData,
+    McpToolActionRequest,
+    McpToolActionVerb,
+    McpToolDescriptor,
+    McpToolImportData,
+    McpToolImportRequest,
+    McpToolLifecycleStatus,
     ObjectType,
     OperatorCommand,
     OperatorIdentity,
@@ -13239,6 +13252,750 @@ async def get_action_catalog_endpoint(
     """
     _extract_identity(authorization)
     return get_action_catalog()
+
+
+# --------------------------------------------------------------------------- #
+# MCP server tool import and action admission (BFF-FINAL-006)
+# --------------------------------------------------------------------------- #
+
+_MCP_TOOL_WRITE_ROLES = {"operator", "admin"}
+_MCP_IMPORT_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+_MCP_TOOL_ACTION_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+_MCP_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {}
+
+
+def _mcp_tool_registry_key(server_id: str, tool_id: str) -> str:
+    return f"{server_id}:{tool_id}"
+
+
+def _require_mcp_tool_write_role(identity: OperatorIdentity) -> None:
+    if _MCP_TOOL_WRITE_ROLES.intersection(identity.roles):
+        return
+    raise _bff_error(
+        403,
+        ErrorCode.INSUFFICIENT_ROLE,
+        "MCP tool import requires operator-level role",
+        "Operator does not hold a role allowed to import or administer MCP tools",
+        precondition_failed="role_check",
+        suggestion="Escalate to an operator or admin",
+    )
+
+
+def _validate_mcp_server_id(server_id: str) -> str:
+    clean = str(server_id or "").strip()
+    if clean:
+        return clean
+    raise _bff_error(
+        422,
+        ErrorCode.INVALID_PARAMS,
+        "MCP server id is required",
+        "server_id path parameter must be a non-empty string",
+        precondition_failed="server_id",
+    )
+
+
+def _parse_mcp_import_payload(payload: Dict[str, Any]) -> McpToolImportRequest:
+    try:
+        request = McpToolImportRequest.model_validate(payload)
+    except ValidationError as exc:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "MCP tool import payload is invalid",
+            str(exc),
+            precondition_failed="payload_shape",
+            suggestion="Submit server metadata and a non-empty tools array of MCP tool descriptors",
+        ) from exc
+    if not request.tools:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "MCP tool import requires at least one tool descriptor",
+            "tools must contain one or more MCP tool descriptors",
+            precondition_failed="tools",
+        )
+    return request
+
+
+def _parse_mcp_tool_action_payload(payload: Dict[str, Any]) -> McpToolActionRequest:
+    try:
+        request = McpToolActionRequest.model_validate(payload)
+    except ValidationError as exc:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "MCP tool action payload is invalid",
+            str(exc),
+            precondition_failed="payload_shape",
+            suggestion="Submit a reason and optional scope for the tool action",
+        ) from exc
+    if not str(request.reason or "").strip():
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_PARAMS,
+            "MCP tool action reason is required",
+            "reason must be a non-empty string for audit",
+            precondition_failed="reason",
+        )
+    return request
+
+
+def _approved_mcp_governance_flags(governance: Dict[str, Any]) -> set[str]:
+    flags: set[str] = set()
+    for field in ("approvedFlags", "approved_flags", "flags"):
+        raw = governance.get(field)
+        if isinstance(raw, list):
+            flags.update(str(value).strip() for value in raw if str(value).strip())
+    if governance.get("allowStandaloneCreate") is True or governance.get("allow_standalone_create") is True:
+        flags.add("allow_standalone_create")
+    return flags
+
+
+def _mcp_tool_standalone_create_authorized(
+    tool: McpToolDescriptor,
+    approved_flags: set[str],
+) -> bool:
+    authorized = False
+    for action in tool.actions:
+        if not action.allow_standalone_create:
+            continue
+        if action.governance_flag and action.governance_flag in approved_flags:
+            authorized = True
+            continue
+        if "allow_standalone_create" in approved_flags:
+            authorized = True
+            continue
+        return False
+    return authorized
+
+
+def _mcp_import_replay_response(
+    record: Dict[str, Any],
+    request_hash: str,
+    *,
+    conflict_message: str,
+) -> Optional[CommandResponse[McpToolImportData]]:
+    if record.get("request_hash") != request_hash:
+        raise _bff_error(
+            409,
+            ErrorCode.IDEMPOTENCY_CONFLICT,
+            conflict_message,
+            "The same Idempotency-Key is already bound to a different MCP import payload",
+            precondition_failed="idempotency_conflict",
+            suggestion="Reuse the original payload for this key or submit with a new Idempotency-Key",
+        )
+    response: CommandResponse[McpToolImportData] = record["response"]
+    return CommandResponse[McpToolImportData](
+        status=response.status,
+        data=response.data.model_copy(update={"replayed": True}),
+        meta={**(response.meta or {}), "replayed": True},
+    )
+
+
+def _mcp_action_replay_response(
+    record: Dict[str, Any],
+    request_hash: str,
+    *,
+    conflict_message: str,
+) -> Optional[CommandResponse[McpToolActionData]]:
+    if record.get("request_hash") != request_hash:
+        raise _bff_error(
+            409,
+            ErrorCode.IDEMPOTENCY_CONFLICT,
+            conflict_message,
+            "The same Idempotency-Key is already bound to a different MCP tool action payload",
+            precondition_failed="idempotency_conflict",
+            suggestion="Reuse the original payload for this key or submit with a new Idempotency-Key",
+        )
+    response: CommandResponse[McpToolActionData] = record["response"]
+    return CommandResponse[McpToolActionData](
+        status=response.status,
+        data=response.data.model_copy(update={"replayed": True}),
+        meta={**(response.meta or {}), "replayed": True},
+    )
+
+
+def _mcp_tool_action_status(action: McpToolActionVerb) -> McpToolLifecycleStatus:
+    if action == McpToolActionVerb.GRANT:
+        return McpToolLifecycleStatus.GRANTED
+    if action == McpToolActionVerb.REVOKE:
+        return McpToolLifecycleStatus.REVOKED
+    if action == McpToolActionVerb.DISABLE:
+        return McpToolLifecycleStatus.DISABLED
+    if action == McpToolActionVerb.TEST:
+        return McpToolLifecycleStatus.TESTED
+    raise _bff_error(
+        422,
+        ErrorCode.INVALID_PARAMS,
+        "Unsupported MCP tool action",
+        f"action={action!r} is not a supported MCP tool lifecycle action",
+        precondition_failed="action",
+    )
+
+
+def _require_mcp_action_admitted(
+    *,
+    tool_record: Dict[str, Any],
+    action: McpToolActionVerb,
+    request: McpToolActionRequest,
+) -> None:
+    tool_class = str(tool_record.get("tool_class") or "")
+    execution_context = str(
+        request.scope.get("executionContext")
+        or request.scope.get("execution_context")
+        or ""
+    ).strip().lower()
+    if tool_class == "lean_direct" and action == McpToolActionVerb.GRANT and execution_context == "live":
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "lean_direct MCP tools cannot be granted for live execution",
+            "OpenClaw tool permission contract denies direct LEAN tool access in live context",
+            precondition_failed="lean_direct_live",
+            suggestion="Use governed signal/artifact flow or restrict the grant scope to paper/backtest",
+        )
+
+
+@app.post(
+    "/bff/v1/mcp/servers/{server_id}/import-tools",
+    response_model=CommandResponse[McpToolImportData],
+)
+@app.post(
+    "/bff/mcp-servers/{server_id}/import-tools",
+    response_model=CommandResponse[McpToolImportData],
+)
+async def import_mcp_server_tools(
+    server_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+):
+    """
+    Import MCP server-owned tool descriptors.
+
+    This route is the only BFF-local tool registration path. It imports tools
+    under a server id, rejects implicit standalone-create semantics, and stores
+    imported descriptors for v1 lifecycle action admission.
+    """
+    clean_server_id = _validate_mcp_server_id(server_id)
+    identity = _extract_identity(authorization)
+    _require_mcp_tool_write_role(identity)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    _reject_body_idempotency_key(payload)
+    request = _parse_mcp_import_payload(payload)
+
+    request_hash = _stable_json_hash(
+        {
+            "route": "POST /bff/v1/mcp/servers/{server_id}/import-tools",
+            "server_id": clean_server_id,
+            "payload": request.model_dump(mode="json", by_alias=True),
+        }
+    )
+    existing = _MCP_IMPORT_IDEMPOTENCY.get(resolved_key)
+    if existing is not None:
+        return _mcp_import_replay_response(
+            existing,
+            request_hash,
+            conflict_message="Idempotency key was already used with a different MCP tool import",
+        )
+
+    approved_flags = _approved_mcp_governance_flags(request.governance)
+    imported: List[McpImportedTool] = []
+    rejected: List[McpRejectedTool] = []
+    seen_tool_ids: set[str] = set()
+
+    for tool in request.tools:
+        tool_id = str(tool.tool_id or "").strip()
+        if not tool_id:
+            rejected.append(
+                McpRejectedTool(
+                    toolId=None,
+                    reason="toolId is required",
+                    preconditionFailed="tool_id",
+                )
+            )
+            continue
+        if tool_id in seen_tool_ids:
+            rejected.append(
+                McpRejectedTool(
+                    toolId=tool_id,
+                    reason="Duplicate toolId in import payload",
+                    preconditionFailed="duplicate_tool_id",
+                )
+            )
+            continue
+        seen_tool_ids.add(tool_id)
+        if not str(tool.name or "").strip():
+            rejected.append(
+                McpRejectedTool(
+                    toolId=tool_id,
+                    reason="Tool name is required",
+                    preconditionFailed="tool_name",
+                )
+            )
+            continue
+        standalone_create_enabled = _mcp_tool_standalone_create_authorized(tool, approved_flags)
+        if any(action.allow_standalone_create for action in tool.actions) and not standalone_create_enabled:
+            rejected.append(
+                McpRejectedTool(
+                    toolId=tool_id,
+                    reason="Standalone tool create must be explicitly authorized by governance flags",
+                    preconditionFailed="standalone_tool_create",
+                )
+            )
+            continue
+
+        registry_key = _mcp_tool_registry_key(clean_server_id, tool_id)
+        _MCP_TOOL_REGISTRY[registry_key] = {
+            "server_id": clean_server_id,
+            "tool_id": tool_id,
+            "name": tool.name,
+            "tool_class": tool.tool_class.value,
+            "descriptor": tool.model_dump(mode="json", by_alias=True),
+            "schema_url": tool.schema_url or request.schema_url,
+            "status": McpToolLifecycleStatus.IMPORTED.value,
+            "standalone_create_enabled": standalone_create_enabled,
+            "imported_by": identity.operator_id,
+            "imported_at": utc_now(),
+        }
+        imported.append(
+            McpImportedTool(
+                toolId=tool_id,
+                serverId=clean_server_id,
+                name=tool.name,
+                toolClass=tool.tool_class,
+                status=McpToolLifecycleStatus.IMPORTED,
+                schemaUrl=tool.schema_url or request.schema_url,
+                actionCount=len(tool.actions),
+                standaloneCreateEnabled=standalone_create_enabled,
+            )
+        )
+
+    data = McpToolImportData(
+        importId=f"mcp-import-{uuid.uuid4().hex[:12]}",
+        serverId=clean_server_id,
+        importedTools=imported,
+        rejectedTools=rejected,
+        replayed=False,
+    )
+    response = CommandResponse[McpToolImportData](
+        status=ActionCommandStatus.COMPLETED,
+        data=data,
+        meta={
+            "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
+            "requestId": str(x_request_id or "").strip() or None,
+            "canonicalWriteAuthority": "mcp_server_import",
+            "standaloneToolCreateRoute": None,
+        },
+    )
+    _MCP_IMPORT_IDEMPOTENCY[resolved_key] = {
+        "request_hash": request_hash,
+        "response": response,
+    }
+    return response
+
+
+def _resolve_mcp_server_id_for_tool(
+    clean_tool_id: str,
+    request: McpToolActionRequest,
+) -> str:
+    explicit = str(
+        request.scope.get("serverId")
+        or request.scope.get("server_id")
+        or ""
+    ).strip()
+    if explicit:
+        return _validate_mcp_server_id(explicit)
+    matches = sorted(
+        {
+            str(record.get("server_id") or "")
+            for record in _MCP_TOOL_REGISTRY.values()
+            if str(record.get("tool_id") or "") == clean_tool_id
+        }
+    )
+    matches = [server_id for server_id in matches if server_id]
+    if not matches:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "MCP tool is not imported",
+            f"tool_id={clean_tool_id} has not been imported under any MCP server",
+            precondition_failed="tool_import",
+            suggestion="Import the server tool descriptors before admitting tool actions",
+        )
+    if len(matches) > 1:
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "MCP tool id is ambiguous across servers",
+            f"tool_id={clean_tool_id} is imported under multiple MCP servers",
+            precondition_failed="server_id",
+            suggestion="Retry with scope.serverId or use the server-scoped v1 MCP tool action route",
+        )
+    return matches[0]
+
+
+@app.post(
+    "/bff/mcp-tools/{tool_id}/{action}",
+    response_model=CommandResponse[McpToolActionData],
+)
+async def admit_mcp_tool_action_alias(
+    tool_id: str,
+    action: McpToolActionVerb,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+):
+    """
+    Frontend-facing compatibility alias for v1 MCP tool lifecycle actions.
+
+    The server-scoped v1 route remains canonical for unambiguous routing. This
+    alias resolves the server from scope.serverId or the imported registry.
+    """
+    clean_tool_id = str(tool_id or "").strip()
+    if not clean_tool_id:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "MCP tool id is required",
+            "tool_id path parameter must be a non-empty string",
+            precondition_failed="tool_id",
+        )
+    _reject_body_idempotency_key(payload)
+    request = _parse_mcp_tool_action_payload(payload)
+    resolved_server_id = _resolve_mcp_server_id_for_tool(clean_tool_id, request)
+    return await admit_mcp_tool_action(
+        server_id=resolved_server_id,
+        tool_id=clean_tool_id,
+        action=action,
+        payload=payload,
+        authorization=authorization,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+        x_request_id=x_request_id,
+    )
+
+
+@app.post(
+    "/bff/v1/mcp/servers/{server_id}/tools/{tool_id}/actions/{action}",
+    response_model=CommandResponse[McpToolActionData],
+)
+async def admit_mcp_tool_action(
+    server_id: str,
+    tool_id: str,
+    action: McpToolActionVerb,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+):
+    """Admit a v1 lifecycle action against an imported MCP tool."""
+    clean_server_id = _validate_mcp_server_id(server_id)
+    clean_tool_id = str(tool_id or "").strip()
+    if not clean_tool_id:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "MCP tool id is required",
+            "tool_id path parameter must be a non-empty string",
+            precondition_failed="tool_id",
+        )
+    identity = _extract_identity(authorization)
+    _require_mcp_tool_write_role(identity)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    _reject_body_idempotency_key(payload)
+    request = _parse_mcp_tool_action_payload(payload)
+
+    request_hash = _stable_json_hash(
+        {
+            "route": "POST /bff/v1/mcp/servers/{server_id}/tools/{tool_id}/actions/{action}",
+            "server_id": clean_server_id,
+            "tool_id": clean_tool_id,
+            "action": action.value,
+            "payload": request.model_dump(mode="json", by_alias=True),
+        }
+    )
+    existing = _MCP_TOOL_ACTION_IDEMPOTENCY.get(resolved_key)
+    if existing is not None:
+        return _mcp_action_replay_response(
+            existing,
+            request_hash,
+            conflict_message="Idempotency key was already used with a different MCP tool action",
+        )
+
+    registry_key = _mcp_tool_registry_key(clean_server_id, clean_tool_id)
+    tool_record = _MCP_TOOL_REGISTRY.get(registry_key)
+    if tool_record is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "MCP tool is not imported for this server",
+            f"tool_id={clean_tool_id} has not been imported under server_id={clean_server_id}",
+            precondition_failed="tool_import",
+            suggestion="Import the server tool descriptors before admitting tool actions",
+        )
+    _require_mcp_action_admitted(
+        tool_record=tool_record,
+        action=action,
+        request=request,
+    )
+
+    next_status = _mcp_tool_action_status(action)
+    if not request.dry_run:
+        tool_record["status"] = next_status.value
+        tool_record["updated_at"] = utc_now()
+        tool_record["updated_by"] = identity.operator_id
+
+    data = McpToolActionData(
+        toolId=clean_tool_id,
+        serverId=clean_server_id,
+        action=action,
+        status=next_status if not request.dry_run else McpToolLifecycleStatus(tool_record["status"]),
+        admitted=True,
+        replayed=False,
+    )
+    response = CommandResponse[McpToolActionData](
+        status=ActionCommandStatus.COMPLETED,
+        data=data,
+        meta={
+            "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
+            "requestId": str(x_request_id or "").strip() or None,
+            "dryRun": request.dry_run,
+            "canonicalWriteAuthority": "mcp_tool_action_admission",
+        },
+    )
+    _MCP_TOOL_ACTION_IDEMPOTENCY[resolved_key] = {
+        "request_hash": request_hash,
+        "response": response,
+    }
+    return response
+
+
+# --------------------------------------------------------------------------- #
+# BFF SSE resync surfaces (BFF-FINAL-009)
+# --------------------------------------------------------------------------- #
+
+@app.get("/bff/approvals")
+async def list_bff_approvals(
+    authorization: Optional[str] = Header(default=None),
+):
+    """
+    SSE resync surface: list pending approval-queue items for the approval channel.
+
+    Clients reconnecting to the approval SSE channel must resync canonical state
+    from this route and GET /bff/v5/interventions before re-streaming.
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    try:
+        items = read_store.list_approval_queue_items()
+    except Exception:
+        items = []
+    pending = [
+        item for item in items
+        if str(item.get("decision_state") or "").lower() in {"pending", "in_review"}
+    ]
+    return {
+        "items": pending,
+        "count": len(pending),
+        "generated_at": snapshot_at,
+    }
+
+
+_V5_INTERVENTIONS_STORE: List[Dict[str, Any]] = []
+
+
+@app.get("/bff/v5/interventions", response_model=InterventionListResponse)
+async def list_v5_interventions(
+    status: Optional[str] = Query(default=None, description="Filter by status: pending, remediated, dismissed, escalated"),
+    kind: Optional[str] = Query(default=None, description="Filter by kind: hiq_sentinel, risk_breach, strategy_drift, loop_anomaly"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """
+    HIQ Sentinel v5 interventions list.
+
+    Returns pending and recent sentinel intervention records.  Clients
+    reconnecting to the approval SSE channel should resync from this
+    route alongside GET /bff/approvals.
+
+    Two-man authorization is required to remediate any record returned here.
+    Submit remediation via POST /bff/v5/interventions/{id}/remediate or via
+    POST /bff/v1/commands with command RemediateSentinelIntervention.
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+
+    items = list(_V5_INTERVENTIONS_STORE)
+    if status:
+        items = [i for i in items if i.get("status") == status]
+    if kind:
+        items = [i for i in items if i.get("kind") == kind]
+
+    records = [InterventionRecord(**i) for i in items]
+    return InterventionListResponse(
+        items=records,
+        count=len(records),
+        generated_at=snapshot_at,
+    )
+
+
+@app.post("/bff/v5/interventions/{intervention_id}/remediate", status_code=202)
+async def remediate_v5_intervention(
+    intervention_id: str,
+    background_tasks: BackgroundTasks,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+    x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """
+    Submit a HIQ Sentinel remediation command for an intervention.
+
+    This is a two-man guarded surface: the request must carry a second-operator
+    signature (twoManSignatureId / secondOperatorId) or the command is rejected
+    with TWO_MAN_REQUIRED (HTTP 409).  Approval evidence and a confirm token are
+    also required because the risk level is CRITICAL.
+
+    Internally this builds a RemediateSentinelIntervention OperatorCommand and
+    routes it through the same admission, idempotency, and audit pipeline as all
+    other governed commands.
+    """
+    identity = _extract_identity(authorization, mfa_token=x_mfa_token)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+
+    merged_params = dict(payload)
+    merged_params["intervention_id"] = intervention_id
+
+    cmd = OperatorCommand(
+        command=CommandType.REMEDIATE_SENTINEL_INTERVENTION,
+        target=TargetObject(
+            type=ObjectType.SENTINEL_INTERVENTION,
+            id=intervention_id,
+        ),
+        action="remediate_sentinel_intervention",
+        params=merged_params,
+        audit_context=AuditContext(
+            reason=str(payload.get("reason") or "HIQ Sentinel remediation"),
+            incident_id=str(payload.get("incident_id") or "").strip() or None,
+        ),
+    )
+
+    foundation_context = _build_foundation_command_context(
+        cmd=cmd,
+        identity=identity,
+        raw_payload={**payload, "intervention_id": intervention_id},
+        trace_id=x_trace_id,
+        correlation_id=x_correlation_id,
+        request_id=x_request_id,
+        idempotency_key=resolved_key,
+    )
+
+    try:
+        _reject_body_idempotency_key(payload)
+        _validate_audit_context(cmd)
+        _require_final_command_preconditions(
+            cmd=cmd,
+            payload={**payload, "intervention_id": intervention_id},
+            confirm_token=x_confirm_token,
+            correlation_id=foundation_context["trace_context"].correlation_id,
+        )
+    except HTTPException as exc:
+        raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
+
+    stored_params = _stored_command_params(cmd, identity)
+
+    duplicate = command_store.get_command_by_idempotency_key(
+        foundation_context["idempotency_record"].idempotency_key
+    )
+    if duplicate:
+        duplicate_record = (duplicate.get("foundation") or {}).get("idempotency_record") or {}
+        if duplicate_record.get("request_hash") != foundation_context["idempotency_record"].request_hash:
+            raise _foundation_idempotency_conflict_error(
+                foundation_context=foundation_context,
+                existing_command_id=str(duplicate.get("command_id") or ""),
+            )
+        return _project_final_command_response(
+            command_id=duplicate["command_id"],
+            command=cmd.command,
+            accepted_at=duplicate.get("submitted_at") or utc_now(),
+            status=CommandStatus(duplicate.get("status") or CommandStatus.SUBMITTED.value),
+            staleness_warning=None,
+        )
+
+    active = command_store.get_active_commands_for_target(cmd.target.type.value, cmd.target.id)
+    if active:
+        error = _bff_error(
+            409, ErrorCode.CONCURRENT_MODIFICATION,
+            "A remediation command is already in flight for this intervention",
+            f"Command {active[0]['command_id']} is currently {active[0]['status']}",
+            precondition_failed="concurrent_safety",
+            suggestion="Wait for the in-flight command to complete before retrying",
+        )
+        raise _foundation_bff_error(error, foundation_context=foundation_context)
+
+    staleness_warning = _check_read_surface_state()
+
+    command_envelope = foundation_context["command_envelope"]
+    idempotency_record = foundation_context["idempotency_record"]
+    idempotency_record = idempotency_record.with_status(
+        "succeeded",
+        result_ref=f"command:{command_envelope.command_id}",
+    )
+    foundation_context["idempotency_record"] = idempotency_record
+    command_id = command_envelope.command_id
+    submitted_at = utc_now()
+
+    raw_token = None
+    if authorization and authorization.startswith("Bearer "):
+        raw_token = authorization[len("Bearer "):]
+    mfa_token_val = x_mfa_token or ("000000" if identity.mfa_verified else None)
+
+    audit_record = {
+        "operator_id": identity.operator_id,
+        "roles_at_submission": identity.roles,
+        "mfa_verified": identity.mfa_verified,
+        "reason": cmd.audit_context.reason,
+        "incident_id": cmd.audit_context.incident_id,
+        "preconditions_checked": [
+            "authentication", "authorization", "two_man", "params_shape", "concurrent_safety"
+        ],
+        "timestamp": submitted_at,
+        "staleness_warning": staleness_warning.model_dump() if staleness_warning else None,
+        "auth_token": raw_token,
+        "mfa_token": mfa_token_val,
+        "foundation": _serialize_foundation_context(foundation_context),
+    }
+
+    command_store.submit_command(
+        command_id=command_id,
+        command_type=cmd.command,
+        target=cmd.target,
+        submitted_at=submitted_at,
+        params=stored_params,
+        audit_context=audit_record,
+        foundation_context=_serialize_foundation_context(foundation_context),
+    )
+    background_tasks.add_task(_process_command_stub, command_id)
+
+    return _project_final_command_response(
+        command_id=command_id,
+        command=cmd.command,
+        accepted_at=submitted_at,
+        status=CommandStatus.SUBMITTED,
+        staleness_warning=staleness_warning,
+    )
 
 
 @app.get("/api/v1/operator/commands/{command_id}", response_model=CommandStatusResponse)

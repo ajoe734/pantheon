@@ -1,0 +1,333 @@
+"""Tests for BFF-FINAL-009: /bff/v5/interventions HIQ Sentinel contract.
+
+Acceptance criteria:
+- canonical v5 route present (GET /bff/v5/interventions returns 200)
+- remediation guarded (two-man check enforced)
+- two-man semantics tested (POST without signature returns 409)
+"""
+from __future__ import annotations
+
+import os
+import sys
+import tempfile
+from contextlib import contextmanager
+from typing import Iterator
+
+from fastapi.testclient import TestClient
+
+sys.path.insert(0, os.path.dirname(__file__))
+
+import main as bff_main
+from command_queue import CommandStore
+from models import (
+    InterventionKind,
+    InterventionRecord,
+    InterventionStatus,
+    ObjectType,
+)
+
+
+OPERATOR_TOKEN = "Bearer op-v5:operator"
+APPROVER_TOKEN = "Bearer op-v5-approver:approver"
+ADMIN_MFA_TOKEN = "Bearer op-v5-admin:admin:mfa"
+
+
+async def _noop_process_command(_command_id: str) -> None:
+    return None
+
+
+@contextmanager
+def _isolated_client() -> Iterator[TestClient]:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.command_store
+        original_worker = bff_main._process_command_stub
+        original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
+        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        bff_main._process_command_stub = _noop_process_command
+        bff_main._V5_INTERVENTIONS_STORE.clear()
+        try:
+            yield TestClient(bff_main.app)
+        finally:
+            bff_main.command_store = original_store
+            bff_main._process_command_stub = original_worker
+            bff_main._V5_INTERVENTIONS_STORE.clear()
+            bff_main._V5_INTERVENTIONS_STORE.extend(original_interventions)
+
+
+# --------------------------------------------------------------------------- #
+# 1. Canonical v5 route present
+# --------------------------------------------------------------------------- #
+
+def test_get_v5_interventions_returns_200_empty_list() -> None:
+    """GET /bff/v5/interventions must be present and return an empty list."""
+    with _isolated_client() as client:
+        response = client.get(
+            "/bff/v5/interventions",
+            headers={"Authorization": OPERATOR_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert "items" in body
+        assert "count" in body
+        assert "generated_at" in body
+        assert body["items"] == []
+        assert body["count"] == 0
+
+
+def test_get_v5_interventions_returns_seeded_records() -> None:
+    """GET /bff/v5/interventions returns records seeded into the in-memory store."""
+    with _isolated_client() as client:
+        bff_main._V5_INTERVENTIONS_STORE.append({
+            "intervention_id": "intv-v5-001",
+            "kind": "hiq_sentinel",
+            "status": "pending",
+            "target_type": "Runtime",
+            "target_id": "rt-v5-001",
+            "triggered_at": "2026-05-08T00:00:00Z",
+            "triggered_by": "sentinel",
+            "description": "HIQ Sentinel detected anomalous loop behavior",
+        })
+        response = client.get(
+            "/bff/v5/interventions",
+            headers={"Authorization": OPERATOR_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["count"] == 1
+        assert body["items"][0]["intervention_id"] == "intv-v5-001"
+        assert body["items"][0]["kind"] == "hiq_sentinel"
+        assert body["items"][0]["status"] == "pending"
+
+
+def test_get_v5_interventions_filters_by_status() -> None:
+    with _isolated_client() as client:
+        bff_main._V5_INTERVENTIONS_STORE.extend([
+            {
+                "intervention_id": "intv-v5-002",
+                "kind": "hiq_sentinel",
+                "status": "pending",
+                "target_type": "Runtime",
+                "target_id": "rt-v5-002",
+                "triggered_at": "2026-05-08T00:01:00Z",
+            },
+            {
+                "intervention_id": "intv-v5-003",
+                "kind": "risk_breach",
+                "status": "remediated",
+                "target_type": "Runtime",
+                "target_id": "rt-v5-003",
+                "triggered_at": "2026-05-08T00:02:00Z",
+                "remediated_at": "2026-05-08T00:05:00Z",
+            },
+        ])
+        response = client.get(
+            "/bff/v5/interventions?status=pending",
+            headers={"Authorization": OPERATOR_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["count"] == 1
+        assert body["items"][0]["intervention_id"] == "intv-v5-002"
+
+
+def test_get_v5_interventions_requires_auth() -> None:
+    with _isolated_client() as client:
+        response = client.get("/bff/v5/interventions")
+        assert response.status_code in {401, 403}, response.text
+
+
+# --------------------------------------------------------------------------- #
+# 2. Remediation guarded — two-man semantics via /bff/v5/interventions/{id}/remediate
+# --------------------------------------------------------------------------- #
+
+def test_remediate_v5_intervention_missing_two_man_returns_409() -> None:
+    """Remediation without two-man signature must return 409 TWO_MAN_REQUIRED."""
+    with _isolated_client() as client:
+        response = client.post(
+            "/bff/v5/interventions/intv-v5-guard-001/remediate",
+            headers={
+                "Authorization": ADMIN_MFA_TOKEN,
+                "Idempotency-Key": "remediate-guard-no-two-man-001",
+                "X-Confirm-Token": "confirm-guard-001",
+                "X-Correlation-Id": "corr-guard-no-two-man-001",
+            },
+            json={
+                "reason": "Sentinel remediation test",
+                "remediation_action": "resolve",
+                "approvalId": "approval-guard-001",
+            },
+        )
+        assert response.status_code == 409, response.text
+        detail = response.json()["detail"]
+        error = detail["error"]
+        assert error["code"] == "TWO_MAN_REQUIRED"
+        assert error["details"]["kind"] == "two_man"
+        assert "corr-guard-no-two-man-001" in str(detail)
+
+
+def test_remediate_v5_intervention_missing_approval_returns_409() -> None:
+    """Remediation without approval evidence must return 409 APPROVAL_REQUIRED."""
+    with _isolated_client() as client:
+        response = client.post(
+            "/bff/v5/interventions/intv-v5-guard-002/remediate",
+            headers={
+                "Authorization": ADMIN_MFA_TOKEN,
+                "Idempotency-Key": "remediate-guard-no-approval-001",
+                "X-Confirm-Token": "confirm-guard-002",
+                "X-Correlation-Id": "corr-guard-no-approval-001",
+            },
+            json={
+                "reason": "Sentinel remediation test",
+                "remediation_action": "resolve",
+                "twoManSignatureId": "tms-guard-002",
+            },
+        )
+        assert response.status_code == 409, response.text
+        detail = response.json()["detail"]
+        error = detail["error"]
+        assert error["code"] == "APPROVAL_REQUIRED"
+        assert error["details"]["kind"] == "approval"
+
+
+def test_remediate_v5_intervention_missing_confirm_token_returns_428() -> None:
+    """Remediation without confirm token must return 428 CONFIRM_TOKEN_REQUIRED."""
+    with _isolated_client() as client:
+        response = client.post(
+            "/bff/v5/interventions/intv-v5-guard-003/remediate",
+            headers={
+                "Authorization": ADMIN_MFA_TOKEN,
+                "Idempotency-Key": "remediate-guard-no-confirm-001",
+                "X-Correlation-Id": "corr-guard-no-confirm-001",
+            },
+            json={
+                "reason": "Sentinel remediation test",
+                "remediation_action": "resolve",
+                "approvalId": "approval-guard-003",
+                "twoManSignatureId": "tms-guard-003",
+            },
+        )
+        assert response.status_code == 428, response.text
+        detail = response.json()["detail"]
+        error = detail["error"]
+        assert error["code"] == "CONFIRM_TOKEN_REQUIRED"
+        assert error["details"]["kind"] == "confirm_token"
+
+
+def test_remediate_v5_intervention_all_preconditions_returns_202() -> None:
+    """Remediation with all required preconditions must be accepted (202)."""
+    with _isolated_client() as client:
+        response = client.post(
+            "/bff/v5/interventions/intv-v5-accept-001/remediate",
+            headers={
+                "Authorization": ADMIN_MFA_TOKEN,
+                "Idempotency-Key": "remediate-accept-001",
+                "X-Confirm-Token": "confirm-accept-001",
+                "X-Correlation-Id": "corr-accept-001",
+            },
+            json={
+                "reason": "Two-man authorized sentinel remediation",
+                "remediation_action": "resolve",
+                "approvalId": "approval-accept-001",
+                "twoManSignatureId": "tms-accept-001",
+            },
+        )
+        assert response.status_code == 202, response.text
+        body = response.json()
+        assert body["status"] in {"accepted", "queued"}
+        assert "data" in body
+        receipt = body["data"]
+        assert receipt.get("receipt_id") or receipt.get("command_id")
+
+
+# --------------------------------------------------------------------------- #
+# 3. Two-man semantics also enforced via /bff/v1/commands
+# --------------------------------------------------------------------------- #
+
+def test_bff_v1_commands_remediate_sentinel_missing_two_man_returns_409() -> None:
+    """RemediateSentinelIntervention via /bff/v1/commands enforces two-man gate."""
+    with _isolated_client() as client:
+        response = client.post(
+            "/bff/v1/commands",
+            headers={
+                "Authorization": ADMIN_MFA_TOKEN,
+                "Idempotency-Key": "remediate-v1-no-two-man-001",
+                "X-Confirm-Token": "confirm-v1-001",
+                "X-Correlation-Id": "corr-v1-no-two-man-001",
+            },
+            json={
+                "command": "RemediateSentinelIntervention",
+                "target": {"type": "SentinelIntervention", "id": "intv-v1-001"},
+                "approvalId": "approval-v1-001",
+                "params": {
+                    "intervention_id": "intv-v1-001",
+                    "remediation_action": "resolve",
+                },
+                "audit_context": {"reason": "v1 remediation test"},
+            },
+        )
+        assert response.status_code == 409, response.text
+        detail = response.json()["detail"]
+        error = detail["error"]
+        assert error["code"] == "TWO_MAN_REQUIRED"
+        assert "TWO_MAN_SIGNATURE_MISSING" in str(detail)
+
+
+# --------------------------------------------------------------------------- #
+# 4. v5 interventions route in SSE resync metadata
+# --------------------------------------------------------------------------- #
+
+def test_v5_interventions_listed_in_approval_sse_resync_routes() -> None:
+    """The approval SSE resync routes must reference /bff/v5/interventions."""
+    resync_routes = bff_main._SSE_RESYNC_ROUTES.get("approval", ())
+    assert "/bff/v5/interventions" in resync_routes, (
+        f"Expected /bff/v5/interventions in approval resync routes, got: {resync_routes}"
+    )
+    assert "/bff/approvals" in resync_routes, (
+        f"Expected /bff/approvals in approval resync routes, got: {resync_routes}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 5. RemediateSentinelIntervention in action catalog
+# --------------------------------------------------------------------------- #
+
+def test_remediate_sentinel_intervention_in_action_catalog() -> None:
+    """RemediateSentinelIntervention must be in the action catalog with two-man gate."""
+    from action_catalog import get_catalog_entry
+    entry = get_catalog_entry("RemediateSentinelIntervention")
+    assert entry is not None, "RemediateSentinelIntervention missing from action catalog"
+    assert entry.requires_two_man is True, "RemediateSentinelIntervention must require two-man"
+    assert entry.requires_approval is True, "RemediateSentinelIntervention must require approval"
+    assert entry.requires_confirm_token is True, "RemediateSentinelIntervention must require confirm token"
+    assert entry.risk_level.value == "critical"
+
+
+# --------------------------------------------------------------------------- #
+# 6. InterventionRecord and InterventionListResponse model validation
+# --------------------------------------------------------------------------- #
+
+def test_intervention_record_model_fields() -> None:
+    """InterventionRecord must be constructable with expected fields."""
+    record = InterventionRecord(
+        intervention_id="intv-model-001",
+        kind=InterventionKind.HIQ_SENTINEL,
+        status=InterventionStatus.PENDING,
+        target_type="Runtime",
+        target_id="rt-model-001",
+        triggered_at="2026-05-08T00:00:00Z",
+    )
+    assert record.intervention_id == "intv-model-001"
+    assert record.kind == InterventionKind.HIQ_SENTINEL
+    assert record.status == InterventionStatus.PENDING
+    assert record.two_man_signature_id is None
+
+
+def test_sentinel_intervention_object_type_present() -> None:
+    """ObjectType must include SentinelIntervention."""
+    assert ObjectType.SENTINEL_INTERVENTION.value == "SentinelIntervention"
+
+
+def test_remediate_sentinel_intervention_command_type_present() -> None:
+    """CommandType must include RemediateSentinelIntervention."""
+    from models import CommandType
+    assert CommandType.REMEDIATE_SENTINEL_INTERVENTION.value == "RemediateSentinelIntervention"

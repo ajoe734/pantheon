@@ -307,6 +307,22 @@ _CATALOG_ENTRIES: list[BffActionCatalogEntry] = [
         required_roles=["approver"],
         description="Record a committee sponsor decision (approved / rejected / conditional).",
     ),
+    # ------------------------------------------------------------------ #
+    # HIQ Sentinel interventions (v5)
+    # ------------------------------------------------------------------ #
+    BffActionCatalogEntry(
+        action_id="RemediateSentinelIntervention",
+        entity_type="SentinelIntervention",
+        endpoint="/bff/v5/interventions/{intervention_id}/remediate",
+        risk_level=RiskLevel.CRITICAL,
+        requires_approval=True,
+        requires_confirm_token=True,
+        requires_two_man=True,
+        cooldown_seconds=60,
+        idempotency_required=True,
+        required_roles=["approver"],
+        description="Execute HIQ Sentinel remediation for a pending intervention; requires two-man authorization.",
+    ),
 ]
 
 # Build an O(1) lookup by action_id
