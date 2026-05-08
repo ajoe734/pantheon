@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-08T17:21:28Z",
+  "updated_at": "2026-05-08T22:55:11Z",
   "counts": {
-    "total": 933,
-    "completed": 917,
+    "total": 934,
+    "completed": 918,
     "superseded": 16
   },
   "recent_terminal_ids": [
+    "BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF",
     "BFF-LUV-GAP-010",
     "BFF-LUV-GAP-003",
     "BFF-LUV-GAP-002",
@@ -25,7 +26,6 @@
     "BFF-FINAL-005",
     "BFF-FINAL-008",
     "BFF-FINAL-003",
-    "BFF-FINAL-004",
-    "BFF-FINAL-002"
+    "BFF-FINAL-004"
   ]
 }
