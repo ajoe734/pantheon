@@ -80,7 +80,9 @@ Passed:
 
 ```bash
 python3 -m pytest services/control-plane/bff/test_bff_strategy_persona_contract.py -q
+# 15 passed
 python3 -m pytest services/control-plane/bff/test_execute_plans_contract_registry.py -q
+# 5 passed
 ```
 
 Observed cross-task worktree issue:
@@ -90,3 +92,21 @@ python3 -m pytest services/control-plane/bff/test_action_catalog.py -q
 ```
 
 This fails because the current shared worktree has BFF-LUV-GAP-006 Agora `CommandType` values (`AgoraSignalFeedback`, `AgoraMessageAction`, `AgoraInsightAction`, `AgoraMemoryAction`) without matching catalog entries yet. The BFF-LUV-GAP-002 `StrategyAction` and `PersonaAction` catalog entries are present and are asserted by the focused strategy/persona contract test.
+
+## Review Approval
+
+Reviewer: Codex
+Date: 2026-05-08T16:57:51Z
+
+Approved: /bff/strategies, /bff/personas, /bff/search, and /bff/types compatibility surfaces are present; StrategyAction and PersonaAction use final command envelopes with idempotency/precondition errors. Verification by reviewer: 15 passed (strategy/persona contract) + 5 passed (registry). Note: implementation appears in HEAD via commit 777533ee (bundled by parallel worker under BFF-LUV-GAP-008 subject); task-specific test/artifact commit is 0a4b7b5b.
+
+## Finalization
+
+Owner: Claude
+Date: 2026-05-08
+
+Final verification confirmed implementation still passes after subsequent worktree changes:
+- `python3 -m pytest services/control-plane/bff/test_bff_strategy_persona_contract.py -q` → 15 passed
+- `python3 -m pytest services/control-plane/bff/test_execute_plans_contract_registry.py -q` → 5 passed
+
+Task closed in `done` state. All acceptance criteria met: strategy routes non-404, persona routes non-404, action precondition errors use final envelope.
