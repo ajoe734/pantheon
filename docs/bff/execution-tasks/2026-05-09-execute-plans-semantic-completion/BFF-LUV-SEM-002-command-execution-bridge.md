@@ -49,8 +49,10 @@ Affected families:
 
 ## Verification
 
-- `python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/models.py services/control-plane/bff/test_final_command_execution_bridge.py`
-- `python3 -m pytest services/control-plane/bff/test_final_command_execution_bridge.py -q` -> 4 passed.
-- `python3 -m pytest services/control-plane/bff/test_final_command_execution_bridge.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py services/control-plane/bff/test_v5_interventions.py services/control-plane/bff/test_final_precondition_errors.py services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/test_execute_plans_contract_registry.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/test_final_contract_primitives.py services/control-plane/bff/test_action_catalog.py -q` -> 128 passed, 11 warnings.
+Final closeout verification (commit b02bce71, 2026-05-09):
 
-Observed warnings are pre-existing route/OpenAPI duplicate operation-id and `datetime.utcnow()` deprecation warnings in BFF tests.
+- `python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/models.py services/control-plane/bff/test_final_command_execution_bridge.py` — OK
+- `python3 -m pytest services/control-plane/bff/test_final_command_execution_bridge.py -q` — 11 passed (bridge suite with server-generated-id replay and durable conflict regression tests)
+- `python3 -m pytest services/control-plane/bff/test_final_command_execution_bridge.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py services/control-plane/bff/test_v5_interventions.py services/control-plane/bff/test_final_precondition_errors.py services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/test_execute_plans_contract_registry.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/test_final_contract_primitives.py services/control-plane/bff/test_action_catalog.py -q` — 138 passed, 13 warnings
+
+Observed warnings are pre-existing route/OpenAPI duplicate operation-id and `datetime.utcnow()` deprecation warnings in BFF tests. No new warnings introduced by this task.
