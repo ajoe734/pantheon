@@ -74,3 +74,13 @@ The full-suite rerun initially exposed service-backed read tests merging seeded
 local snapshot records into explicit service stores. The narrow fix keeps local
 overlay records reserved for datasets written through the current store, while
 preserving task-created capital/ranking/rebalance read-through behavior.
+
+## Closeout Finalization - 2026-05-09T03:52:51Z
+
+Reviewer approval is archived at `.orchestrator/reviews/BFF-LUV-GAP-001-review-codex.md`.
+
+Final owner verification:
+
+- `python3 services/control-plane/bff/contract_snapshots/report_execute_plans_bff_coverage.py` - passed; 178 registry entries, outstanding rows mapped to `BFF-LUV-GAP-002` and `BFF-LUV-GAP-012`, no `Implemented Rows Not Live` section.
+- `python3 -m pytest services/control-plane/bff/test_execute_plans_contract_registry.py -q` - 5 passed.
+- `python3 -m pytest services/control-plane/bff -q` - 552 passed, 48 warnings.
