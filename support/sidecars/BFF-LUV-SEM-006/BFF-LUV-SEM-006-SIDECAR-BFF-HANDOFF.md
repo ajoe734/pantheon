@@ -198,3 +198,20 @@ Reviewer should confirm that this packet stays support-only and that the parent 
 - `docs/bff/execution-tasks/2026-05-09-execute-plans-semantic-completion/BFF-LUV-SEM-005-agora-extended-semantics.md`
 
 This packet is ready for Codex2 review and parent-owner absorption decisions.
+
+## Closeout Note (2026-05-09)
+
+**Status: review_approved → done**
+
+Reviewer Codex2 approved this packet as a historical checklist on 2026-05-09T11:32:28Z.
+
+Post-approval updates (absorbed from parent task live evidence):
+
+- SEM-002 (command execution bridge): now **done** — was listed as `review` at packet preparation time; archived done snapshot recorded in `ai-task-archive/tasks/BFF-LUV-SEM-002.json`.
+- SEM-004 (v5 loop/sentinel runtime): now **done** — was listed as `in_progress` at packet preparation time; archived done snapshot recorded in `ai-task-archive/tasks/BFF-LUV-SEM-004.json`.
+- The "Blocker" entry in the status table above no longer applies. Parent task BFF-LUV-SEM-006 completed live cutover with OpenAPI 200, zero 404/500, and `VITE_BFF_MODE=live safe` confirmed.
+
+This sidecar packet is fully superseded by the parent task artifact:
+- `docs/bff/execution-tasks/2026-05-09-execute-plans-semantic-completion/BFF-LUV-SEM-006-lupin-dev-live-cutover.md`
+
+No canonical truth was modified. Sidecar scope boundary maintained throughout.
