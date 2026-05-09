@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-09T16:06:38Z",
+  "updated_at": "2026-05-09T16:15:00Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -141,13 +141,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
+      "status": "reviewing",
       "current_task_ids": [
         "BFF-LUV-FE-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "execute-plans reconciled on feat/bff-luv-fe-001; npm run test and npm run build passed; preparing commit and push.",
-      "last_update": "2026-05-09T16:06:38Z"
+      "next": "Ready for review. execute-plans branch origin/feat/bff-luv-fe-001 commit ac104b446fe4d8f78df96ecf23a768ac8f754dd0; npm install --package-lock-only, npm run test, and npm run build passed; worktree clean after push.",
+      "last_update": "2026-05-09T16:08:49Z"
     },
     {
       "name": "Copilot",
@@ -343,7 +343,7 @@
       "phase": "BFF Execute-Plans Frontend Live Completion 2026-05-09",
       "owner": "Codex2",
       "reviewer": "Claude",
-      "status": "in_progress",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
         "docs/bff/execution-tasks/2026-05-09-execute-plans-frontend-live-completion/BFF-LUV-FE-001-repo-hygiene-transport-session.md",
@@ -358,8 +358,8 @@
         "npm run build passes",
         "/bff/me not silent mock in real mode"
       ],
-      "next": "execute-plans reconciled on feat/bff-luv-fe-001; npm run test and npm run build passed; preparing commit and push.",
-      "last_update": "2026-05-09T16:06:38Z"
+      "next": "Ready for review. execute-plans branch origin/feat/bff-luv-fe-001 commit ac104b446fe4d8f78df96ecf23a768ac8f754dd0; npm install --package-lock-only, npm run test, and npm run build passed; worktree clean after push.",
+      "last_update": "2026-05-09T16:08:49Z"
     },
     {
       "id": "BFF-LUV-FE-002",
@@ -476,7 +476,7 @@
       "phase": "BFF Execute-Plans Authenticated Live Completion 2026-05-09",
       "owner": "Claude",
       "reviewer": "Gemini",
-      "status": "review",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [
         "support/sidecars/BFF-LUV-AUTHED-LIVE-001/BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF.md"
@@ -486,14 +486,20 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Support-only BFF handoff packet created at support/sidecars/BFF-LUV-AUTHED-LIVE-001/BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF.md. Covers: auth blocker with 4 resolution paths (stub window recommended), operator journey map for Stages 1-8 authenticated smoke, non-capital write-flow smoke targets (confirm-token only), parent absorption checklist, and frontend cutover gate table. Ready for reviewer check and parent-owner absorption decisions.",
-      "last_update": "2026-05-09T16:00:44Z",
+      "next": "Review approved and returned to the owner for finalization",
+      "last_update": "2026-05-09T16:15:00Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "BFF-LUV-AUTHED-LIVE-001",
       "helper_kind": "bff_handoff_packet",
       "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "Sidecar packet is support-only and complies with the helper_kind: bff_handoff_packet constraint.",
+        "It provides clear auth resolution paths and a safe operator journey for authenticated smoke tests.",
+        "Consistent with SEM-006 anonymous probe evidence."
+      ],
+      "review_file": "support/sidecars/BFF-LUV-AUTHED-LIVE-001/BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF.md"
     }
   ],
   "handoffs": [
@@ -763,8 +769,25 @@
       "from": "Claude",
       "to": "Gemini",
       "message": "Support-only BFF handoff packet created at support/sidecars/BFF-LUV-AUTHED-LIVE-001/BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF.md. Covers: auth blocker with 4 resolution paths (stub window recommended), operator journey map for Stages 1-8 authenticated smoke, non-capital write-flow smoke targets (confirm-token only), parent absorption checklist, and frontend cutover gate table. Ready for reviewer check and parent-owner absorption decisions.",
+      "status": "done",
+      "created_at": "2026-05-09T16:00:44Z",
+      "resolved_at": "2026-05-09T16:15:00Z"
+    },
+    {
+      "task_id": "BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Review approved and returned to the owner for finalization",
       "status": "pending",
-      "created_at": "2026-05-09T16:00:44Z"
+      "created_at": "2026-05-09T16:15:00Z"
+    },
+    {
+      "task_id": "BFF-LUV-FE-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review. execute-plans branch origin/feat/bff-luv-fe-001 commit ac104b446fe4d8f78df96ecf23a768ac8f754dd0; npm install --package-lock-only, npm run test, and npm run build passed; worktree clean after push.",
+      "status": "pending",
+      "created_at": "2026-05-09T16:08:49Z"
     }
   ],
   "blockers": [
@@ -837,9 +860,9 @@
       "active": 1,
       "blocked": 0,
       "done": 1,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Copilot": {
       "total": 0,
