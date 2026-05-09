@@ -38,3 +38,19 @@ Avoid editing broad Management Console adapters owned by `BFF-LUV-FE-002`.
 - Reconnect/replay behavior is tested or explicitly blocked by BFF response.
 - `npm run test` passes.
 - `npm run build` passes.
+
+## Implementation Notes
+
+- Added strict live read helpers for delivered Agora/v5 routes so live mode calls BFF and throws typed transport errors instead of silently returning seeded mock data.
+- Added `bff.agora` for daily/signals/inbox/journal/ask read surfaces and routed Agora signal/inbox pages through it.
+- Wired v5 control room, loop-runs, execution health, sentinel findings, and interventions through strict live adapters while keeping mock mode behavior intact.
+- Added live SSE EventSource connection to `/bff/events/stream`, query replay via `lastEventId`, status updates from open/error, and legacy realtime data/v5 bridge events.
+- Limited the mock realtime ticker and manual disconnect simulator to mock mode.
+
+## Verification
+
+- Execute-plans task commit: `8517b23b1102765955294ea5e681e0d541825d56`.
+- `npm run test -- src/lib/bff/__tests__/liveAdapters.test.ts src/lib/v5/__tests__/bff.test.ts src/lib/bff-v1/__tests__/sse.test.ts` - pass, 14 tests.
+- `npm run build` - pass; Vite emitted only existing chunk-size/dynamic-import warnings.
+- `npm run test -- src/lib/bff/__tests__/liveAdapters.test.ts src/lib/bff/__tests__/client.test.ts` - pass, 21 tests.
+- Closeout rerun `npm run test` - pass, 47 test files / 409 tests.
