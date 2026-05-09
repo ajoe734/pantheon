@@ -14340,7 +14340,6 @@ async def bff_agora_signal_detail(
     signal = read_store.get_agora_signal(signalId)
     if not signal:
         surface = _dataset_surface_status("agora_signals", snapshot_at=snapshot_at)
-        _raise_if_read_surface_unavailable(surface, label="Agora signal")
         raise _bff_error(
             404,
             ErrorCode.OBJECT_NOT_FOUND,
@@ -21703,6 +21702,167 @@ def _prefer_latest_bff_gap004_routes() -> None:
 
 
 _prefer_latest_bff_gap004_routes()
+
+
+def _sem_local_records(dataset: str) -> tuple[str, List[Dict[str, Any]]]:
+    data = getattr(read_store, "_data", {})
+    raw = data.get(dataset) if isinstance(data, dict) else None
+    if isinstance(raw, dict):
+        return ("local_snapshot" if raw else "missing", [dict(item) for item in raw.values() if isinstance(item, dict)])
+    if isinstance(raw, list):
+        return ("local_snapshot" if raw else "missing", [dict(item) for item in raw if isinstance(item, dict)])
+    return "missing", []
+
+
+def _sem_read_records(dataset: str) -> tuple[str, List[Dict[str, Any]]]:
+    reader = getattr(read_store, "_read_dataset_records", None)
+    source_fn = getattr(read_store, "dataset_source", None)
+    if not callable(reader):
+        return _sem_local_records(dataset)
+
+    records = [dict(item) for item in reader(dataset) if isinstance(item, dict)]
+    source = source_fn(dataset) if callable(source_fn) else ("local_snapshot" if records else "missing")
+    if source == "missing" and records:
+        source = "local_snapshot"
+    return source, records
+
+
+def _sem_list_payload(dataset: str, surface_key: str, *, filter_mode: Optional[str] = None) -> Dict[str, Any]:
+    source, records = _sem_read_records(dataset)
+    if filter_mode:
+        records = [record for record in records if str(record.get("mode") or "") == filter_mode]
+    snapshot_at = utc_now()
+    surface = _dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        source=source,
+        has_data=(source != "missing"),
+    )
+    meta = _read_surface_meta(
+        dataset,
+        surface_key,
+        snapshot_at=snapshot_at,
+        total=len(records),
+        surface=surface,
+    )
+    return {"items": records, "page_info": {"next_page_token": None}, "meta": meta}
+
+
+@app.get("/bff/agora/inbox")
+async def sem_agora_inbox(authorization: Optional[str] = Header(default=None)):
+    _require_read_role(_extract_identity(authorization))
+    return _sem_list_payload("insight_cards", "agora_inbox")
+
+
+@app.get("/bff/agora/ask/sessions")
+async def sem_agora_ask_sessions(authorization: Optional[str] = Header(default=None)):
+    _require_read_role(_extract_identity(authorization))
+    return _sem_list_payload("agora_sessions", "agora_ask_sessions", filter_mode="quick_ask")
+
+
+@app.get("/bff/agora/skill-coaching/sessions")
+async def sem_agora_skill_coaching_sessions(authorization: Optional[str] = Header(default=None)):
+    _require_read_role(_extract_identity(authorization))
+    return _sem_list_payload("agora_skill_coaching_sessions", "agora_skill_coaching_sessions")
+
+
+@app.get("/bff/agora/persona-lab/runs")
+async def sem_agora_persona_lab_runs(authorization: Optional[str] = Header(default=None)):
+    _require_read_role(_extract_identity(authorization))
+    return _sem_list_payload("agora_persona_lab_runs", "agora_persona_lab_runs")
+
+
+@app.get("/bff/agora/postmortems")
+async def sem_agora_postmortems(authorization: Optional[str] = Header(default=None)):
+    _require_read_role(_extract_identity(authorization))
+    return _sem_list_payload("postmortems", "agora_postmortems")
+
+
+@app.get("/bff/agora/evaluation-suites")
+async def sem_agora_evaluation_suites(authorization: Optional[str] = Header(default=None)):
+    _require_read_role(_extract_identity(authorization))
+    return _sem_list_payload("agora_evaluation_suites", "agora_evaluation_suites")
+
+
+@app.get("/bff/agora/evaluation-runs")
+async def sem_agora_evaluation_runs(authorization: Optional[str] = Header(default=None)):
+    _require_read_role(_extract_identity(authorization))
+    return _sem_list_payload("agora_evaluation_runs", "agora_evaluation_runs")
+
+
+@app.post("/bff/agora/ask", status_code=202)
+async def sem_agora_ask(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/agora/ask", "payload": payload})
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return JSONResponse(status_code=202, content=cached)
+    now = utc_now()
+    session_id = str(payload.get("sessionId") or payload.get("session_id") or f"ask-{uuid.uuid4().hex[:10]}")
+    message_id = str(payload.get("messageId") or payload.get("message_id") or f"msg-{uuid.uuid4().hex[:10]}")
+    prompt = str(payload.get("prompt") or payload.get("message") or payload.get("content") or "").strip()
+    session = read_store.get_agora_session(session_id)
+    if session is None:
+        session = read_store.create_agora_session(
+            session_id=session_id,
+            title=prompt[:80] or "Agora ask",
+            actor_id=identity.operator_id,
+            payload={
+                **dict(payload),
+                "mode": "quick_ask",
+                "participants": [{"type": "operator", "id": identity.operator_id}],
+                "messages": [],
+            },
+            created_at=now,
+        )
+    messages = read_store.list_agora_session_messages(session_id) or []
+    message = next(
+        (item for item in messages if isinstance(item, dict) and str(item.get("id") or "") == message_id),
+        None,
+    )
+    if message is None:
+        message = read_store.append_agora_session_message(
+            session_id,
+            message_id=message_id,
+            content=prompt,
+            actor_id=identity.operator_id,
+            payload={
+                **dict(payload),
+                "sender": {"type": "operator", "id": identity.operator_id},
+                "role": "user",
+            },
+            created_at=now,
+        )
+    session = read_store.get_agora_session(session_id) or session
+    command_id = f"cmd-{uuid.uuid4().hex[:16]}"
+    command_store.submit_command(
+        command_id,
+        CommandType.AGORA_MESSAGE_ACTION,
+        TargetObject(type=ObjectType.AGORA_MESSAGE, id=message_id),
+        now,
+        dict(payload),
+        {"actor": identity.operator_id, "live_capital_side_effects": False},
+        {"idempotency_record": {"idempotency_key": resolved_key, "request_hash": request_hash, "status": "succeeded"}},
+    )
+    result = {
+        "status": "accepted",
+        "data": {"session": session, "message": message},
+        "meta": {
+            "snapshot_at": now,
+            "command": {"command": CommandType.AGORA_MESSAGE_ACTION.value, "commandId": command_id},
+            "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
+        },
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return JSONResponse(status_code=202, content=result)
 
 
 def _sem_empty_final_list(surface_key: str) -> Dict[str, Any]:
