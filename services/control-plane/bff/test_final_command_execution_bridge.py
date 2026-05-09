@@ -154,6 +154,70 @@ def test_confirm_token_create_read_redeem_delete_are_command_store_backed() -> N
         ]
 
 
+def test_deployment_create_server_generated_id_replays_on_retry() -> None:
+    """Regression: POST /bff/deployments with no client id must replay on same Idempotency-Key."""
+    with _isolated_command_bridge() as client:
+        headers = {**HEADERS, "Idempotency-Key": "edge-no-id"}
+        body = {"stage": "paper"}  # no deployment_id — server will generate it
+
+        first = client.post("/bff/deployments", headers=headers, json=body)
+        second = client.post("/bff/deployments", headers=headers, json=body)
+
+        assert first.status_code == 201, first.text
+        assert second.status_code == 201, second.text  # must NOT be 409
+        assert _receipt_id(second.json()) == _receipt_id(first.json())
+        assert second.json()["meta"]["idempotency"]["replayed"] is True
+        # Only one command record created
+        assert len(bff_main.command_store._get_all_commands()) == 1
+
+
+def test_deployment_create_server_generated_id_conflicts_on_different_payload() -> None:
+    """Different payload with same Idempotency-Key must still 409 even with server-generated id."""
+    with _isolated_command_bridge() as client:
+        headers = {**HEADERS, "Idempotency-Key": "edge-no-id-conflict"}
+        first = client.post("/bff/deployments", headers=headers, json={"stage": "paper"})
+        conflict = client.post("/bff/deployments", headers=headers, json={"stage": "live"})
+
+        assert first.status_code == 201, first.text
+        assert conflict.status_code == 409, conflict.text
+
+
+def test_sentinel_remediation_build_server_generated_id_replays_on_retry() -> None:
+    """Regression: POST /bff/v5/sentinel/remediation/build with no finding_id must replay."""
+    with _isolated_command_bridge() as client:
+        headers = {**HEADERS, "Idempotency-Key": "sentinel-build-no-id"}
+        body = {"reason": "x"}  # no finding_id — server will generate it
+
+        first = client.post("/bff/v5/sentinel/remediation/build", headers=headers, json=body)
+        second = client.post("/bff/v5/sentinel/remediation/build", headers=headers, json=body)
+
+        assert first.status_code == 202, first.text
+        assert second.status_code == 202, second.text  # must NOT be 409
+        assert _receipt_id(second.json()) == _receipt_id(first.json())
+        assert second.json()["meta"]["idempotency"]["replayed"] is True
+        assert len(bff_main.command_store._get_all_commands()) == 1
+
+
+def test_sentinel_remediation_build_with_client_finding_id_still_works() -> None:
+    """When finding_id is provided the normal idempotency hash includes target_id."""
+    with _isolated_command_bridge() as client:
+        headers = {**HEADERS, "Idempotency-Key": "sentinel-build-with-id"}
+        body = {"finding_id": "finding-sem-002"}
+
+        first = client.post("/bff/v5/sentinel/remediation/build", headers=headers, json=body)
+        second = client.post("/bff/v5/sentinel/remediation/build", headers=headers, json=body)
+        conflict = client.post(
+            "/bff/v5/sentinel/remediation/build",
+            headers=headers,
+            json={"finding_id": "finding-different"},
+        )
+
+        assert first.status_code == 202, first.text
+        assert second.status_code == 202, second.text
+        assert _receipt_id(second.json()) == _receipt_id(first.json())
+        assert conflict.status_code == 409, conflict.text
+
+
 def test_audit_and_v5_command_routes_write_domain_command_records() -> None:
     with _isolated_command_bridge() as client:
         routes = [

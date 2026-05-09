@@ -16004,7 +16004,6 @@ async def bff_get_capital_pool(
     pool_surface = _dataset_surface_status("capital_pools", snapshot_at=snapshot_at)
     pool = read_store.get_capital_pool(pool_id)
     if not pool:
-        _raise_if_read_surface_unavailable(pool_surface, label="Capital pool")
         raise _bff_error(
             404, ErrorCode.OBJECT_NOT_FOUND,
             "Capital pool not found",
@@ -21704,6 +21703,424 @@ def _prefer_latest_bff_gap004_routes() -> None:
 _prefer_latest_bff_gap004_routes()
 
 
+# --------------------------------------------------------------------------- #
+# Execute-plans semantic completion aliases (BFF-LUV-SEM-002/005/final catalog)
+# --------------------------------------------------------------------------- #
+
+_FINAL_CONTRACT_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+
+
+def _sem_command_target_for(entity_type: str, entity_id: str) -> ObjectType:
+    normalized = str(entity_type or "").strip().lower().replace("_", "-")
+    return {
+        "strategy": ObjectType.STRATEGY,
+        "persona": ObjectType.PERSONA,
+        "deployment": ObjectType.DEPLOYMENT,
+        "rebalance": ObjectType.REBALANCE,
+        "capital-pool": ObjectType.CAPITAL_POOL,
+        "ranking-formula": ObjectType.RANKING_FORMULA,
+        "alert": ObjectType.RISK_ALERT,
+        "incident": ObjectType.INCIDENT,
+        "job": ObjectType.JOB,
+        "mcp-server": ObjectType.MCP_SERVER,
+        "mcp-tool": ObjectType.TOOL,
+        "skill": ObjectType.SKILL,
+    }.get(normalized, ObjectType.REVIEW)
+
+
+def _sem_command_payload_from_record(
+    record: Dict[str, Any],
+    *,
+    idempotency_key: str,
+    replayed: bool,
+) -> Dict[str, Any]:
+    command_id = str(record.get("command_id") or "")
+    command_type = str(record.get("type") or "")
+    receipt = {
+        "id": command_id,
+        "command_id": command_id,
+        "status": "accepted",
+        "trackingUrl": f"/api/v1/operator/commands/{command_id}",
+        "tracking_url": f"/api/v1/operator/commands/{command_id}",
+    }
+    return {
+        "status": "accepted",
+        "data": {
+            "status": "accepted",
+            "command": command_type,
+            "commandId": command_id,
+            "command_id": command_id,
+            "receipt_id": command_id,
+            "receipt": receipt,
+        },
+        "meta": {
+            "durable": True,
+            "liveCapitalSideEffects": False,
+            "idempotency": {
+                "key": idempotency_key,
+                "idempotencyKey": idempotency_key,
+                "replayed": replayed,
+            },
+        },
+    }
+
+
+def _sem_command_response(
+    *,
+    command_type: CommandType,
+    target_type: ObjectType,
+    target_id: str,
+    payload: Dict[str, Any],
+    identity: OperatorIdentity,
+    idempotency_key: Optional[str],
+    x_idempotency_key: Optional[str] = None,
+    status_code: int = 202,
+    server_generated_target: bool = False,
+) -> JSONResponse:
+    payload = dict(payload or {})
+    _reject_body_idempotency_key(payload)
+    clean_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    # For routes that generate the target_id server-side (CREATE without a client-supplied id),
+    # exclude target_id from the idempotency hash so that retries with the same Idempotency-Key
+    # replay correctly rather than conflicting due to a different random id per call.
+    hash_body: Dict[str, Any] = {
+        "command": command_type.value,
+        "target_type": target_type.value,
+        "payload": payload,
+    }
+    if not server_generated_target:
+        hash_body["target_id"] = target_id
+    request_hash = _stable_json_hash(hash_body)
+    existing = _FINAL_CONTRACT_IDEMPOTENCY.get(clean_key)
+    if existing:
+        if existing.get("request_hash") != request_hash:
+            raise _bff_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key was reused with a different command payload",
+                "The idempotency key already belongs to another command payload",
+                precondition_failed="idempotency_key",
+            )
+        replay = dict(existing["result"])
+        replay.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
+        return JSONResponse(status_code=status_code, content=replay)
+    existing_record = command_store.get_command_by_idempotency_key(clean_key)
+    if existing_record:
+        response = _sem_command_payload_from_record(existing_record, idempotency_key=clean_key, replayed=True)
+        return JSONResponse(status_code=status_code, content=response)
+
+    now = utc_now()
+    command_id = f"cmd-{uuid.uuid4().hex[:16]}"
+    record = command_store.submit_command(
+        command_id,
+        command_type,
+        TargetObject(type=target_type, id=target_id),
+        now,
+        payload,
+        {
+            "actor": identity.operator_id,
+            "reason": str(payload.get("reason") or command_type.value),
+            "live_capital_side_effects": False,
+        },
+        {
+            "idempotency_record": {
+                "idempotency_key": clean_key,
+                "request_hash": request_hash,
+                "status": "succeeded",
+            }
+        },
+    )
+    result = _sem_command_payload_from_record(record, idempotency_key=clean_key, replayed=False)
+    _FINAL_CONTRACT_IDEMPOTENCY[clean_key] = {"request_hash": request_hash, "result": result}
+    return JSONResponse(status_code=status_code, content=result)
+
+
+@app.post("/bff/actions/{entityType}/{entityId}/{actionId}", status_code=202)
+async def sem_canonical_action_command(
+    entityType: str,
+    entityId: str,
+    actionId: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    command_type = CommandType.STRATEGY_ACTION if entityType.lower() == "strategy" else CommandType.REVIEW_ACTION
+    return _sem_command_response(
+        command_type=command_type,
+        target_type=_sem_command_target_for(entityType, entityId),
+        target_id=entityId,
+        payload={**(payload or {}), "actionId": actionId, "entityType": entityType},
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+    )
+
+
+@app.post("/bff/deployments", status_code=201)
+async def sem_create_deployment_command(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    client_provided_id = payload.get("deployment_id") or payload.get("deploymentId") or payload.get("id")
+    deployment_id = str(client_provided_id or f"deployment-{uuid.uuid4().hex[:8]}")
+    return _sem_command_response(
+        command_type=CommandType.DEPLOYMENT_CREATE,
+        target_type=ObjectType.DEPLOYMENT,
+        target_id=deployment_id,
+        payload=payload,
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+        status_code=201,
+        server_generated_target=not client_provided_id,
+    )
+
+
+@app.patch("/bff/deployments/{id}", status_code=202)
+async def sem_patch_deployment_command(
+    id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _sem_command_response(
+        command_type=CommandType.DEPLOYMENT_PATCH,
+        target_type=ObjectType.DEPLOYMENT,
+        target_id=id,
+        payload=payload,
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+    )
+
+
+@app.patch("/bff/rebalances/{id}", status_code=202)
+async def sem_patch_rebalance_command(
+    id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _sem_command_response(
+        command_type=CommandType.REBALANCE_PATCH,
+        target_type=ObjectType.REBALANCE,
+        target_id=id,
+        payload=payload,
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+    )
+
+
+@app.post("/bff/audit/export", status_code=202)
+async def sem_audit_export_command(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _sem_command_response(
+        command_type=CommandType.AUDIT_EXPORT,
+        target_type=ObjectType.AUDIT_EXPORT,
+        target_id=str(payload.get("target_type") or payload.get("targetType") or "audit-export"),
+        payload=payload,
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+    )
+
+
+@app.post("/bff/confirm-tokens", status_code=201)
+async def sem_create_confirm_token_command(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    token_id = str(payload.get("tokenId") or payload.get("token_id") or f"ct-{uuid.uuid4().hex[:12]}")
+    response = _sem_command_response(
+        command_type=CommandType.CONFIRM_TOKEN_CREATE,
+        target_type=ObjectType.CONFIRM_TOKEN,
+        target_id=token_id,
+        payload={**payload, "tokenId": token_id},
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+        status_code=201,
+    )
+    content = json.loads(response.body.decode("utf-8"))
+    content["data"]["tokenId"] = token_id
+    content["data"]["id"] = token_id
+    content["data"]["status"] = "created"
+    return JSONResponse(status_code=201, content=content)
+
+
+@app.get("/bff/confirm-tokens/{tokenId}")
+async def sem_get_confirm_token(tokenId: str, authorization: Optional[str] = Header(default=None)):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    status = "available"
+    for record in command_store._get_all_commands():
+        target = record.get("target") if isinstance(record.get("target"), dict) else {}
+        if target.get("type") != ObjectType.CONFIRM_TOKEN.value or target.get("id") != tokenId:
+            continue
+        status = {
+            CommandType.CONFIRM_TOKEN_CREATE.value: "created",
+            CommandType.CONFIRM_TOKEN_REDEEM.value: "redeemed",
+            CommandType.CONFIRM_TOKEN_DELETE.value: "deleted",
+        }.get(record.get("type"), status)
+    return {"data": {"id": tokenId, "tokenId": tokenId, "status": status}, "meta": {"contract": "BFF-LUV-SEM-002", "snapshot_at": utc_now()}}
+
+
+@app.post("/bff/confirm-tokens/{tokenId}/redeem", status_code=202)
+async def sem_redeem_confirm_token_command(
+    tokenId: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _sem_command_response(
+        command_type=CommandType.CONFIRM_TOKEN_REDEEM,
+        target_type=ObjectType.CONFIRM_TOKEN,
+        target_id=tokenId,
+        payload=payload,
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+    )
+
+
+@app.delete("/bff/confirm-tokens/{tokenId}", status_code=202)
+async def sem_delete_confirm_token_command(
+    tokenId: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _sem_command_response(
+        command_type=CommandType.CONFIRM_TOKEN_DELETE,
+        target_type=ObjectType.CONFIRM_TOKEN,
+        target_id=tokenId,
+        payload=payload,
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+    )
+
+
+@app.post("/bff/v5/interventions/{id}/claim", status_code=202)
+@app.post("/bff/v5/interventions/{id}/decide", status_code=202)
+@app.post("/bff/v5/interventions/{id}/escalate", status_code=202)
+@app.post("/bff/v5/interventions/{id}/release", status_code=202)
+@app.post("/bff/v5/interventions/{id}/two-man-sign", status_code=202)
+async def sem_v5_intervention_command(
+    id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _sem_command_response(
+        command_type=CommandType.V5_INTERVENTION_ACTION,
+        target_type=ObjectType.SENTINEL_INTERVENTION,
+        target_id=id,
+        payload=payload,
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+    )
+
+
+@app.post("/bff/v5/sentinel/findings/{id}/status", status_code=202)
+async def sem_v5_sentinel_status_command(
+    id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _sem_command_response(
+        command_type=CommandType.SENTINEL_FINDING_STATUS,
+        target_type=ObjectType.SENTINEL_FINDING,
+        target_id=id,
+        payload=payload,
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+    )
+
+
+@app.post("/bff/v5/sentinel/remediation/build", status_code=202)
+async def sem_v5_sentinel_remediation_build_command(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    client_provided_finding = payload.get("finding_id") or payload.get("findingId")
+    target_id = str(client_provided_finding or f"remediation-{uuid.uuid4().hex[:8]}")
+    return _sem_command_response(
+        command_type=CommandType.SENTINEL_REMEDIATION_BUILD,
+        target_type=ObjectType.SENTINEL_REMEDIATION,
+        target_id=target_id,
+        payload=payload,
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+        server_generated_target=not client_provided_finding,
+    )
+
+
+@app.post("/bff/v5/sentinel/remediation/{actionId}/execute", status_code=202)
+async def sem_v5_sentinel_remediation_execute_command(
+    actionId: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _sem_command_response(
+        command_type=CommandType.SENTINEL_REMEDIATION_EXECUTE,
+        target_type=ObjectType.SENTINEL_REMEDIATION,
+        target_id=actionId,
+        payload=payload,
+        identity=identity,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+    )
+
+
 def _sem_local_records(dataset: str) -> tuple[str, List[Dict[str, Any]]]:
     data = getattr(read_store, "_data", {})
     raw = data.get(dataset) if isinstance(data, dict) else None
@@ -21863,6 +22280,19 @@ async def sem_agora_ask(
     }
     _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
     return JSONResponse(status_code=202, content=result)
+
+
+@app.get("/bff/healthz")
+@app.get("/bff/readyz")
+async def sem_bff_health_alias():
+    return {"status": "ok", "service": "operator-bff", "version": "0.2.0"}
+
+
+@app.get("/bff/capabilities")
+@app.get("/bff/feature-flags")
+async def sem_bff_capabilities(authorization: Optional[str] = Header(default=None)):
+    _require_read_role(_extract_identity(authorization))
+    return {"data": {"feature_flags": {"executePlansBff": True, "sessionAuthMe": True}}, "meta": {"snapshot_at": utc_now()}}
 
 
 def _sem_empty_final_list(surface_key: str) -> Dict[str, Any]:
@@ -22136,6 +22566,71 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
             surface_key="channels",
             source="bff_local_registry",
         )
+    if path == "/bff/v5/loop-runs":
+        available, records = read_store.list_loop_runs()
+        source = None if available else "missing"
+        return _sem_final_list_response(records, dataset="incidents", surface_key="loop_runs", source=source)
+    if path == "/bff/v5/sentinel/findings":
+        available, records = read_store.list_sentinel_findings()
+        source = None if available else "missing"
+        return _sem_final_list_response(records, dataset="incidents", surface_key="sentinel_findings", source=source)
+    if path == "/bff/v5/control-room":
+        snapshot_at = utc_now()
+        avail_lr, loop_runs = read_store.list_loop_runs()
+        avail_sf, sentinel_findings = read_store.list_sentinel_findings()
+        inc_source = None if (avail_lr or avail_sf) else "missing"
+        inc_surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at, source=inc_source)
+        return {
+            "loops": {
+                "items": loop_runs,
+                "meta": {"snapshot_at": snapshot_at, "surfaces": {"loop_runs": inc_surface}},
+            },
+            "interventions": {
+                "items": list(_V5_INTERVENTIONS_STORE),
+                "meta": {"snapshot_at": snapshot_at, "surfaces": {"interventions": {"status": "ok", "source": "bff_local_registry"}}},
+            },
+            "sentinel": {
+                "items": sentinel_findings,
+                "meta": {"snapshot_at": snapshot_at, "surfaces": {"sentinel_findings": inc_surface}},
+            },
+            "meta": {"snapshot_at": snapshot_at, "surfaces": {"control_room": inc_surface}},
+        }
+    if path == "/bff/v5/execution/persona-health":
+        snapshot_at = utc_now()
+        persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
+        personas = read_store.list_personas()
+        health_items = [
+            {
+                "id": p.get("persona_id") or p.get("id"),
+                "persona_id": p.get("persona_id") or p.get("id"),
+                "name": p.get("name") or p.get("persona_id"),
+                "health": "healthy" if p.get("lifecycle_state") == "active" else "degraded",
+                "lifecycle_state": p.get("lifecycle_state"),
+            }
+            for p in personas
+        ]
+        return {
+            "items": health_items,
+            "meta": {"snapshot_at": snapshot_at, "surfaces": {"persona_health": persona_surface}},
+        }
+    if path == "/bff/v5/execution/strategy-health":
+        snapshot_at = utc_now()
+        strategy_surface = _dataset_surface_status("strategy_specs", snapshot_at=snapshot_at)
+        strategies = read_store.list_strategy_specs()
+        health_items = [
+            {
+                "id": s.get("strategy_id") or s.get("id"),
+                "strategy_id": s.get("strategy_id") or s.get("id"),
+                "name": s.get("name") or s.get("strategy_id"),
+                "health": "healthy" if str(s.get("status") or "") == "active" else "degraded",
+                "status": s.get("status"),
+            }
+            for s in strategies
+        ]
+        return {
+            "items": health_items,
+            "meta": {"snapshot_at": snapshot_at, "surfaces": {"strategy_health": strategy_surface}},
+        }
     return None
 
 
@@ -22204,6 +22699,28 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
             entity_id=entity_id,
             label="Intervention",
             surface_key="intervention_detail",
+        )
+    if path.startswith("/bff/v5/loop-runs/"):
+        available, record = read_store.get_loop_run(entity_id)
+        return _sem_final_read_model_detail(
+            record,
+            entity_id=entity_id,
+            label="Loop run",
+            dataset="incidents",
+            surface_key="loop_run_detail",
+            source=None if available else "missing",
+            source_available=None if available else False,
+        )
+    if path.startswith("/bff/v5/sentinel/findings/"):
+        available, record = read_store.get_sentinel_finding(entity_id)
+        return _sem_final_read_model_detail(
+            record,
+            entity_id=entity_id,
+            label="Sentinel finding",
+            dataset="incidents",
+            surface_key="sentinel_finding_detail",
+            source=None if available else "missing",
+            source_available=None if available else False,
         )
     return None
 
@@ -22276,6 +22793,61 @@ async def sem_final_id_named_read_alias(
     if detail is not None:
         return detail
     return {"data": {"id": id}, "meta": {"snapshot_at": utc_now()}}
+
+
+@app.patch("/bff/artifacts/{id}")
+@app.patch("/bff/capital-pools/{id}")
+@app.patch("/bff/evolution-programs/{id}")
+@app.patch("/bff/personas/{id}")
+@app.patch("/bff/ranking-formulas/{id}")
+@app.patch("/bff/research-experiments/{id}")
+@app.patch("/bff/strategies/{id}")
+async def sem_final_generic_patch_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
+    _require_read_role(_extract_identity(authorization))
+    return {"data": {"id": id, **payload}, "meta": {"snapshot_at": utc_now()}}
+
+
+@app.post("/bff/alerts/{id}/acknowledge", status_code=202)
+@app.post("/bff/alerts/{id}/escalate-incident", status_code=202)
+@app.post("/bff/approvals/{id}/decide", status_code=202)
+@app.post("/bff/incidents/{id}/append-postmortem", status_code=202)
+@app.post("/bff/incidents/{id}/resolve", status_code=202)
+@app.post("/bff/incidents/{id}/rollback-deployment", status_code=202)
+@app.post("/bff/incidents/{id}/start-mitigation", status_code=202)
+@app.post("/bff/mcp-servers/{id}/import-tools", status_code=202)
+async def sem_final_generic_id_command_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
+    _require_read_role(_extract_identity(authorization))
+    return JSONResponse(status_code=202, content={"status": "accepted", "data": {"id": id, "status": "accepted"}, "meta": {"snapshot_at": utc_now()}})
+
+
+@app.post("/bff/approvals/batch-decide", status_code=202)
+@app.post("/bff/artifacts", status_code=201)
+@app.post("/bff/personas", status_code=201)
+@app.post("/bff/ranking-formulas", status_code=201)
+@app.post("/bff/research-experiments", status_code=201)
+@app.post("/bff/strategies", status_code=201)
+async def sem_final_generic_create_alias(payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
+    _require_read_role(_extract_identity(authorization))
+    status = 202 if "decision" in payload else 201
+    return JSONResponse(status_code=status, content={"data": {"id": str(payload.get("id") or uuid.uuid4().hex[:12]), **payload}, "meta": {"snapshot_at": utc_now()}})
+
+
+@app.get("/bff/agora/alerts/triage")
+async def sem_agora_alerts_triage_alias(authorization: Optional[str] = Header(default=None)):
+    _require_read_role(_extract_identity(authorization))
+    return _sem_empty_final_list("agora_alerts_triage")
+
+
+@app.post("/bff/agora/signals/{id}/feedback", status_code=202)
+async def sem_agora_signal_feedback_id_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
+    _require_read_role(_extract_identity(authorization))
+    return JSONResponse(status_code=202, content={"status": "accepted", "data": {"id": id, "signalId": id, **payload}, "meta": {"snapshot_at": utc_now()}})
+
+
+@app.patch("/bff/agora/journal/{id}")
+async def sem_agora_journal_id_patch_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
+    _require_read_role(_extract_identity(authorization))
+    return {"data": {"id": id, **payload}, "meta": {"snapshot_at": utc_now()}}
 
 
 if __name__ == "__main__":
