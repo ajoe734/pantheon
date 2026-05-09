@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-09 23:43:47
+Last updated: 2026-05-09 23:58:29
 
 ## Objective
 
@@ -37,8 +37,8 @@ Last updated: 2026-05-09 23:43:47
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Assignment created
-- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Supervisor auto-started BFF-LUV-AUTHED-LIVE-001 after successful dispatch.
+- `Claude`: execution, control-plane, governance-review; next: Reading parent task evidence; preparing operator journey map and auth-blocker resolution checklist for BFF-LUV-AUTHED-LIVE-001 handoff packet.
+- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Missing valid Bearer token for lupin dev; GCP CLI re-auth fails.
 - `Codex`: integration, status-system, schema, acceptance; next: Assignment created
 - `Codex2`: integration, status-system, schema, acceptance; next: Inspecting execute-plans dirty state and reconciling BFF transport/session foundation on a dedicated branch.
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
@@ -51,12 +51,13 @@ Last updated: 2026-05-09 23:43:47
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `BFF-LUV-AUTHED-LIVE-001` | BFF Execute-Plans Authenticated Live Completion 2026-05-09 | Run authenticated lupin dev BFF DTO/write smoke | Gemini | in_progress | - | 補齊 lupin dev public BFF authenticated DTO 與安全 write-flow live smoke；不得再只用 401 route registration 當作完整 cutover。 |
+| `BFF-LUV-AUTHED-LIVE-001` | BFF Execute-Plans Authenticated Live Completion 2026-05-09 | Run authenticated lupin dev BFF DTO/write smoke | Gemini | blocked | - | 補齊 lupin dev public BFF authenticated DTO 與安全 write-flow live smoke；不得再只用 401 route registration 當作完整 cutover。 |
 | `BFF-LUV-FE-001` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Clean execute-plans repo and wire BFF transport/session foundation | Codex2 | in_progress | - | 整理 execute-plans repo、BFF transport 與 /bff/me session foundation，先把 dirty/behind 狀態收乾淨。 |
 | `BFF-LUV-FE-002` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Wire execute-plans Management Console live read adapters | Claude | todo | `BFF-LUV-FE-001` | 把 execute-plans Management Console 主要 read surfaces 接到 Pantheon BFF，hybrid fallback 必須明確。 |
 | `BFF-LUV-FE-003` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Wire execute-plans Agora v5 and realtime live BFF | Gemini2 | todo | `BFF-LUV-FE-001` | 把 execute-plans Agora/v5/realtime 接 live BFF/SSE，保留 mock mode 但 real mode 不可 silent fallback。 |
 | `BFF-LUV-FE-004` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Wire execute-plans safe real write flows | Claude2 | todo | `BFF-LUV-FE-001` | 把 execute-plans high-risk/write flows 接 BFF command/confirm-token/decision envelopes，仍由 env/auth gate 控制。 |
 | `BFF-LUV-FE-005` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Run final execute-plans Lovable live cutover smoke | Codex | todo | `BFF-LUV-AUTHED-LIVE-001`, `BFF-LUV-FE-001`, `BFF-LUV-FE-002`, `BFF-LUV-FE-003`, `BFF-LUV-FE-004` | 等 auth/read/write/realtime 都完成後，跑 execute-plans Lovable live cutover smoke 並發布 handoff。 |
+| `BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Authenticated Live Completion 2026-05-09 | [Sidecar] [Auto] [Parent BFF-LUV-AUTHED-LIVE-001] Prepare BFF-LUV-AUTHED-LIVE-001 BFF and frontend handoff packet | Claude | in_progress | - | 平行支援 BFF-LUV-AUTHED-LIVE-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -101,12 +102,13 @@ Last updated: 2026-05-09 23:43:47
 | `BFF-LUV-GAP-007` | BFF Execute-Plans Contract Gap 2026-05-08 | Reconcile extended Agora and FULL-spec routes | 整理 FULL spec 與長尾 Agora routes，實作 active source refs 並標記歷史 routes 的 disposition。 | Codex | Codex2 | done | - | 2026-05-09 02:00:15 | Review packet refreshed for BFF-LUV-GAP-007: artifact now includes verification commands/results. Focused pytest remains green: python3 -m pytest services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 14 passed, 2 pre-existing datetime.utcnow warnings; coverage report -> agora-extended 4 implemented, 8 alias, 0 missing, 0 deferred, 5 superseded. |
 | `BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-006] Prepare BFF-LUV-GAP-006 BFF and frontend handoff packet | 平行支援 BFF-LUV-GAP-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Codex2 | Codex | done | - | 2026-05-09 01:33:16 | Approved support-only BFF handoff packet for BFF-LUV-GAP-006; parent owner absorbed the checklist into implementation evidence and focused BFF verification remains green. |
 | `BFF-LUV-GAP-004-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-004] Prepare BFF-LUV-GAP-004 BFF and frontend handoff packet | 平行支援 BFF-LUV-GAP-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Gemini2 | Codex | done | - | 2026-05-09 01:38:41 | Handoff packet prepared and updated. Ready for review. |
-| `BFF-LUV-AUTHED-LIVE-001` | BFF Execute-Plans Authenticated Live Completion 2026-05-09 | Run authenticated lupin dev BFF DTO/write smoke | 補齊 lupin dev public BFF authenticated DTO 與安全 write-flow live smoke；不得再只用 401 route registration 當作完整 cutover。 | Gemini | Codex | in_progress | - | 2026-05-09 23:30:48 | Supervisor auto-started BFF-LUV-AUTHED-LIVE-001 after successful dispatch. |
+| `BFF-LUV-AUTHED-LIVE-001` | BFF Execute-Plans Authenticated Live Completion 2026-05-09 | Run authenticated lupin dev BFF DTO/write smoke | 補齊 lupin dev public BFF authenticated DTO 與安全 write-flow live smoke；不得再只用 401 route registration 當作完整 cutover。 | Gemini | Codex | blocked | - | 2026-05-09 23:56:56 | Missing valid Bearer token for lupin dev; GCP CLI re-auth fails. |
 | `BFF-LUV-FE-001` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Clean execute-plans repo and wire BFF transport/session foundation | 整理 execute-plans repo、BFF transport 與 /bff/me session foundation，先把 dirty/behind 狀態收乾淨。 | Codex2 | Claude | in_progress | - | 2026-05-09 23:43:47 | Inspecting execute-plans dirty state and reconciling BFF transport/session foundation on a dedicated branch. |
 | `BFF-LUV-FE-002` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Wire execute-plans Management Console live read adapters | 把 execute-plans Management Console 主要 read surfaces 接到 Pantheon BFF，hybrid fallback 必須明確。 | Claude | Codex2 | todo | `BFF-LUV-FE-001` | 2026-05-09 23:40:34 | Assignment created |
 | `BFF-LUV-FE-003` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Wire execute-plans Agora v5 and realtime live BFF | 把 execute-plans Agora/v5/realtime 接 live BFF/SSE，保留 mock mode 但 real mode 不可 silent fallback。 | Gemini2 | Codex | todo | `BFF-LUV-FE-001` | 2026-05-09 23:40:59 | Assignment created |
 | `BFF-LUV-FE-004` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Wire execute-plans safe real write flows | 把 execute-plans high-risk/write flows 接 BFF command/confirm-token/decision envelopes，仍由 env/auth gate 控制。 | Claude2 | Codex | todo | `BFF-LUV-FE-001` | 2026-05-09 23:41:22 | Assignment created |
 | `BFF-LUV-FE-005` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Run final execute-plans Lovable live cutover smoke | 等 auth/read/write/realtime 都完成後，跑 execute-plans Lovable live cutover smoke 並發布 handoff。 | Codex | Claude | todo | `BFF-LUV-AUTHED-LIVE-001`, `BFF-LUV-FE-001`, `BFF-LUV-FE-002`, `BFF-LUV-FE-003`, `BFF-LUV-FE-004` | 2026-05-09 23:41:46 | Assignment created |
+| `BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Authenticated Live Completion 2026-05-09 | [Sidecar] [Auto] [Parent BFF-LUV-AUTHED-LIVE-001] Prepare BFF-LUV-AUTHED-LIVE-001 BFF and frontend handoff packet | 平行支援 BFF-LUV-AUTHED-LIVE-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Claude | Gemini | in_progress | - | 2026-05-09 23:58:29 | Reading parent task evidence; preparing operator journey map and auth-blocker resolution checklist for BFF-LUV-AUTHED-LIVE-001 handoff packet. |
 
 ## Handoff Queue
 
@@ -118,7 +120,7 @@ Last updated: 2026-05-09 23:43:47
 
 | Task | Owner | Waiting For | Message | Status |
 |---|---|---|---|---|
-| _(none)_ | - | - | - | - |
+| `BFF-LUV-AUTHED-LIVE-001` | Gemini | Codex | Missing valid Bearer token for lupin dev; GCP CLI re-auth fails. | open |
 
 ## Review Notes
 
@@ -195,23 +197,23 @@ Last updated: 2026-05-09 23:43:47
 
 ## Latest Checkpoints
 
-- 2026-05-09 23:43:06 Orchestrator: PreToolUse: Read
-- 2026-05-09 23:43:06 Orchestrator: PreToolUse: Read
-- 2026-05-09 23:43:06 Orchestrator: PostToolUse: Read
-- 2026-05-09 23:43:07 Orchestrator: PreToolUse: Read
-- 2026-05-09 23:43:07 Orchestrator: PostToolUse: Read
-- 2026-05-09 23:43:07 Orchestrator: PostToolUse: Read
-- 2026-05-09 23:43:12 Orchestrator: PreToolUse: Glob
-- 2026-05-09 23:43:13 Orchestrator: PostToolUse: Glob
-- 2026-05-09 23:43:13 Orchestrator: PreToolUse: Glob
-- 2026-05-09 23:43:13 Orchestrator: PreToolUse: Glob
-- 2026-05-09 23:43:14 Orchestrator: PostToolUse: Glob
-- 2026-05-09 23:43:14 Orchestrator: PostToolUse: Glob
-- 2026-05-09 23:43:16 Orchestrator: PreToolUse: Read
-- 2026-05-09 23:43:16 Orchestrator: PreToolUse: Read
-- 2026-05-09 23:43:17 Orchestrator: PostToolUse: Read
-- 2026-05-09 23:43:25 Orchestrator: PreToolUse: Bash
-- 2026-05-09 23:43:25 Orchestrator: PostToolUse: Bash
-- 2026-05-09 23:43:25 Orchestrator: PreToolUse: Bash
-- 2026-05-09 23:43:26 Orchestrator: PostToolUse: Bash
-- 2026-05-09 23:43:47 Codex2: `BFF-LUV-FE-001` Inspecting execute-plans dirty state and reconciling BFF transport/session foundation on a dedicated branch.
+- 2026-05-09 23:57:20 Orchestrator: PostToolUse: Read
+- 2026-05-09 23:57:20 Orchestrator: PostToolUse: Glob
+- 2026-05-09 23:57:28 Orchestrator: PreToolUse: Read
+- 2026-05-09 23:57:28 Orchestrator: PreToolUse: Read
+- 2026-05-09 23:57:29 Orchestrator: PostToolUse: Read
+- 2026-05-09 23:57:29 Orchestrator: PostToolUse: Read
+- 2026-05-09 23:57:41 Orchestrator: PreToolUse: Read
+- 2026-05-09 23:57:41 Orchestrator: PreToolUse: Glob
+- 2026-05-09 23:57:42 Orchestrator: PostToolUse: Read
+- 2026-05-09 23:57:42 Orchestrator: PostToolUse: Glob
+- 2026-05-09 23:57:50 Orchestrator: PreToolUse: Read
+- 2026-05-09 23:57:51 Orchestrator: PostToolUse: Read
+- 2026-05-09 23:57:58 Orchestrator: `BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF` Supervisor auto-started BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF after successful dispatch.
+- 2026-05-09 23:57:58 Orchestrator: `BFF-LUV-AUTHED-LIVE-001` Worker superseded after task responsibility moved to another agent.
+- 2026-05-09 23:58:09 Orchestrator: PreToolUse: Bash
+- 2026-05-09 23:58:11 Orchestrator: PreToolUse: Bash
+- 2026-05-09 23:58:11 Orchestrator: PostToolUse: Bash
+- 2026-05-09 23:58:12 Orchestrator: PostToolUse: Bash
+- 2026-05-09 23:58:27 Orchestrator: PreToolUse: Bash
+- 2026-05-09 23:58:29 Claude: `BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF` Reading parent task evidence; preparing operator journey map and auth-blocker resolution checklist for BFF-LUV-AUTHED-LIVE-001 handoff packet.
