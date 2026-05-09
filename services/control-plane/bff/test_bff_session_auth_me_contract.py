@@ -5,11 +5,13 @@ import os
 import sys
 import time
 
+import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
+from session_lifecycle_store import SessionLifecycleStore
 from services.runtime_auth_inbound import encode_jwt_hs256
 
 
@@ -40,6 +42,16 @@ def _strict_auth_env(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", JWT_ISSUER)
     monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", JWT_AUDIENCE)
     monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
+
+
+@pytest.fixture(autouse=True)
+def isolated_session_lifecycle_store(tmp_path):
+    original_store = bff_main.session_lifecycle_store
+    bff_main.session_lifecycle_store = SessionLifecycleStore(str(tmp_path / "session_lifecycle.json"))
+    try:
+        yield
+    finally:
+        bff_main.session_lifecycle_store = original_store
 
 
 def test_bff_me_stub_returns_frontend_ready_current_user_dto(monkeypatch) -> None:
@@ -80,6 +92,170 @@ def test_bff_me_stub_returns_frontend_ready_current_user_dto(monkeypatch) -> Non
     assert data["session"]["authenticated"] is True
     assert data["session"]["fresh"] is True
     assert data["session"]["mfa_verified"] is True
+
+
+def test_session_lifecycle_routes_require_auth_by_default(monkeypatch) -> None:
+    _strict_auth_env(monkeypatch)
+
+    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    cases = [
+        ("POST", "/bff/auth/refresh", {}),
+        ("POST", "/bff/logout", {}),
+        ("POST", "/bff/switch-tenant", {"tenantId": "tenant-alpha"}),
+        ("PATCH", "/bff/me/locale", {"locale": "en-US"}),
+    ]
+
+    for method, path, body in cases:
+        response = client.request(method, path, json=body)
+        assert response.status_code == 401, (method, path, response.text)
+
+
+def test_bff_auth_refresh_returns_session_dto_without_command_receipt(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
+    monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha,tenant-beta")
+
+    client = TestClient(bff_main.app)
+    response = client.post(
+        "/bff/auth/refresh",
+        json={},
+        headers={
+            "Authorization": OPERATOR_TOKEN,
+            "Idempotency-Key": "refresh-op-2",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    data = payload["data"]
+    assert payload["meta"]["contract"] == "BFF-LUV-SEM-001"
+    assert data["operation"]["type"] == "refresh"
+    assert data["session"]["authenticated"] is True
+    assert data["session"]["state"] == "active"
+    assert data["currentUser"]["id"] == "op-2"
+    assert "commandId" not in data
+    assert "receipt" not in data
+
+
+def test_bff_auth_refresh_replays_by_idempotency_alias(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
+    monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha")
+
+    client = TestClient(bff_main.app)
+    headers = {
+        "Authorization": OPERATOR_TOKEN,
+        "X-Idempotency-Key": "refresh-alias-op-2",
+    }
+    first = client.post("/bff/auth/refresh", json={}, headers=headers)
+    second = client.post("/bff/auth/refresh", json={}, headers=headers)
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    first_payload = first.json()
+    second_payload = second.json()
+    assert second_payload["meta"]["idempotency"]["idempotencyKey"] == "refresh-alias-op-2"
+    assert second_payload["meta"]["idempotency"]["replayed"] is True
+    assert second_payload["data"]["operation"]["operation_id"] == first_payload["data"]["operation"]["operation_id"]
+    assert second_payload["data"]["operation"]["performed_at"] == first_payload["data"]["operation"]["performed_at"]
+
+
+def test_bff_switch_tenant_persists_allowed_tenant_for_me(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
+    monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha,tenant-beta")
+
+    client = TestClient(bff_main.app)
+    switched = client.post(
+        "/bff/switch-tenant",
+        json={"tenantId": "tenant-beta"},
+        headers={"Authorization": OPERATOR_TOKEN},
+    )
+    assert switched.status_code == 200, switched.text
+    assert switched.json()["data"]["tenant"]["id"] == "tenant-beta"
+    assert switched.json()["data"]["tenant"]["source"] == "session"
+
+    me = client.get("/bff/me", headers={"Authorization": OPERATOR_TOKEN})
+    assert me.status_code == 200, me.text
+    assert me.json()["data"]["tenant"]["id"] == "tenant-beta"
+    assert me.json()["data"]["tenant"]["source"] == "session"
+
+
+def test_bff_switch_tenant_rejects_scope_mismatch(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
+    monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha")
+
+    client = TestClient(bff_main.app)
+    response = client.post(
+        "/bff/switch-tenant",
+        json={"tenantId": "tenant-gamma"},
+        headers={"Authorization": "Bearer op-switch:operator"},
+    )
+
+    assert response.status_code == 403, response.text
+    error = response.json()["detail"]["error"]
+    assert error["details"]["precondition_failed"] == "tenant_scope"
+    assert error["details"]["tenantId"] == "tenant-gamma"
+
+
+def test_bff_update_locale_normalizes_and_persists_for_me(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
+    monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha")
+
+    client = TestClient(bff_main.app)
+    updated = client.patch(
+        "/bff/me/locale",
+        json={"locale": "zh_tw"},
+        headers={"Authorization": OPERATOR_TOKEN},
+    )
+
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["data"]["locale"]["resolved"] == "zh-TW"
+    assert updated.json()["data"]["locale"]["source"] == "session"
+
+    me = client.get("/bff/me", headers={"Authorization": OPERATOR_TOKEN})
+    assert me.status_code == 200, me.text
+    assert me.json()["data"]["locale"]["resolved"] == "zh-TW"
+    assert me.json()["data"]["locale"]["source"] == "session"
+
+
+def test_bff_logout_is_idempotent_session_lifecycle(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
+    monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha")
+
+    client = TestClient(bff_main.app)
+    headers = {
+        "Authorization": OPERATOR_TOKEN,
+        "Idempotency-Key": "logout-op-2",
+    }
+    first = client.post("/bff/logout", json={}, headers=headers)
+    second = client.post("/bff/logout", json={}, headers=headers)
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    first_payload = first.json()
+    second_payload = second.json()
+    assert first_payload["data"]["session"]["authenticated"] is False
+    assert first_payload["data"]["session"]["state"] == "logged_out"
+    assert second_payload["meta"]["idempotency"]["replayed"] is True
+    assert second_payload["data"]["operation"]["operation_id"] == first_payload["data"]["operation"]["operation_id"]
+    assert second_payload["data"]["session"]["logged_out_at"] == first_payload["data"]["session"]["logged_out_at"]
+
+
+def test_bff_session_lifecycle_routes_are_visible_in_openapi(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200, response.text
+    paths = response.json()["paths"]
+    assert "post" in paths["/bff/auth/refresh"]
+    assert "post" in paths["/bff/logout"]
+    assert "post" in paths["/bff/switch-tenant"]
+    assert "patch" in paths["/bff/me/locale"]
 
 
 def test_bff_me_propagates_accept_language_when_x_locale_absent(monkeypatch) -> None:

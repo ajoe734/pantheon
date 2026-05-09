@@ -90,6 +90,7 @@ from models import (
 from action_catalog import get_action_catalog, get_catalog_entry
 from command_queue import CommandStore
 from command_executor import execute_command_with_status
+from session_lifecycle_store import SessionLifecycleStore
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 from source_search_ops_client import (
     SearchIndexCommandClient,
@@ -171,6 +172,7 @@ register_fastapi_health_routes(
     details=lambda: {"version": "0.2.0", "data_dir": BFF_DATA_DIR},
 )
 command_store = CommandStore(os.path.join(BFF_DATA_DIR, "commands.jsonl"))
+session_lifecycle_store = SessionLifecycleStore(os.path.join(BFF_DATA_DIR, "session_lifecycle.json"))
 read_store = ReadSurfaceStore(
     os.path.join(BFF_DATA_DIR, "read_surfaces.json"),
     allow_local_snapshot_fallback=_bool_from_env(
@@ -3137,6 +3139,14 @@ def _bff_me_tenant_payload(
     }
 
 
+def _sem_session_key(identity: OperatorIdentity) -> str:
+    return f"operator:{identity.operator_id}"
+
+
+def _sem_session_state(identity: OperatorIdentity) -> Dict[str, Any]:
+    return session_lifecycle_store.get_session(_sem_session_key(identity))
+
+
 @app.get("/bff/me")
 async def bff_me(
     tenant_id: Optional[str] = Query(default=None),
@@ -3151,15 +3161,28 @@ async def bff_me(
     identity = _extract_identity(authorization, mfa_token=x_mfa_token)
     _require_read_role(identity)
     snapshot_at = utc_now()
-    requested_tenant = _first_nonblank(x_tenant_id, x_pantheon_tenant, tenant_id)
+    session_state = _sem_session_state(identity)
+    requested_header_tenant = _first_nonblank(x_tenant_id, x_pantheon_tenant, tenant_id)
+    requested_tenant = _first_nonblank(requested_header_tenant, session_state.get("tenant_id"))
     tenant = _bff_me_tenant_payload(identity, requested_tenant=requested_tenant)
+    tenant["source"] = "request" if requested_header_tenant else ("session" if session_state.get("tenant_id") else "default")
     locale = _resolve_bff_me_locale(
         identity,
         x_locale=x_locale,
         accept_language=accept_language,
     )
+    if not _first_nonblank(x_locale, accept_language) and session_state.get("locale"):
+        locale["resolved"] = session_state["locale"]
+        locale["source"] = "session"
+    else:
+        locale["source"] = "header" if x_locale else ("accept_language" if accept_language else "default")
     user = _bff_me_user_payload(identity)
     session = _bff_me_session_payload(identity, checked_at=snapshot_at)
+    session["state"] = str(session_state.get("state") or "active")
+    if session_state.get("state") == "logged_out":
+        session["authenticated"] = False
+        session["fresh"] = False
+        session["logged_out_at"] = session_state.get("logged_out_at")
     data = {
         "user": user,
         "current_user": user,
@@ -3181,6 +3204,187 @@ async def bff_me(
             "snapshot_at": snapshot_at,
         },
     }
+
+
+def _sem_session_current_response(
+    identity: OperatorIdentity,
+    *,
+    operation_type: str,
+    tenant: Optional[Dict[str, Any]] = None,
+    locale: Optional[Dict[str, Any]] = None,
+    session_patch: Optional[Dict[str, Any]] = None,
+    idempotency_key: Optional[str] = None,
+    replayed: bool = False,
+) -> Dict[str, Any]:
+    now = utc_now()
+    state = _sem_session_state(identity)
+    if session_patch:
+        state = session_lifecycle_store.upsert_session(_sem_session_key(identity), session_patch, now=now)
+    user = _bff_me_user_payload(identity)
+    session = _bff_me_session_payload(identity, checked_at=now)
+    session["state"] = str(state.get("state") or "active")
+    if state.get("state") == "logged_out":
+        session["authenticated"] = False
+        session["fresh"] = False
+        session["logged_out_at"] = state.get("logged_out_at")
+    selected_tenant = tenant or _bff_me_tenant_payload(identity, requested_tenant=state.get("tenant_id"))
+    if state.get("tenant_id"):
+        selected_tenant["source"] = "session"
+    selected_locale = locale or _resolve_bff_me_locale(identity, x_locale=None, accept_language=None)
+    if state.get("locale"):
+        selected_locale["resolved"] = state["locale"]
+        selected_locale["source"] = "session"
+    data = {
+        "operation": {
+            "type": operation_type,
+            "operation_id": f"{operation_type}-{uuid.uuid4().hex[:12]}",
+            "performed_at": now,
+        },
+        "user": user,
+        "currentUser": user,
+        "current_user": user,
+        "roles": user["roles"],
+        "capabilities": user["capabilities"],
+        "tenant": selected_tenant,
+        "tenant_id": selected_tenant["id"],
+        "locale": selected_locale,
+        "environment": _bff_me_environment_payload(),
+        "feature_flags": _bff_me_feature_flags(identity),
+        "session": session,
+    }
+    meta: Dict[str, Any] = {
+        "contract": "BFF-LUV-SEM-001",
+        "snapshot_at": now,
+        "idempotency": {"idempotencyKey": idempotency_key, "replayed": replayed},
+    }
+    return {"data": data, "meta": meta}
+
+
+def _sem_session_idempotency_key(route: str, identity: OperatorIdentity, key: Optional[str]) -> Optional[str]:
+    clean = str(key or "").strip()
+    if not clean:
+        return None
+    return f"{route}:{identity.operator_id}:{clean}"
+
+
+def _sem_optional_idempotency_key(
+    idempotency_key: Optional[str],
+    x_idempotency_key: Optional[str],
+) -> Optional[str]:
+    return _first_nonblank(idempotency_key, x_idempotency_key)
+
+
+@app.post("/bff/auth/refresh")
+async def bff_auth_refresh(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    resolved_key = _sem_optional_idempotency_key(idempotency_key, x_idempotency_key)
+    record_key = _sem_session_idempotency_key("POST /bff/auth/refresh", identity, resolved_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/auth/refresh", "payload": payload or {}})
+    if record_key:
+        cached = session_lifecycle_store.get_idempotency(record_key)
+        if cached:
+            if cached.get("request_hash") != request_hash:
+                raise _bff_error(
+                    409,
+                    ErrorCode.IDEMPOTENCY_CONFLICT,
+                    "Idempotency key was reused with a different refresh payload",
+                    "The idempotency key already belongs to another refresh payload",
+                    precondition_failed="idempotency_key",
+                )
+            result = dict(cached["result"])
+            result.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
+            return result
+    now = utc_now()
+    session_lifecycle_store.upsert_session(
+        _sem_session_key(identity),
+        {"state": "active", "last_refreshed_at": now},
+        now=now,
+    )
+    result = _sem_session_current_response(identity, operation_type="refresh", idempotency_key=resolved_key)
+    if record_key:
+        session_lifecycle_store.put_idempotency(record_key, request_hash=request_hash, result=result, now=now)
+    return result
+
+
+@app.post("/bff/logout")
+async def bff_logout(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    resolved_key = _sem_optional_idempotency_key(idempotency_key, x_idempotency_key)
+    record_key = _sem_session_idempotency_key("POST /bff/logout", identity, resolved_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/logout", "payload": payload or {}})
+    if record_key:
+        cached = session_lifecycle_store.get_idempotency(record_key)
+        if cached:
+            if cached.get("request_hash") != request_hash:
+                raise _bff_error(
+                    409,
+                    ErrorCode.IDEMPOTENCY_CONFLICT,
+                    "Idempotency key was reused with a different logout payload",
+                    "The idempotency key already belongs to another logout payload",
+                    precondition_failed="idempotency_key",
+                )
+            result = dict(cached["result"])
+            result.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
+            return result
+    now = utc_now()
+    result = _sem_session_current_response(
+        identity,
+        operation_type="logout",
+        session_patch={"state": "logged_out", "logged_out_at": now},
+        idempotency_key=resolved_key,
+    )
+    if record_key:
+        session_lifecycle_store.put_idempotency(record_key, request_hash=request_hash, result=result, now=now)
+    return result
+
+
+@app.post("/bff/switch-tenant")
+async def bff_switch_tenant(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    tenant_id = str(payload.get("tenantId") or payload.get("tenant_id") or "").strip()
+    tenant = _bff_me_tenant_payload(identity, requested_tenant=tenant_id)
+    tenant["source"] = "session"
+    session_lifecycle_store.upsert_session(_sem_session_key(identity), {"tenant_id": tenant["id"], "state": "active"}, now=utc_now())
+    return _sem_session_current_response(identity, operation_type="switch_tenant", tenant=tenant)
+
+
+@app.patch("/bff/me/locale")
+async def bff_update_locale(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+):
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    locale_value = _normalize_locale(payload.get("locale"))
+    if not locale_value:
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_PARAMS,
+            "locale is required",
+            "locale must be a non-empty BCP-47-ish language tag",
+            precondition_failed="locale",
+        )
+    locale = _resolve_bff_me_locale(identity, x_locale=locale_value, accept_language=None)
+    locale["resolved"] = locale_value
+    locale["source"] = "session"
+    session_lifecycle_store.upsert_session(_sem_session_key(identity), {"locale": locale_value, "state": "active"}, now=utc_now())
+    return _sem_session_current_response(identity, operation_type="update_locale", locale=locale)
 
 
 def _read_surface_state() -> str:
