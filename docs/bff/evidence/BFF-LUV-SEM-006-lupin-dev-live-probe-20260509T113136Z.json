@@ -1,0 +1,865 @@
+{
+  "task_id": "BFF-LUV-SEM-006",
+  "generated_at": "2026-05-09T11:31:36Z",
+  "target_url": "https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io",
+  "source_commit": "76bfcc8ef3fd5c9b1e8e96e9538ab6ca0a35ab33",
+  "worktree_dirty_entry_count": 27,
+  "commands": [
+    "python3 -m pytest services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/test_bff_session_auth_me_contract.py services/control-plane/bff/test_final_command_execution_bridge.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py -q",
+    "COMPOSE_BAKE=false PANTHEON_ENV=dev PANTHEON_LIVE_BROKER_ENABLED=false PANTHEON_BFF_CORS_ORIGINS=https://pantheon-ai-system-front-dev.lovable.app docker compose -p pantheon -f docker-compose.yml up -d --build operator-bff",
+    "curl -sS http://127.0.0.1:18001/health",
+    "curl -sS http://127.0.0.1:18001/readyz",
+    "curl -sS https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io/openapi.json",
+    "python3 inline urllib anonymous probe over FINAL_CONTRACT_METHOD_PATHS from services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py"
+  ],
+  "pytest_result": {
+    "status": "passed",
+    "summary": "63 passed, 6 warnings"
+  },
+  "compose": {
+    "operator_bff_ps_command": "docker compose -p pantheon -f docker-compose.yml ps operator-bff",
+    "operator_bff_ps_stdout": "NAME                      IMAGE                   COMMAND                  SERVICE        CREATED         STATUS                   PORTS\npantheon-operator-bff-1   pantheon-operator-bff   \"uvicorn main:app --…\"   operator-bff   4 minutes ago   Up 3 minutes (healthy)   0.0.0.0:18001->8001/tcp, [::]:18001->8001/tcp\n",
+    "operator_bff_ps_stderr": "",
+    "operator_bff_ps_exit_code": 0
+  },
+  "health": {
+    "status": 200,
+    "reason": "OK",
+    "body_prefix": "{\"status\":\"ok\",\"service\":\"operator-bff\",\"version\":\"0.2.0\",\"timestamp\":\"2026-05-09T11:31:36Z\"}"
+  },
+  "readyz": {
+    "status": 200,
+    "reason": "OK",
+    "body_prefix": "{\"status\":\"ok\",\"service\":\"operator-bff\",\"timestamp\":\"2026-05-09T11:31:36Z\",\"live\":true,\"ready\":true,\"dependencies\":{\"runtime_manager\":{\"status\":\"ok\",\"url\":\"http://runtime-manager:8081\"},\"governance\":{\"status\":\"ok\",\"url\":\"http://governance:8082\"},\"deployment\":{\"status\":\"ok\",\"url\":\"http://deployment:8095\"}},\"metrics\":{\"service_up\":1},\"details\":{\"version\":\"0.2.0\",\"data_dir\":\"/data/bff\"}}"
+  },
+  "openapi": {
+    "status": 200,
+    "reason": "OK",
+    "path_count": 338,
+    "expected_public_paths": [
+      "/bff/me",
+      "/bff/deployments",
+      "/bff/v5/control-room",
+      "/bff/agora/signals"
+    ],
+    "expected_public_paths_present": {
+      "/bff/me": true,
+      "/bff/deployments": true,
+      "/bff/v5/control-room": true,
+      "/bff/agora/signals": true
+    }
+  },
+  "anonymous_final_contract_probe": {
+    "route_source": "services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py",
+    "route_count": 113,
+    "allowed_statuses_for_gate": [
+      200,
+      401
+    ],
+    "status_counts": {
+      "200": 2,
+      "401": 111
+    },
+    "zero_404_500": true,
+    "non_200_401_count": 0,
+    "failures_404_500_or_error": [],
+    "routes": [
+      {
+        "method": "DELETE",
+        "path_template": "/bff/confirm-tokens/{tokenId}",
+        "path": "/bff/confirm-tokens/probe-token",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/agora/alerts/triage",
+        "path": "/bff/agora/alerts/triage",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/agora/ask/sessions",
+        "path": "/bff/agora/ask/sessions",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/agora/evaluation-runs",
+        "path": "/bff/agora/evaluation-runs",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/agora/evaluation-suites",
+        "path": "/bff/agora/evaluation-suites",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/agora/inbox",
+        "path": "/bff/agora/inbox",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/agora/journal",
+        "path": "/bff/agora/journal",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/agora/persona-lab/runs",
+        "path": "/bff/agora/persona-lab/runs",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/agora/postmortems",
+        "path": "/bff/agora/postmortems",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/agora/signals",
+        "path": "/bff/agora/signals",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/agora/signals/{id}",
+        "path": "/bff/agora/signals/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/agora/skill-coaching/sessions",
+        "path": "/bff/agora/skill-coaching/sessions",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/alerts",
+        "path": "/bff/alerts",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/alerts/{id}",
+        "path": "/bff/alerts/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/approvals",
+        "path": "/bff/approvals",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/approvals/{id}",
+        "path": "/bff/approvals/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/artifacts",
+        "path": "/bff/artifacts",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/artifacts/{id}",
+        "path": "/bff/artifacts/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/audit",
+        "path": "/bff/audit",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/capabilities",
+        "path": "/bff/capabilities",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/capital-pools",
+        "path": "/bff/capital-pools",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/capital-pools/{id}",
+        "path": "/bff/capital-pools/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/channels",
+        "path": "/bff/channels",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/channels/{id}",
+        "path": "/bff/channels/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/confirm-tokens/{tokenId}",
+        "path": "/bff/confirm-tokens/probe-token",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/deployments",
+        "path": "/bff/deployments",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/deployments/{id}",
+        "path": "/bff/deployments/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/events/stream",
+        "path": "/bff/events/stream",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/evolution-programs",
+        "path": "/bff/evolution-programs",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/evolution-programs/{id}",
+        "path": "/bff/evolution-programs/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/feature-flags",
+        "path": "/bff/feature-flags",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/healthz",
+        "path": "/bff/healthz",
+        "status": 200,
+        "reason": "OK"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/incidents",
+        "path": "/bff/incidents",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/incidents/{id}",
+        "path": "/bff/incidents/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/jobs",
+        "path": "/bff/jobs",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/jobs/{id}",
+        "path": "/bff/jobs/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/mcp-servers",
+        "path": "/bff/mcp-servers",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/mcp-servers/{id}",
+        "path": "/bff/mcp-servers/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/mcp-tools",
+        "path": "/bff/mcp-tools",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/mcp-tools/{id}",
+        "path": "/bff/mcp-tools/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/me",
+        "path": "/bff/me",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/personas",
+        "path": "/bff/personas",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/personas/{id}",
+        "path": "/bff/personas/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/ranking-formulas",
+        "path": "/bff/ranking-formulas",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/ranking-formulas/{id}",
+        "path": "/bff/ranking-formulas/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/readyz",
+        "path": "/bff/readyz",
+        "status": 200,
+        "reason": "OK"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/rebalances",
+        "path": "/bff/rebalances",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/rebalances/{id}",
+        "path": "/bff/rebalances/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/research-experiments",
+        "path": "/bff/research-experiments",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/research-experiments/{id}",
+        "path": "/bff/research-experiments/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/runtimes",
+        "path": "/bff/runtimes",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/runtimes/{id}",
+        "path": "/bff/runtimes/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/skills",
+        "path": "/bff/skills",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/skills/{id}",
+        "path": "/bff/skills/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/strategies",
+        "path": "/bff/strategies",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/strategies/{id}",
+        "path": "/bff/strategies/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/tools",
+        "path": "/bff/tools",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/tools/{id}",
+        "path": "/bff/tools/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/v5/control-room",
+        "path": "/bff/v5/control-room",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/v5/execution/persona-health",
+        "path": "/bff/v5/execution/persona-health",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/v5/execution/strategy-health",
+        "path": "/bff/v5/execution/strategy-health",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/v5/interventions",
+        "path": "/bff/v5/interventions",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/v5/interventions/{id}",
+        "path": "/bff/v5/interventions/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/v5/loop-runs",
+        "path": "/bff/v5/loop-runs",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/v5/loop-runs/{id}",
+        "path": "/bff/v5/loop-runs/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/v5/sentinel/findings",
+        "path": "/bff/v5/sentinel/findings",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "GET",
+        "path_template": "/bff/v5/sentinel/findings/{id}",
+        "path": "/bff/v5/sentinel/findings/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "PATCH",
+        "path_template": "/bff/agora/journal/{id}",
+        "path": "/bff/agora/journal/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "PATCH",
+        "path_template": "/bff/artifacts/{id}",
+        "path": "/bff/artifacts/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "PATCH",
+        "path_template": "/bff/capital-pools/{id}",
+        "path": "/bff/capital-pools/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "PATCH",
+        "path_template": "/bff/deployments/{id}",
+        "path": "/bff/deployments/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "PATCH",
+        "path_template": "/bff/evolution-programs/{id}",
+        "path": "/bff/evolution-programs/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "PATCH",
+        "path_template": "/bff/me/locale",
+        "path": "/bff/me/locale",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "PATCH",
+        "path_template": "/bff/personas/{id}",
+        "path": "/bff/personas/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "PATCH",
+        "path_template": "/bff/ranking-formulas/{id}",
+        "path": "/bff/ranking-formulas/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "PATCH",
+        "path_template": "/bff/rebalances/{id}",
+        "path": "/bff/rebalances/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "PATCH",
+        "path_template": "/bff/research-experiments/{id}",
+        "path": "/bff/research-experiments/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "PATCH",
+        "path_template": "/bff/strategies/{id}",
+        "path": "/bff/strategies/probe-id",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/actions/{entityType}/{entityId}/{actionId}",
+        "path": "/bff/actions/strategy/stg_001/submit",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/agora/ask",
+        "path": "/bff/agora/ask",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/agora/signals/{id}/feedback",
+        "path": "/bff/agora/signals/probe-id/feedback",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/alerts/{id}/acknowledge",
+        "path": "/bff/alerts/probe-id/acknowledge",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/alerts/{id}/escalate-incident",
+        "path": "/bff/alerts/probe-id/escalate-incident",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/approvals/batch-decide",
+        "path": "/bff/approvals/batch-decide",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/approvals/{id}/decide",
+        "path": "/bff/approvals/probe-id/decide",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/artifacts",
+        "path": "/bff/artifacts",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/audit/export",
+        "path": "/bff/audit/export",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/auth/refresh",
+        "path": "/bff/auth/refresh",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/capital-pools",
+        "path": "/bff/capital-pools",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/confirm-tokens",
+        "path": "/bff/confirm-tokens",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/confirm-tokens/{tokenId}/redeem",
+        "path": "/bff/confirm-tokens/probe-token/redeem",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/deployments",
+        "path": "/bff/deployments",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/evolution-programs",
+        "path": "/bff/evolution-programs",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/incidents/{id}/append-postmortem",
+        "path": "/bff/incidents/probe-id/append-postmortem",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/incidents/{id}/resolve",
+        "path": "/bff/incidents/probe-id/resolve",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/incidents/{id}/rollback-deployment",
+        "path": "/bff/incidents/probe-id/rollback-deployment",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/incidents/{id}/start-mitigation",
+        "path": "/bff/incidents/probe-id/start-mitigation",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/logout",
+        "path": "/bff/logout",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/mcp-servers/{id}/import-tools",
+        "path": "/bff/mcp-servers/probe-id/import-tools",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/personas",
+        "path": "/bff/personas",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/ranking-formulas",
+        "path": "/bff/ranking-formulas",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/rebalances",
+        "path": "/bff/rebalances",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/research-experiments",
+        "path": "/bff/research-experiments",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/strategies",
+        "path": "/bff/strategies",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/switch-tenant",
+        "path": "/bff/switch-tenant",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/v5/interventions/{id}/claim",
+        "path": "/bff/v5/interventions/probe-id/claim",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/v5/interventions/{id}/decide",
+        "path": "/bff/v5/interventions/probe-id/decide",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/v5/interventions/{id}/escalate",
+        "path": "/bff/v5/interventions/probe-id/escalate",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/v5/interventions/{id}/release",
+        "path": "/bff/v5/interventions/probe-id/release",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/v5/interventions/{id}/two-man-sign",
+        "path": "/bff/v5/interventions/probe-id/two-man-sign",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/v5/sentinel/findings/{id}/status",
+        "path": "/bff/v5/sentinel/findings/probe-id/status",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/v5/sentinel/remediation/build",
+        "path": "/bff/v5/sentinel/remediation/build",
+        "status": 401,
+        "reason": "Unauthorized"
+      },
+      {
+        "method": "POST",
+        "path_template": "/bff/v5/sentinel/remediation/{actionId}/execute",
+        "path": "/bff/v5/sentinel/remediation/submit/execute",
+        "status": 401,
+        "reason": "Unauthorized"
+      }
+    ]
+  },
+  "lovable_frontend_handoff": {
+    "VITE_BFF_MODE_live_safe": true,
+    "VITE_BFF_BASE_URL": "https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io",
+    "note": "Safe to use live mode for the final execute-plans BFF contract on lupin dev because OpenAPI is 200 and anonymous final contract probe has zero 404/500."
+  }
+}
