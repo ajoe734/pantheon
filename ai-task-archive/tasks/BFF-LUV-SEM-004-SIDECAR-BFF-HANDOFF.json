@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-SEM-004-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-09T10:26:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-SEM-004-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BFF-LUV-SEM-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BFF-LUV-SEM-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "BFF Execute-Plans Semantic Completion 2026-05-09",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/BFF-LUV-SEM-004/BFF-LUV-SEM-004-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: sidecar handoff packet approved by Claude2 (2026-05-09). Artifact updated with approval status and review notes. Support-only — no canonical truth modified. Isolated commit 02ab2a90 staged. Ready for parent owner absorption.",
+    "last_update": "2026-05-09T10:26:49Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BFF-LUV-SEM-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "支援性 handoff packet 通過審查。內容準確反映 BFF-LUV-SEM-004 v5 語意完成實作，涵蓋路由表、read-store 推導規則、degraded 降級處理、回應格式、operator journey 與前端交接要點。Canonical truth 未被修改。",
+      "前端團隊可使用 Section 6.3 seed IDs 與 PANTHEON_BFF_SNAPSHOT_PATH 進行開發測試。",
+      "所有 reviewer checklist 項目確認通過：routes 與 main.py decorators 一致、derivation 規則符合 read_store.py 實作、response shapes 符合 test fixtures。"
+    ],
+    "review_file": "support/sidecars/BFF-LUV-SEM-004/BFF-LUV-SEM-004-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-09T10:26:49Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "02ab2a904292a05a210f8ab4bf742f1e9dbc3af9",
+      "commit_subject": "BFF-LUV-SEM-004-SIDECAR-BFF-HANDOFF: closeout — mark review approved in handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verification": "support artifact exists at support/sidecars/BFF-LUV-SEM-004/BFF-LUV-SEM-004-SIDECAR-BFF-HANDOFF.md",
+        "LLM-Agent": "Claude",
+        "Task-ID": "BFF-LUV-SEM-004-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 34,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 9,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-SEM-004-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Handoff packet complete. Covers v5 loop/sentinel routes, control-room composition, read-store derivation rules, degraded handling, seed IDs, and BFF gap summary. 27 tests verified. Ready for Claude2 review.",
+      "status": "done",
+      "created_at": "2026-05-09T10:24:10Z",
+      "resolved_at": "2026-05-09T10:25:13Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-004-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Sidecar handoff packet approved. Accurate documentation of v5 loop/sentinel routes, read-store derivation, degraded handling, and frontend integration notes. No canonical truth modified. Ready for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-05-09T10:25:13Z",
+      "resolved_at": "2026-05-09T10:26:49Z"
+    }
+  ],
+  "blockers": []
+}

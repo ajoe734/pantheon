@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-09T10:52:27Z",
+  "updated_at": "2026-05-09T15:12:45Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,14 +93,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
-      "current_task_ids": [
-        "BFF-LUV-SEM-002",
-        "BFF-LUV-SEM-006-SIDECAR-BFF-HANDOFF"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude-execution-control",
-      "next": "Building BFF/frontend handoff packet for SEM-006 live cutover: surveying completed SEM-001/003/005, pending SEM-002/004, and live probe checklist",
-      "last_update": "2026-05-09T10:52:27Z"
+      "next": "",
+      "last_update": "2026-05-09T13:42:02Z"
     },
     {
       "name": "Gemini",
@@ -124,15 +121,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "blocked",
-      "current_task_ids": [
-        "BFF-LUV-GAP-012",
-        "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF",
-        "BFF-LUV-GAP-007-SIDECAR-BFF-HANDOFF"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/codex-collab-system",
-      "next": "Chair reassigned review from Gemini to Gemini2: Gemini is disabled in ready_dispatcher.disabled_agents, so this support-only review will not auto-dispatch; Gemini2 is idle, verified, and can drain it sequentially with the adjacent sidecar review.",
-      "last_update": "2026-05-09T10:19:21Z"
+      "next": "",
+      "last_update": "2026-05-09T15:11:07Z"
     },
     {
       "name": "Codex2",
@@ -142,13 +135,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "waiting",
-      "current_task_ids": [
-        "BFF-LUV-SEM-006"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/codex-collab-system",
-      "next": "Live cutover remains blocked until SEM-001..005 review/closeout is complete. Reassigned away from Gemini2 because the active Gemini2 worker corrupted BFF source files; do not dispatch live cutover until semantic reviews clear and a fresh live probe is run.",
-      "last_update": "2026-05-09T07:13:16Z"
+      "next": "",
+      "last_update": "2026-05-09T14:24:00Z"
     },
     {
       "name": "Copilot",
@@ -171,13 +162,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
-      "current_task_ids": [
-        "BFF-LUV-SEM-004"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude2-execution-control",
-      "next": "Supervisor re-dispatched BFF-LUV-SEM-004; task remains in progress.",
-      "last_update": "2026-05-09T10:50:37Z"
+      "next": "",
+      "last_update": "2026-05-09T11:04:49Z"
     },
     {
       "name": "Gemini2",
@@ -256,40 +245,6 @@
       "last_update": "2026-05-08T18:00:15Z"
     },
     {
-      "id": "BFF-LUV-GAP-012",
-      "title": "Run execute-plans BFF cutover smoke",
-      "summary_zh": "所有缺口完成或有 disposition 後，對 execute-plans repo 跑 live/hybrid BFF cutover smoke。",
-      "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "blocked",
-      "depends_on": [
-        "BFF-LUV-GAP-001",
-        "BFF-LUV-GAP-002",
-        "BFF-LUV-GAP-003",
-        "BFF-LUV-GAP-004",
-        "BFF-LUV-GAP-005",
-        "BFF-LUV-GAP-006",
-        "BFF-LUV-GAP-007",
-        "BFF-LUV-GAP-008",
-        "BFF-LUV-GAP-009",
-        "BFF-LUV-GAP-010",
-        "BFF-LUV-GAP-011"
-      ],
-      "artifacts": [
-        "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/BFF-LUV-GAP-012-execute-plans-cutover-smoke.md",
-        "/home/lupin/code/execute-plans/README.md"
-      ],
-      "acceptance": [
-        "execute-plans npm test passes",
-        "execute-plans npm build passes",
-        "BFF live smoke covers key routes"
-      ],
-      "next": "Blocked: live cutover must wait for BFF-LUV-SEM-001 through BFF-LUV-SEM-005 semantic completion tasks. Do not claim Lovable/live readiness from route-only wiring.",
-      "last_update": "2026-05-09T05:51:08Z",
-      "waiting_for": "Codex2"
-    },
-    {
       "id": "BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF",
       "title": "Prepare BFF-LUV-GAP-006 BFF and frontend handoff packet",
       "summary_zh": "平行支援 BFF-LUV-GAP-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
@@ -321,58 +276,6 @@
       ]
     },
     {
-      "id": "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare BFF-LUV-GAP-010 BFF and frontend handoff packet",
-      "summary_zh": "平行支援 BFF-LUV-GAP-010，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-      "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
-      "owner": "Codex",
-      "reviewer": "Gemini2",
-      "status": "review",
-      "depends_on": [],
-      "artifacts": [
-        "support/sidecars/BFF-LUV-GAP-010/BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Chair reassigned review from Gemini to Gemini2: Gemini is disabled in ready_dispatcher.disabled_agents, so this support-only review will not auto-dispatch; Gemini2 is idle, verified, and can drain it sequentially with the adjacent sidecar review.",
-      "last_update": "2026-05-09T10:19:21Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "BFF-LUV-GAP-010",
-      "helper_kind": "bff_handoff_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
-    },
-    {
-      "id": "BFF-LUV-GAP-007-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare BFF-LUV-GAP-007 BFF and frontend handoff packet",
-      "summary_zh": "平行支援 BFF-LUV-GAP-007，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-      "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
-      "owner": "Codex",
-      "reviewer": "Gemini2",
-      "status": "review",
-      "depends_on": [],
-      "artifacts": [
-        "support/sidecars/BFF-LUV-GAP-007/BFF-LUV-GAP-007-SIDECAR-BFF-HANDOFF.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Chairman flagged this sidecar review as stale on 2026-05-08T22:59:11Z. Please review the support-only handoff packet and either approve it or return concrete issues; do not block BFF-LUV-GAP-001 mainline refresh.",
-      "last_update": "2026-05-08T23:02:43Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "BFF-LUV-GAP-007",
-      "helper_kind": "bff_handoff_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
-    },
-    {
       "id": "BFF-LUV-GAP-004-SIDECAR-BFF-HANDOFF",
       "title": "Prepare BFF-LUV-GAP-004 BFF and frontend handoff packet",
       "summary_zh": "平行支援 BFF-LUV-GAP-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
@@ -394,114 +297,6 @@
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "BFF-LUV-GAP-004",
-      "helper_kind": "bff_handoff_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
-    },
-    {
-      "id": "BFF-LUV-SEM-002",
-      "title": "Complete execute-plans BFF command execution bridge",
-      "summary_zh": "把 final BFF command routes 從 generic accepted payload 補成 command_store/domain receipt 語意。",
-      "phase": "BFF Execute-Plans Semantic Completion 2026-05-09",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "review",
-      "depends_on": [],
-      "artifacts": [
-        "docs/bff/execution-tasks/2026-05-09-execute-plans-semantic-completion/BFF-LUV-SEM-002-command-execution-bridge.md"
-      ],
-      "acceptance": [
-        "affected command routes write command records",
-        "idempotency replay and conflict are tested",
-        "no live capital side effects are enabled",
-        "focused command tests and final wiring tests pass"
-      ],
-      "next": "Codex2 review in progress for b02bce71; checking command-store idempotency replay/conflict behavior and focused BFF suites.",
-      "last_update": "2026-05-09T10:52:06Z",
-      "task_class": "semantic_completion",
-      "auto_created_by": "Codex",
-      "mutates_canonical": true
-    },
-    {
-      "id": "BFF-LUV-SEM-004",
-      "title": "BFF semantic completion: v5 loop/sentinel/runtime semantics",
-      "summary_zh": "把 v5 loop-runs/persona-health/strategy-health/sentinel findings 從 derived/empty fallback 補成 runtime-backed semantics。",
-      "phase": "BFF Execute-Plans Semantic Completion 2026-05-09",
-      "owner": "Claude2",
-      "reviewer": "Codex2",
-      "status": "in_progress",
-      "depends_on": [],
-      "artifacts": [
-        "docs/bff/execution-tasks/2026-05-09-execute-plans-semantic-completion/BFF-LUV-SEM-004-v5-loop-sentinel-runtime.md"
-      ],
-      "acceptance": [
-        "v5 control room composes real child read models",
-        "seeded loop and sentinel records are visible",
-        "missing runtime source degrades without 500",
-        "focused v5 tests pass"
-      ],
-      "next": "Supervisor re-dispatched BFF-LUV-SEM-004; task remains in progress.",
-      "last_update": "2026-05-09T10:50:37Z",
-      "task_class": "semantic_completion",
-      "auto_created_by": "Codex",
-      "mutates_canonical": true
-    },
-    {
-      "id": "BFF-LUV-SEM-006",
-      "title": "Deploy execute-plans BFF semantic completion to lupin dev",
-      "summary_zh": "部署 patched BFF 到 lupin dev 並用 live probe 證明 /openapi.json 200 與 final contract zero 404/500。",
-      "phase": "BFF Execute-Plans Semantic Completion 2026-05-09",
-      "owner": "Codex2",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "BFF-LUV-SEM-001",
-        "BFF-LUV-SEM-002",
-        "BFF-LUV-SEM-003",
-        "BFF-LUV-SEM-004",
-        "BFF-LUV-SEM-005"
-      ],
-      "artifacts": [
-        "docs/bff/execution-tasks/2026-05-09-execute-plans-semantic-completion/BFF-LUV-SEM-006-lupin-dev-live-cutover.md"
-      ],
-      "acceptance": [
-        "public lupin dev openapi returns 200",
-        "public final BFF probe has zero 404 and zero 500",
-        "probe evidence is published",
-        "Lovable live handoff states whether live mode is safe"
-      ],
-      "next": "Live cutover remains blocked until SEM-001..005 review/closeout is complete. Reassigned away from Gemini2 because the active Gemini2 worker corrupted BFF source files; do not dispatch live cutover until semantic reviews clear and a fresh live probe is run.",
-      "last_update": "2026-05-09T07:14:11Z",
-      "task_class": "semantic_completion",
-      "auto_created_by": "Codex",
-      "mutates_canonical": true
-    },
-    {
-      "id": "BFF-LUV-SEM-006-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare BFF-LUV-SEM-006 BFF and frontend handoff packet",
-      "summary_zh": "平行支援 BFF-LUV-SEM-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-      "phase": "BFF Execute-Plans Semantic Completion 2026-05-09",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "in_progress",
-      "depends_on": [
-        "BFF-LUV-SEM-001",
-        "BFF-LUV-SEM-003",
-        "BFF-LUV-SEM-005"
-      ],
-      "artifacts": [
-        "support/sidecars/BFF-LUV-SEM-006/BFF-LUV-SEM-006-SIDECAR-BFF-HANDOFF.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Building BFF/frontend handoff packet for SEM-006 live cutover: surveying completed SEM-001/003/005, pending SEM-002/004, and live probe checklist",
-      "last_update": "2026-05-09T10:52:27Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "BFF-LUV-SEM-006",
       "helper_kind": "bff_handoff_packet",
       "mutates_canonical": false,
       "auto_created_by": "supervisor-underutilization"
@@ -752,15 +547,6 @@
       "resolved_at": "2026-05-08T18:04:36Z"
     },
     {
-      "task_id": "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Preparing handoff packet for reviewer Codex2.",
-      "status": "done",
-      "created_at": "2026-05-08T17:56:59Z",
-      "resolved_at": "2026-05-08T23:03:19Z"
-    },
-    {
       "task_id": "BFF-LUV-GAP-006",
       "from": "Gemini2",
       "to": "Codex2",
@@ -777,159 +563,9 @@
       "status": "done",
       "created_at": "2026-05-08T18:00:15Z",
       "resolved_at": "2026-05-08T18:04:36Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-007-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Gemini2",
-      "message": "Chairman flagged this sidecar review as stale on 2026-05-08T22:59:11Z. Please review the support-only handoff packet and either approve it or return concrete issues; do not block BFF-LUV-GAP-001 mainline refresh.",
-      "status": "pending",
-      "created_at": "2026-05-08T23:02:43Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Gemini",
-      "message": "Chairman flagged this sidecar review as stale on 2026-05-08T22:59:11Z. Please review the support-only handoff packet and either approve it or return concrete issues; keep BFF-LUV-GAP-001 mainline refresh unblocked.",
-      "status": "done",
-      "created_at": "2026-05-08T23:03:19Z",
-      "resolved_at": "2026-05-09T10:19:21Z"
-    },
-    {
-      "task_id": "BFF-LUV-SEM-002",
-      "from": "Claude2",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Claude2 is dispatch-paused.",
-      "status": "done",
-      "created_at": "2026-05-09T05:49:37Z",
-      "resolved_at": "2026-05-09T05:51:58Z"
-    },
-    {
-      "task_id": "BFF-LUV-SEM-002",
-      "from": "Codex2",
-      "to": "Claude2",
-      "message": "Implemented command-store-backed final BFF command bridge for deployment create/patch, rebalance patch, audit export, confirm-token lifecycle, canonical actions, v5 intervention and sentinel commands. Verification: py_compile main/models/new test passed; focused BFF command/final wiring/action catalog suite -> 128 passed, 11 pre-existing warnings.",
-      "status": "done",
-      "created_at": "2026-05-09T06:05:52Z",
-      "resolved_at": "2026-05-09T06:46:46Z"
-    },
-    {
-      "task_id": "BFF-LUV-SEM-002",
-      "from": "Claude2",
-      "to": "Codex",
-      "message": "Chair reassigned review from Claude2 to Codex: Claude2 is quota-paused for several hours; Codex is unpaused and is not the owner of this review-ready task.",
-      "status": "done",
-      "created_at": "2026-05-09T06:46:46Z",
-      "resolved_at": "2026-05-09T06:52:21Z"
-    },
-    {
-      "task_id": "BFF-LUV-SEM-002",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Review rejected: command routes accept durable writes without Idempotency-Key despite idempotency_required catalog/final-command semantics, and the claimed focused suite now fails (109 passed, 19 failed) because execute-plans semantic route preference/generic placeholders shadow existing concrete BFF routes. Return to Codex2 to require idempotency via final resolver/alias semantics and limit semantic route pruning/placeholders to non-existing or task-owned paths.",
-      "status": "done",
-      "created_at": "2026-05-09T06:52:21Z",
-      "resolved_at": "2026-05-09T06:52:21Z"
-    },
-    {
-      "task_id": "BFF-LUV-SEM-002",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-09T09:56:56Z",
-      "resolved_at": "2026-05-09T09:56:56Z"
-    },
-    {
-      "task_id": "BFF-LUV-SEM-004",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-09T09:58:15Z",
-      "resolved_at": "2026-05-09T09:58:15Z"
-    },
-    {
-      "task_id": "BFF-LUV-SEM-002",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Command execution bridge verified: Idempotency-Key required via _resolve_final_idempotency_key, body idempotencyKey rejected, command-store-backed receipts for deployment/rebalance/audit/confirm-token/v5-intervention/sentinel. Focused suite 132 passed; concrete BFF suites 18+53 passed; no route shadowing detected. Task artifact and test files committed (cbaa7787).",
-      "status": "done",
-      "created_at": "2026-05-09T10:03:37Z",
-      "resolved_at": "2026-05-09T10:09:41Z"
-    },
-    {
-      "task_id": "BFF-LUV-SEM-002",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Review blocked: create/build command routes that generate target ids before idempotency lookup do not replay same-payload retries. Repro with PANTHEON_BFF_AUTH_STUB=true: POST /bff/deployments twice with Idempotency-Key=edge-no-id and body {stage: paper} returns 201 then 409; POST /bff/v5/sentinel/remediation/build twice with body {reason: x} returns 202 then 409. Focused suites still pass: test_final_command_execution_bridge.py 5 passed; test_execute_plans_final_live_wiring_contract.py 7 passed. Please fix server-generated-id replay and add regression coverage before re-handoff.",
-      "status": "done",
-      "created_at": "2026-05-09T10:09:41Z",
-      "resolved_at": "2026-05-09T10:09:41Z"
-    },
-    {
-      "task_id": "BFF-LUV-SEM-002",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Server-generated-id replay fixed: _sem_command_response now accepts server_generated_target=True which excludes the randomly-generated target_id from the idempotency hash. POST /bff/deployments (no body id) and POST /bff/v5/sentinel/remediation/build (no finding_id) now replay correctly with the original 201/202 on retry. Conflict detection still works for different payloads. 4 regression tests added (9 total in focused bridge suite); full focused suite 136 passed. Committed 15c0ccb7.",
-      "status": "done",
-      "created_at": "2026-05-09T10:18:50Z",
-      "resolved_at": "2026-05-09T10:40:22Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF",
-      "from": "Gemini",
-      "to": "Gemini2",
-      "message": "Chair reassigned review from Gemini to Gemini2: Gemini is disabled in ready_dispatcher.disabled_agents, so this support-only review will not auto-dispatch; Gemini2 is idle, verified, and can drain it sequentially with the adjacent sidecar review.",
-      "status": "pending",
-      "created_at": "2026-05-09T10:19:21Z"
-    },
-    {
-      "task_id": "BFF-LUV-SEM-004",
-      "from": "Claude2",
-      "to": "Codex2",
-      "message": "Implementation complete. read_store methods (list_loop_runs, get_loop_run, list_sentinel_findings, get_sentinel_finding) derive from incidents dataset with pattern-ID fallback. All v5 routes wired: loop-runs, sentinel/findings, control-room composition, persona-health, strategy-health. Degraded behavior when source absent. Commit 0a09905a. 56 tests passed (12 unit + 15 v5 contract + 29 regression, 0 failures).",
-      "status": "done",
-      "created_at": "2026-05-09T10:23:16Z",
-      "resolved_at": "2026-05-09T10:45:59Z"
-    },
-    {
-      "task_id": "BFF-LUV-SEM-002",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Review not approved: durable idempotency conflict detection is incomplete. After first POST /bff/deployments, clearing _FINAL_CONTRACT_IDEMPOTENCY and retrying same key with different payload returns 201 replay instead of 409 because command_store existing_record path does not compare stored request_hash. Also POST /bff/confirm-tokens without client tokenId returns 409 on immediate same-key retry because generated tokenId is included in the hash; after memory clear it replays with a mismatched new tokenId. Focused suite still passes, so add regressions for these cases. Also include task-owned enum/catalog/test reset changes in a scoped commit before next handoff.",
-      "status": "done",
-      "created_at": "2026-05-09T10:40:22Z",
-      "resolved_at": "2026-05-09T10:40:22Z"
-    },
-    {
-      "task_id": "BFF-LUV-SEM-004",
-      "from": "Codex2",
-      "to": "Claude2",
-      "message": "Review not approved: fallback/runtime source metadata is inconsistent. When PANTHEON_BFF_LOOP_RUN_STORE is populated and incidents are absent, GET /bff/v5/loop-runs and /bff/v5/loop-runs/{id} return data but meta.surfaces reports status=unavailable source=missing because the BFF still asks dataset_source('incidents') instead of the actual loop_runs fallback source; apply the same fix for sentinel_findings. Also, when an incidents source exists but is empty, list_loop_runs/list_sentinel_findings return (False, []) while detail lookup returns (True, None), so healthy empty runtime sources are misreported as missing/degraded. Existing suites pass: 27 focused loop/sentinel tests and 53 regression tests. Please fix source-aware metadata/availability and add regressions for dedicated fallback store with data and empty incidents source.",
-      "status": "done",
-      "created_at": "2026-05-09T10:45:59Z",
-      "resolved_at": "2026-05-09T10:45:59Z"
-    },
-    {
-      "task_id": "BFF-LUV-SEM-002",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Bug fixes committed b02bce71: (1) _sem_command_response command_store replay path now compares stored request_hash — clearing _FINAL_CONTRACT_IDEMPOTENCY and retrying same key with different payload now correctly returns 409. (2) sem_create_confirm_token_command uses server_generated_target=True when no client tokenId provided, strips server-generated tokenId from hash payload, recovers original tokenId from durable command record on replay — same-key retry no longer returns 409. 2 new regression tests (11 total in bridge suite). Full focused suite 138 passed (13 pre-existing warnings). Task-owned enum/catalog/test-reset changes included in same commit per review request.",
-      "status": "pending",
-      "created_at": "2026-05-09T10:49:53Z"
     }
   ],
-  "blockers": [
-    {
-      "task_id": "BFF-LUV-GAP-012",
-      "owner": "Codex",
-      "waiting_for": "Codex2",
-      "message": "Blocked: live cutover must wait for BFF-LUV-SEM-001 through BFF-LUV-SEM-005 semantic completion tasks. Do not claim Lovable/live readiness from route-only wiring.",
-      "status": "open",
-      "created_at": "2026-05-09T05:51:08Z"
-    }
-  ],
+  "blockers": [],
   "workload": {
     "Claude": 15,
     "Claude2": 15,
@@ -941,22 +577,22 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 2,
-      "active": 2,
-      "blocked": 0,
-      "done": 0,
-      "review": 1,
-      "review_approved": 0,
-      "todo": 1
-    },
-    "Claude2": {
-      "total": 1,
-      "active": 1,
+      "total": 0,
+      "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
+    },
+    "Claude2": {
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
     },
     "Gemini": {
       "total": 0,
@@ -977,22 +613,22 @@
       "todo": 0
     },
     "Codex": {
-      "total": 6,
-      "active": 3,
-      "blocked": 1,
+      "total": 3,
+      "active": 0,
+      "blocked": 0,
       "done": 3,
-      "review": 2,
+      "review": 0,
       "review_approved": 0,
       "todo": 0
     },
     "Codex2": {
-      "total": 2,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 1,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Copilot": {
       "total": 0,

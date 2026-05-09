@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-SEM-005",
+  "archived_at": "2026-05-09T10:11:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-SEM-005",
+    "title": "Complete execute-plans BFF Agora extended semantics",
+    "summary_zh": "把 Agora extended routes 從空 list/generic receipt 補成 read-store-backed 或明確 degraded semantics。",
+    "phase": "BFF Execute-Plans Semantic Completion 2026-05-09",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-09-execute-plans-semantic-completion/BFF-LUV-SEM-005-agora-extended-semantics.md"
+    ],
+    "acceptance": [
+      "each affected Agora route returns seeded data when available",
+      "empty fallback carries honest metadata",
+      "signal feedback writes record or command",
+      "Agora tests and final wiring tests pass"
+    ],
+    "next": "Owner finalized approved Agora extended semantics after task-scoped commit 787ce2a5 and focused verification: semantic/final suite 25 passed; concrete regression suite 53 passed.",
+    "last_update": "2026-05-09T10:11:16Z",
+    "task_class": "semantic_completion",
+    "auto_created_by": "Codex",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "通過，但審查時補了一個實質缺口：SEM Agora list helper 原本只讀 read_store._data，會漏掉 env/service-backed adapter 資料；現已改走 ReadSurfaceStore dataset reader/source。",
+      "補上 Agora sessions/signals、skill coaching、persona lab、evaluation suites/runs 的 service-backed dataset adapters，並讓 POST /bff/agora/ask 使用既有 Agora session/message store methods。",
+      "驗證通過：extended 8 passed；core+extended+final 20 passed；加 command bridge 25 passed；capital/ranking/evolution/jobs/events concrete suite 53 passed。"
+    ],
+    "review_file": "docs/bff/execution-tasks/2026-05-09-execute-plans-semantic-completion/BFF-LUV-SEM-005-agora-extended-semantics.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-09T10:11:16Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "787ce2a5877f81a7a496900ade028feaf26cd4df",
+      "commit_subject": "BFF-LUV-SEM-005 complete Agora extended semantics",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-LUV-SEM-005",
+        "Reviewer": "Codex2",
+        "Verification": "python3 -m pytest services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/test_final_command_execution_bridge.py -q -> 25 passed, 5 warnings; python3 -m pytest services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py -q -> 53 passed, 10 warnings."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 35,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 5,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-SEM-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-09T05:51:28Z",
+      "resolved_at": "2026-05-09T06:02:56Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented Agora extended semantic completion: POST /bff/agora/ask now persists session/message plus AgoraMessageAction receipt; inbox, ask sessions, skill coaching, persona lab, postmortems, and evaluation routes are read-store-backed with honest degraded/missing metadata; task artifact records verification. Tests: python3 -m pytest services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q -> 16 passed, 3 pre-existing warnings.",
+      "status": "done",
+      "created_at": "2026-05-09T06:11:29Z",
+      "resolved_at": "2026-05-09T06:47:02Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-005",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Chair reassigned review from Claude to Codex2: Claude is quota-paused for several hours; Codex2 is unpaused and is not the owner of this review-ready task.",
+      "status": "done",
+      "created_at": "2026-05-09T06:47:02Z",
+      "resolved_at": "2026-05-09T10:05:08Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-005",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Codex2 review approved after read-store adapter hardening and focused verification; owner Codex should finalize with task-scoped commit and done closeout.",
+      "status": "done",
+      "created_at": "2026-05-09T10:05:08Z",
+      "resolved_at": "2026-05-09T10:11:17Z"
+    }
+  ],
+  "blockers": []
+}

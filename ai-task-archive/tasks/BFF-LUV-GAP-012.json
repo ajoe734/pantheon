@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-GAP-012",
+  "archived_at": "2026-05-09T15:12:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-GAP-012",
+    "title": "Run execute-plans BFF cutover smoke",
+    "summary_zh": "所有缺口完成或有 disposition 後，對 execute-plans repo 跑 live/hybrid BFF cutover smoke。",
+    "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-LUV-GAP-001",
+      "BFF-LUV-GAP-002",
+      "BFF-LUV-GAP-003",
+      "BFF-LUV-GAP-004",
+      "BFF-LUV-GAP-005",
+      "BFF-LUV-GAP-006",
+      "BFF-LUV-GAP-007",
+      "BFF-LUV-GAP-008",
+      "BFF-LUV-GAP-009",
+      "BFF-LUV-GAP-010",
+      "BFF-LUV-GAP-011"
+    ],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/BFF-LUV-GAP-012-execute-plans-cutover-smoke.md",
+      "/home/lupin/code/execute-plans/README.md"
+    ],
+    "acceptance": [
+      "execute-plans npm test passes",
+      "execute-plans npm build passes",
+      "BFF live smoke covers key routes"
+    ],
+    "next": "Finalized approved cutover smoke in commit 189dae0b. execute-plans npm test/build passed; lupin dev public BFF /openapi.json is 200 and protected contract routes return 401 instead of 404. Authenticated DTO/write-flow smoke remains explicitly deferred pending operator Bearer token.",
+    "last_update": "2026-05-09T15:12:45Z",
+    "review_notes_zh": [
+      "審查通過：execute-plans npm test (270 tests) 與 npm build 均通過",
+      "公開 lupin dev BFF 健康端點 /openapi.json 200、/health 200，40+ BFF 合約路由均返回 401 而非 404，確認路由已正確註冊並受 auth gate 保護",
+      "剩餘 mock fallback 正確記錄為 deferred_with_task（需要 operator Bearer token 的 DTO/寫入 smoke），非意外 silent fallback",
+      "Reviewer caveat: 匿名 401 probe 僅為路由存在證據，非 DTO shape 正確性證明；authenticated DTO 與 write-flow smoke 需在取得 operator token 後另行追蹤"
+    ],
+    "review_file": "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/BFF-LUV-GAP-012-execute-plans-cutover-smoke.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-09T15:12:45Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "189dae0b3588969ff099b632f05656e89b12ba6a",
+      "commit_subject": "BFF-LUV-GAP-012: record execute-plans cutover smoke",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-LUV-GAP-012",
+        "Reviewer": "Claude",
+        "Verification": "execute-plans npm test passed with 270 tests; npm build passed; lupin dev public BFF probe returned /openapi.json 200 and protected contract routes 401 instead of 404; authenticated DTO/write smoke deferred pending operator Bearer token."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 30,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 22,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-GAP-012",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Cutover smoke completed: execute-plans npm test/build passed; public lupin dev BFF /openapi.json is 200 and probed BFF contract routes are registered/auth-gated with 401 instead of 404. Artifact updated with deferred authenticated DTO/write smoke requiring operator Bearer token.",
+      "status": "done",
+      "created_at": "2026-05-09T15:09:09Z",
+      "resolved_at": "2026-05-09T15:10:31Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-012",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: execute-plans BFF cutover smoke complete. All acceptance criteria met: npm test/build passed, 40+ routes return 401 (auth-gated not 404), deferred scope documented as intentional.",
+      "status": "done",
+      "created_at": "2026-05-09T15:10:31Z",
+      "resolved_at": "2026-05-09T15:12:45Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "BFF-LUV-GAP-012",
+      "owner": "Codex",
+      "waiting_for": "Codex2",
+      "message": "Blocked: live cutover must wait for BFF-LUV-SEM-001 through BFF-LUV-SEM-005 semantic completion tasks. Do not claim Lovable/live readiness from route-only wiring.",
+      "status": "resolved",
+      "created_at": "2026-05-09T05:51:08Z",
+      "resolved_at": "2026-05-09T15:02:36Z"
+    }
+  ]
+}

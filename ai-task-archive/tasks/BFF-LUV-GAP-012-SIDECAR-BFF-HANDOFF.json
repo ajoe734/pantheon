@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-GAP-012-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-09T14:26:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-GAP-012-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BFF-LUV-GAP-012 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BFF-LUV-GAP-012，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-LUV-GAP-001",
+      "BFF-LUV-GAP-002",
+      "BFF-LUV-GAP-003",
+      "BFF-LUV-GAP-004",
+      "BFF-LUV-GAP-005",
+      "BFF-LUV-GAP-006",
+      "BFF-LUV-GAP-007",
+      "BFF-LUV-GAP-008",
+      "BFF-LUV-GAP-009",
+      "BFF-LUV-GAP-010",
+      "BFF-LUV-GAP-011"
+    ],
+    "artifacts": [
+      "support/sidecars/BFF-LUV-GAP-012/BFF-LUV-GAP-012-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only BFF/frontend handoff packet after review approval; committed artifact ff92f811 with closeout verification: coverage renderer 178 rows with stale registry gaps noted, focused BFF pytest 12 passed / 3 warnings.",
+    "last_update": "2026-05-09T14:26:08Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BFF-LUV-GAP-012",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Approved: support-only packet exists and stays out of L1 canonical truth, registry truth, runtime, governance, and frontend implementation.",
+      "Verification: referenced evidence files exist; coverage report reproduced the stale strategy-persona and cutover-smoke gaps; focused BFF pytest passed 12 tests with 3 pre-existing warnings; live lupin dev public probes returned openapi/health 200 and auth-required BFF routes 401.",
+      "Reviewer caveat: packet correctly states anonymous 401 probes are route-presence evidence only, not DTO-shape proof; parent owner must decide whether to refresh the stale registry snapshot or rely on final wiring/live evidence for the cutover smoke."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-09T14:26:08Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "ff92f8115d18e26a60d43e543efb4dd942433368",
+      "commit_subject": "BFF-LUV-GAP-012-SIDECAR-BFF-HANDOFF add support handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-LUV-GAP-012-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 30,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 21,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-GAP-012-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only BFF/frontend handoff packet is ready at support/sidecars/BFF-LUV-GAP-012/BFF-LUV-GAP-012-SIDECAR-BFF-HANDOFF.md. Verification: coverage report rendered 178 rows with stale registry gaps noted; focused BFF pytest passed 12 tests with 3 pre-existing warnings; lupin dev probes returned openapi 200, health 200, and auth-required BFF routes 401.",
+      "status": "done",
+      "created_at": "2026-05-09T14:21:04Z",
+      "resolved_at": "2026-05-09T14:23:45Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-012-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. Support-only handoff packet accepted; owner Codex2 should finalize with a task-scoped commit and done closeout.",
+      "status": "done",
+      "created_at": "2026-05-09T14:23:45Z",
+      "resolved_at": "2026-05-09T14:26:08Z"
+    }
+  ],
+  "blockers": []
+}

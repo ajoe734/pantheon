@@ -1,12 +1,20 @@
 {
   "version": 1,
-  "updated_at": "2026-05-09T10:31:00Z",
+  "updated_at": "2026-05-09T15:12:45Z",
   "counts": {
-    "total": 941,
-    "completed": 925,
+    "total": 949,
+    "completed": 933,
     "superseded": 16
   },
   "recent_terminal_ids": [
+    "BFF-LUV-GAP-012",
+    "BFF-LUV-GAP-012-SIDECAR-BFF-HANDOFF",
+    "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF",
+    "BFF-LUV-GAP-007-SIDECAR-BFF-HANDOFF",
+    "BFF-LUV-SEM-006-SIDECAR-BFF-HANDOFF",
+    "BFF-LUV-SEM-006",
+    "BFF-LUV-SEM-004",
+    "BFF-LUV-SEM-002",
     "BFF-LUV-SEM-002-SIDECAR-BFF-HANDOFF",
     "BFF-LUV-SEM-004-SIDECAR-BFF-HANDOFF",
     "BFF-LUV-SEM-005",
@@ -18,14 +26,6 @@
     "BFF-LUV-GAP-010",
     "BFF-LUV-GAP-003",
     "BFF-LUV-GAP-002",
-    "BFF-LUV-GAP-005",
-    "BFF-LUV-GAP-011",
-    "BFF-LUV-GAP-008",
-    "BFF-LUV-GAP-009",
-    "BFF-FINAL-010",
-    "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
-    "BFF-FINAL-009",
-    "BFF-FINAL-006-SIDECAR-BFF-HANDOFF",
-    "BFF-FINAL-006"
+    "BFF-LUV-GAP-005"
   ]
 }

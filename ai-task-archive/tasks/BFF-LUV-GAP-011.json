@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-GAP-011",
+  "archived_at": "2026-05-08T16:43:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-GAP-011",
+    "title": "Resolve v5 two-man-sign alias decision",
+    "summary_zh": "處理 final contract 中剩下的 /bff/v5/interventions/{id}/two-man-sign 路由決策。",
+    "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/BFF-LUV-GAP-011-v5-two-man-sign.md"
+    ],
+    "acceptance": [
+      "two-man-sign has route or supersession disposition",
+      "v5 intervention tests remain green",
+      "execute-plans source aligned"
+    ],
+    "next": "Superseded /bff/v5/interventions/{id}/two-man-sign in favor of /remediate + RemediateSentinelIntervention. Contract registry updated with superseded_with_reason. 26 tests pass. Task-scoped commit 81397344.",
+    "last_update": "2026-05-08T16:43:10Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-08T16:43:10Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "81397344202dc90aa0b3408ae0a3c143a585d610",
+      "commit_subject": "BFF-LUV-GAP-011: supersede /two-man-sign in favor of /remediate",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Decision": "POST /bff/v5/interventions/{id}/two-man-sign is superseded by",
+        "LLM-Agent": "Claude",
+        "Task-ID": "BFF-LUV-GAP-011",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 17,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 69,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-GAP-011",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Claude2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T16:31:07Z",
+      "resolved_at": "2026-05-08T16:37:48Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-011",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Decision made and committed (81397344): supersede /bff/v5/interventions/{id}/two-man-sign in favor of /remediate + RemediateSentinelIntervention. Contract registry row updated with superseded_with_reason. 26 tests pass. Ready for review.",
+      "status": "done",
+      "created_at": "2026-05-08T16:42:20Z",
+      "resolved_at": "2026-05-08T16:42:47Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-011",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Approved: decision is sound — /remediate already enforces two_man_signature_id atomically; separate /two-man-sign would be redundant. Contract registry disposition is correct. All 26 tests green. Ready to finalize.",
+      "status": "done",
+      "created_at": "2026-05-08T16:42:47Z",
+      "resolved_at": "2026-05-08T16:43:10Z"
+    }
+  ],
+  "blockers": []
+}

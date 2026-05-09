@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-GAP-008",
+  "archived_at": "2026-05-08T16:39:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-GAP-008",
+    "title": "Implement tools MCP and skills BFF compatibility",
+    "summary_zh": "補上 tools/MCP/skills 的 Part 06 compatibility routes，保留 final MCP import/action contract。",
+    "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/BFF-LUV-GAP-008-tools-mcp-skills.md"
+    ],
+    "acceptance": [
+      "tools routes covered",
+      "MCP compatibility routes covered",
+      "skills sandbox routes covered",
+      "final MCP tests remain green"
+    ],
+    "next": "Closeout finalized: 76 tests pass (contract-registry, session-auth-me, auth-facade), tools-mcp-skills 17 implemented/0 missing confirmed. Implementation committed in 777533ee (12 Part 06 compat routes) and 5a1b2a45 (contract snapshot fix). Closeout commit 42fb6c0d. Accepted reviewer approval from Codex.",
+    "last_update": "2026-05-08T16:39:55Z",
+    "review_notes_zh": [
+      "re-review 通過：contract snapshot 中 BFF-LUV-GAP-008 的 17 條 tools-mcp-skills rows 已全數 status=implemented 且 commit=777533ee。",
+      "驗證通過：python3 -m pytest test_execute_plans_contract_registry.py test_bff_session_auth_me_contract.py test_bff_auth_facade.py -q（76 passed）；python3 contract_snapshots/report_execute_plans_bff_coverage.py 顯示 tools-mcp-skills 17 implemented / 0 missing；PANTHEON_BFF_AUTH_STUB=true in-process smoke 覆蓋 tools/MCP/skills create/read/patch/action/sandbox 與 final MCP import/action。",
+      "混合 commit 777533ee 的相鄰 task 變更已由 artifact 註記協調；未發現會阻塞 008 acceptance 的問題。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-08T16:39:55Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "42fb6c0dd5b98eabfeb98575445496de0b4a0192",
+      "commit_subject": "BFF-LUV-GAP-008: closeout — add final verification to task artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "verification": "76 tests pass, tools-mcp-skills 17 implemented / 0 missing.",
+        "LLM-Agent": "Claude",
+        "Task-ID": "BFF-LUV-GAP-008",
+        "Reviewer": "Codex",
+        "Verification": "python3 -m pytest test_execute_plans_contract_registry.py test_bff_session_auth_me_contract.py test_bff_auth_facade.py -q → 76 passed; coverage report tools-mcp-skills 17 implemented 0 missing."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 18,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 68,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-GAP-008",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete: 12 tools/MCP/skills Part 06 compatibility routes added (tools list/get/create/patch/action, MCP servers list/get/create/action/list-tools/tool-action-compat, skills list/get/create/patch/action/sandbox-eval). All 4 final MCP routes preserved. 91 tests pass. Commit: 777533ee. Artifact updated: docs/bff/execution-tasks/2026-05-08-execute-plans-gap/BFF-LUV-GAP-008-tools-mcp-skills.md. Ready for review.",
+      "status": "done",
+      "created_at": "2026-05-08T16:15:44Z",
+      "resolved_at": "2026-05-08T16:21:29Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-008",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review returned: focused tests pass (97 incl final MCP) and tools/MCP/skills smoke is non-404, but not approvable yet. services/control-plane/bff/contract_snapshots/execute_plans_bff_routes.json still marks all 17 BFF-LUV-GAP-008 tools-mcp-skills rows as missing, so the coverage report still reports the family as open. Also commit 777533ee mixes unrelated BFF-LUV-GAP-002/003/010 route families/action catalog/model changes into the BFF-LUV-GAP-008 commit; split or explicitly coordinate before re-review.",
+      "status": "done",
+      "created_at": "2026-05-08T16:21:29Z",
+      "resolved_at": "2026-05-08T16:21:29Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-008",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Re-review ready. Fixed: contract_snapshots/execute_plans_bff_routes.json now marks all 17 tools-mcp-skills rows as implemented (status=implemented, commit=777533ee). Isolated fix commit: 5a1b2a45. Tests: 76 passed (contract-registry, session-auth-me, auth-facade). Mixed-commit coordination note added to task artifact: 777533ee was parallel-worker generated; 002/003 route code is documented per task in ai-status.json; retroactive split requires prohibited force push.",
+      "status": "done",
+      "created_at": "2026-05-08T16:29:28Z",
+      "resolved_at": "2026-05-08T16:36:51Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-008",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. BFF-LUV-GAP-008 tools/MCP/skills compatibility is verified: 17 registry rows implemented/live, focused tests passed (76), coverage reports tools-mcp-skills 17 implemented / 0 missing, and in-process route smoke passed. Owner Claude should perform closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-08T16:36:51Z",
+      "resolved_at": "2026-05-08T16:39:55Z"
+    }
+  ],
+  "blockers": []
+}

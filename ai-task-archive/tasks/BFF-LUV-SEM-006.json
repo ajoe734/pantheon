@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-SEM-006",
+  "archived_at": "2026-05-09T11:41:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-SEM-006",
+    "title": "Deploy execute-plans BFF semantic completion to lupin dev",
+    "summary_zh": "部署 patched BFF 到 lupin dev 並用 live probe 證明 /openapi.json 200 與 final contract zero 404/500。",
+    "phase": "BFF Execute-Plans Semantic Completion 2026-05-09",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-LUV-SEM-001",
+      "BFF-LUV-SEM-002",
+      "BFF-LUV-SEM-003",
+      "BFF-LUV-SEM-004",
+      "BFF-LUV-SEM-005"
+    ],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-09-execute-plans-semantic-completion/BFF-LUV-SEM-006-lupin-dev-live-cutover.md"
+    ],
+    "acceptance": [
+      "public lupin dev openapi returns 200",
+      "public final BFF probe has zero 404 and zero 500",
+      "probe evidence is published",
+      "Lovable live handoff states whether live mode is safe"
+    ],
+    "next": "Finalized approved live cutover. Artifact/evidence already published in task commit 5b3674c8. Closeout verification: curl -sS -o /dev/null -w openapi_status https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io/openapi.json -> 200; python3 AST/urllib anonymous probe over FINAL_CONTRACT_METHOD_PATHS with JSON body for write methods -> 113 routes, 2x 200, 111x 401, zero 404/500; python3 -m pytest services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/test_bff_session_auth_me_contract.py services/control-plane/bff/test_final_command_execution_bridge.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py -q -> 63 passed, 6 warnings. VITE_BFF_MODE=live remains safe for lupin dev final execute-plans BFF contract.",
+    "last_update": "2026-05-09T11:41:32Z",
+    "task_class": "semantic_completion",
+    "auto_created_by": "Codex",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Reviewer 重跑 focused BFF semantic suite：63 passed，6 warnings；結果與 owner evidence 一致。",
+      "Reviewer 以獨立 live HTTP probe 驗證 public lupin dev：/openapi.json 200、338 paths、final contract 113 routes 全部只回 200/401（2x 200、111x 401），zero 404/500。",
+      "Task commit 5b3674c8 只包含 SEM-006 live cutover artifact 與 evidence；VITE_BFF_MODE=live 對 lupin dev final execute-plans BFF contract 可接受。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-09T11:41:32Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "5b3674c8568c2839305f123e2fcfa3026e26356b",
+      "commit_subject": "BFF-LUV-SEM-006 publish lupin dev live probe evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-LUV-SEM-006",
+        "Reviewer": "Codex",
+        "Verification": "pytest focused BFF semantic completion suite -> 63 passed, 6 warnings; lupin dev public /openapi.json -> 200 with 338 paths; anonymous final contract probe -> 113 routes, 2x 200 and 111x 401, zero 404/500."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 26,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 17,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-SEM-006",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Lupin dev live cutover complete and committed (5b3674c8). Evidence: docs/bff/evidence/BFF-LUV-SEM-006-lupin-dev-live-probe-20260509T113136Z.json. Verification: focused BFF semantic suite 63 passed/6 warnings; public /openapi.json 200 with 338 paths; anonymous final-contract probe 113 routes -> 2x 200, 111x 401, zero 404/500. VITE_BFF_MODE=live is safe for lupin dev. Caveat: deploy command omitted --no-deps and restarted dependent dev services; post-command docker compose ps showed stack healthy.",
+      "status": "done",
+      "created_at": "2026-05-09T11:33:55Z",
+      "resolved_at": "2026-05-09T11:38:03Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved: commit 5b3674c8 publishes the SEM-006 live cutover artifact/evidence. Reviewer reran focused BFF semantic suite (63 passed, 6 warnings) and independently probed lupin dev public OpenAPI/final contract: /openapi.json 200 with 338 paths; 113 routes -> 2x 200, 111x 401, zero 404/500. VITE_BFF_MODE=live is safe for lupin dev; owner may finalize.",
+      "status": "done",
+      "created_at": "2026-05-09T11:38:03Z",
+      "resolved_at": "2026-05-09T11:41:32Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-GAP-002",
+  "archived_at": "2026-05-08T17:00:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-GAP-002",
+    "title": "Implement strategy and persona BFF compatibility",
+    "summary_zh": "補上 execute-plans 需要的 strategy/persona /bff compatibility surfaces。",
+    "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/BFF-LUV-GAP-002-strategy-persona-core.md"
+    ],
+    "acceptance": [
+      "strategy routes non-404",
+      "persona routes non-404",
+      "action precondition errors use final envelope"
+    ],
+    "next": "Closeout complete: 15 strategy/persona contract tests pass, 5 registry tests pass, all acceptance criteria met. Task artifact updated with reviewer approval and finalization notes. Closeout commit ccde0217.",
+    "last_update": "2026-05-08T17:00:32Z",
+    "review_notes_zh": [
+      "Approved: /bff/strategies, /bff/personas, /bff/search, and /bff/types compatibility surfaces are present; StrategyAction and PersonaAction use final command envelopes with idempotency/precondition errors. Verification: python3 -m pytest services/control-plane/bff/test_bff_strategy_persona_contract.py -q => 15 passed; python3 -m pytest services/control-plane/bff/test_execute_plans_contract_registry.py -q => 5 passed. Note: implementation appears in HEAD via commit 777533ee despite that commit subject naming BFF-LUV-GAP-008; task-specific test/artifact commit is 0a4b7b5b. Broader test_action_catalog.py still fails only on unrelated GAP-006 Agora catalog entries."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-08T17:00:32Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "ccde021746205b1f436b71730771a542967255c6",
+      "commit_subject": "BFF-LUV-GAP-002: closeout — add reviewer approval and finalization notes to task artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Re-verified after subsequent worktree changes": "15 strategy/persona contract",
+        "LLM-Agent": "Claude",
+        "Task-ID": "BFF-LUV-GAP-002",
+        "Reviewer": "Codex",
+        "Verification": "pytest test_bff_strategy_persona_contract.py -q → 15 passed; pytest test_execute_plans_contract_registry.py -q → 5 passed"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 27,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 71,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-GAP-002",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T16:04:10Z",
+      "resolved_at": "2026-05-08T16:05:04Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T16:21:55Z",
+      "resolved_at": "2026-05-08T16:23:05Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-002",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Helper-claimed by Claude2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T16:24:43Z",
+      "resolved_at": "2026-05-08T16:29:48Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-002",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Claude2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T16:29:48Z",
+      "resolved_at": "2026-05-08T16:31:19Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-002",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Implementation complete. Strategy and persona /bff compatibility routes implemented (12 strategy + 11 persona + /bff/search + /bff/types). Core routes in commit 777533ee; test file and task artifact in commit 0a4b7b5b. Tests: 15 strategy/persona contract tests pass, 5 registry tests pass. Action routes use CommandType.STRATEGY_ACTION/PERSONA_ACTION with idempotency and precondition envelopes. Ready for review.",
+      "status": "done",
+      "created_at": "2026-05-08T16:33:18Z",
+      "resolved_at": "2026-05-08T16:53:27Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Claude2 to Codex after repeated Claude2 capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-05-08T16:53:27Z",
+      "resolved_at": "2026-05-08T16:57:51Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved by Codex: strategy/persona BFF surfaces and focused registry checks pass; owner should perform closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-08T16:57:51Z",
+      "resolved_at": "2026-05-08T17:00:32Z"
+    }
+  ],
+  "blockers": []
+}
