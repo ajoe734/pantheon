@@ -18,6 +18,168 @@ from command_queue import CommandStore  # noqa: E402
 from read_store import ReadSurfaceStore  # noqa: E402
 
 
+FINAL_CONTRACT_METHOD_PATHS = {
+    ("DELETE", "/bff/confirm-tokens/{tokenId}"),
+    ("GET", "/bff/agora/alerts/triage"),
+    ("GET", "/bff/agora/ask/sessions"),
+    ("GET", "/bff/agora/evaluation-runs"),
+    ("GET", "/bff/agora/evaluation-suites"),
+    ("GET", "/bff/agora/inbox"),
+    ("GET", "/bff/agora/journal"),
+    ("GET", "/bff/agora/persona-lab/runs"),
+    ("GET", "/bff/agora/postmortems"),
+    ("GET", "/bff/agora/signals"),
+    ("GET", "/bff/agora/signals/{id}"),
+    ("GET", "/bff/agora/skill-coaching/sessions"),
+    ("GET", "/bff/alerts"),
+    ("GET", "/bff/alerts/{id}"),
+    ("GET", "/bff/approvals"),
+    ("GET", "/bff/approvals/{id}"),
+    ("GET", "/bff/artifacts"),
+    ("GET", "/bff/artifacts/{id}"),
+    ("GET", "/bff/audit"),
+    ("GET", "/bff/capabilities"),
+    ("GET", "/bff/capital-pools"),
+    ("GET", "/bff/capital-pools/{id}"),
+    ("GET", "/bff/channels"),
+    ("GET", "/bff/channels/{id}"),
+    ("GET", "/bff/confirm-tokens/{tokenId}"),
+    ("GET", "/bff/deployments"),
+    ("GET", "/bff/deployments/{id}"),
+    ("GET", "/bff/events/stream"),
+    ("GET", "/bff/evolution-programs"),
+    ("GET", "/bff/evolution-programs/{id}"),
+    ("GET", "/bff/feature-flags"),
+    ("GET", "/bff/healthz"),
+    ("GET", "/bff/incidents"),
+    ("GET", "/bff/incidents/{id}"),
+    ("GET", "/bff/jobs"),
+    ("GET", "/bff/jobs/{id}"),
+    ("GET", "/bff/mcp-servers"),
+    ("GET", "/bff/mcp-servers/{id}"),
+    ("GET", "/bff/mcp-tools"),
+    ("GET", "/bff/mcp-tools/{id}"),
+    ("GET", "/bff/me"),
+    ("GET", "/bff/personas"),
+    ("GET", "/bff/personas/{id}"),
+    ("GET", "/bff/ranking-formulas"),
+    ("GET", "/bff/ranking-formulas/{id}"),
+    ("GET", "/bff/readyz"),
+    ("GET", "/bff/rebalances"),
+    ("GET", "/bff/rebalances/{id}"),
+    ("GET", "/bff/research-experiments"),
+    ("GET", "/bff/research-experiments/{id}"),
+    ("GET", "/bff/runtimes"),
+    ("GET", "/bff/runtimes/{id}"),
+    ("GET", "/bff/skills"),
+    ("GET", "/bff/skills/{id}"),
+    ("GET", "/bff/strategies"),
+    ("GET", "/bff/strategies/{id}"),
+    ("GET", "/bff/tools"),
+    ("GET", "/bff/tools/{id}"),
+    ("GET", "/bff/v5/control-room"),
+    ("GET", "/bff/v5/execution/persona-health"),
+    ("GET", "/bff/v5/execution/strategy-health"),
+    ("GET", "/bff/v5/interventions"),
+    ("GET", "/bff/v5/interventions/{id}"),
+    ("GET", "/bff/v5/loop-runs"),
+    ("GET", "/bff/v5/loop-runs/{id}"),
+    ("GET", "/bff/v5/sentinel/findings"),
+    ("GET", "/bff/v5/sentinel/findings/{id}"),
+    ("PATCH", "/bff/agora/journal/{id}"),
+    ("PATCH", "/bff/artifacts/{id}"),
+    ("PATCH", "/bff/capital-pools/{id}"),
+    ("PATCH", "/bff/deployments/{id}"),
+    ("PATCH", "/bff/evolution-programs/{id}"),
+    ("PATCH", "/bff/me/locale"),
+    ("PATCH", "/bff/personas/{id}"),
+    ("PATCH", "/bff/ranking-formulas/{id}"),
+    ("PATCH", "/bff/rebalances/{id}"),
+    ("PATCH", "/bff/research-experiments/{id}"),
+    ("PATCH", "/bff/strategies/{id}"),
+    ("POST", "/bff/actions/{entityType}/{entityId}/{actionId}"),
+    ("POST", "/bff/agora/ask"),
+    ("POST", "/bff/agora/signals/{id}/feedback"),
+    ("POST", "/bff/alerts/{id}/acknowledge"),
+    ("POST", "/bff/alerts/{id}/escalate-incident"),
+    ("POST", "/bff/approvals/batch-decide"),
+    ("POST", "/bff/approvals/{id}/decide"),
+    ("POST", "/bff/artifacts"),
+    ("POST", "/bff/audit/export"),
+    ("POST", "/bff/auth/refresh"),
+    ("POST", "/bff/capital-pools"),
+    ("POST", "/bff/confirm-tokens"),
+    ("POST", "/bff/confirm-tokens/{tokenId}/redeem"),
+    ("POST", "/bff/deployments"),
+    ("POST", "/bff/evolution-programs"),
+    ("POST", "/bff/incidents/{id}/append-postmortem"),
+    ("POST", "/bff/incidents/{id}/resolve"),
+    ("POST", "/bff/incidents/{id}/rollback-deployment"),
+    ("POST", "/bff/incidents/{id}/start-mitigation"),
+    ("POST", "/bff/logout"),
+    ("POST", "/bff/mcp-servers/{id}/import-tools"),
+    ("POST", "/bff/personas"),
+    ("POST", "/bff/ranking-formulas"),
+    ("POST", "/bff/rebalances"),
+    ("POST", "/bff/research-experiments"),
+    ("POST", "/bff/strategies"),
+    ("POST", "/bff/switch-tenant"),
+    ("POST", "/bff/v5/interventions/{id}/claim"),
+    ("POST", "/bff/v5/interventions/{id}/decide"),
+    ("POST", "/bff/v5/interventions/{id}/escalate"),
+    ("POST", "/bff/v5/interventions/{id}/release"),
+    ("POST", "/bff/v5/interventions/{id}/two-man-sign"),
+    ("POST", "/bff/v5/sentinel/findings/{id}/status"),
+    ("POST", "/bff/v5/sentinel/remediation/build"),
+    ("POST", "/bff/v5/sentinel/remediation/{actionId}/execute"),
+}
+
+LIVE_PROBE_CONCRETE_ROUTES = [
+    ("GET", "/bff/approvals"),
+    ("POST", "/bff/mcp-servers/server-alpha/import-tools"),
+    ("GET", "/bff/v5/interventions"),
+    ("GET", "/bff/me"),
+    ("POST", "/bff/auth/refresh"),
+    ("POST", "/bff/logout"),
+    ("POST", "/bff/actions/strategy/stg_001/submit"),
+    ("GET", "/bff/strategies"),
+    ("GET", "/bff/strategies/stg_001"),
+    ("POST", "/bff/strategies/stg_001/actions/submit"),
+    ("GET", "/bff/personas"),
+    ("GET", "/bff/personas/persona_001"),
+    ("GET", "/bff/capital-pools"),
+    ("GET", "/bff/capital-pools/pool_001"),
+    ("GET", "/bff/rebalances"),
+    ("GET", "/bff/deployments"),
+    ("GET", "/bff/evolution-programs"),
+    ("GET", "/bff/jobs"),
+    ("POST", "/bff/approvals/apr_001/decide"),
+    ("POST", "/bff/approvals/batch-decide"),
+    ("GET", "/bff/alerts"),
+    ("POST", "/bff/alerts/alert_001/acknowledge"),
+    ("GET", "/bff/incidents"),
+    ("GET", "/bff/audit"),
+    ("GET", "/bff/artifacts"),
+    ("GET", "/bff/runtimes"),
+    ("GET", "/bff/mcp-servers"),
+    ("GET", "/bff/mcp-tools"),
+    ("GET", "/bff/skills"),
+    ("GET", "/bff/channels"),
+    ("GET", "/bff/tools"),
+    ("GET", "/bff/ranking-formulas"),
+    ("GET", "/bff/research-experiments"),
+    ("GET", "/bff/agora/signals"),
+    ("GET", "/bff/agora/inbox"),
+    ("GET", "/bff/agora/journal"),
+    ("GET", "/bff/agora/postmortems"),
+    ("GET", "/bff/agora/ask/sessions"),
+    ("GET", "/bff/v5/loop-runs"),
+    ("GET", "/bff/v5/sentinel/findings"),
+    ("POST", "/bff/v5/interventions/intv_001/decide"),
+    ("GET", "/bff/v5/execution/persona-health"),
+]
+
+
 HEADERS = {"Authorization": "Bearer op-execute-plans:operator,reviewer,admin:mfa"}
 FINAL_DETAIL_ID_KEYS = (
     "id",
@@ -153,6 +315,58 @@ def _detail_data(payload: dict) -> dict:
         return data
     return payload
 
+
+def _route_index() -> set[tuple[str, str]]:
+    return {
+        (method, getattr(route, "path", ""))
+        for route in bff_main.app.routes
+        for method in (getattr(route, "methods", set()) or set())
+        if method in {"DELETE", "GET", "PATCH", "POST", "PUT"}
+    }
+
+
+def test_execute_plans_final_contract_paths_are_registered() -> None:
+    missing = FINAL_CONTRACT_METHOD_PATHS - _route_index()
+    assert not missing
+
+
+def test_execute_plans_final_openapi_json_is_route_discoverable() -> None:
+    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200, response.text
+    paths = response.json()["paths"]
+    missing = [path for _, path in FINAL_CONTRACT_METHOD_PATHS if path not in paths]
+    assert not missing
+
+
+def test_execute_plans_live_probe_catalog_no_longer_404s_anonymously() -> None:
+    client = TestClient(bff_main.app, raise_server_exceptions=False)
+
+    failures = []
+    for method, path in LIVE_PROBE_CONCRETE_ROUTES:
+        body = {} if method in {"PATCH", "POST", "PUT"} else None
+        response = client.request(method, path, json=body)
+        if response.status_code in {404, 500}:
+            failures.append((method, path, response.status_code, response.text[:240]))
+
+    assert not failures
+    assert ("GET", "/bff/events/stream") in _route_index()
+
+
+def test_execute_plans_final_stub_auth_smoke_avoids_server_errors(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    client = TestClient(bff_main.app, raise_server_exceptions=False)
+
+    for path in [
+        "/bff/agora/signals/sig_001",
+        "/bff/artifacts",
+        "/bff/artifacts/art_001",
+        "/bff/capital-pools/pool_001",
+        "/bff/v5/execution/strategy-health",
+    ]:
+        response = client.get(path, headers=HEADERS)
+        assert response.status_code < 500, response.text
 
 
 def test_execute_plans_final_seeded_detail_paths_use_read_model_dtos(monkeypatch) -> None:
