@@ -234,6 +234,48 @@ execute-plans commit: `2ed9c27`
 
 ---
 
+## Rev6 Fix (Claude2 · 2026-05-09)
+
+### Change
+
+Propagated HighRiskConfirm-issued `confirmToken` into `runActionSafe` opts at all 5 v3 high-risk call sites.
+
+**Root cause (per Codex Rev5 review):** `HighRiskConfirm` issues a `confirmToken` via `requestConfirmTokenV1`
+(stored in `issuedToken`), then calls `onConfirm(memo, issuedToken ?? undefined)` on user confirmation.
+However, all 5 call sites either:
+- Only embedded the token in the memo string as `[confirmToken=...]` (Strategy, Rebalance), or
+- Did not capture the token at all (CapitalPool, RankingFormula, Persona).
+
+In both cases `runActionSafe` was called without `opts.confirmToken`, so live POST
+`/bff/actions/...` bodies omitted `confirmToken` despite the modal issuing one.
+
+**Changes:**
+
+| File | Change |
+|------|--------|
+| `src/management/pages/StrategyDetail.tsx` | `onConfirm`: add `{ confirmToken: token }` to `runActionSafe` opts; remove memo-string embedding hack |
+| `src/management/pages/RebalanceDetail.tsx` | `onConfirm`: add `{ confirmToken: token }` to `runActionSafe` opts; remove memo-string embedding hack |
+| `src/management/pages/CapitalPoolDetail.tsx` | `onConfirm`: add `token` param; pass `{ confirmToken: token }` to `runActionSafe` opts |
+| `src/management/pages/RankingFormulaDetail.tsx` | `onConfirm`: add `token` param; pass `{ confirmToken: token }` to `runActionSafe` opts |
+| `src/management/pages/PersonaDetail.tsx` | `onConfirm`: add `token` param; pass `{ confirmToken: token }` to `runActionSafe` opts |
+| `src/lib/bff-v1/__tests__/writes.test.ts` | Added live-mode test: `runAction live POST body includes confirmToken from opts` — mocks `fetch`, calls `runAction` with `opts.confirmToken`, asserts the captured POST body includes `confirmToken` |
+
+### Verification (rev6)
+
+```
+npm run test -- src/lib/bff-v1/__tests__/writes.test.ts src/lib/bff/__tests__/runAction.test.ts
+→ 34 passed (12 + 22), 2 files
+
+npm run test
+→ 418 passed, 47 files; no failures
+
+npm run build → exit 0 (existing dynamic-import and chunk-size warnings only)
+```
+
+execute-plans commit: `3f33e60`
+
+---
+
 ### Live Write Smoke Plan (for BFF-LUV-AUTHED-LIVE-001)
 
 When a valid Bearer token is available:
