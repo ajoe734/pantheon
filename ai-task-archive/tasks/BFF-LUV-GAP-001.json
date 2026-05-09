@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-GAP-001",
+  "archived_at": "2026-05-09T03:53:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-GAP-001",
+    "title": "Build execute-plans BFF contract registry",
+    "summary_zh": "建立 execute-plans BFF route registry 與 coverage test，讓後續缺口可被 supervisor 追蹤。",
+    "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/BFF-LUV-GAP-001-contract-registry.md",
+      "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/INDEX.md"
+    ],
+    "acceptance": [
+      "coverage matrix exists",
+      "missing routes map to BFF-LUV-GAP-002..012",
+      "full BFF tests pass"
+    ],
+    "next": "Finalized execute-plans BFF contract registry after Codex approval. Closeout commit 80cc5123 archives reviewer approval and final verification: coverage report passed with 178 entries and no Implemented Rows Not Live section; focused registry pytest 5 passed; full BFF suite 552 passed, 48 warnings.",
+    "last_update": "2026-05-09T03:53:32Z",
+    "review_notes_zh": [
+      "Approved: route registry has 178 entries, missing/deferred rows map to BFF-LUV-GAP-002..012, report/focused/full BFF verification passed (552 passed, 48 warnings)."
+    ],
+    "review_file": ".orchestrator/reviews/BFF-LUV-GAP-001-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-09T03:53:32Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "80cc5123849ac8c66bdb78584ee500f57c120451",
+      "commit_subject": "BFF-LUV-GAP-001: archive closeout approval",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-LUV-GAP-001",
+        "Reviewer": "Codex",
+        "Verification": "python3 services/control-plane/bff/contract_snapshots/report_execute_plans_bff_coverage.py; python3 -m pytest services/control-plane/bff/test_execute_plans_contract_registry.py -q; python3 -m pytest services/control-plane/bff -q"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 20,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-GAP-001",
+      "from": "Codex2",
+      "to": "Gemini2",
+      "message": "Ready for review after stale blocker refresh. BFF-LUV-GAP-003 is archived done and revalidated: coverage report passed with 178 entries and no implemented rows missing live routes; registry pytest 5 passed; GAP-003 contract 24 passed; full BFF suite 552 passed. Reviewer reassigned from Claude to Gemini2 because chair review recorded Claude provider pause until 2026-05-09T12:50:00Z.",
+      "status": "done",
+      "created_at": "2026-05-08T23:19:29Z",
+      "resolved_at": "2026-05-09T03:31:31Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-001",
+      "from": "Gemini2",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Gemini2 to Codex after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-05-09T03:31:31Z",
+      "resolved_at": "2026-05-09T03:40:13Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. Codex verified the execute-plans BFF contract registry, coverage report, focused registry tests, and full BFF suite; owner should perform closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-09T03:40:13Z",
+      "resolved_at": "2026-05-09T03:53:32Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "BFF-LUV-GAP-001",
+      "owner": "Codex2",
+      "waiting_for": "Claude2",
+      "message": "Registry/report/focused tests are complete. Full BFF suite is blocked by in-progress BFF-LUV-GAP-003 worktree failures in action_catalog and capital/ranking/rebalance tests.",
+      "status": "resolved",
+      "created_at": "2026-05-08T15:54:20Z",
+      "resolved_at": "2026-05-08T23:19:11Z"
+    }
+  ]
+}

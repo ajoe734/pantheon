@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-GAP-001-UNBLOCK",
+  "archived_at": "2026-05-09T03:55:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-GAP-001-UNBLOCK",
+    "title": "Unblock BFF-LUV-GAP-001 stale execute-plans registry verification",
+    "summary_zh": "根據 chairman 2026-05-08T22:59:11Z 決策，重新驗證 BFF-LUV-GAP-001 的 execute-plans registry 與測試，清掉指向已完成 BFF-LUV-GAP-003 的 stale blocker。",
+    "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/BFF-LUV-GAP-001-contract-registry.md",
+      "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/INDEX.md",
+      ".orchestrator/chair-reviews/20260508-225340-codex2.md",
+      ".orchestrator/chair-reviews/20260508-225340-codex2.json"
+    ],
+    "acceptance": [
+      "rerun execute-plans coverage report",
+      "rerun focused BFF registry pytest",
+      "update BFF-LUV-GAP-001 status from stale blocker to review or current blocker",
+      "do not start BFF-LUV-GAP-012 until BFF-LUV-GAP-001 is resolved"
+    ],
+    "next": "Finalized stale registry verification unblock after Codex approval. Closeout commit 8477c337 archives reviewer approval. Verification: helper is tracked in git, f87af298 contains the helper, coverage report passed with 178 entries and no Implemented Rows Not Live section, focused registry pytest 5 passed.",
+    "last_update": "2026-05-09T03:55:42Z",
+    "review_notes_zh": [
+      "Approved: helper is now tracked in HEAD commit f87af298; coverage report passed with 178 entries and no Implemented Rows Not Live section; focused registry pytest passed 5 tests."
+    ],
+    "review_file": ".orchestrator/reviews/BFF-LUV-GAP-001-UNBLOCK-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-09T03:55:42Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "8477c337684befbc7aa96cb7e652cf3c25934b48",
+      "commit_subject": "BFF-LUV-GAP-001-UNBLOCK: archive review approval",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-LUV-GAP-001-UNBLOCK",
+        "Reviewer": "Codex",
+        "Verification": "git ls-files --error-unmatch services/control-plane/bff/contract_snapshots/execute_plans_bff_contract.py; git show --name-only --format='' f87af298 | rg 'execute_plans_bff_contract|report_execute_plans|test_execute_plans_contract'; python3 services/control-plane/bff/contract_snapshots/report_execute_plans_bff_coverage.py; python3 -m pytest services/control-plane/bff/test_execute_plans_contract_registry.py -q"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 21,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 4,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-GAP-001-UNBLOCK",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review. Cleared stale BFF-LUV-GAP-003 blocker by revalidating BFF-LUV-GAP-001, adding the revalidation note, and handing BFF-LUV-GAP-001 to Gemini2 review. Verification: coverage report passed; registry pytest 5 passed; GAP-003 contract 24 passed; full BFF suite 552 passed. Narrow code fix: service-backed read surfaces no longer merge seeded local snapshot records unless the dataset was written through the current store.",
+      "status": "done",
+      "created_at": "2026-05-08T23:19:47Z",
+      "resolved_at": "2026-05-08T23:25:51Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-001-UNBLOCK",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review changes requested: tracked coverage report and registry test import services/control-plane/bff/contract_snapshots/execute_plans_bff_contract.py, but that helper is untracked and absent from HEAD, so clean checkout verification would fail. See .orchestrator/reviews/BFF-LUV-GAP-001-UNBLOCK-review-codex.md; track the helper or use tracked code, then rerun coverage report and focused registry pytest.",
+      "status": "done",
+      "created_at": "2026-05-08T23:25:51Z",
+      "resolved_at": "2026-05-08T23:25:51Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-001-UNBLOCK",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for re-review after tracking services/control-plane/bff/contract_snapshots/execute_plans_bff_contract.py in commit f87af298. Verification: coverage report passed with 178 entries and no Implemented Rows Not Live section; focused registry pytest passed 5 tests.",
+      "status": "done",
+      "created_at": "2026-05-08T23:29:32Z",
+      "resolved_at": "2026-05-09T03:48:05Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-001-UNBLOCK",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. The untracked helper blocker is resolved in f87af298; Codex re-ran the tracked-helper check, coverage report, and focused registry pytest. Owner should finalize BFF-LUV-GAP-001-UNBLOCK.",
+      "status": "done",
+      "created_at": "2026-05-09T03:48:05Z",
+      "resolved_at": "2026-05-09T03:55:43Z"
+    }
+  ],
+  "blockers": []
+}
