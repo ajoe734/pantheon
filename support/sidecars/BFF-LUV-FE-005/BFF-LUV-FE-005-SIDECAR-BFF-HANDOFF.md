@@ -87,7 +87,7 @@ Lovable cutover evidence required by BFF-LUV-FE-005 acceptance criteria.
 | Authenticated live DTO smoke | Not run; all live evidence is from anonymous 401/404 route checks or unit mocks | Cutover cannot be declared without proof that the live BFF returns 2xx authenticated DTO shapes for the contract families | Unblock AUTHED-LIVE-001; run authenticated probe once a valid JWT is available. |
 | `bff-v1/writes.ts` adaptLive | Rev4 added adaptLive to `runAction.ts`; `bff-v1/writes.ts` still missing adaptLive for `runAction` and `requestConfirmToken` | UI callers through the v1 compat seam can receive raw `status/data/meta` command receipts | Close FE-004 Rev5 first; this must be resolved before write smoke. |
 | Write smoke evidence | Write smoke plan is documented in FE-004 artifact but not yet executed | Final handoff requires proof that `VITE_BFF_REAL_WRITES=true` does not trigger live-capital side effects | Run non-capital write smoke (confirm-token create/delete, alert acknowledge) against lupin dev after auth is available. |
-| SSE live connection evidence | SSE adapter wired to `/bff/events/stream` but no live connection log or authenticated EventSource smoke | Realtime cutover claim requires at least one authenticated EventSource open/message event from the live BFF | Run live SSE probe during AUTHED-LIVE-001 authenticated session and record first event `type`, `id`, and timestamp. |
+| SSE live connection evidence | SSE adapter wired to `/bff/events/stream` but no live connection log or authenticated EventSource smoke | Realtime cutover claim requires at least one authenticated SSE open/message event from the live BFF | Two-track: (a) browser/Lovable cookie-session probe — `connectLiveSse()` uses `{ withCredentials: true }` only; native `EventSource` cannot inject an `Authorization` header; cookie/session auth is the only browser path; (b) optional non-browser Bearer probe via curl or Node.js EventSource polyfill; record which track was tested. |
 | execute-plans commit hash | FE-004 not yet closed | Final handoff must record the exact execute-plans HEAD commit that went into the Lovable deploy | Wait for FE-004 to close; use its final commit as the execute-plans cutover commit. |
 | pantheon commit hash | Pantheon side is clean after earlier BFF gap tasks | Cutover evidence must reference the pantheon commit matching the BFF contract tested | Record `git -C /home/lupin/code/pantheon rev-parse HEAD` at the time of evidence capture. |
 | README env section | execute-plans README documents env vars | Lovable team needs the final env var table and token-injection instructions in the README for self-service | Update README live-mode section to reflect final cutover env vars and Lovable-specific setup once FE-004 and AUTHED-LIVE-001 close. |
@@ -117,9 +117,32 @@ Inject Bearer token into `sessionStorage["pantheon.bff.bearerToken"]`.
    list. Do not accept silent mock fallback.
 5. v5 smoke: call `bff.v5.loopRuns()`, `bff.v5.sentinelFindings()`, and
    `bff.v5.pendingInterventions()`. Assert 2xx responses.
-6. SSE probe: open `EventSource` to `/bff/events/stream` with Bearer header;
-   record first event received (`type`, `id`, `timestamp`). Verify no mock ticker
-   fires in live mode.
+6. SSE smoke — two tracks (run at least one; record which track was used):
+
+   **Track A — Browser/Lovable cookie-session probe (preferred for Lovable smoke):**
+   The live SSE connector (`src/lib/bff-v1/sse/liveSse.ts`) opens native browser
+   `EventSource` with `{ withCredentials: true }` only. Native browser `EventSource`
+   does not support custom request headers; `Authorization: Bearer ...` cannot be
+   injected by the frontend. SSE auth depends entirely on the active session cookie.
+   Steps: log in with a valid operator account so that the session cookie is set;
+   open or reload the page that triggers `connectLiveSse()`; record whether the
+   `open` event fires and the first event received (`type`, `id`, `timestamp`).
+   A 401 at this step means the session cookie is missing or invalid — not that
+   Bearer injection is needed.
+
+   **Track B — Non-browser Bearer-token probe (optional, out-of-band):**
+   To verify the `/bff/events/stream` endpoint independently of cookies, run a
+   probe with `curl` or a Node.js `EventSource` polyfill that supports request
+   headers. Example:
+   ```bash
+   curl -N -H "Authorization: Bearer <jwt>" \
+        -H "Accept: text/event-stream" \
+        https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io/bff/events/stream
+   ```
+   Label this explicitly as a non-browser probe in the evidence log. Do not
+   describe it as the current Lovable/browser behavior.
+
+   Regardless of track, verify no mock ticker fires in live mode.
 7. Fallback-negative check: with `VITE_BFF_FALLBACK=strict`, cause a deliberate
    transport failure (e.g., set `VITE_BFF_BASE_URL` to unreachable host for one
    probe); verify `BffError` surfaces and mock data does not silently appear.
@@ -159,7 +182,7 @@ Do NOT run write smoke against live-capital side-effect routes:
    - target BFF URL, exact timestamp, environment variables used;
    - per-family status codes and minimal field names only;
    - redacted auth source (e.g., "JWT from lupin-dev-operator credential");
-   - SSE first-event metadata;
+   - SSE first-event metadata and which auth track was used (Track A: browser cookie/session; Track B: non-browser Bearer probe; or blocked with reason);
    - write smoke idempotency key + status.
 2. Record exact commit hashes:
    - `git -C /home/lupin/code/execute-plans rev-parse HEAD` (execute-plans cutover commit).
@@ -191,6 +214,14 @@ Do NOT run write smoke against live-capital side-effect routes:
 - SSE in live mode does not use the mock ticker. Reconnect logic via `lastEventId`
   query parameter is wired; the UI should not manually debounce reconnects that
   the EventSource already handles.
+- The live SSE connector uses native browser `EventSource({ withCredentials: true })`.
+  Native browser `EventSource` does not support injecting an `Authorization` header;
+  session cookie is the only authentication mechanism for the browser SSE path. A
+  401 on `/bff/events/stream` in the browser means the session cookie is absent or
+  expired — not that Bearer injection from `sessionStorage` is needed. If a Bearer-
+  authenticated SSE probe is required for debugging or server-side verification, use
+  curl or a Node.js EventSource polyfill that supports request headers (not the
+  deployed Lovable frontend).
 - 4xx responses (401, 403, 409, 428) are real backend replies and must not fall
   back to mock in strict mode. Surface the typed `BffError` envelope where the
   UI already has error state.
@@ -255,10 +286,14 @@ Reviewer (Codex) should verify:
 3. The Lovable environment configuration section lists correct env vars and
    does not contradict the established transport/auth model from BFF-LUV-FE-001.
 4. The cutover smoke journey excludes live-capital side-effect routes in Phase 2.
-5. The parent absorption checklist aligns with BFF-LUV-FE-005 acceptance
+5. The SSE smoke step distinguishes browser cookie/session EventSource (Track A,
+   no Bearer header injection) from non-browser Bearer probe (Track B, curl/Node.js);
+   the packet does not ask the Lovable browser to inject a Bearer Authorization
+   header into native EventSource.
+6. The parent absorption checklist aligns with BFF-LUV-FE-005 acceptance
    criteria (all deps done or blocked, evidence published, commit hashes
    recorded, final handoff published).
-6. Parent owner (Codex) can use this packet as advisory input without treating
+7. Parent owner (Codex) can use this packet as advisory input without treating
    it as an approved replacement for the BFF-LUV-FE-005 implementation record.
 
 This packet is ready for Codex review and parent-owner absorption decision.
