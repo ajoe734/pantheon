@@ -84,31 +84,36 @@ Owner: Claude. Reviewer: Codex2.
 
 ### Tests
 
-- `src/lib/bff/__tests__/client.test.ts` — 15 focused Vitest cases:
+- `src/lib/bff/__tests__/client.test.ts` — 16 focused Vitest cases:
   family coverage, DTO normalization for representative entity-registry,
   realtime-feed, audit-feed, and governance-queue lists, mock-only fetch
   isolation, hybrid auto-fallback for network/5xx, strict-mode `BffError`
-  surfacing for transport failure, and 4xx propagation in both modes.
+  surfacing for transport failure, 4xx propagation in both modes, and
+  a live URL coverage test that asserts `rankingFormulas.get("rank_1")`
+  calls `/bff/ranking-formulas/rank_1` (not the list endpoint).
 
 ### Verification
 
 - `cd /home/lupin/code/execute-plans && npm test -- --run src/lib/bff/__tests__/client.test.ts`
-  → `Test Files 1 passed (1)`, `Tests 15 passed (15)`.
-- `cd /home/lupin/code/execute-plans && npm test -- --run`
-  → `Test Files 1 failed | 46 passed (47)`, `Tests 392 passed (392)`.
-  The single failing test file is `src/lib/bff/__tests__/runAction.test.ts`,
-  which fails at parse with `Identifier 'readConfirmToken' has already been
-  declared`. That duplicate symbol exists in HEAD's
-  `src/lib/bff/runAction.ts` (lines 224 and 480) — pre-existing
-  BFF-LUV-FE-004 territory and explicitly out of scope per this task brief
-  ("Do not edit write mutation files owned by `BFF-LUV-FE-004`"). My 15
-  client tests are part of the 392 passing tests; the v5 / liveAdapters
-  tests that flagged earlier in interleaved runs are green when this task
-  is run from a clean base.
+  → `Test Files 1 passed (1)`, `Tests 16 passed (16)` (rev2: 15 → 16 after
+  adding rankingFormulas live detail URL test).
 - `cd /home/lupin/code/execute-plans && npm run build`
-  → `built in 1m 28s`. Build succeeds (Vite/esbuild does not flag the
-  duplicate function declaration). Only chunk-size and dynamic-import
-  warnings, no errors.
+  → `built in 1m 2s`. Build succeeds. Only pre-existing chunk-size and
+  dynamic-import warnings, no errors.
+
+### Rev2 Post-Review Correction (2026-05-09 — Codex2 changes-requested)
+
+`managementClient.rankingFormulas.get(id)` was passing `paths.rankingFormulas`
+(a zero-arg list builder `() => '/bff/ranking-formulas'`) as the `pathFor`
+argument to `liveOrMockDetail`. TypeScript allows a zero-arg function where
+`(id: string) => string` is expected (structural subtyping), so the id was
+silently ignored and live detail reads called the list endpoint.
+
+Fix in `src/lib/bff/client.ts`: replaced `paths.rankingFormulas` with the
+inline detail builder `(id) => \`${paths.rankingFormulas()}/${encodeURIComponent(id)}\``
+matching the pattern already used for `runtimes`, `mcpServers`, `tools`, etc.
+
+execute-plans commit: `124aa17`.
 
 ### Followups Outside Scope
 
