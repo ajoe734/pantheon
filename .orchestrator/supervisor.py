@@ -1256,6 +1256,7 @@ def chair_review_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("approval_actions_enabled", True)
     settings.setdefault("max_pending_approvals_in_prompt", 6)
     settings.setdefault("bypass_cooldown_for_pending_approvals", True)
+    settings.setdefault("bypass_primary_work_for_pending_approvals", True)
     settings.setdefault("reassignment_actions_enabled", True)
     settings.setdefault("max_reassignment_actions", 4)
     settings.setdefault("failure_loop_reassignment_threshold", int(worker_reassignment_settings(config).get("after_attempts", 2)))
@@ -5889,6 +5890,10 @@ def dispatch_chair_review(
         return False
     now = utc_now()
     pending_approval_count = len(safe_load_approval_state(config).get("pending", []) or [])
+    approval_triage_requested = bool(
+        pending_approval_count
+        and settings.get("approval_actions_enabled", True)
+    )
     failure_loop_details = chair_review_failure_loop_details(config, state)
     failure_loop_count = len(failure_loop_details)
     failure_loop_agents = {
@@ -5898,7 +5903,7 @@ def dispatch_chair_review(
     }
     bypass_cooldown = bool(
         (
-            pending_approval_count
+            approval_triage_requested
             and settings.get("approval_actions_enabled", True)
             and settings.get("bypass_cooldown_for_pending_approvals", True)
         )
@@ -5935,7 +5940,13 @@ def dispatch_chair_review(
             continue
         if agent_id in active_agents or agent_id in pending_agents:
             continue
-        if agent_has_dispatchable_primary_work(config, status, agent_name, task_map):
+        if (
+            not (
+                approval_triage_requested
+                and settings.get("bypass_primary_work_for_pending_approvals", True)
+            )
+            and agent_has_dispatchable_primary_work(config, status, agent_name, task_map)
+        ):
             continue
         if failure_loop_count:
             reason = "chair_review:reassignment_triage"

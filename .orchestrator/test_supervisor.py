@@ -3293,6 +3293,64 @@ class ChairReviewDispatchTests(unittest.TestCase):
         self.assertEqual(events[0]["reason"], "chair_review:approval_triage")
         self.assertIn("approval_id=apr-1", events[0]["message"])
 
+    def test_dispatch_chair_review_uses_idle_candidate_with_primary_work_for_pending_approval(self) -> None:
+        state = {
+            "queue": {"events": {}},
+            "workers": {
+                "run-codex2": {
+                    "run_id": "run-codex2",
+                    "agent_id": "codex2",
+                    "provider": "codex2",
+                    "status": "running",
+                }
+            },
+            "chair_rotation": {
+                "current_index": 0,
+                "last_chair_run_at": "2026-04-28T12:00:00Z",
+            },
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "PRIMARY-CODEX",
+                    "status": "todo",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(
+                supervisor,
+                "safe_load_approval_state",
+                return_value={
+                    "pending": [
+                        {
+                            "approval_id": "apr-1",
+                            "provider": "claude",
+                            "task_id": "BFF-LUV-FE-002",
+                            "worker_run_id": "run-1",
+                            "tool_name": "Agent",
+                            "risk_class": "unknown",
+                            "created_at": "2026-04-28T12:00:10Z",
+                            "tool_input_preview": "Explore execute-plans repo BFF structure",
+                        }
+                    ],
+                    "history": [],
+                },
+            ),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-28T12:05:00Z"),
+        ):
+            changed = supervisor.dispatch_chair_review(self.config, state, planning_state=None)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["chair_rotation"]["last_chair_agent"], "Codex")
+        events = supervisor.load_event_queue(self.config)
+        self.assertEqual(events[0]["reason"], "chair_review:approval_triage")
+
     def test_dispatch_chair_review_bypasses_cooldown_for_failure_loop(self) -> None:
         state = {
             "queue": {"events": {}},

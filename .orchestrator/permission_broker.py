@@ -176,7 +176,12 @@ UNSAFE_AGENT_MARKERS = (
     "generate",
     "add ",
     "update",
-    "execute",
+    "execute command",
+    "execute commands",
+    "execute shell",
+    "execute bash",
+    "execute script",
+    "execute tests",
     "run ",
     "launch",
 )
@@ -755,12 +760,28 @@ def _collect_paths(tool_input: dict[str, Any]) -> list[Path]:
     return candidates
 
 
-def _paths_within_workspace(paths: list[Path]) -> bool:
+def _allowed_workspace_roots(config: dict[str, Any] | None = None) -> list[Path]:
+    roots = [ROOT, ROOT.parent / "pantheon"]
+    configured = ((config or {}).get("permission_broker", {}) or {}).get("allowed_workspace_roots", [])
+    if isinstance(configured, list):
+        for item in configured:
+            if not isinstance(item, str) or not item.strip():
+                continue
+            candidate = Path(item).expanduser()
+            if not candidate.is_absolute():
+                candidate = ROOT / candidate
+            roots.append(candidate.resolve())
+    return list(dict.fromkeys(roots))
+
+
+def _paths_within_workspace(paths: list[Path], config: dict[str, Any] | None = None) -> bool:
     if not paths:
         return True
-    allowed_roots = [ROOT, ROOT.parent / "pantheon"]
+    allowed_roots = _allowed_workspace_roots(config)
     for path in paths:
-        resolved = path if path.is_absolute() else ROOT / path
+        resolved = path.expanduser()
+        resolved = resolved if resolved.is_absolute() else ROOT / resolved
+        resolved = resolved.resolve()
         if not any(
             _is_relative_to(resolved, root) for root in allowed_roots
         ):
@@ -1027,7 +1048,7 @@ def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, con
             reason = agent_decision["reason"]
             risk_class = agent_decision["risk_class"]
     elif tool_name in EDIT_TOOLS:
-        if _paths_within_workspace(_collect_paths(tool_input)):
+        if _paths_within_workspace(_collect_paths(tool_input), config):
             decision = "allow"
             reason = f"{tool_name} stays within the repository workspace."
             risk_class = "repo_write"

@@ -39,12 +39,72 @@ class ProviderPermissionsTest(unittest.TestCase):
         self.assertEqual(evaluation["decision"], "allow")
         self.assertEqual(evaluation["risk_class"], "safe_read")
 
+    def test_read_only_agent_explore_request_allows_execute_plans_repo_path(self) -> None:
+        evaluation = permission_broker.evaluate_tool_request(
+            "Agent",
+            {
+                "description": "Explore execute-plans repo BFF structure",
+                "prompt": (
+                    "Explore the repository at /home/lupin/code/execute-plans and give me the "
+                    "directory tree under src/lib/bff/, existing BFF files, package.json, and "
+                    "TypeScript config files. List findings only."
+                ),
+                "subagent_type": "Explore",
+            },
+            {},
+        )
+
+        self.assertEqual(evaluation["decision"], "allow")
+        self.assertEqual(evaluation["risk_class"], "safe_read")
+
     def test_mutating_agent_request_still_requires_review(self) -> None:
         evaluation = permission_broker.evaluate_tool_request(
             "Agent",
             {
                 "description": "Implement missing routes",
                 "prompt": "Explore the repo and edit the BFF to add the missing endpoints, then update tests.",
+                "subagent_type": "Explore",
+            },
+            {},
+        )
+
+        self.assertEqual(evaluation["decision"], "defer")
+        self.assertEqual(evaluation["risk_class"], "unknown")
+
+    def test_edit_allows_configured_execute_plans_workspace_root(self) -> None:
+        evaluation = permission_broker.evaluate_tool_request(
+            "Edit",
+            {"file_path": "/home/lupin/code/execute-plans/src/lib/bff/client.ts"},
+            {
+                "permission_broker": {
+                    "allowed_workspace_roots": ["../execute-plans"],
+                }
+            },
+        )
+
+        self.assertEqual(evaluation["decision"], "allow")
+        self.assertEqual(evaluation["risk_class"], "repo_write")
+
+    def test_edit_outside_configured_workspace_roots_is_denied(self) -> None:
+        evaluation = permission_broker.evaluate_tool_request(
+            "Edit",
+            {"file_path": "/tmp/outside.ts"},
+            {
+                "permission_broker": {
+                    "allowed_workspace_roots": ["../execute-plans"],
+                }
+            },
+        )
+
+        self.assertEqual(evaluation["decision"], "deny")
+        self.assertEqual(evaluation["risk_class"], "out_of_workspace")
+
+    def test_agent_execute_command_request_still_requires_review(self) -> None:
+        evaluation = permission_broker.evaluate_tool_request(
+            "Agent",
+            {
+                "description": "Explore repo and execute command checks",
+                "prompt": "Run shell probes and execute commands to inspect package scripts.",
                 "subagent_type": "Explore",
             },
             {},

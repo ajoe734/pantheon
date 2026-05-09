@@ -14,6 +14,12 @@
     "provider_capabilities": ".orchestrator/provider_capabilities.json",
     "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json"
   },
+  "permission_broker": {
+    "allowed_workspace_roots": [
+      ".",
+      "../execute-plans"
+    ]
+  },
   "watcher": {
     "poll_interval_seconds": 2.0,
     "replay_on_start": false,
