@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-10 00:23:23
+Last updated: 2026-05-10 00:27:03
 
 ## Objective
 
@@ -37,7 +37,7 @@ Last updated: 2026-05-10 00:23:23
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Supervisor auto-started BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF after successful dispatch.
+- `Claude`: execution, control-plane, governance-review; next: Support-only BFF handoff packet created at support/sidecars/BFF-LUV-FE-001/BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF.md; covers bff-v1 transport foundation, operator session journey, auth storage, per-route fallback summary, and downstream notes for BFF-LUV-FE-002/003/004. Ready for reviewer check and parent-owner absorption decision.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Missing valid Bearer token for lupin dev; GCP CLI re-auth fails.
 - `Codex`: integration, status-system, schema, acceptance; next: Assignment created
 - `Codex2`: integration, status-system, schema, acceptance; next: Supervisor resumed BFF-LUV-FE-001 for finalize after successful dispatch.
@@ -58,7 +58,7 @@ Last updated: 2026-05-10 00:23:23
 | `BFF-LUV-FE-004` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Wire execute-plans safe real write flows | Claude2 | todo | `BFF-LUV-FE-001` | 把 execute-plans high-risk/write flows 接 BFF command/confirm-token/decision envelopes，仍由 env/auth gate 控制。 |
 | `BFF-LUV-FE-005` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Run final execute-plans Lovable live cutover smoke | Codex | todo | `BFF-LUV-AUTHED-LIVE-001`, `BFF-LUV-FE-001`, `BFF-LUV-FE-002`, `BFF-LUV-FE-003`, `BFF-LUV-FE-004` | 等 auth/read/write/realtime 都完成後，跑 execute-plans Lovable live cutover smoke 並發布 handoff。 |
 | `BFF-LUV-FE-006` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Deploy execute-plans dev and run frontend BFF E2E closure | Codex | todo | `BFF-LUV-AUTHED-LIVE-001`, `BFF-LUV-FE-001`, `BFF-LUV-FE-002`, `BFF-LUV-FE-003`, `BFF-LUV-FE-004`, `BFF-LUV-FE-005` | 所有 execute-plans BFF live wiring 完成後，整理 commit/push、部署 dev，並用前端實際流量驗證 BFF 有通。 |
-| `BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | [Sidecar] [Auto] [Parent BFF-LUV-FE-001] Prepare BFF-LUV-FE-001 BFF and frontend handoff packet | Claude | in_progress | - | 平行支援 BFF-LUV-FE-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
+| `BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | [Sidecar] [Auto] [Parent BFF-LUV-FE-001] Prepare BFF-LUV-FE-001 BFF and frontend handoff packet | Claude | review | - | 平行支援 BFF-LUV-FE-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -110,13 +110,14 @@ Last updated: 2026-05-10 00:23:23
 | `BFF-LUV-FE-004` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Wire execute-plans safe real write flows | 把 execute-plans high-risk/write flows 接 BFF command/confirm-token/decision envelopes，仍由 env/auth gate 控制。 | Claude2 | Codex | todo | `BFF-LUV-FE-001` | 2026-05-09 23:41:22 | Assignment created |
 | `BFF-LUV-FE-005` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Run final execute-plans Lovable live cutover smoke | 等 auth/read/write/realtime 都完成後，跑 execute-plans Lovable live cutover smoke 並發布 handoff。 | Codex | Claude | todo | `BFF-LUV-AUTHED-LIVE-001`, `BFF-LUV-FE-001`, `BFF-LUV-FE-002`, `BFF-LUV-FE-003`, `BFF-LUV-FE-004` | 2026-05-09 23:41:46 | Assignment created |
 | `BFF-LUV-FE-006` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Deploy execute-plans dev and run frontend BFF E2E closure | 所有 execute-plans BFF live wiring 完成後，整理 commit/push、部署 dev，並用前端實際流量驗證 BFF 有通。 | Codex | Claude | todo | `BFF-LUV-AUTHED-LIVE-001`, `BFF-LUV-FE-001`, `BFF-LUV-FE-002`, `BFF-LUV-FE-003`, `BFF-LUV-FE-004`, `BFF-LUV-FE-005` | 2026-05-10 00:21:51 | Assignment created |
-| `BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | [Sidecar] [Auto] [Parent BFF-LUV-FE-001] Prepare BFF-LUV-FE-001 BFF and frontend handoff packet | 平行支援 BFF-LUV-FE-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Claude | Codex2 | in_progress | - | 2026-05-10 00:23:23 | Supervisor auto-started BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF after successful dispatch. |
+| `BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | [Sidecar] [Auto] [Parent BFF-LUV-FE-001] Prepare BFF-LUV-FE-001 BFF and frontend handoff packet | 平行支援 BFF-LUV-FE-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Claude | Codex2 | review | - | 2026-05-10 00:27:03 | Support-only BFF handoff packet created at support/sidecars/BFF-LUV-FE-001/BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF.md; covers bff-v1 transport foundation, operator session journey, auth storage, per-route fallback summary, and downstream notes for BFF-LUV-FE-002/003/004. Ready for reviewer check and parent-owner absorption decision. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
 | `BFF-LUV-FE-001` | Claude | Codex2 | Review approved — all acceptance criteria met; returned to Codex2 for closeout. | pending | 2026-05-10 00:12:29 |
+| `BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF` | Claude | Codex2 | Support-only BFF handoff packet created at support/sidecars/BFF-LUV-FE-001/BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF.md; covers bff-v1 transport foundation, operator session journey, auth storage, per-route fallback summary, and downstream notes for BFF-LUV-FE-002/003/004. Ready for reviewer check and parent-owner absorption decision. | pending | 2026-05-10 00:27:03 |
 
 ## Blockers
 
@@ -200,23 +201,23 @@ Last updated: 2026-05-10 00:23:23
 
 ## Latest Checkpoints
 
-- 2026-05-10 00:16:26 Orchestrator: PreToolUse: Bash
-- 2026-05-10 00:16:27 Orchestrator: PostToolUse: Bash
-- 2026-05-10 00:16:29 Orchestrator: PreToolUse: Bash
-- 2026-05-10 00:16:31 Orchestrator: PostToolUse: Bash
-- 2026-05-10 00:16:40 Orchestrator: Stop: Stop
-- 2026-05-10 00:16:40 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-10 00:21:51 Codex: `BFF-LUV-FE-006` Assigned BFF-LUV-FE-006 to Codex with reviewer Claude
-- 2026-05-10 00:22:35 Orchestrator: `BFF-LUV-FE-001` Worker superseded after task responsibility moved to another agent.
-- 2026-05-10 00:22:35 Orchestrator: `BFF-LUV-FE-001` Wake-up queued for supervisor: owned_finalize_dispatch
-- 2026-05-10 00:22:35 Orchestrator: `OPS-CHAIR-REVIEW` Chair review queued for Claude2: chair_review:operational_review
-- 2026-05-10 00:22:35 Codex: `BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF` Assigned BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF to Claude with reviewer Codex2
-- 2026-05-10 00:22:58 Orchestrator: `BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF` Wake-up queued for supervisor: owned_ready_dispatch
-- 2026-05-10 00:22:58 Orchestrator: `BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF` Auto-created sidecar BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF for BFF-LUV-FE-001 (bff_handoff_packet) while utilization remained below threshold.
-- 2026-05-10 00:22:58 Orchestrator: utilization 0.00 stayed below threshold 0.50; created 1 visible sidecar task(s)
-- 2026-05-10 00:22:58 Orchestrator: `BFF-LUV-FE-001` Worker started via codex: owned_finalize_dispatch
-- 2026-05-10 00:22:59 Codex2: `BFF-LUV-FE-001` Supervisor resumed BFF-LUV-FE-001 for finalize after successful dispatch.
-- 2026-05-10 00:23:23 Orchestrator: `BFF-LUV-FE-001` Supervisor resumed BFF-LUV-FE-001 for finalize after successful dispatch.
-- 2026-05-10 00:23:23 Orchestrator: Worker started via claude_cli: chair_review:operational_review
-- 2026-05-10 00:23:23 Orchestrator: `BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF` Worker started via claude_cli: owned_ready_dispatch
-- 2026-05-10 00:23:23 Claude: `BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF` Supervisor auto-started BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF after successful dispatch.
+- 2026-05-10 00:24:57 Orchestrator: PostToolUse: Bash
+- 2026-05-10 00:24:57 Orchestrator: PreToolUse: Bash
+- 2026-05-10 00:24:59 Orchestrator: PostToolUse: Bash
+- 2026-05-10 00:25:07 Orchestrator: PreToolUse: Bash
+- 2026-05-10 00:25:08 Orchestrator: PostToolUse: Bash
+- 2026-05-10 00:25:44 Orchestrator: PreToolUse: Bash
+- 2026-05-10 00:25:46 Orchestrator: PostToolUse: Bash
+- 2026-05-10 00:26:02 Orchestrator: PreToolUse: Write
+- 2026-05-10 00:26:03 Orchestrator: PostToolUse: Write
+- 2026-05-10 00:26:08 Orchestrator: PreToolUse: Bash
+- 2026-05-10 00:26:08 Claude: `BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF` Handoff packet created at support/sidecars/BFF-LUV-FE-001/BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF.md; covers transport foundation, operator session journey, env vars, auth token storage, per-route fallback summary, and downstream task notes for BFF-LUV-FE-002/003/004.
+- 2026-05-10 00:26:40 Orchestrator: PreToolUse: Write
+- 2026-05-10 00:26:41 Orchestrator: PostToolUse: Write
+- 2026-05-10 00:26:47 Orchestrator: PreToolUse: Write
+- 2026-05-10 00:26:48 Orchestrator: PostToolUse: Write
+- 2026-05-10 00:26:59 Orchestrator: PostToolUse: Bash
+- 2026-05-10 00:27:01 Orchestrator: Stop: Stop
+- 2026-05-10 00:27:01 Orchestrator: SessionEnd: SessionEnd
+- 2026-05-10 00:27:03 Orchestrator: PreToolUse: Bash
+- 2026-05-10 00:27:03 Claude: `BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF` Handoff to Codex2: Support-only BFF handoff packet created at support/sidecars/BFF-LUV-FE-001/BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF.md; covers bff-v1 transport foundation, operator session journey, auth storage, per-route fallback summary, and downstream notes for BFF-LUV-FE-002/003/004. Ready for reviewer check and parent-owner absorption decision.
