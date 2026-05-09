@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 import uuid
@@ -912,6 +913,20 @@ class ServiceBackedReadAdapter:
             "keys": ["session_id", "id"],
             "snapshot_key": "trainer_controls",
         },
+        "loop_runs": {
+            "env": "PANTHEON_BFF_LOOP_RUN_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["id"],
+            "snapshot_key": "loop_runs",
+        },
+        "sentinel_findings": {
+            "env": "PANTHEON_BFF_SENTINEL_FINDING_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["id"],
+            "snapshot_key": "sentinel_findings",
+        },
     }
 
     _HTTP_DATASETS = {
@@ -1097,6 +1112,102 @@ class ServiceBackedReadAdapter:
             include_snapshot_fallback=include_snapshot_fallback,
         )
         return available, records.get(str(record_id))
+
+    _LOOP_RUN_ID_RE = re.compile(r"loop-run-(\d+)$")
+    _SENTINEL_FINDING_ID_RE = re.compile(r"sentinel-finding-(\d+)$")
+
+    @staticmethod
+    def _derive_loop_run(inc: Dict[str, Any], *, override_id: Optional[str] = None) -> Dict[str, Any]:
+        inc_id = str(inc.get("incident_id") or inc.get("id") or "")
+        return {
+            "id": override_id or inc_id,
+            "status": inc.get("status", "unknown"),
+            "activePeriod": {"start": inc.get("created_at"), "end": inc.get("resolved_at")},
+            "derived_from_incident_id": inc_id,
+            "runtime_id": inc.get("runtime_id"),
+            "binding_id": inc.get("binding_id"),
+        }
+
+    @staticmethod
+    def _derive_sentinel_finding(inc: Dict[str, Any], *, override_id: Optional[str] = None) -> Dict[str, Any]:
+        inc_id = str(inc.get("incident_id") or inc.get("id") or "")
+        return {
+            "id": override_id or inc_id,
+            "status": inc.get("status", "unknown"),
+            "derived_from_incident_id": inc_id,
+            "runtime_id": inc.get("runtime_id"),
+            "binding_id": inc.get("binding_id"),
+            "severity": inc.get("severity"),
+            "title": inc.get("title"),
+        }
+
+    def list_loop_runs(self) -> tuple[bool, List[Dict[str, Any]]]:
+        avail_inc, incidents = self._load_dataset("incidents")
+        if avail_inc and incidents:
+            return True, [
+                self._derive_loop_run(inc)
+                for inc in incidents.values()
+                if isinstance(inc, dict) and "sentinel" not in str(inc.get("title") or "").lower()
+            ]
+        avail_lr, lr_data = self._load_dataset("loop_runs")
+        if avail_lr:
+            return True, list(lr_data.values())
+        return False, []
+
+    def get_loop_run(self, loop_run_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
+        avail_inc, incidents = self._load_dataset("incidents")
+        if avail_inc:
+            inc = incidents.get(loop_run_id)
+            if inc and isinstance(inc, dict) and "sentinel" not in str(inc.get("title") or "").lower():
+                return True, self._derive_loop_run(inc)
+            m = self._LOOP_RUN_ID_RE.match(loop_run_id)
+            if m:
+                n = int(m.group(1))
+                non_sentinel = [
+                    v for v in incidents.values()
+                    if isinstance(v, dict) and "sentinel" not in str(v.get("title") or "").lower()
+                ]
+                if 1 <= n <= len(non_sentinel):
+                    return True, self._derive_loop_run(non_sentinel[n - 1], override_id=loop_run_id)
+            return True, None
+        avail_lr, lr_data = self._load_dataset("loop_runs")
+        if avail_lr:
+            return True, lr_data.get(loop_run_id)
+        return False, None
+
+    def list_sentinel_findings(self) -> tuple[bool, List[Dict[str, Any]]]:
+        avail_inc, incidents = self._load_dataset("incidents")
+        if avail_inc and incidents:
+            return True, [
+                self._derive_sentinel_finding(inc)
+                for inc in incidents.values()
+                if isinstance(inc, dict) and "loop" not in str(inc.get("title") or "").lower()
+            ]
+        avail_sf, sf_data = self._load_dataset("sentinel_findings")
+        if avail_sf:
+            return True, list(sf_data.values())
+        return False, []
+
+    def get_sentinel_finding(self, finding_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
+        avail_inc, incidents = self._load_dataset("incidents")
+        if avail_inc:
+            inc = incidents.get(finding_id)
+            if inc and isinstance(inc, dict) and "loop" not in str(inc.get("title") or "").lower():
+                return True, self._derive_sentinel_finding(inc)
+            m = self._SENTINEL_FINDING_ID_RE.match(finding_id)
+            if m:
+                n = int(m.group(1))
+                non_loop = [
+                    v for v in incidents.values()
+                    if isinstance(v, dict) and "loop" not in str(v.get("title") or "").lower()
+                ]
+                if 1 <= n <= len(non_loop):
+                    return True, self._derive_sentinel_finding(non_loop[n - 1], override_id=finding_id)
+            return True, None
+        avail_sf, sf_data = self._load_dataset("sentinel_findings")
+        if avail_sf:
+            return True, sf_data.get(finding_id)
+        return False, None
 
     def write_records(self, dataset: str, records: Dict[str, Dict[str, Any]]) -> bool:
         path = self._resolve_path(dataset)
@@ -11359,6 +11470,18 @@ class ReadSurfaceStore:
             if pm.get("incident_id") == incident_id:
                 return pm
         return None
+
+    def list_loop_runs(self) -> tuple[bool, List[Dict[str, Any]]]:
+        return self._service.list_loop_runs()
+
+    def get_loop_run(self, loop_run_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
+        return self._service.get_loop_run(loop_run_id)
+
+    def list_sentinel_findings(self) -> tuple[bool, List[Dict[str, Any]]]:
+        return self._service.list_sentinel_findings()
+
+    def get_sentinel_finding(self, finding_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
+        return self._service.get_sentinel_finding(finding_id)
 
     def get_kill_switch_status(self) -> Dict[str, Any]:
         ks = self._local_fallback("kill_switch") or {}
