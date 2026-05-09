@@ -195,6 +195,45 @@ Focused write-flow tests — `runAction.test.ts` (22 tests):
 
 ---
 
+## Rev5 Fix (Claude2 · 2026-05-09)
+
+### Change
+
+Added `adaptLive` callbacks to `src/lib/bff-v1/writes.ts` for `runAction` and `requestConfirmToken`
+so the UI-facing v1 write seam also normalizes live backend receipts.
+
+**Root cause (per Codex Rev4 review):** Rev4 added `adaptLive` to the newer canonical seam
+(`src/lib/bff/runAction.ts`), but the UI-facing `src/lib/bff-v1/writes.ts` seam still called
+`withLiveOrMock` for `runAction` (line ~115) and `requestConfirmToken` (line ~173) without
+an `adaptLive` callback. This meant `runActionSafe` received raw backend status/data/meta
+receipts in live mode — missing the `legacy` property needed by `runActionSafe` — and
+`HighRiskConfirm` received `data.tokenId` instead of `data.confirmToken`.
+
+**Changes:**
+
+| File | Change |
+|------|--------|
+| `src/lib/bff-v1/writes.ts` | Added `adaptLive` to `runAction` — maps `data.commandId` → `actionId`, builds `legacy` for `runActionSafe`, reads `idempotencyKey` from `meta` |
+| `src/lib/bff-v1/writes.ts` | Added `adaptLive` to `requestConfirmToken` — maps `data.tokenId` → `confirmToken`, fills `ttlSeconds/expiresAt/requiredPhrase/requiresMemo` from highRiskActions catalog |
+| `src/lib/bff-v1/writes.ts` | Added `import { getHighRiskAction, buildConfirmPhrase }` from `@/lib/v3/highRiskActions` |
+| `src/lib/bff-v1/__tests__/writes.test.ts` | Added 2 live-mode tests: `runAction` asserts `data.actionId`, `legacy.ok`, `legacy.audit.id`; `requestConfirmToken` asserts `data.confirmToken`, `requiredPhrase`, `expiresAt` — both use `liveStatus._reset` + `fetch` mock |
+
+### Verification (rev5)
+
+```
+npm run test -- src/lib/bff-v1/__tests__/writes.test.ts src/lib/bff/__tests__/runAction.test.ts
+→ 33 passed (11 + 22), 2 files
+
+npm run test
+→ 417 passed, 47 files; no failures
+
+npm run build → exit 0 (existing dynamic-import and chunk-size warnings only)
+```
+
+execute-plans commit: `2ed9c27`
+
+---
+
 ### Live Write Smoke Plan (for BFF-LUV-AUTHED-LIVE-001)
 
 When a valid Bearer token is available:
