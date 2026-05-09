@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-09T16:00:44Z",
+  "updated_at": "2026-05-09T16:06:38Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -146,8 +146,8 @@
         "BFF-LUV-FE-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Inspecting execute-plans dirty state and reconciling BFF transport/session foundation on a dedicated branch.",
-      "last_update": "2026-05-09T15:43:47Z"
+      "next": "execute-plans reconciled on feat/bff-luv-fe-001; npm run test and npm run build passed; preparing commit and push.",
+      "last_update": "2026-05-09T16:06:38Z"
     },
     {
       "name": "Copilot",
@@ -358,8 +358,8 @@
         "npm run build passes",
         "/bff/me not silent mock in real mode"
       ],
-      "next": "Inspecting execute-plans dirty state and reconciling BFF transport/session foundation on a dedicated branch.",
-      "last_update": "2026-05-09T15:43:47Z"
+      "next": "execute-plans reconciled on feat/bff-luv-fe-001; npm run test and npm run build passed; preparing commit and push.",
+      "last_update": "2026-05-09T16:06:38Z"
     },
     {
       "id": "BFF-LUV-FE-002",
