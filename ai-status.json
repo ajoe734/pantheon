@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-09T15:12:45Z",
+  "updated_at": "2026-05-09T15:30:48Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -107,11 +107,13 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "working",
+      "current_task_ids": [
+        "BFF-LUV-AUTHED-LIVE-001"
+      ],
       "branch": "feat/gemini-research-runtime",
-      "next": "",
-      "last_update": "2026-05-09T10:20:45Z"
+      "next": "Supervisor auto-started BFF-LUV-AUTHED-LIVE-001 after successful dispatch.",
+      "last_update": "2026-05-09T15:30:48Z"
     },
     {
       "name": "Codex",
@@ -300,6 +302,28 @@
       "helper_kind": "bff_handoff_packet",
       "mutates_canonical": false,
       "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "BFF-LUV-AUTHED-LIVE-001",
+      "title": "Run authenticated lupin dev BFF DTO/write smoke",
+      "summary_zh": "補齊 lupin dev public BFF authenticated DTO 與安全 write-flow live smoke；不得再只用 401 route registration 當作完整 cutover。",
+      "phase": "BFF Execute-Plans Authenticated Live Completion 2026-05-09",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "depends_on": [],
+      "artifacts": [
+        "docs/bff/execution-tasks/2026-05-09-execute-plans-semantic-completion/BFF-LUV-AUTHED-LIVE-001-authenticated-dto-write-smoke.md",
+        "docs/bff/evidence/"
+      ],
+      "acceptance": [
+        "valid operator auth path found or exact blocker recorded",
+        "authenticated live DTO smoke validates route families",
+        "approved non-capital write-flow smoke validates governed receipt envelope",
+        "execute-plans live/write handoff updated"
+      ],
+      "next": "Supervisor auto-started BFF-LUV-AUTHED-LIVE-001 after successful dispatch.",
+      "last_update": "2026-05-09T15:30:48Z"
     }
   ],
   "handoffs": [
@@ -595,13 +619,13 @@
       "todo": 0
     },
     "Gemini": {
-      "total": 0,
-      "active": 0,
+      "total": 1,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Gemini2": {
       "total": 1,

@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-09 23:12:45
+Last updated: 2026-05-09 23:30:48
 
 ## Objective
 
@@ -38,7 +38,7 @@ Last updated: 2026-05-09 23:12:45
 ## Active Slices
 
 - `Claude`: execution, control-plane, governance-review; next: No active assignment
-- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
+- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Supervisor auto-started BFF-LUV-AUTHED-LIVE-001 after successful dispatch.
 - `Codex`: integration, status-system, schema, acceptance; next: No active assignment
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
@@ -51,7 +51,7 @@ Last updated: 2026-05-09 23:12:45
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - | - |
+| `BFF-LUV-AUTHED-LIVE-001` | BFF Execute-Plans Authenticated Live Completion 2026-05-09 | Run authenticated lupin dev BFF DTO/write smoke | Gemini | in_progress | - | 補齊 lupin dev public BFF authenticated DTO 與安全 write-flow live smoke；不得再只用 401 route registration 當作完整 cutover。 |
 
 ### External / Upstream Integration Work
 
@@ -96,6 +96,7 @@ Last updated: 2026-05-09 23:12:45
 | `BFF-LUV-GAP-007` | BFF Execute-Plans Contract Gap 2026-05-08 | Reconcile extended Agora and FULL-spec routes | 整理 FULL spec 與長尾 Agora routes，實作 active source refs 並標記歷史 routes 的 disposition。 | Codex | Codex2 | done | - | 2026-05-09 02:00:15 | Review packet refreshed for BFF-LUV-GAP-007: artifact now includes verification commands/results. Focused pytest remains green: python3 -m pytest services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 14 passed, 2 pre-existing datetime.utcnow warnings; coverage report -> agora-extended 4 implemented, 8 alias, 0 missing, 0 deferred, 5 superseded. |
 | `BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-006] Prepare BFF-LUV-GAP-006 BFF and frontend handoff packet | 平行支援 BFF-LUV-GAP-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Codex2 | Codex | done | - | 2026-05-09 01:33:16 | Approved support-only BFF handoff packet for BFF-LUV-GAP-006; parent owner absorbed the checklist into implementation evidence and focused BFF verification remains green. |
 | `BFF-LUV-GAP-004-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-004] Prepare BFF-LUV-GAP-004 BFF and frontend handoff packet | 平行支援 BFF-LUV-GAP-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Gemini2 | Codex | done | - | 2026-05-09 01:38:41 | Handoff packet prepared and updated. Ready for review. |
+| `BFF-LUV-AUTHED-LIVE-001` | BFF Execute-Plans Authenticated Live Completion 2026-05-09 | Run authenticated lupin dev BFF DTO/write smoke | 補齊 lupin dev public BFF authenticated DTO 與安全 write-flow live smoke；不得再只用 401 route registration 當作完整 cutover。 | Gemini | Codex | in_progress | - | 2026-05-09 23:30:48 | Supervisor auto-started BFF-LUV-AUTHED-LIVE-001 after successful dispatch. |
 
 ## Handoff Queue
 
@@ -184,13 +185,6 @@ Last updated: 2026-05-09 23:12:45
 
 ## Latest Checkpoints
 
-- 2026-05-09 23:09:55 Orchestrator: PreToolUse: Read
-- 2026-05-09 23:09:55 Orchestrator: PostToolUse: Read
-- 2026-05-09 23:09:56 Orchestrator: Terminated older supervisor process 907085 while starting 2070244.
-- 2026-05-09 23:09:58 Orchestrator: `OPS-CHAIR-REVIEW` Chair review queued for Codex2: chair_review:operational_review
-- 2026-05-09 23:09:58 Orchestrator: Worker started via codex: chair_review:operational_review
-- 2026-05-09 23:09:59 Orchestrator: PreToolUse: Read
-- 2026-05-09 23:10:00 Orchestrator: PostToolUse: Read
 - 2026-05-09 23:10:30 Orchestrator: PreToolUse: Bash
 - 2026-05-09 23:10:31 Claude: `BFF-LUV-GAP-012` Review approved: execute-plans BFF cutover smoke complete. All acceptance criteria met: npm test/build passed, 40+ routes return 401 (auth-gated not 404), deferred scope documented as intentional.
 - 2026-05-09 23:10:58 Orchestrator: PostToolUse: Bash
@@ -204,3 +198,10 @@ Last updated: 2026-05-09 23:12:45
 - 2026-05-09 23:11:07 Orchestrator: Stop: Stop
 - 2026-05-09 23:11:34 Orchestrator: `BFF-LUV-GAP-012` Supervisor resumed BFF-LUV-GAP-012 for finalize after successful dispatch.
 - 2026-05-09 23:12:45 Codex: `BFF-LUV-GAP-012` Finalized approved cutover smoke in commit 189dae0b. execute-plans npm test/build passed; lupin dev public BFF /openapi.json is 200 and protected contract routes return 401 instead of 404. Authenticated DTO/write-flow smoke remains explicitly deferred pending operator Bearer token.
+- 2026-05-09 23:14:05 Orchestrator: `BFF-LUV-GAP-012` Worker superseded after task responsibility moved to another agent.
+- 2026-05-09 23:14:05 Orchestrator: `OPS-CHAIR-REVIEW` No runnable support backlog remains; BFF-LUV-GAP-012 is already in owner finalization and its sidecar is done.
+- 2026-05-09 23:21:33 Orchestrator: Chair review worker exited; supervisor will validate the review artifacts.
+- 2026-05-09 23:30:45 Codex: `BFF-LUV-AUTHED-LIVE-001` Assigned BFF-LUV-AUTHED-LIVE-001 to Gemini with reviewer Codex
+- 2026-05-09 23:30:48 Orchestrator: `BFF-LUV-AUTHED-LIVE-001` Wake-up queued for supervisor: owned_ready_dispatch
+- 2026-05-09 23:30:48 Orchestrator: `BFF-LUV-AUTHED-LIVE-001` Worker started via gemini: owned_ready_dispatch
+- 2026-05-09 23:30:48 Gemini: `BFF-LUV-AUTHED-LIVE-001` Supervisor auto-started BFF-LUV-AUTHED-LIVE-001 after successful dispatch.
