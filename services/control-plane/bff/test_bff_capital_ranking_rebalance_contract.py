@@ -26,6 +26,7 @@ def _fresh_client(td: str):
         allow_local_snapshot_fallback=True,
     )
     bff_main._CAPITAL_BFF_IDEMPOTENCY.clear()
+    bff_main.command_store._update_commands([])
     return TestClient(bff_main.app)
 
 

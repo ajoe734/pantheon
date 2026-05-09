@@ -52,12 +52,23 @@ class CommandType(str, Enum):
     SKILL_ACTION = "SkillAction"
     REVIEW_ACTION = "ReviewAction"
     DEPLOYMENT_ACTION = "DeploymentAction"
+    DEPLOYMENT_CREATE = "CreateDeployment"
+    DEPLOYMENT_PATCH = "PatchDeployment"
     RUNTIME_ACTION = "RuntimeAction"
     RISK_ALERT_ACTION = "RiskAlertAction"
     INCIDENT_ACTION = "IncidentAction"
     EVOLUTION_PROGRAM_ACTION = "EvolutionProgramAction"
     EXPERIMENT_ACTION = "ExperimentAction"
     JOB_ACTION = "JobAction"
+    REBALANCE_PATCH = "PatchRebalance"
+    AUDIT_EXPORT = "AuditExport"
+    CONFIRM_TOKEN_CREATE = "CreateConfirmToken"
+    CONFIRM_TOKEN_DELETE = "DeleteConfirmToken"
+    CONFIRM_TOKEN_REDEEM = "RedeemConfirmToken"
+    V5_INTERVENTION_ACTION = "V5InterventionAction"
+    SENTINEL_FINDING_STATUS = "SentinelFindingStatus"
+    SENTINEL_REMEDIATION_BUILD = "SentinelRemediationBuild"
+    SENTINEL_REMEDIATION_EXECUTE = "SentinelRemediationExecute"
 
 
 class ObjectType(str, Enum):
@@ -91,6 +102,10 @@ class ObjectType(str, Enum):
     EVOLUTION_PROGRAM = "EvolutionProgram"
     EXPERIMENT = "Experiment"
     JOB = "Job"
+    AUDIT_EXPORT = "AuditExport"
+    CONFIRM_TOKEN = "ConfirmToken"
+    SENTINEL_FINDING = "SentinelFinding"
+    SENTINEL_REMEDIATION = "SentinelRemediation"
 
 
 class CommandStatus(str, Enum):

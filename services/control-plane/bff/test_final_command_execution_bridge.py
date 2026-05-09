@@ -218,6 +218,65 @@ def test_sentinel_remediation_build_with_client_finding_id_still_works() -> None
         assert conflict.status_code == 409, conflict.text
 
 
+def test_durable_idempotency_conflict_detected_after_memory_clear() -> None:
+    """Regression: after _FINAL_CONTRACT_IDEMPOTENCY is cleared, a retry with a different
+    payload must still return 409 — the command_store existing_record path must compare
+    stored request_hash and not blindly replay."""
+    with _isolated_command_bridge() as client:
+        headers = {**HEADERS, "Idempotency-Key": "sem-002-durable-conflict"}
+        first = client.post("/bff/deployments", headers=headers, json={"stage": "paper"})
+        assert first.status_code == 201, first.text
+
+        # Simulate process restart / memory eviction
+        bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+
+        # Same key, different payload — must conflict even after memory clear
+        conflict = client.post("/bff/deployments", headers=headers, json={"stage": "live"})
+        assert conflict.status_code == 409, conflict.text
+        assert conflict.json()["detail"]["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+
+        # Same key, same payload — must replay even after memory clear
+        replay = client.post("/bff/deployments", headers=headers, json={"stage": "paper"})
+        assert replay.status_code == 201, replay.text
+        assert replay.json()["meta"]["idempotency"]["replayed"] is True
+        assert _receipt_id(replay.json()) == _receipt_id(first.json())
+
+
+def test_confirm_token_server_generated_id_replays_on_same_key_retry() -> None:
+    """Regression: POST /bff/confirm-tokens without client tokenId must replay on same
+    Idempotency-Key retry (not 409) and return the original tokenId from the durable record.
+    Also: after memory clear, a retry with a different payload must still 409."""
+    with _isolated_command_bridge() as client:
+        headers = {**HEADERS, "Idempotency-Key": "sem-002-ct-no-id"}
+        body = {"reason": "guarded action"}  # no tokenId — server will generate
+
+        first = client.post("/bff/confirm-tokens", headers=headers, json=body)
+        assert first.status_code == 201, first.text
+        original_token_id = first.json()["data"]["tokenId"]
+        assert original_token_id.startswith("ct-")
+
+        # Immediate retry with same key — must replay with same tokenId (not 409)
+        second = client.post("/bff/confirm-tokens", headers=headers, json=body)
+        assert second.status_code == 201, second.text
+        assert second.json()["data"]["tokenId"] == original_token_id
+        assert second.json()["meta"]["idempotency"]["replayed"] is True
+
+        # After memory clear, same key + same payload → still replay with original tokenId
+        bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+        third = client.post("/bff/confirm-tokens", headers=headers, json=body)
+        assert third.status_code == 201, third.text
+        assert third.json()["data"]["tokenId"] == original_token_id
+
+        # After memory clear, same key + different payload → 409
+        bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+        conflict = client.post("/bff/confirm-tokens", headers=headers, json={"reason": "different"})
+        assert conflict.status_code == 409, conflict.text
+        assert conflict.json()["detail"]["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+
+        # Only one command record created
+        assert len(bff_main.command_store._get_all_commands()) == 1
+
+
 def test_audit_and_v5_command_routes_write_domain_command_records() -> None:
     with _isolated_command_bridge() as client:
         routes = [

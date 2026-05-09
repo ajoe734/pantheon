@@ -21806,6 +21806,15 @@ def _sem_command_response(
         return JSONResponse(status_code=status_code, content=replay)
     existing_record = command_store.get_command_by_idempotency_key(clean_key)
     if existing_record:
+        stored_hash = (existing_record.get("foundation") or {}).get("idempotency_record", {}).get("request_hash")
+        if stored_hash and stored_hash != request_hash:
+            raise _bff_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency key was reused with a different command payload",
+                "The idempotency key already belongs to another command payload",
+                precondition_failed="idempotency_key",
+            )
         response = _sem_command_payload_from_record(existing_record, idempotency_key=clean_key, replayed=True)
         return JSONResponse(status_code=status_code, content=response)
 
@@ -21954,20 +21963,40 @@ async def sem_create_confirm_token_command(
 ):
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    token_id = str(payload.get("tokenId") or payload.get("token_id") or f"ct-{uuid.uuid4().hex[:12]}")
+    client_provided_id = str(payload.get("tokenId") or payload.get("token_id") or "").strip()
+    token_id = client_provided_id or f"ct-{uuid.uuid4().hex[:12]}"
+    server_generated = not bool(client_provided_id)
+    # When tokenId is server-generated, exclude it from the payload and target_id hash
+    # so that retries with the same Idempotency-Key replay correctly instead of
+    # conflicting on a different randomly-generated id.
+    hash_payload = dict(payload)
+    if server_generated:
+        hash_payload.pop("tokenId", None)
+        hash_payload.pop("token_id", None)
+    else:
+        hash_payload["tokenId"] = token_id
     response = _sem_command_response(
         command_type=CommandType.CONFIRM_TOKEN_CREATE,
         target_type=ObjectType.CONFIRM_TOKEN,
         target_id=token_id,
-        payload={**payload, "tokenId": token_id},
+        payload=hash_payload,
         identity=identity,
         idempotency_key=idempotency_key,
         x_idempotency_key=x_idempotency_key,
         status_code=201,
+        server_generated_target=server_generated,
     )
     content = json.loads(response.body.decode("utf-8"))
-    content["data"]["tokenId"] = token_id
-    content["data"]["id"] = token_id
+    # For server-generated token replays, recover the original tokenId from the
+    # durable command record so the response is stable across retries.
+    final_token_id = token_id
+    if server_generated and content.get("meta", {}).get("idempotency", {}).get("replayed"):
+        clean_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        stored = command_store.get_command_by_idempotency_key(clean_key)
+        if stored:
+            final_token_id = str(stored.get("target", {}).get("id") or token_id)
+    content["data"]["tokenId"] = final_token_id
+    content["data"]["id"] = final_token_id
     content["data"]["status"] = "created"
     return JSONResponse(status_code=201, content=content)
 
