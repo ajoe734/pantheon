@@ -123,26 +123,29 @@ def _cors_origins_from_env() -> List[str]:
 
 
 _cors_origins = _cors_origins_from_env()
+_CORS_ALLOW_HEADERS = [
+    "Accept",
+    "Accept-Language",
+    "Authorization",
+    "Cache-Control",
+    "Content-Type",
+    "X-BFF-Api-Version",
+    "X-Confirm-Token",
+    "Idempotency-Key",
+    "Last-Event-ID",
+    "X-Correlation-Id",
+    "X-Idempotency-Key",
+    "X-MFA-Token",
+    "X-Request-Id",
+    "X-Trace-Id",
+]
 if _cors_origins:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=[
-            "Accept",
-            "Authorization",
-            "Cache-Control",
-            "Content-Type",
-            "X-Confirm-Token",
-            "Idempotency-Key",
-            "Last-Event-ID",
-            "X-Correlation-Id",
-            "X-Idempotency-Key",
-            "X-MFA-Token",
-            "X-Request-Id",
-            "X-Trace-Id",
-        ],
+        allow_headers=_CORS_ALLOW_HEADERS,
     )
 
 # --------------------------------------------------------------------------- #
