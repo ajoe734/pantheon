@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-09T16:12:29Z",
+  "updated_at": "2026-05-09T16:14:04Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,12 +93,12 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "finalize",
+      "status": "waiting",
       "current_task_ids": [
-        "BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF"
+        "BFF-LUV-FE-002"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Review approved and returned to the owner for finalization",
+      "next": "Assignment created",
       "last_update": "2026-05-09T16:15:00Z"
     },
     {
@@ -473,38 +473,6 @@
       ],
       "next": "Assignment created",
       "last_update": "2026-05-09T15:41:46Z"
-    },
-    {
-      "id": "BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare BFF-LUV-AUTHED-LIVE-001 BFF and frontend handoff packet",
-      "summary_zh": "平行支援 BFF-LUV-AUTHED-LIVE-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-      "phase": "BFF Execute-Plans Authenticated Live Completion 2026-05-09",
-      "owner": "Claude",
-      "reviewer": "Gemini",
-      "status": "review_approved",
-      "depends_on": [],
-      "artifacts": [
-        "support/sidecars/BFF-LUV-AUTHED-LIVE-001/BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Review approved and returned to the owner for finalization",
-      "last_update": "2026-05-09T16:15:00Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "BFF-LUV-AUTHED-LIVE-001",
-      "helper_kind": "bff_handoff_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization",
-      "review_notes_zh": [
-        "Sidecar packet is support-only and complies with the helper_kind: bff_handoff_packet constraint.",
-        "It provides clear auth resolution paths and a safe operator journey for authenticated smoke tests.",
-        "Consistent with SEM-006 anonymous probe evidence."
-      ],
-      "review_file": "support/sidecars/BFF-LUV-AUTHED-LIVE-001/BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF.md"
     }
   ],
   "handoffs": [
@@ -770,23 +738,6 @@
       "resolved_at": "2026-05-08T18:04:36Z"
     },
     {
-      "task_id": "BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF",
-      "from": "Claude",
-      "to": "Gemini",
-      "message": "Support-only BFF handoff packet created at support/sidecars/BFF-LUV-AUTHED-LIVE-001/BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF.md. Covers: auth blocker with 4 resolution paths (stub window recommended), operator journey map for Stages 1-8 authenticated smoke, non-capital write-flow smoke targets (confirm-token only), parent absorption checklist, and frontend cutover gate table. Ready for reviewer check and parent-owner absorption decisions.",
-      "status": "done",
-      "created_at": "2026-05-09T16:00:44Z",
-      "resolved_at": "2026-05-09T16:15:00Z"
-    },
-    {
-      "task_id": "BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF",
-      "from": "Gemini",
-      "to": "Claude",
-      "message": "Review approved and returned to the owner for finalization",
-      "status": "pending",
-      "created_at": "2026-05-09T16:15:00Z"
-    },
-    {
       "task_id": "BFF-LUV-FE-001",
       "from": "Codex2",
       "to": "Claude",
@@ -825,12 +776,12 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 2,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 1,
+      "review_approved": 0,
       "todo": 1
     },
     "Claude2": {
