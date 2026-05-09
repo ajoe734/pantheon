@@ -22597,22 +22597,53 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
         )
     if path == "/bff/v5/loop-runs":
         available, records = read_store.list_loop_runs()
+        src_dataset = "loop_runs" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
         source = None if available else "missing"
-        return _sem_final_list_response(records, dataset="incidents", surface_key="loop_runs", source=source)
+        return _sem_final_list_response(records, dataset=src_dataset, surface_key="loop_runs", source=source)
     if path == "/bff/v5/sentinel/findings":
         available, records = read_store.list_sentinel_findings()
+        src_dataset = "sentinel_findings" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
         source = None if available else "missing"
-        return _sem_final_list_response(records, dataset="incidents", surface_key="sentinel_findings", source=source)
+        return _sem_final_list_response(records, dataset=src_dataset, surface_key="sentinel_findings", source=source)
     if path == "/bff/v5/control-room":
         snapshot_at = utc_now()
         avail_lr, loop_runs = read_store.list_loop_runs()
         avail_sf, sentinel_findings = read_store.list_sentinel_findings()
-        inc_source = None if (avail_lr or avail_sf) else "missing"
-        inc_surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at, source=inc_source)
+        incidents_source = read_store.dataset_source("incidents")
+
+        def _control_room_child_surface(dataset: str, available: bool) -> Dict[str, Any]:
+            if incidents_source != "missing":
+                return _dataset_surface_status("incidents", snapshot_at=snapshot_at)
+            return _dataset_surface_status(
+                dataset,
+                snapshot_at=snapshot_at,
+                source=None if available else "missing",
+            )
+
+        loop_surface = _control_room_child_surface("loop_runs", avail_lr)
+        sentinel_surface = _control_room_child_surface("sentinel_findings", avail_sf)
+        child_statuses = {
+            str(loop_surface.get("status") or "ok"),
+            str(sentinel_surface.get("status") or "ok"),
+        }
+        if child_statuses == {"ok"}:
+            control_surface = {"status": "ok", "source": "composed_read_models"}
+        elif child_statuses == {"unavailable"}:
+            control_surface = {
+                "status": "unavailable",
+                "source": "missing",
+                "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
+            }
+        else:
+            control_surface = {
+                "status": "degraded",
+                "source": "composed_read_models",
+                "staleness": {"served_from": "mixed", "last_known_at": snapshot_at},
+            }
         return {
             "loops": {
                 "items": loop_runs,
-                "meta": {"snapshot_at": snapshot_at, "surfaces": {"loop_runs": inc_surface}},
+                "meta": {"snapshot_at": snapshot_at, "surfaces": {"loop_runs": loop_surface}},
             },
             "interventions": {
                 "items": list(_V5_INTERVENTIONS_STORE),
@@ -22620,9 +22651,16 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
             },
             "sentinel": {
                 "items": sentinel_findings,
-                "meta": {"snapshot_at": snapshot_at, "surfaces": {"sentinel_findings": inc_surface}},
+                "meta": {"snapshot_at": snapshot_at, "surfaces": {"sentinel_findings": sentinel_surface}},
             },
-            "meta": {"snapshot_at": snapshot_at, "surfaces": {"control_room": inc_surface}},
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "surfaces": {
+                    "control_room": control_surface,
+                    "loop_runs": loop_surface,
+                    "sentinel_findings": sentinel_surface,
+                },
+            },
         }
     if path == "/bff/v5/execution/persona-health":
         snapshot_at = utc_now()
@@ -22731,22 +22769,24 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
         )
     if path.startswith("/bff/v5/loop-runs/"):
         available, record = read_store.get_loop_run(entity_id)
+        lr_src_dataset = "loop_runs" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
         return _sem_final_read_model_detail(
             record,
             entity_id=entity_id,
             label="Loop run",
-            dataset="incidents",
+            dataset=lr_src_dataset,
             surface_key="loop_run_detail",
             source=None if available else "missing",
             source_available=None if available else False,
         )
     if path.startswith("/bff/v5/sentinel/findings/"):
         available, record = read_store.get_sentinel_finding(entity_id)
+        sf_src_dataset = "sentinel_findings" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
         return _sem_final_read_model_detail(
             record,
             entity_id=entity_id,
             label="Sentinel finding",
-            dataset="incidents",
+            dataset=sf_src_dataset,
             surface_key="sentinel_finding_detail",
             source=None if available else "missing",
             source_available=None if available else False,

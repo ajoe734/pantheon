@@ -452,14 +452,58 @@ def test_get_sentinel_finding_unavailable(mock_read_store: ServiceBackedReadAdap
         if dataset in ("incidents", "sentinel_findings"):
             return False, {}
         return original_load_dataset(dataset, include_snapshot_fallback=include_snapshot_fallback)
-    
+
     mock_read_store._load_dataset = _mock_all_unavailable_load_dataset
-    
+
     available, finding = mock_read_store.get_sentinel_finding("sentinel-finding-1")
     assert available is False
     assert finding is None
-    
+
     # Restore original method
+    mock_read_store._load_dataset = original_load_dataset
+
+
+def test_list_loop_runs_empty_incidents_source_returns_available(mock_read_store: ServiceBackedReadAdapter):
+    """When incidents is available but empty, list_loop_runs must return (True, []).
+    Regression for: if avail_inc and incidents (falsy) falling through to loop_runs when
+    incidents source exists but has zero records."""
+    original_load_dataset = mock_read_store._load_dataset
+
+    def _mock_empty_incidents(dataset: str, *, include_snapshot_fallback: bool = True) -> tuple[bool, Dict[str, Dict[str, Any]]]:
+        if dataset == "incidents":
+            return True, {}  # available but empty
+        if dataset == "loop_runs":
+            return False, {}
+        return original_load_dataset(dataset, include_snapshot_fallback=include_snapshot_fallback)
+
+    mock_read_store._load_dataset = _mock_empty_incidents
+
+    available, loop_runs = mock_read_store.list_loop_runs()
+    assert available is True, "incidents source is available; must report available even when empty"
+    assert loop_runs == []
+
+    mock_read_store._load_dataset = original_load_dataset
+
+
+def test_list_sentinel_findings_empty_incidents_source_returns_available(mock_read_store: ServiceBackedReadAdapter):
+    """When incidents is available but empty, list_sentinel_findings must return (True, []).
+    Regression for: if avail_inc and incidents (falsy) falling through to sentinel_findings when
+    incidents source exists but has zero records."""
+    original_load_dataset = mock_read_store._load_dataset
+
+    def _mock_empty_incidents(dataset: str, *, include_snapshot_fallback: bool = True) -> tuple[bool, Dict[str, Dict[str, Any]]]:
+        if dataset == "incidents":
+            return True, {}  # available but empty
+        if dataset == "sentinel_findings":
+            return False, {}
+        return original_load_dataset(dataset, include_snapshot_fallback=include_snapshot_fallback)
+
+    mock_read_store._load_dataset = _mock_empty_incidents
+
+    available, findings = mock_read_store.list_sentinel_findings()
+    assert available is True, "incidents source is available; must report available even when empty"
+    assert findings == []
+
     mock_read_store._load_dataset = original_load_dataset
 
 # --- Integration Tests for BFF Endpoints ---

@@ -1143,7 +1143,7 @@ class ServiceBackedReadAdapter:
 
     def list_loop_runs(self) -> tuple[bool, List[Dict[str, Any]]]:
         avail_inc, incidents = self._load_dataset("incidents")
-        if avail_inc and incidents:
+        if avail_inc:
             return True, [
                 self._derive_loop_run(inc)
                 for inc in incidents.values()
@@ -1177,7 +1177,7 @@ class ServiceBackedReadAdapter:
 
     def list_sentinel_findings(self) -> tuple[bool, List[Dict[str, Any]]]:
         avail_inc, incidents = self._load_dataset("incidents")
-        if avail_inc and incidents:
+        if avail_inc:
             return True, [
                 self._derive_sentinel_finding(inc)
                 for inc in incidents.values()
