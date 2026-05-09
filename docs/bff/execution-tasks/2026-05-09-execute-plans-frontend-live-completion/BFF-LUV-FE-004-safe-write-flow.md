@@ -148,6 +148,53 @@ npm run build → exit 0
 
 ---
 
+## Rev4 Fix (Claude2 · 2026-05-09)
+
+### Change
+
+Added explicit `adaptLive` callbacks for `runAction`, `requestConfirmToken`, and `readConfirmToken`
+in `src/lib/bff/runAction.ts` to normalize backend command-receipt envelopes into the seam's
+declared `CommandResponse`/`ConfirmTokenResponse` shapes.
+
+**Root cause (per Codex review):** The BFF action route (`/bff/actions/{type}/{id}/{action}`) returns
+`_sem_command_response` shaped as `{status, data: {commandId, ...}, meta: {idempotency: {idempotencyKey, ...}}}`.
+`runAction` was calling `withLiveOrMock` without an `adaptLive` callback (3rd argument missing), so a
+live 2xx reply was returned raw rather than normalized. Similarly, the confirm-token create/read
+adapters were casting the full response as `ConfirmTokenResponse` without mapping `data.tokenId` → `confirmToken`.
+
+**Changes:**
+
+| File | Change |
+|------|--------|
+| `src/lib/bff/runAction.ts` | Added `adaptLive` to `runAction` — maps `data.commandId` → `actionId`, `meta.idempotency.idempotencyKey` → `idempotencyKey` |
+| `src/lib/bff/runAction.ts` | Fixed `requestConfirmToken` adapter — maps `data.tokenId` → `confirmToken`; fills `ttlSeconds/requiredPhrase/requiresMemo` from local `HIGH_RISK_ACTIONS` catalog |
+| `src/lib/bff/runAction.ts` | Fixed `readConfirmToken` adapter — maps `data.tokenId` → `confirmToken`; returns stable `ConfirmTokenResponse` shape |
+| `src/lib/bff/__tests__/runAction.test.ts` | Added 5 live-mode tests: `runAction`, `requestConfirmToken`, `readConfirmToken`, `redeemConfirmToken`, `deleteConfirmToken` — all force live transport via `liveStatus._reset`, mock `fetch`, and assert normalized envelope fields |
+
+Existing `redeemConfirmToken` and `deleteConfirmToken` adapters already returned the correct shape and did not need changes.
+
+### Verification (rev4)
+
+```
+npm run test -- src/lib/bff/__tests__/runAction.test.ts src/lib/bff-v1/__tests__/writes.test.ts
+→ 31 passed (22 + 9), 2 files
+
+npm run test
+→ 412 passed, 45 files; 3 pre-existing UI timeout failures (spec-conflict-g-ui-hygiene.test.tsx)
+
+npm run build → exit 0
+```
+
+Focused write-flow tests — `runAction.test.ts` (22 tests):
+- All prior 17 mock-branch tests retained (unchanged)
+- Live mode: `runAction` — asserts `data.actionId`, `data.status`, `idempotencyKey` from backend `meta`
+- Live mode: `requestConfirmToken` — asserts `data.confirmToken == tokenId`, `requiredPhrase` contains entity ID
+- Live mode: `readConfirmToken` — asserts `data.confirmToken == tokenId` from GET response `data.tokenId`
+- Live mode: `redeemConfirmToken` — asserts `data.tokenId`, `data.redeemed`
+- Live mode: `deleteConfirmToken` — asserts `data.tokenId`, `data.deleted`
+
+---
+
 ### Live Write Smoke Plan (for BFF-LUV-AUTHED-LIVE-001)
 
 When a valid Bearer token is available:
