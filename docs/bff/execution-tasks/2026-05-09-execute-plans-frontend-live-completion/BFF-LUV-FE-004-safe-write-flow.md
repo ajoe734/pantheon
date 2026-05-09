@@ -115,6 +115,39 @@ Focused write-flow tests — `runAction.test.ts` (17 tests):
 - `runAction` stays mock when `VITE_BFF_REAL_WRITES=true` but no bearer token
 - `requestConfirmToken` stays mock when `VITE_BFF_REAL_WRITES=true` but no bearer token
 
+---
+
+## Rev3 Fix (Claude2 · 2026-05-09)
+
+### Change
+
+Removed duplicate confirm-token lifecycle block from `src/lib/bff/runAction.ts`.
+
+Rev2 added `readConfirmToken` / `redeemConfirmToken` / `deleteConfirmToken` (and their
+envelope interfaces) at lines 215–327 (correct location with JSDoc), but inadvertently
+left a second stale copy of the same block at the end of the file (lines 476–543).
+This caused `SyntaxError: Identifier 'readConfirmToken' has already been declared` at
+import time, blocking all focused tests.
+
+The duplicate 69-line block was removed; the canonical definitions at lines 215–327 are retained unchanged.
+
+execute-plans commit: `428af21`
+
+### Verification (rev3)
+
+```
+npm run test -- src/lib/bff/__tests__/runAction.test.ts src/lib/bff-v1/__tests__/writes.test.ts
+→ 26 passed (17 + 9), 2 files
+
+npm run test
+→ 408 passed, 46 passed files; 1 pre-existing UI timeout failure
+  (spec-conflict-g-ui-hygiene.test.tsx — unrelated to FE-004)
+
+npm run build → exit 0
+```
+
+---
+
 ### Live Write Smoke Plan (for BFF-LUV-AUTHED-LIVE-001)
 
 When a valid Bearer token is available:
