@@ -114,6 +114,93 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
+    def test_ignores_activity_log_bullet_that_mentions_prior_quota_reassignment(self) -> None:
+        worker = self._worker_for_log(
+            "- 2026-05-09T07:29:01Z · Orchestrator · task_reassigned · Auto-reassigned review from Copilot to Codex2 after repeated Copilot quota terminal: 402 You have no quota\n"
+        )
+
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_ignores_captured_queue_event_json_that_mentions_prior_quota_reassignment(self) -> None:
+        worker = self._worker_for_log(
+            json.dumps(
+                {
+                    "event_id": "evt-1",
+                    "event_key": "dispatcher:Codex2:BFF-LUV-SEM-001",
+                    "target_agent": "codex2",
+                    "message": "Wake-up queued for supervisor: review_ready_dispatch",
+                    "metadata": {
+                        "task": {
+                            "next": "Auto-reassigned review from Copilot to Codex2 after repeated Copilot quota terminal: 402 You have no quota"
+                        }
+                    },
+                }
+            )
+            + "\n"
+        )
+
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_ignores_allowed_rate_limit_event(self) -> None:
+        worker = self._worker_for_log(
+            json.dumps(
+                {
+                    "type": "rate_limit_event",
+                    "rate_limit_info": {
+                        "status": "allowed",
+                        "resetsAt": 1778324400,
+                        "rateLimitType": "five_hour",
+                        "overageStatus": "rejected",
+                        "overageDisabledReason": "org_level_disabled",
+                        "isUsingOverage": False,
+                    },
+                }
+            )
+            + "\n"
+        )
+
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_detects_non_allowed_rate_limit_event(self) -> None:
+        line = json.dumps(
+            {
+                "type": "rate_limit_event",
+                "rate_limit_info": {
+                    "status": "rate_limited",
+                    "rateLimitType": "five_hour",
+                },
+            }
+        )
+        worker = self._worker_for_log(line + "\n")
+
+        self.assertEqual(supervisor.detect_worker_failure(worker), line)
+
+    def test_detects_real_no_quota_line(self) -> None:
+        worker = self._worker_for_log("402 You have no quota\n")
+
+        self.assertEqual(supervisor.detect_worker_failure(worker), "402 You have no quota")
+
+    def test_ignores_git_fatal_from_tool_command_output(self) -> None:
+        worker = self._worker_for_log(
+            "\n".join(
+                [
+                    "exec",
+                    "/bin/bash -lc 'git show abc:missing.md' in /repo",
+                    " exited 128 in 0ms:",
+                    "fatal: path 'missing.md' does not exist in 'abc'",
+                    "worker continued reviewing after this probe.",
+                ]
+            )
+            + "\n"
+        )
+
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_detects_standalone_fatal_line(self) -> None:
+        worker = self._worker_for_log("fatal: provider process crashed\n")
+
+        self.assertEqual(supervisor.detect_worker_failure(worker), "fatal: provider process crashed")
+
     def test_ignores_log_search_result_json_that_mentions_quota(self) -> None:
         worker = self._worker_for_log(
             "\n".join(
@@ -281,6 +368,17 @@ class DetectWorkerFailureTests(unittest.TestCase):
         )
 
         self.assertEqual(hint, datetime(2026, 4, 29, 5, 0, 0, tzinfo=timezone.utc))
+
+    def test_parse_quota_retry_hint_honors_explicit_utc(self) -> None:
+        from datetime import datetime, timezone
+
+        now = datetime(2026, 5, 8, 16, 53, 27, tzinfo=timezone.utc)
+        hint = supervisor.parse_quota_retry_hint(
+            "You've hit your limit · resets 8:40pm (UTC)",
+            now=now,
+        )
+
+        self.assertEqual(hint, datetime(2026, 5, 8, 20, 40, 0, tzinfo=timezone.utc))
 
     def test_parse_quota_retry_hint_returns_none_when_absent(self) -> None:
         self.assertIsNone(supervisor.parse_quota_retry_hint("Credit balance is too low"))
@@ -1356,6 +1454,154 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["target_agent"], "Qwen")
         self.assertEqual(queued_event["reason"], "owned_in_progress_dispatch")
 
+    def test_dispatcher_helper_claims_in_progress_when_owner_has_higher_priority_load(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo", "in_progress"],
+                    "require_owner_higher_priority_load": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Qwen": ["Claude"],
+                }
+            },
+            "agents": {
+                "qwen": {"id": "qwen", "display_name": "Qwen", "provider": "qwen"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {
+                "run-finalize": {
+                    "run_id": "run-finalize",
+                    "task_id": "WB-005",
+                    "provider": "qwen",
+                    "agent_id": "qwen",
+                    "status": "running",
+                    "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                }
+            },
+        }
+        status = {
+            "tasks": [
+                {"id": "WB-005", "status": "review_approved", "owner": "Qwen", "reviewer": "Claude", "depends_on": []},
+                {"id": "WB-006", "status": "in_progress", "owner": "Qwen", "reviewer": "Claude", "depends_on": []},
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state)
+
+        self.assertTrue(changed)
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "WB-006")
+        self.assertEqual(kwargs["new_owner"], "Claude")
+        self.assertEqual(kwargs["new_reviewer"], "Qwen")
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "WB-006")
+        self.assertEqual(queued_event["target_agent"], "Claude")
+        self.assertEqual(queued_event["reason"], "owned_in_progress_dispatch")
+
+    def test_dispatcher_helper_claim_uses_persisted_reassignment_timestamp_for_event_key(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo", "in_progress"],
+                    "require_owner_higher_priority_load": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Qwen": ["Claude"],
+                }
+            },
+            "agents": {
+                "qwen": {"id": "qwen", "display_name": "Qwen", "provider": "qwen"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        initial_status = {
+            "tasks": [
+                {"id": "WB-005", "status": "review_approved", "owner": "Qwen", "reviewer": "Claude", "depends_on": []},
+                {
+                    "id": "WB-006",
+                    "status": "in_progress",
+                    "owner": "Qwen",
+                    "reviewer": "Claude",
+                    "depends_on": [],
+                    "last_update": "2026-05-09T09:00:00Z",
+                },
+            ]
+        }
+        persisted_status = {
+            "tasks": [
+                {"id": "WB-005", "status": "review_approved", "owner": "Qwen", "reviewer": "Claude", "depends_on": []},
+                {
+                    "id": "WB-006",
+                    "status": "in_progress",
+                    "owner": "Claude",
+                    "reviewer": "Qwen",
+                    "depends_on": [],
+                    "last_update": "2026-05-09T10:00:00Z",
+                    "next": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+                },
+            ]
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {
+                "run-finalize": {
+                    "run_id": "run-finalize",
+                    "task_id": "WB-005",
+                    "provider": "qwen",
+                    "agent_id": "qwen",
+                    "status": "running",
+                    "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                }
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", side_effect=[initial_status, persisted_status]),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True),
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state)
+
+        self.assertTrue(changed)
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertIn('"last_update": "2026-05-09T10:00:00Z"', queued_event["key"])
+        self.assertEqual(queued_event["target_agent"], "Claude")
+        self.assertEqual(queued_event["reason"], "owned_in_progress_dispatch")
+
     def test_dispatcher_reassigns_mainline_qwen_owner_before_dispatch(self) -> None:
         config = {
             "schema": {
@@ -1989,6 +2235,27 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
         dispatch_ready_tasks.assert_not_called()
         dispatch_chair_review.assert_not_called()
         dispatch_underutilization_sidecars.assert_not_called()
+
+    def test_run_supervisor_cycle_logs_and_continues_after_error(self) -> None:
+        config = {"supervisor": {}}
+
+        with (
+            mock.patch.object(supervisor, "run_once", side_effect=RuntimeError("boom")) as run_once,
+            mock.patch.object(supervisor, "console_log") as console_log,
+        ):
+            changed = supervisor.run_supervisor_cycle(config, watch=True, replay=True, quiet=True, verbose=False)
+
+        self.assertFalse(changed)
+        run_once.assert_called_once_with(
+            config,
+            watch=True,
+            replay=True,
+            quiet=True,
+            verbose=False,
+            once=False,
+        )
+        self.assertIn("RuntimeError: boom", console_log.call_args.args[0])
+        self.assertTrue(console_log.call_args.kwargs["quiet"])
 
     def test_run_once_auto_materializes_accepted_session_before_execution_dispatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

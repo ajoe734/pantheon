@@ -89,6 +89,8 @@ WORKER_FAILURE_FALSE_POSITIVE_PATTERNS = (
     re.compile(r"^error:\s+BFF?[A-Za-z0-9_]*Error[A-Za-z0-9_]*,?$", re.IGNORECASE),
     re.compile(r"^error:\s+[A-Za-z_][A-Za-z0-9_<>{}\[\], :|?]+?\|\s*null$", re.IGNORECASE),
     re.compile(r"^[+-]?\s*console\.error\(", re.IGNORECASE),
+    re.compile(r"^-\s+\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\s+·\s+", re.IGNORECASE),
+    re.compile(r"\bauto-reassigned\b.*\bafter repeated\b.*\bquota\b", re.IGNORECASE),
 )
 SEARCH_RESULT_JSON_FIELD_PATTERN = re.compile(
     r"^(?:[^:\s][^:]*:)?\d+[:-]\s*\"[A-Za-z0-9_]+\"\s*:\s*",
@@ -102,6 +104,7 @@ SEARCH_RESULT_LOG_JSON_PATTERN = re.compile(
     r"^[^\s:]+\.log:\d+[:-]\s*\{",
     re.IGNORECASE,
 )
+COMMAND_OUTPUT_EXIT_LINE_PATTERN = re.compile(r"^exited\s+\d+\s+in\s+\S+:", re.IGNORECASE)
 
 LOCAL_TZ = ZoneInfo("Asia/Taipei")
 SUPERVISOR_LOG_QUIET = False
@@ -2464,7 +2467,8 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
         return None
 
     fallback: str | None = None
-    for line in reversed(lines):
+    for idx in range(len(lines) - 1, -1, -1):
+        line = lines[idx]
         stripped = line.strip()
         if not stripped:
             continue
@@ -2475,6 +2479,10 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
         except json.JSONDecodeError:
             stream_payload = None
         if isinstance(stream_payload, dict):
+            if is_captured_orchestrator_record(stream_payload):
+                continue
+            if is_allowed_rate_limit_event(stream_payload):
+                continue
             message = stream_payload.get("message")
             role = message.get("role") if isinstance(message, dict) else None
             if stream_payload.get("type") == "user" or role == "user":
@@ -2484,6 +2492,8 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
         if JSON_FIELD_LINE_PATTERN.search(stripped):
             continue
         if SEARCH_RESULT_LOG_JSON_PATTERN.search(stripped):
+            continue
+        if is_tool_command_output_failure_line(lines, idx):
             continue
         if any(pattern.search(stripped) for pattern in WORKER_FAILURE_FALSE_POSITIVE_PATTERNS):
             continue
@@ -2499,6 +2509,36 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
                 continue
             return stripped
     return fallback
+
+
+def is_captured_orchestrator_record(payload: dict[str, Any]) -> bool:
+    if payload.get("event_id") or payload.get("event_key"):
+        return True
+    if payload.get("queue_event_id") or payload.get("worker_run_id"):
+        return True
+    if payload.get("target_agent") or payload.get("target_display_name"):
+        return True
+    if isinstance(payload.get("metadata"), dict) and isinstance(payload.get("context_files"), list):
+        return True
+    return False
+
+
+def is_allowed_rate_limit_event(payload: dict[str, Any]) -> bool:
+    if payload.get("type") != "rate_limit_event":
+        return False
+    info = payload.get("rate_limit_info")
+    if not isinstance(info, dict):
+        return False
+    return str(info.get("status") or "").strip().lower() == "allowed"
+
+
+def is_tool_command_output_failure_line(lines: list[str], idx: int) -> bool:
+    for prev_idx in range(idx - 1, max(idx - 5, -1), -1):
+        previous = lines[prev_idx].strip()
+        if not previous:
+            continue
+        return bool(COMMAND_OUTPUT_EXIT_LINE_PATTERN.search(previous))
+    return False
 
 
 def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reason: str | None) -> dict[str, Any]:
@@ -2584,8 +2624,9 @@ def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -
     """Return the next wall-clock time at which a quota error says it will reset.
 
     Both Codex ("try again at 7:00 PM") and Claude ("resets 1pm (Asia/Taipei)")
-    emit times in the user's local clock; we interpret them in LOCAL_TZ. Returns
-    a UTC-aware datetime, or None if no hint is found.
+    emit reset times. Bare times are interpreted in LOCAL_TZ, while explicit UTC
+    hints are interpreted in UTC. Returns a UTC-aware datetime, or None if no
+    hint is found.
     """
     if not reason:
         return None
@@ -2601,7 +2642,8 @@ def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -
         hour = 0
     if not (0 <= hour < 24 and 0 <= minute < 60):
         return None
-    base = (now.astimezone(LOCAL_TZ) if now else datetime.now(LOCAL_TZ))
+    hint_tz = timezone.utc if re.search(r"\(\s*UTC\s*\)|\bUTC\b", reason, re.IGNORECASE) else LOCAL_TZ
+    base = (now.astimezone(hint_tz) if now else datetime.now(hint_tz))
     candidate = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if candidate <= base:
         candidate += timedelta(days=1)
@@ -2900,8 +2942,8 @@ def worker_reassignment_settings(config: dict[str, Any]) -> dict[str, Any]:
         "Claude2": ["Codex", "Codex2", "Claude"],
         "Gemini": ["Codex", "Codex2", "Claude"],
         "Gemini2": ["Codex", "Codex2", "Claude"],
-        "Codex": ["Codex2", "Claude"],
-        "Codex2": ["Codex", "Claude"],
+        "Codex": ["Codex2", "Claude", "Claude2"],
+        "Codex2": ["Codex", "Claude", "Claude2"],
         "Copilot": ["Codex", "Codex2", "Claude"],
         "Grok": ["Codex", "Codex2", "Claude"],
     }
@@ -4494,7 +4536,7 @@ def ready_dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
 def helper_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings = dict(ready_dispatch_settings(config).get("helper_claim", {}) or {})
     settings.setdefault("enabled", True)
-    settings.setdefault("task_statuses", ["todo"])
+    settings.setdefault("task_statuses", ["todo", "in_progress"])
     settings.setdefault("paused_owner_task_statuses", ["in_progress"])
     settings.setdefault("require_owner_higher_priority_load", True)
     return settings
@@ -5378,7 +5420,11 @@ def choose_helper_claim_agent(
         return idle_agent_name in fallbacks
     owner_loads = agent_loads.get(owner_name, [])
     if helper_settings.get("require_owner_higher_priority_load", True):
-        current_priority = dispatch_reason_priority("owned_ready_dispatch")
+        dispatch_reason_for_status = {
+            "in_progress": "owned_in_progress_dispatch",
+            "todo": "owned_ready_dispatch",
+        }.get(task_status, "owned_ready_dispatch")
+        current_priority = dispatch_reason_priority(dispatch_reason_for_status)
         if current_priority is None or not any(priority < current_priority for priority in owner_loads):
             return False
     return idle_agent_name in fallbacks
@@ -5759,10 +5805,28 @@ def dispatch_ready_tasks(
                     handoff_to=target_agent,
                     handoff_from=str(task_owner or ""),
                 ):
+                    new_reviewer = str(task_owner or task_reviewer or "")
                     task[owner_field] = target_agent
-                    task[reviewer_field] = str(task_owner or task_reviewer or "")
-                    task["last_update"] = utc_now()
+                    task[reviewer_field] = new_reviewer
                     task["next"] = helper_message
+
+                    # Re-read the persisted task before signing the dispatch event. The
+                    # status writer owns last_update; using a separate utc_now() here
+                    # makes the queued event immediately look stale.
+                    persisted_status = load_status(config)
+                    persisted_task_map = task_index_from_status(config, persisted_status)
+                    persisted_task = persisted_task_map.get(task_id)
+                    if (
+                        persisted_task
+                        and persisted_task.get(owner_field) == target_agent
+                        and persisted_task.get(reviewer_field) == new_reviewer
+                    ):
+                        task.update(persisted_task)
+                        task_map = dict(task_map)
+                        task_map[task_id] = task
+                    else:
+                        task["last_update"] = utc_now()
+
                     event = build_dispatch_event(task, target_agent, helper_dispatch_reason, task_map)
                     if event["key"] not in pending_event_keys and queue_delivery_event(config, event):
                         seen[event["key"]] = utc_now()
@@ -6234,6 +6298,24 @@ def run_once(
         raise
 
 
+def run_supervisor_cycle(
+    config: dict[str, Any],
+    *,
+    watch: bool,
+    replay: bool = False,
+    quiet: bool = False,
+    verbose: bool = False,
+) -> bool:
+    try:
+        return run_once(config, watch=watch, replay=replay, quiet=quiet, verbose=verbose, once=False)
+    except Exception as exc:
+        console_log(
+            f"supervisor cycle failed: {type(exc).__name__}: {exc}; continuing after next poll",
+            quiet=quiet,
+        )
+        return False
+
+
 def main() -> int:
     global SUPERVISOR_LOG_QUIET
     args = parse_args()
@@ -6248,25 +6330,31 @@ def main() -> int:
         f"starting supervisor pid={os.getpid()} poll_interval={poll_interval:.1f}s config={args.config}",
         quiet=args.quiet,
     )
-    run_once(
+    if args.once:
+        run_once(
+            config,
+            watch=not args.no_watch,
+            replay=args.replay,
+            quiet=args.quiet,
+            verbose=args.verbose,
+            once=True,
+        )
+        return 0
+    run_supervisor_cycle(
         config,
         watch=not args.no_watch,
         replay=args.replay,
         quiet=args.quiet,
         verbose=args.verbose,
-        once=args.once,
     )
-    if args.once:
-        return 0
     while True:
         time.sleep(poll_interval)
-        run_once(
+        run_supervisor_cycle(
             config,
             watch=not args.no_watch,
             replay=False,
             quiet=args.quiet,
             verbose=args.verbose,
-            once=False,
         )
 
 

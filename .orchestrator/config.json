@@ -22,8 +22,8 @@
     "max_seen_events": 2000
   },
   "supervisor": {
-    "poll_interval_seconds": 300,
-    "heartbeat_warn_after_seconds": 10.0,
+    "poll_interval_seconds": 15,
+    "heartbeat_warn_after_seconds": 45.0,
     "stall_after_seconds": 300,
     "max_worker_history": 200,
     "auto_refresh_provider_capabilities": true
@@ -111,11 +111,13 @@
       ],
       "Codex": [
         "Codex2",
-        "Claude"
+        "Claude",
+        "Claude2"
       ],
       "Codex2": [
         "Codex",
-        "Claude"
+        "Claude",
+        "Claude2"
       ],
       "Copilot": [
         "Codex",
@@ -145,11 +147,13 @@
       ],
       "Codex": [
         "Codex2",
-        "Claude"
+        "Claude",
+        "Claude2"
       ],
       "Codex2": [
         "Codex",
-        "Claude"
+        "Claude",
+        "Claude2"
       ],
       "Copilot": [
         "Codex",
@@ -573,7 +577,8 @@
     "helper_claim": {
       "enabled": true,
       "task_statuses": [
-        "todo"
+        "todo",
+        "in_progress"
       ],
       "require_owner_higher_priority_load": true
     },

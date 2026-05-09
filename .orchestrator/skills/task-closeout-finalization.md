@@ -20,6 +20,10 @@ Only the task owner may move a `review_approved` task to `done`. The owner is re
 7. Create a task-scoped commit before finalizing whenever the task changed repo files and an isolated commit is possible.
 8. Run `AI_NAME=<Owner> ./scripts/ai-status.sh done <task-id> "<checkpoint message>"` only after the above is complete.
 
+## Background Worker Git Rule
+
+Auto workers run without a human-attended terminal. Do not use interactive git commands such as `git add -p`, `git add -i`, `git commit --interactive`, or `git rebase -i` during closeout. Use explicit file/path staging plus `git diff --cached` review, or skip the isolated commit with a clear exception note when task-owned hunks cannot be separated non-interactively.
+
 ## Commit Requirements
 
 Task closeout commits must be narrow and traceable.

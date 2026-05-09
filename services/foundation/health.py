@@ -103,7 +103,7 @@ def register_fastapi_health_routes(
     async def livez() -> dict[str, Any]:
         return health_payload(service, ready=True, metrics=metrics, details=details)
 
-    async def readyz() -> JSONResponse:
+    async def readyz() -> Any:
         payload = _payload()
         return JSONResponse(payload, status_code=readiness_status_code(payload))
 

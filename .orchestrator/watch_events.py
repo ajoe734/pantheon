@@ -258,6 +258,7 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
         "reason": event.get("reason") or "wakeup",
         "target_files": "\n".join(f"- {path}" for path in target_files) if target_files else "- (none inferred)",
         "sidecar_guardrails": sidecar_guardrails.rstrip(),
+        "target_agent_display_name": display_name_for(config, agent["id"]),
     }
     return render_template(template_path, variables).strip() + "\n"
 
