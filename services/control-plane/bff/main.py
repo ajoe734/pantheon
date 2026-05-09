@@ -21705,6 +21705,419 @@ def _prefer_latest_bff_gap004_routes() -> None:
 _prefer_latest_bff_gap004_routes()
 
 
+def _sem_empty_final_list(surface_key: str) -> Dict[str, Any]:
+    return {
+        "items": [],
+        "page_info": {"next_page_token": None},
+        "meta": {"snapshot_at": utc_now(), "surfaces": {surface_key: {"status": "unavailable", "source": "missing"}}},
+    }
+
+
+def _sem_final_registry_meta(surface_key: str, *, snapshot_at: Optional[str] = None, total: Optional[int] = None) -> Dict[str, Any]:
+    snapshot_at = snapshot_at or utc_now()
+    meta: Dict[str, Any] = {
+        "snapshot_at": snapshot_at,
+        "surfaces": {surface_key: {"status": "ok", "source": "bff_local_registry"}},
+    }
+    if total is not None:
+        meta["total"] = total
+    return meta
+
+
+def _sem_final_list_response(
+    items: List[Dict[str, Any]],
+    *,
+    dataset: str,
+    surface_key: str,
+    source: Optional[str] = None,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    if source == "bff_local_registry":
+        meta = _sem_final_registry_meta(surface_key, snapshot_at=snapshot_at, total=len(items))
+    else:
+        surface = _dataset_surface_status(dataset, snapshot_at=snapshot_at, source=source)
+        meta = {
+            "snapshot_at": snapshot_at,
+            "surfaces": {surface_key: surface},
+            "total": len(items),
+        }
+        reason = _surface_degradation_reason(
+            surface,
+            degraded_reason=f"{surface_key.replace('_', ' ')} is degraded and may be stale.",
+            unavailable_reason=f"{surface_key.replace('_', ' ')} is currently unavailable.",
+        )
+        if reason is not None:
+            meta["degradation"] = {"reason": reason}
+    return {
+        "data": items,
+        "items": items,
+        "page_info": {"next_page_token": None, "total": len(items)},
+        "meta": meta,
+    }
+
+
+def _sem_final_degraded_detail(
+    *,
+    entity_id: str,
+    label: str,
+    dataset: str,
+    surface_key: str,
+    source: Optional[str] = None,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    surface = _dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        has_data=False,
+        missing_message=f"{label} read model source is unavailable.",
+        source=source,
+    )
+    meta = _read_surface_meta(
+        dataset,
+        surface_key,
+        snapshot_at=snapshot_at,
+        surface=surface,
+        unavailable_reason=f"{label} read model source is unavailable.",
+    )
+    return {
+        "data": {
+            "id": entity_id,
+            "status": "degraded",
+            "readSurface": surface,
+            "message": f"{label} read model source is unavailable.",
+        },
+        "meta": meta,
+    }
+
+
+def _sem_final_read_model_detail(
+    record: Optional[Dict[str, Any]],
+    *,
+    entity_id: str,
+    label: str,
+    dataset: str,
+    surface_key: str,
+    source: Optional[str] = None,
+    source_available: Optional[bool] = None,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    surface = _dataset_surface_status(dataset, snapshot_at=snapshot_at, source=source)
+    if record:
+        return {
+            "data": record,
+            "meta": _read_surface_meta(dataset, surface_key, snapshot_at=snapshot_at, surface=surface),
+        }
+    if source_available is False or surface.get("status") == "unavailable":
+        return _sem_final_degraded_detail(
+            entity_id=entity_id,
+            label=label,
+            dataset=dataset,
+            surface_key=surface_key,
+            source=source,
+        )
+    raise _bff_error(
+        404,
+        ErrorCode.OBJECT_NOT_FOUND,
+        f"{label} not found",
+        f"{label} {entity_id} does not exist",
+    )
+
+
+def _sem_final_registry_detail(
+    record: Optional[Dict[str, Any]],
+    *,
+    entity_id: str,
+    label: str,
+    surface_key: str,
+) -> Dict[str, Any]:
+    if not record:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            f"{label} not found",
+            f"{label} {entity_id} does not exist",
+        )
+    snapshot_at = utc_now()
+    return {
+        "data": record,
+        "meta": _sem_final_registry_meta(surface_key, snapshot_at=snapshot_at),
+    }
+
+
+def _sem_final_mcp_tool_records() -> List[Dict[str, Any]]:
+    records: List[Dict[str, Any]] = []
+    for record in _MCP_TOOL_REGISTRY.values():
+        tool_id = str(record.get("tool_id") or record.get("id") or "").strip()
+        if not tool_id:
+            continue
+        records.append(
+            {
+                "id": tool_id,
+                "tool_id": tool_id,
+                "server_id": record.get("server_id"),
+                "name": record.get("name") or tool_id,
+                "status": record.get("status") or "imported",
+                "tool_class": record.get("tool_class") or "",
+                "schema_url": record.get("schema_url"),
+                "action_count": record.get("action_count", 0),
+            }
+        )
+    return sorted(records, key=lambda item: (str(item.get("server_id") or ""), str(item.get("tool_id") or "")))
+
+
+def _sem_final_mcp_tool_record(tool_id: str) -> Optional[Dict[str, Any]]:
+    clean_id = str(tool_id or "").strip()
+    for record in _sem_final_mcp_tool_records():
+        if str(record.get("tool_id") or record.get("id") or "") == clean_id:
+            return record
+    return None
+
+
+def _sem_final_channel_records() -> List[Dict[str, Any]]:
+    return [
+        {
+            "id": channel,
+            "channel_id": channel,
+            "name": channel,
+            "status": "active",
+            "replay_supported": channel in _SSE_RESYNC_ROUTES,
+            "resync_routes": list(_SSE_RESYNC_ROUTES.get(channel, ())),
+        }
+        for channel in SSE_CHANNEL_CATALOG
+    ]
+
+
+def _sem_final_channel_record(channel_id: str) -> Optional[Dict[str, Any]]:
+    clean_id = str(channel_id or "").strip()
+    return next((record for record in _sem_final_channel_records() if record["id"] == clean_id), None)
+
+
+def _sem_final_v5_intervention_record(intervention_id: str) -> Optional[Dict[str, Any]]:
+    clean_id = str(intervention_id or "").strip()
+    for record in _V5_INTERVENTIONS_STORE:
+        if str(record.get("id") or record.get("intervention_id") or "") == clean_id:
+            return dict(record)
+    return None
+
+
+def _sem_final_alert_detail(alert_id: str) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    payload = _build_operator_alerts_payload(snapshot_at)
+    alerts = payload.get("alerts") if isinstance(payload, dict) else []
+    alert = next(
+        (
+            item
+            for item in alerts or []
+            if str(item.get("alert_id") or item.get("id") or "") == str(alert_id)
+        ),
+        None,
+    )
+    if alert:
+        meta = dict(payload.get("meta") or {})
+        meta.setdefault("snapshot_at", snapshot_at)
+        return {"data": alert, "meta": meta}
+    surfaces = ((payload.get("meta") or {}).get("surfaces") or {}) if isinstance(payload, dict) else {}
+    alerts_surface = surfaces.get("alerts") if isinstance(surfaces, dict) else None
+    if isinstance(alerts_surface, dict) and alerts_surface.get("status") == "unavailable":
+        return _sem_final_degraded_detail(
+            entity_id=alert_id,
+            label="Alert",
+            dataset="incidents",
+            surface_key="alert_detail",
+            source=alerts_surface.get("source"),
+        )
+    raise _bff_error(
+        404,
+        ErrorCode.OBJECT_NOT_FOUND,
+        "Alert not found",
+        f"Alert {alert_id} does not exist",
+    )
+
+
+def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
+    if path == "/bff/artifacts":
+        return _sem_final_list_response(
+            read_store.list_research_artifacts(),
+            dataset="research_artifacts",
+            surface_key="artifacts",
+        )
+    if path == "/bff/mcp-servers":
+        return _sem_final_list_response(
+            [dict(record) for record in _MCP_SERVER_REGISTRY.values()],
+            dataset="mcp_servers",
+            surface_key="mcp_servers",
+            source="bff_local_registry",
+        )
+    if path == "/bff/mcp-tools":
+        return _sem_final_list_response(
+            _sem_final_mcp_tool_records(),
+            dataset="mcp_tools",
+            surface_key="mcp_tools",
+            source="bff_local_registry",
+        )
+    if path == "/bff/ranking-formulas":
+        return _sem_final_list_response(
+            read_store.list_ranking_formulas(),
+            dataset="ranking_formulas",
+            surface_key="ranking_formulas",
+        )
+    if path == "/bff/research-experiments":
+        source = "bff_overlay" if _GOV_BFF_EXPERIMENT_OVERLAY else None
+        return _sem_final_list_response(
+            _list_bff_experiments(),
+            dataset="research_experiments",
+            surface_key="research_experiments",
+            source=source,
+        )
+    if path == "/bff/channels":
+        return _sem_final_list_response(
+            _sem_final_channel_records(),
+            dataset="channels",
+            surface_key="channels",
+            source="bff_local_registry",
+        )
+    return None
+
+
+def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Dict[str, Any]]:
+    if path.startswith("/bff/alerts/"):
+        return _sem_final_alert_detail(entity_id)
+    if path.startswith("/bff/approvals/"):
+        return _sem_final_read_model_detail(
+            read_store.get_approval_decision(entity_id),
+            entity_id=entity_id,
+            label="Approval",
+            dataset="approval_decisions",
+            surface_key="approval_detail",
+        )
+    if path.startswith("/bff/artifacts/"):
+        return _sem_final_read_model_detail(
+            read_store.get_research_artifact(entity_id),
+            entity_id=entity_id,
+            label="Artifact",
+            dataset="research_artifacts",
+            surface_key="artifact_detail",
+        )
+    if path.startswith("/bff/channels/"):
+        return _sem_final_registry_detail(
+            _sem_final_channel_record(entity_id),
+            entity_id=entity_id,
+            label="Channel",
+            surface_key="channel_detail",
+        )
+    if path.startswith("/bff/mcp-servers/"):
+        return _sem_final_registry_detail(
+            _MCP_SERVER_REGISTRY.get(entity_id),
+            entity_id=entity_id,
+            label="MCP server",
+            surface_key="mcp_server_detail",
+        )
+    if path.startswith("/bff/mcp-tools/"):
+        return _sem_final_registry_detail(
+            _sem_final_mcp_tool_record(entity_id),
+            entity_id=entity_id,
+            label="MCP tool",
+            surface_key="mcp_tool_detail",
+        )
+    if path.startswith("/bff/ranking-formulas/"):
+        return _sem_final_read_model_detail(
+            read_store.get_ranking_formula(entity_id),
+            entity_id=entity_id,
+            label="Ranking formula",
+            dataset="ranking_formulas",
+            surface_key="ranking_formula_detail",
+        )
+    if path.startswith("/bff/research-experiments/"):
+        source = "bff_overlay" if _GOV_BFF_EXPERIMENT_OVERLAY else None
+        return _sem_final_read_model_detail(
+            _get_bff_experiment(entity_id),
+            entity_id=entity_id,
+            label="Research experiment",
+            dataset="research_experiments",
+            surface_key="research_experiment_detail",
+            source=source,
+            source_available=True if _GOV_BFF_EXPERIMENT_OVERLAY else None,
+        )
+    if path.startswith("/bff/v5/interventions/"):
+        return _sem_final_registry_detail(
+            _sem_final_v5_intervention_record(entity_id),
+            entity_id=entity_id,
+            label="Intervention",
+            surface_key="intervention_detail",
+        )
+    return None
+
+
+@app.get("/bff/alerts")
+@app.get("/bff/alerts/{id}")
+@app.get("/bff/agora/signals/{id}")
+@app.get("/bff/approvals/{id}")
+@app.get("/bff/artifacts")
+@app.get("/bff/artifacts/{id}")
+@app.get("/bff/audit")
+@app.get("/bff/channels")
+@app.get("/bff/channels/{id}")
+@app.get("/bff/events/stream")
+@app.get("/bff/incidents")
+@app.get("/bff/incidents/{id}")
+@app.get("/bff/mcp-servers")
+@app.get("/bff/mcp-servers/{id}")
+@app.get("/bff/mcp-tools")
+@app.get("/bff/mcp-tools/{id}")
+@app.get("/bff/runtimes")
+@app.get("/bff/runtimes/{id}")
+@app.get("/bff/ranking-formulas")
+@app.get("/bff/research-experiments")
+@app.get("/bff/tools")
+@app.get("/bff/tools/{id}")
+@app.get("/bff/v5/control-room")
+@app.get("/bff/v5/execution/persona-health")
+@app.get("/bff/v5/execution/strategy-health")
+@app.get("/bff/v5/loop-runs")
+@app.get("/bff/v5/loop-runs/{id}")
+@app.get("/bff/v5/sentinel/findings")
+@app.get("/bff/v5/sentinel/findings/{id}")
+async def sem_final_generic_read_alias(
+    request: Request,
+    id: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    _require_read_role(_extract_identity(authorization))
+    path = request.url.path
+    if id:
+        detail = _sem_final_generic_detail_for_path(path, id)
+        if detail is not None:
+            return detail
+        return {"data": {"id": id}, "meta": {"snapshot_at": utc_now()}}
+    listed = _sem_final_generic_list_for_path(path)
+    if listed is not None:
+        return listed
+    return _sem_empty_final_list("execute_plans")
+
+
+@app.get("/bff/capital-pools/{id}")
+@app.get("/bff/deployments/{id}")
+@app.get("/bff/evolution-programs/{id}")
+@app.get("/bff/jobs/{id}")
+@app.get("/bff/personas/{id}")
+@app.get("/bff/ranking-formulas/{id}")
+@app.get("/bff/rebalances/{id}")
+@app.get("/bff/research-experiments/{id}")
+@app.get("/bff/skills/{id}")
+@app.get("/bff/strategies/{id}")
+@app.get("/bff/v5/interventions/{id}")
+async def sem_final_id_named_read_alias(
+    request: Request,
+    id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    _require_read_role(_extract_identity(authorization))
+    detail = _sem_final_generic_detail_for_path(request.url.path, id)
+    if detail is not None:
+        return detail
+    return {"data": {"id": id}, "meta": {"snapshot_at": utc_now()}}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)
