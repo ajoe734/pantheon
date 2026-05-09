@@ -316,6 +316,35 @@ def test_execute_plans_sse_aliases_return_replay_unavailable_envelope() -> None:
     assert error["details"]["lastEventId"] == "evt-final-sse-missing"
 
 
+def test_bff_events_stream_matches_lovable_shell_schema_without_auth() -> None:
+    response = asyncio.run(
+        bff_main.stream_bff_events(
+            channels="system,loop",
+            last_event_id=None,
+            last_event_id_camel=None,
+        )
+    )
+
+    assert response.media_type == "text/event-stream"
+    assert response.headers["X-SSE-Channel"] == "bff"
+    assert response.headers["X-SSE-Replay-Supported"] == "false"
+
+    first_chunk = asyncio.run(anext(response.body_iterator))
+    assert "event:" not in first_chunk
+    data_line = next(line for line in first_chunk.splitlines() if line.startswith("data: "))
+    payload = json.loads(data_line.removeprefix("data: "))
+    assert payload["schemaVersion"] == 1
+    assert payload["channel"] == "system"
+    assert payload["type"] == "system.connected"
+    assert payload["payload"]["channels"] == ["system", "loop"]
+
+
+def test_cors_allow_headers_include_lovable_bff_client_headers() -> None:
+    assert "Accept-Language" in bff_main._CORS_ALLOW_HEADERS
+    assert "X-BFF-Api-Version" in bff_main._CORS_ALLOW_HEADERS
+    assert "X-Request-Id" in bff_main._CORS_ALLOW_HEADERS
+
+
 def test_internal_publish_infers_approval_and_ask_channels() -> None:
     client = TestClient(bff_main.app)
 
