@@ -1,8 +1,8 @@
 {
   "project": "pantheon",
-  "sprint": "2026-04-30-activation-ready-platform-closure",
-  "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-10T06:04:12Z",
+  "sprint": "2026-05-10-ep5-broker-tw-qlib-activation",
+  "objective": "BFF execute-plans 前端 wiring 已 loop_complete (46/46 features)，sprint 主軸轉向 EP5 canary readiness 與 OSS production activation。三條 track 並行：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, 跑 place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py 的 human-gate packet 流程；(B) Qlib 第一個 governed LightGBM alpha activation — 寫 RS-003 baseline StrategySpec, 從 TWSE OpenAPI / TPEx E-Data 抓 ≥50 instruments × ≥2 years OHLCV, 跑 production_activation_smoke.py --backend real, submit registry admission packet；(C) services/ namespace normalization — control_plane 併入 control-plane/internal, registry-core/decision-domain 併入 registry/decision_domain。broker production live 與 capital binding 仍 fail-closed; canary 仍需 risk-owner + operator approval gate。Track A 與 B 共用 TW market dataset 不重做兩次。",
+  "updated_at": "2026-05-10T11:09:56Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -183,125 +183,7 @@
       "last_update": "2026-05-09T16:30:59Z"
     }
   ],
-  "tasks": [
-    {
-      "id": "BFF-LUV-GAP-004",
-      "title": "Implement evolution experiment jobs and events BFF compatibility",
-      "summary_zh": "補上 evolution、experiments、jobs、events route families。",
-      "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
-      "owner": "Codex",
-      "reviewer": "Gemini2",
-      "status": "done",
-      "depends_on": [],
-      "artifacts": [
-        "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/BFF-LUV-GAP-004-evolution-experiment-jobs-events.md"
-      ],
-      "acceptance": [
-        "evolution routes covered",
-        "experiment routes covered",
-        "job and event routes covered"
-      ],
-      "next": "Task finalized and committed.",
-      "last_update": "2026-05-08T18:08:00Z"
-    },
-    {
-      "id": "BFF-LUV-GAP-006",
-      "title": "Implement Agora core BFF compatibility",
-      "summary_zh": "補上 Part 06 與 src/lib/v3 目前引用的 Agora core /bff routes。",
-      "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "done",
-      "depends_on": [],
-      "artifacts": [
-        "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/BFF-LUV-GAP-006-agora-core.md"
-      ],
-      "acceptance": [
-        "agora daily signals sessions routes covered",
-        "notes journal insights routes covered",
-        "memory training routes covered"
-      ],
-      "next": "Auto-reassigned review from Gemini2 to Codex2 after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.",
-      "last_update": "2026-05-08T17:58:14Z"
-    },
-    {
-      "id": "BFF-LUV-GAP-007",
-      "title": "Reconcile extended Agora and FULL-spec routes",
-      "summary_zh": "整理 FULL spec 與長尾 Agora routes，實作 active source refs 並標記歷史 routes 的 disposition。",
-      "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "done",
-      "depends_on": [],
-      "artifacts": [
-        "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/BFF-LUV-GAP-007-agora-extended-full-spec.md"
-      ],
-      "acceptance": [
-        "committee evidence routes covered",
-        "persona lab route covered",
-        "FULL-only route families have registry disposition"
-      ],
-      "next": "Review packet refreshed for BFF-LUV-GAP-007: artifact now includes verification commands/results. Focused pytest remains green: python3 -m pytest services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 14 passed, 2 pre-existing datetime.utcnow warnings; coverage report -> agora-extended 4 implemented, 8 alias, 0 missing, 0 deferred, 5 superseded.",
-      "last_update": "2026-05-08T18:00:15Z"
-    },
-    {
-      "id": "BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare BFF-LUV-GAP-006 BFF and frontend handoff packet",
-      "summary_zh": "平行支援 BFF-LUV-GAP-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-      "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
-      "owner": "Codex2",
-      "reviewer": "Codex",
-      "status": "done",
-      "depends_on": [],
-      "artifacts": [
-        "support/sidecars/BFF-LUV-GAP-006/BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Approved support-only BFF handoff packet for BFF-LUV-GAP-006; parent owner absorbed the checklist into implementation evidence and focused BFF verification remains green.",
-      "last_update": "2026-05-08T17:33:16Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "BFF-LUV-GAP-006",
-      "helper_kind": "bff_handoff_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization",
-      "review_notes_zh": [
-        "Sidecar packet is support-only and scoped under support/sidecars; it does not redefine canonical route truth.",
-        "Parent artifact now records absorption of the packet checklist into BFF-LUV-GAP-006 implementation evidence.",
-        "Focused verification rerun from parent artifact: python3 -m pytest services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py services/control-plane/bff/test_action_catalog.py services/control-plane/bff/test_agora_journal_merge_patch.py -q -> 25 passed, 6 pre-existing datetime.utcnow warnings."
-      ]
-    },
-    {
-      "id": "BFF-LUV-GAP-004-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare BFF-LUV-GAP-004 BFF and frontend handoff packet",
-      "summary_zh": "平行支援 BFF-LUV-GAP-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-      "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
-      "owner": "Gemini2",
-      "reviewer": "Codex",
-      "status": "done",
-      "depends_on": [],
-      "artifacts": [
-        "support/sidecars/BFF-LUV-GAP-004/BFF-LUV-GAP-004-SIDECAR-BFF-HANDOFF.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Handoff packet prepared and updated. Ready for review.",
-      "last_update": "2026-05-08T17:38:41Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "BFF-LUV-GAP-004",
-      "helper_kind": "bff_handoff_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
-    }
-  ],
+  "tasks": [],
   "handoffs": [
     {
       "task_id": "LUV-REVIEW-007",
@@ -311,258 +193,6 @@
       "status": "done",
       "created_at": "2026-04-17T11:50:38Z",
       "resolved_at": "2026-04-17T12:39:53Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-004",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T16:04:49Z",
-      "resolved_at": "2026-05-08T16:22:04Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-006",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T16:06:15Z",
-      "resolved_at": "2026-05-08T16:07:39Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-006",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T16:16:36Z",
-      "resolved_at": "2026-05-08T16:17:33Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-004",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T16:22:04Z",
-      "resolved_at": "2026-05-08T16:23:14Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-006",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T16:22:49Z",
-      "resolved_at": "2026-05-08T16:24:53Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-006",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T16:24:53Z",
-      "resolved_at": "2026-05-08T16:47:19Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-007",
-      "from": "Claude2",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Claude2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T16:29:59Z",
-      "resolved_at": "2026-05-08T16:34:10Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-004",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T16:33:54Z",
-      "resolved_at": "2026-05-08T16:39:06Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-007",
-      "from": "Codex",
-      "to": "Claude2",
-      "message": "Helper-claimed by Claude2 while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T16:34:10Z",
-      "resolved_at": "2026-05-08T16:35:41Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-007",
-      "from": "Claude2",
-      "to": "Claude",
-      "message": "Helper-claimed by Claude while Claude2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T16:35:41Z",
-      "resolved_at": "2026-05-08T16:39:18Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-004",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T16:39:06Z",
-      "resolved_at": "2026-05-08T16:42:56Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-007",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T16:39:18Z",
-      "resolved_at": "2026-05-08T16:54:38Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-004",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T16:42:55Z",
-      "resolved_at": "2026-05-08T16:43:53Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-006",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T16:52:52Z",
-      "resolved_at": "2026-05-08T16:55:55Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-007",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T16:54:38Z",
-      "resolved_at": "2026-05-08T17:03:18Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-006",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T16:55:55Z",
-      "resolved_at": "2026-05-08T16:56:49Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-007",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T16:56:36Z",
-      "resolved_at": "2026-05-08T17:03:18Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-006",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T17:02:36Z",
-      "resolved_at": "2026-05-08T17:03:44Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-007",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
-      "status": "done",
-      "created_at": "2026-05-08T17:03:18Z",
-      "resolved_at": "2026-05-08T17:29:06Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Support-only BFF handoff packet created at support/sidecars/BFF-LUV-GAP-006/BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF.md; ready for reviewer check and parent-owner absorption decision.",
-      "status": "done",
-      "created_at": "2026-05-08T17:25:35Z",
-      "resolved_at": "2026-05-08T17:33:16Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-006",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Implemented Agora core BFF compatibility routes, action catalog entries, registry statuses, and focused tests. Verification: python3 -m pytest services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py services/control-plane/bff/test_action_catalog.py services/control-plane/bff/test_agora_journal_merge_patch.py -q -> 25 passed, 6 pre-existing datetime.utcnow warnings.",
-      "status": "done",
-      "created_at": "2026-05-08T17:28:49Z",
-      "resolved_at": "2026-05-08T17:52:41Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Approved support-only BFF handoff packet for BFF-LUV-GAP-006; parent owner absorbed the checklist into implementation evidence and focused BFF verification remains green.",
-      "status": "done",
-      "created_at": "2026-05-08T17:33:16Z",
-      "resolved_at": "2026-05-08T18:04:36Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-004-SIDECAR-BFF-HANDOFF",
-      "from": "Gemini2",
-      "to": "Codex",
-      "message": "Handoff packet prepared and updated. Ready for review.",
-      "status": "done",
-      "created_at": "2026-05-08T17:38:41Z",
-      "resolved_at": "2026-05-08T17:38:41Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-007",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Implemented active Agora extended routes for committee evidence packs and persona-lab submit-commit, added Agora handoff/evidence overlay storage, marked FULL-only Agora families as implemented aliases or superseded in the registry, and documented dispositions in the task artifact. Verification: python3 -m pytest services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 14 passed, 2 pre-existing datetime.utcnow warnings; python3 services/control-plane/bff/contract_snapshots/report_execute_plans_bff_coverage.py -> agora-extended 4 implemented, 8 alias, 0 missing, 0 deferred, 5 superseded.",
-      "status": "done",
-      "created_at": "2026-05-08T17:40:14Z",
-      "resolved_at": "2026-05-08T18:00:15Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-004",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Implemented evolution programs, experiments, jobs, and events BFF compatibility. Verification: GAP-004 contract 29 passed; execute-plans registry + SSE 17 passed; GAP-005 regression 4 passed; py_compile main/test passed.",
-      "status": "done",
-      "created_at": "2026-05-08T17:48:29Z",
-      "resolved_at": "2026-05-08T18:08:00Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-006",
-      "from": "Codex2",
-      "to": "Gemini2",
-      "message": "Chair reassigned review from Codex2 to Gemini2: Codex2 has failed twice on this review dispatch; Codex is the owner and Claude/Claude2 are quota-paused, while Gemini2 is available and has no ownership conflict.",
-      "status": "done",
-      "created_at": "2026-05-08T17:52:41Z",
-      "resolved_at": "2026-05-08T18:04:36Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-006",
-      "from": "Gemini2",
-      "to": "Codex2",
-      "message": "Auto-reassigned review from Gemini2 to Codex2 after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.",
-      "status": "done",
-      "created_at": "2026-05-08T17:58:14Z",
-      "resolved_at": "2026-05-08T18:04:36Z"
-    },
-    {
-      "task_id": "BFF-LUV-GAP-007",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Review packet refreshed for BFF-LUV-GAP-007: artifact now includes verification commands/results. Focused pytest remains green: python3 -m pytest services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 14 passed, 2 pre-existing datetime.utcnow warnings; coverage report -> agora-extended 4 implemented, 8 alias, 0 missing, 0 deferred, 5 superseded.",
-      "status": "done",
-      "created_at": "2026-05-08T18:00:15Z",
-      "resolved_at": "2026-05-08T18:04:36Z"
     }
   ],
   "blockers": [],
@@ -604,28 +234,28 @@
       "todo": 0
     },
     "Gemini2": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
-      "done": 1,
+      "done": 0,
       "review": 0,
       "review_approved": 0,
       "todo": 0
     },
     "Codex": {
-      "total": 3,
+      "total": 0,
       "active": 0,
       "blocked": 0,
-      "done": 3,
+      "done": 0,
       "review": 0,
       "review_approved": 0,
       "todo": 0
     },
     "Codex2": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
-      "done": 1,
+      "done": 0,
       "review": 0,
       "review_approved": 0,
       "todo": 0

@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-GAP-006",
+  "archived_at": "2026-05-10T11:09:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-GAP-006",
+    "title": "Implement Agora core BFF compatibility",
+    "summary_zh": "補上 Part 06 與 src/lib/v3 目前引用的 Agora core /bff routes。",
+    "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/BFF-LUV-GAP-006-agora-core.md"
+    ],
+    "acceptance": [
+      "agora daily signals sessions routes covered",
+      "notes journal insights routes covered",
+      "memory training routes covered"
+    ],
+    "next": "Auto-reassigned review from Gemini2 to Codex2 after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.",
+    "last_update": "2026-05-08T17:58:14Z"
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-GAP-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T16:06:15Z",
+      "resolved_at": "2026-05-08T16:07:39Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T16:16:36Z",
+      "resolved_at": "2026-05-08T16:17:33Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-006",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T16:22:49Z",
+      "resolved_at": "2026-05-08T16:24:53Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-006",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T16:24:53Z",
+      "resolved_at": "2026-05-08T16:47:19Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-006",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T16:52:52Z",
+      "resolved_at": "2026-05-08T16:55:55Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T16:55:55Z",
+      "resolved_at": "2026-05-08T16:56:49Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-006",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T17:02:36Z",
+      "resolved_at": "2026-05-08T17:03:44Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Implemented Agora core BFF compatibility routes, action catalog entries, registry statuses, and focused tests. Verification: python3 -m pytest services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py services/control-plane/bff/test_action_catalog.py services/control-plane/bff/test_agora_journal_merge_patch.py -q -> 25 passed, 6 pre-existing datetime.utcnow warnings.",
+      "status": "done",
+      "created_at": "2026-05-08T17:28:49Z",
+      "resolved_at": "2026-05-08T17:52:41Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-006",
+      "from": "Codex2",
+      "to": "Gemini2",
+      "message": "Chair reassigned review from Codex2 to Gemini2: Codex2 has failed twice on this review dispatch; Codex is the owner and Claude/Claude2 are quota-paused, while Gemini2 is available and has no ownership conflict.",
+      "status": "done",
+      "created_at": "2026-05-08T17:52:41Z",
+      "resolved_at": "2026-05-08T18:04:36Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-006",
+      "from": "Gemini2",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Gemini2 to Codex2 after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-05-08T17:58:14Z",
+      "resolved_at": "2026-05-08T18:04:36Z"
+    }
+  ],
+  "blockers": []
+}

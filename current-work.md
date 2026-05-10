@@ -4,15 +4,15 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-10 14:04:12
+Last updated: 2026-05-10 19:09:56
 
 ## Objective
 
-把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。
+BFF execute-plans 前端 wiring 已 loop_complete (46/46 features)，sprint 主軸轉向 EP5 canary readiness 與 OSS production activation。三條 track 並行：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, 跑 place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py 的 human-gate packet 流程；(B) Qlib 第一個 governed LightGBM alpha activation — 寫 RS-003 baseline StrategySpec, 從 TWSE OpenAPI / TPEx E-Data 抓 ≥50 instruments × ≥2 years OHLCV, 跑 production_activation_smoke.py --backend real, submit registry admission packet；(C) services/ namespace normalization — control_plane 併入 control-plane/internal, registry-core/decision-domain 併入 registry/decision_domain。broker production live 與 capital binding 仍 fail-closed; canary 仍需 risk-owner + operator approval gate。Track A 與 B 共用 TW market dataset 不重做兩次。
 
 ## Current Sprint
 
-- Sprint: `2026-04-30-activation-ready-platform-closure`
+- Sprint: `2026-05-10-ep5-broker-tw-qlib-activation`
 - Canonical files: `AI_COLLABORATION_GUIDE.md`, `ai-status.json`, `ai-activity-log.jsonl`, `current-work.md`, `TARGET_ARCHITECTURE.md`, `OPENCLAW_RUNTIME_CONTRACT.md`, `PERSONA_RUNTIME_MODEL.md`, `BINDING_AND_DEPLOYMENT_SEMANTICS.md`, `PAPER_CANARY_LIVE_POLICY.md`, `ROLLBACK_AND_POSITION_SEMANTICS.md`, `LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md`, `EVOLUTION_REVIEW_AND_THRESHOLDS.md`, `CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md`, `KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md`, `MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md`, `TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md`, `DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md`, `EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md`, `EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md`, `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md`, `LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md`, `CANONICAL_DOCUMENT_MAP.md`, `DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md`, `ROADMAP.md`, `DEVELOPMENT_WORKBREAKDOWN.md`, `OSS_INTEGRATION_CHECKLIST.md`, `WORKBENCH_DELIVERY_BACKLOG.md`, `DELIVERY_CLOSURE_AND_LOOP_STATES.md`, `EXECUTION_PROOF_AND_MATURITY_LEVELS.md`, `CANONICAL_CONTRACT_MIGRATION_DECISION.md`, `WORK_REBASELINE.md`, `Pantheon_總索引版系統分析文件.md`, `Pantheon_資料表_Schema_設計版.md`, `Pantheon_API_Service_Contract_設計版.md`
 - Canonical tiers: `L0 Collaboration & State`, `L0.5 Derived Narrative`, `L1 Platform Architecture & Policy`, `L2 Planning & Execution`, `L3 Supporting Design & Migration`
 - Planning mode: `docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/README.md`
@@ -61,11 +61,16 @@ Last updated: 2026-05-10 14:04:12
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-10 14:04:11
-- Terminal tasks archived: `962` total, `946` completed, `16` superseded
+- Archive updated: 2026-05-10 19:09:55
+- Terminal tasks archived: `967` total, `951` completed, `16` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `BFF-LUV-GAP-007` | BFF Execute-Plans Contract Gap 2026-05-08 | Reconcile extended Agora and FULL-spec routes | Codex | completed | 2026-05-10 19:09:55 | `ai-task-archive/tasks/BFF-LUV-GAP-007.json` |
+| `BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | Prepare BFF-LUV-GAP-006 BFF and frontend handoff packet | Codex2 | completed | 2026-05-10 19:09:55 | `ai-task-archive/tasks/BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF.json` |
+| `BFF-LUV-GAP-006` | BFF Execute-Plans Contract Gap 2026-05-08 | Implement Agora core BFF compatibility | Codex | completed | 2026-05-10 19:09:55 | `ai-task-archive/tasks/BFF-LUV-GAP-006.json` |
+| `BFF-LUV-GAP-004-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | Prepare BFF-LUV-GAP-004 BFF and frontend handoff packet | Gemini2 | completed | 2026-05-10 19:09:55 | `ai-task-archive/tasks/BFF-LUV-GAP-004-SIDECAR-BFF-HANDOFF.json` |
+| `BFF-LUV-GAP-004` | BFF Execute-Plans Contract Gap 2026-05-08 | Implement evolution experiment jobs and events BFF compatibility | Codex | completed | 2026-05-10 19:09:55 | `ai-task-archive/tasks/BFF-LUV-GAP-004.json` |
 | `BFF-LUV-FE-006` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Deploy execute-plans dev and run frontend BFF E2E closure | Claude | completed | 2026-05-10 14:04:11 | `ai-task-archive/tasks/BFF-LUV-FE-006.json` |
 | `BFF-LUV-FE-005` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Run final execute-plans Lovable live cutover smoke | Claude | completed | 2026-05-10 11:05:52 | `ai-task-archive/tasks/BFF-LUV-FE-005.json` |
 | `BFF-LUV-AUTHED-LIVE-001` | BFF Execute-Plans Authenticated Live Completion 2026-05-09 | Run authenticated lupin dev BFF DTO/write smoke | Codex | completed | 2026-05-10 10:56:59 | `ai-task-archive/tasks/BFF-LUV-AUTHED-LIVE-001.json` |
@@ -81,21 +86,11 @@ Last updated: 2026-05-10 14:04:12
 | `BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Authenticated Live Completion 2026-05-09 | Prepare BFF-LUV-AUTHED-LIVE-001 BFF and frontend handoff packet | Claude | completed | 2026-05-10 00:14:04 | `ai-task-archive/tasks/BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF.json` |
 | `BFF-LUV-GAP-012` | BFF Execute-Plans Contract Gap 2026-05-08 | Run execute-plans BFF cutover smoke | Codex | completed | 2026-05-09 23:12:45 | `ai-task-archive/tasks/BFF-LUV-GAP-012.json` |
 | `BFF-LUV-GAP-012-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | Prepare BFF-LUV-GAP-012 BFF and frontend handoff packet | Codex2 | completed | 2026-05-09 22:26:08 | `ai-task-archive/tasks/BFF-LUV-GAP-012-SIDECAR-BFF-HANDOFF.json` |
-| `BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | Prepare BFF-LUV-GAP-010 BFF and frontend handoff packet | Codex | completed | 2026-05-09 21:58:11 | `ai-task-archive/tasks/BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF.json` |
-| `BFF-LUV-GAP-007-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | Prepare BFF-LUV-GAP-007 BFF and frontend handoff packet | Codex | completed | 2026-05-09 21:47:14 | `ai-task-archive/tasks/BFF-LUV-GAP-007-SIDECAR-BFF-HANDOFF.json` |
-| `BFF-LUV-SEM-006-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Semantic Completion 2026-05-09 | Prepare BFF-LUV-SEM-006 BFF and frontend handoff packet | Claude | completed | 2026-05-09 21:43:23 | `ai-task-archive/tasks/BFF-LUV-SEM-006-SIDECAR-BFF-HANDOFF.json` |
-| `BFF-LUV-SEM-006` | BFF Execute-Plans Semantic Completion 2026-05-09 | Deploy execute-plans BFF semantic completion to lupin dev | Codex2 | completed | 2026-05-09 19:41:32 | `ai-task-archive/tasks/BFF-LUV-SEM-006.json` |
-| `BFF-LUV-SEM-004` | BFF Execute-Plans Semantic Completion 2026-05-09 | BFF semantic completion: v5 loop/sentinel/runtime semantics | Claude2 | completed | 2026-05-09 19:11:38 | `ai-task-archive/tasks/BFF-LUV-SEM-004.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `BFF-LUV-GAP-004` | BFF Execute-Plans Contract Gap 2026-05-08 | Implement evolution experiment jobs and events BFF compatibility | 補上 evolution、experiments、jobs、events route families。 | Codex | Gemini2 | done | - | 2026-05-09 02:08:00 | Task finalized and committed. |
-| `BFF-LUV-GAP-006` | BFF Execute-Plans Contract Gap 2026-05-08 | Implement Agora core BFF compatibility | 補上 Part 06 與 src/lib/v3 目前引用的 Agora core /bff routes。 | Codex | Codex2 | done | - | 2026-05-09 01:58:14 | Auto-reassigned review from Gemini2 to Codex2 after repeated Gemini2 terminal: Worker exited before the task reached a terminal status. |
-| `BFF-LUV-GAP-007` | BFF Execute-Plans Contract Gap 2026-05-08 | Reconcile extended Agora and FULL-spec routes | 整理 FULL spec 與長尾 Agora routes，實作 active source refs 並標記歷史 routes 的 disposition。 | Codex | Codex2 | done | - | 2026-05-09 02:00:15 | Review packet refreshed for BFF-LUV-GAP-007: artifact now includes verification commands/results. Focused pytest remains green: python3 -m pytest services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 14 passed, 2 pre-existing datetime.utcnow warnings; coverage report -> agora-extended 4 implemented, 8 alias, 0 missing, 0 deferred, 5 superseded. |
-| `BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-006] Prepare BFF-LUV-GAP-006 BFF and frontend handoff packet | 平行支援 BFF-LUV-GAP-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Codex2 | Codex | done | - | 2026-05-09 01:33:16 | Approved support-only BFF handoff packet for BFF-LUV-GAP-006; parent owner absorbed the checklist into implementation evidence and focused BFF verification remains green. |
-| `BFF-LUV-GAP-004-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-004] Prepare BFF-LUV-GAP-004 BFF and frontend handoff packet | 平行支援 BFF-LUV-GAP-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Gemini2 | Codex | done | - | 2026-05-09 01:38:41 | Handoff packet prepared and updated. Ready for review. |
 
 ## Handoff Queue
 
@@ -113,7 +108,7 @@ Last updated: 2026-05-10 14:04:12
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| `BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF` | Codex | Sidecar packet is support-only and scoped under support/sidecars; it does not redefine canonical route truth.<br>Parent artifact now records absorption of the packet checklist into BFF-LUV-GAP-006 implementation evidence.<br>Focused verification rerun from parent artifact: python3 -m pytest services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py services/control-plane/bff/test_action_catalog.py services/control-plane/bff/test_agora_journal_merge_patch.py -q -> 25 passed, 6 pre-existing datetime.utcnow warnings. | - |
+| _(none)_ | - | - | - |
 
 ## Lovable Coordination
 
@@ -184,23 +179,23 @@ Last updated: 2026-05-10 14:04:12
 
 ## Latest Checkpoints
 
-- 2026-05-10 14:02:23 Orchestrator: PostToolUse: Read
-- 2026-05-10 14:02:23 Orchestrator: PostToolUse: Read
-- 2026-05-10 14:02:43 Orchestrator: PreToolUse: Read
-- 2026-05-10 14:02:44 Orchestrator: PostToolUse: Read
-- 2026-05-10 14:02:45 Orchestrator: PreToolUse: Bash
-- 2026-05-10 14:02:46 Orchestrator: PostToolUse: Bash
-- 2026-05-10 14:02:53 Orchestrator: PreToolUse: Bash
-- 2026-05-10 14:02:53 Orchestrator: PostToolUse: Bash
-- 2026-05-10 14:03:00 Orchestrator: PreToolUse: Read
-- 2026-05-10 14:03:00 Orchestrator: PostToolUse: Read
-- 2026-05-10 14:03:00 Orchestrator: PreToolUse: Read
-- 2026-05-10 14:03:00 Orchestrator: PostToolUse: Read
-- 2026-05-10 14:03:48 Orchestrator: PreToolUse: Edit
-- 2026-05-10 14:03:49 Orchestrator: PostToolUse: Edit
-- 2026-05-10 14:03:53 Orchestrator: PreToolUse: Bash
-- 2026-05-10 14:03:54 Orchestrator: PostToolUse: Bash
-- 2026-05-10 14:04:01 Orchestrator: PreToolUse: Bash
-- 2026-05-10 14:04:02 Orchestrator: PostToolUse: Bash
-- 2026-05-10 14:04:11 Orchestrator: PreToolUse: Bash
-- 2026-05-10 14:04:11 Claude: `BFF-LUV-FE-006` Owner finalization complete. Task artifact updated with closure section. CORS fix 45bf6873, browser E2E 5/5 at 2026-05-10 14:00:59, authenticated smoke 37/37, all acceptance criteria met. Closure commit 83d1e183. execute-plans clean at e25f5c7/198522c. All BFF-LUV frontend tasks done.
+- 2026-05-10 19:09:11 Orchestrator: Worker suspended for approval apr-20260510T095432Z-09623b3f
+- 2026-05-10 19:09:11 Orchestrator: Worker suspended for approval apr-20260510T095432Z-09623b3f
+- 2026-05-10 19:09:16 Orchestrator: PreToolUse: TodoWrite
+- 2026-05-10 19:09:17 Orchestrator: PostToolUse: TodoWrite
+- 2026-05-10 19:09:17 Orchestrator: PreToolUse: Bash
+- 2026-05-10 19:09:21 Orchestrator: PostToolUse: Bash
+- 2026-05-10 19:09:28 Orchestrator: PreToolUse: Bash
+- 2026-05-10 19:09:29 Orchestrator: PostToolUse: Bash
+- 2026-05-10 19:09:30 Orchestrator: Worker suspended for approval apr-20260510T095432Z-09623b3f
+- 2026-05-10 19:09:30 Orchestrator: Worker suspended for approval apr-20260510T095432Z-09623b3f
+- 2026-05-10 19:09:41 Orchestrator: PreToolUse: Bash
+- 2026-05-10 19:09:41 Orchestrator: PostToolUse: Bash
+- 2026-05-10 19:09:45 Orchestrator: PreToolUse: Read
+- 2026-05-10 19:09:45 Orchestrator: PostToolUse: Read
+- 2026-05-10 19:09:45 Orchestrator: PreToolUse: Read
+- 2026-05-10 19:09:45 Orchestrator: PostToolUse: Read
+- 2026-05-10 19:09:49 Orchestrator: Worker suspended for approval apr-20260510T095432Z-09623b3f
+- 2026-05-10 19:09:49 Orchestrator: Worker suspended for approval apr-20260510T095432Z-09623b3f
+- 2026-05-10 19:09:55 Orchestrator: PreToolUse: Bash
+- 2026-05-10 19:09:55 Codex: Archived 5 terminal tasks from ai-status.json.
