@@ -5,6 +5,26 @@ Owner: Claude
 Task: BFF-LUV-FE-006 (Deploy execute-plans dev and run frontend BFF E2E closure)
 Disposition: Blocked — explicit human action required
 
+## Resolution Update — 2026-05-10T05:42:04Z
+
+This blocker is superseded. It was based on probing the obsolete Lovable dev URL
+`https://pantheon-ai-system-front-dev.lovable.app/`.
+
+The operator-corrected execute-plans dev URL is:
+
+`https://pantheon-dev.lovable.app/`
+
+That URL now serves deployment `b944ef3a-5ac7-4f7d-999c-550776971377` with asset
+`/assets/index-hGWC2E4H.js`; the hosted bundle contains the intended lupin dev
+BFF URL `https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io` and does not
+contain the old `https://pantheon-dev-bff.35.236.178.81.sslip.io` URL.
+
+Current anonymous route registration probe against the lupin dev BFF returned
+`200: 1`, `401: 42`, `404: 0` for the FE BFF Contract v1 catalog.
+
+Replacement evidence:
+`docs/bff/evidence/BFF-LUV-FE-006-pantheon-dev-lovable-publish-20260510.md`
+
 ## Context
 
 Codex reopened BFF-LUV-FE-006 after reviewing the first E2E closure evidence
