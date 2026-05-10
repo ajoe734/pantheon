@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-10 19:09:56
+Last updated: 2026-05-10 19:40:11
 
 ## Objective
 
@@ -37,12 +37,12 @@ BFF execute-plans 前端 wiring 已 loop_complete (46/46 features)，sprint 主�
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: No active assignment
+- `Claude`: execution, control-plane, governance-review; next: Assignment created
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 - `Codex`: integration, status-system, schema, acceptance; next: No active assignment
-- `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
+- `Codex2`: integration, status-system, schema, acceptance; next: Assignment created
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: No active assignment
+- `Claude2`: execution, control-plane, governance-review; next: Starting StrategySpec authoring: creating services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md and updating integrations/qlib/activation_packet.md
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 
 ## Delivery Layers
@@ -51,13 +51,14 @@ BFF execute-plans 前端 wiring 已 loop_complete (46/46 features)，sprint 主�
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - | - |
+| `EP5-BROKER-TW-001` | EP5 Broker TW Activation 2026-05-10 | Scaffold Shioaji TW broker adapter with fail-closed sandbox-only gating | Claude | todo | - | 新建 services/broker/shioaji/ adapter，pin Shioaji SDK，BROKER_SHIOAJI_SANDBOX_ENABLED 環境 gate；live 永遠 reject；submit/cancel/get_status 跑 simulation 帳號；介面對齊現有 paper_simulation.py 形狀。 |
 
 ### External / Upstream Integration Work
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - | - |
+| `QLIB-ACT-001` | Qlib Production Activation 2026-05-10 | Author RS-003 baseline StrategySpec for TW cross-sectional equity alpha | Claude2 | in_progress | - | 寫第一份 RS-003 baseline StrategySpec：TW cross-sectional equity supervised alpha；universe = TWSE listed + TPEx listed；label / horizon / why-LightGBM / why-not-RL 都要寫；過 RS-003 replication gate；產出 candidate registry artifact ID，後續 QLIB-ACT-002 governed dataset packet 與 QLIB-ACT-003 LightGBM 跑活動會引用。 |
+| `SVC-RENAME-001` | services Namespace Normalization 2026-05-10 | Inventory services/ duplicate dirs and produce migration map | Codex2 | todo | - | 完整 inventory services/ 的雙命名 (control_plane vs control-plane, registry-core vs registry, source_ingestion vs source-ingest 等)；grep 所有 import sites；產出 migration map：每個檔案搬去哪、import path 怎麼改、docker-compose 哪些 service ref 要動、風險表。本 task 只交 plan，不動程式碼。 |
 
 ## Recently Executed Tasks
 
@@ -91,6 +92,9 @@ BFF execute-plans 前端 wiring 已 loop_complete (46/46 features)，sprint 主�
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
+| `EP5-BROKER-TW-001` | EP5 Broker TW Activation 2026-05-10 | Scaffold Shioaji TW broker adapter with fail-closed sandbox-only gating | 新建 services/broker/shioaji/ adapter，pin Shioaji SDK，BROKER_SHIOAJI_SANDBOX_ENABLED 環境 gate；live 永遠 reject；submit/cancel/get_status 跑 simulation 帳號；介面對齊現有 paper_simulation.py 形狀。 | Claude | Codex2 | todo | - | 2026-05-10 19:38:25 | Assignment created |
+| `QLIB-ACT-001` | Qlib Production Activation 2026-05-10 | Author RS-003 baseline StrategySpec for TW cross-sectional equity alpha | 寫第一份 RS-003 baseline StrategySpec：TW cross-sectional equity supervised alpha；universe = TWSE listed + TPEx listed；label / horizon / why-LightGBM / why-not-RL 都要寫；過 RS-003 replication gate；產出 candidate registry artifact ID，後續 QLIB-ACT-002 governed dataset packet 與 QLIB-ACT-003 LightGBM 跑活動會引用。 | Claude2 | Codex | in_progress | - | 2026-05-10 19:40:11 | Starting StrategySpec authoring: creating services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md and updating integrations/qlib/activation_packet.md |
+| `SVC-RENAME-001` | services Namespace Normalization 2026-05-10 | Inventory services/ duplicate dirs and produce migration map | 完整 inventory services/ 的雙命名 (control_plane vs control-plane, registry-core vs registry, source_ingestion vs source-ingest 等)；grep 所有 import sites；產出 migration map：每個檔案搬去哪、import path 怎麼改、docker-compose 哪些 service ref 要動、風險表。本 task 只交 plan，不動程式碼。 | Codex2 | Codex | todo | - | 2026-05-10 19:38:34 | Assignment created |
 
 ## Handoff Queue
 
@@ -179,23 +183,23 @@ BFF execute-plans 前端 wiring 已 loop_complete (46/46 features)，sprint 主�
 
 ## Latest Checkpoints
 
-- 2026-05-10 19:09:11 Orchestrator: Worker suspended for approval apr-20260510T095432Z-09623b3f
-- 2026-05-10 19:09:11 Orchestrator: Worker suspended for approval apr-20260510T095432Z-09623b3f
-- 2026-05-10 19:09:16 Orchestrator: PreToolUse: TodoWrite
-- 2026-05-10 19:09:17 Orchestrator: PostToolUse: TodoWrite
-- 2026-05-10 19:09:17 Orchestrator: PreToolUse: Bash
-- 2026-05-10 19:09:21 Orchestrator: PostToolUse: Bash
-- 2026-05-10 19:09:28 Orchestrator: PreToolUse: Bash
-- 2026-05-10 19:09:29 Orchestrator: PostToolUse: Bash
-- 2026-05-10 19:09:30 Orchestrator: Worker suspended for approval apr-20260510T095432Z-09623b3f
-- 2026-05-10 19:09:30 Orchestrator: Worker suspended for approval apr-20260510T095432Z-09623b3f
-- 2026-05-10 19:09:41 Orchestrator: PreToolUse: Bash
-- 2026-05-10 19:09:41 Orchestrator: PostToolUse: Bash
-- 2026-05-10 19:09:45 Orchestrator: PreToolUse: Read
-- 2026-05-10 19:09:45 Orchestrator: PostToolUse: Read
-- 2026-05-10 19:09:45 Orchestrator: PreToolUse: Read
-- 2026-05-10 19:09:45 Orchestrator: PostToolUse: Read
-- 2026-05-10 19:09:49 Orchestrator: Worker suspended for approval apr-20260510T095432Z-09623b3f
-- 2026-05-10 19:09:49 Orchestrator: Worker suspended for approval apr-20260510T095432Z-09623b3f
-- 2026-05-10 19:09:55 Orchestrator: PreToolUse: Bash
-- 2026-05-10 19:09:55 Codex: Archived 5 terminal tasks from ai-status.json.
+- 2026-05-10 19:39:28 Orchestrator: PreToolUse: Read
+- 2026-05-10 19:39:28 Orchestrator: PostToolUse: Bash
+- 2026-05-10 19:39:28 Orchestrator: PostToolUse: Read
+- 2026-05-10 19:39:31 Orchestrator: PreToolUse: Read
+- 2026-05-10 19:39:32 Orchestrator: PreToolUse: Read
+- 2026-05-10 19:39:32 Orchestrator: PostToolUse: Read
+- 2026-05-10 19:39:32 Orchestrator: PostToolUse: Read
+- 2026-05-10 19:39:35 Orchestrator: PreToolUse: TodoWrite
+- 2026-05-10 19:39:36 Orchestrator: PostToolUse: TodoWrite
+- 2026-05-10 19:39:41 Orchestrator: PreToolUse: Bash
+- 2026-05-10 19:39:41 Orchestrator: PostToolUse: Bash
+- 2026-05-10 19:39:41 Orchestrator: PreToolUse: Glob
+- 2026-05-10 19:39:41 Orchestrator: PostToolUse: Glob
+- 2026-05-10 19:39:43 Orchestrator: Worker suspended for approval apr-20260510T095432Z-09623b3f
+- 2026-05-10 19:39:43 Orchestrator: Worker suspended for approval apr-20260510T095432Z-09623b3f
+- 2026-05-10 19:39:49 Orchestrator: Stop: Stop
+- 2026-05-10 19:40:02 Orchestrator: Worker suspended for approval apr-20260510T095432Z-09623b3f
+- 2026-05-10 19:40:02 Orchestrator: Worker suspended for approval apr-20260510T095432Z-09623b3f
+- 2026-05-10 19:40:11 Orchestrator: PreToolUse: Bash
+- 2026-05-10 19:40:11 Claude2: `QLIB-ACT-001` Starting StrategySpec authoring: creating services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md and updating integrations/qlib/activation_packet.md

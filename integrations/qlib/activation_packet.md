@@ -1,9 +1,9 @@
 # Qlib Production Activation Packet
 
-Last updated: 2026-05-01
-Owner: P2-QLIB-PROD-DATA-ACTIVATION-001 (Codex2)
-Reviewer: Claude
-Status: production-data activation packet implemented; candidate handoff remains review-only
+Last updated: 2026-05-10
+Owner: QLIB-ACT-001 (Claude2)
+Reviewer: Codex
+Status: RS-003 baseline StrategySpec drafted (QLIB-ACT-001); production-data activation packet implemented; governed dataset and LightGBM run pending (QLIB-ACT-002, QLIB-ACT-003)
 
 ## 1. Purpose
 
@@ -75,10 +75,37 @@ The gate is therefore cleared only in the truthful sense:
 
 | Activation criterion | Current read | Evidence | Gap to close |
 |---|---|---|---|
-| RS-003 baseline StrategySpec candidate exists in registry | blocked | `services/learning/qlib/ACTIVATION_CRITERIA.md §1.1` and `§3.2` require a replication-gate-passed `candidate` artifact before Qlib training; this repo snapshot contains the RS-003 gate implementation but no task-local evidence naming the target candidate registry artifact for this activation | attach the governed StrategySpec / candidate artifact ID, the target strategy family, and the RS-003 pass evidence bundle |
-| Governed dataset of ≥50 instruments with ≥2 years OHLCV history is available | packet validator implemented | `validate_activation_ready_dataset()` enforces the numerical floors, while `validate_production_dataset_proof()` now requires provider entitlement, freshness, PIT, storage, audit, and no-order-route evidence. The repo sample remains smoke-only and does not claim production data. | supply the target run's actual governed dataset/proof JSON and run `production_activation_smoke.py --backend stub` or `--backend real` |
-| Supervised alpha framing is documented for the target strategy | blocked | the gate doc defines the correct problem shape, and the sample dataset uses `strategy_id: equity-cross-sectional-alpha`, but no task-local packet yet cites the concrete governed StrategySpec that binds the target alpha statement, label definition, and universe | cite the target StrategySpec version and summarize why LightGBM supervised ranking/prediction is still the right fit |
+| RS-003 baseline StrategySpec candidate exists in registry | **draft authored** (QLIB-ACT-001) | `services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md` — registry ID `qlib-tw-cross-sectional-alpha-spec-v1`, `artifact_state=draft`, `deployment_summary.current_stage=none`; problem statement, universe (TWSE + TPEx, ≥50 instruments), label (5d forward return, z-scored), horizon, evaluation metrics, and why-LightGBM rationale all defined in §1–§7; RS-003 gate steps cited in §8; pending Codex reviewer approval to advance to `candidate` | await Codex approval of QLIB-ACT-001; then advance spec to `candidate` before starting QLIB-ACT-003 |
+| Governed dataset of ≥50 instruments with ≥2 years OHLCV history is available | packet validator implemented | `validate_activation_ready_dataset()` enforces the numerical floors, while `validate_production_dataset_proof()` now requires provider entitlement, freshness, PIT, storage, audit, and no-order-route evidence. The repo sample remains smoke-only and does not claim production data. | supply the target run's actual governed dataset/proof JSON and run `production_activation_smoke.py --backend stub` or `--backend real` (QLIB-ACT-002) |
+| Supervised alpha framing is documented for the target strategy | **addressed** (QLIB-ACT-001) | `services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md §6.2–§6.3` documents why LightGBM supervised cross-sectional prediction is the correct framing; RL deferred (sequential decision-making not required); TRL not applicable (no preference feedback events); universe bound to TWSE + TPEx listed equities | no gap for this criterion; resolved by QLIB-ACT-001 StrategySpec |
 | No upstream dependency conflicts | satisfied | `services/research/qlib/requirements.txt`, `integrations/qlib/integration.md`, and the passing smoke/unit baselines show the pinned package path is compatible with the current governed research stack | keep this revalidated when dependency pins change |
+
+## 3.0 RS-003 Baseline StrategySpec — QLIB-ACT-001 Summary
+
+**StrategySpec artifact**: `services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md`
+**Candidate registry ID**: `qlib-tw-cross-sectional-alpha-spec-v1`
+**Strategy ID**: `tw-cross-sectional-equity-alpha`
+**Artifact state**: `draft` (pending Codex reviewer approval)
+**Deployment stage**: `none`
+
+Key bindings for downstream tasks:
+
+| Attribute | Value |
+|---|---|
+| Universe | TWSE listed + TPEx listed; ≥50 instruments; ≥2 years daily OHLCV |
+| Label | 5-day forward return, z-scored cross-sectionally |
+| Horizon | 5 trading days (primary); 1-day IC evaluation secondary |
+| Model | LightGBM (`LGBModel` via `pyqlib==0.9.6`) |
+| Features | 13 OHLCV-derived features (momentum, volatility, volume, RSI, cross-sectional z-scores) |
+| Evaluation gate | Test IC ≥ 0.03; test Sharpe ≥ 80% of validation Sharpe |
+| Why LightGBM not RL | Prediction target, not sequential decision; tabular data; RL path (LP-005) not yet activated |
+| Why not TRL | No preference feedback events; TRL governed separately |
+
+QLIB-ACT-002 (governed dataset packet) must cite:
+- `source_strategy_spec_id = "qlib-tw-cross-sectional-alpha-spec-v1"`
+
+QLIB-ACT-003 (LightGBM activation run) must cite:
+- `lineage.source_strategy_spec_id = "qlib-tw-cross-sectional-alpha-spec-v1"` in the model artifact candidate packet
 
 ## 3.1 Offline Preflight
 
@@ -206,17 +233,19 @@ open an order-capable path.
 
 ## 6. Disposition
 
-`Qlib` should remain `smoke-tested` in `OSS_INTEGRATION_CHECKLIST.md`.
+`Qlib` should remain `smoke-tested` in `OSS_INTEGRATION_CHECKLIST.md` until QLIB-ACT-003
+completes the LightGBM activation run and registry admission is granted.
 
-The truthful next action is:
+### Updated next-action sequence (2026-05-10)
 
-1. cite the exact RS-003 candidate artifact for the target alpha lane
-2. attach the governed ≥50-instrument, ≥2-year OHLCV dataset manifest and
-   production dataset proof JSON
-3. bind the target StrategySpec and supervised label definition to that run
-4. execute the first governed LightGBM activation through `--backend real`, or
-   record the explicit install/config error if the upstream backend is not available
-5. submit the resulting `qlib_alpha` artifact packet for registry admission review
+| Step | Task | Status |
+|---|---|---|
+| 1. RS-003 baseline StrategySpec authored | QLIB-ACT-001 | **done — pending Codex review** |
+| 2. StrategySpec advanced to `candidate` | awaits QLIB-ACT-001 reviewer approval | pending |
+| 3. Governed ≥50-instrument, ≥2-year OHLCV dataset manifest and production dataset proof | QLIB-ACT-002 | pending |
+| 4. Bind StrategySpec + supervised label to the LightGBM run | QLIB-ACT-003 cites `qlib-tw-cross-sectional-alpha-spec-v1` | pending |
+| 5. Execute first governed LightGBM activation via `--backend real` | QLIB-ACT-003 | pending |
+| 6. Submit `qlib_alpha` artifact packet for registry admission review | QLIB-ACT-003 output | pending |
 
 Until review admits the packet, the row is production-data packet-ready behind
 explicit gates but still blocked from production registry use.

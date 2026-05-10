@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-05-10-ep5-broker-tw-qlib-activation",
   "objective": "BFF execute-plans 前端 wiring 已 loop_complete (46/46 features)，sprint 主軸轉向 EP5 canary readiness 與 OSS production activation。三條 track 並行：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, 跑 place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py 的 human-gate packet 流程；(B) Qlib 第一個 governed LightGBM alpha activation — 寫 RS-003 baseline StrategySpec, 從 TWSE OpenAPI / TPEx E-Data 抓 ≥50 instruments × ≥2 years OHLCV, 跑 production_activation_smoke.py --backend real, submit registry admission packet；(C) services/ namespace normalization — control_plane 併入 control-plane/internal, registry-core/decision-domain 併入 registry/decision_domain。broker production live 與 capital binding 仍 fail-closed; canary 仍需 risk-owner + operator approval gate。Track A 與 B 共用 TW market dataset 不重做兩次。",
-  "updated_at": "2026-05-10T11:09:56Z",
+  "updated_at": "2026-05-10T11:40:11Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,11 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "ready",
+      "current_task_ids": [
+        "EP5-BROKER-TW-001"
+      ],
       "branch": "feat/claude-execution-control",
-      "next": "",
-      "last_update": "2026-05-10T06:02:06Z"
+      "next": "Assignment created",
+      "last_update": "2026-05-10T11:38:25Z"
     },
     {
       "name": "Gemini",
@@ -125,7 +127,7 @@
       "current_task_ids": [],
       "branch": "feat/codex-collab-system",
       "next": "",
-      "last_update": "2026-05-09T16:21:51Z"
+      "last_update": "2026-05-10T11:38:30Z"
     },
     {
       "name": "Codex2",
@@ -135,11 +137,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "ready",
+      "current_task_ids": [
+        "SVC-RENAME-001"
+      ],
       "branch": "feat/codex-collab-system",
-      "next": "",
-      "last_update": "2026-05-09T18:18:33Z"
+      "next": "Assignment created",
+      "last_update": "2026-05-10T11:38:34Z"
     },
     {
       "name": "Copilot",
@@ -162,11 +166,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "working",
+      "current_task_ids": [
+        "QLIB-ACT-001"
+      ],
       "branch": "feat/claude2-execution-control",
-      "next": "",
-      "last_update": "2026-05-09T18:28:26Z"
+      "next": "Starting StrategySpec authoring: creating services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md and updating integrations/qlib/activation_packet.md",
+      "last_update": "2026-05-10T11:40:11Z"
     },
     {
       "name": "Gemini2",
@@ -183,7 +189,86 @@
       "last_update": "2026-05-09T16:30:59Z"
     }
   ],
-  "tasks": [],
+  "tasks": [
+    {
+      "id": "EP5-BROKER-TW-001",
+      "title": "Scaffold Shioaji TW broker adapter with fail-closed sandbox-only gating",
+      "summary_zh": "新建 services/broker/shioaji/ adapter，pin Shioaji SDK，BROKER_SHIOAJI_SANDBOX_ENABLED 環境 gate；live 永遠 reject；submit/cancel/get_status 跑 simulation 帳號；介面對齊現有 paper_simulation.py 形狀。",
+      "phase": "EP5 Broker TW Activation 2026-05-10",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "services/broker/shioaji/__init__.py",
+        "services/broker/shioaji/adapter.py",
+        "services/broker/shioaji/requirements.txt",
+        "services/broker/shioaji/test_adapter.py",
+        "services/broker/shioaji/README.md"
+      ],
+      "acceptance": [
+        "Shioaji SDK pinned in requirements.txt",
+        "Adapter file scaffolds submit/cancel/get_status against simulation account",
+        "Live order path always returns fail-closed reject with explicit error code",
+        "BROKER_SHIOAJI_SANDBOX_ENABLED env gate enforced (default false)",
+        "Unit/smoke test covers fail-closed default and gated sandbox path",
+        "Integration boundary aligned with existing services/broker/paper_simulation.py interface shape"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-05-10T11:38:25Z"
+    },
+    {
+      "id": "QLIB-ACT-001",
+      "title": "Author RS-003 baseline StrategySpec for TW cross-sectional equity alpha",
+      "summary_zh": "寫第一份 RS-003 baseline StrategySpec：TW cross-sectional equity supervised alpha；universe = TWSE listed + TPEx listed；label / horizon / why-LightGBM / why-not-RL 都要寫；過 RS-003 replication gate；產出 candidate registry artifact ID，後續 QLIB-ACT-002 governed dataset packet 與 QLIB-ACT-003 LightGBM 跑活動會引用。",
+      "phase": "Qlib Production Activation 2026-05-10",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "depends_on": [],
+      "artifacts": [
+        "services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md",
+        "integrations/qlib/activation_packet.md"
+      ],
+      "acceptance": [
+        "StrategySpec problem-statement",
+        "universe",
+        "label",
+        "horizon",
+        "evaluation metric all defined",
+        "Why supervised LightGBM (vs RL/TRL) explicit",
+        "RS-003 replication gate evidence attached or referenced",
+        "Candidate registry artifact ID issued for downstream Qlib activation",
+        "No production registry write before review approval",
+        "artifact_state=draft and deployment_summary.current_stage=none preserved"
+      ],
+      "next": "Starting StrategySpec authoring: creating services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md and updating integrations/qlib/activation_packet.md",
+      "last_update": "2026-05-10T11:40:11Z"
+    },
+    {
+      "id": "SVC-RENAME-001",
+      "title": "Inventory services/ duplicate dirs and produce migration map",
+      "summary_zh": "完整 inventory services/ 的雙命名 (control_plane vs control-plane, registry-core vs registry, source_ingestion vs source-ingest 等)；grep 所有 import sites；產出 migration map：每個檔案搬去哪、import path 怎麼改、docker-compose 哪些 service ref 要動、風險表。本 task 只交 plan，不動程式碼。",
+      "phase": "services Namespace Normalization 2026-05-10",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "docs/architecture/services-namespace-migration-map-2026-05-10.md"
+      ],
+      "acceptance": [
+        "Inventory of all duplicate-looking dirs in services/ with role classification (true duplicate vs role-separated lib/service)",
+        "Grep summary of all import sites referencing the to-be-moved paths",
+        "Migration map file/destination/import-rewrite rules",
+        "Risk table covering docker-compose service refs and downstream consumers",
+        "Roll-forward plan does not break running tests",
+        "No code changes in this task"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-05-10T11:38:34Z"
+    }
+  ],
   "handoffs": [
     {
       "task_id": "LUV-REVIEW-007",
@@ -193,6 +278,15 @@
       "status": "done",
       "created_at": "2026-04-17T11:50:38Z",
       "resolved_at": "2026-04-17T12:39:53Z"
+    },
+    {
+      "task_id": "QLIB-ACT-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Helper-claimed by Claude2 while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-10T11:38:35Z",
+      "resolved_at": "2026-05-10T11:38:41Z"
     }
   ],
   "blockers": [],
@@ -207,22 +301,22 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 0,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Claude2": {
-      "total": 0,
-      "active": 0,
+      "total": 1,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Gemini": {
       "total": 0,
@@ -252,13 +346,13 @@
       "todo": 0
     },
     "Codex2": {
-      "total": 0,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Copilot": {
       "total": 0,
