@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-10T03:20:08Z",
+  "updated_at": "2026-05-10T03:26:44Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,13 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
+      "status": "blocked",
       "current_task_ids": [
         "BFF-LUV-FE-006"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Supervisor re-dispatched BFF-LUV-FE-006; task remains in progress.",
-      "last_update": "2026-05-10T03:20:08Z"
+      "next": "Codex pushed execute-plans empty deploy-trigger commit e25f5c7 to origin/main and polled hosted Lovable at 03:24:31Z, 03:25:12Z, 03:25:33Z, 03:25:52Z. Hosted app still serves deployment 60aec936 / assets/index-Db5tXj5v.js with old BFF URL. Blocker remains: Lovable manual publish/project connection needed before hosted E2E can pass. Evidence updated: docs/bff/evidence/BFF-LUV-FE-006-lovable-deploy-blocker-20260510.md.",
+      "last_update": "2026-05-10T03:26:44Z"
     },
     {
       "name": "Gemini",
@@ -310,7 +310,7 @@
       "phase": "BFF Execute-Plans Frontend Live Completion 2026-05-09",
       "owner": "Claude",
       "reviewer": "Codex",
-      "status": "in_progress",
+      "status": "blocked",
       "depends_on": [
         "BFF-LUV-AUTHED-LIVE-001",
         "BFF-LUV-FE-001",
@@ -332,8 +332,9 @@
         "final evidence published with live/write decisions",
         "supervisor has no active BFF-LUV frontend/live tasks except approved blockers"
       ],
-      "next": "Supervisor re-dispatched BFF-LUV-FE-006; task remains in progress.",
-      "last_update": "2026-05-10T03:20:08Z"
+      "next": "Codex pushed execute-plans empty deploy-trigger commit e25f5c7 to origin/main and polled hosted Lovable at 03:24:31Z, 03:25:12Z, 03:25:33Z, 03:25:52Z. Hosted app still serves deployment 60aec936 / assets/index-Db5tXj5v.js with old BFF URL. Blocker remains: Lovable manual publish/project connection needed before hosted E2E can pass. Evidence updated: docs/bff/evidence/BFF-LUV-FE-006-lovable-deploy-blocker-20260510.md.",
+      "last_update": "2026-05-10T03:26:44Z",
+      "waiting_for": "Codex"
     }
   ],
   "handoffs": [
@@ -626,7 +627,16 @@
       "resolved_at": "2026-05-10T03:20:03Z"
     }
   ],
-  "blockers": [],
+  "blockers": [
+    {
+      "task_id": "BFF-LUV-FE-006",
+      "owner": "Claude",
+      "waiting_for": "Codex",
+      "message": "Lovable deployment capability blocker: hosted https://pantheon-ai-system-front-dev.lovable.app still serves old deployment 60aec936 with old BFF URL. Execute-plans origin/main at 198522c has new BFF URL but Lovable has not auto-deployed. No Lovable deploy API or CLI available for background worker. Human operator must log into Lovable and trigger redeploy, or approve partial-closure exception. Evidence: docs/bff/evidence/BFF-LUV-FE-006-lovable-deploy-blocker-20260510.md. Options: (A) Operator triggers Lovable redeploy and owner reruns E2E; (B) Reviewer/chair approves partial-closure exception and allows done.",
+      "status": "open",
+      "created_at": "2026-05-10T03:23:38Z"
+    }
+  ],
   "workload": {
     "Claude": 15,
     "Claude2": 15,
@@ -640,11 +650,11 @@
     "Claude": {
       "total": 1,
       "active": 1,
-      "blocked": 0,
+      "blocked": 1,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Claude2": {
       "total": 0,
