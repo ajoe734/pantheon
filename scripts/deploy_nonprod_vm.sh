@@ -14,7 +14,7 @@ REMOTE_USER="${REMOTE_USER:-edna}"
 DEV_VM="${DEV_VM:-pantheon-dev-vm1}"
 DEV_ZONE="${DEV_ZONE:-asia-east1-b}"
 DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/home/edna/code/pantheon}"
-DEV_BFF_CORS_ORIGINS="${DEV_BFF_CORS_ORIGINS:-https://pantheon-ai-system-front-dev.lovable.app}"
+DEV_BFF_CORS_ORIGINS="${DEV_BFF_CORS_ORIGINS:-https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app}"
 
 STAGING_CONTROL_VM="${STAGING_CONTROL_VM:-pantheon-taiwan}"
 STAGING_CONTROL_ZONE="${STAGING_CONTROL_ZONE:-asia-east1-b}"

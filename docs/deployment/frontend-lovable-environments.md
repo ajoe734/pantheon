@@ -1,6 +1,6 @@
 # Frontend Lovable Environments
 
-Status date: 2026-04-27
+Status date: 2026-05-10
 
 Authoritative operating rules:
 
@@ -19,7 +19,8 @@ The Pantheon UI repo already supports a BFF base URL through
 Known Lovable frontend projects:
 
 - dev project name: `pantheon-ui-dev`
-- dev frontend URL: `https://pantheon-ai-system-front-dev.lovable.app`
+- current execute-plans dev frontend URL: `https://pantheon-dev.lovable.app`
+- legacy dev frontend URL: `https://pantheon-ai-system-front-dev.lovable.app`
 - staging-live project name: `pantheon-ui-staging-live`
 - staging-live frontend URL: `https://pantheon-ai-system-front-staging-live.lovable.app`
 
@@ -43,7 +44,7 @@ Dev Lovable app:
 
 ```env
 VITE_PANTHEON_ENV=dev
-VITE_BFF_BASE_URL=https://pantheon-dev-bff.35.236.178.81.sslip.io
+VITE_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io
 VITE_PANTHEON_LIVE_BROKER_ENABLED=false
 ```
 
@@ -62,7 +63,7 @@ real enforcement.
 
 Current BFFs are healthy on public HTTPS endpoints:
 
-- dev BFF: `https://pantheon-dev-bff.35.236.178.81.sslip.io`
+- dev BFF: `https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io`
 - staging-live BFF on VM1:
   `https://pantheon-staging-bff.34.81.225.122.sslip.io`
 
@@ -84,7 +85,7 @@ Caddy TLS reverse proxies on port `443`.
 The BFF now supports a comma-separated allowlist:
 
 ```env
-PANTHEON_BFF_CORS_ORIGINS=https://pantheon-ai-system-front-dev.lovable.app
+PANTHEON_BFF_CORS_ORIGINS=https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app
 ```
 
 For staging-live:
@@ -93,7 +94,9 @@ For staging-live:
 PANTHEON_BFF_CORS_ORIGINS=https://pantheon-ai-system-front-staging-live.lovable.app
 ```
 
-Do not allow both dev and staging origins on the same BFF unless the operator is
+The dev BFF currently allows both the legacy dev Lovable origin and the current
+execute-plans dev Lovable origin during the frontend repo/domain migration. Do
+not allow both dev and staging origins on the same BFF unless the operator is
 intentionally running a temporary migration window.
 
 ## Promotion Flow

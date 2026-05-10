@@ -39,7 +39,7 @@ Use two Lovable projects:
 
 | Environment | Lovable project | Lovable frontend URL | Purpose | Publish policy |
 | --- | --- | --- | --- | --- |
-| dev | `pantheon-ui-dev` | `https://pantheon-ai-system-front-dev.lovable.app` | daily UI iteration | may publish frequently after basic smoke |
+| dev | `pantheon-ui-dev` | `https://pantheon-dev.lovable.app` | daily UI iteration | may publish frequently after basic smoke |
 | staging-live | `pantheon-ui-staging-live` | `https://pantheon-ai-system-front-staging-live.lovable.app` | EP5-002/live broker rehearsal frontend | publish only from a verified promotion |
 
 Do not use one Lovable project as both dev and staging-live.
@@ -54,8 +54,9 @@ Dev project:
 
 - Use the existing Lovable project unless the operator explicitly replaces it.
 - Rename/display-name it as `pantheon-ui-dev`.
-- Current subdomain: `pantheon-ai-system-front-dev`.
-- Current frontend URL: `https://pantheon-ai-system-front-dev.lovable.app`.
+- Current subdomain: `pantheon-dev`.
+- Current frontend URL: `https://pantheon-dev.lovable.app`.
+- Legacy frontend URL: `https://pantheon-ai-system-front-dev.lovable.app`.
 - Keep it connected to the dev BFF only.
 
 Staging-live project:
@@ -75,7 +76,7 @@ Dev Lovable project:
 
 ```env
 VITE_PANTHEON_ENV=dev
-VITE_BFF_BASE_URL=https://pantheon-dev-bff.35.236.178.81.sslip.io
+VITE_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io
 VITE_PANTHEON_LIVE_BROKER_ENABLED=false
 ```
 
@@ -111,7 +112,7 @@ http://<external-ip>:<port>
 Current BFF HTTPS URLs:
 
 ```text
-https://pantheon-dev-bff.35.236.178.81.sslip.io
+https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io
 https://pantheon-staging-bff.34.81.225.122.sslip.io
 ```
 
@@ -119,11 +120,15 @@ BFF CORS must be one-to-one:
 
 ```env
 # dev BFF on pantheon-dev-vm1
-PANTHEON_BFF_CORS_ORIGINS=https://pantheon-ai-system-front-dev.lovable.app
+PANTHEON_BFF_CORS_ORIGINS=https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app
 
 # staging BFF on pantheon-taiwan
 PANTHEON_BFF_CORS_ORIGINS=https://pantheon-ai-system-front-staging-live.lovable.app
 ```
+
+The dev BFF keeps the legacy dev Lovable origin while execute-plans completes
+its domain/repo cutover. Remove the legacy origin once no active dev traffic
+uses it.
 
 Do not allow both dev and staging Lovable origins on the same BFF unless the
 operator has explicitly approved a temporary migration window.
