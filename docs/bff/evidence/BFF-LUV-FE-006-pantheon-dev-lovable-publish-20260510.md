@@ -96,6 +96,84 @@ because neither `PANTHEON_BFF_SMOKE_BEARER_TOKEN` nor
 `PANTHEON_BFF_SMOKE_JWT_SECRET` is present in this worker environment. No secret
 or bearer token was written into evidence.
 
+## Browser Network Probe And CORS Fix
+
+Reviewer reran a real headless Chromium network probe from
+`https://pantheon-dev.lovable.app/` after installing temporary Playwright
+browsers outside the repo at `/tmp/pw-browsers`.
+
+Pre-fix result at 2026-05-10T05:49:16Z:
+
+```text
+page_url=https://pantheon-dev.lovable.app/management
+bff_url_origins=["https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io"]
+request_count=5
+response_count=0
+contains_lupin_bff=true
+contains_old_dev_bff=false
+console_error_sample=Access to fetch ... from origin 'https://pantheon-dev.lovable.app' has been blocked by CORS policy
+```
+
+Root cause: the running dev BFF container allowed only the legacy Lovable dev
+origin:
+
+```text
+PANTHEON_BFF_CORS_ORIGINS=https://pantheon-ai-system-front-dev.lovable.app
+```
+
+Fix committed and pushed:
+
+```text
+45bf6873 BFF-LUV-FE-006: allow execute-plans Lovable dev CORS
+```
+
+Dev BFF restart:
+
+```text
+host=pantheon-lupin-dev
+repo=/home/lupin/code/pantheon
+head=45bf6873
+PANTHEON_BFF_CORS_ORIGINS=https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app
+docker compose -p pantheon -f docker-compose.yml up -d --build operator-bff
+health-ok
+{"status":"ok","service":"operator-bff","version":"0.2.0","timestamp":"2026-05-10T06:00:11Z"}
+```
+
+Post-fix CORS preflight:
+
+```text
+OPTIONS /health
+Origin: https://pantheon-dev.lovable.app
+HTTP/2 200
+access-control-allow-origin: https://pantheon-dev.lovable.app
+```
+
+Post-fix browser network probe at 2026-05-10T06:00:59Z:
+
+```json
+{
+  "page_url": "https://pantheon-dev.lovable.app/management",
+  "bff_url_origins": [
+    "https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io"
+  ],
+  "request_count": 5,
+  "response_count": 5,
+  "failed_count": 0,
+  "contains_lupin_bff": true,
+  "contains_old_dev_bff": false,
+  "responses": [
+    {"method": "GET", "status": 200, "url": "/health"},
+    {"method": "GET", "status": 401, "url": "/bff/v5/execution/strategy-health"},
+    {"method": "GET", "status": 401, "url": "/bff/v5/control-room"},
+    {"method": "GET", "status": 401, "url": "/bff/v5/execution/persona-health"},
+    {"method": "GET", "status": 200, "url": "/bff/events/stream"}
+  ]
+}
+```
+
+The `401` responses are the expected anonymous auth gate. They prove the browser
+request reached the registered BFF route and was no longer blocked by CORS.
+
 ## Acceptance Impact
 
 | Criterion | Status |
@@ -104,5 +182,4 @@ or bearer token was written into evidence.
 | deployed frontend bundle points to intended BFF | Met |
 | old BFF URL removed from hosted bundle | Met |
 | route catalog no longer has anonymous 404 gaps | Met |
-| full browser network E2E from this shell | Not rerun; local Playwright/Puppeteer/Chromium is not installed in this environment |
-
+| full browser network E2E from this shell | Met after CORS fix and dev BFF restart; 5 BFF requests, 5 responses, 0 failed |
