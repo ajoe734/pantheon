@@ -44,7 +44,9 @@ Dev Lovable app:
 
 ```env
 VITE_PANTHEON_ENV=dev
+VITE_BFF_MODE=live
 VITE_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io
+VITE_BFF_DEV_BEARER_TOKEN=pantheon-dev-browser:reviewer
 VITE_PANTHEON_LIVE_BROKER_ENABLED=false
 ```
 
@@ -98,6 +100,20 @@ The dev BFF currently allows both the legacy dev Lovable origin and the current
 execute-plans dev Lovable origin during the frontend repo/domain migration. Do
 not allow both dev and staging origins on the same BFF unless the operator is
 intentionally running a temporary migration window.
+
+## Dev BFF Auth
+
+The dev Lovable app needs a browser bootstrap identity before real operator
+login/OIDC is wired. The dev frontend may carry the non-secret build value
+`VITE_BFF_DEV_BEARER_TOKEN=pantheon-dev-browser:reviewer`, and the dev BFF must
+explicitly run with:
+
+```env
+PANTHEON_BFF_AUTH_STUB=true
+```
+
+This pairing is dev-only. Staging-live and production must keep
+`PANTHEON_BFF_AUTH_STUB=false` and require strict JWT/OIDC tokens.
 
 ## Promotion Flow
 

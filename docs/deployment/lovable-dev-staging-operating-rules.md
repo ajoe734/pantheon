@@ -76,7 +76,9 @@ Dev Lovable project:
 
 ```env
 VITE_PANTHEON_ENV=dev
+VITE_BFF_MODE=live
 VITE_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io
+VITE_BFF_DEV_BEARER_TOKEN=pantheon-dev-browser:reviewer
 VITE_PANTHEON_LIVE_BROKER_ENABLED=false
 ```
 
@@ -91,6 +93,8 @@ VITE_PANTHEON_LIVE_BROKER_ENABLED=true
 Rules:
 
 - `VITE_` values are public browser build values, not secrets.
+- `VITE_BFF_DEV_BEARER_TOKEN` is accepted only by the dev BFF when
+  `PANTHEON_BFF_AUTH_STUB=true`; do not set it for staging-live.
 - Never place broker credentials, TWS credentials, API tokens, or private keys
   in Lovable frontend env vars.
 - `VITE_PANTHEON_LIVE_BROKER_ENABLED` is a UI hint only. The BFF/backend owns
@@ -121,9 +125,11 @@ BFF CORS must be one-to-one:
 ```env
 # dev BFF on pantheon-dev-vm1
 PANTHEON_BFF_CORS_ORIGINS=https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app
+PANTHEON_BFF_AUTH_STUB=true
 
 # staging BFF on pantheon-taiwan
 PANTHEON_BFF_CORS_ORIGINS=https://pantheon-ai-system-front-staging-live.lovable.app
+PANTHEON_BFF_AUTH_STUB=false
 ```
 
 The dev BFF keeps the legacy dev Lovable origin while execute-plans completes

@@ -15,6 +15,7 @@ DEV_VM="${DEV_VM:-pantheon-dev-vm1}"
 DEV_ZONE="${DEV_ZONE:-asia-east1-b}"
 DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/home/edna/code/pantheon}"
 DEV_BFF_CORS_ORIGINS="${DEV_BFF_CORS_ORIGINS:-https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app}"
+DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-true}"
 
 STAGING_CONTROL_VM="${STAGING_CONTROL_VM:-pantheon-taiwan}"
 STAGING_CONTROL_ZONE="${STAGING_CONTROL_ZONE:-asia-east1-b}"
@@ -54,7 +55,7 @@ Environment overrides:
   PANTHEON_DEPLOY_WORKTREE_ROOT
   GITHUB_TOKEN
   DEV_VM DEV_ZONE DEV_REMOTE_DIR
-  DEV_BFF_CORS_ORIGINS
+  DEV_BFF_CORS_ORIGINS DEV_BFF_AUTH_STUB
   STAGING_CONTROL_VM STAGING_CONTROL_ZONE STAGING_CONTROL_REMOTE_DIR
   STAGING_EXEC_VM STAGING_EXEC_ZONE STAGING_EXEC_REMOTE_DIR
   STAGING_EXEC_HEALTH_URL
@@ -148,6 +149,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "allow_dirty=${ALLOW_DIRTY}"
   info "allow_example_env=${ALLOW_EXAMPLE_ENV}"
   info "dev_bff_cors_origins=${DEV_BFF_CORS_ORIGINS}"
+  info "dev_bff_auth_stub=${DEV_BFF_AUTH_STUB}"
   info "staging_exec_health_url=${STAGING_EXEC_HEALTH_URL}"
   exit 0
 fi
@@ -170,6 +172,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_ALLOW_DIRTY_DEPLOY=$(shell_quote "$ALLOW_DIRTY")"
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
   command_prefix+=" PANTHEON_DEV_BFF_CORS_ORIGINS=$(shell_quote "$DEV_BFF_CORS_ORIGINS")"
+  command_prefix+=" PANTHEON_DEV_BFF_AUTH_STUB=$(shell_quote "$DEV_BFF_AUTH_STUB")"
   command_prefix+=" PANTHEON_STAGING_EXEC_HEALTH_URL=$(shell_quote "$STAGING_EXEC_HEALTH_URL")"
   command_prefix+=" bash -s"
 
@@ -323,6 +326,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_ENV=dev \
     PANTHEON_LIVE_BROKER_ENABLED=false \
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
+    PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
       docker compose -p pantheon -f docker-compose.yml up -d --build
     curl_with_retry http://127.0.0.1:18001/health
     curl_with_retry http://127.0.0.1:18001/readyz
