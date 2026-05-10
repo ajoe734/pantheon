@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-AUTHED-LIVE-001",
+  "archived_at": "2026-05-10T02:56:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-AUTHED-LIVE-001",
+    "title": "Run authenticated lupin dev BFF DTO/write smoke",
+    "summary_zh": "補齊 lupin dev public BFF authenticated DTO 與安全 write-flow live smoke；不得再只用 401 route registration 當作完整 cutover。",
+    "phase": "BFF Execute-Plans Authenticated Live Completion 2026-05-09",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-09-execute-plans-semantic-completion/BFF-LUV-AUTHED-LIVE-001-authenticated-dto-write-smoke.md",
+      "docs/bff/evidence/"
+    ],
+    "acceptance": [
+      "valid operator auth path found or exact blocker recorded",
+      "authenticated live DTO smoke validates route families",
+      "approved non-capital write-flow smoke validates governed receipt envelope",
+      "execute-plans live/write handoff updated"
+    ],
+    "next": "Finalized authenticated lupin dev BFF DTO/write smoke. Commit 3a0a2d01 records dev compose auth forwarding, probe script, live evidence 37/37 passed, Claude review approval, and downstream FE gate notes. Verification: compose config, py_compile, focused pytest 69/69, authenticated smoke 37/37.",
+    "last_update": "2026-05-10T02:56:59Z",
+    "review_notes_zh": [
+      "審查通過。37/37 probes 全部通過，包含 30 read DTO 與 5 confirm-token write-flow probes，無 live-capital side effects。Token 安全處理正確，僅記錄 secret hash fragment。基礎設施補齊：probe script、OIDC contract test、dev compose auth forwarding。Gate outcome 明確記錄，可供 FE-005/FE-006 downstream 使用。"
+    ],
+    "review_file": "docs/bff/evidence/BFF-LUV-AUTHED-LIVE-001-review-20260510.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-10T02:56:59Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "3a0a2d01699a137017461a5d392e6223709e69e9",
+      "commit_subject": "BFF-LUV-AUTHED-LIVE-001: authenticated live smoke",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-LUV-AUTHED-LIVE-001",
+        "Reviewer": "Claude",
+        "Verification": "docker compose config --quiet; python3 -m py_compile scripts/probe_bff_authenticated_live.py; python3 -m pytest services/control-plane/bff/test_bff_oidc_staging_env_contract.py services/control-plane/bff/test_bff_auth_facade.py -q; authenticated lupin dev BFF smoke 37/37 passed with 30 read probes, 5 confirm-token write probes, and liveCapitalSideEffects=false."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-AUTHED-LIVE-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Authenticated lupin dev BFF smoke complete. Evidence docs/bff/evidence/BFF-LUV-AUTHED-LIVE-001-live-smoke-20260510T024935Z.json: 37/37 passed, 30 read probes, 5 confirm-token write probes, no live-capital side effects. Dev compose now forwards BFF strict JWT/OIDC env; focused auth/compose tests passed 69/69; docker compose config passed.",
+      "status": "done",
+      "created_at": "2026-05-10T02:51:17Z",
+      "resolved_at": "2026-05-10T02:53:53Z"
+    },
+    {
+      "task_id": "BFF-LUV-AUTHED-LIVE-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: 37/37 probes passed, all route families covered, write-flow validates receipt envelope with no live-capital side effects, auth redaction correct, gate outcomes clearly stated. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-10T02:53:53Z",
+      "resolved_at": "2026-05-10T02:57:00Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "BFF-LUV-AUTHED-LIVE-001",
+      "owner": "Gemini",
+      "waiting_for": "Codex",
+      "message": "Missing valid Bearer token for lupin dev; GCP CLI re-auth fails.",
+      "status": "resolved",
+      "created_at": "2026-05-09T15:56:56Z",
+      "resolved_at": "2026-05-10T02:51:13Z"
+    }
+  ]
+}
