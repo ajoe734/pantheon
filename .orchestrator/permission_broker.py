@@ -185,6 +185,23 @@ UNSAFE_AGENT_MARKERS = (
     "run ",
     "launch",
 )
+SAFE_AGENT_RUN_PATTERNS = (
+    re.compile(r"\brun\s+`?git\s+status\b"),
+    re.compile(r"\brun\s+`?git\s+log\b"),
+    re.compile(r"\brun\s+`?git\s+diff\b"),
+    re.compile(r"\brun\s+`?git\s+show\b"),
+    re.compile(r"\brun\s+`?git\s+branch\b"),
+    re.compile(r"\brun\s+`?git\s+remote\s+-v\b"),
+    re.compile(r"\brun\s+`?rg\b"),
+    re.compile(r"\brun\s+`?grep\b"),
+    re.compile(r"\brun\s+`?find\b"),
+    re.compile(r"\brun\s+`?ls\b"),
+    re.compile(r"\brun\s+`?cat\b"),
+    re.compile(r"\brun\s+`?sed\b"),
+    re.compile(r"\brun\s+`?head\b"),
+    re.compile(r"\brun\s+`?tail\b"),
+    re.compile(r"\brun\s+`?wc\b"),
+)
 
 SAFE_PYTHON_ONE_LINER_MARKERS = (
     "print(",
@@ -1099,6 +1116,26 @@ def _contains_marker(text: str, markers: tuple[str, ...]) -> bool:
     return False
 
 
+def _contains_unsafe_agent_push_marker(text: str) -> bool:
+    for match in re.finditer(r"\bpush\b", text):
+        after = text[match.end() : match.end() + 16]
+        if re.match(r"[_\s-]*(status|state)\b", after):
+            continue
+        return True
+    return False
+
+
+def _contains_unsafe_agent_marker(text: str) -> bool:
+    non_run_markers = tuple(marker for marker in UNSAFE_AGENT_MARKERS if marker.strip() not in {"push", "run"})
+    if _contains_marker(text, non_run_markers):
+        return True
+    if _contains_unsafe_agent_push_marker(text):
+        return True
+    if not _contains_marker(text, ("run",)):
+        return False
+    return not any(pattern.search(text) for pattern in SAFE_AGENT_RUN_PATTERNS)
+
+
 def _evaluate_agent_request(tool_input: dict[str, Any]) -> dict[str, str] | None:
     description = str(tool_input.get("description") or "")
     prompt = str(tool_input.get("prompt") or "")
@@ -1106,7 +1143,7 @@ def _evaluate_agent_request(tool_input: dict[str, Any]) -> dict[str, str] | None
     combined = f"{description}\n{prompt}".strip().lower()
     if not combined:
         return None
-    if _contains_marker(combined, UNSAFE_AGENT_MARKERS):
+    if _contains_unsafe_agent_marker(combined):
         return None
     if subagent_type in SAFE_AGENT_SUBAGENT_TYPES or _contains_marker(combined, SAFE_AGENT_MARKERS):
         return {

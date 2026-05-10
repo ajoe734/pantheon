@@ -57,6 +57,23 @@ class ProviderPermissionsTest(unittest.TestCase):
         self.assertEqual(evaluation["decision"], "allow")
         self.assertEqual(evaluation["risk_class"], "safe_read")
 
+    def test_read_only_agent_explore_request_allows_safe_git_inspection(self) -> None:
+        evaluation = permission_broker.evaluate_tool_request(
+            "Agent",
+            {
+                "description": "Deep check task board and push status",
+                "prompt": (
+                    "Audit the task board. Run `git status` and `git log --oneline -20`, "
+                    "then report the current branch state."
+                ),
+                "subagent_type": "Explore",
+            },
+            {},
+        )
+
+        self.assertEqual(evaluation["decision"], "allow")
+        self.assertEqual(evaluation["risk_class"], "safe_read")
+
     def test_mutating_agent_request_still_requires_review(self) -> None:
         evaluation = permission_broker.evaluate_tool_request(
             "Agent",
