@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-10T03:03:22Z",
+  "updated_at": "2026-05-10T03:08:36Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,13 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "reviewing",
+      "status": "working",
       "current_task_ids": [
-        "BFF-LUV-FE-005"
+        "BFF-LUV-FE-006"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "All 5 dependencies done. Anon smoke 63/63, auth+write smoke 37/37, execute-plans 418 tests + build green. VITE_BFF_MODE=live and VITE_BFF_REAL_WRITES=true both allowed. execute-plans b276e50 pushed, pantheon 6912ca34. Evidence at docs/bff/evidence/BFF-LUV-FE-005-cutover-smoke-20260510T030200Z.json. Ready for review.",
-      "last_update": "2026-05-10T03:03:22Z"
+      "next": "Starting E2E closure: verify repo states, run BFF health check, collect evidence, commit and push.",
+      "last_update": "2026-05-10T03:08:36Z"
     },
     {
       "name": "Gemini",
@@ -123,13 +123,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "waiting",
-      "current_task_ids": [
-        "BFF-LUV-FE-006"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/codex-collab-system",
-      "next": "Assignment created",
-      "last_update": "2026-05-09T15:41:46Z"
+      "next": "",
+      "last_update": "2026-05-09T16:21:51Z"
     },
     {
       "name": "Codex2",
@@ -306,43 +304,13 @@
       "auto_created_by": "supervisor-underutilization"
     },
     {
-      "id": "BFF-LUV-FE-005",
-      "title": "Run final execute-plans Lovable live cutover smoke",
-      "summary_zh": "等 auth/read/write/realtime 都完成後，跑 execute-plans Lovable live cutover smoke 並發布 handoff。",
-      "phase": "BFF Execute-Plans Frontend Live Completion 2026-05-09",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "review",
-      "depends_on": [
-        "BFF-LUV-AUTHED-LIVE-001",
-        "BFF-LUV-FE-001",
-        "BFF-LUV-FE-002",
-        "BFF-LUV-FE-003",
-        "BFF-LUV-FE-004"
-      ],
-      "artifacts": [
-        "docs/bff/execution-tasks/2026-05-09-execute-plans-frontend-live-completion/BFF-LUV-FE-005-lovable-cutover-smoke.md",
-        "docs/bff/evidence/",
-        "/home/lupin/code/execute-plans/README.md"
-      ],
-      "acceptance": [
-        "all dependencies done or explicit blockers",
-        "evidence published",
-        "execute-plans commit hash recorded",
-        "pantheon commit hash recorded",
-        "final Lovable env/live write handoff published"
-      ],
-      "next": "All 5 dependencies done. Anon smoke 63/63, auth+write smoke 37/37, execute-plans 418 tests + build green. VITE_BFF_MODE=live and VITE_BFF_REAL_WRITES=true both allowed. execute-plans b276e50 pushed, pantheon 6912ca34. Evidence at docs/bff/evidence/BFF-LUV-FE-005-cutover-smoke-20260510T030200Z.json. Ready for review.",
-      "last_update": "2026-05-10T03:03:22Z"
-    },
-    {
       "id": "BFF-LUV-FE-006",
       "title": "Deploy execute-plans dev and run frontend BFF E2E closure",
       "summary_zh": "所有 execute-plans BFF live wiring 完成後，整理 commit/push、部署 dev，並用前端實際流量驗證 BFF 有通。",
       "phase": "BFF Execute-Plans Frontend Live Completion 2026-05-09",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "todo",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "in_progress",
       "depends_on": [
         "BFF-LUV-AUTHED-LIVE-001",
         "BFF-LUV-FE-001",
@@ -364,8 +332,8 @@
         "final evidence published with live/write decisions",
         "supervisor has no active BFF-LUV frontend/live tasks except approved blockers"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-05-09T16:21:51Z"
+      "next": "Starting E2E closure: verify repo states, run BFF health check, collect evidence, commit and push.",
+      "last_update": "2026-05-10T03:08:36Z"
     }
   ],
   "handoffs": [
@@ -631,21 +599,13 @@
       "resolved_at": "2026-05-08T18:04:36Z"
     },
     {
-      "task_id": "BFF-LUV-FE-005",
+      "task_id": "BFF-LUV-FE-006",
       "from": "Codex",
       "to": "Claude",
       "message": "Helper-claimed by Claude while Codex is dispatch-paused.",
       "status": "done",
-      "created_at": "2026-05-10T02:57:03Z",
-      "resolved_at": "2026-05-10T02:57:09Z"
-    },
-    {
-      "task_id": "BFF-LUV-FE-005",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "All 5 dependencies done. Anon smoke 63/63, auth+write smoke 37/37, execute-plans 418 tests + build green. VITE_BFF_MODE=live and VITE_BFF_REAL_WRITES=true both allowed. execute-plans b276e50 pushed, pantheon 6912ca34. Evidence at docs/bff/evidence/BFF-LUV-FE-005-cutover-smoke-20260510T030200Z.json. Ready for review.",
-      "status": "pending",
-      "created_at": "2026-05-10T03:03:22Z"
+      "created_at": "2026-05-10T03:05:58Z",
+      "resolved_at": "2026-05-10T03:06:02Z"
     }
   ],
   "blockers": [],
@@ -664,9 +624,9 @@
       "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 1,
+      "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Claude2": {
       "total": 0,
@@ -696,13 +656,13 @@
       "todo": 0
     },
     "Codex": {
-      "total": 4,
+      "total": 3,
       "active": 0,
       "blocked": 0,
       "done": 3,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Codex2": {
       "total": 1,

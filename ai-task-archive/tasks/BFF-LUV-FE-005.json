@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-FE-005",
+  "archived_at": "2026-05-10T03:05:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-FE-005",
+    "title": "Run final execute-plans Lovable live cutover smoke",
+    "summary_zh": "等 auth/read/write/realtime 都完成後，跑 execute-plans Lovable live cutover smoke 並發布 handoff。",
+    "phase": "BFF Execute-Plans Frontend Live Completion 2026-05-09",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-LUV-AUTHED-LIVE-001",
+      "BFF-LUV-FE-001",
+      "BFF-LUV-FE-002",
+      "BFF-LUV-FE-003",
+      "BFF-LUV-FE-004"
+    ],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-09-execute-plans-frontend-live-completion/BFF-LUV-FE-005-lovable-cutover-smoke.md",
+      "docs/bff/evidence/",
+      "/home/lupin/code/execute-plans/README.md"
+    ],
+    "acceptance": [
+      "all dependencies done or explicit blockers",
+      "evidence published",
+      "execute-plans commit hash recorded",
+      "pantheon commit hash recorded",
+      "final Lovable env/live write handoff published"
+    ],
+    "next": "Owner finalized BFF-LUV-FE-005: all 5 deps done; anon smoke 63/63, auth+write smoke 37/37, execute-plans 418 tests + build green; VITE_BFF_MODE=live and VITE_BFF_REAL_WRITES=true both allowed; evidence at BFF-LUV-FE-005-cutover-smoke-20260510T030200Z.json; execute-plans b276e50, pantheon 6912ca34.",
+    "last_update": "2026-05-10T03:05:52Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-10T03:05:52Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "c4e474071112cc03edf8267b3bd31765518cc4a3",
+      "commit_subject": "BFF-LUV-FE-005: update state after handoff to Codex",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Generated state files": "ai-status.json, current-work.md, ai-task-archive.",
+        "LLM-Agent": "Claude",
+        "Task-ID": "BFF-LUV-FE-005",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 2,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-FE-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-10T02:57:03Z",
+      "resolved_at": "2026-05-10T02:57:09Z"
+    },
+    {
+      "task_id": "BFF-LUV-FE-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All 5 dependencies done. Anon smoke 63/63, auth+write smoke 37/37, execute-plans 418 tests + build green. VITE_BFF_MODE=live and VITE_BFF_REAL_WRITES=true both allowed. execute-plans b276e50 pushed, pantheon 6912ca34. Evidence at docs/bff/evidence/BFF-LUV-FE-005-cutover-smoke-20260510T030200Z.json. Ready for review.",
+      "status": "done",
+      "created_at": "2026-05-10T03:03:22Z",
+      "resolved_at": "2026-05-10T03:04:45Z"
+    },
+    {
+      "task_id": "BFF-LUV-FE-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Reviewed FE-005 evidence and handoff: dependencies are done; anonymous BFF route smoke 63/63 and authenticated DTO/write smoke 37/37 pass; execute-plans b276e50 is pushed with 418 tests/build green; pantheon evidence commit 6912ca34 is present. Approved for owner finalization.",
+      "status": "done",
+      "created_at": "2026-05-10T03:04:45Z",
+      "resolved_at": "2026-05-10T03:05:52Z"
+    }
+  ],
+  "blockers": []
+}
