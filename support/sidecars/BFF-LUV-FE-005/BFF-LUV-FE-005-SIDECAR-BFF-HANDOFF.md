@@ -35,6 +35,11 @@ Current parent state at packet time:
 | BFF-LUV-FE-004 | in_progress | `src/lib/bff/runAction.ts` write seam (actions, confirm-token lifecycle, decisions); `adaptLive` normalization for command receipts (Rev4); `bff-v1/writes.ts` auth gate | Rev4 Codex review requested adaptLive for `bff-v1/writes.ts` runAction/requestConfirmToken. Awaiting Rev5 from Claude2. |
 | BFF-LUV-AUTHED-LIVE-001 | blocked | — | Missing valid lupin dev Bearer JWT token; GCP CLI re-auth fails non-interactively; local env lacks OIDC credentials. Waiting for Codex to resolve auth path. |
 
+Post-packet update (2026-05-10): authenticated DTO/write evidence is now present at
+`docs/bff/evidence/BFF-LUV-AUTHED-LIVE-001-live-smoke-20260510T024935Z.json`.
+That run passed 37/37 probes, including 30 authenticated read DTO probes and
+5 confirm-token write-flow probes, with no live-capital side effects.
+
 ## Source Snapshot
 
 The following surfaces are wired as of this packet. All paths are in
@@ -84,9 +89,9 @@ Lovable cutover evidence required by BFF-LUV-FE-005 acceptance criteria.
 
 | Gap | Current state | Why it matters for cutover | Recommended action |
 |---|---|---|---|
-| Authenticated live DTO smoke | Not run; all live evidence is from anonymous 401/404 route checks or unit mocks | Cutover cannot be declared without proof that the live BFF returns 2xx authenticated DTO shapes for the contract families | Unblock AUTHED-LIVE-001; run authenticated probe once a valid JWT is available. |
+| Authenticated live DTO smoke | Post-packet evidence now exists: `BFF-LUV-AUTHED-LIVE-001-live-smoke-20260510T024935Z.json` passed 30/30 authenticated read DTO probes. | Cutover cannot be declared without proof that the live BFF returns 2xx authenticated DTO shapes for the contract families | Consume the 2026-05-10 evidence in the parent FE-005 smoke packet. |
 | `bff-v1/writes.ts` adaptLive | Rev4 added adaptLive to `runAction.ts`; `bff-v1/writes.ts` still missing adaptLive for `runAction` and `requestConfirmToken` | UI callers through the v1 compat seam can receive raw `status/data/meta` command receipts | Close FE-004 Rev5 first; this must be resolved before write smoke. |
-| Write smoke evidence | Write smoke plan is documented in FE-004 artifact but not yet executed | Final handoff requires proof that `VITE_BFF_REAL_WRITES=true` does not trigger live-capital side effects | Run non-capital write smoke (confirm-token create/delete, alert acknowledge) against lupin dev after auth is available. |
+| Write smoke evidence | Post-packet evidence now exists: the 2026-05-10 AUTHED-LIVE run passed 5/5 confirm-token write probes with `live_capital_side_effects=false`. | Final handoff requires proof that `VITE_BFF_REAL_WRITES=true` does not trigger live-capital side effects | Consume the confirm-token write evidence; keep any broader write enablement scoped to reviewed FE-004 surfaces. |
 | SSE live connection evidence | SSE adapter wired to `/bff/events/stream` but no live connection log or authenticated EventSource smoke | Realtime cutover claim requires at least one authenticated SSE open/message event from the live BFF | Two-track: (a) browser/Lovable cookie-session probe — `connectLiveSse()` uses `{ withCredentials: true }` only; native `EventSource` cannot inject an `Authorization` header; cookie/session auth is the only browser path; (b) optional non-browser Bearer probe via curl or Node.js EventSource polyfill; record which track was tested. |
 | execute-plans commit hash | FE-004 not yet closed | Final handoff must record the exact execute-plans HEAD commit that went into the Lovable deploy | Wait for FE-004 to close; use its final commit as the execute-plans cutover commit. |
 | pantheon commit hash | Pantheon side is clean after earlier BFF gap tasks | Cutover evidence must reference the pantheon commit matching the BFF contract tested | Record `git -C /home/lupin/code/pantheon rev-parse HEAD` at the time of evidence capture. |

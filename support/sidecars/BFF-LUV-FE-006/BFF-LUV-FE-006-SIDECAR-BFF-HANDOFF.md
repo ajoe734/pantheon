@@ -36,6 +36,12 @@ Current parent state at packet time:
 | `BFF-LUV-FE-005` | `todo` | Lovable cutover smoke has not started. FE-006 should not treat final hosted frontend evidence as already published. | `docs/bff/execution-tasks/2026-05-09-execute-plans-frontend-live-completion/BFF-LUV-FE-005-lovable-cutover-smoke.md` |
 | `BFF-LUV-AUTHED-LIVE-001` | `blocked` | Authenticated live DTO/write smoke is the hard gate. Current blocker is missing valid lupin-dev JWT Bearer token or approved auth-stub window. | `docs/bff/evidence/BFF-LUV-AUTHED-LIVE-001-blocker-20260509.md` |
 
+Post-packet update (2026-05-10): authenticated DTO/write evidence is now present at
+`docs/bff/evidence/BFF-LUV-AUTHED-LIVE-001-live-smoke-20260510T024935Z.json`.
+That run passed 37/37 probes, including 30 authenticated read DTO probes and
+5 confirm-token write-flow probes, with no live-capital side effects. The
+original dependency table above is retained as packet-time history.
+
 ## Source Snapshot For Parent Closure
 
 | Surface | Current state | Source |
@@ -59,8 +65,8 @@ closure. They are not new canonical contract claims.
 
 | Gap | Current evidence | Why it matters for FE-006 | Suggested absorption |
 |---|---|---|---|
-| Authenticated DTO proof | Anonymous route registration exists; protected routes mostly return 401. `BFF-LUV-AUTHED-LIVE-001` is blocked on a valid JWT Bearer token or auth-stub window. | FE-006 acceptance requires deployed frontend requests to reach intended dev BFF and return expected `2xx` or governed auth outcomes. Registration-only 401 evidence is insufficient for live DTO cutover. | Treat as a hard preflight gate. If auth remains blocked, publish one closure blocker naming owner/action instead of deploying as complete. |
-| Write-flow proof | FE-004 artifact records rev4 normalization tests, but task state is still `in_progress`. | FE-006 cannot claim `VITE_BFF_REAL_WRITES=true` is allowed until FE-004 and AUTHED-LIVE finish or receive approved blocker disposition. | Keep `VITE_BFF_REAL_WRITES=false` in deployment unless FE-004 and authenticated non-capital write smoke are approved. |
+| Authenticated DTO proof | Post-packet evidence now exists: `BFF-LUV-AUTHED-LIVE-001-live-smoke-20260510T024935Z.json` passed 30/30 authenticated read DTO probes. | FE-006 acceptance requires deployed frontend requests to reach intended dev BFF and return expected `2xx` or governed auth outcomes. Registration-only 401 evidence is insufficient for live DTO cutover. | Consume the 2026-05-10 evidence as the AUTHED-LIVE proof input; still record deployed frontend request evidence separately. |
+| Write-flow proof | Post-packet evidence now exists: the 2026-05-10 AUTHED-LIVE run passed 5/5 confirm-token write probes with `live_capital_side_effects=false`; FE-004 later finalized its safe-write adapters. | FE-006 cannot claim broad deployment closure until frontend write paths and hosted smoke evidence are also recorded. | Use the confirm-token evidence for the BFF non-capital write gate; keep final `VITE_BFF_REAL_WRITES=true` rollout scoped to reviewed FE-004 surfaces and FE-005/FE-006 smoke. |
 | Lovable cutover evidence | FE-005 is `todo`. | FE-006 depends on hosted Lovable/live smoke evidence and exact commit/env handoff. | Do not duplicate FE-005. Consume its evidence once available; otherwise list it as an explicit predecessor blocker. |
 | Hybrid fallback ambiguity | Shared/dev envs default to `VITE_BFF_FALLBACK=auto`, which can return mock data after transport/5xx failure while `liveStatus` records fallback. | Operators may read seed data as live data if FE-006 only checks UI row presence. | For closure evidence, record `mode`, `effective`, `lastError`, and network status. Run at least one strict-mode route smoke so "real" means no silent mock. |
 | Management detail breadth | FE-002 covers detail path construction, but authenticated live detail DTO shape across all non-audit families is not proven. | Deployed UI detail drawers can fail even if list pages render. | In the FE-006 smoke, choose IDs from live lists and call representative detail drawers or client calls. Label empty-list families separately. |

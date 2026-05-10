@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-10 02:30:16
+Last updated: 2026-05-10 10:53:53
 
 ## Objective
 
@@ -38,8 +38,8 @@ Last updated: 2026-05-10 02:30:16
 ## Active Slices
 
 - `Claude`: execution, control-plane, governance-review; next: No active assignment
-- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Missing valid Bearer token for lupin dev; GCP CLI re-auth fails.
-- `Codex`: integration, status-system, schema, acceptance; next: Assignment created
+- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
+- `Codex`: integration, status-system, schema, acceptance; next: Review approved: 37/37 probes passed, all route families covered, write-flow validates receipt envelope with no live-capital side effects, auth redaction correct, gate outcomes clearly stated. Returned to Codex for finalization.
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
 - `Claude2`: execution, control-plane, governance-review; next: No active assignment
@@ -51,7 +51,7 @@ Last updated: 2026-05-10 02:30:16
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `BFF-LUV-AUTHED-LIVE-001` | BFF Execute-Plans Authenticated Live Completion 2026-05-09 | Run authenticated lupin dev BFF DTO/write smoke | Gemini | blocked | - | 補齊 lupin dev public BFF authenticated DTO 與安全 write-flow live smoke；不得再只用 401 route registration 當作完整 cutover。 |
+| `BFF-LUV-AUTHED-LIVE-001` | BFF Execute-Plans Authenticated Live Completion 2026-05-09 | Run authenticated lupin dev BFF DTO/write smoke | Codex | review_approved | - | 補齊 lupin dev public BFF authenticated DTO 與安全 write-flow live smoke；不得再只用 401 route registration 當作完整 cutover。 |
 | `BFF-LUV-FE-005` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Run final execute-plans Lovable live cutover smoke | Codex | todo | `BFF-LUV-AUTHED-LIVE-001`, `BFF-LUV-FE-001`, `BFF-LUV-FE-002`, `BFF-LUV-FE-003`, `BFF-LUV-FE-004` | 等 auth/read/write/realtime 都完成後，跑 execute-plans Lovable live cutover smoke 並發布 handoff。 |
 | `BFF-LUV-FE-006` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Deploy execute-plans dev and run frontend BFF E2E closure | Codex | todo | `BFF-LUV-AUTHED-LIVE-001`, `BFF-LUV-FE-001`, `BFF-LUV-FE-002`, `BFF-LUV-FE-003`, `BFF-LUV-FE-004`, `BFF-LUV-FE-005` | 所有 execute-plans BFF live wiring 完成後，整理 commit/push、部署 dev，並用前端實際流量驗證 BFF 有通。 |
 
@@ -98,7 +98,7 @@ Last updated: 2026-05-10 02:30:16
 | `BFF-LUV-GAP-007` | BFF Execute-Plans Contract Gap 2026-05-08 | Reconcile extended Agora and FULL-spec routes | 整理 FULL spec 與長尾 Agora routes，實作 active source refs 並標記歷史 routes 的 disposition。 | Codex | Codex2 | done | - | 2026-05-09 02:00:15 | Review packet refreshed for BFF-LUV-GAP-007: artifact now includes verification commands/results. Focused pytest remains green: python3 -m pytest services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 14 passed, 2 pre-existing datetime.utcnow warnings; coverage report -> agora-extended 4 implemented, 8 alias, 0 missing, 0 deferred, 5 superseded. |
 | `BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-006] Prepare BFF-LUV-GAP-006 BFF and frontend handoff packet | 平行支援 BFF-LUV-GAP-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Codex2 | Codex | done | - | 2026-05-09 01:33:16 | Approved support-only BFF handoff packet for BFF-LUV-GAP-006; parent owner absorbed the checklist into implementation evidence and focused BFF verification remains green. |
 | `BFF-LUV-GAP-004-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-004] Prepare BFF-LUV-GAP-004 BFF and frontend handoff packet | 平行支援 BFF-LUV-GAP-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Gemini2 | Codex | done | - | 2026-05-09 01:38:41 | Handoff packet prepared and updated. Ready for review. |
-| `BFF-LUV-AUTHED-LIVE-001` | BFF Execute-Plans Authenticated Live Completion 2026-05-09 | Run authenticated lupin dev BFF DTO/write smoke | 補齊 lupin dev public BFF authenticated DTO 與安全 write-flow live smoke；不得再只用 401 route registration 當作完整 cutover。 | Gemini | Codex | blocked | - | 2026-05-09 23:56:56 | Missing valid Bearer token for lupin dev; GCP CLI re-auth fails. |
+| `BFF-LUV-AUTHED-LIVE-001` | BFF Execute-Plans Authenticated Live Completion 2026-05-09 | Run authenticated lupin dev BFF DTO/write smoke | 補齊 lupin dev public BFF authenticated DTO 與安全 write-flow live smoke；不得再只用 401 route registration 當作完整 cutover。 | Codex | Claude | review_approved | - | 2026-05-10 10:53:53 | Review approved: 37/37 probes passed, all route families covered, write-flow validates receipt envelope with no live-capital side effects, auth redaction correct, gate outcomes clearly stated. Returned to Codex for finalization. |
 | `BFF-LUV-FE-005` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Run final execute-plans Lovable live cutover smoke | 等 auth/read/write/realtime 都完成後，跑 execute-plans Lovable live cutover smoke 並發布 handoff。 | Codex | Claude | todo | `BFF-LUV-AUTHED-LIVE-001`, `BFF-LUV-FE-001`, `BFF-LUV-FE-002`, `BFF-LUV-FE-003`, `BFF-LUV-FE-004` | 2026-05-09 23:41:46 | Assignment created |
 | `BFF-LUV-FE-006` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Deploy execute-plans dev and run frontend BFF E2E closure | 所有 execute-plans BFF live wiring 完成後，整理 commit/push、部署 dev，並用前端實際流量驗證 BFF 有通。 | Codex | Claude | todo | `BFF-LUV-AUTHED-LIVE-001`, `BFF-LUV-FE-001`, `BFF-LUV-FE-002`, `BFF-LUV-FE-003`, `BFF-LUV-FE-004`, `BFF-LUV-FE-005` | 2026-05-10 00:21:51 | Assignment created |
 
@@ -106,19 +106,20 @@ Last updated: 2026-05-10 02:30:16
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - |
+| `BFF-LUV-AUTHED-LIVE-001` | Claude | Codex | Review approved: 37/37 probes passed, all route families covered, write-flow validates receipt envelope with no live-capital side effects, auth redaction correct, gate outcomes clearly stated. Returned to Codex for finalization. | pending | 2026-05-10 10:53:53 |
 
 ## Blockers
 
 | Task | Owner | Waiting For | Message | Status |
 |---|---|---|---|---|
-| `BFF-LUV-AUTHED-LIVE-001` | Gemini | Codex | Missing valid Bearer token for lupin dev; GCP CLI re-auth fails. | open |
+| _(none)_ | - | - | - | - |
 
 ## Review Notes
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
 | `BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF` | Codex | Sidecar packet is support-only and scoped under support/sidecars; it does not redefine canonical route truth.<br>Parent artifact now records absorption of the packet checklist into BFF-LUV-GAP-006 implementation evidence.<br>Focused verification rerun from parent artifact: python3 -m pytest services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py services/control-plane/bff/test_action_catalog.py services/control-plane/bff/test_agora_journal_merge_patch.py -q -> 25 passed, 6 pre-existing datetime.utcnow warnings. | - |
+| `BFF-LUV-AUTHED-LIVE-001` | Claude | 審查通過。37/37 probes 全部通過，包含 30 read DTO 與 5 confirm-token write-flow probes，無 live-capital side effects。Token 安全處理正確，僅記錄 secret hash fragment。基礎設施補齊：probe script、OIDC contract test、dev compose auth forwarding。Gate outcome 明確記錄，可供 FE-005/FE-006 downstream 使用。 | docs/bff/evidence/BFF-LUV-AUTHED-LIVE-001-review-20260510.md |
 
 ## Lovable Coordination
 
@@ -189,23 +190,23 @@ Last updated: 2026-05-10 02:30:16
 
 ## Latest Checkpoints
 
-- 2026-05-10 02:28:39 Orchestrator: PostToolUse: Read
-- 2026-05-10 02:28:40 Orchestrator: PostToolUse: Read
-- 2026-05-10 02:28:51 Orchestrator: PreToolUse: Read
-- 2026-05-10 02:28:51 Orchestrator: PostToolUse: Read
-- 2026-05-10 02:28:52 Orchestrator: PreToolUse: Read
-- 2026-05-10 02:28:52 Orchestrator: PostToolUse: Read
-- 2026-05-10 02:29:01 Orchestrator: PreToolUse: Bash
-- 2026-05-10 02:29:01 Orchestrator: PostToolUse: Bash
-- 2026-05-10 02:29:01 Orchestrator: PreToolUse: Bash
-- 2026-05-10 02:29:02 Orchestrator: PostToolUse: Bash
-- 2026-05-10 02:29:35 Orchestrator: PreToolUse: Bash
-- 2026-05-10 02:29:36 Orchestrator: PostToolUse: Bash
-- 2026-05-10 02:29:37 Orchestrator: PreToolUse: Bash
-- 2026-05-10 02:29:49 Orchestrator: PostToolUse: Bash
-- 2026-05-10 02:30:01 Orchestrator: PreToolUse: Bash
-- 2026-05-10 02:30:02 Orchestrator: PostToolUse: Bash
-- 2026-05-10 02:30:09 Orchestrator: PreToolUse: Bash
-- 2026-05-10 02:30:10 Orchestrator: PostToolUse: Bash
-- 2026-05-10 02:30:15 Orchestrator: PreToolUse: Bash
-- 2026-05-10 02:30:16 Claude2: `BFF-LUV-FE-004` Rev6 approved and finalized: all 5 v3 high-risk call sites pass confirmToken to runActionSafe; adaptLive normalization complete in both bff/runAction.ts and bff-v1/writes.ts; focused tests 34/34; full suite 418/418; build clean. execute-plans HEAD 3f33e60. Closeout commit 52407423.
+- 2026-05-10 10:51:40 Orchestrator: PostToolUse: Read
+- 2026-05-10 10:51:41 Orchestrator: PostToolUse: Read
+- 2026-05-10 10:52:05 Orchestrator: PreToolUse: Read
+- 2026-05-10 10:52:08 Orchestrator: PreToolUse: Read
+- 2026-05-10 10:52:11 Orchestrator: PostToolUse: Read
+- 2026-05-10 10:52:12 Orchestrator: PostToolUse: Read
+- 2026-05-10 10:52:24 Orchestrator: PreToolUse: Read
+- 2026-05-10 10:52:24 Orchestrator: PreToolUse: Read
+- 2026-05-10 10:52:30 Orchestrator: PostToolUse: Read
+- 2026-05-10 10:52:33 Orchestrator: PostToolUse: Read
+- 2026-05-10 10:52:44 Orchestrator: PreToolUse: Read
+- 2026-05-10 10:52:44 Orchestrator: PostToolUse: Read
+- 2026-05-10 10:52:57 Orchestrator: `BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF` Failed to create sidecar for BFF-LUV-AUTHED-LIVE-001: Task BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF is archived. Create a new follow-up task instead of reusing the archived task id.
+- 2026-05-10 10:52:57 Orchestrator: `BFF-LUV-FE-005-SIDECAR-BFF-HANDOFF` Failed to create sidecar for BFF-LUV-FE-005: Task BFF-LUV-FE-005-SIDECAR-BFF-HANDOFF is archived. Create a new follow-up task instead of reusing the archived task id.
+- 2026-05-10 10:52:58 Orchestrator: `BFF-LUV-FE-006-SIDECAR-BFF-HANDOFF` Failed to create sidecar for BFF-LUV-FE-006: Task BFF-LUV-FE-006-SIDECAR-BFF-HANDOFF is archived. Create a new follow-up task instead of reusing the archived task id.
+- 2026-05-10 10:52:58 Orchestrator: underutilized but no sidecar candidate could be assigned safely
+- 2026-05-10 10:53:38 Orchestrator: PreToolUse: Write
+- 2026-05-10 10:53:40 Orchestrator: PostToolUse: Write
+- 2026-05-10 10:53:50 Orchestrator: PreToolUse: Bash
+- 2026-05-10 10:53:53 Claude: `BFF-LUV-AUTHED-LIVE-001` Review approved: 37/37 probes passed, all route families covered, write-flow validates receipt envelope with no live-capital side effects, auth redaction correct, gate outcomes clearly stated. Returned to Codex for finalization.

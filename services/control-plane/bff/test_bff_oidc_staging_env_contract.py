@@ -5,6 +5,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CONTROL_COMPOSE = REPO_ROOT / "docker-compose.control.yml"
+DEV_COMPOSE = REPO_ROOT / "docker-compose.yml"
 PROD_ENV_EXAMPLE = REPO_ROOT / "env" / "prod-control.env.example"
 
 
@@ -19,8 +20,8 @@ def _read_env_file(path: Path) -> dict[str, str]:
     return values
 
 
-def _operator_bff_block() -> str:
-    text = CONTROL_COMPOSE.read_text(encoding="utf-8")
+def _operator_bff_block(path: Path = CONTROL_COMPOSE) -> str:
+    text = path.read_text(encoding="utf-8")
     start = text.index("  operator-bff:")
     end = text.index("\n  persona:", start)
     return text[start:end]
@@ -64,6 +65,31 @@ def test_control_compose_forwards_bff_idp_env_with_stub_disabled_by_default() ->
     assert "PANTHEON_BFF_AUTH_STUB: ${PANTHEON_BFF_AUTH_STUB:-false}" in block
     assert "PANTHEON_BFF_AUTH_MODE: ${PANTHEON_BFF_AUTH_MODE:-strict}" in block
     assert "PANTHEON_BFF_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-}" in block
+
+    for key in (
+        "PANTHEON_BFF_JWKS_URI",
+        "PANTHEON_BFF_OIDC_DISCOVERY_URL",
+        "PANTHEON_BFF_OIDC_ISSUER",
+        "PANTHEON_BFF_OIDC_AUDIENCE",
+        "PANTHEON_BFF_ROLE_CLAIMS",
+        "PANTHEON_BFF_ROLE_MAP",
+        "PANTHEON_BFF_ROLE_MAP_MODE",
+        "PANTHEON_BFF_MFA_REQUIRED",
+        "PANTHEON_BFF_MFA_CLAIMS",
+        "PANTHEON_BFF_MFA_VALUES",
+    ):
+        assert f"{key}: ${{{key}:-" in block
+
+
+def test_dev_compose_forwards_bff_auth_env_with_strict_default() -> None:
+    block = _operator_bff_block(DEV_COMPOSE)
+
+    assert "PANTHEON_BFF_AUTH_STUB: ${PANTHEON_BFF_AUTH_STUB:-false}" in block
+    assert "PANTHEON_BFF_AUTH_MODE: ${PANTHEON_BFF_AUTH_MODE:-strict}" in block
+    assert "PANTHEON_BFF_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-}" in block
+    assert "PANTHEON_BFF_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}" in block
+    assert "PANTHEON_BFF_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}" in block
+    assert "PANTHEON_BFF_DEFAULT_ROLE: ${PANTHEON_BFF_DEFAULT_ROLE:-operator}" in block
 
     for key in (
         "PANTHEON_BFF_JWKS_URI",

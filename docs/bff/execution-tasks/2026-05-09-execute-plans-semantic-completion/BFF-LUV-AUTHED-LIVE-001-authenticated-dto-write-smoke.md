@@ -51,3 +51,24 @@ Observed on 2026-05-09:
 - Write-flow smoke returns the expected governed command/receipt envelope without live-capital side effects.
 - Evidence records exact target URL, timestamp, route list, status codes, DTO shape checks, and redacted auth source.
 - If auth cannot be obtained, the task remains blocked with exact owner/action needed; do not close as done.
+
+## Completion Result - 2026-05-10
+
+Evidence:
+
+- `docs/bff/evidence/BFF-LUV-AUTHED-LIVE-001-live-smoke-20260510T024935Z.json`
+
+Result:
+
+- Target: `https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io`
+- Auth source: HS256 JWT minted from `PANTHEON_BFF_SMOKE_JWT_SECRET`; the evidence records only redacted command text and a short secret hash, not the secret or bearer token.
+- Health/openapi: 2/2 passed.
+- Authenticated read DTO probes: 30/30 passed with `2xx` status across session, strategy/persona/capital, governance, alerts/incidents/audit/artifacts/runtimes, MCP/tools/skills/channels, Agora, and v5 loop/sentinel families.
+- Non-capital write-flow probes: 5/5 passed for confirm-token create/read/redeem/delete/read-deleted (`201`, `200`, `202`, `202`, `200`).
+- Live-capital side effects: `false`.
+- Failed routes: `0`.
+
+Gate outcome:
+
+- `VITE_BFF_MODE=live`: allowed by this authenticated DTO/write smoke.
+- `VITE_BFF_REAL_WRITES=true`: this task no longer blocks the gate for reviewed non-capital safe-write surfaces; final frontend enablement still depends on the downstream FE-005/FE-006 cutover/deploy evidence.

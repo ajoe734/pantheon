@@ -21,3 +21,17 @@ To unblock this task and the subsequent `BFF-LUV-FE` frontend cutover sequence, 
 3. **Fix GCP CLI:** Ensure the auto worker environment has a refreshed and valid GCP identity token that can be accessed via `gcloud auth print-identity-token`.
 
 The task will remain `blocked` until the authentication path is resolved.
+
+## 2026-05-10 Resolution
+
+The auth path was resolved for the smoke run by supplying `PANTHEON_BFF_SMOKE_JWT_SECRET` to `scripts/probe_bff_authenticated_live.py`, which minted a short-lived HS256 JWT without writing the secret or bearer token into evidence.
+
+Passing evidence:
+
+- `docs/bff/evidence/BFF-LUV-AUTHED-LIVE-001-live-smoke-20260510T024935Z.json`
+
+Summary:
+
+- 37/37 probes passed: health/openapi, 30 authenticated read DTO probes, and 5 confirm-token write-flow probes.
+- Failed routes: `0`.
+- Live-capital side effects: `false`.
