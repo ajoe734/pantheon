@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-10 13:45:49
+Last updated: 2026-05-10 13:46:15
 
 ## Objective
 
@@ -37,7 +37,7 @@ Last updated: 2026-05-10 13:45:49
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Supervisor re-dispatched BFF-LUV-FE-006; task remains in progress.
+- `Claude`: execution, control-plane, governance-review; next: E2E closure complete from corrected URL. Commit e459609d stages evidence: https://pantheon-dev.lovable.app/ serves b944ef3a with lupin dev BFF bundle (401:42, 200:1, 0 missing routes). AUTHED-LIVE-001 37/37 authenticated smoke referenced. All acceptance criteria met. Pantheon branch at e459609d, execute-plans at e25f5c7/198522c on origin/main. Ready for final review and done transition.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 - `Codex`: integration, status-system, schema, acceptance; next: No active assignment
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
@@ -51,7 +51,7 @@ Last updated: 2026-05-10 13:45:49
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `BFF-LUV-FE-006` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Deploy execute-plans dev and run frontend BFF E2E closure | Claude | in_progress | `BFF-LUV-AUTHED-LIVE-001`, `BFF-LUV-FE-001`, `BFF-LUV-FE-002`, `BFF-LUV-FE-003`, `BFF-LUV-FE-004`, `BFF-LUV-FE-005` | 所有 execute-plans BFF live wiring 完成後，整理 commit/push、部署 dev，並用前端實際流量驗證 BFF 有通。 |
+| `BFF-LUV-FE-006` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Deploy execute-plans dev and run frontend BFF E2E closure | Claude | review | `BFF-LUV-AUTHED-LIVE-001`, `BFF-LUV-FE-001`, `BFF-LUV-FE-002`, `BFF-LUV-FE-003`, `BFF-LUV-FE-004`, `BFF-LUV-FE-005` | 所有 execute-plans BFF live wiring 完成後，整理 commit/push、部署 dev，並用前端實際流量驗證 BFF 有通。 |
 
 ### External / Upstream Integration Work
 
@@ -96,13 +96,13 @@ Last updated: 2026-05-10 13:45:49
 | `BFF-LUV-GAP-007` | BFF Execute-Plans Contract Gap 2026-05-08 | Reconcile extended Agora and FULL-spec routes | 整理 FULL spec 與長尾 Agora routes，實作 active source refs 並標記歷史 routes 的 disposition。 | Codex | Codex2 | done | - | 2026-05-09 02:00:15 | Review packet refreshed for BFF-LUV-GAP-007: artifact now includes verification commands/results. Focused pytest remains green: python3 -m pytest services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 14 passed, 2 pre-existing datetime.utcnow warnings; coverage report -> agora-extended 4 implemented, 8 alias, 0 missing, 0 deferred, 5 superseded. |
 | `BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-006] Prepare BFF-LUV-GAP-006 BFF and frontend handoff packet | 平行支援 BFF-LUV-GAP-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Codex2 | Codex | done | - | 2026-05-09 01:33:16 | Approved support-only BFF handoff packet for BFF-LUV-GAP-006; parent owner absorbed the checklist into implementation evidence and focused BFF verification remains green. |
 | `BFF-LUV-GAP-004-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-004] Prepare BFF-LUV-GAP-004 BFF and frontend handoff packet | 平行支援 BFF-LUV-GAP-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Gemini2 | Codex | done | - | 2026-05-09 01:38:41 | Handoff packet prepared and updated. Ready for review. |
-| `BFF-LUV-FE-006` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Deploy execute-plans dev and run frontend BFF E2E closure | 所有 execute-plans BFF live wiring 完成後，整理 commit/push、部署 dev，並用前端實際流量驗證 BFF 有通。 | Claude | Codex | in_progress | `BFF-LUV-AUTHED-LIVE-001`, `BFF-LUV-FE-001`, `BFF-LUV-FE-002`, `BFF-LUV-FE-003`, `BFF-LUV-FE-004`, `BFF-LUV-FE-005` | 2026-05-10 13:45:49 | Supervisor re-dispatched BFF-LUV-FE-006; task remains in progress. |
+| `BFF-LUV-FE-006` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Deploy execute-plans dev and run frontend BFF E2E closure | 所有 execute-plans BFF live wiring 完成後，整理 commit/push、部署 dev，並用前端實際流量驗證 BFF 有通。 | Claude | Codex | review | `BFF-LUV-AUTHED-LIVE-001`, `BFF-LUV-FE-001`, `BFF-LUV-FE-002`, `BFF-LUV-FE-003`, `BFF-LUV-FE-004`, `BFF-LUV-FE-005` | 2026-05-10 13:46:15 | E2E closure complete from corrected URL. Commit e459609d stages evidence: https://pantheon-dev.lovable.app/ serves b944ef3a with lupin dev BFF bundle (401:42, 200:1, 0 missing routes). AUTHED-LIVE-001 37/37 authenticated smoke referenced. All acceptance criteria met. Pantheon branch at e459609d, execute-plans at e25f5c7/198522c on origin/main. Ready for final review and done transition. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - |
+| `BFF-LUV-FE-006` | Claude | Codex | E2E closure complete from corrected URL. Commit e459609d stages evidence: https://pantheon-dev.lovable.app/ serves b944ef3a with lupin dev BFF bundle (401:42, 200:1, 0 missing routes). AUTHED-LIVE-001 37/37 authenticated smoke referenced. All acceptance criteria met. Pantheon branch at e459609d, execute-plans at e25f5c7/198522c on origin/main. Ready for final review and done transition. | pending | 2026-05-10 13:46:15 |
 
 ## Blockers
 
@@ -185,23 +185,23 @@ Last updated: 2026-05-10 13:45:49
 
 ## Latest Checkpoints
 
-- 2026-05-10 13:45:14 Orchestrator: PreToolUse: Bash
-- 2026-05-10 13:45:19 Orchestrator: PreToolUse: Bash
-- 2026-05-10 13:45:20 Orchestrator: PostToolUse: Bash
-- 2026-05-10 13:45:23 Orchestrator: PreToolUse: ToolSearch
-- 2026-05-10 13:45:24 Orchestrator: PostToolUse: ToolSearch
-- 2026-05-10 13:45:26 Orchestrator: PreToolUse: Bash
-- 2026-05-10 13:45:27 Orchestrator: PostToolUse: Bash
-- 2026-05-10 13:45:29 Orchestrator: `BFF-LUV-FE-006` Approval requested for WebFetch (apr-20260510T054529Z-56466310)
-- 2026-05-10 13:45:29 Orchestrator: PreToolUse: WebFetch
-- 2026-05-10 13:45:30 Orchestrator: `BFF-LUV-FE-006` Approval requested for WebFetch (apr-20260510T054530Z-97741001)
-- 2026-05-10 13:45:30 Orchestrator: PreToolUse: WebFetch
-- 2026-05-10 13:45:31 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-10 13:45:46 Orchestrator: PreToolUse: Bash
-- 2026-05-10 13:45:46 Orchestrator: `BFF-LUV-FE-006` Auto-pruned stale approval apr-20260510T054529Z-56466310
-- 2026-05-10 13:45:46 Orchestrator: `BFF-LUV-FE-006` Auto-pruned stale approval apr-20260510T054530Z-97741001
-- 2026-05-10 13:45:47 Claude: `BFF-LUV-FE-006` Blocker resolved by Codex: correct URL https://pantheon-dev.lovable.app/ confirmed with deployment b944ef3a, bundle contains lupin dev BFF, anonymous probe 200:1/401:42/404:0. Staging task evidence files and preparing handoff to Codex for final review.
-- 2026-05-10 13:45:48 Orchestrator: `BFF-LUV-FE-006` Dropped orphaned worker after its queue event disappeared; open tasks will be redispatched.
-- 2026-05-10 13:45:48 Orchestrator: `BFF-LUV-FE-006` Wake-up queued for supervisor: owned_in_progress_dispatch
-- 2026-05-10 13:45:48 Orchestrator: `BFF-LUV-FE-006` Worker started via claude_cli: owned_in_progress_dispatch
-- 2026-05-10 13:45:49 Claude: `BFF-LUV-FE-006` Supervisor re-dispatched BFF-LUV-FE-006; task remains in progress.
+- 2026-05-10 13:45:52 Orchestrator: PostToolUse: Bash
+- 2026-05-10 13:45:53 Orchestrator: `BFF-LUV-FE-006` Supervisor re-dispatched BFF-LUV-FE-006; task remains in progress.
+- 2026-05-10 13:45:56 Orchestrator: PreToolUse: Bash
+- 2026-05-10 13:45:57 Orchestrator: PostToolUse: Bash
+- 2026-05-10 13:46:02 Orchestrator: PreToolUse: Read
+- 2026-05-10 13:46:02 Orchestrator: PostToolUse: Read
+- 2026-05-10 13:46:02 Orchestrator: PreToolUse: Read
+- 2026-05-10 13:46:03 Orchestrator: PreToolUse: Read
+- 2026-05-10 13:46:03 Orchestrator: PostToolUse: Read
+- 2026-05-10 13:46:03 Orchestrator: PreToolUse: Read
+- 2026-05-10 13:46:03 Orchestrator: PostToolUse: Read
+- 2026-05-10 13:46:04 Orchestrator: PostToolUse: Read
+- 2026-05-10 13:46:08 Orchestrator: PreToolUse: Bash
+- 2026-05-10 13:46:08 Orchestrator: PostToolUse: Bash
+- 2026-05-10 13:46:09 Orchestrator: PreToolUse: Read
+- 2026-05-10 13:46:09 Orchestrator: PostToolUse: Read
+- 2026-05-10 13:46:10 Orchestrator: PreToolUse: Read
+- 2026-05-10 13:46:10 Orchestrator: PostToolUse: Read
+- 2026-05-10 13:46:15 Orchestrator: PreToolUse: Bash
+- 2026-05-10 13:46:15 Claude: `BFF-LUV-FE-006` Handoff to Codex: E2E closure complete from corrected URL. Commit e459609d stages evidence: https://pantheon-dev.lovable.app/ serves b944ef3a with lupin dev BFF bundle (401:42, 200:1, 0 missing routes). AUTHED-LIVE-001 37/37 authenticated smoke referenced. All acceptance criteria met. Pantheon branch at e459609d, execute-plans at e25f5c7/198522c on origin/main. Ready for final review and done transition.
