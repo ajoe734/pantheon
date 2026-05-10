@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-10 11:08:36
+Last updated: 2026-05-10 11:16:57
 
 ## Objective
 
@@ -37,7 +37,7 @@ Last updated: 2026-05-10 11:08:36
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Starting E2E closure: verify repo states, run BFF health check, collect evidence, commit and push.
+- `Claude`: execution, control-plane, governance-review; next: E2E closure complete. Execute-plans at 198522c on origin/main (418 tests pass, build succeeds). Pantheon pushed at 456113a6. BFF authenticated smoke 37/37 passed (AUTHED-LIVE-001). All route families wired. Evidence: docs/bff/evidence/BFF-LUV-FE-006-e2e-closure-20260510T031500Z.json. VITE_BFF_MODE=live, VITE_BFF_REAL_WRITES defaults false (allowed true per handoff decision). Ready for review.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 - `Codex`: integration, status-system, schema, acceptance; next: No active assignment
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
@@ -51,7 +51,7 @@ Last updated: 2026-05-10 11:08:36
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `BFF-LUV-FE-006` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Deploy execute-plans dev and run frontend BFF E2E closure | Claude | in_progress | `BFF-LUV-AUTHED-LIVE-001`, `BFF-LUV-FE-001`, `BFF-LUV-FE-002`, `BFF-LUV-FE-003`, `BFF-LUV-FE-004`, `BFF-LUV-FE-005` | 所有 execute-plans BFF live wiring 完成後，整理 commit/push、部署 dev，並用前端實際流量驗證 BFF 有通。 |
+| `BFF-LUV-FE-006` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Deploy execute-plans dev and run frontend BFF E2E closure | Claude | review | `BFF-LUV-AUTHED-LIVE-001`, `BFF-LUV-FE-001`, `BFF-LUV-FE-002`, `BFF-LUV-FE-003`, `BFF-LUV-FE-004`, `BFF-LUV-FE-005` | 所有 execute-plans BFF live wiring 完成後，整理 commit/push、部署 dev，並用前端實際流量驗證 BFF 有通。 |
 
 ### External / Upstream Integration Work
 
@@ -96,13 +96,13 @@ Last updated: 2026-05-10 11:08:36
 | `BFF-LUV-GAP-007` | BFF Execute-Plans Contract Gap 2026-05-08 | Reconcile extended Agora and FULL-spec routes | 整理 FULL spec 與長尾 Agora routes，實作 active source refs 並標記歷史 routes 的 disposition。 | Codex | Codex2 | done | - | 2026-05-09 02:00:15 | Review packet refreshed for BFF-LUV-GAP-007: artifact now includes verification commands/results. Focused pytest remains green: python3 -m pytest services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 14 passed, 2 pre-existing datetime.utcnow warnings; coverage report -> agora-extended 4 implemented, 8 alias, 0 missing, 0 deferred, 5 superseded. |
 | `BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-006] Prepare BFF-LUV-GAP-006 BFF and frontend handoff packet | 平行支援 BFF-LUV-GAP-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Codex2 | Codex | done | - | 2026-05-09 01:33:16 | Approved support-only BFF handoff packet for BFF-LUV-GAP-006; parent owner absorbed the checklist into implementation evidence and focused BFF verification remains green. |
 | `BFF-LUV-GAP-004-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-004] Prepare BFF-LUV-GAP-004 BFF and frontend handoff packet | 平行支援 BFF-LUV-GAP-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Gemini2 | Codex | done | - | 2026-05-09 01:38:41 | Handoff packet prepared and updated. Ready for review. |
-| `BFF-LUV-FE-006` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Deploy execute-plans dev and run frontend BFF E2E closure | 所有 execute-plans BFF live wiring 完成後，整理 commit/push、部署 dev，並用前端實際流量驗證 BFF 有通。 | Claude | Codex | in_progress | `BFF-LUV-AUTHED-LIVE-001`, `BFF-LUV-FE-001`, `BFF-LUV-FE-002`, `BFF-LUV-FE-003`, `BFF-LUV-FE-004`, `BFF-LUV-FE-005` | 2026-05-10 11:08:36 | Starting E2E closure: verify repo states, run BFF health check, collect evidence, commit and push. |
+| `BFF-LUV-FE-006` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Deploy execute-plans dev and run frontend BFF E2E closure | 所有 execute-plans BFF live wiring 完成後，整理 commit/push、部署 dev，並用前端實際流量驗證 BFF 有通。 | Claude | Codex | review | `BFF-LUV-AUTHED-LIVE-001`, `BFF-LUV-FE-001`, `BFF-LUV-FE-002`, `BFF-LUV-FE-003`, `BFF-LUV-FE-004`, `BFF-LUV-FE-005` | 2026-05-10 11:16:57 | E2E closure complete. Execute-plans at 198522c on origin/main (418 tests pass, build succeeds). Pantheon pushed at 456113a6. BFF authenticated smoke 37/37 passed (AUTHED-LIVE-001). All route families wired. Evidence: docs/bff/evidence/BFF-LUV-FE-006-e2e-closure-20260510T031500Z.json. VITE_BFF_MODE=live, VITE_BFF_REAL_WRITES defaults false (allowed true per handoff decision). Ready for review. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - |
+| `BFF-LUV-FE-006` | Claude | Codex | E2E closure complete. Execute-plans at 198522c on origin/main (418 tests pass, build succeeds). Pantheon pushed at 456113a6. BFF authenticated smoke 37/37 passed (AUTHED-LIVE-001). All route families wired. Evidence: docs/bff/evidence/BFF-LUV-FE-006-e2e-closure-20260510T031500Z.json. VITE_BFF_MODE=live, VITE_BFF_REAL_WRITES defaults false (allowed true per handoff decision). Ready for review. | pending | 2026-05-10 11:16:57 |
 
 ## Blockers
 
@@ -185,23 +185,23 @@ Last updated: 2026-05-10 11:08:36
 
 ## Latest Checkpoints
 
-- 2026-05-10 11:07:20 Orchestrator: `OPS-CHAIR-REVIEW` 5 idle workers, 0.0 underutilization, BFF-LUV-FE-006 dev-deploy prep is safely parallelizable before Codex primary dispatch, no global blocker.
-- 2026-05-10 11:07:22 Orchestrator: Stop: Stop
-- 2026-05-10 11:07:22 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-10 11:07:39 Orchestrator: Chair review worker exited; supervisor will validate the review artifacts.
-- 2026-05-10 11:07:43 Orchestrator: PreToolUse: Bash
-- 2026-05-10 11:07:43 Orchestrator: PostToolUse: Bash
-- 2026-05-10 11:07:44 Orchestrator: PreToolUse: Bash
-- 2026-05-10 11:07:45 Orchestrator: PostToolUse: Bash
-- 2026-05-10 11:07:55 Orchestrator: PreToolUse: Bash
-- 2026-05-10 11:07:55 Orchestrator: PostToolUse: Bash
-- 2026-05-10 11:07:56 Orchestrator: PreToolUse: Bash
-- 2026-05-10 11:07:57 Orchestrator: PostToolUse: Bash
-- 2026-05-10 11:08:01 Orchestrator: `BFF-LUV-FE-006-SIDECAR-BFF-HANDOFF` Failed to create sidecar for BFF-LUV-FE-006: Task BFF-LUV-FE-006-SIDECAR-BFF-HANDOFF is archived. Create a new follow-up task instead of reusing the archived task id.
-- 2026-05-10 11:08:01 Orchestrator: underutilized but no sidecar candidate could be assigned safely
-- 2026-05-10 11:08:05 Orchestrator: PreToolUse: Read
-- 2026-05-10 11:08:05 Orchestrator: PostToolUse: Read
-- 2026-05-10 11:08:05 Orchestrator: PreToolUse: Read
-- 2026-05-10 11:08:06 Orchestrator: PostToolUse: Read
-- 2026-05-10 11:08:35 Orchestrator: PreToolUse: Bash
-- 2026-05-10 11:08:36 Claude: `BFF-LUV-FE-006` Starting E2E closure: verify repo states, run BFF health check, collect evidence, commit and push.
+- 2026-05-10 11:14:33 Orchestrator: PreToolUse: Bash
+- 2026-05-10 11:14:34 Orchestrator: PostToolUse: Bash
+- 2026-05-10 11:14:39 Orchestrator: PreToolUse: Bash
+- 2026-05-10 11:14:41 Orchestrator: PostToolUse: Bash
+- 2026-05-10 11:14:44 Orchestrator: PreToolUse: Bash
+- 2026-05-10 11:14:45 Orchestrator: PostToolUse: Bash
+- 2026-05-10 11:15:38 Orchestrator: PreToolUse: Write
+- 2026-05-10 11:15:38 Orchestrator: PostToolUse: Write
+- 2026-05-10 11:16:01 Orchestrator: PreToolUse: Bash
+- 2026-05-10 11:16:01 Orchestrator: PostToolUse: Bash
+- 2026-05-10 11:16:05 Orchestrator: PreToolUse: Bash
+- 2026-05-10 11:16:06 Orchestrator: PostToolUse: Bash
+- 2026-05-10 11:16:13 Orchestrator: PreToolUse: Bash
+- 2026-05-10 11:16:14 Orchestrator: PostToolUse: Bash
+- 2026-05-10 11:16:17 Orchestrator: PreToolUse: Bash
+- 2026-05-10 11:16:19 Orchestrator: PostToolUse: Bash
+- 2026-05-10 11:16:28 Orchestrator: PreToolUse: Bash
+- 2026-05-10 11:16:29 Orchestrator: PostToolUse: Bash
+- 2026-05-10 11:16:57 Orchestrator: PreToolUse: Bash
+- 2026-05-10 11:16:57 Claude: `BFF-LUV-FE-006` Handoff to Codex: E2E closure complete. Execute-plans at 198522c on origin/main (418 tests pass, build succeeds). Pantheon pushed at 456113a6. BFF authenticated smoke 37/37 passed (AUTHED-LIVE-001). All route families wired. Evidence: docs/bff/evidence/BFF-LUV-FE-006-e2e-closure-20260510T031500Z.json. VITE_BFF_MODE=live, VITE_BFF_REAL_WRITES defaults false (allowed true per handoff decision). Ready for review.
