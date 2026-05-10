@@ -43,9 +43,26 @@ Hosted Lovable polling after that push still returned the same stale deployment:
 | 2026-05-10T03:25:12Z | 60aec936-0577-4aa4-a9fa-d14b6e5937b4 | /assets/index-Db5tXj5v.js | https://pantheon-dev-bff.35.236.178.81.sslip.io |
 | 2026-05-10T03:25:33Z | 60aec936-0577-4aa4-a9fa-d14b6e5937b4 | /assets/index-Db5tXj5v.js | https://pantheon-dev-bff.35.236.178.81.sslip.io |
 | 2026-05-10T03:25:52Z | 60aec936-0577-4aa4-a9fa-d14b6e5937b4 | /assets/index-Db5tXj5v.js | https://pantheon-dev-bff.35.236.178.81.sslip.io |
+| 2026-05-10T05:35:48Z | 60aec936-0577-4aa4-a9fa-d14b6e5937b4 | /assets/index-Db5tXj5v.js | https://pantheon-dev-bff.35.236.178.81.sslip.io |
+| 2026-05-10T05:37:00Z | 60aec936-0577-4aa4-a9fa-d14b6e5937b4 | /assets/index-Db5tXj5v.js | https://pantheon-dev-bff.35.236.178.81.sslip.io |
 
 Conclusion: a normal GitHub push to `ajoe734/execute-plans@main` is not enough
 to update the currently published Lovable dev app.
+
+## Latest Lovable Publish Recheck
+
+Rechecked after the operator reported Lovable publish should be complete:
+
+- Lovable connector for project `140c41d5-9cd8-4d6b-ba02-66d5941d0dbe` still reports `status=ready`.
+- Published dev URL `https://pantheon-ai-system-front-dev.lovable.app` still serves the same old deployment `60aec936-0577-4aa4-a9fa-d14b6e5937b4`.
+- Hosted JS still contains only `https://pantheon-dev-bff.35.236.178.81.sslip.io`.
+- Hosted JS does not contain `https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io`.
+- Lovable preview host inferred from the connector screenshot URL (`id-preview-a7067bd5--140c41d5-...lovable.app`) returns no Vite asset to verify, and its `a7067bd5` identifier matches the old `front-ai-trading-system` main commit family rather than `execute-plans@e25f5c7`.
+- `ajoe734/execute-plans` still has no GitHub Actions runs and no GitHub deployment records.
+- `ajoe734/front-ai-trading-system` still has GitHub Actions history, latest on `main@a7067bd5`.
+
+Conclusion: Lovable may have accepted a publish action in its UI, but the
+browser-reachable dev app has not moved to the `execute-plans` bundle.
 
 ## Hosted Lovable State (Stale)
 

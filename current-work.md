@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-10 11:26:44
+Last updated: 2026-05-10 13:37:00
 
 ## Objective
 
@@ -37,7 +37,7 @@ Last updated: 2026-05-10 11:26:44
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Codex pushed execute-plans empty deploy-trigger commit e25f5c7 to origin/main and polled hosted Lovable at 03:24:31Z, 03:25:12Z, 03:25:33Z, 03:25:52Z. Hosted app still serves deployment 60aec936 / assets/index-Db5tXj5v.js with old BFF URL. Blocker remains: Lovable manual publish/project connection needed before hosted E2E can pass. Evidence updated: docs/bff/evidence/BFF-LUV-FE-006-lovable-deploy-blocker-20260510.md.
+- `Claude`: execution, control-plane, governance-review; next: Rechecked after reported Lovable publish completion. Lovable connector reports project ready, but published dev URL still serves deployment 60aec936 / assets/index-Db5tXj5v.js with old BFF URL; bundle does not contain lupin dev BFF. execute-plans still has no GitHub Actions/deployment records; front-ai-trading-system retains Actions history around a7067bd5. Blocker remains. Evidence updated with 2026-05-10T05:35Z/05:37Z recheck.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 - `Codex`: integration, status-system, schema, acceptance; next: No active assignment
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
@@ -96,7 +96,7 @@ Last updated: 2026-05-10 11:26:44
 | `BFF-LUV-GAP-007` | BFF Execute-Plans Contract Gap 2026-05-08 | Reconcile extended Agora and FULL-spec routes | 整理 FULL spec 與長尾 Agora routes，實作 active source refs 並標記歷史 routes 的 disposition。 | Codex | Codex2 | done | - | 2026-05-09 02:00:15 | Review packet refreshed for BFF-LUV-GAP-007: artifact now includes verification commands/results. Focused pytest remains green: python3 -m pytest services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 14 passed, 2 pre-existing datetime.utcnow warnings; coverage report -> agora-extended 4 implemented, 8 alias, 0 missing, 0 deferred, 5 superseded. |
 | `BFF-LUV-GAP-006-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-006] Prepare BFF-LUV-GAP-006 BFF and frontend handoff packet | 平行支援 BFF-LUV-GAP-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Codex2 | Codex | done | - | 2026-05-09 01:33:16 | Approved support-only BFF handoff packet for BFF-LUV-GAP-006; parent owner absorbed the checklist into implementation evidence and focused BFF verification remains green. |
 | `BFF-LUV-GAP-004-SIDECAR-BFF-HANDOFF` | BFF Execute-Plans Contract Gap 2026-05-08 | [Sidecar] [Auto] [Parent BFF-LUV-GAP-004] Prepare BFF-LUV-GAP-004 BFF and frontend handoff packet | 平行支援 BFF-LUV-GAP-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Gemini2 | Codex | done | - | 2026-05-09 01:38:41 | Handoff packet prepared and updated. Ready for review. |
-| `BFF-LUV-FE-006` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Deploy execute-plans dev and run frontend BFF E2E closure | 所有 execute-plans BFF live wiring 完成後，整理 commit/push、部署 dev，並用前端實際流量驗證 BFF 有通。 | Claude | Codex | blocked | `BFF-LUV-AUTHED-LIVE-001`, `BFF-LUV-FE-001`, `BFF-LUV-FE-002`, `BFF-LUV-FE-003`, `BFF-LUV-FE-004`, `BFF-LUV-FE-005` | 2026-05-10 11:26:44 | Codex pushed execute-plans empty deploy-trigger commit e25f5c7 to origin/main and polled hosted Lovable at 03:24:31Z, 03:25:12Z, 03:25:33Z, 03:25:52Z. Hosted app still serves deployment 60aec936 / assets/index-Db5tXj5v.js with old BFF URL. Blocker remains: Lovable manual publish/project connection needed before hosted E2E can pass. Evidence updated: docs/bff/evidence/BFF-LUV-FE-006-lovable-deploy-blocker-20260510.md. |
+| `BFF-LUV-FE-006` | BFF Execute-Plans Frontend Live Completion 2026-05-09 | Deploy execute-plans dev and run frontend BFF E2E closure | 所有 execute-plans BFF live wiring 完成後，整理 commit/push、部署 dev，並用前端實際流量驗證 BFF 有通。 | Claude | Codex | blocked | `BFF-LUV-AUTHED-LIVE-001`, `BFF-LUV-FE-001`, `BFF-LUV-FE-002`, `BFF-LUV-FE-003`, `BFF-LUV-FE-004`, `BFF-LUV-FE-005` | 2026-05-10 13:37:00 | Rechecked after reported Lovable publish completion. Lovable connector reports project ready, but published dev URL still serves deployment 60aec936 / assets/index-Db5tXj5v.js with old BFF URL; bundle does not contain lupin dev BFF. execute-plans still has no GitHub Actions/deployment records; front-ai-trading-system retains Actions history around a7067bd5. Blocker remains. Evidence updated with 2026-05-10T05:35Z/05:37Z recheck. |
 
 ## Handoff Queue
 
@@ -185,23 +185,23 @@ Last updated: 2026-05-10 11:26:44
 
 ## Latest Checkpoints
 
-- 2026-05-10 11:22:09 Orchestrator: PostToolUse: TodoWrite
-- 2026-05-10 11:22:46 Orchestrator: PreToolUse: Write
-- 2026-05-10 11:22:46 Orchestrator: PostToolUse: Write
-- 2026-05-10 11:22:51 Orchestrator: PreToolUse: TodoWrite
-- 2026-05-10 11:22:51 Orchestrator: PostToolUse: TodoWrite
-- 2026-05-10 11:22:58 Orchestrator: PreToolUse: Bash
-- 2026-05-10 11:23:01 Orchestrator: `BFF-LUV-FE-006-SIDECAR-BFF-HANDOFF` Failed to create sidecar for BFF-LUV-FE-006: Task BFF-LUV-FE-006-SIDECAR-BFF-HANDOFF is archived. Create a new follow-up task instead of reusing the archived task id.
-- 2026-05-10 11:23:01 Orchestrator: underutilized but no sidecar candidate could be assigned safely
-- 2026-05-10 11:23:07 Orchestrator: PreToolUse: Bash
-- 2026-05-10 11:23:11 Orchestrator: PreToolUse: Bash
-- 2026-05-10 11:23:12 Orchestrator: PostToolUse: Bash
-- 2026-05-10 11:23:15 Orchestrator: PreToolUse: Bash
-- 2026-05-10 11:23:15 Orchestrator: PostToolUse: Bash
-- 2026-05-10 11:23:18 Orchestrator: PreToolUse: Bash
-- 2026-05-10 11:23:19 Orchestrator: PostToolUse: Bash
-- 2026-05-10 11:23:37 Orchestrator: PreToolUse: Bash
-- 2026-05-10 11:23:38 Claude: `BFF-LUV-FE-006` Blocked on Codex: Lovable deployment capability blocker: hosted https://pantheon-ai-system-front-dev.lovable.app still serves old deployment 60aec936 with old BFF URL. Execute-plans origin/main at 198522c has new BFF URL but Lovable has not auto-deployed. No Lovable deploy API or CLI available for background worker. Human operator must log into Lovable and trigger redeploy, or approve partial-closure exception. Evidence: docs/bff/evidence/BFF-LUV-FE-006-lovable-deploy-blocker-20260510.md. Options: (A) Operator triggers Lovable redeploy and owner reruns E2E; (B) Reviewer/chair approves partial-closure exception and allows done.
-- 2026-05-10 11:23:38 Orchestrator: `BFF-LUV-FE-006` Worker superseded after task responsibility moved to another agent.
-- 2026-05-10 11:23:39 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-10 11:26:44 Codex: `BFF-LUV-FE-006` Codex pushed execute-plans empty deploy-trigger commit e25f5c7 to origin/main and polled hosted Lovable at 03:24:31Z, 03:25:12Z, 03:25:33Z, 03:25:52Z. Hosted app still serves deployment 60aec936 / assets/index-Db5tXj5v.js with old BFF URL. Blocker remains: Lovable manual publish/project connection needed before hosted E2E can pass. Evidence updated: docs/bff/evidence/BFF-LUV-FE-006-lovable-deploy-blocker-20260510.md.
+- 2026-05-10 13:36:24 Orchestrator: PreToolUse: Bash
+- 2026-05-10 13:36:24 Orchestrator: PostToolUse: Bash
+- 2026-05-10 13:36:25 Orchestrator: PreToolUse: Bash
+- 2026-05-10 13:36:26 Orchestrator: PostToolUse: Bash
+- 2026-05-10 13:36:27 Orchestrator: PreToolUse: Read
+- 2026-05-10 13:36:27 Orchestrator: PostToolUse: Read
+- 2026-05-10 13:36:29 Orchestrator: PreToolUse: Bash
+- 2026-05-10 13:36:30 Orchestrator: PostToolUse: Bash
+- 2026-05-10 13:36:30 Orchestrator: PreToolUse: Bash
+- 2026-05-10 13:36:31 Orchestrator: PostToolUse: Bash
+- 2026-05-10 13:36:31 Orchestrator: PreToolUse: Bash
+- 2026-05-10 13:36:32 Orchestrator: PostToolUse: Bash
+- 2026-05-10 13:36:35 Orchestrator: PreToolUse: Bash
+- 2026-05-10 13:36:36 Orchestrator: PostToolUse: Bash
+- 2026-05-10 13:36:37 Orchestrator: PreToolUse: Read
+- 2026-05-10 13:36:37 Orchestrator: PreToolUse: Bash
+- 2026-05-10 13:36:38 Orchestrator: PostToolUse: Read
+- 2026-05-10 13:36:38 Orchestrator: PostToolUse: Bash
+- 2026-05-10 13:36:59 Orchestrator: PreToolUse: Bash
+- 2026-05-10 13:37:00 Codex: `BFF-LUV-FE-006` Rechecked after reported Lovable publish completion. Lovable connector reports project ready, but published dev URL still serves deployment 60aec936 / assets/index-Db5tXj5v.js with old BFF URL; bundle does not contain lupin dev BFF. execute-plans still has no GitHub Actions/deployment records; front-ai-trading-system retains Actions history around a7067bd5. Blocker remains. Evidence updated with 2026-05-10T05:35Z/05:37Z recheck.

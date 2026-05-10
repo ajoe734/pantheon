@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-04-30-activation-ready-platform-closure",
   "objective": "把 OSS/research/learning、OpenClaw、source/search 從 pre-activation 或 bounded baseline 推進到 activation-ready / platform-grade；broker order API 應先用 paper/sandbox/test-key 串接並跑 place/cancel/readback/reconcile smoke；只有 production live 下單、取消單、改倉、資金調度等 real-capital side-effect path 預設 fail-closed，外部資料源 production ingestion 以 durable storage、entitlement、license/PIT、rate limit、audit 與 no-direct-order-routing 作為 gate。",
-  "updated_at": "2026-05-10T03:26:44Z",
+  "updated_at": "2026-05-10T05:37:00Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -98,8 +98,8 @@
         "BFF-LUV-FE-006"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Codex pushed execute-plans empty deploy-trigger commit e25f5c7 to origin/main and polled hosted Lovable at 03:24:31Z, 03:25:12Z, 03:25:33Z, 03:25:52Z. Hosted app still serves deployment 60aec936 / assets/index-Db5tXj5v.js with old BFF URL. Blocker remains: Lovable manual publish/project connection needed before hosted E2E can pass. Evidence updated: docs/bff/evidence/BFF-LUV-FE-006-lovable-deploy-blocker-20260510.md.",
-      "last_update": "2026-05-10T03:26:44Z"
+      "next": "Rechecked after reported Lovable publish completion. Lovable connector reports project ready, but published dev URL still serves deployment 60aec936 / assets/index-Db5tXj5v.js with old BFF URL; bundle does not contain lupin dev BFF. execute-plans still has no GitHub Actions/deployment records; front-ai-trading-system retains Actions history around a7067bd5. Blocker remains. Evidence updated with 2026-05-10T05:35Z/05:37Z recheck.",
+      "last_update": "2026-05-10T05:37:00Z"
     },
     {
       "name": "Gemini",
@@ -332,8 +332,8 @@
         "final evidence published with live/write decisions",
         "supervisor has no active BFF-LUV frontend/live tasks except approved blockers"
       ],
-      "next": "Codex pushed execute-plans empty deploy-trigger commit e25f5c7 to origin/main and polled hosted Lovable at 03:24:31Z, 03:25:12Z, 03:25:33Z, 03:25:52Z. Hosted app still serves deployment 60aec936 / assets/index-Db5tXj5v.js with old BFF URL. Blocker remains: Lovable manual publish/project connection needed before hosted E2E can pass. Evidence updated: docs/bff/evidence/BFF-LUV-FE-006-lovable-deploy-blocker-20260510.md.",
-      "last_update": "2026-05-10T03:26:44Z",
+      "next": "Rechecked after reported Lovable publish completion. Lovable connector reports project ready, but published dev URL still serves deployment 60aec936 / assets/index-Db5tXj5v.js with old BFF URL; bundle does not contain lupin dev BFF. execute-plans still has no GitHub Actions/deployment records; front-ai-trading-system retains Actions history around a7067bd5. Blocker remains. Evidence updated with 2026-05-10T05:35Z/05:37Z recheck.",
+      "last_update": "2026-05-10T05:37:00Z",
       "waiting_for": "Codex"
     }
   ],
