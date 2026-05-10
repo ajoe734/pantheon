@@ -472,7 +472,7 @@
         "open_in_vscode": false
       },
       "codex": {
-        "cli": "codex",
+        "cli": ".orchestrator/bin/codex",
         "api_key_env": "OPENAI_API_KEY",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
