@@ -492,7 +492,7 @@
         "open_in_vscode": false
       },
       "codex": {
-        "cli": "codex",
+        "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",

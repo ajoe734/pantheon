@@ -38,3 +38,6 @@ archived
 .venv-*/
 docs/commit-plan-uncommitted-worktree-*.md
 tools/storage-state.json
+
+# Local sprint-pivot backups (operator-only, kept on disk for safety)
+ai-status.json.bak.*
