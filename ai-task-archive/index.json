@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-10T03:05:52Z",
+  "updated_at": "2026-05-10T06:04:11Z",
   "counts": {
-    "total": 961,
-    "completed": 945,
+    "total": 962,
+    "completed": 946,
     "superseded": 16
   },
   "recent_terminal_ids": [
+    "BFF-LUV-FE-006",
     "BFF-LUV-FE-005",
     "BFF-LUV-AUTHED-LIVE-001",
     "BFF-LUV-FE-004",
@@ -25,7 +26,6 @@
     "BFF-LUV-GAP-007-SIDECAR-BFF-HANDOFF",
     "BFF-LUV-SEM-006-SIDECAR-BFF-HANDOFF",
     "BFF-LUV-SEM-006",
-    "BFF-LUV-SEM-004",
-    "BFF-LUV-SEM-002"
+    "BFF-LUV-SEM-004"
   ]
 }
