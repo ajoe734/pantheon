@@ -225,6 +225,39 @@ class TestSandboxInputValidation(unittest.TestCase):
         self.assertEqual(ctx.exception.error_code, "INVALID_LIMIT_PRICE")
 
 
+class TestFractionalQtyRejection(unittest.TestCase):
+    """Fractional qty must be rejected before any SDK call."""
+
+    def _adapter(self) -> ShioajiBrokerAdapter:
+        return ShioajiBrokerAdapter(sandbox_enabled=True, _api=_make_mock_api())
+
+    def test_fractional_qty_rejected(self):
+        with self.assertRaises(ShioajiBrokerError) as ctx:
+            self._adapter().submit(**{**_ORDER_KWARGS, "qty": 1.9})
+        self.assertEqual(ctx.exception.error_code, "INVALID_QTY")
+        self.assertIn("whole number", ctx.exception.message)
+
+    def test_half_lot_rejected(self):
+        with self.assertRaises(ShioajiBrokerError) as ctx:
+            self._adapter().submit(**{**_ORDER_KWARGS, "qty": 0.5})
+        self.assertEqual(ctx.exception.error_code, "INVALID_QTY")
+
+    def test_sdk_not_called_for_fractional_qty(self):
+        mock_api = _make_mock_api()
+        adapter = ShioajiBrokerAdapter(sandbox_enabled=True, _api=mock_api)
+        with self.assertRaises(ShioajiBrokerError):
+            adapter.submit(**{**_ORDER_KWARGS, "qty": 1.5})
+        mock_api.place_order.assert_not_called()
+
+    def test_integer_float_qty_accepted(self):
+        order = self._adapter().submit(**{**_ORDER_KWARGS, "qty": 2.0})
+        self.assertEqual(order.qty, 2.0)
+
+    def test_integer_qty_accepted(self):
+        order = self._adapter().submit(**{**_ORDER_KWARGS, "qty": 5.0})
+        self.assertEqual(order.qty, 5.0)
+
+
 class TestErrorPaths(unittest.TestCase):
     """Error paths for cancel and get_status."""
 

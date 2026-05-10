@@ -212,6 +212,11 @@ class ShioajiBrokerAdapter:
             )
         if qty <= 0:
             raise ShioajiBrokerError("INVALID_QTY", "qty must be positive")
+        if qty != int(qty):
+            raise ShioajiBrokerError(
+                "INVALID_QTY",
+                f"qty must be a whole number (integer lots); fractional quantities are not supported, got {qty!r}",
+            )
         if order_type == "limit" and (limit_price is None or limit_price <= 0):
             raise ShioajiBrokerError(
                 "INVALID_LIMIT_PRICE", "limit_price must be positive for limit orders"
