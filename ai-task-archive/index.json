@@ -1,12 +1,21 @@
 {
   "version": 1,
-  "updated_at": "2026-05-09T16:14:04Z",
+  "updated_at": "2026-05-09T18:30:16Z",
   "counts": {
-    "total": 950,
-    "completed": 934,
+    "total": 959,
+    "completed": 943,
     "superseded": 16
   },
   "recent_terminal_ids": [
+    "BFF-LUV-FE-004",
+    "BFF-LUV-FE-005-SIDECAR-BFF-HANDOFF",
+    "BFF-LUV-FE-006-SIDECAR-BFF-HANDOFF",
+    "BFF-LUV-FE-002-SIDECAR-BFF-HANDOFF",
+    "BFF-LUV-FE-004-SIDECAR-BFF-HANDOFF",
+    "BFF-LUV-FE-002",
+    "BFF-LUV-FE-003",
+    "BFF-LUV-FE-001-SIDECAR-BFF-HANDOFF",
+    "BFF-LUV-FE-001",
     "BFF-LUV-AUTHED-LIVE-001-SIDECAR-BFF-HANDOFF",
     "BFF-LUV-GAP-012",
     "BFF-LUV-GAP-012-SIDECAR-BFF-HANDOFF",
@@ -17,15 +26,6 @@
     "BFF-LUV-SEM-004",
     "BFF-LUV-SEM-002",
     "BFF-LUV-SEM-002-SIDECAR-BFF-HANDOFF",
-    "BFF-LUV-SEM-004-SIDECAR-BFF-HANDOFF",
-    "BFF-LUV-SEM-005",
-    "BFF-LUV-SEM-003",
-    "BFF-LUV-SEM-001",
-    "BFF-LUV-GAP-001-UNBLOCK",
-    "BFF-LUV-GAP-001",
-    "BFF-LUV-GAP-001-SIDECAR-BFF-HANDOFF",
-    "BFF-LUV-GAP-010",
-    "BFF-LUV-GAP-003",
-    "BFF-LUV-GAP-002"
+    "BFF-LUV-SEM-004-SIDECAR-BFF-HANDOFF"
   ]
 }
