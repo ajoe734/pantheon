@@ -41,3 +41,6 @@ tools/storage-state.json
 
 # Local sprint-pivot backups (operator-only, kept on disk for safety)
 ai-status.json.bak.*
+
+# Real env files with secrets (env/*.env.example templates stay tracked)
+env/.env*
