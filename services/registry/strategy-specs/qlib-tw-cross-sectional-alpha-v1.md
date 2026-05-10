@@ -9,7 +9,7 @@
 **Task**: QLIB-ACT-001
 **Owner**: Claude2
 **Reviewer**: Codex
-**RS-003 Gate**: candidate submission — replication gate evidence cited in §6
+**RS-003 Gate**: candidate submission — Codex review approved 2026-05-10; QLIB-ACT-002/003 pending
 **Created**: 2026-05-10
 **Last Updated**: 2026-05-10
 
@@ -173,7 +173,7 @@ Gate status as of 2026-05-10:
 
 | Gate step | Status | Notes |
 |---|---|---|
-| StrategySpec authored | done (this document) | `artifact_state=draft` |
+| StrategySpec authored | done — Codex review approved 2026-05-10 | `artifact_state=draft` |
 | Governed dataset (QLIB-ACT-002) | pending | requires TWSE/TPEx OHLCV dataset packet |
 | LightGBM activation run (QLIB-ACT-003) | pending | depends on QLIB-ACT-002 dataset |
 | Registry admission | pending review | no production registry write until Codex reviewer approves |
