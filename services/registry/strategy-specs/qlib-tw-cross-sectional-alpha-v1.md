@@ -7,11 +7,11 @@
 **Artifact State**: `draft`
 **Deployment Stage**: `none`
 **Task**: QLIB-ACT-001
-**Owner**: Claude2
-**Reviewer**: Codex
-**RS-003 Gate**: candidate submission — Codex review approved 2026-05-10; QLIB-ACT-002/003 pending
+**Owner**: Claude
+**Reviewer**: Codex2
+**RS-003 Gate**: candidate submission — Codex2 review pending; QLIB-ACT-002/003 pending
 **Created**: 2026-05-10
-**Last Updated**: 2026-05-10
+**Last Updated**: 2026-05-12
 
 ---
 
@@ -169,14 +169,14 @@ This StrategySpec is the candidate submission for the RS-003 replication gate. T
 3. The LightGBM activation run (QLIB-ACT-003) produces test IC ≥ 0.03 and test Sharpe ≥ 80% of validation Sharpe.
 4. `build_production_activation_packet()` emits a non-writing `candidate_packet` with `artifact_state=draft`, `deployment_summary.current_stage=none`, `registry_service_only` write authority.
 
-Gate status as of 2026-05-10:
+Gate status as of 2026-05-12:
 
 | Gate step | Status | Notes |
 |---|---|---|
-| StrategySpec authored | done — Codex review approved 2026-05-10 | `artifact_state=draft` |
+| StrategySpec authored | ready for Codex2 review | `artifact_state=draft`; finalized by Claude (owner) on 2026-05-12 |
 | Governed dataset (QLIB-ACT-002) | pending | requires TWSE/TPEx OHLCV dataset packet |
 | LightGBM activation run (QLIB-ACT-003) | pending | depends on QLIB-ACT-002 dataset |
-| Registry admission | pending review | no production registry write until Codex reviewer approves |
+| Registry admission | pending review | no production registry write until Codex2 reviewer approves |
 
 ---
 
@@ -249,7 +249,7 @@ QLIB-ACT-003 must cite this registry ID in the `lineage.source_strategy_spec_id`
 
 ## 11. Constraints and Safety Rules
 
-- This StrategySpec is `artifact_state=draft`. No production registry write may occur before Codex reviewer approves this document.
+- This StrategySpec is `artifact_state=draft`. No production registry write may occur before Codex2 reviewer approves this document.
 - `deployment_summary.current_stage=none` must be preserved until the full activation sequence (QLIB-ACT-001 → QLIB-ACT-002 → QLIB-ACT-003) is complete and registry admission is granted.
 - The signal output from any model trained against this spec is scoring-only. It must not route to broker, order, paper/canary/live execution, or capital binding systems before governance promotion.
 - Qlib LightGBM backend activation requires `PANTHEON_QLIB_ACTIVATION_READY_ENABLED=1` gate per `services/research/qlib/worker.py`.
