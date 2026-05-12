@@ -174,6 +174,95 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
             self.assertEqual(summary["event_trace_status"], "packetized")
             self.assertEqual(packet["bundle"]["canary_plan"]["target_stage"], "canary")
 
+    def test_emit_human_gate_packet_consumes_broker_smoke_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            checklist_path = tmp / "operator-checklist.json"
+            datasource_summary_path = tmp / "datasource-summary.json"
+            plan_path = tmp / "canary-deployment-plan.json"
+            drill_summary_path = tmp / "rollback-drill-summary.json"
+            broker_smoke_summary_path = tmp / "broker-smoke-summary.json"
+            output_dir = tmp / "packet"
+
+            checklist_path.write_text(json.dumps({"status": "pass", "check_health": True}), encoding="utf-8")
+            datasource_summary_path.write_text(
+                json.dumps({"status": "pass", "providers": ["ibkr", "kraken", "shioaji", "tej"]}),
+                encoding="utf-8",
+            )
+            plan_path.write_text(
+                json.dumps(
+                    {
+                        "target_stage": "canary",
+                        "scale": {"capital_scale_pct": 5.0, "gross_scale_pct": 25.0},
+                        "rollback": {"action_type": "pause_then_replace"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            drill_summary_path.write_text(
+                json.dumps(
+                    {
+                        "status": "executed",
+                        "replacement_binding_id": "rb-replacement-001",
+                        "kill_switch_safe_mode": "paused",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            broker_smoke_summary_path.write_text(
+                json.dumps(
+                    {
+                        "task_id": "EP5-BROKER-TW-002",
+                        "provider": "Shioaji",
+                        "status": "passed",
+                        "run_mode": "mock_api_replay",
+                        "proof_boundary": "broker_adapter_sandbox_smoke; not canary/live/capital proof",
+                        "order_ids": {
+                            "pantheon_order_id": "order-001",
+                            "shioaji_trade_id": "trade-001",
+                        },
+                        "reconciliation": {"status": "passed"},
+                        "live_gate": {
+                            "status": "rejected",
+                            "response": {"error_code": "SHIOAJI_LIVE_DISABLED"},
+                        },
+                        "no_real_capital": {
+                            "real_capital_used": False,
+                            "production_live_order_submitted": False,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            args = type(
+                "Args",
+                (),
+                {
+                    "checklist_json": str(checklist_path),
+                    "datasource_summary_json": str(datasource_summary_path),
+                    "plan_json": str(plan_path),
+                    "drill_summary_json": str(drill_summary_path),
+                    "broker_smoke_summary_json": str(broker_smoke_summary_path),
+                    "dual_vm_evidence_dir": str(tmp),
+                    "event_trace_status": "packetized",
+                    "event_trace_note": "Trace query evidence remains packetized pending a replay-clean projection capture.",
+                    "output_dir": str(output_dir),
+                },
+            )
+            exit_code = readiness.command_emit_human_gate_packet(args)
+
+            self.assertEqual(exit_code, 0)
+            packet = json.loads((output_dir / "human-gate-packet.json").read_text(encoding="utf-8"))
+            self.assertEqual(packet["status"], "ready_for_review")
+            self.assertEqual(
+                packet["bundle"]["broker_sandbox_smoke"]["path"],
+                str(broker_smoke_summary_path),
+            )
+            self.assertEqual(packet["bundle"]["broker_sandbox_smoke"]["provider"], "Shioaji")
+            checks = {item["name"]: item for item in packet["acceptance_checks"]}
+            self.assertEqual(checks["broker_sandbox_smoke_consumed"]["status"], "pass")
+
 
 if __name__ == "__main__":
     unittest.main()

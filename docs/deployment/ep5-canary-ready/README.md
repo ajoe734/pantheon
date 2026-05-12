@@ -89,6 +89,7 @@ python3 scripts/run_ep5_canary_readiness.py \
   --datasource-summary-json /tmp/pantheon/ep5-canary-ready/datasource-smoke/summary.json \
   --plan-json docs/deployment/evidence/ep5-dual-vm-local/20260424T143020Z/canary-deployment-plan.json \
   --drill-summary-json docs/deployment/evidence/ep5-dual-vm-local/20260424T143020Z/rollback-drill-summary.json \
+  --broker-smoke-summary-json /tmp/pantheon/ep5-broker-tw-002/sandbox-smoke/summary.json \
   --dual-vm-evidence-dir docs/deployment/evidence/ep5-dual-vm-local/20260424T143020Z \
   --event-trace-status packetized \
   --event-trace-note "Replay-clean event-trace projection evidence still needs a dedicated capture; use the closeout packet for the current gap disposition." \
@@ -100,6 +101,9 @@ Use `--dry-run` until a human gate and real canary infrastructure are available.
 Do not interpret `--dry-run` as a reason to defer broker API integration.
 Broker paper-account, sandbox, simulation, validate-only, or test-key order
 smoke should be captured before any production live order/cancel packet.
+For the Shioaji broker-side adapter, use
+`services/broker/shioaji/sandbox_smoke.py` and feed its `summary.json` into
+`emit-human-gate-packet` with `--broker-smoke-summary-json`.
 Runtime-manager canary activation now requires that broker smoke packet ref,
 the human-gate packet ref, risk-owner approval, operator approval, and policy
 scale values before it will create a forward canary `RuntimeBinding`. Live

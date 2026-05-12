@@ -759,6 +759,7 @@ def build_human_gate_packet(
     datasource_summary_path: Path,
     plan_path: Path,
     drill_summary_path: Path,
+    broker_smoke_summary_path: Path | None,
     dual_vm_evidence_dir: Path | None,
     event_trace_status: str,
     event_trace_note: str,
@@ -767,6 +768,7 @@ def build_human_gate_packet(
     datasource_summary = load_json(datasource_summary_path)
     plan = load_json(plan_path)
     drill_summary = load_json(drill_summary_path)
+    broker_smoke_summary = load_json(broker_smoke_summary_path) if broker_smoke_summary_path else None
 
     checklist_ok = checklist.get("status") == "pass"
     datasource_ok = datasource_summary.get("status") == "pass"
@@ -777,7 +779,57 @@ def build_human_gate_packet(
         and str((plan.get("rollback") or {}).get("action_type") or "") == "pause_then_replace"
     )
     drill_ok = drill_summary.get("status") == "executed"
-    packet_ready = checklist_ok and datasource_ok and plan_ok and drill_ok
+    broker_smoke_ok = True
+    broker_smoke_detail = "No broker smoke summary was provided; retaining backward-compatible packet emission."
+    if broker_smoke_summary is not None:
+        no_real_capital = broker_smoke_summary.get("no_real_capital") or {}
+        production_live = broker_smoke_summary.get("production_live") or {}
+        live_gate = broker_smoke_summary.get("live_gate") or {}
+        live_disabled = (
+            live_gate.get("status") == "rejected"
+            and (live_gate.get("response") or {}).get("error_code") == "SHIOAJI_LIVE_DISABLED"
+        )
+        if not live_gate:
+            live_disabled = not bool(production_live.get("enabled"))
+        broker_smoke_ok = (
+            broker_smoke_summary.get("status") in {"pass", "passed"}
+            and normalize_token(broker_smoke_summary.get("provider")) == normalize_token("Shioaji")
+            and (broker_smoke_summary.get("reconciliation") or {}).get("status") == "passed"
+            and no_real_capital.get("real_capital_used") is False
+            and no_real_capital.get("production_live_order_submitted") is False
+            and live_disabled
+        )
+        broker_smoke_detail = (
+            "Shioaji broker sandbox smoke summary consumed with passed reconciliation and fail-closed live boundary."
+            if broker_smoke_ok
+            else "Shioaji broker sandbox smoke summary is missing pass status, reconciliation, no-real-capital, or live-disabled evidence."
+        )
+    packet_ready = checklist_ok and datasource_ok and plan_ok and drill_ok and broker_smoke_ok
+    acceptance_checks = [
+        {
+            "name": "repo_authoritative_operator_packet",
+            "status": "pass" if checklist_ok and datasource_ok and plan_ok and drill_ok else "fail",
+            "detail": "Checklist, datasource smoke, canary plan, and rollback drill evidence are all present and internally consistent.",
+        },
+        {
+            "name": "event_trace_gap_dispositioned",
+            "status": "pass" if event_trace_status in {"closed", "packetized"} else "fail",
+            "detail": event_trace_note,
+        },
+        {
+            "name": "human_gate_bundle_complete",
+            "status": "pass" if packet_ready else "fail",
+            "detail": "Human gate input bundle is replay-clean at the artifact level; EP5 proof remains deferred.",
+        },
+    ]
+    if broker_smoke_summary_path is not None:
+        acceptance_checks.append(
+            {
+                "name": "broker_sandbox_smoke_consumed",
+                "status": "pass" if broker_smoke_ok else "fail",
+                "detail": broker_smoke_detail,
+            }
+        )
 
     return {
         "task_id": "APP-003-OPENCLAW-CLOSEOUT-001",
@@ -814,6 +866,20 @@ def build_human_gate_packet(
                 "replacement_binding_id": drill_summary.get("replacement_binding_id"),
                 "kill_switch_safe_mode": drill_summary.get("kill_switch_safe_mode"),
             },
+            "broker_sandbox_smoke": {
+                "path": str(broker_smoke_summary_path) if broker_smoke_summary_path else None,
+                "status": broker_smoke_summary.get("status") if broker_smoke_summary else "not_provided",
+                "provider": broker_smoke_summary.get("provider") if broker_smoke_summary else None,
+                "order_ids": broker_smoke_summary.get("order_ids") if broker_smoke_summary else None,
+                "reconciliation_status": (broker_smoke_summary.get("reconciliation") or {}).get("status")
+                if broker_smoke_summary
+                else None,
+                "proof_boundary": broker_smoke_summary.get("proof_boundary") if broker_smoke_summary else None,
+                "live_gate_status": (broker_smoke_summary.get("live_gate") or {}).get("status")
+                if broker_smoke_summary
+                else None,
+                "run_mode": broker_smoke_summary.get("run_mode") if broker_smoke_summary else None,
+            },
             "dual_vm_evidence_dir": str(dual_vm_evidence_dir) if dual_vm_evidence_dir else None,
         },
         "event_trace_read_model": {
@@ -821,23 +887,7 @@ def build_human_gate_packet(
             "note": event_trace_note,
             "acceptance_rule": "Must be either closed with replayable trace evidence or explicitly packetized before human gate.",
         },
-        "acceptance_checks": [
-            {
-                "name": "repo_authoritative_operator_packet",
-                "status": "pass" if checklist_ok and datasource_ok and plan_ok and drill_ok else "fail",
-                "detail": "Checklist, datasource smoke, canary plan, and rollback drill evidence are all present and internally consistent.",
-            },
-            {
-                "name": "event_trace_gap_dispositioned",
-                "status": "pass" if event_trace_status in {"closed", "packetized"} else "fail",
-                "detail": event_trace_note,
-            },
-            {
-                "name": "human_gate_bundle_complete",
-                "status": "pass" if packet_ready else "fail",
-                "detail": "Human gate input bundle is replay-clean at the artifact level; EP5 proof remains deferred.",
-            },
-        ],
+        "acceptance_checks": acceptance_checks,
     }
 
 
@@ -849,6 +899,9 @@ def command_emit_human_gate_packet(args: argparse.Namespace) -> int:
         datasource_summary_path=Path(args.datasource_summary_json),
         plan_path=Path(args.plan_json),
         drill_summary_path=Path(args.drill_summary_json),
+        broker_smoke_summary_path=Path(args.broker_smoke_summary_json)
+        if getattr(args, "broker_smoke_summary_json", None)
+        else None,
         dual_vm_evidence_dir=dual_vm_evidence_dir,
         event_trace_status=args.event_trace_status,
         event_trace_note=args.event_trace_note,
@@ -1094,6 +1147,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_packet.add_argument("--datasource-summary-json", required=True)
     p_packet.add_argument("--plan-json", required=True)
     p_packet.add_argument("--drill-summary-json", required=True)
+    p_packet.add_argument("--broker-smoke-summary-json", default=None)
     p_packet.add_argument("--dual-vm-evidence-dir", default=None)
     p_packet.add_argument("--event-trace-status", choices=("closed", "packetized"), required=True)
     p_packet.add_argument("--event-trace-note", required=True)

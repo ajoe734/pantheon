@@ -89,6 +89,26 @@ python -m pytest test_adapter.py -v
 
 Tests use a mock API and do not require the Shioaji SDK or credentials.
 
+## Sandbox Smoke Evidence
+
+The broker-side place/cancel/readback/reconcile smoke entrypoint is:
+
+```bash
+BROKER_SHIOAJI_SANDBOX_ENABLED=1 \
+python3 services/broker/shioaji/sandbox_smoke.py \
+  --symbol 2330 \
+  --qty 1 \
+  --side buy \
+  --order-type limit \
+  --limit-price 950 \
+  --output-dir /tmp/pantheon/ep5-broker-tw-002/sandbox-smoke
+```
+
+Use `--mock-api` only for local/CI replay when the Shioaji SDK or sandbox
+credentials are unavailable. Mock replay output is explicitly marked as
+`run_mode=mock_api_replay`; real simulation-account proof must run without
+`--mock-api`.
+
 ## Policy References
 
 - `PAPER_CANARY_LIVE_POLICY.md` — deployment stage policy; broker live gate

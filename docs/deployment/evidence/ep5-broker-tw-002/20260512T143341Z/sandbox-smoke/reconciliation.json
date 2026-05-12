@@ -1,0 +1,95 @@
+{
+  "status": "passed",
+  "diff": [
+    {
+      "field": "place.symbol",
+      "expected": "2330",
+      "observed": "2330",
+      "status": "match"
+    },
+    {
+      "field": "place.qty",
+      "expected": 1.0,
+      "observed": 1.0,
+      "status": "match"
+    },
+    {
+      "field": "place.side",
+      "expected": "buy",
+      "observed": "buy",
+      "status": "match"
+    },
+    {
+      "field": "place.status",
+      "expected": "submitted",
+      "observed": "submitted",
+      "status": "match"
+    },
+    {
+      "field": "readback_after_place.order_id",
+      "expected": "28487a9809f14006bc1dd9d4751067ad",
+      "observed": "28487a9809f14006bc1dd9d4751067ad",
+      "status": "match"
+    },
+    {
+      "field": "readback_after_place.status",
+      "expected": "submitted",
+      "observed": "submitted",
+      "status": "match"
+    },
+    {
+      "field": "cancel.order_id",
+      "expected": "28487a9809f14006bc1dd9d4751067ad",
+      "observed": "28487a9809f14006bc1dd9d4751067ad",
+      "status": "match"
+    },
+    {
+      "field": "cancel.status",
+      "expected": "cancelled",
+      "observed": "cancelled",
+      "status": "match"
+    },
+    {
+      "field": "readback_after_cancel.order_id",
+      "expected": "28487a9809f14006bc1dd9d4751067ad",
+      "observed": "28487a9809f14006bc1dd9d4751067ad",
+      "status": "match"
+    },
+    {
+      "field": "readback_after_cancel.status",
+      "expected": "cancelled",
+      "observed": "cancelled",
+      "status": "match"
+    },
+    {
+      "field": "is_real_order",
+      "expected": false,
+      "observed": false,
+      "status": "match"
+    },
+    {
+      "field": "is_real_capital",
+      "expected": false,
+      "observed": false,
+      "status": "match"
+    },
+    {
+      "field": "deployment_stage",
+      "expected": "sandbox",
+      "observed": "sandbox",
+      "status": "match"
+    },
+    {
+      "field": "live_reject.error_code",
+      "expected": "SHIOAJI_LIVE_DISABLED",
+      "observed": "SHIOAJI_LIVE_DISABLED",
+      "status": "match"
+    },
+    {
+      "field": "shioaji_trade_id",
+      "expected": "present",
+      "observed": "mock-shioaji-trade-001",
+      "status": "match"
+    }
+  ]
+}
