@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "task_id": "EP5-BROKER-TW-001",
+  "archived_at": "2026-05-10T13:49:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EP5-BROKER-TW-001",
+    "title": "Scaffold Shioaji TW broker adapter with fail-closed sandbox-only gating",
+    "summary_zh": "新建 services/broker/shioaji/ adapter，pin Shioaji SDK，BROKER_SHIOAJI_SANDBOX_ENABLED 環境 gate；live 永遠 reject；submit/cancel/get_status 跑 simulation 帳號；介面對齊現有 paper_simulation.py 形狀。",
+    "phase": "EP5 Broker TW Activation 2026-05-10",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/broker/shioaji/__init__.py",
+      "services/broker/shioaji/adapter.py",
+      "services/broker/shioaji/requirements.txt",
+      "services/broker/shioaji/test_adapter.py",
+      "services/broker/shioaji/README.md"
+    ],
+    "acceptance": [
+      "Shioaji SDK pinned in requirements.txt",
+      "Adapter file scaffolds submit/cancel/get_status against simulation account",
+      "Live order path always returns fail-closed reject with explicit error code",
+      "BROKER_SHIOAJI_SANDBOX_ENABLED env gate enforced (default false)",
+      "Unit/smoke test covers fail-closed default and gated sandbox path",
+      "Integration boundary aligned with existing services/broker/paper_simulation.py interface shape"
+    ],
+    "next": "Closeout complete. 32 tests pass (python3 -m pytest services/broker/shioaji/test_adapter.py -v); compile clean (python3 -m compileall -q services/broker/shioaji). Shioaji TW broker adapter delivered: fail-closed sandbox gate (BROKER_SHIOAJI_SANDBOX_ENABLED default false), SHIOAJI_LIVE_DISABLED production reject, INVALID_QTY fractional-qty rejection before SDK calls, simulation submit/cancel/get_status, interface aligned with paper_simulation.py. Implementation: e81146b8 + ce7199eb. Sidecar acceptance packet committed at 70b32a5b. Sidecar task reviewed and approved as Claude reviewer.",
+    "last_update": "2026-05-10T13:49:13Z",
+    "review_notes_zh": [
+      "Reviewed commits e81146b8 and ce7199eb for EP5-BROKER-TW-001. Sandbox gate is fail-closed by default; live path remains SHIOAJI_LIVE_DISABLED; submit/cancel/get_status use injected or lazy Shioaji simulation API boundary.",
+      "The prior fractional quantity issue is fixed: submit() now rejects non-integer qty with INVALID_QTY before _get_api()/place_order, and tests cover 1.9, 0.5, 1.5 rejection plus integer float acceptance.",
+      "Verification: python3 -m pytest services/broker/shioaji/test_adapter.py -v (32 passed); git diff --check HEAD~2..HEAD -- services/broker/shioaji; python3 -m compileall -q services/broker/shioaji."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-10T13:49:13Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "70b32a5bcb196ed0859cdf11349df01a3f1da0bc",
+      "commit_subject": "EP5-BROKER-TW-001: add sidecar acceptance packet and closeout support artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "EP5-BROKER-TW-001",
+        "Reviewer": "Codex2",
+        "Verification": "python3 -m pytest services/broker/shioaji/test_adapter.py -v → 32 passed; python3 -m compileall -q services/broker/shioaji → OK"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 6,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 11,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EP5-BROKER-TW-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Implementation complete. 5 files created in services/broker/shioaji/. 27 tests pass (python3 -m pytest test_adapter.py -v). Commit: e81146b8. Key invariants: BROKER_SHIOAJI_SANDBOX_ENABLED=false by default (fail-closed); live orders always SHIOAJI_LIVE_DISABLED regardless of gate; SDK import lazy with ImportError fallback; ShioajiOrder shape mirrors PaperOrder. Please review adapter.py interface, gate enforcement, and test coverage.",
+      "status": "done",
+      "created_at": "2026-05-10T13:37:46Z",
+      "resolved_at": "2026-05-10T13:40:24Z"
+    },
+    {
+      "task_id": "EP5-BROKER-TW-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review requires changes: gate/live reject coverage passed and python3 -m pytest services/broker/shioaji/test_adapter.py -v passed (27 passed), but submit() accepts fractional qty while _place_order_via_sdk() sends quantity=int(qty), silently truncating sandbox order size (for example 1.9 -> 1, 0.5 -> 0) while README documents integer lots. Reject non-integer qty before SDK calls with an explicit error and add a focused test for fractional qty rejection, then hand back to Codex2 for review.",
+      "status": "done",
+      "created_at": "2026-05-10T13:40:24Z",
+      "resolved_at": "2026-05-10T13:40:24Z"
+    },
+    {
+      "task_id": "EP5-BROKER-TW-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Fixed fractional qty truncation: added INVALID_QTY rejection for non-integer qty in submit() before any SDK call (qty != int(qty) check), with message 'fractional quantities are not supported'. Added TestFractionalQtyRejection (5 tests: 1.9, 0.5, 1.5 rejected; 2.0/5.0 accepted; place_order not called on fractional). 32 tests pass. Commit ce7199eb.",
+      "status": "done",
+      "created_at": "2026-05-10T13:41:57Z",
+      "resolved_at": "2026-05-10T13:43:59Z"
+    },
+    {
+      "task_id": "EP5-BROKER-TW-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review approved by Codex2. Verified Shioaji sandbox adapter fail-closed/live-disabled gating, fractional qty rejection before SDK calls, and focused test suite: python3 -m pytest services/broker/shioaji/test_adapter.py -v (32 passed); git diff --check HEAD~2..HEAD -- services/broker/shioaji; python3 -m compileall -q services/broker/shioaji. Owner Claude should perform closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-10T13:43:59Z",
+      "resolved_at": "2026-05-10T13:47:02Z"
+    }
+  ],
+  "blockers": []
+}

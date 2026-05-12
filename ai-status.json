@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-05-10-ep5-broker-tw-qlib-activation",
   "objective": "BFF execute-plans 前端 wiring 已 loop_complete (46/46 features)，sprint 主軸轉向 EP5 canary readiness 與 OSS production activation。三條 track 並行：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, 跑 place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py 的 human-gate packet 流程；(B) Qlib 第一個 governed LightGBM alpha activation — 寫 RS-003 baseline StrategySpec, 從 TWSE OpenAPI / TPEx E-Data 抓 ≥50 instruments × ≥2 years OHLCV, 跑 production_activation_smoke.py --backend real, submit registry admission packet；(C) services/ namespace normalization — control_plane 併入 control-plane/internal, registry-core/decision-domain 併入 registry/decision_domain。broker production live 與 capital binding 仍 fail-closed; canary 仍需 risk-owner + operator approval gate。Track A 與 B 共用 TW market dataset 不重做兩次。",
-  "updated_at": "2026-05-10T11:40:11Z",
+  "updated_at": "2026-05-12T14:52:59Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -93,13 +93,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "ready",
+      "status": "finalize",
       "current_task_ids": [
         "EP5-BROKER-TW-001"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Assignment created",
-      "last_update": "2026-05-10T11:38:25Z"
+      "next": "Restoring review_approved: task was properly completed 2026-05-10 at 70b32a5b with Codex2 approval (review_notes_zh confirmed). ai-status.json was reset by supervisor; restoring prior approved state before final done closeout.",
+      "last_update": "2026-05-12T14:52:59Z"
     },
     {
       "name": "Gemini",
@@ -137,13 +137,14 @@
         "schema",
         "acceptance"
       ],
-      "status": "ready",
+      "status": "working",
       "current_task_ids": [
+        "QLIB-ACT-001",
         "SVC-RENAME-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Assignment created",
-      "last_update": "2026-05-10T11:38:34Z"
+      "next": "Supervisor auto-started QLIB-ACT-001 after successful dispatch.",
+      "last_update": "2026-05-12T14:52:41Z"
     },
     {
       "name": "Copilot",
@@ -166,13 +167,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
-      "current_task_ids": [
-        "QLIB-ACT-001"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude2-execution-control",
-      "next": "Starting StrategySpec authoring: creating services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md and updating integrations/qlib/activation_packet.md",
-      "last_update": "2026-05-10T11:40:11Z"
+      "next": "",
+      "last_update": "2026-05-12T14:47:54Z"
     },
     {
       "name": "Gemini2",
@@ -197,7 +196,7 @@
       "phase": "EP5 Broker TW Activation 2026-05-10",
       "owner": "Claude",
       "reviewer": "Codex2",
-      "status": "todo",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [
         "services/broker/shioaji/__init__.py",
@@ -214,15 +213,20 @@
         "Unit/smoke test covers fail-closed default and gated sandbox path",
         "Integration boundary aligned with existing services/broker/paper_simulation.py interface shape"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-05-10T11:38:25Z"
+      "next": "Restoring review_approved: task was properly completed 2026-05-10 at 70b32a5b with Codex2 approval (review_notes_zh confirmed). ai-status.json was reset by supervisor; restoring prior approved state before final done closeout.",
+      "last_update": "2026-05-12T14:52:59Z",
+      "review_notes_zh": [
+        "Reviewed commits e81146b8 and ce7199eb for EP5-BROKER-TW-001. Sandbox gate is fail-closed by default; live path remains SHIOAJI_LIVE_DISABLED; submit/cancel/get_status use injected or lazy Shioaji simulation API boundary.",
+        "The prior fractional quantity issue is fixed: submit() now rejects non-integer qty with INVALID_QTY before _get_api()/place_order, and tests cover 1.9, 0.5, 1.5 rejection plus integer float acceptance.",
+        "Verification: python3 -m pytest services/broker/shioaji/test_adapter.py -v (32 passed); git diff --check HEAD~2..HEAD -- services/broker/shioaji; python3 -m compileall -q services/broker/shioaji."
+      ]
     },
     {
       "id": "QLIB-ACT-001",
       "title": "Author RS-003 baseline StrategySpec for TW cross-sectional equity alpha",
       "summary_zh": "寫第一份 RS-003 baseline StrategySpec：TW cross-sectional equity supervised alpha；universe = TWSE listed + TPEx listed；label / horizon / why-LightGBM / why-not-RL 都要寫；過 RS-003 replication gate；產出 candidate registry artifact ID，後續 QLIB-ACT-002 governed dataset packet 與 QLIB-ACT-003 LightGBM 跑活動會引用。",
       "phase": "Qlib Production Activation 2026-05-10",
-      "owner": "Claude2",
+      "owner": "Codex2",
       "reviewer": "Codex",
       "status": "in_progress",
       "depends_on": [],
@@ -242,8 +246,8 @@
         "No production registry write before review approval",
         "artifact_state=draft and deployment_summary.current_stage=none preserved"
       ],
-      "next": "Starting StrategySpec authoring: creating services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md and updating integrations/qlib/activation_packet.md",
-      "last_update": "2026-05-10T11:40:11Z"
+      "next": "Supervisor auto-started QLIB-ACT-001 after successful dispatch.",
+      "last_update": "2026-05-12T14:52:41Z"
     },
     {
       "id": "SVC-RENAME-001",
@@ -252,7 +256,7 @@
       "phase": "services Namespace Normalization 2026-05-10",
       "owner": "Codex2",
       "reviewer": "Codex",
-      "status": "todo",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
         "docs/architecture/services-namespace-migration-map-2026-05-10.md"
@@ -265,11 +269,19 @@
         "Roll-forward plan does not break running tests",
         "No code changes in this task"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-05-10T11:38:34Z"
+      "next": "Plan-only artifact ready for review at docs/architecture/services-namespace-migration-map-2026-05-10.md. Prior task-scoped delivery commit e2a9d80c is an ancestor of HEAD; review records are docs/reviews/2026-05-10-svc-rename-001-codex2-review.md and docs/reviews/2026-05-10-svc-rename-001-claude2-review.md. Revalidated now: services/research has no trl dir, services/learning/trl still holds current TRL implementation, telemetry feedback_adapter control-plane feedback import risk is documented, docker-compose feedback/source-ingest refs are covered, and scoped doc/review git diff --check passed. No application code changes made in this run.",
+      "last_update": "2026-05-12T14:52:34Z"
     }
   ],
   "handoffs": [
+    {
+      "task_id": "EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Acceptance packet and dependency map for EP5-BROKER-TW-002 prepared at support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout.",
+      "status": "pending",
+      "created_at": "2026-05-12T14:50:00Z"
+    },
     {
       "task_id": "LUV-REVIEW-007",
       "from": "Claude",
@@ -287,6 +299,22 @@
       "status": "done",
       "created_at": "2026-05-10T11:38:35Z",
       "resolved_at": "2026-05-10T11:38:41Z"
+    },
+    {
+      "task_id": "SVC-RENAME-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Plan-only artifact ready for review at docs/architecture/services-namespace-migration-map-2026-05-10.md. Prior task-scoped delivery commit e2a9d80c is an ancestor of HEAD; review records are docs/reviews/2026-05-10-svc-rename-001-codex2-review.md and docs/reviews/2026-05-10-svc-rename-001-claude2-review.md. Revalidated now: services/research has no trl dir, services/learning/trl still holds current TRL implementation, telemetry feedback_adapter control-plane feedback import risk is documented, docker-compose feedback/source-ingest refs are covered, and scoped doc/review git diff --check passed. No application code changes made in this run.",
+      "status": "pending",
+      "created_at": "2026-05-12T14:52:34Z"
+    },
+    {
+      "task_id": "EP5-BROKER-TW-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Restoring review_approved: task was properly completed 2026-05-10 at 70b32a5b with Codex2 approval (review_notes_zh confirmed). ai-status.json was reset by supervisor; restoring prior approved state before final done closeout.",
+      "status": "pending",
+      "created_at": "2026-05-12T14:52:59Z"
     }
   ],
   "blockers": [],
@@ -306,17 +334,17 @@
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 0,
-      "todo": 1
+      "review_approved": 1,
+      "todo": 0
     },
     "Claude2": {
-      "total": 1,
-      "active": 1,
+      "total": 0,
+      "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Gemini": {
       "total": 0,
@@ -346,11 +374,11 @@
       "todo": 0
     },
     "Codex2": {
-      "total": 1,
-      "active": 0,
+      "total": 2,
+      "active": 2,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
       "todo": 1
     },

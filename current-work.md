@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-10 19:40:11
+Last updated: 2026-05-12 22:52:59
 
 ## Objective
 
@@ -37,12 +37,12 @@ BFF execute-plans 前端 wiring 已 loop_complete (46/46 features)，sprint 主�
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Assignment created
+- `Claude`: execution, control-plane, governance-review; next: Restoring review_approved: task was properly completed 2026-05-10 at 70b32a5b with Codex2 approval (review_notes_zh confirmed). ai-status.json was reset by supervisor; restoring prior approved state before final done closeout.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 - `Codex`: integration, status-system, schema, acceptance; next: No active assignment
-- `Codex2`: integration, status-system, schema, acceptance; next: Assignment created
+- `Codex2`: integration, status-system, schema, acceptance; next: Supervisor auto-started QLIB-ACT-001 after successful dispatch.
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: Starting StrategySpec authoring: creating services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md and updating integrations/qlib/activation_packet.md
+- `Claude2`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 
 ## Delivery Layers
@@ -51,14 +51,14 @@ BFF execute-plans 前端 wiring 已 loop_complete (46/46 features)，sprint 主�
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `EP5-BROKER-TW-001` | EP5 Broker TW Activation 2026-05-10 | Scaffold Shioaji TW broker adapter with fail-closed sandbox-only gating | Claude | todo | - | 新建 services/broker/shioaji/ adapter，pin Shioaji SDK，BROKER_SHIOAJI_SANDBOX_ENABLED 環境 gate；live 永遠 reject；submit/cancel/get_status 跑 simulation 帳號；介面對齊現有 paper_simulation.py 形狀。 |
+| `EP5-BROKER-TW-001` | EP5 Broker TW Activation 2026-05-10 | Scaffold Shioaji TW broker adapter with fail-closed sandbox-only gating | Claude | review_approved | - | 新建 services/broker/shioaji/ adapter，pin Shioaji SDK，BROKER_SHIOAJI_SANDBOX_ENABLED 環境 gate；live 永遠 reject；submit/cancel/get_status 跑 simulation 帳號；介面對齊現有 paper_simulation.py 形狀。 |
 
 ### External / Upstream Integration Work
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `QLIB-ACT-001` | Qlib Production Activation 2026-05-10 | Author RS-003 baseline StrategySpec for TW cross-sectional equity alpha | Claude2 | in_progress | - | 寫第一份 RS-003 baseline StrategySpec：TW cross-sectional equity supervised alpha；universe = TWSE listed + TPEx listed；label / horizon / why-LightGBM / why-not-RL 都要寫；過 RS-003 replication gate；產出 candidate registry artifact ID，後續 QLIB-ACT-002 governed dataset packet 與 QLIB-ACT-003 LightGBM 跑活動會引用。 |
-| `SVC-RENAME-001` | services Namespace Normalization 2026-05-10 | Inventory services/ duplicate dirs and produce migration map | Codex2 | todo | - | 完整 inventory services/ 的雙命名 (control_plane vs control-plane, registry-core vs registry, source_ingestion vs source-ingest 等)；grep 所有 import sites；產出 migration map：每個檔案搬去哪、import path 怎麼改、docker-compose 哪些 service ref 要動、風險表。本 task 只交 plan，不動程式碼。 |
+| `QLIB-ACT-001` | Qlib Production Activation 2026-05-10 | Author RS-003 baseline StrategySpec for TW cross-sectional equity alpha | Codex2 | in_progress | - | 寫第一份 RS-003 baseline StrategySpec：TW cross-sectional equity supervised alpha；universe = TWSE listed + TPEx listed；label / horizon / why-LightGBM / why-not-RL 都要寫；過 RS-003 replication gate；產出 candidate registry artifact ID，後續 QLIB-ACT-002 governed dataset packet 與 QLIB-ACT-003 LightGBM 跑活動會引用。 |
+| `SVC-RENAME-001` | services Namespace Normalization 2026-05-10 | Inventory services/ duplicate dirs and produce migration map | Codex2 | review | - | 完整 inventory services/ 的雙命名 (control_plane vs control-plane, registry-core vs registry, source_ingestion vs source-ingest 等)；grep 所有 import sites；產出 migration map：每個檔案搬去哪、import path 怎麼改、docker-compose 哪些 service ref 要動、風險表。本 task 只交 plan，不動程式碼。 |
 
 ## Recently Executed Tasks
 
@@ -92,15 +92,17 @@ BFF execute-plans 前端 wiring 已 loop_complete (46/46 features)，sprint 主�
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `EP5-BROKER-TW-001` | EP5 Broker TW Activation 2026-05-10 | Scaffold Shioaji TW broker adapter with fail-closed sandbox-only gating | 新建 services/broker/shioaji/ adapter，pin Shioaji SDK，BROKER_SHIOAJI_SANDBOX_ENABLED 環境 gate；live 永遠 reject；submit/cancel/get_status 跑 simulation 帳號；介面對齊現有 paper_simulation.py 形狀。 | Claude | Codex2 | todo | - | 2026-05-10 19:38:25 | Assignment created |
-| `QLIB-ACT-001` | Qlib Production Activation 2026-05-10 | Author RS-003 baseline StrategySpec for TW cross-sectional equity alpha | 寫第一份 RS-003 baseline StrategySpec：TW cross-sectional equity supervised alpha；universe = TWSE listed + TPEx listed；label / horizon / why-LightGBM / why-not-RL 都要寫；過 RS-003 replication gate；產出 candidate registry artifact ID，後續 QLIB-ACT-002 governed dataset packet 與 QLIB-ACT-003 LightGBM 跑活動會引用。 | Claude2 | Codex | in_progress | - | 2026-05-10 19:40:11 | Starting StrategySpec authoring: creating services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md and updating integrations/qlib/activation_packet.md |
-| `SVC-RENAME-001` | services Namespace Normalization 2026-05-10 | Inventory services/ duplicate dirs and produce migration map | 完整 inventory services/ 的雙命名 (control_plane vs control-plane, registry-core vs registry, source_ingestion vs source-ingest 等)；grep 所有 import sites；產出 migration map：每個檔案搬去哪、import path 怎麼改、docker-compose 哪些 service ref 要動、風險表。本 task 只交 plan，不動程式碼。 | Codex2 | Codex | todo | - | 2026-05-10 19:38:34 | Assignment created |
+| `EP5-BROKER-TW-001` | EP5 Broker TW Activation 2026-05-10 | Scaffold Shioaji TW broker adapter with fail-closed sandbox-only gating | 新建 services/broker/shioaji/ adapter，pin Shioaji SDK，BROKER_SHIOAJI_SANDBOX_ENABLED 環境 gate；live 永遠 reject；submit/cancel/get_status 跑 simulation 帳號；介面對齊現有 paper_simulation.py 形狀。 | Claude | Codex2 | review_approved | - | 2026-05-12 22:52:59 | Restoring review_approved: task was properly completed 2026-05-10 at 70b32a5b with Codex2 approval (review_notes_zh confirmed). ai-status.json was reset by supervisor; restoring prior approved state before final done closeout. |
+| `QLIB-ACT-001` | Qlib Production Activation 2026-05-10 | Author RS-003 baseline StrategySpec for TW cross-sectional equity alpha | 寫第一份 RS-003 baseline StrategySpec：TW cross-sectional equity supervised alpha；universe = TWSE listed + TPEx listed；label / horizon / why-LightGBM / why-not-RL 都要寫；過 RS-003 replication gate；產出 candidate registry artifact ID，後續 QLIB-ACT-002 governed dataset packet 與 QLIB-ACT-003 LightGBM 跑活動會引用。 | Codex2 | Codex | in_progress | - | 2026-05-12 22:52:41 | Supervisor auto-started QLIB-ACT-001 after successful dispatch. |
+| `SVC-RENAME-001` | services Namespace Normalization 2026-05-10 | Inventory services/ duplicate dirs and produce migration map | 完整 inventory services/ 的雙命名 (control_plane vs control-plane, registry-core vs registry, source_ingestion vs source-ingest 等)；grep 所有 import sites；產出 migration map：每個檔案搬去哪、import path 怎麼改、docker-compose 哪些 service ref 要動、風險表。本 task 只交 plan，不動程式碼。 | Codex2 | Codex | review | - | 2026-05-12 22:52:34 | Plan-only artifact ready for review at docs/architecture/services-namespace-migration-map-2026-05-10.md. Prior task-scoped delivery commit e2a9d80c is an ancestor of HEAD; review records are docs/reviews/2026-05-10-svc-rename-001-codex2-review.md and docs/reviews/2026-05-10-svc-rename-001-claude2-review.md. Revalidated now: services/research has no trl dir, services/learning/trl still holds current TRL implementation, telemetry feedback_adapter control-plane feedback import risk is documented, docker-compose feedback/source-ingest refs are covered, and scoped doc/review git diff --check passed. No application code changes made in this run. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - |
+| `EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE` | Gemini | Codex2 | Acceptance packet and dependency map for EP5-BROKER-TW-002 prepared at support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout. | pending | 2026-05-12 22:50:00 |
+| `SVC-RENAME-001` | Codex2 | Codex | Plan-only artifact ready for review at docs/architecture/services-namespace-migration-map-2026-05-10.md. Prior task-scoped delivery commit e2a9d80c is an ancestor of HEAD; review records are docs/reviews/2026-05-10-svc-rename-001-codex2-review.md and docs/reviews/2026-05-10-svc-rename-001-claude2-review.md. Revalidated now: services/research has no trl dir, services/learning/trl still holds current TRL implementation, telemetry feedback_adapter control-plane feedback import risk is documented, docker-compose feedback/source-ingest refs are covered, and scoped doc/review git diff --check passed. No application code changes made in this run. | pending | 2026-05-12 22:52:34 |
+| `EP5-BROKER-TW-001` | Codex2 | Claude | Restoring review_approved: task was properly completed 2026-05-10 at 70b32a5b with Codex2 approval (review_notes_zh confirmed). ai-status.json was reset by supervisor; restoring prior approved state before final done closeout. | pending | 2026-05-12 22:52:59 |
 
 ## Blockers
 
@@ -112,7 +114,7 @@ BFF execute-plans 前端 wiring 已 loop_complete (46/46 features)，sprint 主�
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| _(none)_ | - | - | - |
+| `EP5-BROKER-TW-001` | Codex2 | Reviewed commits e81146b8 and ce7199eb for EP5-BROKER-TW-001. Sandbox gate is fail-closed by default; live path remains SHIOAJI_LIVE_DISABLED; submit/cancel/get_status use injected or lazy Shioaji simulation API boundary.<br>The prior fractional quantity issue is fixed: submit() now rejects non-integer qty with INVALID_QTY before _get_api()/place_order, and tests cover 1.9, 0.5, 1.5 rejection plus integer float acceptance.<br>Verification: python3 -m pytest services/broker/shioaji/test_adapter.py -v (32 passed); git diff --check HEAD~2..HEAD -- services/broker/shioaji; python3 -m compileall -q services/broker/shioaji. | - |
 
 ## Lovable Coordination
 
@@ -183,23 +185,23 @@ BFF execute-plans 前端 wiring 已 loop_complete (46/46 features)，sprint 主�
 
 ## Latest Checkpoints
 
-- 2026-05-10 19:39:28 Orchestrator: PreToolUse: Read
-- 2026-05-10 19:39:28 Orchestrator: PostToolUse: Bash
-- 2026-05-10 19:39:28 Orchestrator: PostToolUse: Read
-- 2026-05-10 19:39:31 Orchestrator: PreToolUse: Read
-- 2026-05-10 19:39:32 Orchestrator: PreToolUse: Read
-- 2026-05-10 19:39:32 Orchestrator: PostToolUse: Read
-- 2026-05-10 19:39:32 Orchestrator: PostToolUse: Read
-- 2026-05-10 19:39:35 Orchestrator: PreToolUse: TodoWrite
-- 2026-05-10 19:39:36 Orchestrator: PostToolUse: TodoWrite
-- 2026-05-10 19:39:41 Orchestrator: PreToolUse: Bash
-- 2026-05-10 19:39:41 Orchestrator: PostToolUse: Bash
-- 2026-05-10 19:39:41 Orchestrator: PreToolUse: Glob
-- 2026-05-10 19:39:41 Orchestrator: PostToolUse: Glob
-- 2026-05-10 19:39:43 Orchestrator: Worker suspended for approval apr-20260510T095432Z-09623b3f
-- 2026-05-10 19:39:43 Orchestrator: Worker suspended for approval apr-20260510T095432Z-09623b3f
-- 2026-05-10 19:39:49 Orchestrator: Stop: Stop
-- 2026-05-10 19:40:02 Orchestrator: Worker suspended for approval apr-20260510T095432Z-09623b3f
-- 2026-05-10 19:40:02 Orchestrator: Worker suspended for approval apr-20260510T095432Z-09623b3f
-- 2026-05-10 19:40:11 Orchestrator: PreToolUse: Bash
-- 2026-05-10 19:40:11 Claude2: `QLIB-ACT-001` Starting StrategySpec authoring: creating services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md and updating integrations/qlib/activation_packet.md
+- 2026-05-12 22:52:20 Orchestrator: PreToolUse: Read
+- 2026-05-12 22:52:20 Orchestrator: PostToolUse: Read
+- 2026-05-12 22:52:29 Orchestrator: PreToolUse: Read
+- 2026-05-12 22:52:29 Orchestrator: PostToolUse: Read
+- 2026-05-12 22:52:33 Orchestrator: PreToolUse: Bash
+- 2026-05-12 22:52:34 Orchestrator: PostToolUse: Bash
+- 2026-05-12 22:52:34 Codex2: `SVC-RENAME-001` Handoff to Codex: Plan-only artifact ready for review at docs/architecture/services-namespace-migration-map-2026-05-10.md. Prior task-scoped delivery commit e2a9d80c is an ancestor of HEAD; review records are docs/reviews/2026-05-10-svc-rename-001-codex2-review.md and docs/reviews/2026-05-10-svc-rename-001-claude2-review.md. Revalidated now: services/research has no trl dir, services/learning/trl still holds current TRL implementation, telemetry feedback_adapter control-plane feedback import risk is documented, docker-compose feedback/source-ingest refs are covered, and scoped doc/review git diff --check passed. No application code changes made in this run.
+- 2026-05-12 22:52:40 Orchestrator: `SVC-RENAME-001` Worker superseded after task responsibility moved to another agent.
+- 2026-05-12 22:52:40 Orchestrator: `SVC-RENAME-001` Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-12 22:52:40 Orchestrator: `QLIB-ACT-001` Wake-up queued for supervisor: owned_ready_dispatch
+- 2026-05-12 22:52:40 Orchestrator: `SVC-RENAME-001` Worker started via codex: review_ready_dispatch
+- 2026-05-12 22:52:40 Orchestrator: `QLIB-ACT-001` Worker started via codex: owned_ready_dispatch
+- 2026-05-12 22:52:41 Codex2: `QLIB-ACT-001` Supervisor auto-started QLIB-ACT-001 after successful dispatch.
+- 2026-05-12 22:52:45 Orchestrator: PreToolUse: Read
+- 2026-05-12 22:52:46 Orchestrator: PostToolUse: Read
+- 2026-05-12 22:52:52 Orchestrator: PreToolUse: Edit
+- 2026-05-12 22:52:53 Orchestrator: PostToolUse: Edit
+- 2026-05-12 22:52:53 Orchestrator: `QLIB-ACT-001` Supervisor auto-started QLIB-ACT-001 after successful dispatch.
+- 2026-05-12 22:52:58 Orchestrator: PreToolUse: Bash
+- 2026-05-12 22:52:59 Claude: `EP5-BROKER-TW-001` Restoring review_approved: task was properly completed 2026-05-10 at 70b32a5b with Codex2 approval (review_notes_zh confirmed). ai-status.json was reset by supervisor; restoring prior approved state before final done closeout.
