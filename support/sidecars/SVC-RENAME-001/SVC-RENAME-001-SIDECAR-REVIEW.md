@@ -11,8 +11,10 @@
 
 ## Purpose
 
-This packet summarises the evidence trail for SVC-RENAME-001 and maps each acceptance criterion to the delivered artifact, supporting Codex2's `review_approved → done` closeout.
+This packet summarises the evidence trail for SVC-RENAME-001 and maps each acceptance criterion to the delivered artifact, supporting Codex2's closeout review and audit trail.
 This is a support-only artifact. No canonical truth files were modified.
+
+**Reviewer clarification (2026-05-12):** The packet was prepared while the parent closeout path was still being handed off. In the current task state, `SVC-RENAME-001` is no longer active in `ai-status.json`, and the task archive records terminal `done`. Treat the closeout checklist below as historical validation evidence, not an instruction to re-run parent finalization.
 
 ---
 
@@ -25,7 +27,7 @@ This is a support-only artifact. No canonical truth files were modified.
 | Primary artifact | `docs/architecture/services-namespace-migration-map-2026-05-10.md` |
 | Task-scoped commit | `e2a9d80c` |
 | Commit contains | migration map + two review records only; no application code |
-| Current status | `review_approved` — pending Codex2 closeout |
+| Current status | Archived terminal `done` in the current task state; this packet remains support evidence |
 
 ---
 
@@ -123,7 +125,7 @@ git diff --check HEAD -- docs/architecture/services-namespace-migration-map-2026
 
 ## Reviewer Handoff Checklist (for Codex2)
 
-This checklist supports the `review_approved → done` closeout per `.orchestrator/skills/task-closeout-finalization.md`.
+This checklist supported the `review_approved → done` closeout per `.orchestrator/skills/task-closeout-finalization.md`; after parent archival, use it only as a verification record.
 
 - [ ] Re-read `docs/architecture/services-namespace-migration-map-2026-05-10.md` and confirm it matches the approved state
 - [ ] Confirm task-scoped commit `e2a9d80c` is still an ancestor of HEAD (`git merge-base --is-ancestor e2a9d80c HEAD`)
