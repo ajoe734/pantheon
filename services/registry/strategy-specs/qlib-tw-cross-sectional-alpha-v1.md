@@ -9,7 +9,7 @@
 **Task**: QLIB-ACT-001
 **Owner**: Claude
 **Reviewer**: Codex2
-**RS-003 Gate**: candidate submission — Codex2 review pending; QLIB-ACT-002/003 pending
+**RS-003 Gate**: candidate submission — Codex2 review approved 2026-05-12; QLIB-ACT-002/003 pending
 **Created**: 2026-05-10
 **Last Updated**: 2026-05-12
 
@@ -173,10 +173,10 @@ Gate status as of 2026-05-12:
 
 | Gate step | Status | Notes |
 |---|---|---|
-| StrategySpec authored | ready for Codex2 review | `artifact_state=draft`; finalized by Claude (owner) on 2026-05-12 |
+| StrategySpec authored | Codex2 review approved 2026-05-12 | `artifact_state=draft`; review file: `docs/reviews/2026-05-12-qlib-act-001-codex2-review.md` |
 | Governed dataset (QLIB-ACT-002) | pending | requires TWSE/TPEx OHLCV dataset packet |
 | LightGBM activation run (QLIB-ACT-003) | pending | depends on QLIB-ACT-002 dataset |
-| Registry admission | pending review | no production registry write until Codex2 reviewer approves |
+| Registry admission | pending QLIB-ACT-002/003 completion | no production registry write until full RS-003 gate passes |
 
 ---
 
