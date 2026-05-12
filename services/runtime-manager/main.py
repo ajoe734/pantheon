@@ -637,10 +637,10 @@ def evolution_redeploy():
 #
 # The deployable runtime-manager owns both the canonical /api/runtimes/... and
 # the operator-facing /api/internal/v1/... command paths the BFF dispatches
-# against. The legacy `services.control_plane.internal_api` module is mounted
-# on this Flask app so command, pause, rollback, kill-switch, and consultation
-# sponsor-decision routes share the same in-process service and kill-switch
-# state. See internal_api_routes.py for the shared-state wiring.
+# against. The legacy `services.control_plane.internal.internal_api` module is
+# mounted on this Flask app so command, pause, rollback, kill-switch, and
+# consultation sponsor-decision routes share the same in-process service and
+# kill-switch state. See internal_api_routes.py for the shared-state wiring.
 # ---------------------------------------------------------------------------
 
 from internal_api_routes import register_internal_api_routes  # noqa: E402

@@ -1,8 +1,8 @@
 """Inbound bearer/JWT/RBAC/MFA validation for protected runtime command routes.
 
 Production hardening for SVC-RUNTIME-HARDENING. The runtime-manager and the
-legacy ``services/control_plane/internal_api`` operator command surface share a
-single auth contract:
+legacy ``services.control_plane.internal.internal_api`` operator command
+surface share a single auth contract:
 
 * Authorization header must be ``Bearer <token>``.
 * The token may be either an HS256 JWT (signed with

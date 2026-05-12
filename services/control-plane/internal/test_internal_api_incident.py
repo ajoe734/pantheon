@@ -10,14 +10,16 @@ import os
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 # Ensure runtime-manager modules are importable
-RM_DIR = os.path.join(os.path.dirname(__file__), "..", "execution", "runtime-manager")
-sys.path.insert(0, RM_DIR)
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
+SERVICES_DIR = Path(__file__).resolve().parents[2]
+REPO_ROOT = SERVICES_DIR.parent
+RM_DIR = SERVICES_DIR / "execution" / "runtime-manager"
+sys.path.insert(0, str(RM_DIR))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from kill_switch_controller import (
     KillSwitchController,
@@ -35,7 +37,7 @@ from runtime_binding import (
     RuntimeBinding,
 )
 
-import services.control_plane.internal_api as internal_api
+import services.control_plane.internal.internal_api as internal_api
 from services.consultation.models import (
     ActorRef,
     AuthorType,

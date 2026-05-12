@@ -413,7 +413,7 @@ def run_internal_api_boundary_smoke():
 
     binding_id = deploy_resp.get_json()["binding_id"]
 
-    internal_api = import_module("services.control_plane.internal_api")
+    internal_api = import_module("services.control_plane.internal.internal_api")
     internal_api._runtime_manager_client = None
     internal_api._COMMAND_STATE_FILE = command_state_path
     protected_client = internal_api.app.test_client()

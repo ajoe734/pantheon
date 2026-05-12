@@ -1,10 +1,11 @@
 """Operator command-plane routes for the deployable runtime-manager service.
 
-`services/control_plane/internal_api.py` is the legacy operator command surface.
-It speaks the `/api/internal/v1/...` paths the BFF dispatches against and
-delegates binding mutations through a `RuntimeManagerClient`. When that module
-runs as its own Flask process it would HTTP-loopback into the runtime-manager
-service for every operator command.
+`services.control_plane.internal.internal_api` is the legacy operator command
+surface, loaded from `services/control-plane/internal/internal_api.py`. It
+speaks the `/api/internal/v1/...` paths the BFF dispatches against and delegates
+binding mutations through a `RuntimeManagerClient`. When that module runs as
+its own Flask process it would HTTP-loopback into the runtime-manager service
+for every operator command.
 
 This module folds those routes into the runtime-manager process so the
 deployable runtime-manager container is the single command plane:
@@ -207,7 +208,7 @@ def register_internal_api_routes(
     harnesses that re-import `main` do not duplicate routes.
     """
     import kill_switch_controller as ksc
-    from services.control_plane import internal_api as legacy
+    from services.control_plane.internal import internal_api as legacy
 
     legacy._runtime_manager_client = _InProcessRuntimeManagerAdapter(get_service)
     legacy._RuntimeManagerClientError = RuntimeManagerClientError

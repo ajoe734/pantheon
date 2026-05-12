@@ -340,7 +340,7 @@ class ApproveDeploymentDeploymentAuthorityTests(unittest.TestCase):
         self.command_state_path = Path(self.tempdir.name) / "commands.json"
         self.main = _load_main_module(self.store_path, self.command_state_path)
         self.client = self.main.app.test_client()
-        self.legacy = importlib.import_module("services.control_plane.internal_api")
+        self.legacy = importlib.import_module("services.control_plane.internal.internal_api")
         self.headers = {
             "Authorization": "Bearer alice:approver",
             "X-MFA-Token": "234567",
