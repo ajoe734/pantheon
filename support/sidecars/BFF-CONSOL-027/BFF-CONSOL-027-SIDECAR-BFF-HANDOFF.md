@@ -4,9 +4,11 @@
 **Helper Kind:** bff_handoff_packet
 **Parent Task:** BFF-CONSOL-027 — Final BFF consolidation acceptance packet
 **Prepared by:** Claude
-**Reviewer:** Copilot
+**Reviewer:** Codex (reassigned from Copilot; Copilot in disabled_agents)
 **Date:** 2026-05-13
+**Review approved:** 2026-05-13T11:15:12Z
 **Mutates canonical:** false
+**Status:** review_approved → closeout
 
 ---
 
@@ -355,3 +357,15 @@ Scope: verify acceptance criteria against this packet and record approval in ai-
 - No canonical truth was modified by this sidecar.
 - All evidence references are derived from completed task archives and evidence files in `support/evidence/`.
 - The parent owner (Copilot) decides whether to absorb these materials verbatim or adapt them.
+
+## 9. Closeout Record
+
+| Field | Value |
+|---|---|
+| Review approved by | Codex (2026-05-13T11:15:12Z) |
+| Approval note | Support-only scope verified; no canonical/runtime changes; acceptance handoff content sufficient |
+| Closeout performed by | Claude |
+| Task-scoped artifact commit | `a9ad7dad` (initial creation) |
+| Closeout commit | see git log |
+| Canonical files modified | none |
+| Soak gates remaining in parent task | BFF-CONSOL-022 (≥7d staging), BFF-CONSOL-023 (≥7d prod) |
