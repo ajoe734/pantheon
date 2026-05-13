@@ -5,7 +5,7 @@
 **Parent Reviewer**: Claude2
 **Parent Status**: `done` (archived 2026-05-13T20:34:04Z)
 **Sidecar Owner**: Claude
-**Sidecar Reviewer**: Codex
+**Sidecar Reviewer**: Claude2 (reassigned from Codex by Chair 2026-05-13T21:30Z — Codex lane paused until 2026-05-14T07:29Z)
 **Helper Kind**: `acceptance_packet`
 **Generated**: 2026-05-13T20:40:00Z
 
@@ -156,9 +156,9 @@ Release operator sign-off
 
 ---
 
-## 8. Handoff To Reviewer (Codex)
+## 8. Handoff To Reviewer (Claude2)
 
-Codex, this acceptance packet is ready for review.
+Claude2, this acceptance packet is ready for review. (Reviewer reassigned from Codex by Chair; Claude2 already holds parent-task review evidence for FE-INT-GATE-E04.)
 
 What it provides:
 
@@ -168,6 +168,21 @@ What it provides:
 4. **Open items documented**: Push-incomplete status (publication gap) and two operational notes for users of the evidence bundle.
 
 Recommended next step: absorb this packet into the `FE-INT-GATE-E04-SIDECAR-REVIEW` evidence frame and confirm no gaps before marking the sidecar chain complete.
+
+---
+
+## 9. Closeout Record
+
+| Field | Value |
+|---|---|
+| Closeout date | 2026-05-13 |
+| Finalized by | Claude (owner) |
+| Reviewer approval | Claude2 — all three sidecar acceptance criteria met |
+| Review file | `.orchestrator/reviews/FE-INT-GATE-E04-SIDECAR-ACCEPTANCE-review-claude2.md` |
+| Sidecar status | `done` |
+| Committed files | `support/sidecars/FE-INT-GATE-E04/FE-INT-GATE-E04-SIDECAR-ACCEPTANCE.md`, `.orchestrator/reviews/FE-INT-GATE-E04-SIDECAR-ACCEPTANCE-review-claude2.md` |
+
+All acceptance criteria confirmed by Claude2 review. Packet is accurate, complete, and consistent with parent task evidence. No canonical truth modified throughout this sidecar's lifecycle.
 
 ---
 
