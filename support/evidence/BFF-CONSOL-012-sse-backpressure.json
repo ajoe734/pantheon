@@ -1,0 +1,66 @@
+{
+  "task_id": "BFF-CONSOL-012",
+  "generated_at": "2026-05-13T05:15:52Z",
+  "artifact": "services/control-plane/bff/tests/test_sse_backpressure.py",
+  "commands": [
+    "pytest services/control-plane/bff/tests/test_sse_backpressure.py -q",
+    "pytest services/control-plane/bff/test_pkt005_sse_substrate_contract.py services/control-plane/bff/tests/test_sse_backpressure.py -q"
+  ],
+  "results": {
+    "test_sse_backpressure": "3 passed in 5.61s",
+    "sse_substrate_plus_backpressure": "17 passed in 7.05s"
+  },
+  "assertions": {
+    "backend_replay_buffer_has_explicit_upper_bound": true,
+    "slow_consumer_does_not_create_unbounded_subscriber_queue": true,
+    "disconnect_reclaims_subscriber_queue_within_timeout": true,
+    "replay_window_policy_is_bounded": true,
+    "drop_strategy_is_explicit": true,
+    "per_aggregate_ordering_is_preserved_inside_replay_window": true
+  },
+  "measurements": {
+    "replay_window_events": 500,
+    "replay_buffer_high_water_mark_events": 500,
+    "subscriber_queue_max_events": 1000,
+    "subscriber_queue_high_water_mark_events": 1000,
+    "slow_consumer_published_events": 1025,
+    "slow_consumer_dropped_events_after_queue_full": 25,
+    "subscriber_count_after_disconnect": 0,
+    "disconnect_cleanup_timeout_seconds": 1.0,
+    "replay_window_publish_count": 505,
+    "replay_window_evicted_oldest_count": 5,
+    "replayed_valid_cursor_sequence_numbers": [
+      503,
+      504,
+      505
+    ]
+  },
+  "drop_strategy": {
+    "subscriber_queue": {
+      "strategy": "newest",
+      "evidence": "When the per-subscriber asyncio.Queue(maxsize=1000) is full, _publish_event catches QueueFull and does not enqueue the new event for that slow subscriber."
+    },
+    "replay_window": {
+      "strategy": "oldest",
+      "evidence": "The in-memory replay buffer is deque(maxlen=500), so publishing beyond the replay window evicts the oldest event IDs."
+    }
+  },
+  "replay_policy_headers": {
+    "X-SSE-Replay-Supported": "true",
+    "X-SSE-Replay-Window-Events": "500",
+    "X-SSE-Buffer-Size": "500",
+    "X-SSE-Replay-Store": "in-memory",
+    "X-SSE-Resync-Routes": "/bff/approvals,/bff/v5/interventions"
+  },
+  "ordering_policy_alignment": {
+    "canonical_policy": "EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md",
+    "global_total_ordering_required": false,
+    "per_aggregate_ordering_fields_tested": [
+      "aggregate_type",
+      "aggregate_id",
+      "sequence_no",
+      "causal_parent_id"
+    ],
+    "replay_scope": "bounded in-memory event window; missing cursors raise SSE_REPLAY_UNAVAILABLE and clients must resync through route headers"
+  }
+}
