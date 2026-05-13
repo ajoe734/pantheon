@@ -448,7 +448,7 @@ def test_read_store_rebalance_roundtrip() -> None:
     with tempfile.TemporaryDirectory() as td:
         store = ReadSurfaceStore(
             os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
+            allow_local_snapshot_fallback=False,
         )
         assert store.list_rebalances() == []
         rb = store.create_rebalance(

@@ -20435,11 +20435,13 @@ async def bff_list_deployments(
     if status:
         requested_statuses = {v.strip().lower() for v in status.split(",") if v.strip()}
         plans = [p for p in plans if str(p.get("status") or "").lower() in requested_statuses]
+    total = len(plans)
 
     surface = _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at)
     if surface.get("status") == "unavailable":
         plans = []
         next_page_token = None
+        total = 0
     else:
         plans, next_page_token = _page_slice(plans, page_token, page_size)
 
@@ -20450,8 +20452,9 @@ async def bff_list_deployments(
         meta["staleness"] = staleness
 
     return {
+        "data": plans,
         "items": plans,
-        "page_info": {"next_page_token": next_page_token},
+        "page_info": {"next_page_token": next_page_token, "total": total},
         "meta": meta,
     }
 

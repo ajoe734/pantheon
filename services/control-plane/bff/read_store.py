@@ -79,6 +79,90 @@ def _model_to_data(model: Any) -> Dict[str, Any]:
     return json.loads(model.json())
 
 
+_FIXTURE_PACK_A_PATH = Path(__file__).resolve().parent / "data" / "fixtures_pack_a.json"
+_FIXTURE_DATASET_ALIASES = {
+    "deployments": "deployment_plans",
+    "runtimes": "runtime_bindings",
+}
+_FIXTURE_RECORD_KEYS = [
+    "id",
+    "entry_id",
+    "decision_id",
+    "plan_id",
+    "pool_id",
+    "persona_id",
+    "session_id",
+    "sessionId",
+    "strategy_id",
+    "experiment_id",
+    "artifact_id",
+    "rebalance_id",
+    "binding_id",
+    "runtime_id",
+]
+
+
+def _load_fixture_pack_datasets(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+    datasets = payload.get("datasets") if isinstance(payload, dict) else None
+    if not isinstance(datasets, dict):
+        return {}
+    return json.loads(json.dumps(datasets))
+
+
+def _load_fixture_pack_a_datasets() -> Dict[str, Any]:
+    return _load_fixture_pack_datasets(_FIXTURE_PACK_A_PATH)
+
+
+def _fixture_list_record_key(record: Any) -> str:
+    if isinstance(record, dict):
+        key = _record_key(record, _FIXTURE_RECORD_KEYS)
+        if key:
+            return key
+    return json.dumps(record, sort_keys=True, ensure_ascii=True)
+
+
+def _merge_default_fixture_pack(target: Dict[str, Any], fixture: Dict[str, Any]) -> bool:
+    changed = False
+    for raw_key, incoming in fixture.items():
+        key = _FIXTURE_DATASET_ALIASES.get(raw_key, raw_key)
+        if isinstance(incoming, dict):
+            existing = target.get(key)
+            if not isinstance(existing, dict):
+                target[key] = json.loads(json.dumps(incoming))
+                changed = True
+                continue
+            for record_key, record in incoming.items():
+                if record_key not in existing:
+                    existing[record_key] = json.loads(json.dumps(record))
+                    changed = True
+            continue
+        if isinstance(incoming, list):
+            existing = target.get(key)
+            if not isinstance(existing, list):
+                target[key] = json.loads(json.dumps(incoming))
+                changed = True
+                continue
+            seen = {_fixture_list_record_key(record) for record in existing}
+            for record in incoming:
+                record_key = _fixture_list_record_key(record)
+                if record_key in seen:
+                    continue
+                existing.append(json.loads(json.dumps(record)))
+                seen.add(record_key)
+                changed = True
+    return changed
+
+
+def _load_default_fixture_pack_datasets() -> Dict[str, Any]:
+    return _load_fixture_pack_a_datasets()
+
+
 # Evidence redaction support
 from models import (
     EvidenceKind,
@@ -1230,7 +1314,7 @@ class ServiceBackedReadAdapter:
 
 
 def _default_read_data() -> Dict[str, Any]:
-    return {
+    data = {
         "deployment_plans": {
             "plan-F-042": {
                 "id": "plan-F-042",
@@ -4930,6 +5014,8 @@ def _default_read_data() -> Dict[str, Any]:
             },
         },
     }
+    _merge_default_fixture_pack(data, _load_default_fixture_pack_datasets())
+    return data
 
 
 class ReadSurfaceStore:
@@ -4941,6 +5027,7 @@ class ReadSurfaceStore:
         "runtime_bindings": "runtime_bindings",
         "registry_entries": "registry_entries",
         "personas": "personas",
+        "persona_route_policies": "persona_route_policies",
         "sessions": "sessions",
         "capability_snapshots": "capability_snapshots",
         "teaching_sessions": "teaching_sessions",
@@ -6443,6 +6530,8 @@ class ReadSurfaceStore:
     def _backfill_local_contract_defaults(self) -> bool:
         changed = False
         default_data = _default_read_data()
+        if _merge_default_fixture_pack(self._data, _load_default_fixture_pack_datasets()):
+            changed = True
         deployment_plans = self._data.get("deployment_plans")
         default_plans = default_data.get("deployment_plans", {})
         approval_decisions = self._data.get("approval_decisions")
@@ -7646,6 +7735,20 @@ class ReadSurfaceStore:
             "runtime_binding_id": runtime_binding_id or raw.get("runtime_binding_id"),
             "status": raw.get("status"),
             "transition_type": raw.get("transition_type"),
+            "stages": json.loads(json.dumps(raw.get("stages") or [])),
+            "approval_ref": json.loads(
+                json.dumps(
+                    raw.get("approval_ref")
+                    or (
+                        {
+                            "approval_decision_id": raw.get("approval_decision_id"),
+                            "href": f"/bff/approvals/{raw.get('approval_decision_id')}",
+                        }
+                        if raw.get("approval_decision_id")
+                        else {}
+                    )
+                )
+            ),
         }
 
     @staticmethod
@@ -8294,7 +8397,13 @@ class ReadSurfaceStore:
         status: Optional[str] = None,
         pool_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        items = list(self._local_overlay_records("rebalances").values())
+        records = dict(self._local_overlay_records("rebalances"))
+        local_fallback = self._local_fallback("rebalances")
+        if isinstance(local_fallback, dict):
+            merged = dict(local_fallback)
+            merged.update(records)
+            records = merged
+        items = list(records.values())
         if status:
             items = [i for i in items if i.get("status") == status]
         if pool_id:
@@ -8304,7 +8413,13 @@ class ReadSurfaceStore:
     def get_rebalance(self, rebalance_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not rebalance_id:
             return None
-        return self._local_overlay_records("rebalances").get(rebalance_id)
+        overlay = self._local_overlay_records("rebalances").get(rebalance_id)
+        if overlay is not None:
+            return overlay
+        local_fallback = self._local_fallback("rebalances")
+        if isinstance(local_fallback, dict):
+            return local_fallback.get(rebalance_id)
+        return None
 
     def create_rebalance(
         self,
@@ -10340,6 +10455,12 @@ class ReadSurfaceStore:
     @classmethod
     def _project_research_experiment_summary(cls, exp: Dict[str, Any]) -> Dict[str, Any]:
         status = str(exp.get("status") or "")
+        strategy_selector = exp.get("strategy_selector") or {}
+        strategy_id = (
+            exp.get("linked_strategy_id")
+            or exp.get("strategy_id")
+            or strategy_selector.get("strategy_id")
+        )
         return {
             "experiment_id": exp.get("experiment_id"),
             "ticket_id": exp.get("ticket_id"),
@@ -10348,6 +10469,8 @@ class ReadSurfaceStore:
             "queued_at": exp.get("queued_at"),
             "started_at": exp.get("started_at"),
             "completed_at": exp.get("completed_at"),
+            "strategy_id": strategy_id,
+            "linked_strategy_id": strategy_id,
             "artifact_ids": list(exp.get("artifact_ids") or []),
             "allowedActions": {"canCancel": cls._rw04_can_cancel(status)},
         }
@@ -10588,6 +10711,16 @@ class ReadSurfaceStore:
         return str(latest.get("artifact_id") or "") == str(artifact.get("artifact_id") or "")
 
     def _project_research_artifact_summary(self, artifact: Dict[str, Any]) -> Dict[str, Any]:
+        metadata = artifact.get("metadata") if isinstance(artifact.get("metadata"), dict) else {}
+        provenance = artifact.get("provenance") if isinstance(artifact.get("provenance"), dict) else {}
+        strategy_id = (
+            artifact.get("linked_strategy_id")
+            or artifact.get("strategy_id")
+            or metadata.get("linked_strategy_id")
+            or metadata.get("strategy_id")
+            or provenance.get("linked_strategy_id")
+            or provenance.get("strategy_id")
+        )
         return {
             "artifact_id": artifact.get("artifact_id"),
             "lineage_id": artifact.get("lineage_id"),
@@ -10597,6 +10730,8 @@ class ReadSurfaceStore:
             "artifact_type": artifact.get("artifact_type"),
             "produced_by_experiment_id": artifact.get("produced_by_experiment_id"),
             "linked_ticket_id": artifact.get("linked_ticket_id"),
+            "strategy_id": strategy_id,
+            "linked_strategy_id": strategy_id,
             "created_at": artifact.get("created_at"),
             "metric_summary": self._rw05_metric_summary(artifact),
             "experiment_refs": self._rw05_experiment_refs(artifact),
@@ -10623,6 +10758,16 @@ class ReadSurfaceStore:
 
     def _project_research_artifact_detail(self, artifact: Dict[str, Any]) -> Dict[str, Any]:
         lineage_chain = self._rw05_lineage_versions(artifact.get("lineage_id"))
+        metadata = artifact.get("metadata") if isinstance(artifact.get("metadata"), dict) else {}
+        provenance = artifact.get("provenance") if isinstance(artifact.get("provenance"), dict) else {}
+        strategy_id = (
+            artifact.get("linked_strategy_id")
+            or artifact.get("strategy_id")
+            or metadata.get("linked_strategy_id")
+            or metadata.get("strategy_id")
+            or provenance.get("linked_strategy_id")
+            or provenance.get("strategy_id")
+        )
         return {
             "artifact_id": artifact.get("artifact_id"),
             "lineage_id": artifact.get("lineage_id"),
@@ -10634,6 +10779,8 @@ class ReadSurfaceStore:
             "description": artifact.get("description"),
             "produced_by_experiment_id": artifact.get("produced_by_experiment_id"),
             "linked_ticket_id": artifact.get("linked_ticket_id"),
+            "strategy_id": strategy_id,
+            "linked_strategy_id": strategy_id,
             "created_at": artifact.get("created_at"),
             "sealed_at": artifact.get("sealed_at"),
             "is_current_version": self._rw05_is_current_version(artifact),
@@ -13638,6 +13785,35 @@ class ReadSurfaceStore:
         if available:
             return raw
         return (self._local_fallback("consult_policies") or {}).get(persona_id)
+
+    def get_persona_consult_policy(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self.get_consult_policy(persona_id)
+
+    def get_route_policy_for_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not persona_id:
+            return None
+        route_policies = self._local_fallback("persona_route_policies") or {}
+        if isinstance(route_policies, dict):
+            policy = route_policies.get(persona_id)
+            if isinstance(policy, dict):
+                return json.loads(json.dumps(policy))
+        consult_policy = self.get_consult_policy(persona_id)
+        if consult_policy:
+            return {
+                "personaId": persona_id,
+                "version": "v1",
+                "rules": [
+                    {
+                        "route": rule.get("condition"),
+                        "mode": "consult_required",
+                        "description": rule.get("description"),
+                    }
+                    for rule in consult_policy.get("trigger_rules") or []
+                    if isinstance(rule, dict)
+                ],
+                "consult_policy": json.loads(json.dumps(consult_policy)),
+            }
+        return None
 
     def get_persona_allowed_actions(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
         """Derive allowed actions for a persona based on lifecycle state and session status.
