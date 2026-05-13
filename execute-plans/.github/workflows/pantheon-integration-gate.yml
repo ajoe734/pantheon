@@ -51,6 +51,8 @@ jobs:
       PANTHEON_E2E_STRICT: "1"
       PANTHEON_AUDIT_OUT_DIR: .lovable/audits/current-run
       PANTHEON_BFF_SMOKE_BEARER_TOKEN: ${{ secrets.PANTHEON_BFF_SMOKE_BEARER_TOKEN }}
+      PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE: docs/testing/Release_Gate_Checklist_2026-05-10.md
+      PANTHEON_RELEASE_GATE_CHECKLIST_OUT: .lovable/audits/Release_Gate_Checklist.md
 
     steps:
       - uses: actions/checkout@v4
@@ -161,6 +163,19 @@ jobs:
         continue-on-error: ${{ (inputs.soft_fail || vars.PANTHEON_RELEASE_GATE_SOFT_FAIL || 'true') == 'true' }}
         run: node scripts/aggregate-release-gate.mjs
 
+      - name: Create release evidence bundle
+        if: always()
+        run: |
+          SHA="${PANTHEON_FRONTEND_SHA:-$(git rev-parse HEAD 2>/dev/null | head -c 12)}"
+          SHORT_SHA="${SHA:0:12}"
+          BUNDLE_FILE="release-evidence-${SHORT_SHA}.zip"
+          zip -r "${BUNDLE_FILE}" \
+            .lovable/audits/ \
+            playwright-report/ \
+            test-results/ \
+            2>/dev/null || true
+          echo "PANTHEON_RELEASE_EVIDENCE_BUNDLE=${BUNDLE_FILE}" >> "${GITHUB_ENV}"
+
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -174,6 +189,7 @@ jobs:
             .lovable/audits/current-run/**/*.log
             playwright-report
             test-results
+            release-evidence-*.zip
 
       - name: Comment release gate on PR
         if: always() && github.event_name == 'pull_request'
