@@ -36,6 +36,9 @@ ROUTE_PARAM_RE = re.compile(r"\{[^/{}]+\}")
 # Keys are "METHOD /exact-path" matching the FastAPI route path string.
 # Canonical target (covered_by) uses the same path format for clarity.
 ROUTE_STATUS_OVERRIDES: dict[str, dict] = {
+    # The execute-plans final contract treats the approval list as the SSE
+    # resync companion to /bff/actions and /bff/v1/commands.
+    "GET /bff/approvals": {"family": "final-contract"},
     # /bff/mcp-servers* and /bff/mcp-tools* are execute-plans compat aliases
     # for the canonical /bff/mcp/* routes in the tools-mcp-skills family.
     "GET /bff/mcp-servers": {"status": "alias", "covered_by": "GET /bff/mcp/servers"},
@@ -196,7 +199,7 @@ def app_route_index(app: object) -> list[dict]:
             entry: dict = {
                 "method": method,
                 "path": norm_path,
-                "family": infer_family(path),
+                "family": override.get("family", infer_family(path)),
                 "status": override.get("status", "implemented"),
             }
             if "covered_by" in override:

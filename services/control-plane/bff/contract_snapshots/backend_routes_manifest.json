@@ -1199,6 +1199,12 @@
       "status": "implemented"
     },
     {
+      "method": "GET",
+      "path": "/bff/approvals",
+      "family": "final-contract",
+      "status": "implemented"
+    },
+    {
       "method": "POST",
       "path": "/bff/actions/{param}/{param}/{param}",
       "family": "final-contract",
@@ -1225,12 +1231,6 @@
     {
       "method": "GET",
       "path": "/bff/alerts/{param}",
-      "family": "governance-runtime-risk-audit",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/approvals",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
