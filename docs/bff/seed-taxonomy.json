@@ -1,0 +1,1257 @@
+{
+  "schema_version": 1,
+  "task_id": "BFF-CONSOL-007",
+  "generated_at": "2026-05-13T03:58:00Z",
+  "source": {
+    "brief_path": "execute-plans/src/lib/bff/seed.ts",
+    "actual_frontend_path": "../execute-plans/src/lib/bff-v1/seed.ts",
+    "seed_data_path": "../execute-plans/src/mocks/seed.ts",
+    "notes": [
+      "The pantheon checkout does not contain an execute-plans/ directory.",
+      "The sibling execute-plans checkout exposes the seed accessor at src/lib/bff-v1/seed.ts; src/lib/bff/client.ts and src/lib/bff-v1/legacy.ts bridge the current live/mock surfaces."
+    ]
+  },
+  "category_definitions": {
+    "live_required": "Operator-facing data or command/session surface that must use a live BFF route in live/strict mode. Mock seed is allowed only in mock mode or explicit hybrid fallback with visible status.",
+    "mock_only_dev": "Development-only helper. In live mode it should be hidden, disabled, or rendered as an explicit empty/mock state; it must not masquerade as live data.",
+    "deprecated": "Legacy public accessor that should be replaced by the typed live surface or command client and removed from seed.ts after the migration task lands.",
+    "deferred": "No safe direct live replacement in this task. The helper needs the listed follow-up task to either wire a route, fold into an existing detail DTO, or remove the UI surface."
+  },
+  "category_counts": {
+    "live_required": 52,
+    "mock_only_dev": 4,
+    "deprecated": 2,
+    "deferred": 25
+  },
+  "helpers": [
+    {
+      "name": "bff.getAcceptLanguage",
+      "category": "mock_only_dev",
+      "seed_source": "usePlatform.locale",
+      "live_routes": [],
+      "replacement": "Use request headers from the real bffFetch/client path; keep this only as Settings/test instrumentation.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-015"
+      ],
+      "priority": "P3",
+      "notes": "Utility, not entity seed data."
+    },
+    {
+      "name": "bff.mutations",
+      "category": "deprecated",
+      "seed_source": "@/lib/bff/mutations",
+      "live_routes": [
+        "POST /bff/v1/commands",
+        "POST /bff/actions/{entityType}/{entityId}/{actionId}"
+      ],
+      "replacement": "Use bffWrites/runActionSafe command-client paths and retire direct bff.mutations callers.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-019",
+        "BFF-CONSOL-020",
+        "BFF-CONSOL-021",
+        "BFF-CONSOL-024"
+      ],
+      "priority": "P0",
+      "notes": "Direct legacy mutation namespace mutates in-process mock state."
+    },
+    {
+      "name": "bff.agora",
+      "category": "live_required",
+      "seed_source": "@/lib/bff/agora",
+      "live_routes": [
+        "GET /bff/agora/daily",
+        "GET /bff/agora/signals",
+        "GET /bff/agora/signals/{id}",
+        "GET /bff/agora/inbox",
+        "GET /bff/agora/journal",
+        "GET /bff/agora/ask/sessions"
+      ],
+      "replacement": "Keep bffAgora strict live adapter; ensure all exposed Agora pages consume typed live errors in strict mode.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-017",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "Namespace is already attached through a live adapter, but its mock branch still derives from seed for mock mode."
+    },
+    {
+      "name": "bff.v5",
+      "category": "live_required",
+      "seed_source": "@/lib/bff/v5",
+      "live_routes": [
+        "GET /bff/v5/control-room",
+        "GET /bff/v5/loop-runs",
+        "GET /bff/v5/loop-runs/{id}",
+        "GET /bff/v5/sentinel/findings",
+        "GET /bff/v5/sentinel/findings/{id}",
+        "GET /bff/v5/interventions",
+        "GET /bff/v5/interventions/{id}",
+        "GET /bff/v5/execution/persona-health",
+        "GET /bff/v5/execution/strategy-health"
+      ],
+      "replacement": "Keep bffV5 strict live adapter and finish v5 detail evidence.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-017",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "v5 write helpers still use guarded overlays or command routes; read helpers must not silently seed in strict live."
+    },
+    {
+      "name": "bff.me.get",
+      "category": "live_required",
+      "seed_source": "fetchMe",
+      "live_routes": [
+        "GET /bff/me"
+      ],
+      "replacement": "Use /bff/me as session authority; mockMe only belongs to mock mode.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-013"
+      ],
+      "priority": "P0",
+      "notes": "Role vocabulary must align with backend canonical roles."
+    },
+    {
+      "name": "bff.me.refresh",
+      "category": "live_required",
+      "seed_source": "refreshSession",
+      "live_routes": [
+        "POST /bff/auth/refresh"
+      ],
+      "replacement": "Use live session refresh and typed BffError in strict mode.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-013"
+      ],
+      "priority": "P0",
+      "notes": "Cookie-only sessions are covered by the write-gate follow-up."
+    },
+    {
+      "name": "bff.me.logout",
+      "category": "live_required",
+      "seed_source": "logoutSession",
+      "live_routes": [
+        "POST /bff/logout"
+      ],
+      "replacement": "Use live logout; mock branch only clears local session cache in mock mode.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-013"
+      ],
+      "priority": "P0",
+      "notes": "Session lifecycle surface."
+    },
+    {
+      "name": "bff.me.invalidate",
+      "category": "live_required",
+      "seed_source": "invalidateMe",
+      "live_routes": [],
+      "replacement": "Keep as local cache invalidation used by the live /bff/me facade.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-013"
+      ],
+      "priority": "P2",
+      "notes": "Non-fetch cache helper; not seed data."
+    },
+    {
+      "name": "bff.commands.requestConfirmToken",
+      "category": "deprecated",
+      "seed_source": "mutations.requestConfirmToken",
+      "live_routes": [
+        "POST /bff/confirm-tokens",
+        "POST /bff/v1/commands"
+      ],
+      "replacement": "Use bffWrites.requestConfirmToken or the command client; keep only as mock branch until command migration completes.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-020",
+        "BFF-CONSOL-021",
+        "BFF-CONSOL-024"
+      ],
+      "priority": "P0",
+      "notes": "No direct callers were found outside the write facade/tests."
+    },
+    {
+      "name": "bff.strategies.list",
+      "category": "live_required",
+      "seed_source": "seed.strategies",
+      "live_routes": [
+        "GET /bff/strategies"
+      ],
+      "replacement": "managementClient.strategies.list or lists.strategies",
+      "follow_up_tasks": [
+        "BFF-CONSOL-016",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Core Management Console family."
+    },
+    {
+      "name": "bff.strategies.get",
+      "category": "live_required",
+      "seed_source": "seed.strategies",
+      "live_routes": [
+        "GET /bff/strategies/{id}"
+      ],
+      "replacement": "managementClient.strategies.get",
+      "follow_up_tasks": [
+        "BFF-CONSOL-016",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Strategy detail must include specs/experiments/artifacts/lineage/audit related tabs."
+    },
+    {
+      "name": "bff.personas.list",
+      "category": "live_required",
+      "seed_source": "seed.personas",
+      "live_routes": [
+        "GET /bff/personas"
+      ],
+      "replacement": "managementClient.personas.list or lists.personas",
+      "follow_up_tasks": [
+        "BFF-CONSOL-016",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Core Management Console family."
+    },
+    {
+      "name": "bff.personas.get",
+      "category": "live_required",
+      "seed_source": "seed.personas",
+      "live_routes": [
+        "GET /bff/personas/{id}"
+      ],
+      "replacement": "managementClient.personas.get",
+      "follow_up_tasks": [
+        "BFF-CONSOL-016",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Persona detail must link route policy/activity/evaluations/memory from live BFF."
+    },
+    {
+      "name": "bff.capitalPools.list",
+      "category": "live_required",
+      "seed_source": "seed.capitalPools",
+      "live_routes": [
+        "GET /bff/capital-pools"
+      ],
+      "replacement": "managementClient.capitalPools.list or lists.capitalPools",
+      "follow_up_tasks": [
+        "BFF-CONSOL-008",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Pack A fixture family."
+    },
+    {
+      "name": "bff.capitalPools.get",
+      "category": "live_required",
+      "seed_source": "seed.capitalPools",
+      "live_routes": [
+        "GET /bff/capital-pools/{id}"
+      ],
+      "replacement": "managementClient.capitalPools.get",
+      "follow_up_tasks": [
+        "BFF-CONSOL-008",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Capital binding detail should not silently seed in strict live."
+    },
+    {
+      "name": "bff.rankingFormulas.list",
+      "category": "live_required",
+      "seed_source": "seed.rankingFormulas",
+      "live_routes": [
+        "GET /bff/ranking-formulas"
+      ],
+      "replacement": "managementClient.rankingFormulas.list or lists.rankingFormulas",
+      "follow_up_tasks": [
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "Backend also has /bff/ranking/formulas compatibility routes."
+    },
+    {
+      "name": "bff.rankingFormulas.get",
+      "category": "live_required",
+      "seed_source": "seed.rankingFormulas",
+      "live_routes": [
+        "GET /bff/ranking-formulas/{id}"
+      ],
+      "replacement": "managementClient.rankingFormulas.get",
+      "follow_up_tasks": [
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "Formula studio/detail live wiring surface."
+    },
+    {
+      "name": "bff.rebalances.list",
+      "category": "live_required",
+      "seed_source": "seed.rebalances",
+      "live_routes": [
+        "GET /bff/rebalances"
+      ],
+      "replacement": "managementClient.rebalances.list or lists.rebalances",
+      "follow_up_tasks": [
+        "BFF-CONSOL-018",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Core governance queue family."
+    },
+    {
+      "name": "bff.rebalances.get",
+      "category": "live_required",
+      "seed_source": "seed.rebalances",
+      "live_routes": [
+        "GET /bff/rebalances/{id}"
+      ],
+      "replacement": "managementClient.rebalances.get",
+      "follow_up_tasks": [
+        "BFF-CONSOL-018",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Detail smoke C owns rebalance live transcript."
+    },
+    {
+      "name": "bff.deployments.list",
+      "category": "live_required",
+      "seed_source": "seed.deployments",
+      "live_routes": [
+        "GET /bff/deployments"
+      ],
+      "replacement": "managementClient.deployments.list or lists.deployments",
+      "follow_up_tasks": [
+        "BFF-CONSOL-016",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Pack A fixture family."
+    },
+    {
+      "name": "bff.deployments.get",
+      "category": "live_required",
+      "seed_source": "seed.deployments",
+      "live_routes": [
+        "GET /bff/deployments/{id}"
+      ],
+      "replacement": "managementClient.deployments.get",
+      "follow_up_tasks": [
+        "BFF-CONSOL-016",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Deployment detail should carry stage and approval pointers."
+    },
+    {
+      "name": "bff.evolution.list",
+      "category": "live_required",
+      "seed_source": "seed.evolutionPrograms",
+      "live_routes": [
+        "GET /bff/evolution-programs"
+      ],
+      "replacement": "managementClient.evolution.list or lists.evolution",
+      "follow_up_tasks": [
+        "BFF-CONSOL-017",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Pack B fixture family."
+    },
+    {
+      "name": "bff.evolution.get",
+      "category": "live_required",
+      "seed_source": "seed.evolutionPrograms",
+      "live_routes": [
+        "GET /bff/evolution-programs/{id}"
+      ],
+      "replacement": "managementClient.evolution.get",
+      "follow_up_tasks": [
+        "BFF-CONSOL-017",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Evolution detail smoke B owns live transcript."
+    },
+    {
+      "name": "bff.research.list",
+      "category": "live_required",
+      "seed_source": "seed.researchExperiments",
+      "live_routes": [
+        "GET /bff/research-experiments"
+      ],
+      "replacement": "managementClient.research.list or lists.research",
+      "follow_up_tasks": [
+        "BFF-CONSOL-017",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Frontend helper name is research; canonical route uses research-experiments."
+    },
+    {
+      "name": "bff.research.get",
+      "category": "live_required",
+      "seed_source": "seed.researchExperiments",
+      "live_routes": [
+        "GET /bff/research-experiments/{id}"
+      ],
+      "replacement": "managementClient.research.get",
+      "follow_up_tasks": [
+        "BFF-CONSOL-017",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Research detail should link analysis evidence."
+    },
+    {
+      "name": "bff.artifacts.list",
+      "category": "live_required",
+      "seed_source": "seed.artifacts",
+      "live_routes": [
+        "GET /bff/artifacts"
+      ],
+      "replacement": "managementClient.artifacts.list or lists.artifacts",
+      "follow_up_tasks": [
+        "BFF-CONSOL-017",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Pack B fixture family."
+    },
+    {
+      "name": "bff.artifacts.get",
+      "category": "live_required",
+      "seed_source": "seed.artifacts",
+      "live_routes": [
+        "GET /bff/artifacts/{id}"
+      ],
+      "replacement": "managementClient.artifacts.get",
+      "follow_up_tasks": [
+        "BFF-CONSOL-017",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Artifact detail should include lineage."
+    },
+    {
+      "name": "bff.jobs.list",
+      "category": "live_required",
+      "seed_source": "seed.jobs",
+      "live_routes": [
+        "GET /bff/jobs"
+      ],
+      "replacement": "managementClient.jobs.list or lists.jobs",
+      "follow_up_tasks": [
+        "BFF-CONSOL-018",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "There is no seed.ts jobs.get; managementClient has a placeholder detail gap owned by BFF-CONSOL-018."
+    },
+    {
+      "name": "bff.runtimes.list",
+      "category": "live_required",
+      "seed_source": "seed.runtimes",
+      "live_routes": [
+        "GET /bff/runtimes"
+      ],
+      "replacement": "managementClient.runtimes.list or lists.runtimes",
+      "follow_up_tasks": [
+        "BFF-CONSOL-016",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Pack B fixture family; runtime stays fail-closed for production live."
+    },
+    {
+      "name": "bff.runtimes.get",
+      "category": "live_required",
+      "seed_source": "seed.runtimes",
+      "live_routes": [
+        "GET /bff/runtimes/{id}"
+      ],
+      "replacement": "managementClient.runtimes.get",
+      "follow_up_tasks": [
+        "BFF-CONSOL-016",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Runtime detail smoke A owns live transcript."
+    },
+    {
+      "name": "bff.alerts.list",
+      "category": "live_required",
+      "seed_source": "seed.alerts",
+      "live_routes": [
+        "GET /bff/alerts"
+      ],
+      "replacement": "managementClient.alerts.list or lists.alerts",
+      "follow_up_tasks": [
+        "BFF-CONSOL-010",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Pack C fixture family."
+    },
+    {
+      "name": "bff.alerts.get",
+      "category": "live_required",
+      "seed_source": "seed.alerts",
+      "live_routes": [
+        "GET /bff/alerts/{id}"
+      ],
+      "replacement": "managementClient.alerts.get",
+      "follow_up_tasks": [
+        "BFF-CONSOL-010",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Alias route also exists as /bff/risk/alerts/{id}."
+    },
+    {
+      "name": "bff.incidents.list",
+      "category": "live_required",
+      "seed_source": "seed.incidents",
+      "live_routes": [
+        "GET /bff/incidents"
+      ],
+      "replacement": "managementClient.incidents.list or lists.incidents",
+      "follow_up_tasks": [
+        "BFF-CONSOL-018",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Pack C fixture family."
+    },
+    {
+      "name": "bff.incidents.get",
+      "category": "live_required",
+      "seed_source": "seed.incidents",
+      "live_routes": [
+        "GET /bff/incidents/{id}"
+      ],
+      "replacement": "managementClient.incidents.get",
+      "follow_up_tasks": [
+        "BFF-CONSOL-018",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Incident detail smoke C owns runtime status and rollback-option evidence."
+    },
+    {
+      "name": "bff.approvals.list",
+      "category": "live_required",
+      "seed_source": "seed.approvals",
+      "live_routes": [
+        "GET /bff/approvals"
+      ],
+      "replacement": "managementClient.approvals.list or lists.approvals",
+      "follow_up_tasks": [
+        "BFF-CONSOL-018",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Pack C fixture family."
+    },
+    {
+      "name": "bff.approvals.get",
+      "category": "live_required",
+      "seed_source": "seed.approvals",
+      "live_routes": [
+        "GET /bff/approvals/{id}"
+      ],
+      "replacement": "managementClient.approvals.get",
+      "follow_up_tasks": [
+        "BFF-CONSOL-018",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Approval detail smoke C owns deployment-link evidence."
+    },
+    {
+      "name": "bff.audit.list",
+      "category": "live_required",
+      "seed_source": "seed.auditEvents",
+      "live_routes": [
+        "GET /bff/audit"
+      ],
+      "replacement": "managementClient.audit.list or lists.audit",
+      "follow_up_tasks": [
+        "BFF-CONSOL-018",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Audit is list-only in detail smoke C; detail drawer should be disabled."
+    },
+    {
+      "name": "bff.tools.list",
+      "category": "live_required",
+      "seed_source": "seed.tools",
+      "live_routes": [
+        "GET /bff/tools"
+      ],
+      "replacement": "managementClient.tools.list or lists.tools",
+      "follow_up_tasks": [
+        "BFF-CONSOL-010",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "Pack C fixture family."
+    },
+    {
+      "name": "bff.tools.get",
+      "category": "live_required",
+      "seed_source": "seed.tools",
+      "live_routes": [
+        "GET /bff/tools/{id}"
+      ],
+      "replacement": "managementClient.tools.get",
+      "follow_up_tasks": [
+        "BFF-CONSOL-010",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "Tool detail should not use seed in strict live."
+    },
+    {
+      "name": "bff.mcpServers.list",
+      "category": "live_required",
+      "seed_source": "seed.mcpServers",
+      "live_routes": [
+        "GET /bff/mcp-servers"
+      ],
+      "replacement": "managementClient.mcpServers.list or lists.mcpServers",
+      "follow_up_tasks": [
+        "BFF-CONSOL-010",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "Backend has mcp-final alias route."
+    },
+    {
+      "name": "bff.mcpServers.get",
+      "category": "live_required",
+      "seed_source": "seed.mcpServers",
+      "live_routes": [
+        "GET /bff/mcp-servers/{id}"
+      ],
+      "replacement": "managementClient.mcpServers.get",
+      "follow_up_tasks": [
+        "BFF-CONSOL-010",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "Server detail should not use seed in strict live."
+    },
+    {
+      "name": "bff.mcpTools.list",
+      "category": "live_required",
+      "seed_source": "seed.mcpTools",
+      "live_routes": [
+        "GET /bff/mcp-tools"
+      ],
+      "replacement": "managementClient.mcpTools.list or lists.mcpTools",
+      "follow_up_tasks": [
+        "BFF-CONSOL-010",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "Backend has mcp-final alias route."
+    },
+    {
+      "name": "bff.mcpTools.get",
+      "category": "live_required",
+      "seed_source": "seed.mcpTools",
+      "live_routes": [
+        "GET /bff/mcp-tools/{id}"
+      ],
+      "replacement": "managementClient.mcpTools.get",
+      "follow_up_tasks": [
+        "BFF-CONSOL-010",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "MCP tool detail should not use seed in strict live."
+    },
+    {
+      "name": "bff.skills.list",
+      "category": "live_required",
+      "seed_source": "seed.skills",
+      "live_routes": [
+        "GET /bff/skills"
+      ],
+      "replacement": "managementClient.skills.list or lists.skills",
+      "follow_up_tasks": [
+        "BFF-CONSOL-010",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "Pack C fixture family."
+    },
+    {
+      "name": "bff.skills.get",
+      "category": "live_required",
+      "seed_source": "seed.skills",
+      "live_routes": [
+        "GET /bff/skills/{id}"
+      ],
+      "replacement": "managementClient.skills.get",
+      "follow_up_tasks": [
+        "BFF-CONSOL-010",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "Skill detail/editor should not use seed in strict live."
+    },
+    {
+      "name": "bff.channels.list",
+      "category": "live_required",
+      "seed_source": "seed.channels",
+      "live_routes": [
+        "GET /bff/channels"
+      ],
+      "replacement": "managementClient.channels.list or lists.channels",
+      "follow_up_tasks": [
+        "BFF-CONSOL-010",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "Pack C fixture family and SSE-topic alignment input."
+    },
+    {
+      "name": "bff.channels.get",
+      "category": "live_required",
+      "seed_source": "seed.channels",
+      "live_routes": [
+        "GET /bff/channels/{id}"
+      ],
+      "replacement": "managementClient.channels.get",
+      "follow_up_tasks": [
+        "BFF-CONSOL-010",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "Channel detail should not use seed in strict live."
+    },
+    {
+      "name": "bff.routePolicies.list",
+      "category": "deferred",
+      "seed_source": "seed.routePolicies",
+      "live_routes": [],
+      "replacement": "Add a route-policy list route or remove list UI; for persona-specific display use /bff/personas/{id}/route-policy.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "No standalone /bff/route-policies route in the backend manifest."
+    },
+    {
+      "name": "bff.routePolicies.get",
+      "category": "deferred",
+      "seed_source": "seed.routePolicies",
+      "live_routes": [],
+      "replacement": "Fold into /bff/personas/{id}/route-policy or add a canonical route-policy detail route.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "Current helper gets route policy by policy id, but live route is persona scoped."
+    },
+    {
+      "name": "bff.routePolicies.forPersona",
+      "category": "live_required",
+      "seed_source": "seed.routePolicies",
+      "live_routes": [
+        "GET /bff/personas/{id}/route-policy"
+      ],
+      "replacement": "Wire persona route-policy tab to live persona-scoped route.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-016",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "This helper has a direct backend replacement."
+    },
+    {
+      "name": "bff.policyVersions.list",
+      "category": "deferred",
+      "seed_source": "seed.policyVersions",
+      "live_routes": [],
+      "replacement": "Add version history to route-policy DTO or create a version route before strict live display.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "No backend route found for policy versions."
+    },
+    {
+      "name": "bff.permissionMatrix.get",
+      "category": "deferred",
+      "seed_source": "seed.permissionMatrices",
+      "live_routes": [],
+      "replacement": "Wire a permissions/capabilities route or hide the matrix in strict live.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "No /bff/permission-matrices route in the manifest."
+    },
+    {
+      "name": "bff.permissionMatrices.list",
+      "category": "deferred",
+      "seed_source": "seed.permissionMatrices",
+      "live_routes": [],
+      "replacement": "Wire a permissions/capabilities route or hide the matrix list in strict live.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "No /bff/permission-matrices route in the manifest."
+    },
+    {
+      "name": "bff.memoryUpdates.list",
+      "category": "deferred",
+      "seed_source": "seed.memoryUpdates",
+      "live_routes": [],
+      "replacement": "Use persona-scoped memory route where possible; remove global memory queue seed fallback unless a route is added.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "No global memory-updates route found."
+    },
+    {
+      "name": "bff.memoryUpdates.forPersona",
+      "category": "live_required",
+      "seed_source": "seed.memoryUpdates",
+      "live_routes": [
+        "GET /bff/personas/{id}/memory"
+      ],
+      "replacement": "Wire persona memory tab to live persona-scoped route.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-016",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "This helper has a direct backend replacement."
+    },
+    {
+      "name": "bff.consultRules.list",
+      "category": "deferred",
+      "seed_source": "seed.consultRules",
+      "live_routes": [],
+      "replacement": "Add /bff consult-policy surface or migrate UI to existing API v1 consultation routes.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "Backend has API v1 consultation routes, but no matching /bff consultRules route."
+    },
+    {
+      "name": "bff.consultRules.get",
+      "category": "deferred",
+      "seed_source": "seed.consultRules",
+      "live_routes": [],
+      "replacement": "Add /bff consult-policy detail surface or remove strict-live seed display.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "No matching /bff route."
+    },
+    {
+      "name": "bff.evolutionRuns.list",
+      "category": "deferred",
+      "seed_source": "seed.evolutionRuns",
+      "live_routes": [],
+      "replacement": "Use program-scoped runs or add a global runs route.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-017",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "Backend exposes runs under /bff/evolution-programs/{id}/runs."
+    },
+    {
+      "name": "bff.evolutionRuns.forProgram",
+      "category": "live_required",
+      "seed_source": "seed.evolutionRuns",
+      "live_routes": [
+        "GET /bff/evolution-programs/{id}/runs"
+      ],
+      "replacement": "Wire evolution program detail tabs to live program-scoped runs.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-017",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "Direct backend route exists."
+    },
+    {
+      "name": "bff.evolutionCandidates.forRun",
+      "category": "deferred",
+      "seed_source": "seed.evolutionCandidates",
+      "live_routes": [
+        "GET /bff/evolution-programs/{id}/candidates"
+      ],
+      "replacement": "Change helper contract from runId to programId or resolve run->program before calling the live route.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-017",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "Current helper is run-scoped; backend route is program-scoped."
+    },
+    {
+      "name": "bff.fitnessFormulas.list",
+      "category": "deferred",
+      "seed_source": "seed.fitnessFormulas",
+      "live_routes": [],
+      "replacement": "Create an evolution formula/config route or hide this studio in strict live.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-017",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "No matching route in backend manifest."
+    },
+    {
+      "name": "bff.fitnessFormulas.get",
+      "category": "deferred",
+      "seed_source": "seed.fitnessFormulas",
+      "live_routes": [],
+      "replacement": "Create an evolution formula/config detail route or remove strict-live seed fallback.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-017",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "No matching route in backend manifest."
+    },
+    {
+      "name": "bff.mutationRules.list",
+      "category": "deferred",
+      "seed_source": "seed.mutationRules",
+      "live_routes": [],
+      "replacement": "Create an evolution mutation-rule route or hide this studio in strict live.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-017",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "No matching route in backend manifest."
+    },
+    {
+      "name": "bff.allocationSimulations.forRebalance",
+      "category": "mock_only_dev",
+      "seed_source": "seed.allocationSimulations",
+      "live_routes": [],
+      "replacement": "Hide or show an explicit mock-only simulator state in live mode until a simulation route exists.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-015",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "Current UI warms a mock cache; no live authority."
+    },
+    {
+      "name": "bff.policyViolations.list",
+      "category": "deferred",
+      "seed_source": "seed.policyViolations",
+      "live_routes": [],
+      "replacement": "Add policy-violation route or fold into persona/strategy detail DTOs.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-016",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "No generic subject violation route in backend manifest."
+    },
+    {
+      "name": "bff.policyViolations.forSubject",
+      "category": "deferred",
+      "seed_source": "seed.policyViolations",
+      "live_routes": [],
+      "replacement": "Add subject-scoped policy-violation route or fold into detail DTOs.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-016",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "Used by persona detail; strict live needs a non-seed source."
+    },
+    {
+      "name": "bff.evaluationRuns.list",
+      "category": "deferred",
+      "seed_source": "seed.evaluationRuns",
+      "live_routes": [],
+      "replacement": "Use persona-scoped evaluations where possible or add a generic evaluation-runs route.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-016",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "Backend exposes /bff/personas/{id}/evaluations, not a generic list."
+    },
+    {
+      "name": "bff.evaluationRuns.forSubject",
+      "category": "deferred",
+      "seed_source": "seed.evaluationRuns",
+      "live_routes": [
+        "GET /bff/personas/{id}/evaluations"
+      ],
+      "replacement": "Split persona subject to the live persona route; disable unsupported subject kinds in strict live.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-016",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "Current helper is generic subject-scoped; live route is persona-specific."
+    },
+    {
+      "name": "bff.objectVersions.forSubject",
+      "category": "deferred",
+      "seed_source": "seed.objectVersions",
+      "live_routes": [
+        "GET /bff/strategies/{id}/specs"
+      ],
+      "replacement": "Fold strategy/persona versions into detail tabs or add subject version routes.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-016",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "No generic object-version route exists."
+    },
+    {
+      "name": "bff.featureSets.forStrategy",
+      "category": "deferred",
+      "seed_source": "seed.featureSets",
+      "live_routes": [],
+      "replacement": "Add strategy feature-set route or fold into strategy specs/detail DTO.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-016",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "Strategy data-features tab is seed-only today."
+    },
+    {
+      "name": "bff.performanceSeries.forStrategy",
+      "category": "deferred",
+      "seed_source": "seed.performanceSeries",
+      "live_routes": [],
+      "replacement": "Add strategy performance route or map to a canonical telemetry route before strict live.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-016",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "Operator performance charts must not show seed as live."
+    },
+    {
+      "name": "bff.watchers.forSubject",
+      "category": "mock_only_dev",
+      "seed_source": "seed.watchers",
+      "live_routes": [],
+      "replacement": "Hide watcher chips or replace with a real subscription/collaboration route later.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-015",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P3",
+      "notes": "No canonical BFF truth source for watchers."
+    },
+    {
+      "name": "bff.decisionJournal.list",
+      "category": "live_required",
+      "seed_source": "bffAgora.journal.list",
+      "live_routes": [
+        "GET /bff/agora/journal"
+      ],
+      "replacement": "Use bffAgora.journal.list and filter client-side only after live response.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-017",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "Already delegates through the Agora live adapter."
+    },
+    {
+      "name": "bff.decisionJournal.forSubject",
+      "category": "live_required",
+      "seed_source": "bffAgora.journal.list",
+      "live_routes": [
+        "GET /bff/agora/journal"
+      ],
+      "replacement": "Use live journal list and subject filter; avoid seed fallback in strict live.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-017",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "Already delegates through the Agora live adapter."
+    },
+    {
+      "name": "bff.allocationLimits.forPool",
+      "category": "deferred",
+      "seed_source": "seed.allocationLimits",
+      "live_routes": [],
+      "replacement": "Fold allocation limits into capital-pool detail DTO or add a pool-scoped route.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-016",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "No pool allocation-limits route found."
+    },
+    {
+      "name": "bff.poolFreezes.forPool",
+      "category": "deferred",
+      "seed_source": "seed.poolFreezes",
+      "live_routes": [],
+      "replacement": "Fold freezes into capital-pool detail DTO or add a pool-scoped route.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-016",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "No pool freezes route found."
+    },
+    {
+      "name": "bff.deploymentStages.forDeployment",
+      "category": "live_required",
+      "seed_source": "seed.deploymentStages",
+      "live_routes": [
+        "GET /bff/deployments/{id}"
+      ],
+      "replacement": "Read stages from live deployment detail DTO instead of a standalone seed array.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-016",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "Pack A acceptance requires deployment stages and approval pointer."
+    },
+    {
+      "name": "bff.mcpSecrets.forServer",
+      "category": "mock_only_dev",
+      "seed_source": "seed.mcpSecrets",
+      "live_routes": [],
+      "replacement": "Hide in live mode unless a masked secret-metadata route is explicitly added; never expose real secret values.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-015",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Security-sensitive seed-only panel."
+    },
+    {
+      "name": "bff.promotions.forProgram",
+      "category": "deferred",
+      "seed_source": "seed.promotions",
+      "live_routes": [],
+      "replacement": "Add promotion-history route or fold promotion history into evolution program detail.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-017",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "No promotion route found in backend manifest."
+    },
+    {
+      "name": "bff.metricFreezes.forRebalance",
+      "category": "deferred",
+      "seed_source": "seed.metricFreezes",
+      "live_routes": [],
+      "replacement": "Fold metric freezes into rebalance detail DTO or add a rebalance-scoped route.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-018",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "No metric-freezes route found."
+    },
+    {
+      "name": "bff.rebalanceOverrides.forRebalance",
+      "category": "deferred",
+      "seed_source": "seed.rebalanceOverrides",
+      "live_routes": [],
+      "replacement": "Fold overrides into rebalance detail DTO or add a rebalance-scoped route.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-018",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P2",
+      "notes": "No rebalance-overrides route found."
+    },
+    {
+      "name": "bff.rebalanceWorkflow.forRebalance",
+      "category": "live_required",
+      "seed_source": "seed.rebalanceWorkflowSteps",
+      "live_routes": [
+        "GET /bff/rebalances/{id}"
+      ],
+      "replacement": "Read workflow/status steps from live rebalance detail DTO or an explicit subresource.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-018",
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P1",
+      "notes": "Detail smoke C should prove the replacement."
+    },
+    {
+      "name": "bff.search",
+      "category": "live_required",
+      "seed_source": "seed.searchableObjects",
+      "live_routes": [
+        "GET /bff/search"
+      ],
+      "replacement": "Add a live search adapter; in strict live, failed search should return typed error or explicit unavailable state, not seed results.",
+      "follow_up_tasks": [
+        "BFF-CONSOL-025"
+      ],
+      "priority": "P0",
+      "notes": "Command palette currently queries seed.searchableObjects directly."
+    }
+  ],
+  "elimination_order": [
+    {
+      "priority": "P0",
+      "helpers": [
+        "bff.mutations",
+        "bff.commands.requestConfirmToken",
+        "bff.me.*",
+        "core Management Console list/detail helpers",
+        "bff.search",
+        "bff.mcpSecrets.forServer"
+      ],
+      "reason": "These can mislead operators or touch command/session/security surfaces."
+    },
+    {
+      "priority": "P1",
+      "helpers": [
+        "Agora/v5 namespaces",
+        "related detail helpers with existing parent BFF routes"
+      ],
+      "reason": "These are visible in detail journeys and should be proved by BFF-CONSOL-016/017/018."
+    },
+    {
+      "priority": "P2",
+      "helpers": [
+        "deferred governance/evolution/capital adjunct helpers without direct routes"
+      ],
+      "reason": "BFF-CONSOL-025 should either add route contracts or remove/hide strict-live UI."
+    },
+    {
+      "priority": "P3",
+      "helpers": [
+        "local instrumentation and collaboration-only chips"
+      ],
+      "reason": "Safe to hide in live mode after mock badge plumbing exists."
+    }
+  ]
+}
