@@ -233,7 +233,7 @@ BFF 目前有兩條寫入路徑：
 | `/bff/v1/commands` | 最終合約 | command admission / idempotency / RBAC / audit 的正式統一入口 |
 | `/api/v1/operator/commands` | Legacy | 向下相容；不得靜默移除 |
 
-`BFF_COMMAND_API_CONTRACT.md` §8 Command Adapter Mapping 建立了從 actions 路徑到 commands 路徑的完整映射表，覆蓋全部 entityType（strategy / persona / capital-pool / rebalance / deployment / evolution-program / research-experiment / artifact / ranking-formula / runtime / tool / mcp-server / mcp-tool / skill / channel）與 3 條特殊路徑（approvals decide / alerts acknowledge / v5 interventions decide）。
+`BFF_COMMAND_API_CONTRACT.md` §8 Command Adapter Mapping 建立了從 actions 路徑到 commands 路徑的完整映射表，覆蓋全部明確映射 entityType（strategy / persona / capital-pool / rebalance / deployment / evolution-program / research-experiment / artifact / ranking-formula / runtime / tool / mcp-server / mcp-tool / skill / channel）、review 指出的 active caller overlay（例如 strategy `update_params`、capital-pool `adjust_budget`、deployment `promote_live`、evolution-program `stop`、research-experiment `promote_artifact`、skill `publish` / `retire`、mcp-server `test_connection` / `health_check` / `update_env_grants`、mcp-tool `grant_env`）、generic approval / alert / incident fallback route family，以及 3 條特殊路徑（approvals decide / alerts acknowledge / v5 interventions decide）與 confirm-token lifecycle rows。
 
 ### 收斂里程碑
 
