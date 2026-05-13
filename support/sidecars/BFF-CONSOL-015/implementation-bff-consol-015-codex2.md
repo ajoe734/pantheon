@@ -64,7 +64,7 @@ Re-run during closeout:
 npm test -- src/components/data/MockDataBadge.test.tsx src/lib/bff-v1/__tests__/seedTaxonomy.test.ts
 ```
 
-Result: `2 passed (10 tests)`.
+Result: `2 test files passed (13 tests)`.
 
 ```bash
 npx eslint src/components/data/MockDataBadge.tsx src/components/data/mockDataBadgeModel.ts src/components/data/MockDataBadge.test.tsx src/lib/bff-v1/seedTaxonomy.ts src/lib/bff-v1/__tests__/seedTaxonomy.test.ts src/lib/bff-v1/seed.ts src/management/components/detail/AllocationSimulationPanel.tsx src/management/components/detail/FitnessFormulaPanel.tsx src/management/components/detail/McpSecretsPanel.tsx src/management/pages/phase2/Settings.tsx
@@ -73,10 +73,15 @@ npx eslint src/components/data/MockDataBadge.tsx src/components/data/mockDataBad
 Result: no lint output.
 
 ```bash
-git -C /home/lupin/code/execute-plans diff --check --cached -- src/components/data/MockDataBadge.tsx src/components/data/mockDataBadgeModel.ts src/components/data/MockDataBadge.test.tsx src/lib/bff-v1/seedTaxonomy.ts src/lib/bff-v1/__tests__/seedTaxonomy.test.ts src/lib/bff-v1/seed-taxonomy.json src/lib/bff-v1/seed.ts src/lib/bff-v1/index.ts src/management/components/detail/AllocationSimulationPanel.tsx src/management/components/detail/FitnessFormulaPanel.tsx src/management/components/detail/McpSecretsPanel.tsx src/management/pages/phase2/Settings.tsx
+git -C /home/lupin/code/execute-plans diff --check -- src/components/data/MockDataBadge.tsx src/components/data/mockDataBadgeModel.ts src/components/data/MockDataBadge.test.tsx src/lib/bff-v1/seedTaxonomy.ts src/lib/bff-v1/__tests__/seedTaxonomy.test.ts src/lib/bff-v1/seed-taxonomy.json src/lib/bff-v1/seed.ts src/lib/bff-v1/index.ts src/management/components/detail/AllocationSimulationPanel.tsx src/management/components/detail/FitnessFormulaPanel.tsx src/management/components/detail/McpSecretsPanel.tsx src/management/pages/phase2/Settings.tsx
 ```
 
 Result: no whitespace errors.
+
+Closeout note: frontend implementation files are already durable in sibling checkout commit
+`20945d8 BFF-CONSOL-015 add live mock-data badges`; those task paths are clean in the
+current frontend worktree. The frontend checkout also has unrelated dirty files from later
+tasks, not owned by BFF-CONSOL-015.
 
 ## Coordination Note
 
