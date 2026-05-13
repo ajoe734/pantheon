@@ -18,7 +18,7 @@ BASELINE_PATH = REPO_ROOT / "docs/bff/contract_snapshots/route-diff-baseline.jso
 
 ROUTE_PARAM_RE = re.compile(r":([A-Za-z_][A-Za-z0-9_]*)|\{[^/{}]+\}")
 
-FRONTEND_NON_BLOCKING_STATUSES = {
+NON_BLOCKING_ROUTE_STATUSES = {
     "deferred",
     "deferred_with_task",
     "deprecated",
@@ -114,9 +114,17 @@ def has_mock_only_marker(entry: dict[str, Any]) -> bool:
     return False
 
 
-def frontend_requires_backend(entry: dict[str, Any]) -> bool:
+def route_requires_counterpart(entry: dict[str, Any]) -> bool:
     status = str(entry.get("status") or "").strip().lower()
-    return status not in FRONTEND_NON_BLOCKING_STATUSES and not has_mock_only_marker(entry)
+    return status not in NON_BLOCKING_ROUTE_STATUSES and not has_mock_only_marker(entry)
+
+
+def frontend_requires_backend(entry: dict[str, Any]) -> bool:
+    return route_requires_counterpart(entry)
+
+
+def backend_requires_frontend(entry: dict[str, Any]) -> bool:
+    return route_requires_counterpart(entry)
 
 
 def frontend_referenced_backend_keys(entries: list[dict[str, Any]]) -> set[str]:
@@ -131,6 +139,7 @@ def frontend_referenced_backend_keys(entries: list[dict[str, Any]]) -> set[str]:
 
 def _empty_failure_map() -> dict[str, list[dict[str, Any]]]:
     return {
+        "backend_missing_frontend": [],
         "frontend_missing_backend": [],
         "naming_mismatches": [],
         "duplicate_backend_keys": [],
@@ -144,7 +153,7 @@ def build_route_diff(
     *,
     backend_path: Path = BACKEND_MANIFEST,
     frontend_path: Path = FRONTEND_MANIFEST,
-    mode: str = "fail-but-warn",
+    mode: str = "fail-hard",
 ) -> dict[str, Any]:
     backend_entries = list(backend_manifest.get("entries") or [])
     frontend_entries = list(frontend_manifest.get("entries") or [])
@@ -189,28 +198,32 @@ def build_route_diff(
     backend_missing_frontend = [
         route_summary(backend_index[key], key)
         for key in sorted(backend_index)
-        if key not in frontend_backend_keys
+        if key not in frontend_backend_keys and backend_requires_frontend(backend_index[key])
     ]
+    warnings = {"backend_missing_frontend": backend_missing_frontend}
+    if mode == "fail-hard":
+        failures["backend_missing_frontend"] = backend_missing_frontend
+        warnings = {"backend_missing_frontend": []}
 
     failure_counts = {name: len(rows) for name, rows in failures.items()}
-    warning_counts = {"backend_missing_frontend": len(backend_missing_frontend)}
+    warning_counts = {name: len(rows) for name, rows in warnings.items()}
     failure_count = sum(failure_counts.values())
     warning_count = sum(warning_counts.values())
-    mode_failure_count = failure_count + (warning_count if mode == "fail-hard" else 0)
+    mode_failure_count = failure_count
 
     return {
         "metadata": {
-            "task_id": "BFF-CONSOL-003",
+            "task_id": "BFF-CONSOL-026",
             "mode": mode,
             "generator": "scripts/bff_route_diff.py",
             "backend_manifest": repo_relative(backend_path),
             "frontend_manifest": repo_relative(frontend_path),
             "backend_snapshot_date": backend_manifest.get("metadata", {}).get("snapshot_date"),
             "frontend_snapshot_date": frontend_manifest.get("metadata", {}).get("snapshot_date"),
-            "frontend_non_blocking_statuses": sorted(FRONTEND_NON_BLOCKING_STATUSES),
+            "non_blocking_route_statuses": sorted(NON_BLOCKING_ROUTE_STATUSES),
             "rules": [
                 "Frontend active routes absent from the backend are failures unless marked mock-only, deferred, superseded, or covered_by a backend route.",
-                "Backend routes absent from the frontend manifest are warnings in fail-but-warn mode.",
+                "Backend active routes absent from the frontend manifest are failures in fail-hard mode unless marked mock-only, deferred, or superseded.",
                 "Shared active method/path routes with mismatched manifest family names are failures.",
             ],
         },
@@ -225,9 +238,7 @@ def build_route_diff(
             "mode_failure_count": mode_failure_count,
         },
         "failures": failures,
-        "warnings": {
-            "backend_missing_frontend": backend_missing_frontend,
-        },
+        "warnings": warnings,
     }
 
 
@@ -297,7 +308,8 @@ def render_summary(diff: dict[str, Any]) -> str:
 
     missing = diff["failures"]["frontend_missing_backend"]
     mismatches = diff["failures"]["naming_mismatches"]
-    backend_only = diff["warnings"]["backend_missing_frontend"]
+    backend_only_failures = diff["failures"].get("backend_missing_frontend", [])
+    backend_only_warnings = diff["warnings"].get("backend_missing_frontend", [])
     if missing:
         lines.append("")
         lines.append("Frontend routes missing in backend:")
@@ -312,13 +324,20 @@ def render_summary(diff: dict[str, Any]) -> str:
             lines.append(f"- {row['key']}: frontend={row['frontend_family']} backend={row['backend_family']}")
         if len(mismatches) > 25:
             lines.append(f"- ... {len(mismatches) - 25} more")
-    if backend_only:
+    if backend_only_failures:
+        lines.append("")
+        lines.append("Backend routes missing in frontend:")
+        for row in backend_only_failures[:25]:
+            lines.append(f"- {row['key']} family={row.get('family', '')} status={row.get('status', '')}")
+        if len(backend_only_failures) > 25:
+            lines.append(f"- ... {len(backend_only_failures) - 25} more")
+    if backend_only_warnings:
         lines.append("")
         lines.append("Backend-only warning sample:")
-        for row in backend_only[:25]:
+        for row in backend_only_warnings[:25]:
             lines.append(f"- {row['key']} family={row.get('family', '')} status={row.get('status', '')}")
-        if len(backend_only) > 25:
-            lines.append(f"- ... {len(backend_only) - 25} more")
+        if len(backend_only_warnings) > 25:
+            lines.append(f"- ... {len(backend_only_warnings) - 25} more")
     return "\n".join(lines)
 
 
@@ -327,7 +346,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--backend", default=str(BACKEND_MANIFEST), help="Backend route manifest JSON path.")
     parser.add_argument("--frontend", default=str(FRONTEND_MANIFEST), help="Frontend route manifest JSON path.")
     parser.add_argument("--baseline", default=str(BASELINE_PATH), help="Checked-in route diff baseline JSON path.")
-    parser.add_argument("--mode", choices=["fail-but-warn", "fail-hard"], default="fail-but-warn")
+    parser.add_argument("--mode", choices=["fail-but-warn", "fail-hard"], default="fail-hard")
     parser.add_argument("--dump", action="store_true", help="Print current diff JSON instead of a text summary.")
     parser.add_argument("--write-baseline", action="store_true", help="Write the current diff to the baseline path.")
     parser.add_argument(
@@ -338,7 +357,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--strict-warnings",
         action="store_true",
-        help="When checking the baseline, treat backend-only warning drift as a failure.",
+        help="When checking a fail-but-warn baseline, treat backend-only warning drift as a failure.",
     )
     return parser.parse_args(argv)
 
@@ -360,6 +379,8 @@ def main(argv: list[str] | None = None) -> int:
         baseline_path.parent.mkdir(parents=True, exist_ok=True)
         baseline_path.write_text(canonical_json(diff), encoding="utf-8")
         print(f"Wrote route diff baseline to {baseline_path}")
+        if not args.check_baseline:
+            return 0
 
     if args.check_baseline:
         if not baseline_path.exists():
@@ -371,10 +392,18 @@ def main(argv: list[str] | None = None) -> int:
             print("Route diff baseline drift detected:", file=sys.stderr)
             print("".join(drift), file=sys.stderr)
             return 1
-        if not args.dump:
-            warning_note = " with strict warnings" if args.strict_warnings else " hard-failure surface"
+        if args.dump:
+            print(canonical_json(diff), end="")
+        else:
+            warning_note = " with strict warnings" if args.strict_warnings else " fail-hard surface"
             print(f"Route diff baseline matches current{warning_note}.")
-            print(render_summary(diff))
+            if args.mode == "fail-hard":
+                grandfathered = diff["summary"]["failures"].get("backend_missing_frontend", 0)
+                if grandfathered:
+                    print(f"Grandfathered backend-only routes locked by baseline: {grandfathered}")
+            else:
+                print(render_summary(diff))
+        return 0
 
     if args.dump:
         print(canonical_json(diff), end="")

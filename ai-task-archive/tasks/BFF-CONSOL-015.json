@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-015",
+  "archived_at": "2026-05-13T09:08:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-015",
+    "title": "Mock-only badge implementation (live mode)",
+    "summary_zh": "live mode 下若頁面 fetch 失敗回 seed-only helper UI 自動掛 mock data badge;mock_only_dev helper 在 live mode 直接禁用 (raise 或 return null + 顯示空狀態)。讀 BFF-CONSOL-007 taxonomy 作為分類來源。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-005",
+      "BFF-CONSOL-007"
+    ],
+    "artifacts": [
+      "execute-plans/src/components/data/MockDataBadge.tsx",
+      "execute-plans/src/lib/bff/seed.ts"
+    ],
+    "acceptance": [
+      "badge 在 live mode 顯示 mock 狀態",
+      "mock_only_dev helper 在 live mode 不再回 seed",
+      "deferred helper 顯示明確空狀態",
+      "live_required helper 不掛 badge",
+      "taxonomy JSON 變更後 badge 行為跟著動",
+      "Copilot 簽核 badge 行為對齊 taxonomy"
+    ],
+    "next": "BFF-CONSOL-015 finalized after Claude approval. Frontend implementation committed in sibling execute-plans at 20945d8; pantheon review/sidecar commit dd8345e0. Closeout verification reran targeted Vitest 10 tests, targeted ESLint, and cached diff check successfully. Copilot taxonomy critique remains deferred follow-on per reviewer note.",
+    "last_update": "2026-05-13T09:08:32Z",
+    "review_notes_zh": [
+      "實作架構正確，MockDataBadge/MockDataEmptyState 元件乾淨，seedTaxonomy 從 BFF-CONSOL-007 JSON 讀取並正確映射四個類別行為",
+      "mock_only_dev 在 live mode 回傳空值、deferred 顯示明確空狀態、live_required 不掛 badge 均通過測試驗證",
+      "Copilot taxonomy 簽核列為後續追蹤事項，不阻擋實作核准",
+      "路徑偏差（bff→bff-v1）已在 sidecar 文件中說明，符合 BFF-CONSOL-007 的記錄"
+    ],
+    "review_file": ".orchestrator/reviews/BFF-CONSOL-015-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T09:08:32Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "dd8345e020e75b7745e54c201503cc053f3bd6d4",
+      "commit_subject": "BFF-CONSOL-015 record mock badge approval",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-CONSOL-015",
+        "Reviewer": "Claude",
+        "Verification": "sibling frontend commit 20945d8; npm test -- src/components/data/MockDataBadge.test.tsx src/lib/bff-v1/__tests__/seedTaxonomy.test.ts passed 10 tests; targeted npx eslint clean; git diff --check --cached clean."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 47,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-015",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-13T03:58:19Z",
+      "resolved_at": "2026-05-13T03:58:28Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-015",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Implementation ready for review. Frontend task files staged in ../execute-plans; handoff note: support/sidecars/BFF-CONSOL-015/implementation-bff-consol-015-codex2.md. Verification passed: focused Vitest 10 tests, targeted ESLint clean, npm run build passed, diff --check clean. BFF-CONSOL-015-SIDECAR-BFF-HANDOFF is still in progress; please confirm whether independent Copilot/taxonomy signoff is required before approval.",
+      "status": "done",
+      "created_at": "2026-05-13T05:57:40Z",
+      "resolved_at": "2026-05-13T06:46:46Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-015",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Chair reassigned review from Claude2 to Claude: Claude2 is rate-limited until 2026-05-13T17:00:00Z (~10 hours). BFF-CONSOL-015 has been in review for 43+ minutes with no pickup path. Claude is idle, is a configured reviewer fallback for Claude2, and is not currently assigned as reviewer on any other in-flight review task.",
+      "status": "done",
+      "created_at": "2026-05-13T06:46:46Z",
+      "resolved_at": "2026-05-13T06:49:12Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-015",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved and returned to Codex2 for finalization. Implementation correct, taxonomy-backed tests pass for all acceptance criteria. Copilot signoff deferred as follow-on audit.",
+      "status": "done",
+      "created_at": "2026-05-13T06:49:12Z",
+      "resolved_at": "2026-05-13T09:08:32Z"
+    }
+  ],
+  "blockers": []
+}

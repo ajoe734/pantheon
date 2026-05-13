@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-007",
+  "archived_at": "2026-05-13T03:51:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-007",
+    "title": "Seed taxonomy spreadsheet",
+    "summary_zh": "盤點 execute-plans src/lib/bff/seed.ts 全 helper 分四類 live_required|mock_only_dev|deprecated|deferred。輸出 docs/bff/seed-taxonomy-2026-05-13.md 與 seed-taxonomy.json 供 015 mock-only badge 與 025 seed elimination 使用。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/seed-taxonomy-2026-05-13.md",
+      "docs/bff/seed-taxonomy.json"
+    ],
+    "acceptance": [
+      "seed.ts 所有 helper 都被分類",
+      "每個 helper 標 live_required|mock_only_dev|deprecated|deferred",
+      "deferred 註明對應 follow-up task",
+      "taxonomy JSON 可被前端腳本 import",
+      "doc 提供 elimination 優先順序",
+      "Claude2 簽核 taxonomy 為下游消費基準"
+    ],
+    "next": "Owner finalized approved seed taxonomy after task-scoped commit 42ac7b0e. Verification: jq helper count/category/duplicate/follow-up/priority checks passed; node require imported taxonomy JSON with 83 helpers; source path discrepancy documented and confirmed.",
+    "last_update": "2026-05-13T03:51:47Z",
+    "review_notes_zh": [
+      "審查通過：83 helper 完整分類，JSON 結構可被前端 import，P0-P3 消除優先順序清晰，deferred 全部標明 follow-up task",
+      "後續：BFF-CONSOL-015 mock badge、BFF-CONSOL-025 seed elimination 以此 taxonomy 為輸入基準"
+    ],
+    "review_file": "support/evidence/BFF-CONSOL-007/review-claude-2026-05-13.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T03:51:47Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "42ac7b0e7464d9c45dbbdf0a34aa72aa5522309b",
+      "commit_subject": "BFF-CONSOL-007 add seed taxonomy artifacts",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-CONSOL-007",
+        "Reviewer": "Claude",
+        "Verification": "jq helper count/category/duplicate/follow-up/priority checks passed; node require imported docs/bff/seed-taxonomy.json with 83 helpers; source path check confirmed sibling src/lib/bff-v1/seed.ts and absent brief path src/lib/bff/seed.ts."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 26,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 21,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-007",
+      "from": "Copilot",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-13T02:08:22Z",
+      "resolved_at": "2026-05-13T02:08:33Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-007",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-13T02:48:56Z",
+      "resolved_at": "2026-05-13T02:49:15Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-007",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-13T03:28:46Z",
+      "resolved_at": "2026-05-13T03:28:59Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-007",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Seed taxonomy artifacts ready for review: docs/bff/seed-taxonomy-2026-05-13.md and docs/bff/seed-taxonomy.json. Covered 83 helpers from sibling execute-plans/src/lib/bff-v1/seed.ts (brief path src/lib/bff/seed.ts does not exist there): live_required=52, mock_only_dev=4, deprecated=2, deferred=25. Verification: jq parsed JSON, category counts match helper grouping, helper names are unique, follow_up_tasks/live_routes arrays and P0-P3 priorities validated; backend route availability cross-checked against services/control-plane/bff/contract_snapshots/backend_routes_manifest.json.",
+      "status": "done",
+      "created_at": "2026-05-13T03:47:10Z",
+      "resolved_at": "2026-05-13T03:48:56Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-007",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: taxonomy JSON validates (83 helpers, counts match, no duplicates, all deferred have follow_up_tasks). Elimination order P0-P3 is correct and actionable for BFF-CONSOL-015 and BFF-CONSOL-025. Path discrepancy from brief is documented. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-13T03:48:56Z",
+      "resolved_at": "2026-05-13T03:51:48Z"
+    }
+  ],
+  "blockers": []
+}

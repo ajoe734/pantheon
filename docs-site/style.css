@@ -937,6 +937,48 @@ details[open].cockpit-details .cockpit-details-summary::before {
   background: var(--red-soft);
 }
 
+.codex-slot-card {
+  grid-column: 1 / -1;
+}
+
+.codex-slot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+  width: 100%;
+}
+
+.codex-slot-row {
+  border: 1px solid var(--line);
+  border-left: 4px solid rgba(95, 111, 108, 0.32);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--panel);
+}
+
+.codex-slot-row.codex-slot-running {
+  border-left-color: var(--teal);
+  background: rgba(20, 104, 94, 0.06);
+}
+
+.codex-slot-row.codex-slot-pending {
+  border-left-color: var(--orange);
+  background: rgba(166, 117, 28, 0.06);
+}
+
+.codex-slot-name,
+.codex-slot-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.codex-slot-name {
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
 .sys-card-head {
   display: flex;
   align-items: center;

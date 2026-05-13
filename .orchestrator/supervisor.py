@@ -5,6 +5,7 @@ import argparse
 import atexit
 import importlib
 import json
+import math
 import os
 import random
 import re
@@ -609,12 +610,181 @@ def resolve_agent_model_preference(config: dict[str, Any], agent: dict[str, Any]
     return None
 
 
-def build_request(config: dict[str, Any], event: dict[str, Any]) -> DeliveryRequest:
-    agent = agent_config_for(config, event["target_agent"])
+def provider_config_for(config: dict[str, Any], provider: str | None) -> dict[str, Any]:
+    providers = config.get("providers", {}) or {}
+    raw = str(provider or "").strip()
+    if not raw:
+        return {}
+    normalized = normalize_agent_id(raw)
+    candidates = [raw, normalized, raw.replace("_", "-"), raw.replace("-", "_")]
+    for candidate in candidates:
+        if candidate in providers and isinstance(providers[candidate], dict):
+            return providers[candidate]
+    return {}
+
+
+def provider_dispatch_group_id(config: dict[str, Any], provider: str | None) -> str:
+    provider_id = normalize_agent_id(provider or "")
+    if not provider_id:
+        return ""
+    provider_cfg = provider_config_for(config, provider)
+    group = (
+        provider_cfg.get("quota_group")
+        or provider_cfg.get("dispatch_group")
+        or provider_cfg.get("account_group")
+    )
+    return normalize_agent_id(str(group or provider_id))
+
+
+def agent_is_dispatch_slot(agent: dict[str, Any] | None) -> bool:
+    return bool(isinstance(agent, dict) and str(agent.get("dispatch_slot_for") or "").strip())
+
+
+def logical_worker_slot_ids(config: dict[str, Any], agent_id: str | None) -> list[str]:
+    normalized = normalize_agent_id(agent_id or "")
+    if not normalized:
+        return []
+    agents = config.get("agents", {}) or {}
+    logical_agent = agents.get(normalized) or {}
+    slot_ids: list[str] = []
+    seen: set[str] = set()
+    for raw_slot in logical_agent.get("worker_slots", []) or []:
+        slot_id = normalize_agent_id(str(raw_slot or ""))
+        if slot_id and slot_id in agents and slot_id not in seen:
+            seen.add(slot_id)
+            slot_ids.append(slot_id)
+    for slot_id, slot_agent in agents.items():
+        if normalize_agent_id(str((slot_agent or {}).get("dispatch_slot_for") or "")) != normalized:
+            continue
+        normalized_slot = normalize_agent_id(slot_id)
+        if normalized_slot and normalized_slot not in seen:
+            seen.add(normalized_slot)
+            slot_ids.append(normalized_slot)
+    return slot_ids
+
+
+def dispatch_loop_agent_ids(config: dict[str, Any]) -> list[str]:
+    return [
+        normalize_agent_id(agent_id)
+        for agent_id, agent in (config.get("agents", {}) or {}).items()
+        if normalize_agent_id(agent_id) and not agent_is_dispatch_slot(agent)
+    ]
+
+
+def agent_dispatch_capacity(config: dict[str, Any], agent_id: str | None, settings: dict[str, Any] | None = None) -> int:
+    normalized = normalize_agent_id(agent_id or "")
+    settings = settings or ready_dispatch_settings(config)
+    default_capacity = max(1, int(settings.get("max_tasks_per_agent", 1)))
+    display_name = display_name_for(config, normalized)
+    overrides = settings.get("max_tasks_per_agent_by_agent", {}) or {}
+    for key in (normalized, display_name):
+        if key in overrides:
+            try:
+                return max(1, int(overrides[key]))
+            except (TypeError, ValueError):
+                pass
+    slot_count = len(logical_worker_slot_ids(config, normalized))
+    return max(default_capacity, slot_count) if slot_count else default_capacity
+
+
+def dispatch_weight_mapping(settings: dict[str, Any] | None) -> dict[str, Any]:
+    settings = settings or {}
+    mapping = settings.get("target_workload") or settings.get("agent_workload_weights") or {}
+    return mapping if isinstance(mapping, dict) else {}
+
+
+def dispatch_weight_for_agent(config: dict[str, Any], agent_id: str | None, settings: dict[str, Any] | None = None) -> int:
+    mapping = dispatch_weight_mapping(settings)
+    if not mapping:
+        return 1
+    normalized = normalize_agent_id(agent_id or "")
+    display_name = display_name_for(config, normalized)
+    for key in (display_name, normalized):
+        if key in mapping:
+            try:
+                return max(0, int(mapping[key]))
+            except (TypeError, ValueError):
+                return 0
+    return 0
+
+
+def weighted_dispatch_agent_ids(config: dict[str, Any], settings: dict[str, Any] | None = None) -> list[str]:
+    settings = settings or ready_dispatch_settings(config)
+    base_agent_ids = dispatch_loop_agent_ids(config)
+    if not dispatch_weight_mapping(settings):
+        return base_agent_ids
+
+    weighted = [
+        (agent_id, dispatch_weight_for_agent(config, agent_id, settings))
+        for agent_id in base_agent_ids
+    ]
+    weighted = [(agent_id, weight) for agent_id, weight in weighted if weight > 0]
+    if not weighted:
+        return base_agent_ids
+
+    divisor = 0
+    for _agent_id, weight in weighted:
+        divisor = weight if divisor == 0 else math.gcd(divisor, weight)
+    normalized = [(agent_id, max(1, weight // max(1, divisor))) for agent_id, weight in weighted]
+    total = sum(weight for _agent_id, weight in normalized)
+    current = {agent_id: 0 for agent_id, _weight in normalized}
+    sequence: list[str] = []
+    for _ in range(total):
+        for agent_id, weight in normalized:
+            current[agent_id] += weight
+        selected = max(
+            normalized,
+            key=lambda item: (current[item[0]], item[1], -base_agent_ids.index(item[0])),
+        )[0]
+        sequence.append(selected)
+        current[selected] -= total
+    return sequence
+
+
+def select_dispatch_agent_id(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    agent_id: str | None,
+    active_statuses: set[str],
+    provider_report: dict[str, Any] | None = None,
+) -> str | None:
+    normalized = normalize_agent_id(agent_id or "")
+    slot_ids = logical_worker_slot_ids(config, normalized)
+    if not slot_ids:
+        return normalized
+    active_slots = {
+        normalize_agent_id(str(worker.get("agent_id") or ""))
+        for worker in state.get("workers", {}).values()
+        if worker.get("status") in active_statuses
+    }
+    for slot_id in slot_ids:
+        if slot_id in active_slots:
+            continue
+        if agent_auto_dispatch_block_reason(config, state, slot_id, provider_report):
+            continue
+        return slot_id
+    return None
+
+
+def build_request(
+    config: dict[str, Any],
+    event: dict[str, Any],
+    *,
+    agent_id_override: str | None = None,
+) -> DeliveryRequest:
+    logical_agent = agent_config_for(config, event["target_agent"])
+    agent = agent_config_for(config, agent_id_override or event["target_agent"])
     metadata = dict(event.get("metadata", {}) or {})
     model_preference = resolve_agent_model_preference(config, agent)
     if model_preference and "model_preference" not in metadata:
         metadata["model_preference"] = model_preference
+    logical_agent_id = normalize_agent_id(str(logical_agent.get("id") or event.get("target_agent") or ""))
+    if logical_agent_id and "logical_agent_id" not in metadata:
+        metadata["logical_agent_id"] = logical_agent_id
+    if agent_id_override:
+        metadata["dispatch_slot_id"] = agent["id"]
+        metadata["dispatch_slot"] = agent.get("slot_id") or agent["id"]
+        metadata["target_display_name"] = event.get("target_display_name") or display_name_for(config, logical_agent_id)
     context_files = event.get("context_files")
     if context_files is None:
         context_files = execution_context_files(config, event.get("task_id"))
@@ -715,10 +885,16 @@ def start_worker_for_request(
         return False, failure_summary.get("summary") or result.error or result.notes or "Worker delivery failed.", None
 
     worker_run_id = result.run_id or new_runtime_id(request.provider)
+    logical_agent_id = str(request.metadata.get("logical_agent_id") or agent["id"])
+    dispatch_slot_id = str(request.metadata.get("dispatch_slot_id") or "")
     state.setdefault("workers", {})[worker_run_id] = {
         "run_id": worker_run_id,
         "provider": request.provider,
         "agent_id": agent["id"],
+        "logical_agent_id": logical_agent_id,
+        "dispatch_slot_id": dispatch_slot_id or None,
+        "dispatch_slot": request.metadata.get("dispatch_slot"),
+        "quota_group": provider_dispatch_group_id(config, request.provider),
         "task_id": request.task_id,
         "session_id": result.session_id,
         "mode": result.mode,
@@ -742,6 +918,9 @@ def start_worker_for_request(
         "next_retry_at": None,
         "last_error": None,
     }
+    # Persist immediately after launch so a supervisor crash cannot orphan
+    # a live worker before the end-of-tick state save.
+    save_runtime_state(config, state)
     write_activity_log(
         config,
         {
@@ -819,7 +998,7 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             continue
         request = build_request(config, event)
         request_provider = getattr(request, "provider", event.get("provider"))
-        pause_entry = current_provider_dispatch_pause(state, request_provider)
+        pause_entry = current_provider_dispatch_pause(state, request_provider, config)
         if pause_entry:
             pause_summary = str(pause_entry.get("summary") or pause_entry.get("reason") or "capacity guardrail active.")
             record["status"] = "failed"
@@ -861,6 +1040,14 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             )
             changed = True
             continue
+        dispatch_agent_id = select_dispatch_agent_id(config, state, request_agent_id, active_statuses, provider_report)
+        if dispatch_agent_id is None:
+            record["status"] = "pending"
+            record["last_wait_reason"] = f"All worker slots for {request_agent_id} are busy or dispatch-paused."
+            changed = True
+            continue
+        if dispatch_agent_id != request_agent_id:
+            request = build_request(config, event, agent_id_override=dispatch_agent_id)
         record["attempt_count"] = int(record.get("attempt_count", 0)) + 1
         record["last_attempt_at"] = utc_now()
         ok, outcome, delivery = start_worker_for_request(
@@ -2681,24 +2868,31 @@ def _failure_streak_key(task_id: str, provider: str) -> str:
     return f"{task_id}:{provider}"
 
 
-def current_provider_dispatch_pause(state: dict[str, Any], provider: str | None) -> dict[str, Any] | None:
+def current_provider_dispatch_pause(
+    state: dict[str, Any],
+    provider: str | None,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     provider_id = normalize_agent_id(provider or "")
     if not provider_id:
         return None
     bucket = _dispatch_pause_bucket(state)
-    entry = bucket.get(provider_id)
-    if not isinstance(entry, dict):
-        return None
-    blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
-    now = datetime.now(timezone.utc)
-    if blocked_until is not None and blocked_until <= now:
-        bucket.pop(provider_id, None)
-        return None
-    return entry
+    group_id = provider_dispatch_group_id(config, provider) if config is not None else provider_id
+    for pause_id in dict.fromkeys([group_id, provider_id]):
+        entry = bucket.get(pause_id)
+        if not isinstance(entry, dict):
+            continue
+        blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
+        now = datetime.now(timezone.utc)
+        if blocked_until is not None and blocked_until <= now:
+            bucket.pop(pause_id, None)
+            continue
+        return entry
+    return None
 
 
-def provider_dispatch_paused(state: dict[str, Any], provider: str | None) -> bool:
-    return current_provider_dispatch_pause(state, provider) is not None
+def provider_dispatch_paused(config: dict[str, Any], state: dict[str, Any], provider: str | None) -> bool:
+    return current_provider_dispatch_pause(state, provider, config) is not None
 
 
 def agent_dispatch_paused(config: dict[str, Any], state: dict[str, Any], agent_id: str | None) -> bool:
@@ -2708,7 +2902,7 @@ def agent_dispatch_paused(config: dict[str, Any], state: dict[str, Any], agent_i
         return True
     agent = agent_config_for(config, agent_id)
     provider_id = str(agent.get("provider") or agent.get("id") or agent_id)
-    return provider_dispatch_paused(state, provider_id)
+    return provider_dispatch_paused(config, state, provider_id)
 
 
 def is_terminal_quota_failure_kind(kind: str | None) -> bool:
@@ -2747,6 +2941,7 @@ def mark_provider_dispatch_paused(
     provider_id = normalize_agent_id(provider or "")
     if not provider_id:
         return False
+    pause_provider_id = provider_dispatch_group_id(config, provider) or provider_id
     now = datetime.now(timezone.utc)
     effective_pause_kind = str(pause_kind or failure_kind or "").strip().lower()
     if effective_pause_kind == "auth":
@@ -2766,16 +2961,17 @@ def mark_provider_dispatch_paused(
     blocked_until_iso = blocked_until.isoformat().replace("+00:00", "Z")
     actual_pause_seconds = max(1, int((blocked_until - now).total_seconds()))
     bucket = _dispatch_pause_bucket(state)
-    previous = bucket.get(provider_id)
-    summary = summarize_failure_reason(reason, provider_id)
+    previous = bucket.get(pause_provider_id)
+    summary = summarize_failure_reason(reason, pause_provider_id)
     changed = (
         not isinstance(previous, dict)
         or str(previous.get("blocked_until") or "") != blocked_until_iso
         or str(previous.get("summary") or "") != summary.get("summary")
         or str(previous.get("raw_ref") or "") != str(raw_ref or "")
     )
-    bucket[provider_id] = {
-        "provider": provider_id,
+    bucket[pause_provider_id] = {
+        "provider": pause_provider_id,
+        "trigger_provider": provider_id,
         "paused_at": now.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "blocked_until": blocked_until_iso,
         "reason": summary.get("summary"),
@@ -2799,11 +2995,12 @@ def mark_provider_dispatch_paused(
             config,
             {
                 "type": "provider_dispatch_paused",
-                "provider": provider_id,
+                "provider": pause_provider_id,
+                "trigger_provider": provider_id,
                 "task_id": task_id,
                 "worker_run_id": worker_run_id,
                 "message": (
-                    f"Paused new dispatches for {provider_id} until {blocked_until_iso} after {pause_description}: "
+                    f"Paused new dispatches for {pause_provider_id} until {blocked_until_iso} after {pause_description}: "
                     f"{summary.get('summary')}"
                 ),
                 "raw_ref": raw_ref,
@@ -3531,7 +3728,7 @@ def manual_pending_inbox_can_auto_redeliver(
     request = request_for_worker(config, worker)
     if request is None:
         return False
-    if current_provider_dispatch_pause(state, request.provider):
+    if current_provider_dispatch_pause(state, request.provider, config):
         return False
     agent_capability = (provider_report or {}).get("agent_adapters", {}).get(str(request.agent_id) or "", {}) or {}
     if not agent_capability.get("can_auto_deliver"):
@@ -3973,7 +4170,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         if (
             worker.get("queue_event_id")
             and worker.get("status") in active_worker_statuses
-            and higher_priority_ready_task_exists(config, worker, task_map)
+            and higher_priority_ready_task_exists(config, worker, task_map, state)
         ):
             if alive:
                 terminate_worker_pid(worker.get("pid"))
@@ -4577,6 +4774,8 @@ def configured_worker_lane_ids(config: dict[str, Any]) -> list[str]:
     lanes: list[str] = []
     seen: set[str] = set()
     for agent_id, agent in (config.get("agents", {}) or {}).items():
+        if agent_is_dispatch_slot(agent):
+            continue
         display_name = str(agent.get("display_name") or agent.get("name") or agent_id)
         if "legacy alias" in display_name.lower():
             continue
@@ -4825,6 +5024,8 @@ def eligible_idle_agents_for_sidecars(
     task_map = task_index_from_status(config, status)
     agents: list[str] = []
     for agent_id, agent in (config.get("agents", {}) or {}).items():
+        if agent_is_dispatch_slot(agent):
+            continue
         display_name = str(agent.get("display_name") or agent.get("name") or agent_id).strip()
         if "legacy alias" in display_name.lower():
             continue
@@ -5457,10 +5658,20 @@ def is_sidecar_review_of_current_parent(
     return task_class == "sidecar" or bool(candidate_task.get("helper_kind"))
 
 
+def worker_logical_dispatch_agent_id(config: dict[str, Any], worker: dict[str, Any]) -> str:
+    explicit = normalize_agent_id(str(worker.get("logical_agent_id") or ""))
+    if explicit:
+        return explicit
+    agent_id = normalize_agent_id(str(worker.get("agent_id") or worker.get("provider") or ""))
+    agent = config.get("agents", {}).get(agent_id, {}) or {}
+    return normalize_agent_id(str(agent.get("dispatch_slot_for") or agent_id))
+
+
 def higher_priority_ready_task_exists(
     config: dict[str, Any],
     worker: dict[str, Any],
     task_map: dict[str, dict[str, Any]],
+    state: dict[str, Any] | None = None,
 ) -> bool:
     if worker_is_discussion_planning(worker) or worker_is_coordination_dispatch(worker):
         return False
@@ -5468,9 +5679,11 @@ def higher_priority_ready_task_exists(
     if current_priority is None:
         return False
 
-    agent_name = display_name_for(config, str(worker.get("agent_id") or ""))
+    logical_agent_id = worker_logical_dispatch_agent_id(config, worker)
+    agent_name = display_name_for(config, logical_agent_id)
     current_task_id = str(worker.get("task_id") or "")
     settings = ready_dispatch_settings(config)
+    active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
     review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
     finalize_statuses = {str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])}
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
@@ -5478,6 +5691,7 @@ def higher_priority_ready_task_exists(
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
     current_task = task_map.get(current_task_id)
+    higher_priority_task_ids: set[str] = set()
 
     for task_id, task in task_map.items():
         if task_id == current_task_id:
@@ -5513,9 +5727,60 @@ def higher_priority_ready_task_exists(
             candidate_priority = 3
 
         if candidate_priority is not None and candidate_priority < current_priority:
-            return True
+            higher_priority_task_ids.add(str(task_id))
 
-    return False
+    if not higher_priority_task_ids:
+        return False
+
+    effective_state = state or {
+        "workers": {str(worker.get("run_id") or "__current__"): worker},
+        "queue": {"events": {}},
+    }
+    occupied_count = 0
+    served_higher_priority_task_ids: set[str] = set()
+    active_event_ids: set[str] = set()
+    current_run_id = str(worker.get("run_id") or "")
+
+    for run_id, other in (effective_state.get("workers", {}) or {}).items():
+        if other.get("status") not in active_statuses:
+            continue
+        other_agent_id = worker_logical_dispatch_agent_id(config, other)
+        if display_name_for(config, other_agent_id) != agent_name:
+            continue
+        occupied_count += 1
+        event_id = str(other.get("queue_event_id") or "")
+        if event_id:
+            active_event_ids.add(event_id)
+        other_priority = dispatch_reason_priority(other.get("request_snapshot", {}).get("reason"))
+        other_task_id = str(other.get("task_id") or "")
+        if str(run_id) != current_run_id and other_priority is not None and other_priority < current_priority and other_task_id:
+            served_higher_priority_task_ids.add(other_task_id)
+
+    queue_records = (effective_state.get("queue", {}) or {}).get("events", {}) or {}
+    try:
+        queued_events = load_event_queue(config)
+    except KeyError:
+        queued_events = []
+    for event in queued_events:
+        event_id = str(event.get("event_id") or "")
+        if not event_id or event_id in active_event_ids:
+            continue
+        record = queue_records.get(event_id, {})
+        if record.get("status") in {"completed", "failed"}:
+            continue
+        target_agent = str(event.get("target_display_name") or display_name_for(config, str(event.get("target_agent") or "")))
+        if target_agent != agent_name:
+            continue
+        occupied_count += 1
+        event_priority = dispatch_reason_priority(str(event.get("reason") or ""))
+        event_task_id = str(event.get("task_id") or "")
+        if event_priority is not None and event_priority < current_priority and event_task_id:
+            served_higher_priority_task_ids.add(event_task_id)
+
+    agent_capacity = agent_dispatch_capacity(config, logical_agent_id, settings)
+    free_slots = max(0, agent_capacity - occupied_count)
+    unserved_higher_priority = higher_priority_task_ids - served_higher_priority_task_ids
+    return len(unserved_higher_priority) > free_slots
 
 
 def worker_matches_current_assignment(
@@ -5682,10 +5947,9 @@ def dispatch_ready_tasks(
     owned_statuses = [str(value).lower() for value in settings.get("owned_statuses", ["in_progress", "todo"])]
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
     active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
-    max_tasks_per_agent = max(1, int(settings.get("max_tasks_per_agent", 1)))
     max_dispatches_per_tick = max(1, int(settings.get("max_dispatches_per_tick", 4)))
 
-    active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
+    _active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
     active_task_ids = {task_id for task_id, _agent_id in active_task_agents if task_id}
     pending_task_ids = {task_id for task_id, _agent_id in pending_task_agents if task_id}
@@ -5714,17 +5978,33 @@ def dispatch_ready_tasks(
         task_map = {task.get(task_id_field): task for task in tasks}
 
     dispatches = 0
-    agent_ids = list(config.get("agents", {}).keys())
+    weighted_dispatch_enabled = bool(dispatch_weight_mapping(settings))
+    agent_sequence = weighted_dispatch_agent_ids(config, settings)
+    dispatch_state = state.setdefault("ready_dispatcher", {})
+    try:
+        dispatch_cursor = int(dispatch_state.get("weighted_cursor", 0))
+    except (TypeError, ValueError):
+        dispatch_cursor = 0
+    if agent_sequence:
+        dispatch_cursor %= len(agent_sequence)
+        agent_ids = agent_sequence[dispatch_cursor:] + agent_sequence[:dispatch_cursor]
+    else:
+        agent_ids = []
+    considered_agents = 0
     for agent_id in agent_ids:
         if dispatches >= max_dispatches_per_tick:
             break
+        considered_agents += 1
         target_agent = display_name_for(config, agent_id)
         if target_agent in failure_loop_agents:
             continue
         if agent_auto_dispatch_block_reason(config, state, agent_id, provider_report):
             continue
-        if agent_id in active_agents or agent_id in pending_agents:
+        agent_capacity = agent_dispatch_capacity(config, agent_id, settings)
+        current_agent_load = len(agent_loads.get(target_agent, []))
+        if current_agent_load >= agent_capacity:
             continue
+        available_agent_slots = agent_capacity - current_agent_load
         target_has_primary_work = agent_has_dispatchable_primary_work(config, status, target_agent, task_map)
 
         candidates: list[tuple[int, int, dict[str, Any], str]] = []
@@ -5833,6 +6113,9 @@ def dispatch_ready_tasks(
                         seen[event["key"]] = utc_now()
                         pending_event_keys.add(event["key"])
                         pending_agents.add(agent_id)
+                        agent_loads.setdefault(target_agent, []).append(
+                            dispatch_reason_priority(helper_dispatch_reason) or 9
+                        )
                         active_task_ids.add(task_id)
                         changed = True
                         dispatches += 1
@@ -5862,16 +6145,20 @@ def dispatch_ready_tasks(
             candidates.append((priority, index, task, reason))
 
         candidates.sort(key=lambda item: (item[0], item[1]))
-        for _, _, task, reason in candidates[:max_tasks_per_agent]:
+        per_occurrence_limit = 1 if weighted_dispatch_enabled else available_agent_slots
+        for _, _, task, reason in candidates[:per_occurrence_limit]:
             event = build_dispatch_event(task, target_agent, reason, task_map)
             if queue_delivery_event(config, event):
                 seen[event["key"]] = utc_now()
                 pending_event_keys.add(event["key"])
+                agent_loads.setdefault(target_agent, []).append(dispatch_reason_priority(reason) or 9)
                 changed = True
                 dispatches += 1
                 if dispatches >= max_dispatches_per_tick:
                     break
 
+    if agent_sequence and considered_agents:
+        dispatch_state["weighted_cursor"] = (dispatch_cursor + considered_agents) % len(agent_sequence)
     return changed
 
 

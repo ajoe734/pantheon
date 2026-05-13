@@ -82,6 +82,16 @@ def _gemini_runtime_env(config: dict[str, Any] | None = None, provider_id: str =
     return env
 
 
+def _codex_home(config: dict[str, Any] | None = None, provider_id: str = "codex") -> Path:
+    provider = ((config or {}).get("providers", {}).get(provider_id, {}) or {}).get("codex", {}) or {}
+    home = str(provider.get("codex_home") or provider.get("config_home") or "").strip()
+    return Path(os.path.expanduser(home)) if home else Path.home() / ".codex"
+
+
+def _codex_config_path(config: dict[str, Any] | None = None, provider_id: str = "codex") -> Path:
+    return _codex_home(config, provider_id) / "config.toml"
+
+
 def _gemini_settings(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> dict[str, Any]:
     return load_json(_gemini_settings_path(config, provider_id), default={}) or {}
 
@@ -726,6 +736,64 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
             ]
         )
     )
+    codex_provider_ids = list(
+        dict.fromkeys(
+            [
+                "codex",
+                *[
+                    provider_id
+                    for provider_id, settings in (config.get("providers", {}) or {}).items()
+                    if provider_id != "codex" and (settings or {}).get("delivery_mode") == "codex"
+                ],
+            ]
+        )
+    )
+
+    def codex_provider_report(provider_id: str) -> dict[str, Any]:
+        provider_settings = config.get("providers", {}).get(provider_id, {}) or {}
+        profile = provider_settings.get("codex", {}) or codex_profile
+        config_path_for_provider = _codex_config_path(config, provider_id)
+        applied = (
+            profile.get("ask_for_approval", "never") == "never"
+            and profile.get("sandbox_mode", "workspace-write") == "workspace-write"
+        )
+        return {
+            "installed": codex_installed,
+            "host_layer": "CLI + VS Code extension" if openai_path and codex_binary else ("CLI" if codex_binary else "VS Code extension"),
+            "delivery_mode": "codex",
+            "quota_group": provider_settings.get("quota_group"),
+            "approval_mode": f"orchestrator:{profile.get('ask_for_approval', 'never')}",
+            "persistent_allow_supported": False,
+            "default_auto_approve_supported": True,
+            "full_access_supported": True,
+            "per_tool_allow_supported": False,
+            "local_cli_worker_supported": bool(codex_binary),
+            "vscode_link_supported": bool(openai_path),
+            "cloud_agent_supported": False,
+            "supports_auto_approve": bool(codex_binary),
+            "supports_defer_resume": False,
+            "supported_models": [],
+            "selected_model": None,
+            "applied": applied,
+            "verified": "partial" if codex_installed else "unavailable",
+            "version": openai_version,
+            "paths": {
+                "extension": str(openai_path) if openai_path else None,
+                "config": str(config_path_for_provider),
+                "home": str(_codex_home(config, provider_id)),
+                "binary": codex_binary,
+            },
+            "settings": {
+                "orchestrator.ask_for_approval": profile.get("ask_for_approval", "never"),
+                "orchestrator.sandbox_mode": profile.get("sandbox_mode", "workspace-write"),
+                "dangerously_bypass": profile.get("dangerously_bypass", False),
+                "codex.codex_home": profile.get("codex_home"),
+            },
+            "notes": [
+                "Verified CLI flags from the locally installed Codex CLI help output.",
+                "No verified persistent approval config keys were found in local extension metadata, so auto-approve is applied per orchestrated run rather than globally.",
+            ],
+        }
 
     report = {
         "generated_at": utc_now(),
@@ -772,40 +840,7 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
                 )
                 for provider_id in gemini_provider_ids
             },
-            "codex": {
-                "installed": codex_installed,
-                "host_layer": "CLI + VS Code extension" if openai_path and codex_binary else ("CLI" if codex_binary else "VS Code extension"),
-                "delivery_mode": "codex",
-                "approval_mode": f"orchestrator:{codex_profile.get('ask_for_approval', 'never')}",
-                "persistent_allow_supported": False,
-                "default_auto_approve_supported": True,
-                "full_access_supported": True,
-                "per_tool_allow_supported": False,
-                "local_cli_worker_supported": bool(codex_binary),
-                "vscode_link_supported": bool(openai_path),
-                "cloud_agent_supported": False,
-                "supports_auto_approve": bool(codex_binary),
-                "supports_defer_resume": False,
-                "supported_models": [],
-                "selected_model": None,
-                "applied": codex_applied,
-                "verified": "partial" if codex_installed else "unavailable",
-                "version": openai_version,
-                "paths": {
-                    "extension": str(openai_path) if openai_path else None,
-                    "config": str(CODEX_CONFIG_PATH),
-                    "binary": codex_binary,
-                },
-                "settings": {
-                    "orchestrator.ask_for_approval": codex_profile.get("ask_for_approval", "never"),
-                    "orchestrator.sandbox_mode": codex_profile.get("sandbox_mode", "workspace-write"),
-                    "dangerously_bypass": codex_profile.get("dangerously_bypass", False),
-                },
-                "notes": [
-                    "Verified CLI flags from the locally installed Codex CLI help output.",
-                    "No verified persistent approval config keys were found in local extension metadata, so auto-approve is applied per orchestrated run rather than globally.",
-                ],
-            },
+            **{provider_id: codex_provider_report(provider_id) for provider_id in codex_provider_ids},
             "copilot": {
                 "installed": copilot_installed,
                 "host_layer": "CLI + VS Code extension + GitHub CLI"

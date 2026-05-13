@@ -18,3 +18,9 @@ The dedicated control-plane compose stack wires BFF reads through service URLs f
 deployment, governance approval, capital, runtime-manager, incidents, postmortems,
 evolution, lineage, and memory. It must not mount governance/runtime/incident data
 volumes into `operator-bff` as a normal read path.
+
+## Route Diff Gate
+
+The route manifest CI gate is fail-hard from 2026-05-13. See
+[route-diff-fail-hard-cutover.md](contract_snapshots/route-diff-fail-hard-cutover.md)
+for the baseline lock and unmatched route policy.

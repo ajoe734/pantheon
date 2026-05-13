@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-012",
+  "archived_at": "2026-05-13T05:33:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-012",
+    "title": "SSE backpressure & unbounded buffer test",
+    "summary_zh": "client disconnect 後 backend 不該 unbounded buffer。對齊 EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md 的 ordering 規定。Test: simulate slow consumer + disconnect assert backend buffer bound + replay window policy + drop strategy。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-011"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/tests/test_sse_backpressure.py",
+      "support/evidence/BFF-CONSOL-012-sse-backpressure.json"
+    ],
+    "acceptance": [
+      "backend buffer 有 explicit upper bound",
+      "slow consumer 不會 OOM",
+      "disconnect 後 buffer 在 N 秒內回收",
+      "replay window 與 ordering policy 對齊文件",
+      "drop strategy 明確 (oldest|newest|reject)",
+      "evidence 包含 measured buffer high-water mark"
+    ],
+    "next": "Finalized BFF-CONSOL-012 after review approval. Task commit 1b088e43 added scoped SSE backpressure test, evidence, and review note. Verification: pytest services/control-plane/bff/tests/test_sse_backpressure.py -q => 3 passed in 11.72s; pytest services/control-plane/bff/test_pkt005_sse_substrate_contract.py services/control-plane/bff/tests/test_sse_backpressure.py -q => 17 passed in 16.53s; python3 -m json.tool support/evidence/BFF-CONSOL-012-sse-backpressure.json => passed.",
+    "last_update": "2026-05-13T05:33:44Z",
+    "review_notes_zh": [
+      "批准：focused backpressure tests cover bounded replay buffer, bounded subscriber queue, newest-drop slow-consumer behavior, disconnect cleanup, replay eviction/resync policy, and per-aggregate ordering fields. Verification: 3-test file passed, combined SSE substrate/backpressure suite 17 passed, evidence JSON validated."
+    ],
+    "review_file": ".orchestrator/reviews/BFF-CONSOL-012-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T05:33:44Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "1b088e4316eb6ca2a4936acd64d140757e9822c0",
+      "commit_subject": "BFF-CONSOL-012 add SSE backpressure evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-CONSOL-012",
+        "Reviewer": "Codex",
+        "Verification": "pytest services/control-plane/bff/tests/test_sse_backpressure.py -q => 3 passed in 11.72s; pytest services/control-plane/bff/test_pkt005_sse_substrate_contract.py services/control-plane/bff/tests/test_sse_backpressure.py -q => 17 passed in 16.53s; python3 -m json.tool support/evidence/BFF-CONSOL-012-sse-backpressure.json => passed."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 42,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 7,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-012",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Gemini is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-13T05:11:27Z",
+      "resolved_at": "2026-05-13T05:11:39Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-012",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Ready for review. Added services/control-plane/bff/tests/test_sse_backpressure.py and support/evidence/BFF-CONSOL-012-sse-backpressure.json. Coverage: slow consumer fills bounded subscriber queue maxsize=1000 without unbounded growth; newest events are dropped for the saturated subscriber; replay buffer remains deque(maxlen=500) and drops oldest; disconnect aclose removes subscriber within 1s; replay after valid cursor preserves per-aggregate sequence fields and missing cursor raises SSE_REPLAY_UNAVAILABLE/resync policy. Verification: pytest services/control-plane/bff/tests/test_sse_backpressure.py -q => 3 passed; pytest services/control-plane/bff/test_pkt005_sse_substrate_contract.py services/control-plane/bff/tests/test_sse_backpressure.py -q => 17 passed; evidence JSON validated with python3 -m json.tool.",
+      "status": "done",
+      "created_at": "2026-05-13T05:16:40Z",
+      "resolved_at": "2026-05-13T05:24:55Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-012",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-05-13T05:24:55Z",
+      "resolved_at": "2026-05-13T05:29:16Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-012",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved by Codex. Backpressure, replay-window, disconnect cleanup, drop-strategy, and ordering-policy acceptance checks passed; owner Codex2 should finalize with task-scoped closeout.",
+      "status": "done",
+      "created_at": "2026-05-13T05:29:16Z",
+      "resolved_at": "2026-05-13T05:33:44Z"
+    }
+  ],
+  "blockers": []
+}

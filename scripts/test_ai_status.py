@@ -954,6 +954,8 @@ class PortableStateRenderingTests(unittest.TestCase):
 
         self.assertEqual(bundle["focus_mode"], "execution")
         self.assertEqual(bundle["runtime_summary"]["running_workers"], 1)
+        self.assertEqual(bundle["runtime_summary"]["dispatch_targets"]["Codex"], 35)
+        self.assertEqual(bundle["runtime_summary"]["dispatch_targets"]["Gemini"], 5)
         self.assertEqual(bundle["execution_summary"]["ready_now"], 0)
         self.assertEqual(bundle["execution_summary"]["dependency_ready"], 1)
         self.assertEqual(bundle["execution_summary"]["in_review"], 1)

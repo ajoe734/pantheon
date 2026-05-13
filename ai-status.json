@@ -2,7 +2,7 @@
   "project": "pantheon",
   "sprint": "2026-05-13-ep5-qlib-bff-consolidation",
   "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec, 從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV, 跑 production_activation_smoke.py --backend real, submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal, registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff, command envelope unification, non-empty fixture & detail journey, SSE real stream replay, strict env cutover, seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write soak 1 週後 deprecate 舊 receipt。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。",
-  "updated_at": "2026-05-13T06:38:48Z",
+  "updated_at": "2026-05-13T09:40:42Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -98,8 +98,8 @@
         "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Handoff packet ready. Summarizes all done evidence (BFF-CONSOL-001..014, 018), maps pending evidence for 015..026, provides verified route coverage, operator journey, and ACCEPTANCE.md template for Copilot to assemble BFF-CONSOL-027 final acceptance packet. No canonical truth modified.",
-      "last_update": "2026-05-13T06:38:22Z"
+      "next": "Chair reassigned review from Copilot to Codex: Copilot is listed in ready_dispatcher.disabled_agents and cannot be auto-dispatched for review. BFF-CONSOL-027-SIDECAR-BFF-HANDOFF has been in review state since 14:38 UTC+8 with no auto-pickup path. Codex is the first-listed reviewer_fallback for Copilot and currently has available review capacity (no active review assignments).",
+      "last_update": "2026-05-13T08:20:04Z"
     },
     {
       "name": "Gemini",
@@ -125,13 +125,11 @@
       ],
       "status": "working",
       "current_task_ids": [
-        "BFF-CONSOL-016-SIDECAR-BFF-HANDOFF",
-        "BFF-CONSOL-026-SIDECAR-BFF-HANDOFF",
-        "BFF-CONSOL-017-SIDECAR-BFF-HANDOFF"
+        "BFF-CONSOL-016"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Supervisor auto-started BFF-CONSOL-017-SIDECAR-BFF-HANDOFF after successful dispatch.",
-      "last_update": "2026-05-13T06:38:48Z"
+      "next": "Supervisor auto-started BFF-CONSOL-016 after successful dispatch.",
+      "last_update": "2026-05-13T09:33:48Z"
     },
     {
       "name": "Codex2",
@@ -141,13 +139,14 @@
         "schema",
         "acceptance"
       ],
-      "status": "reviewing",
+      "status": "working",
       "current_task_ids": [
-        "BFF-CONSOL-015"
+        "BFF-CONSOL-017",
+        "BFF-CONSOL-019"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Implementation ready for review. Frontend task files staged in ../execute-plans; handoff note: support/sidecars/BFF-CONSOL-015/implementation-bff-consol-015-codex2.md. Verification passed: focused Vitest 10 tests, targeted ESLint clean, npm run build passed, diff --check clean. BFF-CONSOL-015-SIDECAR-BFF-HANDOFF is still in progress; please confirm whether independent Copilot/taxonomy signoff is required before approval.",
-      "last_update": "2026-05-13T05:57:40Z"
+      "next": "Addressing Codex review findings: enforcing Pack B evolution 200 path and research experiment/analysis linkage, then rerunning focused BFF regression.",
+      "last_update": "2026-05-13T09:40:42Z"
     },
     {
       "name": "Copilot",
@@ -188,13 +187,13 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "reviewing",
+      "status": "working",
       "current_task_ids": [
         "BFF-CONSOL-019-SIDECAR-BFF-HANDOFF"
       ],
       "branch": "feat/gemini2-research-runtime",
-      "next": "Work is complete and ready for your review.",
-      "last_update": "2026-05-13T06:06:45Z"
+      "next": "Supervisor re-dispatched BFF-CONSOL-019-SIDECAR-BFF-HANDOFF; task remains in progress.",
+      "last_update": "2026-05-13T09:37:34Z"
     }
   ],
   "tasks": [
@@ -215,8 +214,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Auto-reassigned ownership from Gemini2 to Codex2 after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex2 starts a fresh run.",
-      "last_update": "2026-05-13T05:47:43Z",
+      "next": "Supervisor preempted SVC-RENAME-003-SIDECAR-ACCEPTANCE to free Codex2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
+      "last_update": "2026-05-13T09:38:02Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "SVC-RENAME-003",
@@ -225,40 +224,13 @@
       "auto_created_by": "supervisor-underutilization"
     },
     {
-      "id": "BFF-CONSOL-015",
-      "title": "Mock-only badge implementation (live mode)",
-      "summary_zh": "live mode 下若頁面 fetch 失敗回 seed-only helper UI 自動掛 mock data badge;mock_only_dev helper 在 live mode 直接禁用 (raise 或 return null + 顯示空狀態)。讀 BFF-CONSOL-007 taxonomy 作為分類來源。",
-      "phase": "BFF Consolidation 2026-05-13",
-      "owner": "Codex2",
-      "reviewer": "Claude2",
-      "status": "review",
-      "depends_on": [
-        "BFF-CONSOL-005",
-        "BFF-CONSOL-007"
-      ],
-      "artifacts": [
-        "execute-plans/src/components/data/MockDataBadge.tsx",
-        "execute-plans/src/lib/bff/seed.ts"
-      ],
-      "acceptance": [
-        "badge 在 live mode 顯示 mock 狀態",
-        "mock_only_dev helper 在 live mode 不再回 seed",
-        "deferred helper 顯示明確空狀態",
-        "live_required helper 不掛 badge",
-        "taxonomy JSON 變更後 badge 行為跟著動",
-        "Copilot 簽核 badge 行為對齊 taxonomy"
-      ],
-      "next": "Implementation ready for review. Frontend task files staged in ../execute-plans; handoff note: support/sidecars/BFF-CONSOL-015/implementation-bff-consol-015-codex2.md. Verification passed: focused Vitest 10 tests, targeted ESLint clean, npm run build passed, diff --check clean. BFF-CONSOL-015-SIDECAR-BFF-HANDOFF is still in progress; please confirm whether independent Copilot/taxonomy signoff is required before approval.",
-      "last_update": "2026-05-13T05:57:40Z"
-    },
-    {
       "id": "BFF-CONSOL-016",
       "title": "Detail journey smoke A (strategy persona deployment runtime)",
       "summary_zh": "detail journey smoke A: strategy/persona/deployment/runtime 各跑 list→detail→related tabs。每個 family ≥1 non-empty fixture (來自 008) detail drawer 渲染 tabs 切換 degraded path 都跑過。Evidence support/evidence/BFF-CONSOL-016-detail-smoke-a.json。",
       "phase": "BFF Consolidation 2026-05-13",
-      "owner": "Codex2",
-      "reviewer": "Claude",
-      "status": "todo",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "in_progress",
       "depends_on": [
         "BFF-CONSOL-008"
       ],
@@ -274,8 +246,8 @@
         "persona detail 顯示 route-policy 與 activity",
         "evidence JSON 含每個 family 的 route 與 status"
       ],
-      "next": "Supervisor preempted BFF-CONSOL-016 to free Codex2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
-      "last_update": "2026-05-13T06:13:39Z"
+      "next": "Supervisor auto-started BFF-CONSOL-016 after successful dispatch.",
+      "last_update": "2026-05-13T09:33:48Z"
     },
     {
       "id": "BFF-CONSOL-017",
@@ -283,8 +255,8 @@
       "summary_zh": "detail journey smoke B: evolution/research/v5/agora/artifacts list→detail→related tabs。每個 family 走過 live detail 而非 mock。",
       "phase": "BFF Consolidation 2026-05-13",
       "owner": "Codex2",
-      "reviewer": "Claude",
-      "status": "todo",
+      "reviewer": "Codex",
+      "status": "in_progress",
       "depends_on": [
         "BFF-CONSOL-009"
       ],
@@ -300,8 +272,8 @@
         "artifacts detail 含 lineage",
         "evidence JSON 含每個 family transcript"
       ],
-      "next": "Supervisor preempted BFF-CONSOL-017 to free Codex2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
-      "last_update": "2026-05-13T06:13:50Z"
+      "next": "Addressing Codex review findings: enforcing Pack B evolution 200 path and research experiment/analysis linkage, then rerunning focused BFF regression.",
+      "last_update": "2026-05-13T09:40:42Z"
     },
     {
       "id": "BFF-CONSOL-019",
@@ -309,8 +281,8 @@
       "summary_zh": "後端 /bff/actions/* 在 BFF 內轉成 /bff/v1/commands admission：actor from auth/Idempotency-Key/trace_id+correlation_id/policy decision/audit action/target typed reference。**不可在 EP5 paper-canary closeout 之前 merge runtime change**;PR 準備好但 hold 在 review 直到 EP5 closeout signal。Reviewer Claude 在 EP5 closeout 後才會 approve。",
       "phase": "BFF Consolidation 2026-05-13",
       "owner": "Codex2",
-      "reviewer": "Claude",
-      "status": "todo",
+      "reviewer": "Codex",
+      "status": "in_progress",
       "depends_on": [
         "BFF-CONSOL-004"
       ],
@@ -328,8 +300,8 @@
         "target typed reference 對齊 BFF_COMMAND_API_CONTRACT",
         "EP5 paper-canary closeout 之前禁止 merge runtime change"
       ],
-      "next": "Supervisor preempted BFF-CONSOL-019 to free Codex2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
-      "last_update": "2026-05-13T05:40:05Z"
+      "next": "Codex2 resumed BFF command envelope adapter implementation; inspecting existing BFF action and command admission paths.",
+      "last_update": "2026-05-13T09:38:46Z"
     },
     {
       "id": "BFF-CONSOL-020",
@@ -389,7 +361,7 @@
       "title": "Lovable staging strict cutover (isolated preview branch)",
       "summary_zh": "開 Lovable preview branch 設 VITE_BFF_MODE=live + VITE_BFF_FALLBACK=strict + VITE_BFF_REAL_WRITES=false。現有 staging 維持 auto fallback 不切。Soak ≥7 day 紀錄 strict mode 下 read/SSE/detail journey 沒 regression。",
       "phase": "BFF Consolidation 2026-05-13",
-      "owner": "Gemini2",
+      "owner": "Codex2",
       "reviewer": "Gemini",
       "status": "todo",
       "depends_on": [
@@ -410,8 +382,8 @@
         "SSE replay/read smoke 都 pass",
         "evidence 紀錄 strict 下無 fallback regression"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-05-13T02:04:36Z"
+      "next": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex2 starts a fresh run.",
+      "last_update": "2026-05-13T09:34:41Z"
     },
     {
       "id": "BFF-CONSOL-023",
@@ -500,7 +472,7 @@
       "phase": "BFF Consolidation 2026-05-13",
       "owner": "Codex2",
       "reviewer": "Codex",
-      "status": "todo",
+      "status": "review_approved",
       "depends_on": [
         "BFF-CONSOL-001",
         "BFF-CONSOL-002",
@@ -517,8 +489,13 @@
         "baseline 鎖定後續 route 變更必須同步",
         "文件更新 fail-hard 切換時間表"
       ],
-      "next": "Auto-reassigned ownership from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex2 starts a fresh run.",
-      "last_update": "2026-05-13T03:12:22Z"
+      "next": "Review approved: fail-hard route diff baseline gate verified; owner to finalize with task-scoped closeout.",
+      "last_update": "2026-05-13T09:39:39Z",
+      "review_notes_zh": [
+        "Approved: fail-hard CLI, baseline lock, CI workflow, docs, and tests match BFF-CONSOL-026 acceptance.",
+        "Known non-task manifest check failure remains due unrelated /bff/research-analyses dirty main.py routes."
+      ],
+      "review_file": ".orchestrator/reviews/BFF-CONSOL-026-review-codex.md"
     },
     {
       "id": "BFF-CONSOL-027",
@@ -579,7 +556,7 @@
       "phase": "BFF Consolidation 2026-05-13",
       "owner": "Codex",
       "reviewer": "Codex2",
-      "status": "in_progress",
+      "status": "todo",
       "depends_on": [
         "BFF-CONSOL-008"
       ],
@@ -591,8 +568,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Supervisor auto-started BFF-CONSOL-016-SIDECAR-BFF-HANDOFF after successful dispatch.",
-      "last_update": "2026-05-13T06:38:18Z",
+      "next": "Supervisor preempted BFF-CONSOL-016-SIDECAR-BFF-HANDOFF to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
+      "last_update": "2026-05-13T08:58:33Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "BFF-CONSOL-016",
@@ -607,7 +584,7 @@
       "phase": "BFF Consolidation 2026-05-13",
       "owner": "Codex",
       "reviewer": "Codex2",
-      "status": "in_progress",
+      "status": "todo",
       "depends_on": [
         "BFF-CONSOL-001",
         "BFF-CONSOL-002",
@@ -621,8 +598,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Supervisor auto-started BFF-CONSOL-026-SIDECAR-BFF-HANDOFF after successful dispatch.",
-      "last_update": "2026-05-13T06:38:35Z",
+      "next": "Supervisor preempted BFF-CONSOL-026-SIDECAR-BFF-HANDOFF to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
+      "last_update": "2026-05-13T08:59:00Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "BFF-CONSOL-026",
@@ -649,8 +626,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Auto-reassigned ownership from Copilot to Codex after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-05-13T05:30:30Z",
+      "next": "Supervisor preempted BFF-CONSOL-012-SIDECAR-BFF-HANDOFF to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
+      "last_update": "2026-05-13T07:19:05Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "BFF-CONSOL-012",
@@ -665,7 +642,7 @@
       "phase": "BFF Consolidation 2026-05-13",
       "owner": "Codex",
       "reviewer": "Codex2",
-      "status": "in_progress",
+      "status": "todo",
       "depends_on": [
         "BFF-CONSOL-009"
       ],
@@ -677,8 +654,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Supervisor auto-started BFF-CONSOL-017-SIDECAR-BFF-HANDOFF after successful dispatch.",
-      "last_update": "2026-05-13T06:38:48Z",
+      "next": "Supervisor preempted BFF-CONSOL-017-SIDECAR-BFF-HANDOFF to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
+      "last_update": "2026-05-13T08:59:23Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "BFF-CONSOL-017",
@@ -707,7 +684,7 @@
         "Hand off the packet to the assigned reviewer"
       ],
       "next": "Supervisor preempted BFF-CONSOL-015-SIDECAR-BFF-HANDOFF to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
-      "last_update": "2026-05-13T06:37:43Z",
+      "last_update": "2026-05-13T08:59:44Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "BFF-CONSOL-015",
@@ -722,7 +699,7 @@
       "phase": "BFF Consolidation 2026-05-13",
       "owner": "Gemini2",
       "reviewer": "Codex2",
-      "status": "review",
+      "status": "in_progress",
       "depends_on": [
         "BFF-CONSOL-004"
       ],
@@ -734,8 +711,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Work is complete and ready for your review.",
-      "last_update": "2026-05-13T06:06:45Z",
+      "next": "Supervisor re-dispatched BFF-CONSOL-019-SIDECAR-BFF-HANDOFF; task remains in progress.",
+      "last_update": "2026-05-13T09:37:34Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "BFF-CONSOL-019",
@@ -762,8 +739,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-05-13T06:19:10Z",
+      "next": "Supervisor preempted BFF-CONSOL-025-SIDECAR-BFF-HANDOFF to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
+      "last_update": "2026-05-13T09:01:56Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "BFF-CONSOL-025",
@@ -777,7 +754,7 @@
       "summary_zh": "平行支援 BFF-CONSOL-027，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
       "phase": "BFF Consolidation 2026-05-13",
       "owner": "Claude",
-      "reviewer": "Copilot",
+      "reviewer": "Codex",
       "status": "review",
       "depends_on": [
         "BFF-CONSOL-001",
@@ -804,8 +781,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Handoff packet ready. Summarizes all done evidence (BFF-CONSOL-001..014, 018), maps pending evidence for 015..026, provides verified route coverage, operator journey, and ACCEPTANCE.md template for Copilot to assemble BFF-CONSOL-027 final acceptance packet. No canonical truth modified.",
-      "last_update": "2026-05-13T06:38:22Z",
+      "next": "Chair reassigned review from Copilot to Codex: Copilot is listed in ready_dispatcher.disabled_agents and cannot be auto-dispatched for review. BFF-CONSOL-027-SIDECAR-BFF-HANDOFF has been in review state since 14:38 UTC+8 with no auto-pickup path. Codex is the first-listed reviewer_fallback for Copilot and currently has available review capacity (no active review assignments).",
+      "last_update": "2026-05-13T08:20:04Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "BFF-CONSOL-027",
@@ -858,15 +835,6 @@
       "status": "done",
       "created_at": "2026-05-13T03:43:57Z",
       "resolved_at": "2026-05-13T03:44:04Z"
-    },
-    {
-      "task_id": "BFF-CONSOL-015",
-      "from": "Claude2",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Claude2 is dispatch-paused.",
-      "status": "done",
-      "created_at": "2026-05-13T03:58:19Z",
-      "resolved_at": "2026-05-13T03:58:28Z"
     },
     {
       "task_id": "BFF-CONSOL-017",
@@ -923,39 +891,112 @@
       "resolved_at": "2026-05-13T05:42:01Z"
     },
     {
-      "task_id": "BFF-CONSOL-015",
-      "from": "Codex2",
-      "to": "Claude2",
-      "message": "Implementation ready for review. Frontend task files staged in ../execute-plans; handoff note: support/sidecars/BFF-CONSOL-015/implementation-bff-consol-015-codex2.md. Verification passed: focused Vitest 10 tests, targeted ESLint clean, npm run build passed, diff --check clean. BFF-CONSOL-015-SIDECAR-BFF-HANDOFF is still in progress; please confirm whether independent Copilot/taxonomy signoff is required before approval.",
-      "status": "pending",
-      "created_at": "2026-05-13T05:57:40Z"
-    },
-    {
       "task_id": "BFF-CONSOL-019-SIDECAR-BFF-HANDOFF",
       "from": "Gemini2",
       "to": "Codex2",
       "message": "Work is complete and ready for your review.",
-      "status": "pending",
-      "created_at": "2026-05-13T06:06:45Z"
+      "status": "done",
+      "created_at": "2026-05-13T06:06:45Z",
+      "resolved_at": "2026-05-13T09:36:03Z"
     },
     {
       "task_id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
       "from": "Claude",
       "to": "Copilot",
       "message": "Handoff packet ready. Summarizes all done evidence (BFF-CONSOL-001..014, 018), maps pending evidence for 015..026, provides verified route coverage, operator journey, and ACCEPTANCE.md template for Copilot to assemble BFF-CONSOL-027 final acceptance packet. No canonical truth modified.",
+      "status": "done",
+      "created_at": "2026-05-13T06:38:22Z",
+      "resolved_at": "2026-05-13T08:20:04Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Chair reassigned review from Copilot to Codex: Copilot is listed in ready_dispatcher.disabled_agents and cannot be auto-dispatched for review. BFF-CONSOL-027-SIDECAR-BFF-HANDOFF has been in review state since 14:38 UTC+8 with no auto-pickup path. Codex is the first-listed reviewer_fallback for Copilot and currently has available review capacity (no active review assignments).",
       "status": "pending",
-      "created_at": "2026-05-13T06:38:22Z"
+      "created_at": "2026-05-13T08:20:04Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-016",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-13T09:02:59Z",
+      "resolved_at": "2026-05-13T09:03:28Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-017",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-13T09:03:11Z",
+      "resolved_at": "2026-05-13T09:03:44Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-019",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-13T09:06:04Z",
+      "resolved_at": "2026-05-13T09:06:18Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-026",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: CLI now defaults to fail-hard, backend-only unmatched routes are in the failure surface, CI uses the fail-hard baseline gate, and cutover docs/baseline/tests are updated. Verified python3 scripts/bff_route_diff.py --check-baseline and python3 -m pytest scripts/test_bff_route_diff.py -q. Note: python3 scripts/bff_route_manifest_backend.py --check currently fails because unrelated dirty services/control-plane/bff/main.py adds GET /bff/research-analyses and GET /bff/research-analyses/{param} without regenerating the backend manifest.",
+      "status": "done",
+      "created_at": "2026-05-13T09:32:18Z",
+      "resolved_at": "2026-05-13T09:39:39Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-019-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Gemini2",
+      "message": "Review changes requested by Codex2: the handoff packet is still a generic placeholder. Please replace it with concrete BFF-CONSOL-019 support material: command-envelope adapter query/action gap, operator journey for /bff/actions/* -> /bff/v1/commands, frontend runAction/commandClient handoff notes, parent absorption risks/gates including EP5 closeout hold, and explicit confirmation that only support artifacts changed.",
+      "status": "done",
+      "created_at": "2026-05-13T09:36:03Z",
+      "resolved_at": "2026-05-13T09:36:03Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-017",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-13T09:36:29Z",
+      "resolved_at": "2026-05-13T09:36:58Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-019",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-13T09:36:41Z",
+      "resolved_at": "2026-05-13T09:37:14Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-026",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: fail-hard route diff baseline gate verified; owner to finalize with task-scoped closeout.",
+      "status": "pending",
+      "created_at": "2026-05-13T09:39:39Z"
     }
   ],
   "blockers": [],
   "workload": {
-    "Claude": 15,
-    "Claude2": 15,
-    "Gemini": 30,
-    "Gemini2": 30,
-    "Codex": 30,
-    "Codex2": 30,
-    "Copilot": 25
+    "Claude": 10,
+    "Claude2": 10,
+    "Gemini": 5,
+    "Gemini2": 5,
+    "Codex": 35,
+    "Codex2": 35,
+    "Copilot": 5
   },
   "workload_summary": {
     "Claude": {
@@ -986,31 +1027,31 @@
       "todo": 0
     },
     "Gemini2": {
-      "total": 3,
+      "total": 2,
       "active": 1,
-      "blocked": 0,
-      "done": 0,
-      "review": 1,
-      "review_approved": 0,
-      "todo": 2
-    },
-    "Codex": {
-      "total": 8,
-      "active": 3,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 8
+      "todo": 2
     },
-    "Codex2": {
-      "total": 7,
+    "Codex": {
+      "total": 9,
       "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 1,
+      "review": 0,
       "review_approved": 0,
-      "todo": 6
+      "todo": 9
+    },
+    "Codex2": {
+      "total": 6,
+      "active": 2,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 1,
+      "todo": 5
     },
     "Copilot": {
       "total": 1,

@@ -9,6 +9,7 @@ import {
   buildTruthMismatches,
   actorLabel,
   agentLabel,
+  buildCodexSlotRoster,
   buildDependencySchedule,
   dependencyBatchState,
   deriveAgentState,
@@ -158,6 +159,7 @@ export function renderAgentLanes(status, agentStates) {
         <span class="chip">可開工 ${agent.ready_count || 0}</span>
         <span class="chip">等前置 ${agent.waiting_count || 0}</span>
         <span class="chip">已批准 ${agent.approved_count || 0}</span>
+        ${Number.isFinite(agent.target_workload) ? `<span class="chip">目標 ${agent.target_workload}%</span>` : ""}
       </div>
       ${focusTasks ? `<ul class="note-list compact">${focusTasks}</ul>` : ""}
       <p class="lane-copy">下一步：${truncate(agent.next, 120)}</p>
@@ -2444,6 +2446,29 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
     </div>
   `;
   statusEl.appendChild(dispatchCard);
+
+  const codexSlots = buildCodexSlotRoster(orchState, status);
+  const codexSlotCard = document.createElement("article");
+  codexSlotCard.className = "sys-card codex-slot-card";
+  codexSlotCard.innerHTML = `
+    <div class="sys-card-head"><span class="sys-icon">▦</span><strong>Codex Worker Slots</strong></div>
+    <div class="codex-slot-grid">
+      ${codexSlots.map((slot) => `
+        <div class="codex-slot-row codex-slot-${slot.status}">
+          <div class="codex-slot-name">
+            <strong>${escapeHtml(slot.label)}</strong>
+            <span class="chip">${escapeHtml(slot.quota_group)}</span>
+          </div>
+          <div class="codex-slot-meta">
+            <span class="status-pill ${slot.status === "running" ? "status-working" : slot.status === "pending" ? "status-review" : "status-idle"}">${slot.status === "idle" ? "idle" : slot.worker_status || slot.status}</span>
+            ${slot.task_id ? `<span class="chip">${escapeHtml(slot.task_id)}</span>` : `<span class="chip">空 slot</span>`}
+            ${slot.last_event_at ? `<span class="chip">${escapeHtml(timeAgo(slot.last_event_at))}</span>` : ""}
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+  statusEl.appendChild(codexSlotCard);
 
   const approvalCard = document.createElement("article");
   approvalCard.className = "sys-card";

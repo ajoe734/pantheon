@@ -1,0 +1,143 @@
+{
+  "task_id": "EP5-BROKER-TW-002-RERUN-REAL",
+  "generated_at": "2026-05-13T00:53:38Z",
+  "completed_at": "2026-05-13T00:53:44Z",
+  "provider": "Shioaji",
+  "adapter": "services.broker.shioaji.ShioajiBrokerAdapter",
+  "account_kind": "futures",
+  "run_mode": "shioaji_simulation_sdk",
+  "status": "failed",
+  "proof_boundary": "broker_adapter_sandbox_smoke; not canary/live/capital proof",
+  "environment": {
+    "BROKER_SHIOAJI_SANDBOX_ENABLED": true,
+    "BROKER_SHIOAJI_API_KEY_configured": true,
+    "BROKER_SHIOAJI_SECRET_KEY_configured": true,
+    "raw_secret_material_persisted": false
+  },
+  "taipei_sandbox_window": {
+    "start": {
+      "label": "futures_smoke_start",
+      "timezone": "Asia/Taipei",
+      "observed_at": "2026-05-13T08:53:38+08:00",
+      "window_start_hour": 8,
+      "window_end_hour_exclusive": 20,
+      "within_window": true
+    },
+    "end": {
+      "label": "futures_smoke_end",
+      "timezone": "Asia/Taipei",
+      "observed_at": "2026-05-13T08:53:44+08:00",
+      "window_start_hour": 8,
+      "window_end_hour_exclusive": 20,
+      "within_window": true
+    },
+    "fail_fast_enforced": true
+  },
+  "submit_spacing_gate": {
+    "scope": "per-account thread-local adapter gate",
+    "configured_seconds": 1.0
+  },
+  "request": {
+    "capital_pool_id": "pool-ep5-broker-tw-sandbox",
+    "strategy_id": "strategy-ep5-broker-tw-smoke",
+    "symbol": "TXFR1",
+    "qty": 1.0,
+    "side": "sell",
+    "order_type": "limit",
+    "limit_price": 30000.0,
+    "account_kind": "futures",
+    "futures_category": "TXF"
+  },
+  "place": {
+    "request": {
+      "capital_pool_id": "pool-ep5-broker-tw-sandbox",
+      "strategy_id": "strategy-ep5-broker-tw-smoke",
+      "symbol": "TXFR1",
+      "qty": 1.0,
+      "side": "sell",
+      "order_type": "limit",
+      "limit_price": 30000.0,
+      "account_kind": "futures",
+      "futures_category": "TXF"
+    },
+    "response": {},
+    "sdk_trace": "not_captured_for_real_sdk"
+  },
+  "readback": {
+    "after_place": {},
+    "after_cancel": {}
+  },
+  "cancel": {
+    "request": {
+      "order_id": null
+    },
+    "response": {}
+  },
+  "order_ids": {
+    "pantheon_order_id": null,
+    "shioaji_trade_id": null
+  },
+  "status_transitions": [
+    {
+      "step": "place",
+      "order_id": null,
+      "status": null,
+      "observed_at": null
+    },
+    {
+      "step": "readback_after_place",
+      "order_id": null,
+      "status": null,
+      "observed_at": "2026-05-13T00:53:44Z"
+    },
+    {
+      "step": "cancel",
+      "order_id": null,
+      "status": null,
+      "observed_at": null
+    },
+    {
+      "step": "readback_after_cancel",
+      "order_id": null,
+      "status": null,
+      "observed_at": "2026-05-13T00:53:44Z"
+    }
+  ],
+  "live_gate": {
+    "status": "rejected",
+    "response": {
+      "status": "broker_error",
+      "error_code": "SHIOAJI_LIVE_DISABLED",
+      "message": "Live broker execution is permanently disabled. The Shioaji adapter operates in sandbox (simulation) mode only.",
+      "status_code": 403
+    }
+  },
+  "reconciliation": {
+    "status": "failed",
+    "diff": [],
+    "error": {
+      "status": "broker_error",
+      "error_code": "SHIOAJI_ACCOUNT_MISSING",
+      "message": "Shioaji futures account is not available after login.",
+      "status_code": 503
+    }
+  },
+  "no_real_capital": {
+    "status": "passed",
+    "real_capital_used": false,
+    "real_capital_reserved": false,
+    "production_live_order_submitted": false,
+    "production_live_cancel_submitted": false
+  },
+  "error": {
+    "status": "broker_error",
+    "error_code": "SHIOAJI_ACCOUNT_MISSING",
+    "message": "Shioaji futures account is not available after login.",
+    "status_code": 503
+  },
+  "notes": [
+    "BROKER_SHIOAJI_SANDBOX_ENABLED must be explicitly true; default-false adapter behavior is not bypassed.",
+    "Live execution remains SHIOAJI_LIVE_DISABLED.",
+    "No capital binding, registry admission, paper promotion, canary activation, or live order is performed."
+  ]
+}

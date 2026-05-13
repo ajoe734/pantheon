@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-004",
+  "archived_at": "2026-05-13T03:19:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-004",
+    "title": "Command envelope mapping spec doc",
+    "summary_zh": "把所有 /bff/actions/{entityType}/{entityId}/{actionId} route 對應到 /bff/v1/commands 的 mapping 表寫進 services/control-plane/bff/BFF_COMMAND_API_CONTRACT.md §Command Adapter Mapping 與 CANONICAL_CONTRACT_MIGRATION_DECISION.md。每筆要含 action_id/target_type/command_name/idempotency_key_template/actor_source/trace_propagation/audit_event/policy_check。spec-only 不動 runtime。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/control-plane/bff/BFF_COMMAND_API_CONTRACT.md",
+      "CANONICAL_CONTRACT_MIGRATION_DECISION.md"
+    ],
+    "acceptance": [
+      "mapping 表覆蓋現有 runAction.ts 所有 entityType (strategy/persona/deployment/approval/runtime/incident/v5-intervention 等)",
+      "每筆有 8 個 metadata 欄位",
+      "idempotency key template 對齊 BFF_COMMAND_API_CONTRACT",
+      "audit_event 名稱對齊現有 audit pipeline",
+      "migration decision 文件加上 actions→commands 收斂的時間表",
+      "不修改任何 runtime code"
+    ],
+    "next": "Owner finalized approved spec-only mapping. Closeout commit af03fecf records evidence; implementation commits e4e43240 and bbe7eacf contain the approved docs. Verification: python3 -m pytest services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/test_cw03_committee_board_contract.py -q (28 passed); git diff --check and git diff --name-only on task artifacts produced no output. Worktree has unrelated dirty state/artifacts, so finalization intentionally did not stage unrelated files.",
+    "last_update": "2026-05-13T03:19:09Z",
+    "review_notes_zh": [
+      "Rev2 (bbe7eacf) 審查通過",
+      "§8 mapping 表已覆蓋所有 active caller：strategy update_params、capital-pool adjust_budget、deployment promote_live、evolution-program stop、research-experiment promote_artifact、skill publish/retire、mcp-server test_connection/health_check/update_env_grants、mcp-tool grant_env；所有 entityType section 各有 8 欄；audit_event 已修正為 capitalpool./rankingformula./mcpserver./mcptool. lowercase 形式（與 generic runAction mutations.runAction() 一致）；§8 Source and audit semantics note 明確區分 generic route mapping 與 typed helper；CANONICAL_CONTRACT_MIGRATION_DECISION.md §11 收斂時間表完整涵蓋 Wave 1–4 與 EP5 gate；§13 section numbering 為 cosmetic（原 §11 移位），不影響正確性；runtime code 無異動。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T03:19:09Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "af03fecf827e600d6d29c0322617f5138846e770",
+      "commit_subject": "BFF-CONSOL-004 finalize closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-CONSOL-004",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 24,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 18,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-13T02:27:53Z",
+      "resolved_at": "2026-05-13T02:28:01Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-13T02:29:07Z",
+      "resolved_at": "2026-05-13T02:29:14Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete. Commit: e4e43240. Added §8 Command Adapter Mapping to BFF_COMMAND_API_CONTRACT.md (17 entity-type sections × 8 metadata columns; 3 special-path sections; §8.17 adapter design constraints). Added §11 actions→commands convergence timeline to CANONICAL_CONTRACT_MIGRATION_DECISION.md (Wave 1–4 milestones, EP5 gate, dual-write soak conditions, 5 convergence principles). Spec-only — no runtime code modified. Acceptance criteria: mapping table covers all runAction.ts entityTypes; every row has 8 metadata fields; idempotency_key_template aligned to BFF_COMMAND_API_CONTRACT; audit_event names align with mutations.ts pushAudit calls; migration decision doc updated with actions→commands timeline.",
+      "status": "done",
+      "created_at": "2026-05-13T02:34:41Z",
+      "resolved_at": "2026-05-13T02:42:04Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review blocked: §8 does not cover all active /bff/actions callers from execute-plans runActionSafe/runAction paths (examples: strategy update_params, capital-pool adjust_budget, deployment promote_live, research-experiment promote_artifact, skill publish/retire, mcp-server test_connection/health_check/update_env_grants, mcp-tool grant_env). Also several audit_event values do not align with mutations.ts pushAudit for generic runAction multi-word kinds (e.g. CapitalPool -> capitalpool.* but doc uses capitalPool.*, RankingFormula -> rankingformula.* but doc uses rankingFormula.*, McpServer/McpTool similarly) unless those rows are intentionally typed-helper mappings; please update §8 to distinguish generic action route vs typed helper source and re-handoff.",
+      "status": "done",
+      "created_at": "2026-05-13T02:42:04Z",
+      "resolved_at": "2026-05-13T02:42:04Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-13T02:46:06Z",
+      "resolved_at": "2026-05-13T02:46:16Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Rev2 ready for review. Commit bbe7eacf updates only BFF_COMMAND_API_CONTRACT.md and CANONICAL_CONTRACT_MIGRATION_DECISION.md: added active caller overlays (update_params, adjust_budget, promote_live, evolution stop, promote_artifact, skill publish/retire, MCP test/health/env grants, grant_env), documented generic runAction audit semantics, corrected CapitalPool/RankingFormula/McpServer/McpTool audit_event names to lowercase mock pipeline form, and added approval/alert/incident fallback mappings. Verification: §8 table column check passed; git diff --check passed; runtime code unchanged.",
+      "status": "done",
+      "created_at": "2026-05-13T02:58:53Z",
+      "resolved_at": "2026-05-13T03:01:48Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved and returned to Codex for closeout. Rev2 satisfies all six acceptance criteria: active caller overlays added, 8-column coverage complete, audit_event names in lowercase mock pipeline form, semantics note clarifies generic vs typed helper distinction, CANONICAL_CONTRACT_MIGRATION_DECISION §11 timeline complete, no runtime code modified.",
+      "status": "done",
+      "created_at": "2026-05-13T03:01:48Z",
+      "resolved_at": "2026-05-13T03:15:05Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Restored prior Claude review approval after owner closeout pickup; proceeding with finalization against approved Rev2 artifacts.",
+      "status": "done",
+      "created_at": "2026-05-13T03:17:43Z",
+      "resolved_at": "2026-05-13T03:19:09Z"
+    }
+  ],
+  "blockers": []
+}

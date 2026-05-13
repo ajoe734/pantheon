@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "task_id": "SVC-RENAME-001",
+  "archived_at": "2026-05-10T12:44:50Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-RENAME-001",
+    "title": "Inventory services/ duplicate dirs and produce migration map",
+    "summary_zh": "完整 inventory services/ 的雙命名 (control_plane vs control-plane, registry-core vs registry, source_ingestion vs source-ingest 等)；grep 所有 import sites；產出 migration map：每個檔案搬去哪、import path 怎麼改、docker-compose 哪些 service ref 要動、風險表。本 task 只交 plan，不動程式碼。",
+    "phase": "services Namespace Normalization 2026-05-10",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/architecture/services-namespace-migration-map-2026-05-10.md"
+    ],
+    "acceptance": [
+      "Inventory of all duplicate-looking dirs in services/ with role classification (true duplicate vs role-separated lib/service)",
+      "Grep summary of all import sites referencing the to-be-moved paths",
+      "Migration map file/destination/import-rewrite rules",
+      "Risk table covering docker-compose service refs and downstream consumers",
+      "Roll-forward plan does not break running tests",
+      "No code changes in this task"
+    ],
+    "next": "Closeout complete: committed task-scoped migration map and review records in e2a9d80c; verified services/research has no trl directory, services/learning/trl remains the current implementation, telemetry feedback_adapter downstream import is documented, docker-compose feedback/source-ingest refs are covered, and scoped doc diff passed git diff --cached --check. Plan-only task; no application code changes.",
+    "last_update": "2026-05-10T12:44:50Z",
+    "review_notes_zh": [
+      "審查通過：Codex2 三項 blocking findings (Pair E telemetry 下游 shim、Pair J TRL 目錄不存在確認、Pair A 可執行 Python shim layout) 全數解決",
+      "驗證命令已執行：find services/research 無 trl、feedback_adapter sys.path 注入確認、learning/trl 完整內容確認",
+      "接受準則全部滿足：10 pairs inventory、import sites grep、migration map、risk table、roll-forward plan、零程式碼變更"
+    ],
+    "review_file": "docs/reviews/2026-05-10-svc-rename-001-claude2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-10T12:44:50Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "e2a9d80c0717aeb6d801ded2250d822aaaf4e568",
+      "commit_subject": "SVC-RENAME-001 document services namespace migration",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-RENAME-001",
+        "Reviewer": "Claude2",
+        "- rg -n \"dockerfile": "services/(control-plane/feedback|feedback|source_ingestion)|source-ingest:|feedback:\" docker-compose*.yml"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 5,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 7,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-RENAME-001",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Helper-claimed by Claude2 while Codex2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-10T11:43:15Z",
+      "resolved_at": "2026-05-10T11:43:22Z"
+    },
+    {
+      "task_id": "SVC-RENAME-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Migration map delivered at docs/architecture/services-namespace-migration-map-2026-05-10.md. Covers all 10 duplicate/ambiguous dir pairs (control_plane/control-plane, registry/registry-core, incident/incidents, source_ingestion/source-ingest, feedback split, governance split, lineage-read, promotion, runtime-manager, learning/research). Includes P1/P2/P3 priority classification, per-pair file-move tables, import rewrite rules, docker-compose change list, risk table, and roll-forward execution order. No code changed per task scope.",
+      "status": "done",
+      "created_at": "2026-05-10T11:49:22Z",
+      "resolved_at": "2026-05-10T12:32:27Z"
+    },
+    {
+      "task_id": "SVC-RENAME-001",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Codex2 review requests changes; see docs/reviews/2026-05-10-svc-rename-001-codex2-review.md. Required fixes: Pair E must include telemetry feedback_adapter downstream import/shim impact; Pair J must correct nonexistent services/research/trl inventory/target; Pair A must define an executable Python import/shim layout for services.control_plane.internal.*.",
+      "status": "done",
+      "created_at": "2026-05-10T12:32:27Z",
+      "resolved_at": "2026-05-10T12:32:27Z"
+    },
+    {
+      "task_id": "SVC-RENAME-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-10T12:32:49Z",
+      "resolved_at": "2026-05-10T12:32:49Z"
+    },
+    {
+      "task_id": "SVC-RENAME-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "SVC-RENAME-001 review fixes ready: migration map updated for Pair A executable services.control_plane.internal shim layout, Pair E telemetry feedback_adapter downstream import/shim impact, and Pair J corrected services/research/trl inventory plus TRL path references. Verification: find services/research -maxdepth 2 -type d; rg docker-compose feedback/source-ingest refs; rg services.learning.trl/services-research-trL refs; git diff --cached --check scoped doc. No code changes.",
+      "status": "done",
+      "created_at": "2026-05-10T12:40:01Z",
+      "resolved_at": "2026-05-10T12:42:34Z"
+    },
+    {
+      "task_id": "SVC-RENAME-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Claude2 review approved: all 3 Codex2 blocking findings resolved, all acceptance criteria met. Pair A shim layout actionable, Pair E telemetry downstream covered, Pair J correctly shows no existing research/trl. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-10T12:42:34Z",
+      "resolved_at": "2026-05-10T12:44:50Z"
+    }
+  ],
+  "blockers": []
+}

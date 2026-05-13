@@ -53,37 +53,37 @@ KNOWN_AGENTS = {
     "Claude": {
         "capability_lane": ["execution", "control-plane", "governance-review"],
         "default_branch": "feat/claude-execution-control",
-        "target_workload": 15,
+        "target_workload": 10,
     },
     "Claude2": {
         "capability_lane": ["execution", "control-plane", "governance-review"],
         "default_branch": "feat/claude2-execution-control",
-        "target_workload": 15,
+        "target_workload": 10,
     },
     "Gemini": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/gemini-research-runtime",
-        "target_workload": 30,
+        "target_workload": 5,
     },
     "Gemini2": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/gemini2-research-runtime",
-        "target_workload": 30,
+        "target_workload": 5,
     },
     "Codex": {
         "capability_lane": ["integration", "status-system", "schema", "acceptance"],
         "default_branch": "feat/codex-collab-system",
-        "target_workload": 30,
+        "target_workload": 35,
     },
     "Codex2": {
         "capability_lane": ["integration", "status-system", "schema", "acceptance"],
         "default_branch": "feat/codex-collab-system",
-        "target_workload": 30,
+        "target_workload": 35,
     },
     "Copilot": {
         "capability_lane": ["research-ingest", "external-search", "spec-review", "critique"],
         "default_branch": "feat/copilot-research-critique",
-        "target_workload": 25,
+        "target_workload": 5,
     },
 }
 
@@ -1495,7 +1495,12 @@ def modules_outside_coordination_feature_rows(
 
 
 def normalize_worker_actor(worker: dict[str, Any]) -> str:
-    for candidate in (worker.get("agent_id"), worker.get("target_agent"), worker.get("provider")):
+    for candidate in (worker.get("logical_agent_id"), worker.get("agent_id"), worker.get("target_agent"), worker.get("provider")):
+        normalized = str(candidate or "").strip().lower().replace("-", "_")
+        if re.match(r"^codex1_[1-4]$", normalized):
+            return "Codex"
+        if re.match(r"^codex2_[1-4]$", normalized):
+            return "Codex2"
         canonical = canonical_agent_name(candidate)
         if canonical:
             return canonical
@@ -1590,6 +1595,10 @@ def normalize_runtime_workers(state: dict[str, Any], orchestrator_state: dict[st
                 "queue_event_id": worker.get("queue_event_id"),
                 "actor": normalize_worker_actor(worker),
                 "provider": worker.get("provider"),
+                "logical_agent_id": worker.get("logical_agent_id"),
+                "dispatch_slot": worker.get("dispatch_slot"),
+                "dispatch_slot_id": worker.get("dispatch_slot_id"),
+                "quota_group": worker.get("quota_group"),
                 "status": worker_status,
                 "bucket": bucket,
                 "task_status": task_status,
@@ -2641,6 +2650,8 @@ def build_dashboard_bundle(
         if worker.get("status") == "failed":
             lane["failed"] += 1
 
+    dispatch_targets = {name: meta["target_workload"] for name, meta in KNOWN_AGENTS.items()}
+
     return {
         "generated_at": iso_now(),
         "focus_mode": focus_mode,
@@ -2657,6 +2668,7 @@ def build_dashboard_bundle(
             "mode_switch_requested": supervisor_state.get("mode_switch_requested"),
             "mode_occupancy": mode_occupancy,
             "lanes": lanes,
+            "dispatch_targets": dispatch_targets,
         },
         "execution_summary": {
             "ready_now": ready_now,

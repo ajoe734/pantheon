@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "QLIB-ACT-001",
+  "archived_at": "2026-05-10T12:34:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "QLIB-ACT-001",
+    "title": "Author RS-003 baseline StrategySpec for TW cross-sectional equity alpha",
+    "summary_zh": "寫第一份 RS-003 baseline StrategySpec：TW cross-sectional equity supervised alpha；universe = TWSE listed + TPEx listed；label / horizon / why-LightGBM / why-not-RL 都要寫；過 RS-003 replication gate；產出 candidate registry artifact ID，後續 QLIB-ACT-002 governed dataset packet 與 QLIB-ACT-003 LightGBM 跑活動會引用。",
+    "phase": "Qlib Production Activation 2026-05-10",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md",
+      "integrations/qlib/activation_packet.md"
+    ],
+    "acceptance": [
+      "StrategySpec problem-statement",
+      "universe",
+      "label",
+      "horizon",
+      "evaluation metric all defined",
+      "Why supervised LightGBM (vs RL/TRL) explicit",
+      "RS-003 replication gate evidence attached or referenced",
+      "Candidate registry artifact ID issued for downstream Qlib activation",
+      "No production registry write before review approval",
+      "artifact_state=draft and deployment_summary.current_stage=none preserved"
+    ],
+    "next": "Closeout complete: RS-003 baseline StrategySpec (qlib-tw-cross-sectional-alpha-spec-v1, artifact_state=draft) and activation packet delivered in scoped commit aa9139fd; closeout record commit e67083a8 updates artifacts to reflect Codex review approval. git diff --check passed. QLIB-ACT-002 governed dataset and QLIB-ACT-003 LightGBM run remain pending per RS-003 gate table. No production registry write performed.",
+    "last_update": "2026-05-10T12:34:39Z",
+    "review_notes_zh": [
+      "審查通過：StrategySpec 覆蓋 problem statement、TWSE+TPEx universe、5d label、LightGBM config、why-not-RL/TRL、評估門檻與 RS-003 gate block。",
+      "確認保持非生產寫入邊界：candidate registry record 仍為 artifact_state=draft，deployment_summary.current_stage=none；QLIB-ACT-002/003 dataset 與 LightGBM run 仍列為 pending。",
+      "驗證：git show --stat HEAD scoped artifacts；git diff --check HEAD~1..HEAD scoped artifacts。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-10T12:34:39Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "e67083a82f491b529bbc25bd1d17b6fe9bacfc87",
+      "commit_subject": "QLIB-ACT-001: closeout — update artifacts to reflect Codex review approval",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "- activation_packet.md": "status line, §3 gate table, §6 disposition next-action table",
+        "- qlib-tw-cross-sectional-alpha-v1.md": "RS-003 Gate header and §8 gate step row",
+        "Verification": "git diff --check passed on staged files; artifacts match approved scope.",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "QLIB-ACT-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 5,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 5,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "QLIB-ACT-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Helper-claimed by Claude2 while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-10T11:38:35Z",
+      "resolved_at": "2026-05-10T11:38:41Z"
+    },
+    {
+      "task_id": "QLIB-ACT-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "RS-003 baseline StrategySpec authored: services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md created with problem statement, TWSE+TPEx universe, 5d label, LightGBM config, why-not-RL rationale, RS-003 gate evidence block, and candidate registry record (qlib-tw-cross-sectional-alpha-spec-v1, artifact_state=draft). activation_packet.md updated to cite spec and show gate table. No production registry write. Pending Codex review.",
+      "status": "done",
+      "created_at": "2026-05-10T11:43:10Z",
+      "resolved_at": "2026-05-10T12:32:00Z"
+    },
+    {
+      "task_id": "QLIB-ACT-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review approved: QLIB-ACT-001 StrategySpec and activation packet meet acceptance; owner must finalize with task-scoped closeout. Verified scoped commit aa9139fd and git diff --check passed.",
+      "status": "done",
+      "created_at": "2026-05-10T12:32:00Z",
+      "resolved_at": "2026-05-10T12:34:39Z"
+    }
+  ],
+  "blockers": []
+}

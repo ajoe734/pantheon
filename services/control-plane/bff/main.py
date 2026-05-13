@@ -11,7 +11,7 @@ import time
 import uuid
 from collections import deque
 from datetime import datetime, timedelta, timezone
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -490,6 +490,8 @@ def _bff_error(
 
 
 _FOUNDATION_COMMAND_ROUTE = "POST /api/v1/operator/commands"
+_FINAL_COMMAND_ROUTE = "POST /bff/v1/commands"
+_ACTIONS_TO_COMMANDS_SOURCE_ROUTE = "POST /bff/actions/{entityType}/{entityId}/{actionId}"
 
 
 def _foundation_environment_scope() -> EnvironmentScope:
@@ -519,9 +521,14 @@ def _foundation_actor_ref(identity: OperatorIdentity) -> ActorRef:
     )
 
 
-def _foundation_request_payload(cmd: OperatorCommand, raw_payload: Dict[str, Any]) -> Dict[str, Any]:
+def _foundation_request_payload(
+    cmd: OperatorCommand,
+    raw_payload: Dict[str, Any],
+    *,
+    route: str = _FOUNDATION_COMMAND_ROUTE,
+) -> Dict[str, Any]:
     return {
-        "route": _FOUNDATION_COMMAND_ROUTE,
+        "route": route,
         "command": cmd.command.value,
         "target": cmd.target.model_dump(),
         "params": dict(cmd.params),
@@ -569,6 +576,7 @@ def _build_foundation_command_context(
     correlation_id: Optional[str],
     request_id: Optional[str],
     idempotency_key: Optional[str],
+    route: str = _FOUNDATION_COMMAND_ROUTE,
 ) -> Dict[str, Any]:
     environment = _foundation_environment_scope()
     actor_ref = _foundation_actor_ref(identity)
@@ -578,9 +586,9 @@ def _build_foundation_command_context(
         target_id=cmd.target.id,
         environment=environment,
         runtime_id=cmd.target.id if cmd.target.type == ObjectType.RUNTIME else None,
-        attributes={"route": _FOUNDATION_COMMAND_ROUTE},
+        attributes={"route": route},
     )
-    request_payload = _foundation_request_payload(cmd, raw_payload)
+    request_payload = _foundation_request_payload(cmd, raw_payload, route=route)
     trace = _build_foundation_trace(
         environment=environment,
         actor_ref=actor_ref,
@@ -623,9 +631,10 @@ def _build_foundation_command_context(
         trace=command_envelope.trace,
         payload=request_payload,
         policy_decision_ref=policy_decision.decision_id,
-        metadata={"route": _FOUNDATION_COMMAND_ROUTE},
+        metadata={"route": route},
     )
     return {
+        "admission_route": route,
         "command_envelope": command_envelope,
         "trace_context": command_envelope.trace,
         "idempotency_record": idempotency_record,
@@ -637,6 +646,7 @@ def _build_foundation_command_context(
 
 def _serialize_foundation_context(context: Dict[str, Any]) -> Dict[str, Any]:
     return {
+        "admission_route": context.get("admission_route"),
         "trace_context": context["trace_context"].to_dict(),
         "command_envelope": context["command_envelope"].to_dict(),
         "idempotency_record": context["idempotency_record"].to_dict(),
@@ -678,6 +688,7 @@ def _foundation_bff_error(
 ) -> HTTPException:
     fields = _extract_error_fields(exc)
     command_envelope: CommandEnvelope = foundation_context["command_envelope"]
+    admission_route = str(foundation_context.get("admission_route") or _FOUNDATION_COMMAND_ROUTE)
     if fields["status_code"] == 403:
         policy_decision = PolicyDecision.make(
             policy_id="bff.command.admission",
@@ -709,7 +720,7 @@ def _foundation_bff_error(
             trace=command_envelope.trace,
             payload=foundation_context["request_payload"],
             policy_decision_ref=policy_decision.decision_id,
-            metadata={"route": _FOUNDATION_COMMAND_ROUTE},
+            metadata={"route": admission_route},
         )
         return _bff_error(
             fields["status_code"],
@@ -5617,6 +5628,48 @@ def _ew04_inspiration_payload(
         artifact_exists=artifact_exists,
     )
     return payload
+
+
+def _ew04_inspiration_projection_from_lineage_edges(artifact_id: str) -> Optional[Dict[str, Any]]:
+    source = read_store.dataset_source("lineage_edges")
+    if source == "missing":
+        return None
+    lineage_edges = read_store.list_lineage_edges(artifact_id=artifact_id)
+    if not lineage_edges:
+        return None
+    surface_state = "fresh"
+    if source in {"missing", "local_snapshot"} or _surface_status().get("status") == "degraded":
+        surface_state = "stale"
+
+    inspiration_edges: List[Dict[str, Any]] = []
+    strategy_tags = set()
+    for edge in lineage_edges:
+        from_artifact_id = str(edge.get("from_artifact_id") or "").strip()
+        to_artifact_id = str(edge.get("to_artifact_id") or "").strip()
+        source_artifact_id = from_artifact_id if to_artifact_id == artifact_id else to_artifact_id
+        relationship_type = str(edge.get("edge_type") or edge.get("relationship") or "").strip()
+        if not source_artifact_id or not relationship_type:
+            continue
+        strategy_id = str(edge.get("strategy_id") or "").strip()
+        if strategy_id:
+            strategy_tags.add(strategy_id)
+        inspiration_edges.append(
+            {
+                "lineage_edge_id": edge.get("id"),
+                "source_artifact_id": source_artifact_id,
+                "relationship_type": relationship_type,
+                "influence_weight": 1.0,
+            }
+        )
+    return {
+        "artifact_id": artifact_id,
+        "inspiration_edges": inspiration_edges,
+        "strategy_tags": sorted(strategy_tags),
+        "meta": {
+            "snapshot_at": utc_now(),
+            "surfaces": {"inspiration": surface_state},
+        },
+    }
 
 
 def _rw01_surface_state(
@@ -13191,7 +13244,8 @@ async def get_inspiration_graph(
     snapshot_at = utc_now()
     projection = read_store.get_inspiration_graph(artifact_id)
     artifact_exists = read_store.artifact_exists(artifact_id)
-    dataset_source = read_store.dataset_source("inspiration_graphs")
+    if projection is None and artifact_exists:
+        projection = _ew04_inspiration_projection_from_lineage_edges(artifact_id)
 
     if projection is None and not artifact_exists:
         raise _bff_error(
@@ -21305,11 +21359,22 @@ _GOV_BFF_JOB_OVERLAY: Dict[str, Dict[str, Any]] = {}
 
 
 def _get_bff_evolution_program(program_id: str) -> Optional[Dict[str, Any]]:
-    return _GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.get(program_id)
+    overlay = _GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.get(program_id)
+    if overlay is not None:
+        return dict(overlay)
+    program = read_store.get_evolution_program(program_id)
+    return dict(program) if program else None
 
 
 def _list_bff_evolution_programs(*, status: Optional[str] = None) -> List[Dict[str, Any]]:
-    programs = list(_GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.values())
+    programs_by_id: Dict[str, Dict[str, Any]] = {}
+    for program in read_store.list_evolution_programs():
+        program_id = str(program.get("program_id") or program.get("id") or "").strip()
+        if program_id:
+            programs_by_id[program_id] = dict(program)
+    for program_id, program in _GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.items():
+        programs_by_id[program_id] = dict(program)
+    programs = list(programs_by_id.values())
     if status:
         requested = {s.strip().lower() for s in status.split(",") if s.strip()}
         programs = [p for p in programs if str(p.get("status") or "").lower() in requested]
@@ -21319,8 +21384,36 @@ def _list_bff_evolution_programs(*, status: Optional[str] = None) -> List[Dict[s
 def _get_bff_experiment(experiment_id: str) -> Optional[Dict[str, Any]]:
     overlay = _GOV_BFF_EXPERIMENT_OVERLAY.get(experiment_id)
     if overlay:
-        return overlay
-    return read_store.get_research_experiment(experiment_id)
+        return _bff_experiment_with_analysis_links(overlay)
+    experiment = read_store.get_research_experiment(experiment_id)
+    if not experiment:
+        return None
+    return _bff_experiment_with_analysis_links(experiment)
+
+
+def _bff_experiment_with_analysis_links(experiment: Dict[str, Any]) -> Dict[str, Any]:
+    record = dict(experiment)
+    experiment_id = str(record.get("experiment_id") or record.get("id") or "").strip()
+    if not experiment_id:
+        return record
+    analyses = read_store.list_research_analyses(experiment_id=experiment_id)
+    analysis_links: List[Dict[str, Any]] = []
+    for analysis in analyses:
+        analysis_id = str(analysis.get("analysis_id") or analysis.get("id") or "").strip()
+        if not analysis_id:
+            continue
+        analysis_links.append(
+            {
+                "analysis_id": analysis_id,
+                "ticket_id": analysis.get("ticket_id"),
+                "status": analysis.get("status"),
+                "detail": f"/bff/research-analyses/{analysis_id}",
+                "api_detail": f"/api/v1/research/analysis/{analysis_id}",
+            }
+        )
+    record["analysis_links"] = analysis_links
+    record["analysis_ids"] = [link["analysis_id"] for link in analysis_links]
+    return record
 
 
 def _list_bff_experiments(*, status: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -22975,6 +23068,12 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
             surface_key="research_experiments",
             source=source,
         )
+    if path == "/bff/research-analyses":
+        return _sem_final_list_response(
+            read_store.list_research_analyses(),
+            dataset="research_analyses",
+            surface_key="research_analyses",
+        )
     if path == "/bff/channels":
         return _sem_final_list_response(
             _sem_final_channel_records(),
@@ -23147,6 +23246,14 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
             source=source,
             source_available=True if _GOV_BFF_EXPERIMENT_OVERLAY else None,
         )
+    if path.startswith("/bff/research-analyses/"):
+        return _sem_final_read_model_detail(
+            read_store.get_research_analysis(entity_id),
+            entity_id=entity_id,
+            label="Research analysis",
+            dataset="research_analyses",
+            surface_key="research_analysis_detail",
+        )
     if path.startswith("/bff/v5/interventions/"):
         return _sem_final_registry_detail(
             _sem_final_v5_intervention_record(entity_id),
@@ -23201,6 +23308,7 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
 @app.get("/bff/runtimes/{id}")
 @app.get("/bff/ranking-formulas")
 @app.get("/bff/research-experiments")
+@app.get("/bff/research-analyses")
 @app.get("/bff/tools")
 @app.get("/bff/tools/{id}")
 @app.get("/bff/v5/control-room")
@@ -23235,6 +23343,7 @@ async def sem_final_generic_read_alias(
 @app.get("/bff/personas/{id}")
 @app.get("/bff/ranking-formulas/{id}")
 @app.get("/bff/rebalances/{id}")
+@app.get("/bff/research-analyses/{id}")
 @app.get("/bff/research-experiments/{id}")
 @app.get("/bff/skills/{id}")
 @app.get("/bff/strategies/{id}")

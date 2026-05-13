@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "EP5-BROKER-TW-002-RERUN-REAL-FIX",
+  "archived_at": "2026-05-13T02:37:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EP5-BROKER-TW-002-RERUN-REAL-FIX",
+    "title": "Fix RERUN-REAL: remove signed precheck in simulation mode, run stock-only smoke (no futures, no production signed verify)",
+    "summary_zh": "修正 EP5-BROKER-TW-002-RERUN-REAL 的設計錯誤。Sinopac 官方流程：simulation 模式跑 place_order 就是 audit-generating 測試，signed=True 是審核通過後 production mode 才有。Worker 之前加的 SHIOAJI_ACCOUNT_UNSIGNED precheck 反而堵死通關路。本次要：(1) 移除 adapter 與 sandbox_smoke.py 中 signed=False 的 precheck 邏輯；(2) 只跑證券戶 smoke（user 永豐後台 9A9r-0628518，已簽 API 同意書，無期貨戶）；(3) 測試 symbol = 2890 (中信金), 1 張, limit 18.0；(4) 流程：simulation=True login → place_order (LMT/ROD/Buy) → sleep ≥1s → cancel_order → get_status readback → reconcile 確認狀態；(5) 不要 sleep 300s 後 re-login 驗 signed=True，那是 production mode (EP5-BROKER-TW-002-PRODUCTION-VERIFY) 的工作；(6) 全程 simulation=True；(7) live order 路徑仍須 fail-closed；(8) evidence 路徑 support/evidence/EP5-BROKER-TW-002-RERUN-REAL-FIX/stock-smoke.json (一份就好) ；(9) 完成後在 task 'next' 欄寫明：'請 operator 回 Sinopac 後台確認「python 測試與否」變為「已測試」，之後 dispatch EP5-BROKER-TW-002-PRODUCTION-VERIFY 驗 production mode signed=True'。",
+    "phase": "EP5 Broker TW Real Sandbox Smoke 2026-05-13",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/broker/shioaji/adapter.py",
+      "services/broker/shioaji/sandbox_smoke.py",
+      "support/evidence/EP5-BROKER-TW-002-RERUN-REAL-FIX/stock-smoke.json"
+    ],
+    "acceptance": [
+      "adapter.py SHIOAJI_ACCOUNT_UNSIGNED precheck removed (or made production-mode-only)",
+      "sandbox_smoke.py no longer pre-checks signed status in simulation mode",
+      "real Shioaji SDK (simulation=True) used end-to-end",
+      "stock account smoke completes place + cancel + readback + reconcile with shioaji_trade_id",
+      "order spacing >=1s preserved",
+      "futures account smoke is NOT attempted (user has no futures account)",
+      "no sleep+relogin signed=True verification (deferred to PRODUCTION-VERIFY task)",
+      "live order route still rejects with SHIOAJI_LIVE_DISABLED",
+      "smoke ran within 08:00-20:00 Asia/Taipei window",
+      "evidence stock-smoke.json shows simulation server response code 0 and OrderStatus Submitted then Cancelled",
+      "task next field instructs operator to verify 已測試 status on Sinopac backend before dispatching follow-up"
+    ],
+    "next": "Formal closeout complete. Task commits: implementation 306aa4f0, closeout 0ca37fd2. Verification: python3 -m pytest services/broker/shioaji/test_adapter.py services/broker/shioaji/test_sandbox_smoke.py -q => 44 passed; reviewed stock-smoke.json real Shioaji simulation evidence: stock-only 2890 qty=1 LMT 18.0, cancel delay 1.0s, session Response Code 0 observed, shioaji_trade_id=10054A, live gate SHIOAJI_LIVE_DISABLED, reconciliation passed. 請 operator 回 Sinopac 後台確認「python 測試與否」變為「已測試」，之後 dispatch EP5-BROKER-TW-002-PRODUCTION-VERIFY 驗 production mode signed=True.",
+    "last_update": "2026-05-13T02:37:39Z",
+    "review_notes_zh": [
+      "已審查 commit 306aa4f0 與目前 task artifacts；adapter/sandbox_smoke 已移除 simulation signed=False precheck 與 sleep/relogin signed audit。",
+      "重跑 python3 -m pytest services/broker/shioaji/test_adapter.py services/broker/shioaji/test_sandbox_smoke.py -q：44 passed。",
+      "stock-smoke.json 證據為 real Shioaji simulation SDK、stock-only、2890 qty=1 LMT 18.0、cancel delay >=1s、session Response Code 0、shioaji_trade_id=10054A、live gate SHIOAJI_LIVE_DISABLED、reconciliation passed；固定 18.0 價格的 Shioaji op_code 88 callback 已保留作為證據。",
+      "同意進入 review_approved；owner closeout 時仍須保留 next 指示：operator 回 Sinopac 後台確認「python 測試與否」變為「已測試」，再 dispatch EP5-BROKER-TW-002-PRODUCTION-VERIFY。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T02:37:39Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "0ca37fd2986ce78f0d0b632ff2ec8d730a4e58d7",
+      "commit_subject": "EP5-BROKER-TW-002-RERUN-REAL-FIX closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EP5-BROKER-TW-002-RERUN-REAL-FIX",
+        "Reviewer": "Codex",
+        "Verification": "python3 -m pytest services/broker/shioaji/test_adapter.py services/broker/shioaji/test_sandbox_smoke.py -q => 44 passed; closeout note records reviewed commit 306aa4f0, stock-only Shioaji simulation evidence, live gate fail-closed, and operator Sinopac 已測試 follow-up."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 18,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 10,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EP5-BROKER-TW-002-RERUN-REAL-FIX",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review. Task commit: 306aa4f0. Removed simulation-mode signed precheck and removed signed-status sleep/relogin audit; stock-only real smoke wrote support/evidence/EP5-BROKER-TW-002-RERUN-REAL-FIX/stock-smoke.json. Verification: python3 -m pytest services/broker/shioaji/test_adapter.py services/broker/shioaji/test_sandbox_smoke.py -q => 44 passed; real Shioaji simulation stock smoke 2890 qty=1 LMT 18.0 cancel-delay=1.0 => status passed, session Response Code 0 observed, shioaji_trade_id=10054A, live gate SHIOAJI_LIVE_DISABLED. Evidence also records Shioaji order callback op_code 88 price-range message for the fixed 18.0 limit. 請 operator 回 Sinopac 後台確認「python 測試與否」變為「已測試」，之後 dispatch EP5-BROKER-TW-002-PRODUCTION-VERIFY 驗 production mode signed=True",
+      "status": "done",
+      "created_at": "2026-05-13T01:33:21Z",
+      "resolved_at": "2026-05-13T02:30:50Z"
+    },
+    {
+      "task_id": "EP5-BROKER-TW-002-RERUN-REAL-FIX",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved by Codex. Verified commit 306aa4f0/current artifacts, reran focused pytest (44 passed), and checked stock-smoke.json real SDK evidence: stock-only 2890 qty=1 LMT 18.0, >=1s cancel delay, session Response Code 0, shioaji_trade_id=10054A, live gate fail-closed, reconciliation passed. Owner Codex2 should perform formal closeout and preserve operator instruction for Sinopac 已測試 check before production verify.",
+      "status": "done",
+      "created_at": "2026-05-13T02:30:50Z",
+      "resolved_at": "2026-05-13T02:37:39Z"
+    }
+  ],
+  "blockers": []
+}

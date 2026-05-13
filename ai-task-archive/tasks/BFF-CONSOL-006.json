@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-006",
+  "archived_at": "2026-05-13T04:07:03Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-006",
+    "title": "Role vocabulary mapping doc",
+    "summary_zh": "寫一份 doc 對齊 backend role vocabulary (viewer/operator/approver/admin) vs frontend mock (portfolio_manager/ops) vs MeResponse.roles 對應。輸出 docs/bff/role-vocabulary-mapping-2026-05-13.md。供 BFF-CONSOL-013 cookie write gate 與後續 capability map 使用。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/role-vocabulary-mapping-2026-05-13.md"
+    ],
+    "acceptance": [
+      "表格列出 backend canonical role",
+      "表格列出 frontend mock role",
+      "對應關係明確",
+      "涵蓋 MeResponse.roles 預期輸出",
+      "標出哪些 frontend-only role 屬於 deprecated",
+      "doc 在 PR review 中由 Claude 簽核"
+    ],
+    "next": "Closeout complete: committed task artifact/review as 8174240c. Verification: python3 -m pytest services/control-plane/bff/test_bff_session_auth_me_contract.py -q => 13 passed, 1 warning; git diff --check -- docs/bff/role-vocabulary-mapping-2026-05-13.md => clean. Remaining dirty worktree entries are unrelated/generated or other-task files.",
+    "last_update": "2026-05-13T04:07:03Z",
+    "review_notes_zh": [
+      "審查通過",
+      "兩項前次審查問題已修正：capability 合併公式正確 (claim_caps extend 而非 replace)、mutation 風險表引用源正確 (_MUTATION_APPROVAL_ROLES/_MUTATION_REJECTION_ROLES)",
+      "所有 acceptance criteria 達成；源碼比對全部吻合"
+    ],
+    "review_file": "support/sidecars/BFF-CONSOL-006/REVIEW-claude-2026-05-13.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T04:07:03Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "8174240c1b692fefa4c9a8db7ba06590776bea20",
+      "commit_subject": "BFF-CONSOL-006 document role vocabulary mapping",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-CONSOL-006",
+        "Reviewer": "Claude",
+        "Verification": "python3 -m pytest services/control-plane/bff/test_bff_session_auth_me_contract.py -q (13 passed, 1 warning); git diff --check -- docs/bff/role-vocabulary-mapping-2026-05-13.md (clean); git diff --cached --check (clean)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 28,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-13T02:06:18Z",
+      "resolved_at": "2026-05-13T02:06:37Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-006",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-13T02:37:14Z",
+      "resolved_at": "2026-05-13T02:37:43Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-13T02:39:45Z",
+      "resolved_at": "2026-05-13T02:39:54Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Role vocabulary mapping doc complete. Commit 7206ed3b adds docs/bff/role-vocabulary-mapping-2026-05-13.md with 10 sections: backend canonical roles (admin/approver/operator/reviewer/analyst/viewer), frontend mock roles (platform_admin/portfolio_manager/research_lead/ops/viewer), explicit mapping table with migration actions, MeResponse.roles expected output with examples, role-to-capability map from _ROLE_CAPABILITY_MAP, command risk thresholds, session_kind plan for BFF-CONSOL-013, deprecated role table flagging all 4 non-viewer frontend-only roles, and migration checklist. Sources: main.py _ROLE_CAPABILITY_MAP/_READ_ROLES/_WRITE_ROLES; execute-plans/src/lib/v4/session/me.ts Role type and mockMe().",
+      "status": "done",
+      "created_at": "2026-05-13T03:09:09Z",
+      "resolved_at": "2026-05-13T03:13:57Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: docs/bff/role-vocabulary-mapping-2026-05-13.md needs two source-accuracy fixes before approval. Line 144 says explicit capability claims override fallback, but main.py builds capabilities as claim_caps plus _capabilities_for_identity(identity), deduped. Line 150 cites _RISK_GATE_ROLES, which does not exist; use the actual _MUTATION_APPROVAL_ROLES/_MUTATION_REJECTION_ROLES and admin MFA validators, or retitle the table to match those sources. Core role mapping, frontend mock vocabulary, /bff/me roles shape, and deprecated frontend-only role coverage otherwise check out.",
+      "status": "done",
+      "created_at": "2026-05-13T03:13:57Z",
+      "resolved_at": "2026-05-13T03:13:57Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-13T03:52:04Z",
+      "resolved_at": "2026-05-13T03:52:10Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Role vocabulary mapping doc ready for review at docs/bff/role-vocabulary-mapping-2026-05-13.md. It aligns backend /bff/me roles with execute-plans mock roles, marks frontend-only aliases deprecated, and specifies MeResponse.roles output plus BFF-CONSOL-013 session_kind dependency. Verification: python3 -m pytest services/control-plane/bff/test_bff_session_auth_me_contract.py -q => 13 passed, 1 existing warning; git diff --check -- docs/bff/role-vocabulary-mapping-2026-05-13.md => clean.",
+      "status": "done",
+      "created_at": "2026-05-13T03:58:30Z",
+      "resolved_at": "2026-05-13T04:02:00Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved. Both prior issues resolved: capability merge formula correct (claim_caps extend, not replace), mutation risk gate table now cites correct sources. All acceptance criteria met and verified against main.py and models.py. Returning to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-13T04:02:00Z",
+      "resolved_at": "2026-05-13T04:07:03Z"
+    }
+  ],
+  "blockers": []
+}
