@@ -219,3 +219,13 @@ def test_pack_c_live_detail_routes_use_fixture_records() -> None:
                     failures.append((path, key, data))
 
             assert not failures
+
+            approval = client.get("/bff/approvals/approval-pack-c-deploy", headers=HEADERS)
+            assert approval.status_code == 200, approval.text
+            approval_data = approval.json()["data"]
+            assert approval_data["target_type"] == "DeploymentPlan"
+            assert approval_data["target_id"] == "plan-pack-c-paper-001"
+            assert approval_data["deployment_ref"] == {
+                "plan_id": "plan-pack-c-paper-001",
+                "href": "/bff/deployments/plan-pack-c-paper-001",
+            }

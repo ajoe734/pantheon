@@ -7772,15 +7772,34 @@ class ReadSurfaceStore:
 
     @staticmethod
     def _project_canonical_approval_decision(raw: Dict[str, Any]) -> Dict[str, Any]:
+        decision_id = raw.get("decision_id") or raw.get("id")
+        target_type = raw.get("target_type") or raw.get("decision_type")
+        target_id = raw.get("target_id")
+        deployment_ref = {}
+        if str(target_type or "") == "DeploymentPlan" and target_id:
+            deployment_ref = {
+                "plan_id": target_id,
+                "href": f"/bff/deployments/{target_id}",
+            }
         return {
-            "id": raw.get("decision_id") or raw.get("id"),
+            "id": decision_id,
+            "decision_id": decision_id,
+            "decision_type": raw.get("decision_type"),
+            "target_type": target_type,
+            "target_id": target_id,
+            "target_version": raw.get("target_version"),
+            "deployment_ref": deployment_ref,
             "outcome": raw.get("decision") or raw.get("outcome"),
             "reviewer": raw.get("actor_id") or raw.get("reviewer"),
             "actor_role": raw.get("actor_role"),
+            "created_by": raw.get("created_by") or raw.get("actor_id"),
+            "created_at": raw.get("created_at") or raw.get("submitted_at"),
+            "submitted_at": raw.get("submitted_at") or raw.get("created_at"),
             "decided_at": raw.get("decided_at"),
             "risk_level": raw.get("risk_level"),
             "state": raw.get("decision_state") or raw.get("state"),
             "rationale": raw.get("rationale"),
+            "evidence_refs": json.loads(json.dumps(raw.get("evidence_refs") or [])),
         }
 
     @staticmethod

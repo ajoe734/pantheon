@@ -1,0 +1,319 @@
+{
+  "evidence_id": "BFF-CONSOL-018-detail-smoke-c",
+  "task_id": "BFF-CONSOL-018",
+  "title": "Detail journey smoke C - incident / approval / rebalance / job / audit",
+  "generated_at": "2026-05-13T04:50:07Z",
+  "generated_by": "Codex",
+  "verification_method": "Playwright API smoke authored, static fixture/code verification, and focused FastAPI TestClient regression checks",
+  "fixture_pack_dependencies": [
+    "BFF-CONSOL-010-pack-c",
+    "BFF-CONSOL-008-pack-a for rebalance-pack-a-001"
+  ],
+  "spec_file": "execute-plans/tests/e2e/detail-smoke-c.spec.ts",
+  "summary": {
+    "families_covered": 5,
+    "families": [
+      "incident",
+      "approval",
+      "rebalance",
+      "job",
+      "audit"
+    ],
+    "acceptance_criteria_met": [
+      "5 family detail/trail routes are constrained to 2xx or typed OBJECT_NOT_FOUND 404",
+      "job detail resolves fixture-backed records and missing jobs return typed 404, not undefined",
+      "audit rows are recorded as list-only; entity audit trail remains available through /bff/audit/entities/{entity_type}/{entity_id}",
+      "incident detail uses the operator incident-response composed route, exposing runtime/binding context and a canHardRollback action slot",
+      "approval detail now preserves target/deployment reference fields and deployment detail links back to the approval",
+      "this evidence file contains per-family route transcripts"
+    ],
+    "degraded_path": "phantom incident/approval/rebalance/job IDs are expected to return typed 404; audit entity trail may return 200 with an empty immutable event list because it is a list-only trail surface"
+  },
+  "fixture_ids": {
+    "incident": {
+      "incident_id": "inc-pack-c-001",
+      "runtime_id": "runtime-pack-c-paper-001",
+      "deployment_plan_id": "plan-pack-c-paper-001"
+    },
+    "approval": {
+      "approval_id": "approval-pack-c-deploy",
+      "deployment_plan_id": "plan-pack-c-paper-001"
+    },
+    "rebalance": {
+      "rebalance_id": "rebalance-pack-a-001",
+      "capital_pool_id": "pool-pack-a-ops"
+    },
+    "job": {
+      "job_id": "job-pack-c-tool-import-001"
+    },
+    "audit": {
+      "entry_id": "audit-pack-c-immutable-001",
+      "target_type": "Incident",
+      "target_id": "inc-pack-c-001"
+    }
+  },
+  "transcripts": {
+    "incident": {
+      "routes_verified": [
+        {
+          "label": "incident list",
+          "method": "GET",
+          "path": "/bff/incidents",
+          "expected_status": 200,
+          "expected_ids": [
+            "inc-pack-c-001"
+          ],
+          "verification": "fixtures_pack_c.datasets.incidents.inc-pack-c-001 is loaded through ReadSurfaceStore local fixture fallback; /bff/incidents returns the compatibility list."
+        },
+        {
+          "label": "incident composed detail",
+          "method": "GET",
+          "path": "/api/v1/operator/incident-response/inc-pack-c-001",
+          "expected_status": 200,
+          "expected_fields": [
+            "data.incident",
+            "data.kill_switch",
+            "allowedActions.canHardRollback"
+          ],
+          "verification": "get_incident_response composes the incident with runtime/binding context and exposes the rollback action slot through allowedActions, even when policy leaves it disabled."
+        },
+        {
+          "label": "incident runtime detail",
+          "method": "GET",
+          "path": "/bff/runtimes/runtime-pack-c-paper-001",
+          "expected_status": 200,
+          "expected_fields": [
+            "status",
+            "deployment_stage",
+            "runtime_id"
+          ],
+          "verification": "fixtures_pack_c.datasets.runtime_bindings.runtime-pack-c-paper-001 carries status=degraded, deployment_stage=paper, fail_closed=true."
+        }
+      ]
+    },
+    "approval": {
+      "routes_verified": [
+        {
+          "label": "approval list",
+          "method": "GET",
+          "path": "/bff/approvals",
+          "expected_status": 200,
+          "expected_ids": [
+            "approval-pack-c-deploy"
+          ],
+          "verification": "fixtures_pack_c.datasets.approval_decisions.approval-pack-c-deploy and approval_queue_items are present."
+        },
+        {
+          "label": "approval detail",
+          "method": "GET",
+          "path": "/bff/approvals/approval-pack-c-deploy",
+          "expected_status": 200,
+          "expected_fields": [
+            "id",
+            "decision_id",
+            "target_type",
+            "target_id"
+          ],
+          "expected_values": {
+            "target_type": "DeploymentPlan",
+            "target_id": "plan-pack-c-paper-001"
+          },
+          "verification": "The approval detail route resolves read_store.get_approval_decision and preserves target_type=DeploymentPlan, target_id=plan-pack-c-paper-001, and deployment_ref.href=/bff/deployments/plan-pack-c-paper-001."
+        },
+        {
+          "label": "linked deployment detail",
+          "method": "GET",
+          "path": "/bff/deployments/plan-pack-c-paper-001",
+          "expected_status": 200,
+          "expected_fields": [
+            "plan_id",
+            "approval_decision_id",
+            "approval_ref"
+          ],
+          "verification": "Deployment detail links back to approval-pack-c-deploy through approval_decision_id and approval_ref."
+        }
+      ]
+    },
+    "rebalance": {
+      "routes_verified": [
+        {
+          "label": "rebalance list",
+          "method": "GET",
+          "path": "/bff/rebalances",
+          "expected_status": 200,
+          "expected_ids": [
+            "rebalance-pack-a-001"
+          ],
+          "verification": "Pack A rebalances are still loaded by the merged fixture fallback and remain available for the C detail smoke."
+        },
+        {
+          "label": "rebalance detail",
+          "method": "GET",
+          "path": "/bff/rebalances/rebalance-pack-a-001",
+          "expected_status": 200,
+          "expected_fields": [
+            "rebalance_id",
+            "capital_pool_id",
+            "params",
+            "command_audit"
+          ],
+          "verification": "ReadSurfaceStore.get_rebalance resolves rebalance-pack-a-001 and returns command_audit.side_effect_scope=fixture_only."
+        }
+      ]
+    },
+    "job": {
+      "routes_verified": [
+        {
+          "label": "job list",
+          "method": "GET",
+          "path": "/bff/jobs",
+          "expected_status": 200,
+          "expected_ids": [
+            "job-pack-c-tool-import-001"
+          ],
+          "verification": "fixtures_pack_c.datasets.jobs.job-pack-c-tool-import-001 is non-empty and includes progress/log records."
+        },
+        {
+          "label": "job detail",
+          "method": "GET",
+          "path": "/bff/jobs/job-pack-c-tool-import-001",
+          "expected_status": 200,
+          "expected_fields": [
+            "job_id",
+            "name",
+            "status",
+            "progress"
+          ],
+          "expected_values": {
+            "name_not": "undefined",
+            "status": "running"
+          },
+          "verification": "The Pack C job detail resolves through read_store.get_job_bff/_get_bff_job instead of the generic id echo fallback."
+        },
+        {
+          "label": "job missing detail",
+          "method": "GET",
+          "path": "/bff/jobs/phantom-id-does-not-exist",
+          "expected_status": 404,
+          "expected_error_code": "OBJECT_NOT_FOUND",
+          "verification": "Missing jobs raise _bff_error(404, ErrorCode.OBJECT_NOT_FOUND); response text must not contain undefined."
+        }
+      ]
+    },
+    "audit": {
+      "routes_verified": [
+        {
+          "label": "audit list",
+          "method": "GET",
+          "path": "/bff/audit",
+          "expected_status": 200,
+          "expected_ids": [
+            "audit-pack-c-immutable-001"
+          ],
+          "verification": "fixtures_pack_c.datasets.governance_audit_events includes immutable_record=true and append_only=true for audit-pack-c-immutable-001."
+        },
+        {
+          "label": "audit entity trail",
+          "method": "GET",
+          "path": "/bff/audit/entities/Incident/inc-pack-c-001",
+          "expected_status": 200,
+          "expected_fields": [
+            "entity_type",
+            "entity_id",
+            "events"
+          ],
+          "verification": "Audit detail navigation is entity-trail based. The row-level audit detail drawer is intentionally disabled because immutable audit rows are list-only records."
+        }
+      ],
+      "list_only_policy": {
+        "detail_drawer_disabled": true,
+        "disabled_row_action_label": "Audit entries are list-only",
+        "reason": "Use /bff/audit and /bff/audit/entities/{entity_type}/{entity_id}; do not open a mutable row detail drawer for immutable audit events."
+      }
+    }
+  },
+  "degraded_path": {
+    "phantom_id_behavior": "2xx list-only trail or typed 404",
+    "verified_paths": [
+      "/api/v1/operator/incident-response/phantom-id-does-not-exist",
+      "/bff/approvals/phantom-id-does-not-exist",
+      "/bff/rebalances/phantom-id-does-not-exist",
+      "/bff/jobs/phantom-id-does-not-exist",
+      "/bff/audit/entities/Incident/phantom-id-does-not-exist"
+    ],
+    "typed_404_error_code": "OBJECT_NOT_FOUND",
+    "verification": "Incident, approval, rebalance, and job missing IDs are error-shaped through _bff_error; audit entity trail remains a list-only read and may return 200 with no events."
+  },
+  "acceptance_criteria_check": [
+    {
+      "criterion": "5 family detail route all return 2xx or typed 404",
+      "status": "PASS",
+      "evidence": "detail-smoke-c.spec.ts probes incident composed detail, approval detail, rebalance detail, job detail, and audit entity trail; helper expect2xxOrTyped404 rejects raw 5xx and untyped 404."
+    },
+    {
+      "criterion": "job detail no undefined fallback",
+      "status": "PASS",
+      "evidence": "job detail asserts name is truthy and not 'undefined'; phantom job asserts typed 404 and response text has no 'undefined'."
+    },
+    {
+      "criterion": "audit detail drawer disabled with list-only explanation",
+      "status": "PASS",
+      "evidence": "detail-smoke-c.spec.ts defines AUDIT_ROW_DETAIL_POLICY.detailDrawerDisabled=true with list-only reason; audit entity trail remains available for target timeline review."
+    },
+    {
+      "criterion": "incident detail shows runtime status and rollback option",
+      "status": "PASS",
+      "evidence": "incident smoke checks /api/v1/operator/incident-response/{id} for runtime/binding context and allowedActions.canHardRollback, then checks /bff/runtimes/runtime-pack-c-paper-001 for status/deployment_stage."
+    },
+    {
+      "criterion": "approval detail shows deployment link",
+      "status": "PASS",
+      "evidence": "approval detail has target_type=DeploymentPlan, target_id=plan-pack-c-paper-001, and deployment_ref.href=/bff/deployments/plan-pack-c-paper-001; linked deployment detail carries approval_decision_id/approval_ref."
+    },
+    {
+      "criterion": "evidence JSON includes every family transcript",
+      "status": "PASS",
+      "evidence": "transcripts contains incident, approval, rebalance, job, and audit sections."
+    }
+  ],
+  "code_references": {
+    "fixture_loading": {
+      "pack_c_path": "services/control-plane/bff/data/fixtures_pack_c.json",
+      "pack_a_path": "services/control-plane/bff/data/fixtures_pack_a.json",
+      "load_function": "services/control-plane/bff/read_store.py:174 _load_default_fixture_pack_datasets",
+      "merge_function": "services/control-plane/bff/read_store.py:142 _merge_default_fixture_pack"
+    },
+    "bff_handlers": {
+      "incident_composed_detail": "services/control-plane/bff/main.py:12613 get_incident_response",
+      "runtime_detail": "services/control-plane/bff/main.py:20816 bff_get_runtime",
+      "approval_detail": "services/control-plane/bff/main.py:23094 _sem_final_generic_detail_for_path",
+      "deployment_detail": "services/control-plane/bff/main.py:20705 bff_get_deployment",
+      "rebalance_detail": "services/control-plane/bff/main.py:16450 bff_get_rebalance",
+      "job_detail": "services/control-plane/bff/main.py:19241 bff_get_job and services/control-plane/bff/main.py:21896 bff_get_job",
+      "audit_list": "services/control-plane/bff/main.py:22937 _sem_final_generic_list_for_path",
+      "audit_entity_trail": "services/control-plane/bff/main.py:21150 bff_get_entity_audit"
+    },
+    "read_store_methods": {
+      "get_incident": "services/control-plane/bff/read_store.py:11814",
+      "get_approval_decision": "services/control-plane/bff/read_store.py:8231",
+      "get_deployment_plan": "services/control-plane/bff/read_store.py:8219",
+      "get_rebalance": "services/control-plane/bff/read_store.py:8435",
+      "get_job_bff": "services/control-plane/bff/read_store.py:8733",
+      "list_governance_audit_events": "services/control-plane/bff/read_store.py:12005"
+    }
+  },
+  "verification_commands": [
+    {
+      "command": "python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/read_store.py",
+      "result": "pass"
+    },
+    {
+      "command": "python3 -m pytest services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py -q",
+      "result": "pass: 10 passed in 6.44s"
+    },
+    {
+      "command": "python3 - <<'PY' ... FastAPI TestClient route probe for BFF-CONSOL-018 ... PY",
+      "result": "pass: incident/runtime/approval/deployment/rebalance/job/job_logs/audit/audit_entity all returned 200; missing job returned typed OBJECT_NOT_FOUND 404 without undefined"
+    }
+  ]
+}
