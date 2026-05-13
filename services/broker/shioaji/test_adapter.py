@@ -12,15 +12,17 @@ Tests inject a mock Shioaji API so no real SDK or network access is required.
 """
 from __future__ import annotations
 
-import sys
 import os
+import sys
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 _SHIOAJI_DIR = str(os.path.dirname(__file__))
 if _SHIOAJI_DIR not in sys.path:
     sys.path.insert(0, _SHIOAJI_DIR)
 
+import adapter as adapter_module  # noqa: E402
 from adapter import ShioajiBrokerAdapter, ShioajiBrokerError, ShioajiOrder  # noqa: E402
 
 
@@ -28,13 +30,28 @@ def _make_mock_api(trade_id: str = "mock-trade-001") -> MagicMock:
     """Return a minimal Shioaji API mock sufficient for adapter tests."""
     mock_trade = MagicMock()
     mock_trade.trade_id = trade_id
+    mock_trade.status = SimpleNamespace(id=trade_id, status="Submitted", status_code="0", msg="")
 
     api = MagicMock()
     api.Contracts.Stocks.__getitem__.return_value = MagicMock()
+    api.Contracts.Futures.TXF.__getitem__.return_value = MagicMock()
+    api.Contracts.Futures.__getitem__.return_value = api.Contracts.Futures.TXF
     api.Order.return_value = MagicMock()
     api.place_order.return_value = mock_trade
     api.cancel_order.return_value = None
     api.update_status.return_value = None
+    api.stock_account = SimpleNamespace(
+        broker_id="9A95",
+        account_id="stock-test-001",
+        person_id="person-test",
+        signed=True,
+    )
+    api.futopt_account = SimpleNamespace(
+        broker_id="F002000",
+        account_id="future-test-001",
+        person_id="person-test",
+        signed=True,
+    )
     return api
 
 
@@ -45,6 +62,7 @@ _ORDER_KWARGS = dict(
     qty=1.0,
     side="buy",
 )
+_TEST_SPACING_SECONDS = 0.0
 
 
 class TestSandboxGateFailClosed(unittest.TestCase):
@@ -80,21 +98,31 @@ class TestLiveOrderAlwaysRejected(unittest.TestCase):
     """Live reject path must raise unconditionally regardless of sandbox gate."""
 
     def test_live_rejected_when_gate_closed(self):
-        adapter = ShioajiBrokerAdapter(sandbox_enabled=False)
+        adapter = ShioajiBrokerAdapter(
+            sandbox_enabled=False,
+            submit_spacing_seconds=_TEST_SPACING_SECONDS,
+        )
         with self.assertRaises(ShioajiBrokerError) as ctx:
             adapter.reject_live_order()
         self.assertEqual(ctx.exception.error_code, "SHIOAJI_LIVE_DISABLED")
         self.assertEqual(ctx.exception.status_code, 403)
 
     def test_live_rejected_when_gate_open(self):
-        adapter = ShioajiBrokerAdapter(sandbox_enabled=True, _api=_make_mock_api())
+        adapter = ShioajiBrokerAdapter(
+            sandbox_enabled=True,
+            _api=_make_mock_api(),
+            submit_spacing_seconds=_TEST_SPACING_SECONDS,
+        )
         with self.assertRaises(ShioajiBrokerError) as ctx:
             adapter.reject_live_order()
         self.assertEqual(ctx.exception.error_code, "SHIOAJI_LIVE_DISABLED")
         self.assertEqual(ctx.exception.status_code, 403)
 
     def test_live_rejection_payload_shape(self):
-        adapter = ShioajiBrokerAdapter(sandbox_enabled=False)
+        adapter = ShioajiBrokerAdapter(
+            sandbox_enabled=False,
+            submit_spacing_seconds=_TEST_SPACING_SECONDS,
+        )
         try:
             adapter.reject_live_order()
         except ShioajiBrokerError as exc:
@@ -108,7 +136,11 @@ class TestSandboxSubmitHappyPath(unittest.TestCase):
     """Sandbox submit with a mock API."""
 
     def _adapter(self) -> ShioajiBrokerAdapter:
-        return ShioajiBrokerAdapter(sandbox_enabled=True, _api=_make_mock_api())
+        return ShioajiBrokerAdapter(
+            sandbox_enabled=True,
+            _api=_make_mock_api(),
+            submit_spacing_seconds=_TEST_SPACING_SECONDS,
+        )
 
     def test_market_order_returns_shioaji_order(self):
         order = self._adapter().submit(**_ORDER_KWARGS)
@@ -128,6 +160,71 @@ class TestSandboxSubmitHappyPath(unittest.TestCase):
     def test_market_order_trade_id_captured(self):
         order = self._adapter().submit(**_ORDER_KWARGS)
         self.assertEqual(order.shioaji_trade_id, "mock-trade-001")
+        self.assertEqual(order.shioaji_order_status, "Submitted")
+        self.assertEqual(order.shioaji_order_status_code, "0")
+
+    def test_stock_order_uses_stock_account(self):
+        mock_api = _make_mock_api()
+        adapter = ShioajiBrokerAdapter(
+            sandbox_enabled=True,
+            _api=mock_api,
+            submit_spacing_seconds=_TEST_SPACING_SECONDS,
+        )
+        adapter.submit(**_ORDER_KWARGS)
+        self.assertIs(mock_api.Order.call_args.kwargs["account"], mock_api.stock_account)
+
+    def test_futures_order_uses_futopt_account(self):
+        mock_api = _make_mock_api()
+        adapter = ShioajiBrokerAdapter(
+            sandbox_enabled=True,
+            _api=mock_api,
+            submit_spacing_seconds=_TEST_SPACING_SECONDS,
+        )
+        order = adapter.submit(
+            **{
+                **_ORDER_KWARGS,
+                "symbol": "TXFR1",
+                "account_kind": "futures",
+                "futures_category": "TXF",
+            }
+        )
+        self.assertEqual(order.account_kind, "futures")
+        self.assertIs(mock_api.Order.call_args.kwargs["account"], mock_api.futopt_account)
+        mock_api.Contracts.Futures.TXF.__getitem__.assert_called_with("TXFR1")
+
+    def test_unsigned_stock_account_still_places_in_simulation(self):
+        mock_api = _make_mock_api()
+        mock_api.stock_account.signed = False
+        adapter = ShioajiBrokerAdapter(
+            sandbox_enabled=True,
+            _api=mock_api,
+            submit_spacing_seconds=_TEST_SPACING_SECONDS,
+        )
+        order = adapter.submit(**_ORDER_KWARGS)
+
+        self.assertEqual(order.status, "submitted")
+        self.assertIs(mock_api.Order.call_args.kwargs["account"], mock_api.stock_account)
+        mock_api.place_order.assert_called_once()
+
+    def test_missing_futures_account_rejected_before_place(self):
+        mock_api = _make_mock_api()
+        mock_api.futopt_account = None
+        adapter = ShioajiBrokerAdapter(
+            sandbox_enabled=True,
+            _api=mock_api,
+            submit_spacing_seconds=_TEST_SPACING_SECONDS,
+        )
+        with self.assertRaises(ShioajiBrokerError) as ctx:
+            adapter.submit(
+                **{
+                    **_ORDER_KWARGS,
+                    "symbol": "TXFR1",
+                    "account_kind": "futures",
+                    "futures_category": "TXF",
+                }
+            )
+        self.assertEqual(ctx.exception.error_code, "SHIOAJI_ACCOUNT_MISSING")
+        mock_api.place_order.assert_not_called()
 
     def test_limit_order_submit(self):
         order = self._adapter().submit(
@@ -158,7 +255,11 @@ class TestSandboxCancelAndGetStatus(unittest.TestCase):
     """Cancel and get_status with a mock API."""
 
     def _adapter(self) -> ShioajiBrokerAdapter:
-        return ShioajiBrokerAdapter(sandbox_enabled=True, _api=_make_mock_api())
+        return ShioajiBrokerAdapter(
+            sandbox_enabled=True,
+            _api=_make_mock_api(),
+            submit_spacing_seconds=_TEST_SPACING_SECONDS,
+        )
 
     def test_cancel_submitted_order(self):
         adapter = self._adapter()
@@ -182,17 +283,25 @@ class TestSandboxCancelAndGetStatus(unittest.TestCase):
 
     def test_get_status_calls_update_status(self):
         mock_api = _make_mock_api()
-        adapter = ShioajiBrokerAdapter(sandbox_enabled=True, _api=mock_api)
+        adapter = ShioajiBrokerAdapter(
+            sandbox_enabled=True,
+            _api=mock_api,
+            submit_spacing_seconds=_TEST_SPACING_SECONDS,
+        )
         order = adapter.submit(**_ORDER_KWARGS)
         adapter.get_status(order.order_id)
-        mock_api.update_status.assert_called_once()
+        mock_api.update_status.assert_called_once_with(mock_api.stock_account)
 
 
 class TestSandboxInputValidation(unittest.TestCase):
     """Input validation runs before any SDK call."""
 
     def _adapter(self) -> ShioajiBrokerAdapter:
-        return ShioajiBrokerAdapter(sandbox_enabled=True, _api=_make_mock_api())
+        return ShioajiBrokerAdapter(
+            sandbox_enabled=True,
+            _api=_make_mock_api(),
+            submit_spacing_seconds=_TEST_SPACING_SECONDS,
+        )
 
     def test_invalid_side_rejected(self):
         with self.assertRaises(ShioajiBrokerError) as ctx:
@@ -229,7 +338,11 @@ class TestFractionalQtyRejection(unittest.TestCase):
     """Fractional qty must be rejected before any SDK call."""
 
     def _adapter(self) -> ShioajiBrokerAdapter:
-        return ShioajiBrokerAdapter(sandbox_enabled=True, _api=_make_mock_api())
+        return ShioajiBrokerAdapter(
+            sandbox_enabled=True,
+            _api=_make_mock_api(),
+            submit_spacing_seconds=_TEST_SPACING_SECONDS,
+        )
 
     def test_fractional_qty_rejected(self):
         with self.assertRaises(ShioajiBrokerError) as ctx:
@@ -244,7 +357,11 @@ class TestFractionalQtyRejection(unittest.TestCase):
 
     def test_sdk_not_called_for_fractional_qty(self):
         mock_api = _make_mock_api()
-        adapter = ShioajiBrokerAdapter(sandbox_enabled=True, _api=mock_api)
+        adapter = ShioajiBrokerAdapter(
+            sandbox_enabled=True,
+            _api=mock_api,
+            submit_spacing_seconds=_TEST_SPACING_SECONDS,
+        )
         with self.assertRaises(ShioajiBrokerError):
             adapter.submit(**{**_ORDER_KWARGS, "qty": 1.5})
         mock_api.place_order.assert_not_called()
@@ -262,7 +379,11 @@ class TestErrorPaths(unittest.TestCase):
     """Error paths for cancel and get_status."""
 
     def _adapter(self) -> ShioajiBrokerAdapter:
-        return ShioajiBrokerAdapter(sandbox_enabled=True, _api=_make_mock_api())
+        return ShioajiBrokerAdapter(
+            sandbox_enabled=True,
+            _api=_make_mock_api(),
+            submit_spacing_seconds=_TEST_SPACING_SECONDS,
+        )
 
     def test_cancel_unknown_order_raises_not_found(self):
         with self.assertRaises(ShioajiBrokerError) as ctx:
@@ -286,12 +407,62 @@ class TestErrorPaths(unittest.TestCase):
 
     def test_error_payload_shape(self):
         try:
-            ShioajiBrokerAdapter(sandbox_enabled=False).submit(**_ORDER_KWARGS)
+            ShioajiBrokerAdapter(
+                sandbox_enabled=False,
+                submit_spacing_seconds=_TEST_SPACING_SECONDS,
+            ).submit(**_ORDER_KWARGS)
         except ShioajiBrokerError as exc:
             payload = exc.to_payload()
         self.assertEqual(payload["status"], "broker_error")
         self.assertIn("error_code", payload)
         self.assertIn("message", payload)
+
+
+class TestSubmitSpacingGate(unittest.TestCase):
+    """Adapter enforces a per-account thread-local submit interval."""
+
+    def setUp(self):
+        adapter_module.ShioajiBrokerAdapter._thread_submit_state.last_submit_by_account = {}
+
+    def test_second_submit_waits_for_same_account(self):
+        mock_api = _make_mock_api()
+        adapter = ShioajiBrokerAdapter(
+            sandbox_enabled=True,
+            _api=mock_api,
+            submit_spacing_seconds=1.0,
+        )
+        with patch.object(adapter_module.time, "monotonic", side_effect=[100.0, 100.25, 101.0]):
+            with patch.object(adapter_module.time, "sleep") as sleep:
+                adapter.submit(**_ORDER_KWARGS)
+                order = adapter.submit(**_ORDER_KWARGS)
+
+        sleep.assert_called_once()
+        self.assertAlmostEqual(sleep.call_args.args[0], 0.75)
+        self.assertAlmostEqual(order.submit_spacing_wait_seconds, 0.75)
+        self.assertAlmostEqual(order.submit_spacing_previous_elapsed_seconds, 0.25)
+
+    def test_submit_spacing_is_per_account(self):
+        mock_api = _make_mock_api()
+        adapter = ShioajiBrokerAdapter(
+            sandbox_enabled=True,
+            _api=mock_api,
+            submit_spacing_seconds=1.0,
+        )
+        with patch.object(adapter_module.time, "monotonic", side_effect=[200.0, 200.1]):
+            with patch.object(adapter_module.time, "sleep") as sleep:
+                adapter.submit(**_ORDER_KWARGS)
+                order = adapter.submit(
+                    **{
+                        **_ORDER_KWARGS,
+                        "symbol": "TXFR1",
+                        "account_kind": "futures",
+                        "futures_category": "TXF",
+                    }
+                )
+
+        sleep.assert_not_called()
+        self.assertEqual(order.submit_spacing_wait_seconds, 0.0)
+        self.assertIsNone(order.submit_spacing_previous_elapsed_seconds)
 
 
 if __name__ == "__main__":

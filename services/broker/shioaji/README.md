@@ -75,7 +75,7 @@ adapter.reject_live_order()  # raises ShioajiBrokerError(SHIOAJI_LIVE_DISABLED)
 ## Requirements
 
 ```
-shioaji>=1.1.0,<2.0.0
+shioaji>=1.2.0,<2.0.0
 ```
 
 Install in the broker Docker image only — not in shared requirements.
@@ -96,13 +96,20 @@ The broker-side place/cancel/readback/reconcile smoke entrypoint is:
 ```bash
 BROKER_SHIOAJI_SANDBOX_ENABLED=1 \
 python3 services/broker/shioaji/sandbox_smoke.py \
-  --symbol 2330 \
+  --account-kind stock \
+  --symbol 2890 \
   --qty 1 \
   --side buy \
   --order-type limit \
-  --limit-price 950 \
-  --output-dir /tmp/pantheon/ep5-broker-tw-002/sandbox-smoke
+  --limit-price 18.0 \
+  --cancel-delay-seconds 1.0 \
+  --output-file support/evidence/EP5-BROKER-TW-002-RERUN-REAL-FIX/stock-smoke.json
 ```
+
+This RERUN-REAL-FIX smoke is stock-only. Do not run futures smoke for this
+account, and do not run the old sleep/relogin signed-status audit here;
+production-mode signed verification belongs to `EP5-BROKER-TW-002-PRODUCTION-VERIFY`.
+Real SDK runs fail fast outside the 08:00-20:00 Asia/Taipei sandbox window.
 
 Use `--mock-api` only for local/CI replay when the Shioaji SDK or sandbox
 credentials are unavailable. Mock replay output is explicitly marked as
