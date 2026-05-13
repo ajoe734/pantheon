@@ -1,0 +1,173 @@
+{
+  "task_id": "BFF-CONSOL-021",
+  "status": "soak_pending_elapsed_time",
+  "created_at": "2026-05-13T11:53:20Z",
+  "updated_at": "2026-05-13T11:53:20Z",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "dependencies": {
+    "BFF-CONSOL-019": {
+      "status": "done",
+      "commit": "34fa7aec2a931333966d98b71a1c2d6bd5d0fe44",
+      "evidence": "ai-task-archive/tasks/BFF-CONSOL-019.json"
+    },
+    "BFF-CONSOL-020": {
+      "status": "done",
+      "root_closeout_commit": "7f8f9cf84e45e50f550acd9fda63848422fb01e6",
+      "frontend_reference_commit": "30b4ed394bcb036cb9f18b63c99f2910a657916e",
+      "evidence": "support/evidence/BFF-CONSOL-020-closeout.md"
+    }
+  },
+  "receipt_samples": [
+    {
+      "route_class": "legacy_action_adapter",
+      "method": "POST",
+      "path": "/bff/actions/strategy/stg-bff-021/submit_review",
+      "idempotency_key": "bff-consol-021-evidence-action",
+      "captured_at": "2026-05-13T11:53:20Z",
+      "action_receipt": {
+        "status": "accepted",
+        "command": "StrategyAction",
+        "receipt_id": "cmd-182b3a0b531c404d95b8d7987faa9839",
+        "command_id": "cmd-182b3a0b531c404d95b8d7987faa9839",
+        "routing_path": "direct",
+        "durable": true,
+        "live_capital_side_effects": false,
+        "idempotency_replayed": false
+      },
+      "command_receipt": {
+        "command_id": "cmd-182b3a0b531c404d95b8d7987faa9839",
+        "type": "StrategyAction",
+        "target": "Strategy:stg-bff-021",
+        "admission_route": "POST /bff/v1/commands",
+        "source_route": "POST /bff/actions/{entityType}/{entityId}/{actionId}",
+        "trace_id": "trace-bff-consol-021-evidence",
+        "correlation_id": "corr-bff-consol-021-evidence",
+        "idempotency_status": "succeeded"
+      },
+      "reconciliation": {
+        "receipt_ids_match": true,
+        "command_store_records_created": 1,
+        "legacy_response_and_command_record_share_idempotency_key": true
+      }
+    },
+    {
+      "route_class": "final_command_direct",
+      "method": "POST",
+      "path": "/bff/v1/commands",
+      "idempotency_key": "bff-consol-021-evidence-command",
+      "captured_at": "2026-05-13T11:53:20Z",
+      "command_receipt": {
+        "status": "accepted",
+        "receipt_id": "cmd-ff3926658c694b9abc7602ce26062e85",
+        "command_id": "cmd-ff3926658c694b9abc7602ce26062e85",
+        "type": "PauseExecution",
+        "target": "Runtime:runtime-bff-consol-021-evidence",
+        "admission_route": "POST /bff/v1/commands",
+        "source_route": null,
+        "routing_path": "direct",
+        "live_capital_side_effects": false,
+        "idempotency_status": "succeeded"
+      }
+    }
+  ],
+  "regression_checks": {
+    "legacy_action_dual_write": {
+      "status": "passed",
+      "test": "test_legacy_action_dual_writes_action_and_command_receipts"
+    },
+    "legacy_action_replay": {
+      "status": "passed",
+      "test": "test_legacy_action_idempotency_replay_returns_same_receipt"
+    },
+    "legacy_action_conflict_409": {
+      "status": "passed",
+      "test": "test_legacy_action_idempotency_conflict_returns_409"
+    },
+    "final_command_replay": {
+      "status": "passed",
+      "test": "test_final_command_idempotency_replay_returns_same_receipt"
+    },
+    "final_command_conflict_409": {
+      "status": "passed",
+      "test": "test_final_command_idempotency_conflict_returns_409"
+    },
+    "missing_confirm_token_confirm_token_required": {
+      "status": "passed",
+      "test": "test_final_command_missing_confirm_token_returns_typed_error",
+      "http_status": 428,
+      "error_code": "CONFIRM_TOKEN_REQUIRED"
+    },
+    "missing_approval_evidence_approval_required": {
+      "status": "passed",
+      "test": "test_final_command_missing_approval_evidence_returns_typed_error",
+      "http_status": 409,
+      "error_code": "APPROVAL_REQUIRED"
+    }
+  },
+  "verification": [
+    {
+      "command": "python3 -m py_compile services/control-plane/bff/tests/test_command_replay_conflict.py",
+      "status": "passed",
+      "recorded_at": "2026-05-13T11:52:00Z"
+    },
+    {
+      "command": "python3 -m pytest services/control-plane/bff/tests/test_command_replay_conflict.py -q",
+      "status": "passed",
+      "result": "7 passed in 7.46s",
+      "recorded_at": "2026-05-13T11:52:00Z"
+    },
+    {
+      "command": "python3 -m pytest services/control-plane/bff/tests/test_actions_to_commands_adapter.py services/control-plane/bff/test_final_precondition_errors.py -q",
+      "status": "passed",
+      "result": "6 passed in 8.15s",
+      "recorded_at": "2026-05-13T11:54:00Z"
+    },
+    {
+      "command": "python3 -m json.tool support/evidence/BFF-CONSOL-021-dual-write-soak.json",
+      "status": "passed",
+      "recorded_at": "2026-05-13T11:54:00Z"
+    },
+    {
+      "command": "git diff --no-index --check /dev/null services/control-plane/bff/tests/test_command_replay_conflict.py",
+      "status": "passed",
+      "result": "no whitespace-error output",
+      "recorded_at": "2026-05-13T11:54:00Z"
+    },
+    {
+      "command": "git diff --no-index --check /dev/null support/evidence/BFF-CONSOL-021-dual-write-soak.json",
+      "status": "passed",
+      "result": "no whitespace-error output",
+      "recorded_at": "2026-05-13T11:54:00Z"
+    }
+  ],
+  "soak": {
+    "required_clean_days": 7,
+    "elapsed_clean_days": 0,
+    "started_at": "2026-05-13T11:53:20Z",
+    "earliest_completion_at": "2026-05-20T11:53:20Z",
+    "completion_criteria": [
+      "At least seven elapsed calendar days after started_at",
+      "No replay/conflict/precondition regression in daily checks",
+      "Legacy action adapter and final command direct receipt samples remain reconcilable",
+      "No live capital side effects are enabled during this soak"
+    ],
+    "days": [
+      {
+        "day_index": 0,
+        "date": "2026-05-13",
+        "status": "bootstrap_local_passed_not_counted_as_elapsed_day",
+        "route_mix": [
+          "legacy_action_adapter",
+          "final_command_direct"
+        ],
+        "regressions": [],
+        "verification": "python3 -m pytest services/control-plane/bff/tests/test_command_replay_conflict.py -q"
+      }
+    ]
+  },
+  "blockers": [
+    "Seven elapsed clean soak days have not completed; earliest eligible review completion is 2026-05-20T11:53:20Z.",
+    "BFF-CONSOL-024 must remain blocked until this evidence records seven clean elapsed days."
+  ]
+}
