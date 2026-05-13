@@ -1,0 +1,2257 @@
+{
+  "metadata": {
+    "snapshot_date": "2026-05-13",
+    "source": "services/control-plane/bff/main.py",
+    "generator": "scripts/bff_route_manifest_backend.py",
+    "total_routes": 371,
+    "status_values": [
+      "implemented",
+      "alias",
+      "superseded",
+      "deferred"
+    ],
+    "notes": [
+      "All routes in this manifest are directly registered in the FastAPI app.",
+      "HEAD and OPTIONS routes are excluded.",
+      "Duplicate method+path pairs (e.g. stacked decorators on one handler) are deduped.",
+      "Diff this against execute_plans_bff_routes.json to find backend/frontend gaps."
+    ]
+  },
+  "entries": [
+    {
+      "method": "GET",
+      "path": "/bff/agora/alerts/triage",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/ask/sessions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/daily",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/evaluation-runs",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/evaluation-suites",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/inbox",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/insights",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/journal",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/memory",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/notes",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/postmortems",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/sessions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/sessions/{sessionId}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/sessions/{sessionId}/messages",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/signals",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/signals/{signalId}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/skill-coaching/sessions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/training-examples",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/watchlist",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/research/tasks",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/agora/journal/{entry_id}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/ask",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/insights",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/insights/{insightId}/actions/{actionId}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/journal",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/memory/{memoryId}/actions/{actionId}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/messages/{messageId}/actions/{actionId}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/notes",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/sessions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/sessions/{sessionId}/messages",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/signals/{signalId}/feedback",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/training-examples",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/insights/{insightId}/actions/attach-strategy",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/memory/{memoryId}/actions/quarantine",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/handoffs",
+      "family": "agora-extended",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/persona-lab/runs",
+      "family": "agora-extended",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/channels",
+      "family": "agora-extended",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/channels/{id}",
+      "family": "agora-extended",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/committee/{sessionId}/evidence-pack",
+      "family": "agora-extended",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/committee/{sessionId}/evidence-pack/files",
+      "family": "agora-extended",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/persona-lab/{draftId}/actions/submit-commit",
+      "family": "agora-extended",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/approval-decisions",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/approval-decisions/{decision_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/artifacts",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/artifacts/compare",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/artifacts/{artifact_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/bindings",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/bindings/{binding_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/capital-pools",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/capital-pools/{pool_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/committees",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/committees/{committee_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/consult/memos",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/consult/memos/{memo_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/consult/requests",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/consult/requests/{request_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/consultations/{session_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/consultations/{session_id}/evidence",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/consultations/{session_id}/outcome",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/consultations/{session_id}/participants",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/consultations/{session_id}/transcript",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/deployment-plans",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/deployment-plans/{plan_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/evolution-decisions",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/evolution-decisions/{decision_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/experiments",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/experiments/{experiment_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/freeze-orders",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/incidents",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/incidents/{incident_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/kill-switch/status",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge/evidence",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge/evidence/{ref_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge/insights",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge/insights/{insight_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge/memory",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge/memory/{entry_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge/notes",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge/notes/{note_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge/strategy-specs",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge/strategy-specs/{strategy_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge/strategy-specs/{strategy_id}/compare",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge/strategy-specs/{strategy_id}/versions",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/lineage",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/lineage/edges/{edge_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/lineage/graph",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/lineage/inspiration/{artifact_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/personas",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/personas/{persona_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/personas/{persona_id}/capabilities",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/personas/{persona_id}/consult-policy",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/personas/{persona_id}/consultations",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/personas/{persona_id}/sessions",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/personas/{persona_id}/teaching",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/postmortems",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/postmortems/{report_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/research/analysis",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/research/analysis/{analysis_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/research/search",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/research/source-connectors",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/research/tickets",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/research/tickets/{ticket_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/rollbacks",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/runtime-bindings",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/runtime-bindings/{binding_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/runtimes/{runtime_id}/rollbacks",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/runtimes/{runtime_id}/status",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/sessions/{session_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/settings",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/settings/export",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/telemetry",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/telemetry/{artifact_id}/performance",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/telemetry/{runtime_id}/summary",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/trainer/replay",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/trainer/replay/{session_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/trainer/sessions",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/trainer/sessions/{session_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/trainer/sessions/{session_id}/controls",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/trainer/sessions/{session_id}/preview",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/workbench/consultation",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/workbench/knowledge",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/research/tickets/{ticket_id}",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/consult/requests",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/consult/requests/{request_id}/cancel",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/experiments/launch",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/experiments/{experiment_id}/cancel",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/knowledge/notes",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/research/tickets",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/settings",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/settings/import",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/trainer/sessions",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/trainer/sessions/{session_id}/commit",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/trainer/sessions/{session_id}/discard",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/trainer/sessions/{session_id}/message",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/trainer/sessions/{session_id}/patch",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/trainer/sessions/{session_id}/preview",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/capital-pools",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/capital-pools/{pool_id}",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/ranking-formulas",
+      "family": "capital-ranking-rebalance",
+      "status": "alias",
+      "covered_by": "GET /bff/ranking/formulas"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/ranking-formulas/{id}",
+      "family": "capital-ranking-rebalance",
+      "status": "alias",
+      "covered_by": "GET /bff/ranking/formulas/{formula_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/ranking/formulas",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/ranking/formulas/{formula_id}",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/rankings",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/rankings/{ranking_id}",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/rebalances",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/rebalances/{rebalance_id}",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/capital-pools/{pool_id}",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/ranking-formulas/{id}",
+      "family": "capital-ranking-rebalance",
+      "status": "alias",
+      "covered_by": "PATCH /bff/ranking/formulas/{formula_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/ranking/formulas/{formula_id}",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/rebalances/{id}",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/capital-pools",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/capital-pools/{pool_id}/actions/{action_id}",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/ranking-formulas",
+      "family": "capital-ranking-rebalance",
+      "status": "alias",
+      "covered_by": "POST /bff/ranking/formulas"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/ranking/formulas",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/ranking/formulas/{formula_id}/actions/{action_id}",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/rankings/{ranking_id}/actions/{action_id}",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/rebalances",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/rebalances/{rebalance_id}/actions/{action_id}",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/artifacts",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/artifacts/{id}",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/events",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/evolution-programs",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/evolution-programs/{programId}",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/evolution-programs/{programId}/candidates",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/evolution-programs/{programId}/runs",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/experiments",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/experiments/{experimentId}",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/experiments/{experimentId}/artifacts",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/experiments/{experimentId}/logs",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/experiments/{experimentId}/metrics",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/jobs",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/jobs/{jobId}",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/jobs/{jobId}/logs",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/research-experiments",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/research-experiments/{id}",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/artifacts/{id}",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/evolution-programs/{programId}",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/research-experiments/{id}",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/artifacts",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/evolution-programs",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/evolution-programs/{programId}/actions/{actionId}",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/experiments",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/experiments/{experimentId}/actions/{actionId}",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/jobs/{jobId}/actions/{actionId}",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/research-experiments",
+      "family": "evolution-experiment-jobs-events",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/v5/control-room",
+      "family": "execute-plans-cutover-smoke",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/v5/execution/persona-health",
+      "family": "execute-plans-cutover-smoke",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/v5/execution/strategy-health",
+      "family": "execute-plans-cutover-smoke",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/v5/loop-runs",
+      "family": "execute-plans-cutover-smoke",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/v5/loop-runs/{id}",
+      "family": "execute-plans-cutover-smoke",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/v5/sentinel/findings",
+      "family": "execute-plans-cutover-smoke",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/v5/sentinel/findings/{id}",
+      "family": "execute-plans-cutover-smoke",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/v5/sentinel/findings/{id}/status",
+      "family": "execute-plans-cutover-smoke",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/v5/sentinel/remediation/build",
+      "family": "execute-plans-cutover-smoke",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/v5/sentinel/remediation/{actionId}/execute",
+      "family": "execute-plans-cutover-smoke",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/actions",
+      "family": "final-contract",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/actions/{entityType}/{entityId}/{actionId}",
+      "family": "final-contract",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/v1/commands",
+      "family": "final-contract",
+      "status": "implemented"
+    },
+    {
+      "method": "DELETE",
+      "path": "/bff/confirm-tokens/{tokenId}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/alerts",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/alerts/{id}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/approvals",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/approvals/{approval_id}/evidence",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/approvals/{id}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/audit",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/audit/entities/{entity_type}/{entity_id}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/audit/events",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/audit/export",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/confirm-tokens/{tokenId}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/deployments",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/deployments/{deployment_id}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/incidents",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/incidents/{incident_id}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/reviews",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/reviews/{review_id}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/reviews/{review_id}/audit",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/reviews/{review_id}/validators",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/risk/alerts",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/risk/alerts/{alert_id}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/runtimes",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/runtimes/{runtime_id}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/deployments/{id}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/alerts/{id}/acknowledge",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/alerts/{id}/escalate-incident",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/approvals/batch-decide",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/approvals/{id}/decide",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/audit/export",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/command-confirmations",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/confirm-tokens",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/confirm-tokens/{tokenId}/redeem",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/deployments",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/deployments/{deployment_id}/actions/{action_id}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/incidents",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/incidents/{id}/append-postmortem",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/incidents/{id}/resolve",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/incidents/{id}/rollback-deployment",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/incidents/{id}/start-mitigation",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/incidents/{incident_id}/actions/{action_id}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/reviews",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/reviews/{review_id}/actions/{action_id}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/risk/alerts/{alert_id}/actions/{action_id}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/runtimes/{runtime_id}/actions/{action_id}",
+      "family": "governance-runtime-risk-audit",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/capabilities",
+      "family": "health",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/feature-flags",
+      "family": "health",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/healthz",
+      "family": "health",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/readyz",
+      "family": "health",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/docs",
+      "family": "health",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/docs/oauth2-redirect",
+      "family": "health",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/health",
+      "family": "health",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/healthz",
+      "family": "health",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/livez",
+      "family": "health",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/metrics",
+      "family": "health",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/openapi.json",
+      "family": "health",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/readyz",
+      "family": "health",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/redoc",
+      "family": "health",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/mcp-servers",
+      "family": "mcp-final",
+      "status": "alias",
+      "covered_by": "GET /bff/mcp/servers"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/mcp-servers/{id}",
+      "family": "mcp-final",
+      "status": "alias",
+      "covered_by": "GET /bff/mcp/servers/{server_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/mcp-tools",
+      "family": "mcp-final",
+      "status": "alias",
+      "covered_by": "GET /bff/mcp/servers/{server_id}/tools"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/mcp-tools/{id}",
+      "family": "mcp-final",
+      "status": "alias",
+      "covered_by": "GET /bff/mcp/servers/{server_id}/tools"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/mcp-servers/{server_id}/import-tools",
+      "family": "mcp-final",
+      "status": "alias",
+      "covered_by": "POST /bff/v1/mcp/servers/{server_id}/import-tools"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/mcp-tools/{tool_id}/{action}",
+      "family": "mcp-final",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/v1/mcp/servers/{server_id}/import-tools",
+      "family": "mcp-final",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/v1/mcp/servers/{server_id}/tools/{tool_id}/actions/{action}",
+      "family": "mcp-final",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/alerts",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/commands/{command_id}",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/degraded-control-guidance",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/deployment-diff/{plan_id}",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/deployment-plans",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/deployment-review/{plan_id}",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/governance/approval-queue",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/governance/audit",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/governance/review-queue",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/health-status",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/home",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/incident-response/{incident_id}",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/mutation-review/{decision_id}",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/openclaw/broker-adapter-readiness",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/openclaw/broker/adapter-readiness",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/openclaw/live-gate/audit",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/openclaw/live-gate/status",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/openclaw/ops",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/openclaw/tool-workflow-bridge",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/paper-live-drift/{runtime_id}",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/persona-management/{persona_id}",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/post-incident-review/{incident_id}",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/research/oss-activation-ready",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/research/oss-preactivation",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/rollback-review/{rollback_id}",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/runtime-state",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/search/ops",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/operator/source/ops",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/operator/commands",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/operator/openclaw/sessions",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/operator/openclaw/sessions/{session_id}/cancel",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/operator/search/index/materialize",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/operator/search/index/refresh",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/operator/source/dlq/replay",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/operator/source/frontier/{frontier_id}/replay",
+      "family": "operator",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/me",
+      "family": "session-auth-me",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/me/locale",
+      "family": "session-auth-me",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/auth/refresh",
+      "family": "session-auth-me",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/logout",
+      "family": "session-auth-me",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/switch-tenant",
+      "family": "session-auth-me",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/events/stream",
+      "family": "sse-compatibility",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/sse/agora/sessions/{sessionId}",
+      "family": "sse-compatibility",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/sse/agora/signals",
+      "family": "sse-compatibility",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/sse/alerts",
+      "family": "sse-compatibility",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/sse/command-center/events",
+      "family": "sse-compatibility",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/sse/command-center/kpi",
+      "family": "sse-compatibility",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/sse/deployment/events",
+      "family": "sse-compatibility",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/sse/incidents/{incidentId}/timeline",
+      "family": "sse-compatibility",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/sse/jobs/{jobId}/progress",
+      "family": "sse-compatibility",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/sse/notifications",
+      "family": "sse-compatibility",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/sse/review/updates",
+      "family": "sse-compatibility",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/agora/ask/stream",
+      "family": "sse-substrate",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/approvals/stream",
+      "family": "sse-substrate",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/incidents/stream",
+      "family": "sse-substrate",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/kill-switch/updates",
+      "family": "sse-substrate",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/runtime/{runtime_id}/events/stream",
+      "family": "sse-substrate",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/stream/{channel}",
+      "family": "sse-substrate",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/internal/sse/publish",
+      "family": "sse-substrate",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/personas",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/personas/{persona_id}",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/personas/{persona_id}/activity",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/personas/{persona_id}/audit",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/personas/{persona_id}/evaluations",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/personas/{persona_id}/memory",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/personas/{persona_id}/route-policy",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/search",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/strategies",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/strategies/{strategy_id}",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/strategies/{strategy_id}/artifacts",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/strategies/{strategy_id}/audit",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/strategies/{strategy_id}/experiments",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/strategies/{strategy_id}/lineage",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/strategies/{strategy_id}/specs",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/types",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/personas/{persona_id}",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/strategies/{strategy_id}",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/personas",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/personas/{persona_id}/actions/{action_id}",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/personas/{persona_id}/test-prompt",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/strategies",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/strategies/{strategy_id}/actions/{action_id}",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/strategies/{strategy_id}/dry-run",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/strategies/{strategy_id}/specs",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/mcp/servers",
+      "family": "tools-mcp-skills",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/mcp/servers/{server_id}",
+      "family": "tools-mcp-skills",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/mcp/servers/{server_id}/tools",
+      "family": "tools-mcp-skills",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/skills",
+      "family": "tools-mcp-skills",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/skills/{skill_id}",
+      "family": "tools-mcp-skills",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/tools",
+      "family": "tools-mcp-skills",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/tools/{tool_id}",
+      "family": "tools-mcp-skills",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/skills/{skill_id}",
+      "family": "tools-mcp-skills",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/tools/{tool_id}",
+      "family": "tools-mcp-skills",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/mcp/servers",
+      "family": "tools-mcp-skills",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/mcp/servers/{server_id}/actions/{action_id}",
+      "family": "tools-mcp-skills",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/mcp/tools/{tool_id}/actions/{action_id}",
+      "family": "tools-mcp-skills",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/skills",
+      "family": "tools-mcp-skills",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/skills/{skill_id}/actions/{action_id}",
+      "family": "tools-mcp-skills",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/skills/{skill_id}/sandbox-eval",
+      "family": "tools-mcp-skills",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/tools",
+      "family": "tools-mcp-skills",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/tools/{tool_id}/actions/{action_id}",
+      "family": "tools-mcp-skills",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/v5/interventions",
+      "family": "v5-interventions",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/v5/interventions/{id}",
+      "family": "v5-interventions",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/v5/interventions/{id}/claim",
+      "family": "v5-interventions",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/v5/interventions/{id}/decide",
+      "family": "v5-interventions",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/v5/interventions/{id}/escalate",
+      "family": "v5-interventions",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/v5/interventions/{id}/release",
+      "family": "v5-interventions",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/v5/interventions/{id}/two-man-sign",
+      "family": "v5-interventions",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/v5/interventions/{intervention_id}/remediate",
+      "family": "v5-interventions",
+      "status": "implemented"
+    }
+  ]
+}
