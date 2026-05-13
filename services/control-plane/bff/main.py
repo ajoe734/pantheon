@@ -19401,6 +19401,94 @@ _MCP_SERVER_REGISTRY: Dict[str, Dict[str, Any]] = {}
 _SKILL_REGISTRY: Dict[str, Dict[str, Any]] = {}
 
 
+def _read_store_fixture_records(dataset: str) -> List[Dict[str, Any]]:
+    data = getattr(read_store, "_data", {})
+    raw = data.get(dataset) if isinstance(data, dict) else None
+    if isinstance(raw, dict):
+        return [dict(record) for record in raw.values() if isinstance(record, dict)]
+    if isinstance(raw, list):
+        return [dict(record) for record in raw if isinstance(record, dict)]
+    return []
+
+
+def _merge_registry_records(
+    fixture_records: List[Dict[str, Any]],
+    registry_records: List[Dict[str, Any]],
+    id_keys: tuple[str, ...],
+) -> List[Dict[str, Any]]:
+    merged: Dict[str, Dict[str, Any]] = {}
+    for record in fixture_records + registry_records:
+        record_id = ""
+        for key in id_keys:
+            value = record.get(key)
+            if value not in (None, ""):
+                record_id = str(value)
+                break
+        if record_id:
+            merged[record_id] = dict(record)
+    return list(merged.values())
+
+
+def _tool_fixture_records() -> List[Dict[str, Any]]:
+    return _read_store_fixture_records("tools")
+
+
+def _skill_fixture_records() -> List[Dict[str, Any]]:
+    return _read_store_fixture_records("skills")
+
+
+def _mcp_server_fixture_records() -> List[Dict[str, Any]]:
+    return _read_store_fixture_records("mcp_servers")
+
+
+def _mcp_tool_fixture_records() -> List[Dict[str, Any]]:
+    return _read_store_fixture_records("mcp_tools")
+
+
+def _merged_tool_records() -> List[Dict[str, Any]]:
+    return _merge_registry_records(
+        _tool_fixture_records(),
+        [dict(record) for record in _TOOL_REGISTRY.values()],
+        ("tool_id", "id"),
+    )
+
+
+def _merged_skill_records() -> List[Dict[str, Any]]:
+    return _merge_registry_records(
+        _skill_fixture_records(),
+        [dict(record) for record in _SKILL_REGISTRY.values()],
+        ("skill_id", "id"),
+    )
+
+
+def _merged_mcp_server_records() -> List[Dict[str, Any]]:
+    return _merge_registry_records(
+        _mcp_server_fixture_records(),
+        [dict(record) for record in _MCP_SERVER_REGISTRY.values()],
+        ("server_id", "id"),
+    )
+
+
+def _merged_mcp_tool_records() -> List[Dict[str, Any]]:
+    return _merge_registry_records(
+        _mcp_tool_fixture_records(),
+        [dict(record) for record in _MCP_TOOL_REGISTRY.values()],
+        ("tool_id", "id"),
+    )
+
+
+def _find_record_by_id(records: List[Dict[str, Any]], entity_id: str, id_keys: tuple[str, ...]) -> Optional[Dict[str, Any]]:
+    clean_id = str(entity_id or "").strip()
+    return next(
+        (
+            dict(record)
+            for record in records
+            if any(str(record.get(key) or "") == clean_id for key in id_keys)
+        ),
+        None,
+    )
+
+
 def _tools_bff_idempotency_check(resolved_key: str, request_hash: str) -> Optional[Dict[str, Any]]:
     existing = _TOOLS_BFF_IDEMPOTENCY.get(resolved_key)
     if existing is None:
@@ -19541,7 +19629,7 @@ async def bff_list_tools(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
-    items = list(_TOOL_REGISTRY.values())
+    items = _merged_tool_records()
     if status:
         items = [t for t in items if t.get("status") == status]
     if tool_class:
@@ -19616,10 +19704,10 @@ async def bff_get_tool(
     clean_id = str(tool_id or "").strip()
     if not clean_id:
         raise _bff_error(422, ErrorCode.INVALID_PARAMS, "tool_id is required", "tool_id path parameter must be a non-empty string", precondition_failed="tool_id")
-    record = _TOOL_REGISTRY.get(clean_id)
+    record = _find_record_by_id(_merged_tool_records(), clean_id, ("tool_id", "id"))
     if record is None:
         # Also search MCP tool registry for MCP-imported tools.
-        for reg_key, reg_record in _MCP_TOOL_REGISTRY.items():
+        for reg_record in _merged_mcp_tool_records():
             if reg_record.get("tool_id") == clean_id:
                 record = {
                     "id": clean_id,
@@ -19714,7 +19802,7 @@ async def bff_list_mcp_servers(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
-    items = list(_MCP_SERVER_REGISTRY.values())
+    items = _merged_mcp_server_records()
     if status:
         items = [s for s in items if s.get("status") == status]
     total = len(items)
@@ -19777,7 +19865,7 @@ async def bff_get_mcp_server(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     clean_id = _validate_mcp_server_id(server_id)
-    record = _MCP_SERVER_REGISTRY.get(clean_id)
+    record = _find_record_by_id(_merged_mcp_server_records(), clean_id, ("server_id", "id"))
     if record is None:
         raise _bff_error(404, ErrorCode.OBJECT_NOT_FOUND, "MCP server not found", f"server_id={clean_id!r} is not registered", precondition_failed="server_id")
     return record
@@ -19832,7 +19920,7 @@ async def bff_list_mcp_server_tools(
             "action_count": rec.get("action_count", 0),
             "schema_url": rec.get("schema_url"),
         }
-        for key, rec in _MCP_TOOL_REGISTRY.items()
+        for rec in _merged_mcp_tool_records()
         if rec.get("server_id") == clean_id
     ]
     total = len(tools)
@@ -19903,7 +19991,7 @@ async def bff_list_skills(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
-    items = list(_SKILL_REGISTRY.values())
+    items = _merged_skill_records()
     if status:
         items = [s for s in items if s.get("status") == status]
     total = len(items)
@@ -19969,7 +20057,7 @@ async def bff_get_skill(
     clean_id = str(skill_id or "").strip()
     if not clean_id:
         raise _bff_error(422, ErrorCode.INVALID_PARAMS, "skill_id is required", "skill_id path parameter must be a non-empty string", precondition_failed="skill_id")
-    record = _SKILL_REGISTRY.get(clean_id)
+    record = _find_record_by_id(_merged_skill_records(), clean_id, ("skill_id", "id"))
     if record is None:
         raise _bff_error(404, ErrorCode.OBJECT_NOT_FOUND, "Skill not found", f"skill_id={clean_id!r} is not registered", precondition_failed="skill_id")
     return record
@@ -21118,11 +21206,18 @@ def _list_bff_experiments(*, status: Optional[str] = None) -> List[Dict[str, Any
 
 
 def _get_bff_job(job_id: str) -> Optional[Dict[str, Any]]:
-    return _GOV_BFF_JOB_OVERLAY.get(job_id)
+    overlay = _GOV_BFF_JOB_OVERLAY.get(job_id)
+    if overlay is not None:
+        return dict(overlay)
+    return _find_record_by_id(_read_store_fixture_records("jobs"), job_id, ("job_id", "id"))
 
 
 def _list_bff_jobs(*, status: Optional[str] = None) -> List[Dict[str, Any]]:
-    jobs = list(_GOV_BFF_JOB_OVERLAY.values())
+    jobs = _merge_registry_records(
+        _read_store_fixture_records("jobs"),
+        [dict(record) for record in _GOV_BFF_JOB_OVERLAY.values()],
+        ("job_id", "id"),
+    )
     if status:
         requested = {s.strip().lower() for s in status.split(",") if s.strip()}
         jobs = [j for j in jobs if str(j.get("status") or "").lower() in requested]
@@ -22621,7 +22716,7 @@ def _sem_final_registry_detail(
 
 def _sem_final_mcp_tool_records() -> List[Dict[str, Any]]:
     records: List[Dict[str, Any]] = []
-    for record in _MCP_TOOL_REGISTRY.values():
+    for record in _merged_mcp_tool_records():
         tool_id = str(record.get("tool_id") or record.get("id") or "").strip()
         if not tool_id:
             continue
@@ -22710,6 +22805,12 @@ def _sem_final_alert_detail(alert_id: str) -> Dict[str, Any]:
 
 
 def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
+    if path == "/bff/audit":
+        return _sem_final_list_response(
+            read_store.list_governance_audit_events(),
+            dataset="governance_audit_events",
+            surface_key="audit",
+        )
     if path == "/bff/artifacts":
         return _sem_final_list_response(
             read_store.list_research_artifacts(),
@@ -22718,7 +22819,7 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
         )
     if path == "/bff/mcp-servers":
         return _sem_final_list_response(
-            [dict(record) for record in _MCP_SERVER_REGISTRY.values()],
+            _merged_mcp_server_records(),
             dataset="mcp_servers",
             surface_key="mcp_servers",
             source="bff_local_registry",
@@ -22885,7 +22986,7 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
         )
     if path.startswith("/bff/mcp-servers/"):
         return _sem_final_registry_detail(
-            _MCP_SERVER_REGISTRY.get(entity_id),
+            _find_record_by_id(_merged_mcp_server_records(), entity_id, ("server_id", "id")),
             entity_id=entity_id,
             label="MCP server",
             surface_key="mcp_server_detail",

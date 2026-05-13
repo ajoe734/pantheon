@@ -81,7 +81,8 @@ def _model_to_data(model: Any) -> Dict[str, Any]:
 
 _FIXTURE_PACK_A_PATH = Path(__file__).resolve().parent / "data" / "fixtures_pack_a.json"
 _FIXTURE_PACK_B_PATH = Path(__file__).resolve().parent / "data" / "fixtures_pack_b.json"
-_FIXTURE_PACK_PATHS = (_FIXTURE_PACK_A_PATH, _FIXTURE_PACK_B_PATH)
+_FIXTURE_PACK_C_PATH = Path(__file__).resolve().parent / "data" / "fixtures_pack_c.json"
+_FIXTURE_PACK_PATHS = (_FIXTURE_PACK_A_PATH, _FIXTURE_PACK_B_PATH, _FIXTURE_PACK_C_PATH)
 _FIXTURE_DATASET_ALIASES = {
     "deployments": "deployment_plans",
     "runtimes": "runtime_bindings",
@@ -92,11 +93,14 @@ _FIXTURE_RECORD_KEYS = [
     "entry_id",
     "decision_id",
     "intervention_id",
+    "job_id",
     "plan_id",
     "program_id",
     "pool_id",
     "persona_id",
+    "server_id",
     "signal_id",
+    "skill_id",
     "session_id",
     "sessionId",
     "strategy_id",
@@ -105,6 +109,8 @@ _FIXTURE_RECORD_KEYS = [
     "rebalance_id",
     "binding_id",
     "runtime_id",
+    "tool_id",
+    "channel_id",
 ]
 
 
@@ -8717,7 +8723,7 @@ class ReadSurfaceStore:
         status: Optional[str] = None,
         job_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        items = list((self._local_fallback("bff_jobs") or {}).values())
+        items = list((self._local_fallback("jobs") or self._local_fallback("bff_jobs") or {}).values())
         if status:
             items = [i for i in items if i.get("status") == status]
         if job_type:
@@ -8727,7 +8733,8 @@ class ReadSurfaceStore:
     def get_job_bff(self, job_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not job_id:
             return None
-        return (self._local_fallback("bff_jobs") or {}).get(job_id)
+        jobs = self._local_fallback("jobs") or self._local_fallback("bff_jobs") or {}
+        return jobs.get(job_id)
 
     def get_job_logs_bff(self, job_id: str) -> List[Dict[str, Any]]:
         job = self.get_job_bff(job_id)
