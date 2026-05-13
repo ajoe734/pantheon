@@ -2,8 +2,8 @@
   "evidence_id": "BFF-CONSOL-017-detail-smoke-b",
   "task_id": "BFF-CONSOL-017",
   "title": "Detail journey smoke B - evolution / research / v5 / agora / artifacts",
-  "generated_at": "2026-05-13T05:24:41Z",
-  "generated_by": "Codex",
+  "generated_at": "2026-05-13T10:50:15Z",
+  "generated_by": "Codex2",
   "verification_method": "focused FastAPI TestClient regression plus Playwright smoke spec update",
   "fixture_pack_dependency": "BFF-CONSOL-009-pack-b",
   "spec_file": "execute-plans/tests/e2e/detail-smoke-b.spec.ts",
@@ -328,11 +328,11 @@
   "verification_commands": [
     {
       "command": "PANTHEON_BFF_AUTH_STUB=true PANTHEON_BFF_AUTH_MODE=permissive python3 -m pytest services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py -q",
-      "result": "2 passed in 5.25s"
+      "result": "2 passed in 3.92s"
     },
     {
       "command": "PANTHEON_BFF_AUTH_STUB=true PANTHEON_BFF_AUTH_MODE=permissive python3 -m pytest services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py services/control-plane/bff/test_rw03_analyze_contract.py services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py services/control-plane/bff/test_ew04_inspiration_graph_contract.py -q",
-      "result": "51 passed in 43.14s"
+      "result": "51 passed in 26.14s"
     }
   ]
 }
