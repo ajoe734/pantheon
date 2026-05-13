@@ -114,6 +114,8 @@ os.environ["INCIDENTS_DATA_DIR"] = str(_INCIDENT_SERVICE_DIR)
 os.environ["POSTMORTEMS_DATA_DIR"] = str(_INCIDENT_SERVICE_DIR)
 os.environ["PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK"] = "false"
 os.environ["BFF_READ_SURFACE_STATE"] = "fresh"
+os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
+os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
 for _env_name in (
     "PANTHEON_BFF_INCIDENT_STORE",
     "PANTHEON_BFF_POSTMORTEM_STORE",

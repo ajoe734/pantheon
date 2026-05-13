@@ -103,8 +103,6 @@ from settings_store import SettingsStore
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
-app = FastAPI(title="Pantheon Operator BFF", version="0.2.0")
-
 
 def _bool_from_env(name: str, *, default: bool = False) -> bool:
     raw = os.getenv(name)
@@ -113,14 +111,95 @@ def _bool_from_env(name: str, *, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+_BFF_AUTH_STUB_ENV = "PANTHEON_BFF_AUTH_STUB"
+_PRODUCTION_STRICT_ENVIRONMENTS = {
+    "canary",
+    "live",
+    "prod",
+    "production",
+    "staging-live",
+}
+_DEFAULT_LOVABLE_CORS_ORIGINS = [
+    # Lovable shared-preview and published URLs for the Pantheon UI lanes.
+    "https://preview--pantheon-dev.lovable.app",
+    "https://preview--pantheon-ai-system-front-dev.lovable.app",
+    "https://preview--pantheon-ai-system-front-staging-live.lovable.app",
+    "https://preview--pantheon.lovable.app",
+    "https://preview--pantheon-ai-system-front.lovable.app",
+    "https://pantheon-dev.lovable.app",
+    "https://pantheon-ai-system-front-dev.lovable.app",
+    "https://pantheon-ai-system-front-staging-live.lovable.app",
+    "https://pantheon.lovable.app",
+    "https://pantheon-ai-system-front.lovable.app",
+]
+_DEV_LOVABLE_CORS_ORIGINS = {
+    "https://preview--pantheon-dev.lovable.app",
+    "https://preview--pantheon-ai-system-front-dev.lovable.app",
+    "https://pantheon-dev.lovable.app",
+    "https://pantheon-ai-system-front-dev.lovable.app",
+}
+
+
+def _normalized_origin(origin: str) -> str:
+    return origin.strip().rstrip("/")
+
+
+def _dedupe_origins(origins: List[str]) -> List[str]:
+    deduped: List[str] = []
+    seen = set()
+    for origin in origins:
+        cleaned = _normalized_origin(origin)
+        if cleaned and cleaned not in seen:
+            deduped.append(cleaned)
+            seen.add(cleaned)
+    return deduped
+
+
+def _bff_auth_mode() -> str:
+    return os.getenv("PANTHEON_BFF_AUTH_MODE", "strict").strip().lower() or "strict"
+
+
+def _is_production_strict_mode() -> bool:
+    env_name = os.getenv("PANTHEON_ENV", "").strip().lower()
+    deployment_stage = os.getenv("PANTHEON_DEPLOYMENT_STAGE", "").strip().lower()
+    return _bff_auth_mode() == "strict" and (
+        env_name in _PRODUCTION_STRICT_ENVIRONMENTS
+        or deployment_stage in _PRODUCTION_STRICT_ENVIRONMENTS
+    )
+
+
+def _bff_auth_stub_enabled() -> bool:
+    return _bool_from_env(_BFF_AUTH_STUB_ENV) and _bff_auth_mode() != "strict"
+
+
 def _cors_origins_from_env() -> List[str]:
     raw = os.getenv("PANTHEON_BFF_CORS_ORIGINS", "")
-    origins = []
-    for origin in raw.split(","):
-        cleaned = origin.strip().rstrip("/")
-        if cleaned:
-            origins.append(cleaned)
-    return origins
+    origins = _dedupe_origins(raw.split(",")) if raw.strip() else list(_DEFAULT_LOVABLE_CORS_ORIGINS)
+    if _is_production_strict_mode():
+        origins = [
+            origin
+            for origin in origins
+            if origin not in _DEV_LOVABLE_CORS_ORIGINS and origin != "*"
+        ]
+    return _dedupe_origins(origins)
+
+
+def _cors_origin_allowed(origin: str) -> bool:
+    return _normalized_origin(origin) in set(_cors_origins_from_env())
+
+
+def _build_bff_app() -> FastAPI:
+    cors_origins = _cors_origins_from_env()
+    built_app = FastAPI(title="Pantheon Operator BFF", version="0.2.0")
+    if cors_origins:
+        built_app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_credentials=True,
+            allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+            allow_headers=_CORS_ALLOW_HEADERS,
+        )
+    return built_app
 
 
 _cors_origins = _cors_origins_from_env()
@@ -140,14 +219,7 @@ _CORS_ALLOW_HEADERS = [
     "X-Request-Id",
     "X-Trace-Id",
 ]
-if _cors_origins:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=_cors_origins,
-        allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=_CORS_ALLOW_HEADERS,
-    )
+app = _build_bff_app()
 
 # --------------------------------------------------------------------------- #
 # Storage
@@ -194,7 +266,8 @@ _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 # Production default: validates HS256 JWT (issuer, audience, expiry, subject)
 # via services.runtime_auth_inbound.validate_request_auth.
 #
-# Dev/test stub mode is available only when PANTHEON_BFF_AUTH_STUB=true.
+# Dev/test stub mode is available only when PANTHEON_BFF_AUTH_STUB=true and
+# PANTHEON_BFF_AUTH_MODE is not strict.
 # Stub accepts "Bearer <operator_id>:<comma_roles>[:mfa]" for local iteration.
 #
 # BFF-scoped env vars (mapped to runtime_auth_inbound key names internally):
@@ -216,9 +289,7 @@ _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 #   PANTHEON_BFF_MFA_CLAIMS    - comma-separated MFA claim paths (e.g. amr,acr)
 #   PANTHEON_BFF_MFA_VALUES    - accepted MFA proof values (e.g. mfa,totp,webauthn)
 #   When JWKS_URI is set, RS256/ES256 JWKS path is used instead of HS256.
-#   Strict default still applies: stub tokens are never accepted unless AUTH_STUB=true.
-
-_BFF_AUTH_STUB_ENV = "PANTHEON_BFF_AUTH_STUB"
+#   Strict default still applies: stub tokens are not accepted in strict mode.
 
 
 def _extract_identity(
@@ -226,7 +297,7 @@ def _extract_identity(
     mfa_token: Optional[str] = None,
     session_cookie: Optional[str] = None,
 ) -> OperatorIdentity:
-    if _bool_from_env(_BFF_AUTH_STUB_ENV):
+    if _bff_auth_stub_enabled():
         return _extract_identity_stub(authorization)
     # Cookie session: treat cookie value as a bearer token when no Authorization header present.
     if not authorization and session_cookie:
@@ -3066,8 +3137,8 @@ def _bff_me_session_payload(identity: OperatorIdentity, *, checked_at: str) -> D
 
 def _bff_me_environment_payload() -> Dict[str, Any]:
     scope = _foundation_environment_scope()
-    stub_auth = _bool_from_env(_BFF_AUTH_STUB_ENV)
-    auth_mode = "stub" if stub_auth else os.getenv("PANTHEON_BFF_AUTH_MODE", "strict").strip().lower() or "strict"
+    stub_auth = _bff_auth_stub_enabled()
+    auth_mode = "stub" if stub_auth else _bff_auth_mode()
     return {
         "name": scope.name.value,
         "deployment_stage": os.getenv("PANTHEON_DEPLOYMENT_STAGE", scope.name.value),

@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 os.environ["BFF_DATA_DIR"] = "/tmp/pantheon/bff_test"
 os.environ.setdefault("BFF_READ_SURFACE_STATE", "fresh")
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
+os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
 from fastapi.testclient import TestClient
 import main as bff_main
 from main import app, command_store

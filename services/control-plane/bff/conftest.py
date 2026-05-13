@@ -16,3 +16,5 @@ def _bff_stub_auth_default(monkeypatch):
     """Enable stub auth mode unless the test overrides it explicitly."""
     if not os.environ.get("PANTHEON_BFF_AUTH_STUB"):
         monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    if not os.environ.get("PANTHEON_BFF_AUTH_MODE"):
+        monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")

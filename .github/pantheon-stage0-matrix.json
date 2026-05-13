@@ -87,6 +87,7 @@
         ],
         "commands": [
           "python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/read_store.py services/frontend/sse_reconciler.py services/frontend/adapter.py",
+          "python3 -m pytest services/control-plane/bff/tests/test_auth_jwks_strict.py -q",
           "python3 services/control-plane/bff/test_command_executor.py",
           "python3 services/control-plane/bff/test_read_store_deployment.py",
           "python3 services/control-plane/bff/test_read_store_incident.py",

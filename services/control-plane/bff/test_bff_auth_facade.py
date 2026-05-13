@@ -253,7 +253,11 @@ class TestExtractIdentityDispatch:
 
     def test_no_stub_env_routes_to_jwt(self):
         from fastapi import HTTPException
-        with patch.dict(os.environ, {"PANTHEON_BFF_AUTH_STUB": ""}, clear=False):
+        with patch.dict(
+            os.environ,
+            {"PANTHEON_BFF_AUTH_STUB": "", "PANTHEON_BFF_AUTH_MODE": "strict"},
+            clear=False,
+        ):
             with pytest.raises(HTTPException) as exc_info:
                 _extract_identity("Bearer op-admin:admin:mfa")
         assert exc_info.value.status_code == 401
