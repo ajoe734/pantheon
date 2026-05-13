@@ -1,12 +1,14 @@
 {
   "version": 1,
-  "updated_at": "2026-05-13T09:08:32Z",
+  "updated_at": "2026-05-13T10:49:57Z",
   "counts": {
-    "total": 990,
-    "completed": 972,
+    "total": 992,
+    "completed": 974,
     "superseded": 18
   },
   "recent_terminal_ids": [
+    "BFF-CONSOL-016",
+    "BFF-CONSOL-026",
     "BFF-CONSOL-015",
     "BFF-CONSOL-022-SIDECAR-BFF-HANDOFF",
     "EP5-BROKER-TW-002-RERUN-REAL-SIDECAR-ACCEPTANCE",
@@ -24,8 +26,6 @@
     "BFF-CONSOL-004",
     "BFF-CONSOL-003",
     "SVC-RENAME-003",
-    "BFF-CONSOL-001",
-    "EP5-BROKER-TW-002-RERUN-REAL-FIX",
-    "BFF-CONSOL-002"
+    "BFF-CONSOL-001"
   ]
 }
