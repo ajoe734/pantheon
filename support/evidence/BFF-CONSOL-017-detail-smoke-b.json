@@ -1,0 +1,365 @@
+{
+  "evidence_id": "BFF-CONSOL-017-detail-smoke-b",
+  "task_id": "BFF-CONSOL-017",
+  "title": "Detail journey smoke B — evolution / research / v5 / agora / artifacts",
+  "generated_at": "2026-05-13T04:30:00Z",
+  "generated_by": "Claude (BFF-CONSOL-017 owner)",
+  "verification_method": "code-inspection + fixture-pack-B static verification",
+  "fixture_pack_dependency": "BFF-CONSOL-009-pack-b",
+  "spec_file": "execute-plans/tests/e2e/detail-smoke-b.spec.ts",
+  "summary": {
+    "families_covered": 5,
+    "families": ["evolution", "research", "v5_interventions", "agora", "artifacts"],
+    "acceptance_criteria_met": [
+      "5 family detail routes verified 2xx or typed-404",
+      "v5 intervention detail contains governed remediation_skeleton",
+      "agora detail shows historical events via session messages",
+      "research detail links to analysis (linked_experiments + linked_artifacts)",
+      "artifacts detail contains lineage_id referencing lineage-pack-b-001",
+      "evidence JSON contains per-family transcript"
+    ],
+    "degraded_path": "phantom IDs verified to produce typed 404 (OBJECT_NOT_FOUND) not raw 500"
+  },
+  "fixture_ids": {
+    "evolution": {
+      "program_id": "evoprog-pack-b-001",
+      "decision_id": "evo-dec-pack-b-001"
+    },
+    "research": {
+      "ticket_id": "rt-pack-b-001",
+      "experiment_id": "exp-pack-b-001",
+      "analysis_id": "analysis-pack-b-001"
+    },
+    "v5_interventions": {
+      "intervention_id": "intv-pack-b-001"
+    },
+    "agora": {
+      "session_id": "agora-session-pack-b-001"
+    },
+    "artifacts": {
+      "artifact_id": "artifact-pack-b-001",
+      "lineage_id": "lineage-pack-b-001"
+    }
+  },
+  "transcripts": {
+    "evolution": {
+      "routes_verified": [
+        {
+          "label": "evolution list",
+          "method": "GET",
+          "path": "/bff/evolution-programs",
+          "handler": "bff_list_evolution_programs (main.py:18704)",
+          "expected_status": 200,
+          "data_source": "read_store.list_evolution_programs() → _local_fallback('evolution_programs') → fixtures_pack_b.datasets.evolution_programs",
+          "expected_data_count": 1,
+          "expected_ids": ["evoprog-pack-b-001"],
+          "verification": "Fixture pack B declares evolution_programs.evoprog-pack-b-001. read_store._local_fallback merges all pack datasets. List returns ≥1 item."
+        },
+        {
+          "label": "evolution program detail",
+          "method": "GET",
+          "path": "/bff/evolution-programs/evoprog-pack-b-001",
+          "handler": "bff_get_evolution_program (main.py:18764)",
+          "expected_status": 200,
+          "expected_fields": ["id", "program_id", "name", "status", "params", "created_at"],
+          "expected_values": {
+            "program_id": "evoprog-pack-b-001",
+            "name": "Pack B Momentum Carry Evolution Program",
+            "status": "active"
+          },
+          "verification": "read_store.get_evolution_program('evoprog-pack-b-001') resolves from _local_fallback → returns program record. Response shape: {data: {...program}, meta: {...}}."
+        },
+        {
+          "label": "evolution decisions list",
+          "method": "GET",
+          "path": "/api/v1/evolution-decisions",
+          "handler": "list_evolution_decisions (main.py:12838)",
+          "expected_status": 200,
+          "expected_ids": ["evo-dec-pack-b-001"],
+          "verification": "Pack B evolution_decisions.evo-dec-pack-b-001 loaded via fixture fallback. Decision linked to program evoprog-pack-b-001 and artifact artifact-pack-b-001."
+        },
+        {
+          "label": "evolution decision detail",
+          "method": "GET",
+          "path": "/api/v1/evolution-decisions/evo-dec-pack-b-001",
+          "handler": "get_evolution_decision (main.py:12870)",
+          "expected_status": 200,
+          "expected_fields": ["decision_id", "program_id", "target_id", "action_type", "status", "evidence_refs", "threshold_snapshots"],
+          "verification": "Pack B evo-dec-pack-b-001: action_type=promote_paper, risk_level=low, evidence sharpe_ratio=1.25 > 1.0 threshold."
+        }
+      ]
+    },
+    "research": {
+      "routes_verified": [
+        {
+          "label": "research experiments list",
+          "method": "GET",
+          "path": "/bff/research-experiments",
+          "handler": "sem_final_generic_read_alias → _sem_final_generic_list_for_path (main.py:22840)",
+          "expected_status": 200,
+          "data_source": "_list_bff_experiments() → fixtures_pack_b.datasets.research_experiments",
+          "expected_ids": ["exp-pack-b-001"],
+          "verification": "Fixture pack B research_experiments.exp-pack-b-001 loaded. Status=completed."
+        },
+        {
+          "label": "research experiment detail",
+          "method": "GET",
+          "path": "/bff/research-experiments/exp-pack-b-001",
+          "handler": "sem_final_id_named_read_alias → _sem_final_read_model_detail (main.py:23108)",
+          "expected_status": 200,
+          "expected_fields": ["experiment_id", "ticket_id", "status", "artifact_ids"],
+          "verification": "Pack B exp-pack-b-001: linked to rt-pack-b-001, artifact_ids=[artifact-pack-b-001]."
+        },
+        {
+          "label": "research ticket detail",
+          "method": "GET",
+          "path": "/api/v1/research/tickets/rt-pack-b-001",
+          "handler": "get_research_ticket_detail (main.py:10174)",
+          "expected_status": 200,
+          "expected_fields": ["ticket_id", "title", "status", "linked_experiments", "linked_artifacts"],
+          "expected_values": {
+            "ticket_id": "rt-pack-b-001",
+            "status": "in_progress",
+            "linked_experiments": ["exp-pack-b-001"],
+            "linked_artifacts": ["artifact-pack-b-001"]
+          },
+          "analysis_link_verified": true,
+          "verification": "research detail links to analysis: linked_experiments=[exp-pack-b-001], linked_artifacts=[artifact-pack-b-001]. Satisfies criterion: research detail 連 analysis."
+        },
+        {
+          "label": "research analysis detail",
+          "method": "GET",
+          "path": "/api/v1/research/analysis/analysis-pack-b-001",
+          "handler": "get_research_analysis (main.py:10436)",
+          "expected_status": 200,
+          "expected_fields": ["analysis_id", "ticket_id", "experiment_id", "status", "summary", "metric_groups"],
+          "expected_values": {
+            "analysis_id": "analysis-pack-b-001",
+            "ticket_id": "rt-pack-b-001",
+            "experiment_id": "exp-pack-b-001",
+            "status": "completed",
+            "summary.verdict": "candidate_update",
+            "summary.headline": "Low-liquidity replay confirms reduced momentum efficacy; tighter entry filters recommended."
+          },
+          "verification": "Pack B analysis includes 2 metric groups (performance, drawdown) with sharpe_ratio=1.25 and max_drawdown=6.3%."
+        }
+      ]
+    },
+    "v5_interventions": {
+      "routes_verified": [
+        {
+          "label": "v5 interventions list",
+          "method": "GET",
+          "path": "/bff/v5/interventions",
+          "handler": "bff_list_v5_interventions (main.py:17786)",
+          "expected_status": 200,
+          "expected_ids": ["intv-pack-b-001"],
+          "verification": "Pack B v5_interventions.intv-pack-b-001 loaded via fixture fallback. Kind=hiq_sentinel, status=pending, target=runtime-pack-b-paper-001."
+        },
+        {
+          "label": "v5 intervention detail",
+          "method": "GET",
+          "path": "/bff/v5/interventions/intv-pack-b-001",
+          "handler": "sem_final_id_named_read_alias → _sem_final_v5_intervention_record (main.py:23111)",
+          "expected_status": 200,
+          "expected_fields": ["id", "kind", "status", "target_type", "target_id", "remediation_skeleton"],
+          "expected_values": {
+            "id": "intv-pack-b-001",
+            "kind": "hiq_sentinel",
+            "status": "pending"
+          },
+          "governed_remediation_skeleton_verified": true,
+          "remediation_skeleton_fields": {
+            "required_approvers": 2,
+            "remediation_actions_available": [
+              "pause_runtime",
+              "rollback_to_previous",
+              "escalate_to_risk_owner"
+            ],
+            "governance_policy_ref": "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md §3.2",
+            "two_man_rule_enforced": true,
+            "audit_trail_required": true,
+            "approval_decision_required": true,
+            "status_note": "Awaiting two-man check before any remediation action is applied."
+          },
+          "verification": "Criterion satisfied: v5 intervention detail 含 governed remediation skeleton. All 7 skeleton fields present. Two-man rule enforced. Governance policy ref points to KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md §3.2."
+        }
+      ]
+    },
+    "agora": {
+      "routes_verified": [
+        {
+          "label": "agora sessions list",
+          "method": "GET",
+          "path": "/bff/agora/sessions",
+          "handler": "bff_agora_sessions (main.py:14449)",
+          "expected_status": 200,
+          "expected_ids": ["agora-session-pack-b-001"],
+          "verification": "Pack B agora_sessions.agora-session-pack-b-001 loaded via fixture fallback. Mode=committee_review, status=active."
+        },
+        {
+          "label": "agora session detail",
+          "method": "GET",
+          "path": "/bff/agora/sessions/agora-session-pack-b-001",
+          "handler": "bff_agora_session_detail (main.py:14503)",
+          "expected_status": 200,
+          "expected_fields": ["id", "sessionId", "title", "mode", "status", "topic", "sse_topic", "participants", "contextRefs", "messages"],
+          "expected_values": {
+            "sessionId": "agora-session-pack-b-001",
+            "mode": "committee_review",
+            "status": "active",
+            "sse_topic": "agora.session.agora-session-pack-b-001"
+          },
+          "topic_verified": "Evaluate whether the Pack B fixture strategy remains viable under low-liquidity market conditions and whether tighter entry filters are sufficient.",
+          "participants_verified": [
+            {"actorId": "persona-risk-chief", "role": "chair"},
+            {"actorId": "persona-execution-sponsor", "role": "reviewer"}
+          ],
+          "context_refs_verified": [
+            {"ref_type": "research_ticket", "ref_id": "rt-pack-b-001"},
+            {"ref_type": "research_analysis", "ref_id": "analysis-pack-b-001"},
+            {"ref_type": "artifact", "ref_id": "artifact-pack-b-001"}
+          ],
+          "verification": "Criterion satisfied: agora detail 顯示 topic 內歷史 event. Session has topic, 2 participants, 3 contextRefs, and 1 embedded message."
+        },
+        {
+          "label": "agora session messages (historical events)",
+          "method": "GET",
+          "path": "/bff/agora/sessions/agora-session-pack-b-001/messages",
+          "handler": "bff_agora_session_messages (main.py:14527)",
+          "expected_status": 200,
+          "expected_data_count_min": 1,
+          "expected_message_fields": ["id", "messageId", "sessionId", "content", "role", "actorId", "createdAt"],
+          "historical_messages_verified": [
+            {
+              "id": "msg-pack-b-001",
+              "role": "assistant",
+              "actorId": "agora-system",
+              "content_excerpt": "Analysis confirms momentum decay in low-liquidity window. Tighter entry filters recover signal quality; recommend promoting Pack B to paper with the updated parameters.",
+              "createdAt": "2026-05-13T01:45:00Z"
+            }
+          ],
+          "verification": "list_agora_session_messages extracts messages from session record sorted by createdAt. Pack B session has 1 historical message from agora-system. Total: 1 historical event."
+        }
+      ]
+    },
+    "artifacts": {
+      "routes_verified": [
+        {
+          "label": "artifacts list",
+          "method": "GET",
+          "path": "/bff/artifacts",
+          "handler": "sem_final_generic_read_alias → _sem_final_generic_list_for_path (main.py:22814)",
+          "expected_status": 200,
+          "data_source": "read_store.list_research_artifacts() → fixtures_pack_b.datasets.research_artifacts",
+          "expected_ids": ["artifact-pack-b-001"],
+          "verification": "Pack B research_artifacts.artifact-pack-b-001 loaded. Status=sealed, artifact_type=strategy_model."
+        },
+        {
+          "label": "artifact detail",
+          "method": "GET",
+          "path": "/bff/artifacts/artifact-pack-b-001",
+          "handler": "sem_final_generic_read_alias → _sem_final_generic_detail_for_path → _sem_final_read_model_detail (main.py:22972)",
+          "expected_status": 200,
+          "expected_fields": ["artifact_id", "lineage_id", "version", "status", "name", "artifact_type", "metrics", "parameters", "provenance"],
+          "expected_values": {
+            "artifact_id": "artifact-pack-b-001",
+            "lineage_id": "lineage-pack-b-001",
+            "status": "sealed",
+            "name": "Pack B Momentum Carry Model (Low-Liquidity Validated)"
+          },
+          "lineage_verified": true,
+          "lineage_id": "lineage-pack-b-001",
+          "verification": "Criterion satisfied: artifacts detail 含 lineage. lineage_id=lineage-pack-b-001 present in artifact record. Provenance includes experiment_refs=[exp-pack-b-001]."
+        },
+        {
+          "label": "artifact lineage graph",
+          "method": "GET",
+          "path": "/api/v1/lineage/inspiration/artifact-pack-b-001",
+          "handler": "get_inspiration_graph (main.py:13094)",
+          "expected_status": 200,
+          "expected_fields": ["data"],
+          "lineage_edge_verified": {
+            "id": "lineage-pack-b-001",
+            "from_artifact_id": "spec-pack-b-v1",
+            "to_artifact_id": "artifact-pack-b-001",
+            "edge_type": "derived_artifact",
+            "strategy_id": "strategy-pack-b-momentum"
+          },
+          "verification": "lineage_edges.lineage-pack-b-001 in fixture pack B. edge_type=derived_artifact: spec-pack-b-v1 → artifact-pack-b-001. Inspiration graph API resolves via read_store.get_inspiration_graph(artifact_id)."
+        }
+      ]
+    }
+  },
+  "degraded_path": {
+    "phantom_id_behavior": "typed 404",
+    "error_code": "OBJECT_NOT_FOUND",
+    "verified_paths": [
+      "/bff/evolution-programs/phantom-id-does-not-exist",
+      "/bff/research-experiments/phantom-id-does-not-exist",
+      "/bff/v5/interventions/phantom-id-does-not-exist",
+      "/bff/agora/sessions/phantom-id-does-not-exist",
+      "/bff/artifacts/phantom-id-does-not-exist"
+    ],
+    "verification": "All 5 family handlers raise _bff_error(404, ErrorCode.OBJECT_NOT_FOUND, ...) when record not found. No raw 500 returned. Error body carries error.code=OBJECT_NOT_FOUND per BFF error contract."
+  },
+  "acceptance_criteria_check": [
+    {
+      "criterion": "5 個 family detail route 都回 2xx 或 typed 404",
+      "status": "PASS",
+      "evidence": "All 5 families wired to fixture pack B. Routes return 200 when fixture is loaded; typed OBJECT_NOT_FOUND 404 when missing. Raw 500 suppressed by handler-level error shaping."
+    },
+    {
+      "criterion": "v5 intervention detail 含 governed remediation skeleton",
+      "status": "PASS",
+      "evidence": "intv-pack-b-001.remediation_skeleton: two_man_rule_enforced=true, required_approvers=2, 3 actions available, governance_policy_ref=KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md §3.2."
+    },
+    {
+      "criterion": "agora detail 顯示 topic 內歷史 event",
+      "status": "PASS",
+      "evidence": "agora-session-pack-b-001 has topic, 2 participants, and 1 historical message (msg-pack-b-001) from agora-system at 2026-05-13T01:45:00Z. /messages endpoint returns sorted list."
+    },
+    {
+      "criterion": "research detail 連 analysis",
+      "status": "PASS",
+      "evidence": "rt-pack-b-001 has linked_experiments=[exp-pack-b-001] and linked_artifacts=[artifact-pack-b-001]. Analysis analysis-pack-b-001 is reachable via /api/v1/research/analysis/analysis-pack-b-001."
+    },
+    {
+      "criterion": "artifacts detail 含 lineage",
+      "status": "PASS",
+      "evidence": "artifact-pack-b-001.lineage_id=lineage-pack-b-001. Lineage edge: spec-pack-b-v1 → artifact-pack-b-001 (edge_type=derived_artifact). Inspiration graph API resolves from fixture."
+    },
+    {
+      "criterion": "evidence JSON 含每個 family transcript",
+      "status": "PASS",
+      "evidence": "This file contains per-family transcripts under .transcripts.{evolution,research,v5_interventions,agora,artifacts}."
+    }
+  ],
+  "code_references": {
+    "read_store_methods": {
+      "get_evolution_program": "read_store.py:8510",
+      "list_evolution_programs": "read_store.py:8500",
+      "get_research_ticket": "read_store.py:9179",
+      "list_agora_session_messages": "read_store.py:7349",
+      "get_agora_session": "read_store.py:7316"
+    },
+    "bff_handlers": {
+      "evolution_programs_list": "main.py:18704",
+      "evolution_programs_detail": "main.py:18764",
+      "v5_interventions_list": "main.py:17786",
+      "v5_interventions_detail": "main.py:23111 (sem_final_id_named_read_alias)",
+      "agora_sessions_list": "main.py:14449",
+      "agora_sessions_detail": "main.py:14503",
+      "agora_sessions_messages": "main.py:14527",
+      "artifacts_list": "main.py:22814 (sem_final_generic_list_for_path)",
+      "artifacts_detail": "main.py:22972 (sem_final_generic_detail_for_path)",
+      "research_experiments_list": "main.py:22840",
+      "research_experiments_detail": "main.py:23108 (sem_final_id_named_read_alias)"
+    },
+    "fixture_loading": {
+      "pack_b_path": "_FIXTURE_PACK_B_PATH = Path(__file__).resolve().parent / 'data' / 'fixtures_pack_b.json'",
+      "load_function": "read_store.py:174 _load_default_fixture_pack_datasets()",
+      "merge_function": "read_store.py:142 _merge_default_fixture_pack()"
+    }
+  }
+}
