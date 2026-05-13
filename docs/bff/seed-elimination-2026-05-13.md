@@ -60,23 +60,35 @@ Adjunct live-required helpers now use their route or parent DTO:
 - `bff.rebalanceWorkflow.forRebalance` -> `/bff/rebalances/{id}`
 - `bff.search` -> `/bff/search`
 
-## Deferred Follow-Up
+## BFF-CONSOL-028 Adjunct Follow-Up
 
-`BFF-CONSOL-028` owns the remaining deferred helper families:
+`BFF-CONSOL-028` resolved the deferred adjunct families with one of two strict
+live policies.
 
-- global route-policy list/detail and policy versions
-- permission matrix list/detail
-- global memory queue
-- consultation rules
-- global/run-scoped evolution run adjuncts and candidate helpers
-- fitness formulas and mutation rules
-- policy violations and evaluation/object-version adjuncts
-- feature sets and performance series
-- allocation limits and pool freezes
-- promotions, metric freezes, and rebalance overrides
+Routeable helpers now fold into existing BFF parent/detail routes:
 
-Until `BFF-CONSOL-028` resolves them, these helpers return explicit empty or
-unavailable states in live mode; they do not return seed as live truth.
+- `bff.routePolicies.list/get` synthesize global policy rows from
+  `/bff/personas` plus `/bff/personas/{id}/route-policy`.
+- `bff.memoryUpdates.list` synthesizes the global queue from
+  `/bff/personas/{id}/memory`.
+- `bff.consultRules.list/get` derives visible trigger rules from the live
+  `consult_policy` payload carried by `/bff/personas/{id}/route-policy`.
+- `bff.evolutionRuns.list` uses `/bff/evolution-programs` plus
+  `/bff/evolution-programs/{id}/runs`.
+- `bff.evolutionCandidates.forRun` resolves the run's program from live run
+  routes, then reads `/bff/evolution-programs/{id}/candidates`.
+- `bff.evaluationRuns.list/forSubject` route persona subjects through
+  `/bff/personas/{id}/evaluations`; unsupported subject kinds return empty in
+  strict live.
+- `bff.objectVersions.forSubject` routes strategy subjects through
+  `/bff/strategies/{id}/specs`; unsupported subject kinds return empty in
+  strict live.
+
+Helpers with no safe BFF route or parent DTO remain explicit strict-live
+empty/unavailable surfaces: policy versions, permission matrices,
+fitness/mutation rules, policy violations, feature sets, performance series,
+allocation limits, pool freezes, promotions, metric freezes, and rebalance
+overrides. These helpers do not expose seed rows while `VITE_BFF_MODE=live`.
 
 ## Verification
 
@@ -96,3 +108,28 @@ Results:
   size and dynamic-import chunking warnings.
 - Scoped `git diff --check` and `jq empty` validation passed for the touched
   seed/taxonomy/docs files.
+
+Additional `BFF-CONSOL-028` verification from `../execute-plans`:
+
+```bash
+npm test -- src/lib/bff-v1/__tests__/seedTaxonomy.test.ts
+npm test -- src/lib/bff-v1/__tests__/seedTaxonomy.test.ts src/lib/bff-v1/__tests__/lists.test.ts src/lib/bff/__tests__/client.test.ts
+npm run build
+```
+
+Additional Pantheon-side checks:
+
+```bash
+jq empty docs/bff/seed-taxonomy.json
+jq empty ../execute-plans/src/lib/bff-v1/seed-taxonomy.json
+git diff --check -- docs/bff/seed-elimination-2026-05-13.md docs/bff/seed-taxonomy.json
+```
+
+Results:
+
+- Focused seed taxonomy test passed, `8` tests passed.
+- Broader BFF client/list/taxonomy run passed, `3` files and `32` tests
+  passed.
+- Frontend production build completed successfully. Vite reported only existing
+  Browserslist, dynamic-import chunking, and bundle-size warnings.
+- JSON validation and scoped Pantheon `git diff --check` passed.

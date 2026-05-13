@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "BFF-CONSOL-007",
-  "generated_at": "2026-05-13T03:58:00Z",
+  "generated_at": "2026-05-13T11:28:46Z",
   "source": {
     "brief_path": "execute-plans/src/lib/bff/seed.ts",
     "actual_frontend_path": "../execute-plans/src/lib/bff-v1/seed.ts",
@@ -15,13 +15,13 @@
     "live_required": "Operator-facing data or command/session surface that must use a live BFF route in live/strict mode. Mock seed is allowed only in mock mode or explicit hybrid fallback with visible status.",
     "mock_only_dev": "Development-only helper. In live mode it should be hidden, disabled, or rendered as an explicit empty/mock state; it must not masquerade as live data.",
     "deprecated": "Legacy public accessor that should be replaced by the typed live surface or command client and removed from seed.ts after the migration task lands.",
-    "deferred": "No safe direct live replacement in this task. The helper needs the listed follow-up task to either wire a route, fold into an existing detail DTO, or remove the UI surface."
+    "deferred": "No safe direct live replacement. In strict live the helper must be hidden, disabled, or return an explicit empty/unavailable state unless a later task adds a canonical BFF route or parent DTO."
   },
   "category_counts": {
-    "live_required": 52,
+    "live_required": 62,
     "mock_only_dev": 4,
     "deprecated": 2,
-    "deferred": 25
+    "deferred": 15
   },
   "helpers": [
     {
@@ -738,27 +738,29 @@
     },
     {
       "name": "bff.routePolicies.list",
-      "category": "deferred",
+      "category": "live_required",
       "seed_source": "seed.routePolicies",
-      "live_routes": [],
-      "replacement": "Add a route-policy list route or remove list UI; for persona-specific display use /bff/personas/{id}/route-policy.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
+      "live_routes": [
+        "GET /bff/personas",
+        "GET /bff/personas/{id}/route-policy"
       ],
+      "replacement": "Synthesize the list from persona-scoped route-policy DTOs; do not expose the global seed list in live mode.",
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "No standalone /bff/route-policies route in the backend manifest."
+      "notes": "BFF-CONSOL-028: folded into existing persona route-policy BFF routes."
     },
     {
       "name": "bff.routePolicies.get",
-      "category": "deferred",
+      "category": "live_required",
       "seed_source": "seed.routePolicies",
-      "live_routes": [],
-      "replacement": "Fold into /bff/personas/{id}/route-policy or add a canonical route-policy detail route.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
+      "live_routes": [
+        "GET /bff/personas",
+        "GET /bff/personas/{id}/route-policy"
       ],
+      "replacement": "Resolve by live synthesized route-policy identifier from persona-scoped DTOs; do not read seed by policy id in live mode.",
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "Current helper gets route policy by policy id, but live route is persona scoped."
+      "notes": "BFF-CONSOL-028: folded policy detail into persona route-policy DTOs."
     },
     {
       "name": "bff.routePolicies.forPersona",
@@ -781,11 +783,9 @@
       "seed_source": "seed.policyVersions",
       "live_routes": [],
       "replacement": "Add version history to route-policy DTO or create a version route before strict live display.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
-      ],
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "No backend route found for policy versions."
+      "notes": "BFF-CONSOL-028 decision: strict live returns explicit empty/unavailable until a canonical BFF route or parent DTO exists. No backend route found for policy versions."
     },
     {
       "name": "bff.permissionMatrix.get",
@@ -793,11 +793,9 @@
       "seed_source": "seed.permissionMatrices",
       "live_routes": [],
       "replacement": "Wire a permissions/capabilities route or hide the matrix in strict live.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
-      ],
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "No /bff/permission-matrices route in the manifest."
+      "notes": "BFF-CONSOL-028 decision: strict live returns explicit empty/unavailable until a canonical BFF route or parent DTO exists. No /bff/permission-matrices route in the manifest."
     },
     {
       "name": "bff.permissionMatrices.list",
@@ -805,23 +803,22 @@
       "seed_source": "seed.permissionMatrices",
       "live_routes": [],
       "replacement": "Wire a permissions/capabilities route or hide the matrix list in strict live.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
-      ],
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "No /bff/permission-matrices route in the manifest."
+      "notes": "BFF-CONSOL-028 decision: strict live returns explicit empty/unavailable until a canonical BFF route or parent DTO exists. No /bff/permission-matrices route in the manifest."
     },
     {
       "name": "bff.memoryUpdates.list",
-      "category": "deferred",
+      "category": "live_required",
       "seed_source": "seed.memoryUpdates",
-      "live_routes": [],
-      "replacement": "Use persona-scoped memory route where possible; remove global memory queue seed fallback unless a route is added.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
+      "live_routes": [
+        "GET /bff/personas",
+        "GET /bff/personas/{id}/memory"
       ],
+      "replacement": "Synthesize the global memory queue from persona-scoped memory routes; no global seed queue in live mode.",
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "No global memory-updates route found."
+      "notes": "BFF-CONSOL-028: folded global queue into existing persona memory BFF routes."
     },
     {
       "name": "bff.memoryUpdates.forPersona",
@@ -840,39 +837,42 @@
     },
     {
       "name": "bff.consultRules.list",
-      "category": "deferred",
+      "category": "live_required",
       "seed_source": "seed.consultRules",
-      "live_routes": [],
-      "replacement": "Add /bff consult-policy surface or migrate UI to existing API v1 consultation routes.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
+      "live_routes": [
+        "GET /bff/personas",
+        "GET /bff/personas/{id}/route-policy"
       ],
+      "replacement": "Derive visible consultation trigger rules from live route-policy consult_policy DTOs; hide rows when no live consult policy is present.",
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "Backend has API v1 consultation routes, but no matching /bff consultRules route."
+      "notes": "BFF-CONSOL-028: folded consult rules into persona route-policy DTOs instead of seed."
     },
     {
       "name": "bff.consultRules.get",
-      "category": "deferred",
+      "category": "live_required",
       "seed_source": "seed.consultRules",
-      "live_routes": [],
-      "replacement": "Add /bff consult-policy detail surface or remove strict-live seed display.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
+      "live_routes": [
+        "GET /bff/personas",
+        "GET /bff/personas/{id}/route-policy"
       ],
+      "replacement": "Resolve by rule id from live route-policy consult_policy DTOs; no seed detail fallback in live mode.",
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "No matching /bff route."
+      "notes": "BFF-CONSOL-028: folded consult rule detail into persona route-policy DTOs."
     },
     {
       "name": "bff.evolutionRuns.list",
-      "category": "deferred",
+      "category": "live_required",
       "seed_source": "seed.evolutionRuns",
-      "live_routes": [],
-      "replacement": "Use program-scoped runs or add a global runs route.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
+      "live_routes": [
+        "GET /bff/evolution-programs",
+        "GET /bff/evolution-programs/{id}/runs"
       ],
+      "replacement": "Synthesize the global run list from program-scoped run routes.",
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "Backend exposes runs under /bff/evolution-programs/{id}/runs."
+      "notes": "BFF-CONSOL-028: routeable through existing evolution program run routes."
     },
     {
       "name": "bff.evolutionRuns.forProgram",
@@ -891,17 +891,17 @@
     },
     {
       "name": "bff.evolutionCandidates.forRun",
-      "category": "deferred",
+      "category": "live_required",
       "seed_source": "seed.evolutionCandidates",
       "live_routes": [
+        "GET /bff/evolution-programs",
+        "GET /bff/evolution-programs/{id}/runs",
         "GET /bff/evolution-programs/{id}/candidates"
       ],
-      "replacement": "Change helper contract from runId to programId or resolve run->program before calling the live route.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
-      ],
+      "replacement": "Resolve run to its program from live run routes, then read program-scoped candidates; return empty if the run cannot be resolved live.",
+      "follow_up_tasks": [],
       "priority": "P1",
-      "notes": "Current helper is run-scoped; backend route is program-scoped."
+      "notes": "BFF-CONSOL-028: folded run-scoped helper into program-scoped candidate route."
     },
     {
       "name": "bff.fitnessFormulas.list",
@@ -909,11 +909,9 @@
       "seed_source": "seed.fitnessFormulas",
       "live_routes": [],
       "replacement": "Create an evolution formula/config route or hide this studio in strict live.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
-      ],
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "No matching route in backend manifest."
+      "notes": "BFF-CONSOL-028 decision: strict live returns explicit empty/unavailable until a canonical BFF route or parent DTO exists. No matching route in backend manifest."
     },
     {
       "name": "bff.fitnessFormulas.get",
@@ -921,11 +919,9 @@
       "seed_source": "seed.fitnessFormulas",
       "live_routes": [],
       "replacement": "Create an evolution formula/config detail route or remove strict-live seed fallback.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
-      ],
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "No matching route in backend manifest."
+      "notes": "BFF-CONSOL-028 decision: strict live returns explicit empty/unavailable until a canonical BFF route or parent DTO exists. No matching route in backend manifest."
     },
     {
       "name": "bff.mutationRules.list",
@@ -933,11 +929,9 @@
       "seed_source": "seed.mutationRules",
       "live_routes": [],
       "replacement": "Create an evolution mutation-rule route or hide this studio in strict live.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
-      ],
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "No matching route in backend manifest."
+      "notes": "BFF-CONSOL-028 decision: strict live returns explicit empty/unavailable until a canonical BFF route or parent DTO exists. No matching route in backend manifest."
     },
     {
       "name": "bff.allocationSimulations.forRebalance",
@@ -958,11 +952,9 @@
       "seed_source": "seed.policyViolations",
       "live_routes": [],
       "replacement": "Add policy-violation route or fold into persona/strategy detail DTOs.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
-      ],
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "No generic subject violation route in backend manifest."
+      "notes": "BFF-CONSOL-028 decision: strict live returns explicit empty/unavailable until a canonical BFF route or parent DTO exists. No generic subject violation route in backend manifest."
     },
     {
       "name": "bff.policyViolations.forSubject",
@@ -970,51 +962,46 @@
       "seed_source": "seed.policyViolations",
       "live_routes": [],
       "replacement": "Add subject-scoped policy-violation route or fold into detail DTOs.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
-      ],
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "Used by persona detail; strict live needs a non-seed source."
+      "notes": "BFF-CONSOL-028 decision: strict live returns explicit empty/unavailable until a canonical BFF route or parent DTO exists. Used by persona detail; strict live needs a non-seed source."
     },
     {
       "name": "bff.evaluationRuns.list",
-      "category": "deferred",
+      "category": "live_required",
       "seed_source": "seed.evaluationRuns",
-      "live_routes": [],
-      "replacement": "Use persona-scoped evaluations where possible or add a generic evaluation-runs route.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
+      "live_routes": [
+        "GET /bff/personas",
+        "GET /bff/personas/{id}/evaluations"
       ],
+      "replacement": "Synthesize persona evaluation rows from persona-scoped evaluation routes; unsupported non-persona evaluation lists remain hidden.",
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "Backend exposes /bff/personas/{id}/evaluations, not a generic list."
+      "notes": "BFF-CONSOL-028: routeable through existing persona evaluation routes."
     },
     {
       "name": "bff.evaluationRuns.forSubject",
-      "category": "deferred",
+      "category": "live_required",
       "seed_source": "seed.evaluationRuns",
       "live_routes": [
         "GET /bff/personas/{id}/evaluations"
       ],
-      "replacement": "Split persona subject to the live persona route; disable unsupported subject kinds in strict live.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
-      ],
+      "replacement": "Use the live persona evaluation route for Persona subjects; return explicit empty state for unsupported subject kinds in strict live mode.",
+      "follow_up_tasks": [],
       "priority": "P1",
-      "notes": "Current helper is generic subject-scoped; live route is persona-specific."
+      "notes": "BFF-CONSOL-028: persona subjects route live; other subject kinds are hidden, not seeded."
     },
     {
       "name": "bff.objectVersions.forSubject",
-      "category": "deferred",
+      "category": "live_required",
       "seed_source": "seed.objectVersions",
       "live_routes": [
         "GET /bff/strategies/{id}/specs"
       ],
-      "replacement": "Fold strategy/persona versions into detail tabs or add subject version routes.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
-      ],
+      "replacement": "Use strategy spec-version route for Strategy subjects; return explicit empty state for unsupported subject kinds in strict live mode.",
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "No generic object-version route exists."
+      "notes": "BFF-CONSOL-028: strategy versions route live; persona/generic object versions are hidden until a canonical route exists."
     },
     {
       "name": "bff.featureSets.forStrategy",
@@ -1022,11 +1009,9 @@
       "seed_source": "seed.featureSets",
       "live_routes": [],
       "replacement": "Add strategy feature-set route or fold into strategy specs/detail DTO.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
-      ],
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "Strategy data-features tab is seed-only today."
+      "notes": "BFF-CONSOL-028 decision: strict live returns explicit empty/unavailable until a canonical BFF route or parent DTO exists. Strategy data-features tab is seed-only today."
     },
     {
       "name": "bff.performanceSeries.forStrategy",
@@ -1034,11 +1019,9 @@
       "seed_source": "seed.performanceSeries",
       "live_routes": [],
       "replacement": "Add strategy performance route or map to a canonical telemetry route before strict live.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
-      ],
+      "follow_up_tasks": [],
       "priority": "P1",
-      "notes": "Operator performance charts must not show seed as live."
+      "notes": "BFF-CONSOL-028 decision: strict live returns explicit empty/unavailable until a canonical BFF route or parent DTO exists. Operator performance charts must not show seed as live."
     },
     {
       "name": "bff.watchers.forSubject",
@@ -1089,11 +1072,9 @@
       "seed_source": "seed.allocationLimits",
       "live_routes": [],
       "replacement": "Fold allocation limits into capital-pool detail DTO or add a pool-scoped route.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
-      ],
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "No pool allocation-limits route found."
+      "notes": "BFF-CONSOL-028 decision: strict live returns explicit empty/unavailable until a canonical BFF route or parent DTO exists. No pool allocation-limits route found."
     },
     {
       "name": "bff.poolFreezes.forPool",
@@ -1101,11 +1082,9 @@
       "seed_source": "seed.poolFreezes",
       "live_routes": [],
       "replacement": "Fold freezes into capital-pool detail DTO or add a pool-scoped route.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
-      ],
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "No pool freezes route found."
+      "notes": "BFF-CONSOL-028 decision: strict live returns explicit empty/unavailable until a canonical BFF route or parent DTO exists. No pool freezes route found."
     },
     {
       "name": "bff.deploymentStages.forDeployment",
@@ -1141,11 +1120,9 @@
       "seed_source": "seed.promotions",
       "live_routes": [],
       "replacement": "Add promotion-history route or fold promotion history into evolution program detail.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
-      ],
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "No promotion route found in backend manifest."
+      "notes": "BFF-CONSOL-028 decision: strict live returns explicit empty/unavailable until a canonical BFF route or parent DTO exists. No promotion route found in backend manifest."
     },
     {
       "name": "bff.metricFreezes.forRebalance",
@@ -1153,11 +1130,9 @@
       "seed_source": "seed.metricFreezes",
       "live_routes": [],
       "replacement": "Fold metric freezes into rebalance detail DTO or add a rebalance-scoped route.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
-      ],
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "No metric-freezes route found."
+      "notes": "BFF-CONSOL-028 decision: strict live returns explicit empty/unavailable until a canonical BFF route or parent DTO exists. No metric-freezes route found."
     },
     {
       "name": "bff.rebalanceOverrides.forRebalance",
@@ -1165,11 +1140,9 @@
       "seed_source": "seed.rebalanceOverrides",
       "live_routes": [],
       "replacement": "Fold overrides into rebalance detail DTO or add a rebalance-scoped route.",
-      "follow_up_tasks": [
-        "BFF-CONSOL-028"
-      ],
+      "follow_up_tasks": [],
       "priority": "P2",
-      "notes": "No rebalance-overrides route found."
+      "notes": "BFF-CONSOL-028 decision: strict live returns explicit empty/unavailable until a canonical BFF route or parent DTO exists. No rebalance-overrides route found."
     },
     {
       "name": "bff.rebalanceWorkflow.forRebalance",
