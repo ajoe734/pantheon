@@ -6,7 +6,7 @@
 | Parent task | BFF-CONSOL-022 - Lovable staging strict cutover (isolated preview branch) |
 | Helper kind | bff_handoff_packet |
 | Prepared by | Codex2 |
-| Reviewer | Gemini2 |
+| Reviewer | Codex |
 | Date | 2026-05-13 |
 | Mutates canonical truth | false |
 | Status | ready for reviewer handoff |
