@@ -13,7 +13,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-from fastapi import Body, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request
+from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
@@ -224,10 +224,25 @@ _BFF_AUTH_STUB_ENV = "PANTHEON_BFF_AUTH_STUB"
 def _extract_identity(
     authorization: Optional[str],
     mfa_token: Optional[str] = None,
+    session_cookie: Optional[str] = None,
 ) -> OperatorIdentity:
     if _bool_from_env(_BFF_AUTH_STUB_ENV):
         return _extract_identity_stub(authorization)
+    # Cookie session: treat cookie value as a bearer token when no Authorization header present.
+    if not authorization and session_cookie:
+        identity = _extract_identity_jwt(f"Bearer {session_cookie}", mfa_token=mfa_token)
+        identity = identity.model_copy(update={"token_kind": "cookie"})
+        return identity
     return _extract_identity_jwt(authorization, mfa_token=mfa_token)
+
+
+def _resolve_session_kind(identity: OperatorIdentity) -> str:
+    """Return session_kind: cookie | bearer | stub based on how the identity was established."""
+    if identity.token_kind == "stub":
+        return "stub"
+    if identity.token_kind == "cookie":
+        return "cookie"
+    return "bearer"
 
 
 def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
@@ -3039,6 +3054,7 @@ def _bff_me_session_payload(identity: OperatorIdentity, *, checked_at: str) -> D
         "id": session_id,
         "authenticated": True,
         "auth_mode": identity.token_kind,
+        "session_kind": _resolve_session_kind(identity),
         "fresh": exp is None or exp > now,
         "freshness_seconds_remaining": freshness_seconds,
         "issued_at": _epoch_to_iso(claims.get("iat")),
@@ -3154,6 +3170,7 @@ def _sem_session_state(identity: OperatorIdentity) -> Dict[str, Any]:
 async def bff_me(
     tenant_id: Optional[str] = Query(default=None),
     authorization: Optional[str] = Header(default=None),
+    pantheon_session: Optional[str] = Cookie(default=None),
     x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
@@ -3161,7 +3178,7 @@ async def bff_me(
     accept_language: Optional[str] = Header(default=None, alias="Accept-Language"),
 ):
     """BFF current-user/session DTO consumed by execute-plans."""
-    identity = _extract_identity(authorization, mfa_token=x_mfa_token)
+    identity = _extract_identity(authorization, mfa_token=x_mfa_token, session_cookie=pantheon_session)
     _require_read_role(identity)
     snapshot_at = utc_now()
     session_state = _sem_session_state(identity)
