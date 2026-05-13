@@ -17754,6 +17754,35 @@ async def bff_types_compat(
 _V5_INTERVENTIONS_STORE: List[Dict[str, Any]] = []
 
 
+def _v5_intervention_records(
+    *,
+    status: Optional[str] = None,
+    kind: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    records_by_id: Dict[str, Dict[str, Any]] = {}
+    store_lister = getattr(read_store, "list_v5_interventions", None)
+    if callable(store_lister):
+        for record in store_lister(status=status, kind=kind):
+            if not isinstance(record, dict):
+                continue
+            record_id = str(record.get("intervention_id") or record.get("id") or "").strip()
+            if record_id:
+                records_by_id[record_id] = dict(record)
+
+    for record in _V5_INTERVENTIONS_STORE:
+        if not isinstance(record, dict):
+            continue
+        if status and str(record.get("status") or "") != status:
+            continue
+        if kind and str(record.get("kind") or "") != kind:
+            continue
+        record_id = str(record.get("intervention_id") or record.get("id") or "").strip()
+        if record_id:
+            records_by_id[record_id] = dict(record)
+
+    return list(records_by_id.values())
+
+
 @app.get("/bff/v5/interventions", response_model=InterventionListResponse)
 async def list_v5_interventions(
     status: Optional[str] = Query(default=None, description="Filter by status: pending, remediated, dismissed, escalated"),
@@ -17775,11 +17804,7 @@ async def list_v5_interventions(
     _require_read_role(identity)
     snapshot_at = utc_now()
 
-    items = list(_V5_INTERVENTIONS_STORE)
-    if status:
-        items = [i for i in items if i.get("status") == status]
-    if kind:
-        items = [i for i in items if i.get("kind") == kind]
+    items = _v5_intervention_records(status=status, kind=kind)
 
     records = [InterventionRecord(**i) for i in items]
     return InterventionListResponse(
@@ -22644,7 +22669,7 @@ def _sem_final_channel_record(channel_id: str) -> Optional[Dict[str, Any]]:
 
 def _sem_final_v5_intervention_record(intervention_id: str) -> Optional[Dict[str, Any]]:
     clean_id = str(intervention_id or "").strip()
-    for record in _V5_INTERVENTIONS_STORE:
+    for record in _v5_intervention_records():
         if str(record.get("id") or record.get("intervention_id") or "") == clean_id:
             return dict(record)
     return None
@@ -22777,7 +22802,7 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
                 "meta": {"snapshot_at": snapshot_at, "surfaces": {"loop_runs": loop_surface}},
             },
             "interventions": {
-                "items": list(_V5_INTERVENTIONS_STORE),
+                "items": _v5_intervention_records(),
                 "meta": {"snapshot_at": snapshot_at, "surfaces": {"interventions": {"status": "ok", "source": "bff_local_registry"}}},
             },
             "sentinel": {

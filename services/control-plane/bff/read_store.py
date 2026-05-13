@@ -80,17 +80,23 @@ def _model_to_data(model: Any) -> Dict[str, Any]:
 
 
 _FIXTURE_PACK_A_PATH = Path(__file__).resolve().parent / "data" / "fixtures_pack_a.json"
+_FIXTURE_PACK_B_PATH = Path(__file__).resolve().parent / "data" / "fixtures_pack_b.json"
+_FIXTURE_PACK_PATHS = (_FIXTURE_PACK_A_PATH, _FIXTURE_PACK_B_PATH)
 _FIXTURE_DATASET_ALIASES = {
     "deployments": "deployment_plans",
     "runtimes": "runtime_bindings",
 }
 _FIXTURE_RECORD_KEYS = [
     "id",
+    "analysis_id",
     "entry_id",
     "decision_id",
+    "intervention_id",
     "plan_id",
+    "program_id",
     "pool_id",
     "persona_id",
+    "signal_id",
     "session_id",
     "sessionId",
     "strategy_id",
@@ -160,7 +166,10 @@ def _merge_default_fixture_pack(target: Dict[str, Any], fixture: Dict[str, Any])
 
 
 def _load_default_fixture_pack_datasets() -> Dict[str, Any]:
-    return _load_fixture_pack_a_datasets()
+    merged: Dict[str, Any] = {}
+    for path in _FIXTURE_PACK_PATHS:
+        _merge_default_fixture_pack(merged, _load_fixture_pack_datasets(path))
+    return merged
 
 
 # Evidence redaction support
@@ -5038,6 +5047,9 @@ class ReadSurfaceStore:
         "incidents": "incidents",
         "postmortems": "postmortems",
         "evolution_decisions": "evolution_decisions",
+        "evolution_programs": "evolution_programs",
+        "evolution_program_runs": "evolution_program_runs",
+        "evolution_program_candidates": "evolution_program_candidates",
         "telemetry_summaries": "telemetry_summaries",
         "telemetry_performance": "telemetry_performance",
         "paper_live_drift_reports": "paper_live_drift_reports",
@@ -5084,6 +5096,7 @@ class ReadSurfaceStore:
         "agora_handoffs": "agora_handoffs",
         "agora_training_examples": "agora_training_examples",
         "agora_audit_events": "agora_audit_events",
+        "v5_interventions": "v5_interventions",
         "ranking_formulas": "ranking_formulas",
         "rebalances": "rebalances",
         "rankings": "rankings",
@@ -7850,6 +7863,7 @@ class ReadSurfaceStore:
         return {
             "id": decision_id,
             "decision_id": decision_id,
+            "program_id": raw.get("program_id"),
             "action_type": raw.get("action_type"),
             "risk_level": raw.get("risk_level"),
             "status": decision_state,
@@ -7863,6 +7877,8 @@ class ReadSurfaceStore:
             "target_version": raw.get("target_version"),
             "target_stage": raw.get("target_stage"),
             "approval_decision_id": raw.get("approval_decision_id"),
+            "artifact_ref": raw.get("artifact_ref"),
+            "score": raw.get("score"),
             "created_at": raw.get("created_at"),
             "updated_at": raw.get("updated_at"),
             "notes": raw.get("notes"),
@@ -8577,6 +8593,43 @@ class ReadSurfaceStore:
             }
             for d in related
         ]
+
+    # ------------------------------------------------------------------ #
+    # v5 intervention fixture read surface (BFF-CONSOL-009)
+    # ------------------------------------------------------------------ #
+
+    def list_v5_interventions(
+        self,
+        *,
+        status: Optional[str] = None,
+        kind: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        items = self._read_dataset_records("v5_interventions")
+        if status:
+            items = [
+                item
+                for item in items
+                if str(item.get("status") or "").strip().lower() == str(status).strip().lower()
+            ]
+        if kind:
+            items = [
+                item
+                for item in items
+                if str(item.get("kind") or "").strip().lower() == str(kind).strip().lower()
+            ]
+        items.sort(
+            key=lambda item: _parse_rfc3339(item.get("triggered_at")) or datetime.min,
+            reverse=True,
+        )
+        return json.loads(json.dumps(items))
+
+    def get_v5_intervention(self, intervention_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not intervention_id:
+            return None
+        for item in self.list_v5_interventions():
+            if str(item.get("intervention_id") or item.get("id") or "") == str(intervention_id):
+                return json.loads(json.dumps(item))
+        return None
 
     # ------------------------------------------------------------------ #
     # Experiments BFF compat (BFF-LUV-GAP-004)
@@ -11033,6 +11086,12 @@ class ReadSurfaceStore:
                         "handoffId",
                         "trainingExampleId",
                         "example_id",
+                        "analysis_id",
+                        "artifact_id",
+                        "intervention_id",
+                        "program_id",
+                        "runtime_id",
+                        "signal_id",
                     ],
                 ) or str(index)
                 merged[key] = record
