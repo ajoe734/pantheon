@@ -21,6 +21,7 @@ if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
 from task_archive import (
+    ARCHIVE_TASKS_DIR,
     DEFAULT_RECENT_LIMIT as DEFAULT_ARCHIVE_RECENT_LIMIT,
     TaskResolver,
     archive_task_path,
@@ -554,6 +555,39 @@ def load_logs() -> list[dict[str, Any]]:
     return logs
 
 
+def load_log_tail_lines(max_lines: int = 5000) -> list[str]:
+    if not LOG_FILE.exists():
+        return []
+    try:
+        with LOG_FILE.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            file_size = handle.tell()
+            block_size = 1 << 16
+            buffer = bytearray()
+            line_count = 0
+            position = file_size
+            while position > 0 and line_count <= max_lines:
+                read_size = min(block_size, position)
+                position -= read_size
+                handle.seek(position)
+                chunk = handle.read(read_size)
+                buffer[0:0] = chunk
+                line_count = buffer.count(b"\n")
+            tail = bytes(buffer)
+        if line_count > max_lines:
+            split_at = -1
+            extra = line_count - max_lines
+            for _ in range(extra):
+                split_at = tail.find(b"\n", split_at + 1)
+                if split_at == -1:
+                    break
+            if split_at != -1:
+                tail = tail[split_at + 1 :]
+        return tail.decode("utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+
+
 def load_planning_state() -> dict[str, Any] | None:
     if not PLANNING_STATE_FILE.exists():
         return None
@@ -581,6 +615,76 @@ def load_config() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def bool_config_setting(settings: dict[str, Any], key: str, default: bool = False) -> bool:
+    value = settings.get(key, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return bool(value)
+
+
+def int_config_setting(settings: dict[str, Any], key: str, default: int) -> int:
+    try:
+        return int(settings.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def build_dispatch_policy_summary(config: dict[str, Any]) -> dict[str, Any]:
+    ready_dispatcher = config.get("ready_dispatcher") if isinstance(config.get("ready_dispatcher"), dict) else {}
+    helper_claim = ready_dispatcher.get("helper_claim") if isinstance(ready_dispatcher.get("helper_claim"), dict) else {}
+    claim_idle_work = bool_config_setting(helper_claim, "claim_idle_work", False)
+    helper_claim_enabled = bool_config_setting(helper_claim, "enabled", True)
+    return {
+        "mode": "idle_worker_claim" if helper_claim_enabled and claim_idle_work else "supervisor_owned_dispatch",
+        "helper_claim_enabled": helper_claim_enabled,
+        "claim_idle_work": claim_idle_work,
+        "claim_sidecars_when_idle": bool_config_setting(helper_claim, "claim_sidecars_when_idle", False),
+        "require_owner_higher_priority_load": bool_config_setting(helper_claim, "require_owner_higher_priority_load", True),
+        "owned_work_first": True,
+        "max_dispatches_per_tick": int_config_setting(ready_dispatcher, "max_dispatches_per_tick", 4),
+        "max_tasks_per_agent": int_config_setting(ready_dispatcher, "max_tasks_per_agent", 1),
+        "sidecar_only_agents": ready_dispatcher.get("sidecar_only_agents") or [],
+        "disabled_agents": ready_dispatcher.get("disabled_agents") or [],
+    }
+
+
+def recent_helper_claims(limit: int = 8, max_scan_lines: int = 5000) -> list[dict[str, Any]]:
+    claims: list[dict[str, Any]] = []
+    for line_no, line in enumerate(reversed(load_log_tail_lines(max_lines=max_scan_lines)), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            entry = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            print(
+                f"Warning: skipping malformed ai-activity-log.jsonl tail line -{line_no}: {exc}",
+                file=sys.stderr,
+            )
+            continue
+        if str(entry.get("type") or "") != "task_helper_claimed":
+            continue
+        claims.append(
+            {
+                "task_id": entry.get("task_id"),
+                "from_owner": entry.get("from_owner") or entry.get("from"),
+                "to_owner": entry.get("to_owner") or entry.get("to"),
+                "new_reviewer": entry.get("new_reviewer") or entry.get("reviewer"),
+                "message": entry.get("message"),
+                "ts": entry.get("ts") or entry.get("updated_at"),
+            }
+        )
+        if len(claims) >= limit:
+            break
+    return claims
+
+
 def save_state(state: dict[str, Any]) -> None:
     serialized = json.dumps(state, indent=2, ensure_ascii=False) + "\n"
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=STATUS_FILE.parent, delete=False) as handle:
@@ -589,6 +693,57 @@ def save_state(state: dict[str, Any]) -> None:
         os.fsync(handle.fileno())
         temp_path = Path(handle.name)
     os.replace(temp_path, STATUS_FILE)
+
+
+def ensure_sprint_started_at(state: dict[str, Any]) -> None:
+    current_sprint = str(state.get("sprint") or "").strip()
+    if not current_sprint:
+        return
+    on_disk: dict[str, Any] = {}
+    if STATUS_FILE.exists():
+        try:
+            on_disk = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            on_disk = {}
+    on_disk_sprint = str(on_disk.get("sprint") or "").strip()
+    on_disk_started_at = on_disk.get("sprint_started_at")
+    if on_disk_sprint == current_sprint and on_disk_started_at:
+        state["sprint_started_at"] = on_disk_started_at
+        return
+    state["sprint_started_at"] = iso_now()
+
+
+def count_terminal_since(threshold_iso: str | None) -> tuple[int, int]:
+    if not threshold_iso:
+        return (0, 0)
+    try:
+        threshold = datetime.fromisoformat(str(threshold_iso).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return (0, 0)
+    completed_count = 0
+    superseded_count = 0
+    if not ARCHIVE_TASKS_DIR.exists():
+        return (0, 0)
+    for path in ARCHIVE_TASKS_DIR.glob("*.json"):
+        try:
+            snapshot = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        archived_at_raw = str(snapshot.get("archived_at") or "").strip()
+        if not archived_at_raw:
+            continue
+        try:
+            archived_at = datetime.fromisoformat(archived_at_raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if archived_at < threshold:
+            continue
+        outcome = str(snapshot.get("terminal_outcome") or "").strip().lower()
+        if outcome == "superseded":
+            superseded_count += 1
+        else:
+            completed_count += 1
+    return (completed_count, superseded_count)
 
 
 def task_resolver(state: dict[str, Any]) -> TaskResolver:
@@ -2449,6 +2604,8 @@ def build_dashboard_bundle(
     planning = planning_state or {}
     orchestrator = orchestrator_state or {}
     approvals = approval_state or {}
+    config = load_config()
+    dispatch_policy = build_dispatch_policy_summary(config)
     resolver = task_resolver(state)
     task_map = resolver.active_task_map()
     archive_index = load_archive_index()
@@ -2652,6 +2809,18 @@ def build_dashboard_bundle(
 
     dispatch_targets = {name: meta["target_workload"] for name, meta in KNOWN_AGENTS.items()}
 
+    sprint_started_at_value = str(state.get("sprint_started_at") or "").strip() or None
+    completed_in_sprint, superseded_in_sprint = count_terminal_since(sprint_started_at_value)
+
+    bff_consol_archived_ids: list[str] = []
+    if ARCHIVE_TASKS_DIR.exists():
+        for path in ARCHIVE_TASKS_DIR.glob("BFF-CONSOL-*.json"):
+            stem = path.stem
+            if stem.endswith("-SIDECAR-BFF-HANDOFF") or stem.endswith("-SIDECAR-ACCEPTANCE") or stem.endswith("-SIDECAR-REVIEW"):
+                continue
+            bff_consol_archived_ids.append(stem)
+    bff_consol_archived_ids.sort()
+
     return {
         "generated_at": iso_now(),
         "focus_mode": focus_mode,
@@ -2706,13 +2875,19 @@ def build_dashboard_bundle(
                 "total": int(archive_counts.get("total") or 0),
                 "completed": done,
                 "superseded": superseded,
+                "completed_in_sprint": completed_in_sprint,
+                "superseded_in_sprint": superseded_in_sprint,
             },
+            "sprint_started_at": sprint_started_at_value,
             "recent_terminal_ids": archive_index.get("recent_terminal_ids") or [],
             "recent_terminal_tasks": recent_terminal_tasks,
+            "bff_consol_archived_ids": bff_consol_archived_ids,
         },
         "coordination_summary": coordination_summary,
         "bridge_summary": bridge_summary,
         "chair_summary": chair_summary,
+        "dispatch_policy": dispatch_policy,
+        "recent_helper_claims": recent_helper_claims(),
         "worker_task_links": worker_task_links,
         "truth_mismatches": mismatches,
     }
@@ -2794,6 +2969,7 @@ def sync_all(state: dict[str, Any]) -> None:
     normalize_handoffs(state)
     recompute_agents(state)
     recompute_workload(state)
+    ensure_sprint_started_at(state)
     state["updated_at"] = iso_now()
     save_state(state)
     logs = load_logs()

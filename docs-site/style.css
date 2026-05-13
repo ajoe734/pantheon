@@ -93,11 +93,16 @@ h1, h2, h3, p { margin: 0; }
   color: var(--muted);
   font-size: 0.88rem;
   line-height: 1.4;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
   min-width: 0;
   margin: 0;
+  cursor: help;
+}
+.hero-objective:hover {
+  -webkit-line-clamp: unset;
 }
 
 .eyebrow,
@@ -1462,6 +1467,74 @@ details[open].cockpit-details .cockpit-details-summary::before {
   .bridge-grid { grid-template-columns: 1fr; }
   .board { grid-template-columns: repeat(6, minmax(220px, 1fr)); }
 }
+
+.bff-consol-panel { margin-top: 16px; }
+.bff-consol-waves {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+.bff-consol-wave {
+  background: var(--card-bg, rgba(255,255,255,0.04));
+  border-radius: 8px;
+  padding: 12px;
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bff-consol-wave-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+}
+.bff-consol-progress-bar {
+  background: rgba(255,255,255,0.08);
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.bff-consol-progress-fill {
+  height: 100%;
+  background: var(--accent, #4ea1f7);
+  transition: width 0.3s ease;
+}
+.bff-consol-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.82rem;
+}
+.bff-consol-task {
+  display: grid;
+  grid-template-columns: 56px 88px 1fr;
+  gap: 6px;
+  align-items: baseline;
+}
+.bff-consol-task-id { font-weight: 600; color: var(--muted); }
+.bff-consol-task-title {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bff-consol-task-pill {
+  font-size: 0.72rem;
+  padding: 1px 6px;
+  border-radius: 8px;
+  text-align: center;
+  background: rgba(255,255,255,0.06);
+}
+.bff-consol-task-pill.done       { background: rgba(76,175,80,0.15);  color: #6dc774; }
+.bff-consol-task-pill.review     { background: rgba(255,193,7,0.15);  color: #f3c14b; }
+.bff-consol-task-pill.review_approved { background: rgba(255,193,7,0.15); color: #f3c14b; }
+.bff-consol-task-pill.in_progress{ background: rgba(78,161,247,0.15); color: #6db1f7; }
+.bff-consol-task-pill.todo       { background: rgba(255,255,255,0.06); color: var(--muted); }
+.bff-consol-task-pill.blocked    { background: rgba(244,67,54,0.15);  color: #ef6b62; }
+.bff-consol-task-pill.superseded { background: rgba(155,89,182,0.15); color: #b785d8; }
+.workload-card-paused { opacity: 0.78; border-color: rgba(244,67,54,0.4); }
 
 @media (max-width: 640px) {
   .mode-grid { grid-template-columns: 1fr; }

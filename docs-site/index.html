@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>協作看板</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./style.css?v=20260428-0912" />
+    <link rel="stylesheet" href="./style.css?v=20260513-fix7" />
   </head>
   <body>
     <div class="shell">
@@ -30,6 +30,20 @@
 
       <section class="alert-section">
         <div id="alert-strip" class="alert-grid"></div>
+      </section>
+
+      <section id="bff-consol-section" class="panel bff-consol-panel" hidden>
+        <div class="panel-head">
+          <div>
+            <p class="panel-kicker">Track D</p>
+            <h2>BFF Consolidation Track</h2>
+            <p class="subpanel-copy">補完 BFF execute-plans live wiring 的剩餘 production gap，27 個 task 分 4 wave 推進。</p>
+          </div>
+          <div id="bff-consol-summary" class="inline-summary panel-summary"></div>
+        </div>
+        <div class="panel-body">
+          <div id="bff-consol-waves" class="bff-consol-waves"></div>
+        </div>
       </section>
 
       <section class="panel cockpit-panel">
@@ -131,8 +145,8 @@
         <div class="section-shell-head">
           <div>
             <p class="panel-kicker">Execution</p>
-            <h2>Supervisor Managed Execution</h2>
-            <p class="subpanel-copy">planning 共識定下來之後，這裡是日常追進度、看 live runtime、處理 review 與 blocker 的主戰場。</p>
+            <h2>Worker Claim Execution</h2>
+            <p class="subpanel-copy">planning 共識定下來之後，空閒 autoworker 可以 claim ready work；這裡追蹤 live runtime、claim policy、review 與 blocker。</p>
           </div>
           <div class="panel-head-actions">
             <div id="execution-panel-summary" class="inline-summary panel-summary"></div>
@@ -347,6 +361,6 @@
       </section>
     </div>
 
-    <script src="./script.js?v=20260428-0912" type="module"></script>
+    <script src="./script.js?v=20260513-fix7" type="module"></script>
   </body>
 </html>
