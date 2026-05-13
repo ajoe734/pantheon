@@ -526,8 +526,9 @@ def _foundation_request_payload(
     raw_payload: Dict[str, Any],
     *,
     route: str = _FOUNDATION_COMMAND_ROUTE,
+    source_route: Optional[str] = None,
 ) -> Dict[str, Any]:
-    return {
+    payload = {
         "route": route,
         "command": cmd.command.value,
         "target": cmd.target.model_dump(),
@@ -535,6 +536,16 @@ def _foundation_request_payload(
         "audit_context": cmd.audit_context.model_dump(),
         "raw_payload": raw_payload,
     }
+    if source_route:
+        payload["source_route"] = source_route
+    return payload
+
+
+def _foundation_route_metadata(route: str, source_route: Optional[str] = None) -> Dict[str, Any]:
+    metadata: Dict[str, Any] = {"route": route}
+    if source_route:
+        metadata["source_route"] = source_route
+    return metadata
 
 
 def _build_foundation_trace(
@@ -577,18 +588,25 @@ def _build_foundation_command_context(
     request_id: Optional[str],
     idempotency_key: Optional[str],
     route: str = _FOUNDATION_COMMAND_ROUTE,
+    source_route: Optional[str] = None,
 ) -> Dict[str, Any]:
     environment = _foundation_environment_scope()
     actor_ref = _foundation_actor_ref(identity)
+    route_metadata = _foundation_route_metadata(route, source_route)
     authority_scope = AuthorityScope(
         action=cmd.command.value,
         target_type=cmd.target.type.value,
         target_id=cmd.target.id,
         environment=environment,
         runtime_id=cmd.target.id if cmd.target.type == ObjectType.RUNTIME else None,
-        attributes={"route": route},
+        attributes=route_metadata,
     )
-    request_payload = _foundation_request_payload(cmd, raw_payload, route=route)
+    request_payload = _foundation_request_payload(
+        cmd,
+        raw_payload,
+        route=route,
+        source_route=source_route,
+    )
     trace = _build_foundation_trace(
         environment=environment,
         actor_ref=actor_ref,
@@ -631,10 +649,11 @@ def _build_foundation_command_context(
         trace=command_envelope.trace,
         payload=request_payload,
         policy_decision_ref=policy_decision.decision_id,
-        metadata={"route": route},
+        metadata=route_metadata,
     )
     return {
         "admission_route": route,
+        "source_route": source_route,
         "command_envelope": command_envelope,
         "trace_context": command_envelope.trace,
         "idempotency_record": idempotency_record,
@@ -645,7 +664,7 @@ def _build_foundation_command_context(
 
 
 def _serialize_foundation_context(context: Dict[str, Any]) -> Dict[str, Any]:
-    return {
+    serialized = {
         "admission_route": context.get("admission_route"),
         "trace_context": context["trace_context"].to_dict(),
         "command_envelope": context["command_envelope"].to_dict(),
@@ -653,6 +672,9 @@ def _serialize_foundation_context(context: Dict[str, Any]) -> Dict[str, Any]:
         "policy_decision": context["policy_decision"].to_dict(),
         "audit_action": context["audit_action"].to_dict(),
     }
+    if context.get("source_route"):
+        serialized["source_route"] = context.get("source_route")
+    return serialized
 
 
 def _extract_error_fields(exc: HTTPException) -> Dict[str, Any]:
@@ -689,6 +711,8 @@ def _foundation_bff_error(
     fields = _extract_error_fields(exc)
     command_envelope: CommandEnvelope = foundation_context["command_envelope"]
     admission_route = str(foundation_context.get("admission_route") or _FOUNDATION_COMMAND_ROUTE)
+    source_route = str(foundation_context.get("source_route") or "").strip() or None
+    route_metadata = _foundation_route_metadata(admission_route, source_route)
     if fields["status_code"] == 403:
         policy_decision = PolicyDecision.make(
             policy_id="bff.command.admission",
@@ -720,7 +744,7 @@ def _foundation_bff_error(
             trace=command_envelope.trace,
             payload=foundation_context["request_payload"],
             policy_decision_ref=policy_decision.decision_id,
-            metadata={"route": admission_route},
+            metadata=route_metadata,
         )
         return _bff_error(
             fields["status_code"],
@@ -769,7 +793,7 @@ def _foundation_bff_error(
         reason=fields["reason"],
         trace=command_envelope.trace,
         payload=foundation_context["request_payload"],
-        metadata={"route": _FOUNDATION_COMMAND_ROUTE},
+        metadata=route_metadata,
     )
     return _bff_error(
         fields["status_code"],
@@ -792,6 +816,8 @@ def _foundation_idempotency_conflict_error(
 ) -> HTTPException:
     command_envelope: CommandEnvelope = foundation_context["command_envelope"]
     idempotency_record: IdempotencyRecord = foundation_context["idempotency_record"]
+    admission_route = str(foundation_context.get("admission_route") or _FOUNDATION_COMMAND_ROUTE)
+    source_route = str(foundation_context.get("source_route") or "").strip() or None
     message = "Idempotency key was already used with a different command payload"
     reason = (
         f"idempotency_key={idempotency_record.idempotency_key} is already bound "
@@ -818,7 +844,7 @@ def _foundation_idempotency_conflict_error(
         reason=reason,
         trace=command_envelope.trace,
         payload=foundation_context["request_payload"],
-        metadata={"route": _FOUNDATION_COMMAND_ROUTE},
+        metadata=_foundation_route_metadata(admission_route, source_route),
     )
     return _bff_error(
         409,
@@ -7357,6 +7383,7 @@ def _project_final_command_response(
     accepted_at: str,
     status: CommandStatus,
     staleness_warning: Optional[StalenessWarning],
+    meta: Optional[Dict[str, Any]] = None,
 ) -> CommandResponse[Dict[str, Any]]:
     final_status = _action_command_status_from_command_status(status)
     legacy_payload = _project_command_submission_response(
@@ -7369,7 +7396,7 @@ def _project_final_command_response(
     legacy_payload["status"] = final_status.value
     if isinstance(legacy_payload.get("receipt"), dict):
         legacy_payload["receipt"]["status"] = final_status.value
-    return CommandResponse[Dict[str, Any]](status=final_status, data=legacy_payload)
+    return CommandResponse[Dict[str, Any]](status=final_status, data=legacy_payload, meta=meta)
 
 
 # --------------------------------------------------------------------------- #
@@ -13770,28 +13797,38 @@ async def submit_command(
     )
 
 
-@app.post("/bff/v1/commands", status_code=202)
-async def submit_final_command(
-    background_tasks: BackgroundTasks,
-    payload: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(default=None),
-    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
-    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
-    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
-    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
-    x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """
-    Submit an operator command (final BFF contract).
+def _command_response_durable_meta(idempotency_key: str, *, replayed: bool) -> Dict[str, Any]:
+    return {
+        "durable": True,
+        "liveCapitalSideEffects": False,
+        "idempotency": {
+            "key": idempotency_key,
+            "idempotencyKey": idempotency_key,
+            "replayed": replayed,
+        },
+    }
 
-    Idempotency-Key is the required header; X-Idempotency-Key is accepted as a
-    temporary compatibility alias when Idempotency-Key is absent.
-    idempotencyKey in the request body is rejected.
-    Returns CommandResponse<T> wrapping the command receipt.
-    """
-    # 1. Authenticate
+
+def _submit_final_command_admission(
+    *,
+    background_tasks: BackgroundTasks,
+    payload: Dict[str, Any],
+    authorization: Optional[str],
+    x_mfa_token: Optional[str],
+    x_trace_id: Optional[str],
+    x_correlation_id: Optional[str],
+    x_request_id: Optional[str],
+    x_confirm_token: Optional[str],
+    idempotency_key: Optional[str],
+    x_idempotency_key: Optional[str],
+    route: str = _FINAL_COMMAND_ROUTE,
+    source_route: Optional[str] = None,
+    audit_extra: Optional[Dict[str, Any]] = None,
+    extra_precondition: Optional[Callable[[OperatorIdentity, OperatorCommand], None]] = None,
+    enqueue: bool = True,
+    include_durable_meta: bool = False,
+) -> CommandResponse[Dict[str, Any]]:
+    """Submit a final-contract command through the shared BFF command admission path."""
     identity = _extract_identity(authorization, mfa_token=x_mfa_token)
     cmd = _normalize_operator_command_payload(payload)
 
@@ -13807,11 +13844,14 @@ async def submit_final_command(
         correlation_id=x_correlation_id,
         request_id=x_request_id,
         idempotency_key=resolved_key,
+        route=route,
+        source_route=source_route,
     )
 
-    # 2. Precondition validation
     try:
         _reject_body_idempotency_key(payload)
+        if extra_precondition is not None:
+            extra_precondition(identity, cmd)
         _validate_audit_context(cmd)
         _ensure_live_broker_scope_allowed(cmd, payload)
         _validate_drawer_runtime_target(cmd)
@@ -13829,7 +13869,6 @@ async def submit_final_command(
 
     stored_params = _stored_command_params(cmd, identity, raw_payload=payload)
 
-    # 3. Idempotency replay / conflict check
     duplicate = command_store.get_command_by_idempotency_key(
         foundation_context["idempotency_record"].idempotency_key
     )
@@ -13846,9 +13885,11 @@ async def submit_final_command(
             accepted_at=duplicate.get("submitted_at") or utc_now(),
             status=CommandStatus(duplicate.get("status") or CommandStatus.SUBMITTED.value),
             staleness_warning=None,
+            meta=_command_response_durable_meta(resolved_key, replayed=True)
+            if include_durable_meta
+            else None,
         )
 
-    # 4. Concurrent modification check
     active = command_store.get_active_commands_for_target(cmd.target.type.value, cmd.target.id)
     if active:
         error = _bff_error(
@@ -13860,10 +13901,8 @@ async def submit_final_command(
         )
         raise _foundation_bff_error(error, foundation_context=foundation_context)
 
-    # 5. Degraded mode check
     staleness_warning = _check_read_surface_state()
 
-    # 6. Persist command
     command_envelope: CommandEnvelope = foundation_context["command_envelope"]
     idempotency_record: IdempotencyRecord = foundation_context["idempotency_record"]
     idempotency_record = idempotency_record.with_status(
@@ -13894,6 +13933,8 @@ async def submit_final_command(
         "mfa_token": mfa_token,
         "foundation": _serialize_foundation_context(foundation_context),
     }
+    if audit_extra:
+        audit_record.update({key: value for key, value in audit_extra.items() if value is not None})
 
     command_store.submit_command(
         command_id=command_id,
@@ -13910,7 +13951,8 @@ async def submit_final_command(
         command_id, cmd.command.value, cmd.target.type.value, cmd.target.id, identity.operator_id,
     )
 
-    background_tasks.add_task(_process_command_stub, command_id)
+    if enqueue:
+        background_tasks.add_task(_process_command_stub, command_id)
 
     return _project_final_command_response(
         command_id=command_id,
@@ -13918,6 +13960,45 @@ async def submit_final_command(
         accepted_at=submitted_at,
         status=CommandStatus.SUBMITTED,
         staleness_warning=staleness_warning,
+        meta=_command_response_durable_meta(resolved_key, replayed=False)
+        if include_durable_meta
+        else None,
+    )
+
+
+@app.post("/bff/v1/commands", status_code=202)
+async def submit_final_command(
+    background_tasks: BackgroundTasks,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+    x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """
+    Submit an operator command (final BFF contract).
+
+    Idempotency-Key is the required header; X-Idempotency-Key is accepted as a
+    temporary compatibility alias when Idempotency-Key is absent.
+    idempotencyKey in the request body is rejected.
+    Returns CommandResponse<T> wrapping the command receipt.
+    """
+    return _submit_final_command_admission(
+        background_tasks=background_tasks,
+        payload=payload,
+        authorization=authorization,
+        x_mfa_token=x_mfa_token,
+        x_trace_id=x_trace_id,
+        x_correlation_id=x_correlation_id,
+        x_request_id=x_request_id,
+        x_confirm_token=x_confirm_token,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+        route=_FINAL_COMMAND_ROUTE,
     )
 
 
@@ -22183,6 +22264,199 @@ _prefer_latest_bff_gap004_routes()
 
 _FINAL_CONTRACT_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 
+_ACTION_ADAPTER_ENTITY_SPECS: Dict[str, Dict[str, Any]] = {
+    "strategy": {
+        "target_type": ObjectType.STRATEGY,
+        "command_type": CommandType.STRATEGY_ACTION,
+        "audit_namespace": "strategy",
+    },
+    "persona": {
+        "target_type": ObjectType.PERSONA,
+        "command_type": CommandType.PERSONA_ACTION,
+        "audit_namespace": "persona",
+    },
+    "capital-pool": {
+        "target_type": ObjectType.CAPITAL_POOL,
+        "command_type": CommandType.CAPITAL_POOL_ACTION,
+        "audit_namespace": "capitalpool",
+    },
+    "rebalance": {
+        "target_type": ObjectType.REBALANCE,
+        "command_type": CommandType.REBALANCE_ACTION,
+        "audit_namespace": "rebalance",
+    },
+    "ranking-formula": {
+        "target_type": ObjectType.RANKING_FORMULA,
+        "command_type": CommandType.RANKING_FORMULA_ACTION,
+        "audit_namespace": "rankingformula",
+    },
+    "ranking": {
+        "target_type": ObjectType.RANKING,
+        "command_type": CommandType.RANKING_ACTION,
+        "audit_namespace": "ranking",
+    },
+    "deployment": {
+        "target_type": ObjectType.DEPLOYMENT,
+        "command_type": CommandType.DEPLOYMENT_ACTION,
+        "audit_namespace": "deployment",
+    },
+    "runtime": {
+        "target_type": ObjectType.RUNTIME,
+        "command_type": CommandType.RUNTIME_ACTION,
+        "audit_namespace": "runtime",
+    },
+    "review": {
+        "target_type": ObjectType.REVIEW,
+        "command_type": CommandType.REVIEW_ACTION,
+        "audit_namespace": "review",
+    },
+    "approval": {
+        "target_type": ObjectType.APPROVAL_DECISION,
+        "command_type": CommandType.REVIEW_ACTION,
+        "audit_namespace": "approval",
+    },
+    "alert": {
+        "target_type": ObjectType.RISK_ALERT,
+        "command_type": CommandType.RISK_ALERT_ACTION,
+        "audit_namespace": "alert",
+    },
+    "incident": {
+        "target_type": ObjectType.INCIDENT,
+        "command_type": CommandType.INCIDENT_ACTION,
+        "audit_namespace": "incident",
+    },
+    "evolution-program": {
+        "target_type": ObjectType.EVOLUTION_PROGRAM,
+        "command_type": CommandType.EVOLUTION_PROGRAM_ACTION,
+        "audit_namespace": "evolution",
+    },
+    "research-experiment": {
+        "target_type": ObjectType.EXPERIMENT,
+        "command_type": CommandType.EXPERIMENT_ACTION,
+        "audit_namespace": "research",
+    },
+    "experiment": {
+        "target_type": ObjectType.EXPERIMENT,
+        "command_type": CommandType.EXPERIMENT_ACTION,
+        "audit_namespace": "research",
+    },
+    "job": {
+        "target_type": ObjectType.JOB,
+        "command_type": CommandType.JOB_ACTION,
+        "audit_namespace": "job",
+    },
+    "tool": {
+        "target_type": ObjectType.TOOL,
+        "command_type": CommandType.TOOL_ACTION,
+        "audit_namespace": "tool",
+    },
+    "mcp-server": {
+        "target_type": ObjectType.MCP_SERVER,
+        "command_type": CommandType.MCP_SERVER_ACTION,
+        "audit_namespace": "mcpserver",
+    },
+    "mcp-tool": {
+        "target_type": ObjectType.TOOL,
+        "command_type": CommandType.TOOL_ACTION,
+        "audit_namespace": "mcptool",
+    },
+    "skill": {
+        "target_type": ObjectType.SKILL,
+        "command_type": CommandType.SKILL_ACTION,
+        "audit_namespace": "skill",
+    },
+    "artifact": {
+        "target_type": ObjectType.REVIEW,
+        "command_type": CommandType.REVIEW_ACTION,
+        "audit_namespace": "artifact",
+    },
+    "channel": {
+        "target_type": ObjectType.REVIEW,
+        "command_type": CommandType.REVIEW_ACTION,
+        "audit_namespace": "channel",
+    },
+}
+
+
+def _normalize_action_adapter_entity_type(entity_type: str) -> str:
+    return str(entity_type or "").strip().lower().replace("_", "-")
+
+
+def _action_adapter_spec(entity_type: str) -> Dict[str, Any]:
+    normalized = _normalize_action_adapter_entity_type(entity_type)
+    spec = _ACTION_ADAPTER_ENTITY_SPECS.get(normalized)
+    if spec is None:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Unsupported action entity type",
+            f"/bff/actions does not admit entityType={entity_type!r}",
+            precondition_failed="entity_type",
+            suggestion="Submit a documented BFF action entity type from BFF_COMMAND_API_CONTRACT.md section 8",
+        )
+    return spec
+
+
+def _action_adapter_audit_event(spec: Dict[str, Any], action_id: str) -> str:
+    namespace = str(spec.get("audit_namespace") or "action").strip()
+    action = str(action_id or "").strip()
+    return f"{namespace}.{action}" if action else namespace
+
+
+def _action_adapter_command_payload(
+    *,
+    entity_type: str,
+    entity_id: str,
+    action_id: str,
+    payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    normalized_entity_type = _normalize_action_adapter_entity_type(entity_type)
+    clean_entity_id = str(entity_id or "").strip()
+    clean_action_id = str(action_id or "").strip()
+    if not clean_entity_id:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Action target id is required",
+            "entityId must be a non-empty string",
+            precondition_failed="entity_id",
+        )
+    if not clean_action_id:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Action id is required",
+            "actionId must be a non-empty string",
+            precondition_failed="action_id",
+        )
+    spec = _action_adapter_spec(normalized_entity_type)
+    audit_event = _action_adapter_audit_event(spec, clean_action_id)
+    body = dict(payload or {})
+    reason = str(
+        body.get("reason")
+        or body.get("operator_note")
+        or body.get("note")
+        or audit_event
+    ).strip()
+    params = {
+        **body,
+        "action_id": clean_action_id,
+        "entity_type": normalized_entity_type,
+        "entity_id": clean_entity_id,
+        "audit_event": audit_event,
+        "adapter_source_route": _ACTIONS_TO_COMMANDS_SOURCE_ROUTE,
+    }
+    return {
+        "command": spec["command_type"].value,
+        "target": {
+            "type": spec["target_type"].value,
+            "id": clean_entity_id,
+        },
+        "action": clean_action_id,
+        "params": params,
+        "audit_context": {"reason": reason},
+    }
+
 
 def _sem_command_target_for(entity_type: str, entity_id: str) -> ObjectType:
     normalized = str(entity_type or "").strip().lower().replace("_", "-")
@@ -22320,25 +22594,52 @@ def _sem_command_response(
 
 @app.post("/bff/actions/{entityType}/{entityId}/{actionId}", status_code=202)
 async def sem_canonical_action_command(
+    background_tasks: BackgroundTasks,
     entityType: str,
     entityId: str,
     actionId: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+    x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    command_type = CommandType.STRATEGY_ACTION if entityType.lower() == "strategy" else CommandType.REVIEW_ACTION
-    return _sem_command_response(
-        command_type=command_type,
-        target_type=_sem_command_target_for(entityType, entityId),
-        target_id=entityId,
-        payload={**(payload or {}), "actionId": actionId, "entityType": entityType},
-        identity=identity,
+    payload = dict(payload or {})
+    _reject_body_idempotency_key(payload)
+    command_payload = _action_adapter_command_payload(
+        entity_type=entityType,
+        entity_id=entityId,
+        action_id=actionId,
+        payload=payload,
+    )
+    params = command_payload["params"]
+    return _submit_final_command_admission(
+        background_tasks=background_tasks,
+        payload=command_payload,
+        authorization=authorization,
+        x_mfa_token=x_mfa_token,
+        x_trace_id=x_trace_id,
+        x_correlation_id=x_correlation_id,
+        x_request_id=x_request_id,
+        x_confirm_token=x_confirm_token,
         idempotency_key=idempotency_key,
         x_idempotency_key=x_idempotency_key,
+        route=_FINAL_COMMAND_ROUTE,
+        source_route=_ACTIONS_TO_COMMANDS_SOURCE_ROUTE,
+        audit_extra={
+            "action_id": params.get("action_id"),
+            "entity_type": params.get("entity_type"),
+            "entity_id": params.get("entity_id"),
+            "audit_event": params.get("audit_event"),
+            "adapter_source_route": _ACTIONS_TO_COMMANDS_SOURCE_ROUTE,
+        },
+        extra_precondition=lambda identity, _cmd: _require_operator_role(identity),
+        enqueue=False,
+        include_durable_meta=True,
     )
 
 

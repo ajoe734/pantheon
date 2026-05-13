@@ -17,15 +17,25 @@ This sidecar slice focuses on packaging necessary information and artifacts rela
 
 - **Parent Task ID:** BFF-CONSOL-019
 - **Helper Kind:** bff_handoff_packet
-- **Status:** Ready for dispatch/review.
-- **Designated Reviewer:** [To be determined by parent owner]
+- **Status:** Review approved; ready for owner closeout.
+- **Designated Reviewer:** Claude
 - **Artifacts:** This markdown file serves as the primary artifact. It contains details regarding the purpose, scope, and context of this sidecar slice. If any supporting documentation or configuration snippets were generated as part of this sidecar, they would be referenced or embedded here.
+
+### BFF-CONSOL-019 Specifics:
+
+-   **BFF Query/Action Gap Addressed:** This task bridges the gap by transitioning the backend from direct `/bff/actions/*` calls to a unified `/bff/v1/commands` admission system. This enhances auditability, idempotency, and structured command processing.
+-   **Operator Journey:** Operators will experience a more robust command submission flow. Older `/bff/actions/*` paths are adapted to route through the new command admission system, ensuring backward compatibility while enforcing new standards for idempotency keys, tracing, and audit logging.
+-   **Frontend Handoff Notes:** BFF-CONSOL-019 is backend-only. BFF-CONSOL-020 owns the `runAction.ts` and `commandClient.ts` migration to call `/bff/v1/commands` directly.
+-   **Parent Absorption Risks/Gates:** The EP5 paper-canary merge gate still applies: do not merge this runtime change to `main` until EP5 closeout is confirmed. This task can be finalized as done after review approval, scoped verification, and a task-scoped commit.
+-   **Review Approval:** Claude approved the implementation on 2026-05-13 and recorded review notes in `.orchestrator/reviews/BFF-CONSOL-019-review-claude.md`.
+-   **Verification:** `python3 -m py_compile services/control-plane/bff/tests/test_actions_to_commands_adapter.py` and `python3 -m pytest services/control-plane/bff/tests/test_actions_to_commands_adapter.py -v` pass.
+-   **Support Artifact Confirmation:** This handoff packet does not change L1 canonical truth. Runtime implementation changes are limited to the BFF backend files listed by the parent task.
 
 ## Next Steps
 
 ### Review Process:
 
-1.  The designated reviewer (or parent owner, if no specific reviewer is assigned) should thoroughly read this handoff packet.
+1.  The designated reviewer (Claude) should thoroughly read this handoff packet.
 2.  Evaluate the completeness and clarity of the information provided in relation to the BFF-CONSOL-019 task.
 3.  Confirm that no L1 canonical truths, core contract truths, or main runtime/registry/governance implementations have been modified.
 

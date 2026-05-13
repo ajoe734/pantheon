@@ -611,6 +611,29 @@ def _execute_remediate_sentinel_intervention(
     }
 
 
+def _execute_bff_action_adapter(
+    command_id: str, params: Dict[str, Any],
+    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Record adapter-only execution for BFF resource action envelopes.
+
+    The generic /bff/actions/* adapter is an admission bridge. It must not
+    directly mutate BFF read state or call live broker/runtime side effects.
+    Domain-specific authorities can later consume the persisted command record.
+    """
+    del auth_token, mfa_token
+    return {
+        "command_id": command_id,
+        "dispatch_path": "bff_action_adapter",
+        "status": "admitted",
+        "action_id": params.get("action_id"),
+        "entity_type": params.get("entity_type"),
+        "entity_id": params.get("entity_id"),
+        "audit_event": params.get("audit_event"),
+        "live_capital_side_effects": False,
+    }
+
+
 # Dispatch table: CommandType -> execution function
 _EXECUTORS = {
     CommandType.APPROVE_DEPLOYMENT: _execute_approve_deployment,
@@ -633,6 +656,23 @@ _EXECUTORS = {
     CommandType.APPROVE_MUTATION: _execute_approve_mutation,
     CommandType.REJECT_MUTATION: _execute_reject_mutation,
     CommandType.REMEDIATE_SENTINEL_INTERVENTION: _execute_remediate_sentinel_intervention,
+    CommandType.CAPITAL_POOL_ACTION: _execute_bff_action_adapter,
+    CommandType.RANKING_FORMULA_ACTION: _execute_bff_action_adapter,
+    CommandType.REBALANCE_ACTION: _execute_bff_action_adapter,
+    CommandType.RANKING_ACTION: _execute_bff_action_adapter,
+    CommandType.STRATEGY_ACTION: _execute_bff_action_adapter,
+    CommandType.PERSONA_ACTION: _execute_bff_action_adapter,
+    CommandType.TOOL_ACTION: _execute_bff_action_adapter,
+    CommandType.MCP_SERVER_ACTION: _execute_bff_action_adapter,
+    CommandType.SKILL_ACTION: _execute_bff_action_adapter,
+    CommandType.REVIEW_ACTION: _execute_bff_action_adapter,
+    CommandType.DEPLOYMENT_ACTION: _execute_bff_action_adapter,
+    CommandType.RUNTIME_ACTION: _execute_bff_action_adapter,
+    CommandType.RISK_ALERT_ACTION: _execute_bff_action_adapter,
+    CommandType.INCIDENT_ACTION: _execute_bff_action_adapter,
+    CommandType.EVOLUTION_PROGRAM_ACTION: _execute_bff_action_adapter,
+    CommandType.EXPERIMENT_ACTION: _execute_bff_action_adapter,
+    CommandType.JOB_ACTION: _execute_bff_action_adapter,
 }
 
 
