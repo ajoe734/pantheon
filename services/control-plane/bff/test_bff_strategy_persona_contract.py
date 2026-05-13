@@ -279,7 +279,7 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
             bff_main._PERSONA_BFF_OVERLAY.clear()
             bff_main.read_store = ReadSurfaceStore(
                 os.path.join(td, "read_surfaces.json"),
-                allow_local_snapshot_fallback=True,
+                allow_local_snapshot_fallback=False,
             )
             detail = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
             assert detail.status_code == 200, detail.text
@@ -291,6 +291,40 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
                 body = resp.json()
                 assert "data" in body or "items" in body
                 assert "meta" in body
+        finally:
+            bff_main.read_store = original
+
+
+def test_bff_personas_patch_persists_without_snapshot_fallback() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            create = client.post(
+                "/bff/personas",
+                json={"name": "Tactical Persona", "archetype": "macro"},
+                headers={**HEADERS, "Idempotency-Key": "create-persona-patch"},
+            )
+            assert create.status_code == 201, create.text
+            persona_id = create.json()["data"]["id"]
+
+            patch = client.patch(
+                f"/bff/personas/{persona_id}",
+                json={"name": "Persistent Persona", "risk": "high", "successRate": 0.42},
+                headers={**HEADERS, "Idempotency-Key": "patch-persona-001"},
+            )
+            assert patch.status_code == 200, patch.text
+
+            bff_main._PERSONA_BFF_OVERLAY.clear()
+            bff_main.read_store = ReadSurfaceStore(
+                os.path.join(td, "read_surfaces.json"),
+                allow_local_snapshot_fallback=False,
+            )
+            detail = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
+            assert detail.status_code == 200, detail.text
+            assert detail.json()["data"]["name"] == "Persistent Persona"
+            assert detail.json()["data"]["risk"] == "high"
+            assert detail.json()["meta"]["surfaces"]["persona_detail"]["source"] == "bff_local_dev_store"
         finally:
             bff_main.read_store = original
 

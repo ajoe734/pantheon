@@ -16495,9 +16495,9 @@ async def bff_ranking_action(
 # DTO shape declared in execute-plans/src/lib/bff/types.ts. Action endpoints
 # route through the same command/precondition machinery used by capital-pool
 # actions (BFF-LUV-GAP-003) so high-risk operations honor the final BFF
-# envelope. New strategy/persona records created via these routes are kept
-# in an in-process write-through cache; durable persistence is delegated to
-# the canonical strategy_specs / personas read store backends.
+# envelope. New persona records created via these routes are persisted through
+# the BFF read store until the persona registry service owns the write path.
+# Strategy creates still use the legacy in-process compatibility overlay.
 
 _STRATEGY_BFF_LIFECYCLE_MAP = {
     "draft": "draft",
@@ -17349,7 +17349,7 @@ async def bff_patch_persona(
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
-    """BFF: patch persona overlay fields."""
+    """BFF: patch persona fields through the BFF read store."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     _reject_body_idempotency_key(payload)
@@ -17386,6 +17386,28 @@ async def bff_patch_persona(
         base["risk"] = _normalize_risk_level(payload["risk"])
     base["updatedAt"] = snapshot_at
     base["id"] = persona_id
+    persona_record = read_store.update_persona(
+        persona_id,
+        name=str(base.get("name") or persona_id),
+        actor_id=str(base.get("owner") or identity.operator_id),
+        updated_at=snapshot_at,
+        archetype=str(base.get("archetype") or "generalist"),
+        lifecycle_state=str(base.get("state") or "draft"),
+        risk_level=str(base.get("risk") or "low"),
+        metadata={
+            "success_rate": float(base.get("successRate") or 0.0),
+        },
+    )
+    if persona_record is not None:
+        routed = _routed_strategies_for_persona(persona_id)
+        base = _project_persona_dto(
+            persona_record,
+            overlay={
+                "routedStrategies": int(base.get("routedStrategies") or routed),
+                "successRate": float(base.get("successRate") or 0.0),
+            },
+            routed_strategies=routed,
+        )
     _PERSONA_BFF_OVERLAY[persona_id] = base
     result = {"data": base, "meta": {"snapshot_at": snapshot_at}}
     _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}

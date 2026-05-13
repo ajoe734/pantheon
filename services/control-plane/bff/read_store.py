@@ -6785,6 +6785,19 @@ class ReadSurfaceStore:
             return records
         return {}
 
+    def _local_bff_persona_records(self) -> Dict[str, Dict[str, Any]]:
+        records = self._local_dataset("personas")
+        if not isinstance(records, dict):
+            return {}
+        local_personas: Dict[str, Dict[str, Any]] = {}
+        for key, record in records.items():
+            if not isinstance(record, dict) or not self._is_bff_local_persona(record):
+                continue
+            persona_id = str(record.get("persona_id") or record.get("id") or key or "").strip()
+            if persona_id:
+                local_personas[persona_id] = record
+        return local_personas
+
     def _ensure_local_overlay_records(self, dataset: str) -> Dict[str, Dict[str, Any]]:
         self._local_overlay_write_datasets.add(dataset)
         key = self._LOCAL_DATA_KEYS.get(dataset, dataset)
@@ -6838,6 +6851,8 @@ class ReadSurfaceStore:
             )
             if available:
                 return self._service.source(dataset)
+        if include_local_fallback and dataset == "personas" and self._local_bff_persona_records():
+            return "bff_local_dev_store"
         local_payload = self._local_fallback(dataset) if include_local_fallback else None
         if include_local_fallback and local_payload in (None, "", [], {}):
             local_payload = self._local_overlay_records(dataset)
@@ -7808,6 +7823,7 @@ class ReadSurfaceStore:
         mandate: Optional[str] = None,
         strategy_family: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        local_personas = self._local_bff_persona_records()
         available, raw_personas = self._service.list_records("personas")
         if available:
             personas_by_id = {
@@ -7815,15 +7831,19 @@ class ReadSurfaceStore:
                 for projected in (self._project_service_persona(persona) for persona in raw_personas)
                 if str(projected.get("persona_id") or projected.get("id") or "").strip()
             }
-            for persona in (self._local_fallback("personas") or {}).values():
-                if not isinstance(persona, dict) or not self._is_bff_local_persona(persona):
-                    continue
-                persona_id = str(persona.get("persona_id") or persona.get("id") or "")
-                if persona_id:
-                    personas_by_id[persona_id] = persona
+            personas_by_id.update(local_personas)
             personas = list(personas_by_id.values())
         else:
-            personas = list((self._local_fallback("personas") or {}).values())
+            personas_by_id = {}
+            local_fallback = self._local_fallback("personas")
+            if isinstance(local_fallback, dict):
+                personas_by_id.update({
+                    str(persona.get("persona_id") or persona.get("id") or key): persona
+                    for key, persona in local_fallback.items()
+                    if isinstance(persona, dict)
+                })
+            personas_by_id.update(local_personas)
+            personas = [persona for key, persona in personas_by_id.items() if key]
         if lifecycle_state:
             personas = [p for p in personas if p.get("lifecycle_state") == lifecycle_state]
         if mandate:
@@ -7888,6 +7908,55 @@ class ReadSurfaceStore:
             records[persona_id] = record
             if self._service.write_records("personas", records):
                 return self._project_service_persona(record)
+
+        personas = self._ensure_local_overlay_records("personas")
+        personas[persona_id] = record
+        self._save()
+        return self._project_service_persona(record)
+
+    def update_persona(
+        self,
+        persona_id: str,
+        *,
+        name: Optional[str] = None,
+        actor_id: Optional[str] = None,
+        updated_at: Optional[str] = None,
+        archetype: Optional[str] = None,
+        lifecycle_state: Optional[str] = None,
+        risk_level: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not persona_id:
+            return None
+        existing = self.get_persona(persona_id)
+        if existing is None:
+            return None
+        timestamp = updated_at or _utc_now_rfc3339()
+        record = json.loads(json.dumps(existing))
+        record["id"] = persona_id
+        record["persona_id"] = persona_id
+        if name is not None:
+            record["name"] = name
+        if lifecycle_state is not None:
+            record["lifecycle_state"] = lifecycle_state
+            record["status"] = lifecycle_state
+        if archetype is not None:
+            record["mandate"] = archetype
+            record["strategy_family"] = archetype
+        record["updated_at"] = timestamp
+
+        clean_metadata = dict(record.get("metadata") if isinstance(record.get("metadata"), dict) else {})
+        if metadata:
+            clean_metadata.update(json.loads(json.dumps(metadata)))
+        if actor_id is not None:
+            clean_metadata["owner"] = actor_id
+        if archetype is not None:
+            clean_metadata["archetype"] = archetype
+        if risk_level is not None:
+            clean_metadata["risk_level"] = risk_level
+        record["metadata"] = clean_metadata
+        record["canonicalWriteAuthority"] = "persona_registry_service"
+        record["persistenceMode"] = "bff_local_dev_store"
 
         personas = self._ensure_local_overlay_records("personas")
         personas[persona_id] = record
@@ -8551,15 +8620,23 @@ class ReadSurfaceStore:
     def get_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not persona_id:
             return None
+        local_persona = self._local_bff_persona_records().get(str(persona_id))
         available, raw = self._service.record("personas", persona_id)
         if available:
             if raw:
-                return self._project_service_persona(raw)
-            local = (self._local_fallback("personas") or {}).get(persona_id)
-            if isinstance(local, dict) and self._is_bff_local_persona(local):
-                return local
+                projected = self._project_service_persona(raw)
+                if local_persona:
+                    projected.update(json.loads(json.dumps(local_persona)))
+                return projected
+            if local_persona:
+                return local_persona
             return None
-        return (self._local_fallback("personas") or {}).get(persona_id)
+        if local_persona:
+            return local_persona
+        local = self._local_fallback("personas")
+        if isinstance(local, dict):
+            return local.get(persona_id)
+        return None
 
     def get_runtime_binding(self, binding_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not binding_id:
