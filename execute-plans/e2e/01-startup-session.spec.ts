@@ -190,7 +190,11 @@ test.describe("F01 startup session", () => {
 
     const opened = await page.evaluate(
       ({ url }) =>
-        new Promise<{ readyState: number; firstMessageType?: string }>(
+        new Promise<{
+          readyState: number;
+          openState: number;
+          firstMessageType?: string;
+        }>(
           (resolve, reject) => {
             const eventSource = new EventSource(url);
             const timeout = window.setTimeout(() => {
@@ -203,7 +207,7 @@ test.describe("F01 startup session", () => {
               window.clearTimeout(timeout);
               const state = eventSource.readyState;
               eventSource.close();
-              resolve({ readyState: state });
+              resolve({ readyState: state, openState: EventSource.OPEN });
             };
 
             eventSource.onmessage = (event) => {
@@ -214,11 +218,12 @@ test.describe("F01 startup session", () => {
                 const payload = JSON.parse(event.data);
                 resolve({
                   readyState: state,
+                  openState: EventSource.OPEN,
                   firstMessageType:
                     typeof payload.type === "string" ? payload.type : undefined,
                 });
               } catch {
-                resolve({ readyState: state });
+                resolve({ readyState: state, openState: EventSource.OPEN });
               }
             };
 
@@ -233,7 +238,7 @@ test.describe("F01 startup session", () => {
       { url: streamUrl },
     );
 
-    expect(opened.readyState).toBe(EventSource.OPEN);
+    expect(opened.readyState).toBe(opened.openState);
     if (opened.firstMessageType) {
       expect(opened.firstMessageType).toMatch(/^system\./);
     }
