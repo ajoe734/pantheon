@@ -4,7 +4,8 @@ Task ID: BFF-CONSOL-015-SIDECAR-BFF-HANDOFF
 Parent Task: BFF-CONSOL-015 - Mock-only badge implementation (live mode)
 Helper Kind: bff_handoff_packet
 Prepared by: Claude
-Reviewer: Codex
+Refreshed by: Codex2
+Reviewer: Claude
 Date: 2026-05-13
 Mutates canonical truth: false
 
@@ -17,8 +18,10 @@ or governance implementation.
 
 BFF-CONSOL-015 added the live-mode badge and empty-state UI surface that makes
 seed-backed helpers visually distinct from live-backed data in any non-mock BFF
-mode. The badge behavior is fully driven by the BFF-CONSOL-007 taxonomy JSON,
-which classifies all 83 seed helpers into four categories.
+mode. The badge behavior is fully driven by the taxonomy JSON category for each
+helper. BFF-CONSOL-007 created the original 83-helper taxonomy; later
+BFF-CONSOL-025 and BFF-CONSOL-028 updates changed category counts without
+changing the badge behavior mapping.
 
 ## Parent Task Delivery Summary
 
@@ -33,15 +36,15 @@ BFF-CONSOL-015 is `done`. Sibling frontend commit `20945d8` (in
 | `seed-taxonomy.json` | `src/lib/bff-v1/seed-taxonomy.json` | BFF-CONSOL-007 taxonomy embedded in frontend |
 | `seed.ts` (updated) | `src/lib/bff-v1/seed.ts` | Live-mode gates: `liveEmpty`, `delaySeed` |
 
-Four UI surfaces were wired:
+Four UI panels were wired, covering five helper gates:
 
 | Panel | Helper name | Badge type |
 |---|---|---|
 | `Settings.tsx` | `bff.getAcceptLanguage` | `MockDataBadge` (mock_only_dev -> disabled) |
-| `AllocationSimulationPanel.tsx` | `bff.allocationSimulations.forRebalance` | `MockDataEmptyState` (deferred) |
+| `AllocationSimulationPanel.tsx` | `bff.allocationSimulations.forRebalance` | `MockDataEmptyState` (mock_only_dev -> disabled) |
 | `FitnessFormulaPanel.tsx` | `bff.fitnessFormulas.list` | `MockDataEmptyState` (deferred) |
 | `FitnessFormulaPanel.tsx` | `bff.mutationRules.list` | `MockDataEmptyState` (deferred) |
-| `McpSecretsPanel.tsx` | `bff.mcpSecrets.forServer` | `MockDataEmptyState` (deferred) |
+| `McpSecretsPanel.tsx` | `bff.mcpSecrets.forServer` | `MockDataEmptyState` (mock_only_dev -> disabled) |
 
 Verification from the parent closeout:
 
@@ -76,13 +79,14 @@ true for `mock_only_dev` (disabled) and `deferred` (empty_state) categories when
 invoke this check before returning any seed value.
 
 Path note: the task brief named `execute-plans/src/lib/bff/seed.ts`. The
-actual frontend surface is `execute-plans/src/lib/bff-v1/seed.ts` per
+actual frontend surface is `../execute-plans/src/lib/bff-v1/seed.ts` per
 BFF-CONSOL-007's taxonomy record. This deviation is documented in the
 parent implementation sidecar.
 
-## Taxonomy Count Baseline
+## Taxonomy Count Baseline And Current State
 
-As of BFF-CONSOL-007 (commit `42ac7b0e`), the taxonomy JSON contains 83 helpers:
+BFF-CONSOL-015 consumed the BFF-CONSOL-007 taxonomy snapshot. That snapshot
+contains 83 helpers:
 
 | Category | Count | Live-mode behavior |
 |---|---|---|
@@ -92,17 +96,36 @@ As of BFF-CONSOL-007 (commit `42ac7b0e`), the taxonomy JSON contains 83 helpers:
 | `deprecated` | 2 | legacy_mock badge; seed not gated |
 | **Total** | **83** | |
 
+The current taxonomy state after BFF-CONSOL-025 and the in-review
+BFF-CONSOL-028 work still contains 83 helpers, but 10 previously deferred
+adjunct helpers have been promoted to `live_required` after live route or parent
+DTO handling was added.
+
+| Source checked | `live_required` | `deferred` | `mock_only_dev` | `deprecated` | Total |
+|---|---:|---:|---:|---:|---:|
+| `docs/bff/seed-taxonomy.json` | 62 | 15 | 4 | 2 | 83 |
+| `../execute-plans/src/lib/bff-v1/seed-taxonomy.json` | 62 | 15 | 4 | 2 | 83 |
+
+`docs/bff/seed-elimination-2026-05-13.md` records the post-025/028 split:
+routeable adjunct helpers now fold into existing BFF parent/detail routes, and
+the remaining 15 deferred helpers are explicit strict-live empty/unavailable
+surfaces until a canonical BFF route or parent DTO exists.
+
 ## BFF Query Gap Matrix
 
-Helpers in `deferred` and `mock_only_dev` categories represent surfaces that
-do not yet have a safe live route replacement.
+Helpers in `deferred` and `mock_only_dev` categories still must not display
+seed rows as live truth. In the current post-025/028 taxonomy, `deferred` means
+"explicit empty/unavailable in strict live" rather than "unassigned follow-up."
 
 ### Currently Gated (seed returns empty in live mode)
 
 | Helper name | Category | Follow-up task(s) |
 |---|---|---|
 | `bff.getAcceptLanguage` | mock_only_dev | BFF-CONSOL-015 (badge only; no live route needed) |
-| All 25 deferred helpers | deferred | Various (see taxonomy JSON `follow_up_tasks` per entry) |
+| `bff.allocationSimulations.forRebalance` | mock_only_dev | BFF-CONSOL-015/BFF-CONSOL-025; current UI warms a mock cache only |
+| `bff.watchers.forSubject` | mock_only_dev | BFF-CONSOL-025; no canonical BFF truth source |
+| `bff.mcpSecrets.forServer` | mock_only_dev | BFF-CONSOL-025; security-sensitive seed-only panel |
+| 15 current deferred helpers | deferred | BFF-CONSOL-028 decision notes; keep explicit empty/unavailable until live authority exists |
 
 ### Deprecated (seed not blocked, but callers should migrate)
 
@@ -115,10 +138,10 @@ do not yet have a safe live route replacement.
 
 | Gap | Action required |
 |---|---|
-| 25 deferred helpers have no live route yet | Each deferred entry names the follow-up task responsible for wiring or hiding the surface |
-| BFF-CONSOL-025 seed elimination | Must consume this taxonomy as the elimination priority input (P0 = mock_only_dev + deprecated; P1-P3 = deferred by group) |
-| BFF-CONSOL-028 adjunct helpers | Deferred surfaces in governance/evolution/capital families need route or hide decisions before strict cutover |
-| Copilot taxonomy signoff | Deferred from BFF-CONSOL-015 approval; follow-on audit will validate category assignments against Copilot critique |
+| 15 deferred helpers remain strict-live unavailable | Keep returning empty/unavailable, with no seed rows, until a canonical BFF route or parent DTO is added and reviewed |
+| BFF-CONSOL-025 seed elimination | Done; it consumed the original 52/25/4/2 taxonomy and removed silent live seed fallback for live-required and seed-only surfaces |
+| BFF-CONSOL-028 adjunct helpers | In review; current taxonomy/docs are already at 62/15/4/2 and no deferred helper points at BFF-CONSOL-025 or BFF-CONSOL-028 as an open follow-up |
+| Copilot taxonomy critique | Non-blocking follow-on from BFF-CONSOL-015; any future reclassification should update taxonomy JSON, not badge code |
 
 ## Operator Journey
 
@@ -126,15 +149,16 @@ do not yet have a safe live route replacement.
 
 ```text
 Operator opens execute-plans in VITE_BFF_MODE=live
-  -> Page renders AllocationSimulationPanel
-  -> Panel calls bff.allocationSimulations.forRebalance(rebalanceId)
-  -> seed.ts liveEmpty("bff.allocationSimulations.forRebalance", []) intercepts
+  -> Page renders FitnessFormulaPanel
+  -> Panel calls bff.fitnessFormulas.list()
+  -> seed.ts delaySeed("bff.fitnessFormulas.list", seed.fitnessFormulas, []) intercepts
   -> Returns [] immediately (empty, no delay)
-  -> simulationGate = getMockDataBadgeModel("bff.allocationSimulations.forRebalance", liveStatus)
+  -> fitnessGate = getMockDataBadgeModel("bff.fitnessFormulas.list", liveStatus)
      => returns MockDataBadgeModel { behavior: "empty_state", tone: "warning" }
   -> Panel renders <MockDataEmptyState> with amber warning icon
   -> Title: "Live data not wired"
-  -> Description: "Live route deferred; waiting for <follow-up task>."
+  -> Description explains that strict live is unavailable until a canonical route
+     or parent DTO exists.
 ```
 
 ### Live mode: page loads a mock_only_dev helper (disabled)
@@ -173,7 +197,9 @@ Operator opens execute-plans in VITE_BFF_MODE=strict (BFF-CONSOL-022 preview bra
 These commands verify the badge contract for frontend integration work:
 
 ```bash
-# Badge component tests (10 tests cover all 4 taxonomy categories)
+# Run from ../execute-plans.
+
+# Badge component and taxonomy tests cover all 4 taxonomy categories.
 npm test -- src/components/data/MockDataBadge.test.tsx \
              src/lib/bff-v1/__tests__/seedTaxonomy.test.ts
 
@@ -184,12 +210,13 @@ npx eslint src/components/data/MockDataBadge.tsx \
            src/lib/bff-v1/seed.ts
 
 # Validate taxonomy JSON syntax
-python3 -m json.tool execute-plans/src/lib/bff-v1/seed-taxonomy.json >/dev/null
+python3 -m json.tool src/lib/bff-v1/seed-taxonomy.json >/dev/null
 
 # Count helpers by category in taxonomy JSON
-node -e "const t=require('./execute-plans/src/lib/bff-v1/seed-taxonomy.json'); \
+node -e "const t=require('./src/lib/bff-v1/seed-taxonomy.json'); \
   const c={}; t.helpers.forEach(h=>{c[h.category]=(c[h.category]||0)+1}); console.log(c)"
-# Expected: { live_required: 52, deferred: 25, mock_only_dev: 4, deprecated: 2 }
+# Expected current post-025/028 state:
+# { live_required: 62, deferred: 15, mock_only_dev: 4, deprecated: 2 }
 ```
 
 Frontend unit test matrix recommended for this contract:
@@ -213,14 +240,14 @@ Frontend unit test matrix recommended for this contract:
 - **Taxonomy JSON is the single source of truth.** If a helper's category
   changes in `seed-taxonomy.json`, badge behavior and the live-mode seed gate
   both follow automatically. Do not hardcode category assumptions in panel code.
-- **BFF-CONSOL-025 seed elimination** uses this taxonomy as its P0-P3 elimination
-  priority input. P0 = `mock_only_dev` (4 helpers) + `deprecated` (2 helpers);
-  P1-P3 = `deferred` subgroups ordered by follow-up risk. Do not change category
-  assignments without aligning with BFF-CONSOL-025.
-- **BFF-CONSOL-028 adjunct surface follow-up** is responsible for wiring or
-  hiding the governance/evolution/capital deferred helpers before strict cutover.
-  Until BFF-CONSOL-028 is done, those surfaces remain amber empty states in live
-  mode and must not be promoted to live-required in the taxonomy.
+- **BFF-CONSOL-025 seed elimination** is done. It consumed the original
+  BFF-CONSOL-007 52/25/4/2 snapshot and made live-required helpers strict-read
+  BFF routes while keeping seed-only helpers empty/unavailable in live mode.
+- **BFF-CONSOL-028 adjunct surface follow-up** is in review. It promotes
+  routeable adjunct helpers into `live_required` and leaves 15 helpers as
+  explicit strict-live unavailable surfaces. Parent absorption should check
+  BFF-CONSOL-028's final review outcome before treating those 62/15/4/2 counts
+  as closed delivery truth.
 - **Copilot taxonomy critique** is a deferred follow-on from the BFF-CONSOL-015
   review. If Copilot reclassifies any helper, the fix is a taxonomy JSON update;
   the badge and seed gate code does not need to change.
@@ -231,14 +258,15 @@ Frontend unit test matrix recommended for this contract:
   `MockDataBadge.tsx`, `seedTaxonomy.ts`, `seed.ts`, canonical documents, or
   any execute-plans runtime files.
 
-## Handoff Checklist for Codex (Reviewer)
+## Handoff Checklist for Claude (Reviewer)
 
 - Confirm the badge behavior table matches the `getSeedHelperLiveBehavior`
   mapping in `src/lib/bff-v1/seedTaxonomy.ts`.
-- Confirm the taxonomy category counts (52/25/4/2) match the JSON counts in
-  `src/lib/bff-v1/seed-taxonomy.json`.
-- Confirm the four wired UI surfaces match those listed in the parent
-  implementation sidecar (`implementation-bff-consol-015-codex2.md`).
+- Confirm the original BFF-CONSOL-015 snapshot is identified as 52/25/4/2 and
+  the current post-025/028 JSON counts are identified as 62/15/4/2.
+- Confirm the four wired UI panels and five helper gates match those listed in
+  the parent implementation sidecar
+  (`implementation-bff-consol-015-codex2.md`).
 - Confirm no canonical truth, runtime, or registry files were modified by
   this sidecar.
 - Confirm the operator journey sections are consistent with the live-mode
@@ -247,7 +275,7 @@ Frontend unit test matrix recommended for this contract:
 
 ## Verification for This Sidecar
 
-Performed as read-only context checks plus artifact creation:
+Performed as read-only context checks plus support artifact refresh:
 
 - Read task-scoped context: `AI_COLLABORATION_GUIDE.md`,
   `.orchestrator/task-briefs/bff_consol_015_sidecar_bff_handoff.md`,
@@ -257,16 +285,33 @@ Performed as read-only context checks plus artifact creation:
 - Read parent implementation sidecar:
   `support/sidecars/BFF-CONSOL-015/implementation-bff-consol-015-codex2.md`.
 - Read sibling frontend source files:
-  - `execute-plans/src/components/data/MockDataBadge.tsx`
-  - `execute-plans/src/components/data/mockDataBadgeModel.ts`
-  - `execute-plans/src/lib/bff-v1/seedTaxonomy.ts`
-  - `execute-plans/src/lib/bff-v1/seed-taxonomy.json` (first 50 lines for counts)
-  - `execute-plans/src/lib/bff-v1/seed.ts` (grep for live-mode gate calls)
-- Searched all `MockDataBadge` / `MockDataEmptyState` usages in `execute-plans/src/`
+  - `../execute-plans/src/components/data/MockDataBadge.tsx`
+  - `../execute-plans/src/components/data/mockDataBadgeModel.ts`
+  - `../execute-plans/src/lib/bff-v1/seedTaxonomy.ts`
+  - `../execute-plans/src/lib/bff-v1/seed-taxonomy.json`
+  - `../execute-plans/src/lib/bff-v1/seed.ts` (grep for live-mode gate calls)
+- Searched all `MockDataBadge` / `MockDataEmptyState` usages in `../execute-plans/src/`
   to enumerate wired surfaces.
 - Read dependency task archives: `BFF-CONSOL-007.json`, `BFF-CONSOL-005.json`
   (first 80 lines each) for dependency context.
 - Read format reference: `support/sidecars/BFF-CONSOL-012/BFF-CONSOL-012-SIDECAR-BFF-HANDOFF.md`.
+- Refreshed post-review facts from:
+  - `support/sidecars/BFF-CONSOL-025/BFF-CONSOL-025-SIDECAR-BFF-HANDOFF.md`
+  - `support/sidecars/BFF-CONSOL-025/BFF-CONSOL-025-REVIEW.md`
+  - `docs/bff/seed-elimination-2026-05-13.md`
+  - `docs/bff/seed-taxonomy.json`
+  - `../execute-plans/src/lib/bff-v1/seed-taxonomy.json`
+- Rechecked taxonomy counts with `jq`:
+  - `docs/bff/seed-taxonomy.json`: 62 live_required, 15 deferred,
+    4 mock_only_dev, 2 deprecated.
+  - `../execute-plans/src/lib/bff-v1/seed-taxonomy.json`: 62 live_required,
+    15 deferred, 4 mock_only_dev, 2 deprecated.
+- Rechecked the original BFF-CONSOL-007 snapshot with
+  `git show 42ac7b0e:docs/bff/seed-taxonomy.json`: 52 live_required,
+  25 deferred, 4 mock_only_dev, 2 deprecated.
+- Ran scoped artifact checks:
+  - `git diff --check -- support/sidecars/BFF-CONSOL-015/BFF-CONSOL-015-SIDECAR-BFF-HANDOFF.md`
+  - `LC_ALL=C grep -nP '[^\x00-\x7F]' support/sidecars/BFF-CONSOL-015/BFF-CONSOL-015-SIDECAR-BFF-HANDOFF.md`
 
 No canonical truth, core contract truth, runtime implementation, registry code,
 or governance implementation was modified by this sidecar.
