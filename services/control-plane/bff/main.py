@@ -18476,7 +18476,7 @@ def _handle_sse_stream(
         # Check if replay is possible before starting the stream
         _replay_from(buffer, last_event_id)
     except SseReplayUnavailableError as exc:
-        raise _bff_error(
+        error = _bff_error(
             status_code=409,
             code=ErrorCode.SSE_REPLAY_UNAVAILABLE,
             message=str(exc),
@@ -18490,7 +18490,9 @@ def _handle_sse_stream(
                 "replayStore": "in-memory",
                 "resyncRoutes": list(_SSE_RESYNC_ROUTES.get(channel, ())),
             },
-        ) from exc
+        )
+        error.headers = _sse_replay_headers(channel)
+        raise error from exc
 
     headers = {
         "Cache-Control": "no-cache",
@@ -18562,21 +18564,61 @@ async def _frontend_bff_event_stream(channels: tuple[str, ...]) -> AsyncGenerato
 @app.get("/bff/events/stream")
 async def stream_bff_events(
     channels: Optional[str] = Query(default=None),
+    channel: Optional[str] = Query(default=None),
     last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
     last_event_id_camel: Optional[str] = Query(default=None, alias="lastEventId"),
+    last_event_id_header: Optional[str] = Header(default=None, alias="Last-Event-ID"),
+    authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+    pantheon_session: Optional[str] = Cookie(default=None),
 ):
     """BFF-wide SSE stream for the frontend shell.
 
     ``lastEventId`` is accepted for the browser client, but this transitional
-    liveness stream does not replay privileged domain events.
+    liveness stream only applies to unauthenticated callers. Authenticated
+    cookie or Bearer callers use the real replay-capable SSE substrate.
     """
-    del last_event_id, last_event_id_camel
+    channels_value = channels if isinstance(channels, str) else None
+    channel_value = channel if isinstance(channel, str) else None
+    last_event_id_value = last_event_id if isinstance(last_event_id, str) else None
+    last_event_id_camel_value = last_event_id_camel if isinstance(last_event_id_camel, str) else None
+    last_event_id_header_value = last_event_id_header if isinstance(last_event_id_header, str) else None
+    authorization_value = authorization if isinstance(authorization, str) else None
+    x_mfa_token_value = x_mfa_token if isinstance(x_mfa_token, str) else None
+    pantheon_session_value = pantheon_session if isinstance(pantheon_session, str) else None
+
+    resolved_last_event_id = (
+        last_event_id_value or last_event_id_camel_value or last_event_id_header_value
+    )
 
     requested = tuple(
         channel.strip()
-        for channel in (channels or "system").split(",")
+        for channel in (channel_value or channels_value or "system").split(",")
         if channel.strip()
     )
+    if authorization_value or pantheon_session_value:
+        selected_channel = requested[0] if requested else "system"
+        if selected_channel not in SSE_CHANNELS:
+            raise _bff_error(
+                400,
+                ErrorCode.INVALID_REQUEST,
+                f"Unknown SSE channel: {selected_channel}",
+                f"Channel must be one of {sorted(list(SSE_CHANNELS))}",
+            )
+        identity = _extract_identity(
+            authorization_value,
+            mfa_token=x_mfa_token_value,
+            session_cookie=pantheon_session_value,
+        )
+        _require_read_role(identity)
+        return _handle_sse_stream(
+            selected_channel,
+            _sse_buffers[selected_channel],
+            _sse_subscribers[selected_channel],
+            resolved_last_event_id,
+            extra_headers={"X-BFF-Session-Kind": _resolve_session_kind(identity)},
+        )
+
     headers = {
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
