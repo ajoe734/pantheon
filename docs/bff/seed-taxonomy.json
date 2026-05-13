@@ -743,7 +743,7 @@
       "live_routes": [],
       "replacement": "Add a route-policy list route or remove list UI; for persona-specific display use /bff/personas/{id}/route-policy.",
       "follow_up_tasks": [
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "No standalone /bff/route-policies route in the backend manifest."
@@ -755,7 +755,7 @@
       "live_routes": [],
       "replacement": "Fold into /bff/personas/{id}/route-policy or add a canonical route-policy detail route.",
       "follow_up_tasks": [
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "Current helper gets route policy by policy id, but live route is persona scoped."
@@ -782,7 +782,7 @@
       "live_routes": [],
       "replacement": "Add version history to route-policy DTO or create a version route before strict live display.",
       "follow_up_tasks": [
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "No backend route found for policy versions."
@@ -794,7 +794,7 @@
       "live_routes": [],
       "replacement": "Wire a permissions/capabilities route or hide the matrix in strict live.",
       "follow_up_tasks": [
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "No /bff/permission-matrices route in the manifest."
@@ -806,7 +806,7 @@
       "live_routes": [],
       "replacement": "Wire a permissions/capabilities route or hide the matrix list in strict live.",
       "follow_up_tasks": [
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "No /bff/permission-matrices route in the manifest."
@@ -818,7 +818,7 @@
       "live_routes": [],
       "replacement": "Use persona-scoped memory route where possible; remove global memory queue seed fallback unless a route is added.",
       "follow_up_tasks": [
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "No global memory-updates route found."
@@ -845,7 +845,7 @@
       "live_routes": [],
       "replacement": "Add /bff consult-policy surface or migrate UI to existing API v1 consultation routes.",
       "follow_up_tasks": [
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "Backend has API v1 consultation routes, but no matching /bff consultRules route."
@@ -857,7 +857,7 @@
       "live_routes": [],
       "replacement": "Add /bff consult-policy detail surface or remove strict-live seed display.",
       "follow_up_tasks": [
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "No matching /bff route."
@@ -869,8 +869,7 @@
       "live_routes": [],
       "replacement": "Use program-scoped runs or add a global runs route.",
       "follow_up_tasks": [
-        "BFF-CONSOL-017",
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "Backend exposes runs under /bff/evolution-programs/{id}/runs."
@@ -899,8 +898,7 @@
       ],
       "replacement": "Change helper contract from runId to programId or resolve run->program before calling the live route.",
       "follow_up_tasks": [
-        "BFF-CONSOL-017",
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P1",
       "notes": "Current helper is run-scoped; backend route is program-scoped."
@@ -912,8 +910,7 @@
       "live_routes": [],
       "replacement": "Create an evolution formula/config route or hide this studio in strict live.",
       "follow_up_tasks": [
-        "BFF-CONSOL-017",
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "No matching route in backend manifest."
@@ -925,8 +922,7 @@
       "live_routes": [],
       "replacement": "Create an evolution formula/config detail route or remove strict-live seed fallback.",
       "follow_up_tasks": [
-        "BFF-CONSOL-017",
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "No matching route in backend manifest."
@@ -938,8 +934,7 @@
       "live_routes": [],
       "replacement": "Create an evolution mutation-rule route or hide this studio in strict live.",
       "follow_up_tasks": [
-        "BFF-CONSOL-017",
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "No matching route in backend manifest."
@@ -964,8 +959,7 @@
       "live_routes": [],
       "replacement": "Add policy-violation route or fold into persona/strategy detail DTOs.",
       "follow_up_tasks": [
-        "BFF-CONSOL-016",
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "No generic subject violation route in backend manifest."
@@ -977,8 +971,7 @@
       "live_routes": [],
       "replacement": "Add subject-scoped policy-violation route or fold into detail DTOs.",
       "follow_up_tasks": [
-        "BFF-CONSOL-016",
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "Used by persona detail; strict live needs a non-seed source."
@@ -990,8 +983,7 @@
       "live_routes": [],
       "replacement": "Use persona-scoped evaluations where possible or add a generic evaluation-runs route.",
       "follow_up_tasks": [
-        "BFF-CONSOL-016",
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "Backend exposes /bff/personas/{id}/evaluations, not a generic list."
@@ -1005,8 +997,7 @@
       ],
       "replacement": "Split persona subject to the live persona route; disable unsupported subject kinds in strict live.",
       "follow_up_tasks": [
-        "BFF-CONSOL-016",
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P1",
       "notes": "Current helper is generic subject-scoped; live route is persona-specific."
@@ -1020,8 +1011,7 @@
       ],
       "replacement": "Fold strategy/persona versions into detail tabs or add subject version routes.",
       "follow_up_tasks": [
-        "BFF-CONSOL-016",
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "No generic object-version route exists."
@@ -1033,8 +1023,7 @@
       "live_routes": [],
       "replacement": "Add strategy feature-set route or fold into strategy specs/detail DTO.",
       "follow_up_tasks": [
-        "BFF-CONSOL-016",
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "Strategy data-features tab is seed-only today."
@@ -1046,8 +1035,7 @@
       "live_routes": [],
       "replacement": "Add strategy performance route or map to a canonical telemetry route before strict live.",
       "follow_up_tasks": [
-        "BFF-CONSOL-016",
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P1",
       "notes": "Operator performance charts must not show seed as live."
@@ -1102,8 +1090,7 @@
       "live_routes": [],
       "replacement": "Fold allocation limits into capital-pool detail DTO or add a pool-scoped route.",
       "follow_up_tasks": [
-        "BFF-CONSOL-016",
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "No pool allocation-limits route found."
@@ -1115,8 +1102,7 @@
       "live_routes": [],
       "replacement": "Fold freezes into capital-pool detail DTO or add a pool-scoped route.",
       "follow_up_tasks": [
-        "BFF-CONSOL-016",
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "No pool freezes route found."
@@ -1156,8 +1142,7 @@
       "live_routes": [],
       "replacement": "Add promotion-history route or fold promotion history into evolution program detail.",
       "follow_up_tasks": [
-        "BFF-CONSOL-017",
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "No promotion route found in backend manifest."
@@ -1169,8 +1154,7 @@
       "live_routes": [],
       "replacement": "Fold metric freezes into rebalance detail DTO or add a rebalance-scoped route.",
       "follow_up_tasks": [
-        "BFF-CONSOL-018",
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "No metric-freezes route found."
@@ -1182,8 +1166,7 @@
       "live_routes": [],
       "replacement": "Fold overrides into rebalance detail DTO or add a rebalance-scoped route.",
       "follow_up_tasks": [
-        "BFF-CONSOL-018",
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-028"
       ],
       "priority": "P2",
       "notes": "No rebalance-overrides route found."

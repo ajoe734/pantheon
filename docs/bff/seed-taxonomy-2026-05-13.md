@@ -26,7 +26,7 @@ bridge it into the live/mock migration surface.
 | `live_required` | 52 | `BFF-CONSOL-016`, `017`, `018`, `025` |
 | `mock_only_dev` | 4 | `BFF-CONSOL-015`, `025` |
 | `deprecated` | 2 | `BFF-CONSOL-019`, `020`, `021`, `024`, `025` |
-| `deferred` | 25 | `BFF-CONSOL-025` |
+| `deferred` | 25 | `BFF-CONSOL-028` follow-up after `BFF-CONSOL-025` gating |
 
 JSON source of truth for scripts: `docs/bff/seed-taxonomy.json`.
 
@@ -36,7 +36,7 @@ JSON source of truth for scripts: `docs/bff/seed-taxonomy.json`.
 | --- | --- | --- |
 | P0 | `bff.mutations`, `bff.commands.requestConfirmToken`, `bff.me.*`, core Management list/detail helpers, `bff.search`, `bff.mcpSecrets.forServer` | Command/session/security and global navigation surfaces must not silently seed. |
 | P1 | Agora/v5 namespaces, route-policy/memory/evolution-run/decision-journal/deployment-stage/rebalance-workflow helpers | Existing BFF routes or parent DTOs can replace the seed path; detail smokes should prove it. |
-| P2 | Governance/evolution/capital adjunct helpers with no direct route | `BFF-CONSOL-025` must either add route contracts or remove/hide strict-live UI. |
+| P2 | Governance/evolution/capital adjunct helpers with no direct route | `BFF-CONSOL-028` must either add route contracts, fold into detail DTOs, or remove/hide strict-live UI. |
 | P3 | `getAcceptLanguage`, watcher chips | Local instrumentation/collaboration affordances; hide in live mode if not backed by real truth. |
 
 ## Helper Matrix
@@ -90,40 +90,40 @@ JSON source of truth for scripts: `docs/bff/seed-taxonomy.json`.
 | `bff.skills.get` | `live_required` | `GET /bff/skills/{id}`. | `010`, `025` |
 | `bff.channels.list` | `live_required` | `GET /bff/channels`. | `010`, `025` |
 | `bff.channels.get` | `live_required` | `GET /bff/channels/{id}`. | `010`, `025` |
-| `bff.routePolicies.list` | `deferred` | No standalone route; use persona-scoped route or add a route-policy list route. | `025` |
-| `bff.routePolicies.get` | `deferred` | No policy-id route; fold into persona route-policy detail or add canonical route. | `025` |
+| `bff.routePolicies.list` | `deferred` | No standalone route; use persona-scoped route or add a route-policy list route. | `028` |
+| `bff.routePolicies.get` | `deferred` | No policy-id route; fold into persona route-policy detail or add canonical route. | `028` |
 | `bff.routePolicies.forPersona` | `live_required` | `GET /bff/personas/{id}/route-policy`. | `016`, `025` |
-| `bff.policyVersions.list` | `deferred` | Add route-policy version DTO/route or remove strict-live display. | `025` |
-| `bff.permissionMatrix.get` | `deferred` | Add permissions/capabilities route or hide matrix in strict live. | `025` |
-| `bff.permissionMatrices.list` | `deferred` | Add permissions/capabilities route or hide matrix list in strict live. | `025` |
-| `bff.memoryUpdates.list` | `deferred` | No global memory-updates route; use persona-scoped memory where possible. | `025` |
+| `bff.policyVersions.list` | `deferred` | Add route-policy version DTO/route or remove strict-live display. | `028` |
+| `bff.permissionMatrix.get` | `deferred` | Add permissions/capabilities route or hide matrix in strict live. | `028` |
+| `bff.permissionMatrices.list` | `deferred` | Add permissions/capabilities route or hide matrix list in strict live. | `028` |
+| `bff.memoryUpdates.list` | `deferred` | No global memory-updates route; use persona-scoped memory where possible. | `028` |
 | `bff.memoryUpdates.forPersona` | `live_required` | `GET /bff/personas/{id}/memory`. | `016`, `025` |
-| `bff.consultRules.list` | `deferred` | API v1 consultation routes exist, but no matching `/bff` consultRules route. | `025` |
-| `bff.consultRules.get` | `deferred` | Add `/bff` consult-policy detail or remove strict-live seed display. | `025` |
-| `bff.evolutionRuns.list` | `deferred` | No global route; backend exposes program-scoped runs. | `017`, `025` |
+| `bff.consultRules.list` | `deferred` | API v1 consultation routes exist, but no matching `/bff` consultRules route. | `028` |
+| `bff.consultRules.get` | `deferred` | Add `/bff` consult-policy detail or remove strict-live seed display. | `028` |
+| `bff.evolutionRuns.list` | `deferred` | No global route; backend exposes program-scoped runs. | `028` |
 | `bff.evolutionRuns.forProgram` | `live_required` | `GET /bff/evolution-programs/{id}/runs`. | `017`, `025` |
-| `bff.evolutionCandidates.forRun` | `deferred` | Backend route is program-scoped candidates; helper contract is run-scoped. | `017`, `025` |
-| `bff.fitnessFormulas.list` | `deferred` | No route; add evolution config route or hide studio in strict live. | `017`, `025` |
-| `bff.fitnessFormulas.get` | `deferred` | No route; add detail route or remove seed fallback. | `017`, `025` |
-| `bff.mutationRules.list` | `deferred` | No route; add mutation-rule route or hide studio in strict live. | `017`, `025` |
+| `bff.evolutionCandidates.forRun` | `deferred` | Backend route is program-scoped candidates; helper contract is run-scoped. | `028` |
+| `bff.fitnessFormulas.list` | `deferred` | No route; add evolution config route or hide studio in strict live. | `028` |
+| `bff.fitnessFormulas.get` | `deferred` | No route; add detail route or remove seed fallback. | `028` |
+| `bff.mutationRules.list` | `deferred` | No route; add mutation-rule route or hide studio in strict live. | `028` |
 | `bff.allocationSimulations.forRebalance` | `mock_only_dev` | Mock simulator only; hide or show explicit mock state in live. | `015`, `025` |
-| `bff.policyViolations.list` | `deferred` | Add policy-violation route or fold into detail DTOs. | `016`, `025` |
-| `bff.policyViolations.forSubject` | `deferred` | Add subject route or fold into detail DTOs. | `016`, `025` |
-| `bff.evaluationRuns.list` | `deferred` | No generic route; persona-scoped evaluations exist. | `016`, `025` |
-| `bff.evaluationRuns.forSubject` | `deferred` | Split persona subject to `/bff/personas/{id}/evaluations`; disable unsupported subject kinds. | `016`, `025` |
-| `bff.objectVersions.forSubject` | `deferred` | No generic version route; fold strategy/persona versions into detail tabs. | `016`, `025` |
-| `bff.featureSets.forStrategy` | `deferred` | No route; add feature-set route or fold into strategy specs/detail. | `016`, `025` |
-| `bff.performanceSeries.forStrategy` | `deferred` | Add strategy performance route or map to canonical telemetry route. | `016`, `025` |
+| `bff.policyViolations.list` | `deferred` | Add policy-violation route or fold into detail DTOs. | `028` |
+| `bff.policyViolations.forSubject` | `deferred` | Add subject route or fold into detail DTOs. | `028` |
+| `bff.evaluationRuns.list` | `deferred` | No generic route; persona-scoped evaluations exist. | `028` |
+| `bff.evaluationRuns.forSubject` | `deferred` | Split persona subject to `/bff/personas/{id}/evaluations`; disable unsupported subject kinds. | `028` |
+| `bff.objectVersions.forSubject` | `deferred` | No generic version route; fold strategy/persona versions into detail tabs. | `028` |
+| `bff.featureSets.forStrategy` | `deferred` | No route; add feature-set route or fold into strategy specs/detail. | `028` |
+| `bff.performanceSeries.forStrategy` | `deferred` | Add strategy performance route or map to canonical telemetry route. | `028` |
 | `bff.watchers.forSubject` | `mock_only_dev` | Hide watcher chips or add real collaboration/subscription route later. | `015`, `025` |
 | `bff.decisionJournal.list` | `live_required` | Delegates to `GET /bff/agora/journal`. | `017`, `025` |
 | `bff.decisionJournal.forSubject` | `live_required` | Delegates to live journal list, then filters by subject. | `017`, `025` |
-| `bff.allocationLimits.forPool` | `deferred` | Fold into capital-pool detail or add pool-scoped route. | `016`, `025` |
-| `bff.poolFreezes.forPool` | `deferred` | Fold into capital-pool detail or add pool-scoped route. | `016`, `025` |
+| `bff.allocationLimits.forPool` | `deferred` | Fold into capital-pool detail or add pool-scoped route. | `028` |
+| `bff.poolFreezes.forPool` | `deferred` | Fold into capital-pool detail or add pool-scoped route. | `028` |
 | `bff.deploymentStages.forDeployment` | `live_required` | Read stages from `GET /bff/deployments/{id}` detail DTO. | `016`, `025` |
 | `bff.mcpSecrets.forServer` | `mock_only_dev` | Hide in live unless a masked metadata route is added; never expose real secret values. | `015`, `025` |
-| `bff.promotions.forProgram` | `deferred` | Add promotion-history route or fold into evolution program detail. | `017`, `025` |
-| `bff.metricFreezes.forRebalance` | `deferred` | Fold into rebalance detail or add rebalance-scoped route. | `018`, `025` |
-| `bff.rebalanceOverrides.forRebalance` | `deferred` | Fold into rebalance detail or add rebalance-scoped route. | `018`, `025` |
+| `bff.promotions.forProgram` | `deferred` | Add promotion-history route or fold into evolution program detail. | `028` |
+| `bff.metricFreezes.forRebalance` | `deferred` | Fold into rebalance detail or add rebalance-scoped route. | `028` |
+| `bff.rebalanceOverrides.forRebalance` | `deferred` | Fold into rebalance detail or add rebalance-scoped route. | `028` |
 | `bff.rebalanceWorkflow.forRebalance` | `live_required` | Read workflow/status from `GET /bff/rebalances/{id}` or a subresource. | `018`, `025` |
 | `bff.search` | `live_required` | `GET /bff/search`; strict live must not return `seed.searchableObjects()`. | `025` |
 
