@@ -92,13 +92,13 @@
     },
     {
       "method": "GET",
-      "path": "/bff/agora/sessions/{sessionId}",
+      "path": "/bff/agora/sessions/{param}",
       "family": "agora-core",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/agora/sessions/{sessionId}/messages",
+      "path": "/bff/agora/sessions/{param}/messages",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -110,7 +110,7 @@
     },
     {
       "method": "GET",
-      "path": "/bff/agora/signals/{signalId}",
+      "path": "/bff/agora/signals/{param}",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -140,7 +140,7 @@
     },
     {
       "method": "PATCH",
-      "path": "/bff/agora/journal/{entry_id}",
+      "path": "/bff/agora/journal/{param}",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -158,7 +158,7 @@
     },
     {
       "method": "POST",
-      "path": "/bff/agora/insights/{insightId}/actions/{actionId}",
+      "path": "/bff/agora/insights/{param}/actions/{param}",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -170,13 +170,13 @@
     },
     {
       "method": "POST",
-      "path": "/bff/agora/memory/{memoryId}/actions/{actionId}",
+      "path": "/bff/agora/memory/{param}/actions/{param}",
       "family": "agora-core",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/agora/messages/{messageId}/actions/{actionId}",
+      "path": "/bff/agora/messages/{param}/actions/{param}",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -194,13 +194,13 @@
     },
     {
       "method": "POST",
-      "path": "/bff/agora/sessions/{sessionId}/messages",
+      "path": "/bff/agora/sessions/{param}/messages",
       "family": "agora-core",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/agora/signals/{signalId}/feedback",
+      "path": "/bff/agora/signals/{param}/feedback",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -212,13 +212,13 @@
     },
     {
       "method": "POST",
-      "path": "/bff/insights/{insightId}/actions/attach-strategy",
+      "path": "/bff/insights/{param}/actions/attach-strategy",
       "family": "agora-core",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/memory/{memoryId}/actions/quarantine",
+      "path": "/bff/memory/{param}/actions/quarantine",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -242,25 +242,25 @@
     },
     {
       "method": "GET",
-      "path": "/bff/channels/{id}",
+      "path": "/bff/channels/{param}",
       "family": "agora-extended",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/agora/committee/{sessionId}/evidence-pack",
+      "path": "/bff/agora/committee/{param}/evidence-pack",
       "family": "agora-extended",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/agora/committee/{sessionId}/evidence-pack/files",
+      "path": "/bff/agora/committee/{param}/evidence-pack/files",
       "family": "agora-extended",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/agora/persona-lab/{draftId}/actions/submit-commit",
+      "path": "/bff/agora/persona-lab/{param}/actions/submit-commit",
       "family": "agora-extended",
       "status": "implemented"
     },
@@ -272,7 +272,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/approval-decisions/{decision_id}",
+      "path": "/api/v1/approval-decisions/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -290,7 +290,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/artifacts/{artifact_id}",
+      "path": "/api/v1/artifacts/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -302,7 +302,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/bindings/{binding_id}",
+      "path": "/api/v1/bindings/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -314,7 +314,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/capital-pools/{pool_id}",
+      "path": "/api/v1/capital-pools/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -326,7 +326,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/committees/{committee_id}",
+      "path": "/api/v1/committees/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -338,7 +338,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/consult/memos/{memo_id}",
+      "path": "/api/v1/consult/memos/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -350,37 +350,37 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/consult/requests/{request_id}",
+      "path": "/api/v1/consult/requests/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/consultations/{session_id}",
+      "path": "/api/v1/consultations/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/consultations/{session_id}/evidence",
+      "path": "/api/v1/consultations/{param}/evidence",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/consultations/{session_id}/outcome",
+      "path": "/api/v1/consultations/{param}/outcome",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/consultations/{session_id}/participants",
+      "path": "/api/v1/consultations/{param}/participants",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/consultations/{session_id}/transcript",
+      "path": "/api/v1/consultations/{param}/transcript",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -392,7 +392,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/deployment-plans/{plan_id}",
+      "path": "/api/v1/deployment-plans/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -404,7 +404,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/evolution-decisions/{decision_id}",
+      "path": "/api/v1/evolution-decisions/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -416,7 +416,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/experiments/{experiment_id}",
+      "path": "/api/v1/experiments/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -434,7 +434,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/incidents/{incident_id}",
+      "path": "/api/v1/incidents/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -452,7 +452,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/knowledge/evidence/{ref_id}",
+      "path": "/api/v1/knowledge/evidence/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -464,7 +464,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/knowledge/insights/{insight_id}",
+      "path": "/api/v1/knowledge/insights/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -476,7 +476,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/knowledge/memory/{entry_id}",
+      "path": "/api/v1/knowledge/memory/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -488,7 +488,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/knowledge/notes/{note_id}",
+      "path": "/api/v1/knowledge/notes/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -500,19 +500,19 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/knowledge/strategy-specs/{strategy_id}",
+      "path": "/api/v1/knowledge/strategy-specs/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/knowledge/strategy-specs/{strategy_id}/compare",
+      "path": "/api/v1/knowledge/strategy-specs/{param}/compare",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/knowledge/strategy-specs/{strategy_id}/versions",
+      "path": "/api/v1/knowledge/strategy-specs/{param}/versions",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -524,7 +524,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/lineage/edges/{edge_id}",
+      "path": "/api/v1/lineage/edges/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -536,7 +536,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/lineage/inspiration/{artifact_id}",
+      "path": "/api/v1/lineage/inspiration/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -548,37 +548,37 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/personas/{persona_id}",
+      "path": "/api/v1/personas/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/personas/{persona_id}/capabilities",
+      "path": "/api/v1/personas/{param}/capabilities",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/personas/{persona_id}/consult-policy",
+      "path": "/api/v1/personas/{param}/consult-policy",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/personas/{persona_id}/consultations",
+      "path": "/api/v1/personas/{param}/consultations",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/personas/{persona_id}/sessions",
+      "path": "/api/v1/personas/{param}/sessions",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/personas/{persona_id}/teaching",
+      "path": "/api/v1/personas/{param}/teaching",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -590,7 +590,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/postmortems/{report_id}",
+      "path": "/api/v1/postmortems/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -602,7 +602,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/research/analysis/{analysis_id}",
+      "path": "/api/v1/research/analysis/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -626,7 +626,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/research/tickets/{ticket_id}",
+      "path": "/api/v1/research/tickets/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -644,25 +644,25 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/runtime-bindings/{binding_id}",
+      "path": "/api/v1/runtime-bindings/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/runtimes/{runtime_id}/rollbacks",
+      "path": "/api/v1/runtimes/{param}/rollbacks",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/runtimes/{runtime_id}/status",
+      "path": "/api/v1/runtimes/{param}/status",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/sessions/{session_id}",
+      "path": "/api/v1/sessions/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -686,13 +686,13 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/telemetry/{artifact_id}/performance",
+      "path": "/api/v1/telemetry/{param}/performance",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/telemetry/{runtime_id}/summary",
+      "path": "/api/v1/telemetry/{param}/summary",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -704,7 +704,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/trainer/replay/{session_id}",
+      "path": "/api/v1/trainer/replay/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -716,19 +716,19 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/trainer/sessions/{session_id}",
+      "path": "/api/v1/trainer/sessions/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/trainer/sessions/{session_id}/controls",
+      "path": "/api/v1/trainer/sessions/{param}/controls",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/trainer/sessions/{session_id}/preview",
+      "path": "/api/v1/trainer/sessions/{param}/preview",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -746,7 +746,7 @@
     },
     {
       "method": "PATCH",
-      "path": "/api/v1/research/tickets/{ticket_id}",
+      "path": "/api/v1/research/tickets/{param}",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -758,7 +758,7 @@
     },
     {
       "method": "POST",
-      "path": "/api/v1/consult/requests/{request_id}/cancel",
+      "path": "/api/v1/consult/requests/{param}/cancel",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -770,7 +770,7 @@
     },
     {
       "method": "POST",
-      "path": "/api/v1/experiments/{experiment_id}/cancel",
+      "path": "/api/v1/experiments/{param}/cancel",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -806,31 +806,31 @@
     },
     {
       "method": "POST",
-      "path": "/api/v1/trainer/sessions/{session_id}/commit",
+      "path": "/api/v1/trainer/sessions/{param}/commit",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/api/v1/trainer/sessions/{session_id}/discard",
+      "path": "/api/v1/trainer/sessions/{param}/discard",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/api/v1/trainer/sessions/{session_id}/message",
+      "path": "/api/v1/trainer/sessions/{param}/message",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/api/v1/trainer/sessions/{session_id}/patch",
+      "path": "/api/v1/trainer/sessions/{param}/patch",
       "family": "api-v1",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/api/v1/trainer/sessions/{session_id}/preview",
+      "path": "/api/v1/trainer/sessions/{param}/preview",
       "family": "api-v1",
       "status": "implemented"
     },
@@ -842,7 +842,7 @@
     },
     {
       "method": "GET",
-      "path": "/bff/capital-pools/{pool_id}",
+      "path": "/bff/capital-pools/{param}",
       "family": "capital-ranking-rebalance",
       "status": "implemented"
     },
@@ -855,10 +855,10 @@
     },
     {
       "method": "GET",
-      "path": "/bff/ranking-formulas/{id}",
+      "path": "/bff/ranking-formulas/{param}",
       "family": "capital-ranking-rebalance",
       "status": "alias",
-      "covered_by": "GET /bff/ranking/formulas/{formula_id}"
+      "covered_by": "GET /bff/ranking/formulas/{param}"
     },
     {
       "method": "GET",
@@ -868,7 +868,7 @@
     },
     {
       "method": "GET",
-      "path": "/bff/ranking/formulas/{formula_id}",
+      "path": "/bff/ranking/formulas/{param}",
       "family": "capital-ranking-rebalance",
       "status": "implemented"
     },
@@ -880,7 +880,7 @@
     },
     {
       "method": "GET",
-      "path": "/bff/rankings/{ranking_id}",
+      "path": "/bff/rankings/{param}",
       "family": "capital-ranking-rebalance",
       "status": "implemented"
     },
@@ -892,32 +892,32 @@
     },
     {
       "method": "GET",
-      "path": "/bff/rebalances/{rebalance_id}",
+      "path": "/bff/rebalances/{param}",
       "family": "capital-ranking-rebalance",
       "status": "implemented"
     },
     {
       "method": "PATCH",
-      "path": "/bff/capital-pools/{pool_id}",
+      "path": "/bff/capital-pools/{param}",
       "family": "capital-ranking-rebalance",
       "status": "implemented"
     },
     {
       "method": "PATCH",
-      "path": "/bff/ranking-formulas/{id}",
+      "path": "/bff/ranking-formulas/{param}",
       "family": "capital-ranking-rebalance",
       "status": "alias",
-      "covered_by": "PATCH /bff/ranking/formulas/{formula_id}"
+      "covered_by": "PATCH /bff/ranking/formulas/{param}"
     },
     {
       "method": "PATCH",
-      "path": "/bff/ranking/formulas/{formula_id}",
+      "path": "/bff/ranking/formulas/{param}",
       "family": "capital-ranking-rebalance",
       "status": "implemented"
     },
     {
       "method": "PATCH",
-      "path": "/bff/rebalances/{id}",
+      "path": "/bff/rebalances/{param}",
       "family": "capital-ranking-rebalance",
       "status": "implemented"
     },
@@ -929,7 +929,7 @@
     },
     {
       "method": "POST",
-      "path": "/bff/capital-pools/{pool_id}/actions/{action_id}",
+      "path": "/bff/capital-pools/{param}/actions/{param}",
       "family": "capital-ranking-rebalance",
       "status": "implemented"
     },
@@ -948,13 +948,13 @@
     },
     {
       "method": "POST",
-      "path": "/bff/ranking/formulas/{formula_id}/actions/{action_id}",
+      "path": "/bff/ranking/formulas/{param}/actions/{param}",
       "family": "capital-ranking-rebalance",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/rankings/{ranking_id}/actions/{action_id}",
+      "path": "/bff/rankings/{param}/actions/{param}",
       "family": "capital-ranking-rebalance",
       "status": "implemented"
     },
@@ -966,7 +966,7 @@
     },
     {
       "method": "POST",
-      "path": "/bff/rebalances/{rebalance_id}/actions/{action_id}",
+      "path": "/bff/rebalances/{param}/actions/{param}",
       "family": "capital-ranking-rebalance",
       "status": "implemented"
     },
@@ -978,7 +978,7 @@
     },
     {
       "method": "GET",
-      "path": "/bff/artifacts/{id}",
+      "path": "/bff/artifacts/{param}",
       "family": "evolution-experiment-jobs-events",
       "status": "implemented"
     },
@@ -996,19 +996,19 @@
     },
     {
       "method": "GET",
-      "path": "/bff/evolution-programs/{programId}",
+      "path": "/bff/evolution-programs/{param}",
       "family": "evolution-experiment-jobs-events",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/evolution-programs/{programId}/candidates",
+      "path": "/bff/evolution-programs/{param}/candidates",
       "family": "evolution-experiment-jobs-events",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/evolution-programs/{programId}/runs",
+      "path": "/bff/evolution-programs/{param}/runs",
       "family": "evolution-experiment-jobs-events",
       "status": "implemented"
     },
@@ -1020,25 +1020,25 @@
     },
     {
       "method": "GET",
-      "path": "/bff/experiments/{experimentId}",
+      "path": "/bff/experiments/{param}",
       "family": "evolution-experiment-jobs-events",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/experiments/{experimentId}/artifacts",
+      "path": "/bff/experiments/{param}/artifacts",
       "family": "evolution-experiment-jobs-events",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/experiments/{experimentId}/logs",
+      "path": "/bff/experiments/{param}/logs",
       "family": "evolution-experiment-jobs-events",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/experiments/{experimentId}/metrics",
+      "path": "/bff/experiments/{param}/metrics",
       "family": "evolution-experiment-jobs-events",
       "status": "implemented"
     },
@@ -1050,13 +1050,13 @@
     },
     {
       "method": "GET",
-      "path": "/bff/jobs/{jobId}",
+      "path": "/bff/jobs/{param}",
       "family": "evolution-experiment-jobs-events",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/jobs/{jobId}/logs",
+      "path": "/bff/jobs/{param}/logs",
       "family": "evolution-experiment-jobs-events",
       "status": "implemented"
     },
@@ -1068,25 +1068,25 @@
     },
     {
       "method": "GET",
-      "path": "/bff/research-experiments/{id}",
+      "path": "/bff/research-experiments/{param}",
       "family": "evolution-experiment-jobs-events",
       "status": "implemented"
     },
     {
       "method": "PATCH",
-      "path": "/bff/artifacts/{id}",
+      "path": "/bff/artifacts/{param}",
       "family": "evolution-experiment-jobs-events",
       "status": "implemented"
     },
     {
       "method": "PATCH",
-      "path": "/bff/evolution-programs/{programId}",
+      "path": "/bff/evolution-programs/{param}",
       "family": "evolution-experiment-jobs-events",
       "status": "implemented"
     },
     {
       "method": "PATCH",
-      "path": "/bff/research-experiments/{id}",
+      "path": "/bff/research-experiments/{param}",
       "family": "evolution-experiment-jobs-events",
       "status": "implemented"
     },
@@ -1104,7 +1104,7 @@
     },
     {
       "method": "POST",
-      "path": "/bff/evolution-programs/{programId}/actions/{actionId}",
+      "path": "/bff/evolution-programs/{param}/actions/{param}",
       "family": "evolution-experiment-jobs-events",
       "status": "implemented"
     },
@@ -1116,13 +1116,13 @@
     },
     {
       "method": "POST",
-      "path": "/bff/experiments/{experimentId}/actions/{actionId}",
+      "path": "/bff/experiments/{param}/actions/{param}",
       "family": "evolution-experiment-jobs-events",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/jobs/{jobId}/actions/{actionId}",
+      "path": "/bff/jobs/{param}/actions/{param}",
       "family": "evolution-experiment-jobs-events",
       "status": "implemented"
     },
@@ -1158,7 +1158,7 @@
     },
     {
       "method": "GET",
-      "path": "/bff/v5/loop-runs/{id}",
+      "path": "/bff/v5/loop-runs/{param}",
       "family": "execute-plans-cutover-smoke",
       "status": "implemented"
     },
@@ -1170,13 +1170,13 @@
     },
     {
       "method": "GET",
-      "path": "/bff/v5/sentinel/findings/{id}",
+      "path": "/bff/v5/sentinel/findings/{param}",
       "family": "execute-plans-cutover-smoke",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/v5/sentinel/findings/{id}/status",
+      "path": "/bff/v5/sentinel/findings/{param}/status",
       "family": "execute-plans-cutover-smoke",
       "status": "implemented"
     },
@@ -1188,7 +1188,7 @@
     },
     {
       "method": "POST",
-      "path": "/bff/v5/sentinel/remediation/{actionId}/execute",
+      "path": "/bff/v5/sentinel/remediation/{param}/execute",
       "family": "execute-plans-cutover-smoke",
       "status": "implemented"
     },
@@ -1200,7 +1200,7 @@
     },
     {
       "method": "POST",
-      "path": "/bff/actions/{entityType}/{entityId}/{actionId}",
+      "path": "/bff/actions/{param}/{param}/{param}",
       "family": "final-contract",
       "status": "implemented"
     },
@@ -1212,7 +1212,7 @@
     },
     {
       "method": "DELETE",
-      "path": "/bff/confirm-tokens/{tokenId}",
+      "path": "/bff/confirm-tokens/{param}",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
@@ -1224,7 +1224,7 @@
     },
     {
       "method": "GET",
-      "path": "/bff/alerts/{id}",
+      "path": "/bff/alerts/{param}",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
@@ -1236,13 +1236,13 @@
     },
     {
       "method": "GET",
-      "path": "/bff/approvals/{approval_id}/evidence",
+      "path": "/bff/approvals/{param}",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/approvals/{id}",
+      "path": "/bff/approvals/{param}/evidence",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
@@ -1254,7 +1254,7 @@
     },
     {
       "method": "GET",
-      "path": "/bff/audit/entities/{entity_type}/{entity_id}",
+      "path": "/bff/audit/entities/{param}/{param}",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
@@ -1272,7 +1272,7 @@
     },
     {
       "method": "GET",
-      "path": "/bff/confirm-tokens/{tokenId}",
+      "path": "/bff/confirm-tokens/{param}",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
@@ -1284,7 +1284,7 @@
     },
     {
       "method": "GET",
-      "path": "/bff/deployments/{deployment_id}",
+      "path": "/bff/deployments/{param}",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
@@ -1296,7 +1296,7 @@
     },
     {
       "method": "GET",
-      "path": "/bff/incidents/{incident_id}",
+      "path": "/bff/incidents/{param}",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
@@ -1308,19 +1308,19 @@
     },
     {
       "method": "GET",
-      "path": "/bff/reviews/{review_id}",
+      "path": "/bff/reviews/{param}",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/reviews/{review_id}/audit",
+      "path": "/bff/reviews/{param}/audit",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/reviews/{review_id}/validators",
+      "path": "/bff/reviews/{param}/validators",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
@@ -1332,7 +1332,7 @@
     },
     {
       "method": "GET",
-      "path": "/bff/risk/alerts/{alert_id}",
+      "path": "/bff/risk/alerts/{param}",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
@@ -1344,25 +1344,25 @@
     },
     {
       "method": "GET",
-      "path": "/bff/runtimes/{runtime_id}",
+      "path": "/bff/runtimes/{param}",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
     {
       "method": "PATCH",
-      "path": "/bff/deployments/{id}",
+      "path": "/bff/deployments/{param}",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/alerts/{id}/acknowledge",
+      "path": "/bff/alerts/{param}/acknowledge",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/alerts/{id}/escalate-incident",
+      "path": "/bff/alerts/{param}/escalate-incident",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
@@ -1374,7 +1374,7 @@
     },
     {
       "method": "POST",
-      "path": "/bff/approvals/{id}/decide",
+      "path": "/bff/approvals/{param}/decide",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
@@ -1398,7 +1398,7 @@
     },
     {
       "method": "POST",
-      "path": "/bff/confirm-tokens/{tokenId}/redeem",
+      "path": "/bff/confirm-tokens/{param}/redeem",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
@@ -1410,7 +1410,7 @@
     },
     {
       "method": "POST",
-      "path": "/bff/deployments/{deployment_id}/actions/{action_id}",
+      "path": "/bff/deployments/{param}/actions/{param}",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
@@ -1422,31 +1422,31 @@
     },
     {
       "method": "POST",
-      "path": "/bff/incidents/{id}/append-postmortem",
+      "path": "/bff/incidents/{param}/actions/{param}",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/incidents/{id}/resolve",
+      "path": "/bff/incidents/{param}/append-postmortem",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/incidents/{id}/rollback-deployment",
+      "path": "/bff/incidents/{param}/resolve",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/incidents/{id}/start-mitigation",
+      "path": "/bff/incidents/{param}/rollback-deployment",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/incidents/{incident_id}/actions/{action_id}",
+      "path": "/bff/incidents/{param}/start-mitigation",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
@@ -1458,19 +1458,19 @@
     },
     {
       "method": "POST",
-      "path": "/bff/reviews/{review_id}/actions/{action_id}",
+      "path": "/bff/reviews/{param}/actions/{param}",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/risk/alerts/{alert_id}/actions/{action_id}",
+      "path": "/bff/risk/alerts/{param}/actions/{param}",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/runtimes/{runtime_id}/actions/{action_id}",
+      "path": "/bff/runtimes/{param}/actions/{param}",
       "family": "governance-runtime-risk-audit",
       "status": "implemented"
     },
@@ -1561,47 +1561,47 @@
     },
     {
       "method": "GET",
-      "path": "/bff/mcp-servers/{id}",
+      "path": "/bff/mcp-servers/{param}",
       "family": "mcp-final",
       "status": "alias",
-      "covered_by": "GET /bff/mcp/servers/{server_id}"
+      "covered_by": "GET /bff/mcp/servers/{param}"
     },
     {
       "method": "GET",
       "path": "/bff/mcp-tools",
       "family": "mcp-final",
       "status": "alias",
-      "covered_by": "GET /bff/mcp/servers/{server_id}/tools"
+      "covered_by": "GET /bff/mcp/servers/{param}/tools"
     },
     {
       "method": "GET",
-      "path": "/bff/mcp-tools/{id}",
+      "path": "/bff/mcp-tools/{param}",
       "family": "mcp-final",
       "status": "alias",
-      "covered_by": "GET /bff/mcp/servers/{server_id}/tools"
+      "covered_by": "GET /bff/mcp/servers/{param}/tools"
     },
     {
       "method": "POST",
-      "path": "/bff/mcp-servers/{server_id}/import-tools",
+      "path": "/bff/mcp-servers/{param}/import-tools",
       "family": "mcp-final",
       "status": "alias",
-      "covered_by": "POST /bff/v1/mcp/servers/{server_id}/import-tools"
+      "covered_by": "POST /bff/v1/mcp/servers/{param}/import-tools"
     },
     {
       "method": "POST",
-      "path": "/bff/mcp-tools/{tool_id}/{action}",
+      "path": "/bff/mcp-tools/{param}/{param}",
       "family": "mcp-final",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/v1/mcp/servers/{server_id}/import-tools",
+      "path": "/bff/v1/mcp/servers/{param}/import-tools",
       "family": "mcp-final",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/v1/mcp/servers/{server_id}/tools/{tool_id}/actions/{action}",
+      "path": "/bff/v1/mcp/servers/{param}/tools/{param}/actions/{param}",
       "family": "mcp-final",
       "status": "implemented"
     },
@@ -1613,7 +1613,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/operator/commands/{command_id}",
+      "path": "/api/v1/operator/commands/{param}",
       "family": "operator",
       "status": "implemented"
     },
@@ -1625,7 +1625,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/operator/deployment-diff/{plan_id}",
+      "path": "/api/v1/operator/deployment-diff/{param}",
       "family": "operator",
       "status": "implemented"
     },
@@ -1637,7 +1637,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/operator/deployment-review/{plan_id}",
+      "path": "/api/v1/operator/deployment-review/{param}",
       "family": "operator",
       "status": "implemented"
     },
@@ -1673,13 +1673,13 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/operator/incident-response/{incident_id}",
+      "path": "/api/v1/operator/incident-response/{param}",
       "family": "operator",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/operator/mutation-review/{decision_id}",
+      "path": "/api/v1/operator/mutation-review/{param}",
       "family": "operator",
       "status": "implemented"
     },
@@ -1721,19 +1721,19 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/operator/paper-live-drift/{runtime_id}",
+      "path": "/api/v1/operator/paper-live-drift/{param}",
       "family": "operator",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/operator/persona-management/{persona_id}",
+      "path": "/api/v1/operator/persona-management/{param}",
       "family": "operator",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/operator/post-incident-review/{incident_id}",
+      "path": "/api/v1/operator/post-incident-review/{param}",
       "family": "operator",
       "status": "implemented"
     },
@@ -1751,7 +1751,7 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/operator/rollback-review/{rollback_id}",
+      "path": "/api/v1/operator/rollback-review/{param}",
       "family": "operator",
       "status": "implemented"
     },
@@ -1787,7 +1787,7 @@
     },
     {
       "method": "POST",
-      "path": "/api/v1/operator/openclaw/sessions/{session_id}/cancel",
+      "path": "/api/v1/operator/openclaw/sessions/{param}/cancel",
       "family": "operator",
       "status": "implemented"
     },
@@ -1811,7 +1811,7 @@
     },
     {
       "method": "POST",
-      "path": "/api/v1/operator/source/frontier/{frontier_id}/replay",
+      "path": "/api/v1/operator/source/frontier/{param}/replay",
       "family": "operator",
       "status": "implemented"
     },
@@ -1853,7 +1853,7 @@
     },
     {
       "method": "GET",
-      "path": "/bff/sse/agora/sessions/{sessionId}",
+      "path": "/bff/sse/agora/sessions/{param}",
       "family": "sse-compatibility",
       "status": "implemented"
     },
@@ -1889,13 +1889,13 @@
     },
     {
       "method": "GET",
-      "path": "/bff/sse/incidents/{incidentId}/timeline",
+      "path": "/bff/sse/incidents/{param}/timeline",
       "family": "sse-compatibility",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/sse/jobs/{jobId}/progress",
+      "path": "/bff/sse/jobs/{param}/progress",
       "family": "sse-compatibility",
       "status": "implemented"
     },
@@ -1937,13 +1937,13 @@
     },
     {
       "method": "GET",
-      "path": "/api/v1/runtime/{runtime_id}/events/stream",
+      "path": "/api/v1/runtime/{param}/events/stream",
       "family": "sse-substrate",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/api/v1/stream/{channel}",
+      "path": "/api/v1/stream/{param}",
       "family": "sse-substrate",
       "status": "implemented"
     },
@@ -1961,37 +1961,37 @@
     },
     {
       "method": "GET",
-      "path": "/bff/personas/{persona_id}",
+      "path": "/bff/personas/{param}",
       "family": "strategy-persona",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/personas/{persona_id}/activity",
+      "path": "/bff/personas/{param}/activity",
       "family": "strategy-persona",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/personas/{persona_id}/audit",
+      "path": "/bff/personas/{param}/audit",
       "family": "strategy-persona",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/personas/{persona_id}/evaluations",
+      "path": "/bff/personas/{param}/evaluations",
       "family": "strategy-persona",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/personas/{persona_id}/memory",
+      "path": "/bff/personas/{param}/memory",
       "family": "strategy-persona",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/personas/{persona_id}/route-policy",
+      "path": "/bff/personas/{param}/route-policy",
       "family": "strategy-persona",
       "status": "implemented"
     },
@@ -2009,37 +2009,37 @@
     },
     {
       "method": "GET",
-      "path": "/bff/strategies/{strategy_id}",
+      "path": "/bff/strategies/{param}",
       "family": "strategy-persona",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/strategies/{strategy_id}/artifacts",
+      "path": "/bff/strategies/{param}/artifacts",
       "family": "strategy-persona",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/strategies/{strategy_id}/audit",
+      "path": "/bff/strategies/{param}/audit",
       "family": "strategy-persona",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/strategies/{strategy_id}/experiments",
+      "path": "/bff/strategies/{param}/experiments",
       "family": "strategy-persona",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/strategies/{strategy_id}/lineage",
+      "path": "/bff/strategies/{param}/lineage",
       "family": "strategy-persona",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/strategies/{strategy_id}/specs",
+      "path": "/bff/strategies/{param}/specs",
       "family": "strategy-persona",
       "status": "implemented"
     },
@@ -2051,13 +2051,13 @@
     },
     {
       "method": "PATCH",
-      "path": "/bff/personas/{persona_id}",
+      "path": "/bff/personas/{param}",
       "family": "strategy-persona",
       "status": "implemented"
     },
     {
       "method": "PATCH",
-      "path": "/bff/strategies/{strategy_id}",
+      "path": "/bff/strategies/{param}",
       "family": "strategy-persona",
       "status": "implemented"
     },
@@ -2069,13 +2069,13 @@
     },
     {
       "method": "POST",
-      "path": "/bff/personas/{persona_id}/actions/{action_id}",
+      "path": "/bff/personas/{param}/actions/{param}",
       "family": "strategy-persona",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/personas/{persona_id}/test-prompt",
+      "path": "/bff/personas/{param}/test-prompt",
       "family": "strategy-persona",
       "status": "implemented"
     },
@@ -2087,19 +2087,19 @@
     },
     {
       "method": "POST",
-      "path": "/bff/strategies/{strategy_id}/actions/{action_id}",
+      "path": "/bff/strategies/{param}/actions/{param}",
       "family": "strategy-persona",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/strategies/{strategy_id}/dry-run",
+      "path": "/bff/strategies/{param}/dry-run",
       "family": "strategy-persona",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/strategies/{strategy_id}/specs",
+      "path": "/bff/strategies/{param}/specs",
       "family": "strategy-persona",
       "status": "implemented"
     },
@@ -2111,13 +2111,13 @@
     },
     {
       "method": "GET",
-      "path": "/bff/mcp/servers/{server_id}",
+      "path": "/bff/mcp/servers/{param}",
       "family": "tools-mcp-skills",
       "status": "implemented"
     },
     {
       "method": "GET",
-      "path": "/bff/mcp/servers/{server_id}/tools",
+      "path": "/bff/mcp/servers/{param}/tools",
       "family": "tools-mcp-skills",
       "status": "implemented"
     },
@@ -2129,7 +2129,7 @@
     },
     {
       "method": "GET",
-      "path": "/bff/skills/{skill_id}",
+      "path": "/bff/skills/{param}",
       "family": "tools-mcp-skills",
       "status": "implemented"
     },
@@ -2141,19 +2141,19 @@
     },
     {
       "method": "GET",
-      "path": "/bff/tools/{tool_id}",
+      "path": "/bff/tools/{param}",
       "family": "tools-mcp-skills",
       "status": "implemented"
     },
     {
       "method": "PATCH",
-      "path": "/bff/skills/{skill_id}",
+      "path": "/bff/skills/{param}",
       "family": "tools-mcp-skills",
       "status": "implemented"
     },
     {
       "method": "PATCH",
-      "path": "/bff/tools/{tool_id}",
+      "path": "/bff/tools/{param}",
       "family": "tools-mcp-skills",
       "status": "implemented"
     },
@@ -2165,13 +2165,13 @@
     },
     {
       "method": "POST",
-      "path": "/bff/mcp/servers/{server_id}/actions/{action_id}",
+      "path": "/bff/mcp/servers/{param}/actions/{param}",
       "family": "tools-mcp-skills",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/mcp/tools/{tool_id}/actions/{action_id}",
+      "path": "/bff/mcp/tools/{param}/actions/{param}",
       "family": "tools-mcp-skills",
       "status": "implemented"
     },
@@ -2183,13 +2183,13 @@
     },
     {
       "method": "POST",
-      "path": "/bff/skills/{skill_id}/actions/{action_id}",
+      "path": "/bff/skills/{param}/actions/{param}",
       "family": "tools-mcp-skills",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/skills/{skill_id}/sandbox-eval",
+      "path": "/bff/skills/{param}/sandbox-eval",
       "family": "tools-mcp-skills",
       "status": "implemented"
     },
@@ -2201,7 +2201,7 @@
     },
     {
       "method": "POST",
-      "path": "/bff/tools/{tool_id}/actions/{action_id}",
+      "path": "/bff/tools/{param}/actions/{param}",
       "family": "tools-mcp-skills",
       "status": "implemented"
     },
@@ -2213,43 +2213,43 @@
     },
     {
       "method": "GET",
-      "path": "/bff/v5/interventions/{id}",
+      "path": "/bff/v5/interventions/{param}",
       "family": "v5-interventions",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/v5/interventions/{id}/claim",
+      "path": "/bff/v5/interventions/{param}/claim",
       "family": "v5-interventions",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/v5/interventions/{id}/decide",
+      "path": "/bff/v5/interventions/{param}/decide",
       "family": "v5-interventions",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/v5/interventions/{id}/escalate",
+      "path": "/bff/v5/interventions/{param}/escalate",
       "family": "v5-interventions",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/v5/interventions/{id}/release",
+      "path": "/bff/v5/interventions/{param}/release",
       "family": "v5-interventions",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/v5/interventions/{id}/two-man-sign",
+      "path": "/bff/v5/interventions/{param}/remediate",
       "family": "v5-interventions",
       "status": "implemented"
     },
     {
       "method": "POST",
-      "path": "/bff/v5/interventions/{intervention_id}/remediate",
+      "path": "/bff/v5/interventions/{param}/two-man-sign",
       "family": "v5-interventions",
       "status": "implemented"
     }

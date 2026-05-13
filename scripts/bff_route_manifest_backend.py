@@ -192,14 +192,19 @@ def app_route_index(app: object) -> list[dict]:
                 continue
             seen.add(key)
             override = ROUTE_STATUS_OVERRIDES.get(f"{method} {path}", {})
+            norm_path = normalize_path(path)
             entry: dict = {
                 "method": method,
-                "path": path,
+                "path": norm_path,
                 "family": infer_family(path),
                 "status": override.get("status", "implemented"),
             }
             if "covered_by" in override:
-                entry["covered_by"] = override["covered_by"]
+                raw_covered_by = override["covered_by"]
+                parts = raw_covered_by.split(" ", 1)
+                entry["covered_by"] = (
+                    f"{parts[0]} {normalize_path(parts[1])}" if len(parts) == 2 else raw_covered_by
+                )
             entries.append(entry)
     entries.sort(key=lambda e: (e["family"], e["method"], e["path"]))
     return entries
