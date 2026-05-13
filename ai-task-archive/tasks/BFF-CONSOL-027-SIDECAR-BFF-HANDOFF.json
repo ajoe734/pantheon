@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-13T11:17:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BFF-CONSOL-027 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BFF-CONSOL-027，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-001",
+      "BFF-CONSOL-002",
+      "BFF-CONSOL-003",
+      "BFF-CONSOL-004",
+      "BFF-CONSOL-005",
+      "BFF-CONSOL-006",
+      "BFF-CONSOL-007",
+      "BFF-CONSOL-008",
+      "BFF-CONSOL-009",
+      "BFF-CONSOL-010",
+      "BFF-CONSOL-011",
+      "BFF-CONSOL-012",
+      "BFF-CONSOL-013",
+      "BFF-CONSOL-014",
+      "BFF-CONSOL-018"
+    ],
+    "artifacts": [
+      "support/sidecars/BFF-CONSOL-027/BFF-CONSOL-027-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: handoff packet finalized (commit a009993f). Reviewer Codex approved support-only scope at 2026-05-13T11:15:12Z. Evidence inventory covers all 26 predecessor BFF-CONSOL tasks; ACCEPTANCE.md template delivered to Copilot; soak gates and EP5 dependency documented. No canonical/runtime files modified.",
+    "last_update": "2026-05-13T11:17:05Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BFF-CONSOL-027",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Reviewed support/sidecars/BFF-CONSOL-027/BFF-CONSOL-027-SIDECAR-BFF-HANDOFF.md and commit a9ad7dad. Scope is compliant: a single support handoff artifact, no canonical truth, runtime, registry, or governance implementation edits.",
+      "Packet is sufficient for the BFF-CONSOL-027 parent owner: it indexes completed evidence, calls out hard pending gates, summarizes verified route/operator journey coverage, and includes an ACCEPTANCE.md assembly template.",
+      "Non-blocking note: the packet was authored before reviewer fallback and later task movement, so Copilot/reviewer labels and pending-status rows are contextual snapshots; parent acceptance assembly should refresh live task status before copying final status text."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T11:17:05Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "a009993fcfac68db5bd3d2ff44a1ccab8c7d1774",
+      "commit_subject": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF closeout finalization",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verification": "artifact scope confirmed support-only; no canonical/runtime",
+        "LLM-Agent": "Claude",
+        "Task-ID": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 17,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Handoff packet ready. Summarizes all done evidence (BFF-CONSOL-001..014, 018), maps pending evidence for 015..026, provides verified route coverage, operator journey, and ACCEPTANCE.md template for Copilot to assemble BFF-CONSOL-027 final acceptance packet. No canonical truth modified.",
+      "status": "done",
+      "created_at": "2026-05-13T06:38:22Z",
+      "resolved_at": "2026-05-13T08:20:04Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Chair reassigned review from Copilot to Codex: Copilot is listed in ready_dispatcher.disabled_agents and cannot be auto-dispatched for review. BFF-CONSOL-027-SIDECAR-BFF-HANDOFF has been in review state since 14:38 UTC+8 with no auto-pickup path. Codex is the first-listed reviewer_fallback for Copilot and currently has available review capacity (no active review assignments).",
+      "status": "done",
+      "created_at": "2026-05-13T08:20:04Z",
+      "resolved_at": "2026-05-13T11:15:12Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Approved sidecar handoff packet for owner finalization: support-only scope verified, no canonical/runtime changes, and acceptance handoff content is sufficient; owner Claude should perform closeout to done.",
+      "status": "done",
+      "created_at": "2026-05-13T11:15:12Z",
+      "resolved_at": "2026-05-13T11:17:05Z"
+    }
+  ],
+  "blockers": []
+}

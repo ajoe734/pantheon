@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-025-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-13T11:51:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-025-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BFF-CONSOL-025 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BFF-CONSOL-025，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-018"
+    ],
+    "artifacts": [
+      "support/sidecars/BFF-CONSOL-025/BFF-CONSOL-025-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only BFF/frontend handoff packet after Codex review approval. Task-scoped commit db07a506 adds only support/sidecars/BFF-CONSOL-025/BFF-CONSOL-025-SIDECAR-BFF-HANDOFF.md. Verification: re-read task brief, reviewer approval, closeout spec, and packet; no whitespace-error output from git diff --no-index --check; ASCII scan produced no matches; git diff --cached --check passed before commit. Remaining dirty worktree files are pre-existing/unrelated generated or other task changes.",
+    "last_update": "2026-05-13T11:51:05Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BFF-CONSOL-025",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Approved: support-only handoff packet is scoped to archived BFF-CONSOL-025 baseline, adds only support/sidecars/BFF-CONSOL-025/BFF-CONSOL-025-SIDECAR-BFF-HANDOFF.md, and does not claim L1 canonical truth, BFF runtime, route manifest, registry, governance, or execute-plans source changes.",
+      "Reviewer verification: read task brief, closeout spec, active task slice, handoff packet, BFF-CONSOL-025 archive, parent review, and seed elimination evidence; reran git diff --no-index --check and ASCII scan on the packet; reviewed scoped untracked diff and current worktree status.",
+      "Residual note: current docs/taxonomy may already include BFF-CONSOL-028 work in review, so this packet is approved only as a parent-025 baseline/support handoff. BFF-CONSOL-028 route or category promotions still require their own review/closeout."
+    ],
+    "review_file": "support/sidecars/BFF-CONSOL-025/BFF-CONSOL-025-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T11:51:05Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "db07a506912dec6b40cec1960a125fb604410d29",
+      "commit_subject": "BFF-CONSOL-025-SIDECAR-BFF-HANDOFF add handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-CONSOL-025-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Verification": "re-read task brief, reviewer approval, closeout spec, and handoff packet; git diff --no-index --check produced no whitespace-error output; LC_ALL=C grep -nP '[^\\x00-\\x7F]' produced no matches; git diff --cached --check passed."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 29,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 13,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-025-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-13T11:26:47Z",
+      "resolved_at": "2026-05-13T11:27:02Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-025-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: support-only BFF/frontend handoff packet created at support/sidecars/BFF-CONSOL-025/BFF-CONSOL-025-SIDECAR-BFF-HANDOFF.md. Packet summarizes archived BFF-CONSOL-025 seed elimination baseline, live-required BFF route coverage, mock-only/deprecated/deferred helper handling, operator live-mode journey, frontend handoff notes, and BFF-CONSOL-028 caveat. Verification: no whitespace-error output from git diff --no-index --check, ASCII scan produced no matches, and no runtime/canonical files were modified by this sidecar.",
+      "status": "done",
+      "created_at": "2026-05-13T11:32:40Z",
+      "resolved_at": "2026-05-13T11:47:18Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-025-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved: support-only BFF/frontend handoff packet is scoped to archived BFF-CONSOL-025 baseline, adds only the sidecar artifact, and keeps BFF-CONSOL-028 promotions under their own review. Owner Codex2 should finalize review_approved -> done per closeout spec.",
+      "status": "done",
+      "created_at": "2026-05-13T11:47:18Z",
+      "resolved_at": "2026-05-13T11:51:06Z"
+    }
+  ],
+  "blockers": []
+}

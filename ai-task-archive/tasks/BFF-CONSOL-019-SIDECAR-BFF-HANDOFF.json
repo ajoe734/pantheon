@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-019-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-13T11:49:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-019-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BFF-CONSOL-019 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BFF-CONSOL-019，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-004"
+    ],
+    "artifacts": [
+      "support/sidecars/BFF-CONSOL-019/BFF-CONSOL-019-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only BFF/frontend handoff packet after Codex review approval. Task-scoped commit 13a40994 contains only support/sidecars/BFF-CONSOL-019/BFF-CONSOL-019-SIDECAR-BFF-HANDOFF.md. Verification: python3 -m py_compile services/control-plane/bff/tests/test_actions_to_commands_adapter.py; python3 -m pytest services/control-plane/bff/tests/test_actions_to_commands_adapter.py -v (3 passed); git diff --check -- support/sidecars/BFF-CONSOL-019/BFF-CONSOL-019-SIDECAR-BFF-HANDOFF.md. Existing unrelated dirty files were left untouched.",
+    "last_update": "2026-05-13T11:49:33Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BFF-CONSOL-019",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "PASS：sidecar artifact 僅更新 support/sidecars/BFF-CONSOL-019/BFF-CONSOL-019-SIDECAR-BFF-HANDOFF.md，未修改 L1 canonical truth、核心 contract truth、runtime、registry 或 governance 實作。",
+      "已核對 parent archive ai-task-archive/tasks/BFF-CONSOL-019.json、Claude review note、parent commit 34fa7aec、EP5 merge gate 與 publication ahead gap；packet 描述與目前 task truth 一致。",
+      "已核對 BFF adapter 程式/測試引用：/bff/actions/* 走 final command admission、Idempotency-Key 必填且 X-Idempotency-Key 為相容 alias、trace/source_route/audit/policy evidence 有 coverage；py_compile OK，pytest actions adapter 3 passed，git diff --check OK。",
+      "Frontend handoff notes 保持在 BFF-CONSOL-019/020/021 邊界內，沒有要求本 sidecar 吸收 canonical/runtime 變更。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T11:49:33Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "13a409949b3a3490ac6c31f33a4767d22e81c499",
+      "commit_subject": "BFF-CONSOL-019-SIDECAR-BFF-HANDOFF finalize handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-CONSOL-019-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 29,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 12,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-019-SIDECAR-BFF-HANDOFF",
+      "from": "Gemini2",
+      "to": "Codex2",
+      "message": "Work is complete and ready for your review.",
+      "status": "done",
+      "created_at": "2026-05-13T06:06:45Z",
+      "resolved_at": "2026-05-13T09:36:03Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-019-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Gemini2",
+      "message": "Review changes requested by Codex2: the handoff packet is still a generic placeholder. Please replace it with concrete BFF-CONSOL-019 support material: command-envelope adapter query/action gap, operator journey for /bff/actions/* -> /bff/v1/commands, frontend runAction/commandClient handoff notes, parent absorption risks/gates including EP5 closeout hold, and explicit confirmation that only support artifacts changed.",
+      "status": "done",
+      "created_at": "2026-05-13T09:36:03Z",
+      "resolved_at": "2026-05-13T09:36:03Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-019-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-13T11:24:24Z",
+      "resolved_at": "2026-05-13T11:24:35Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-019-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "BFF-CONSOL-019 sidecar handoff packet is ready for review at support/sidecars/BFF-CONSOL-019/BFF-CONSOL-019-SIDECAR-BFF-HANDOFF.md. It is support-only and documents parent archive evidence, command adapter gap closure, operator journey, frontend handoff for BFF-CONSOL-020, BFF-CONSOL-021 receipt dependencies, EP5 merge gate, and parent publication gap. Verification: python3 -m py_compile services/control-plane/bff/tests/test_actions_to_commands_adapter.py; python3 -m pytest services/control-plane/bff/tests/test_actions_to_commands_adapter.py -v (3 passed); git diff --check -- support/sidecars/BFF-CONSOL-019/BFF-CONSOL-019-SIDECAR-BFF-HANDOFF.md. Task-owned content change is limited to the sidecar markdown artifact; existing unrelated dirty files remain untouched.",
+      "status": "done",
+      "created_at": "2026-05-13T11:29:04Z",
+      "resolved_at": "2026-05-13T11:44:03Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-019-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved: support-only BFF-CONSOL-019 handoff packet is scoped correctly and matches parent archive/review evidence. Reviewer verification: read task brief, packet, parent archive, Claude review, BFF command contract/action adapter code/tests; ran py_compile, focused pytest (3 passed), git diff --check on the sidecar artifact, and scoped dirty-file review confirming no task-owned runtime/canonical changes. Owner Codex2 should finalize review_approved -> done per closeout spec.",
+      "status": "done",
+      "created_at": "2026-05-13T11:44:03Z",
+      "resolved_at": "2026-05-13T11:49:33Z"
+    }
+  ],
+  "blockers": []
+}

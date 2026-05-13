@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "SVC-RENAME-003-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-05-13T11:48:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-RENAME-003-SIDECAR-ACCEPTANCE",
+    "title": "Prepare SVC-RENAME-003 acceptance packet and dependency map",
+    "summary_zh": "平行支援 SVC-RENAME-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "services Namespace Normalization 2026-05-10",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/SVC-RENAME-003/SVC-RENAME-003-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only acceptance packet in commit e58a6099. Closeout verification: re-read task brief, Codex reviewer approval, packet, parent owner evidence, Claude approval, and Pair A migration map; rg placeholder-drift pattern returned no matches; git diff --check on packet passed; cached diff contained only support/sidecars/SVC-RENAME-003/SVC-RENAME-003-SIDECAR-ACCEPTANCE.md. Pre-existing unrelated dirty worktree entries remained outside this task; no canonical truth/runtime/registry/governance files were changed by this sidecar commit.",
+    "last_update": "2026-05-13T11:48:41Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-RENAME-003",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T11:48:41Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "e58a60997b2fc45fa76b5801ae4cbeb1b03c7e3b",
+      "commit_subject": "SVC-RENAME-003-SIDECAR-ACCEPTANCE finalize acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-RENAME-003-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 29,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 11,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-RENAME-003-SIDECAR-ACCEPTANCE",
+      "from": "Gemini2",
+      "to": "Codex2",
+      "message": "Acceptance packet for SVC-RENAME-003 created and ready for review. The file is support/sidecars/SVC-RENAME-003/SVC-RENAME-003-SIDECAR-ACCEPTANCE.md.",
+      "status": "done",
+      "created_at": "2026-05-13T00:51:32Z",
+      "resolved_at": "2026-05-13T00:57:10Z"
+    },
+    {
+      "task_id": "SVC-RENAME-003-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Chair reassigned review from Codex2 to Codex: Codex2 is occupied (working on EP5-BROKER-TW-002-RERUN-REAL, itself blocked on human-gate) and cannot promptly review. Codex is idle and not in any paused lane — moving the review to Codex unblocks the sidecar queue without disrupting ownership.",
+      "status": "done",
+      "created_at": "2026-05-13T00:57:10Z",
+      "resolved_at": "2026-05-13T05:42:01Z"
+    },
+    {
+      "task_id": "SVC-RENAME-003-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Gemini2",
+      "message": "Review changes requested: packet is still mostly placeholder. Please add a concrete SVC-RENAME-003 acceptance checklist, dependency map, and parent-owner absorption notes; replace reviewer placeholder/status drift with assigned reviewer Codex and current lifecycle; remove or reframe generic criteria that say the sidecar is complete only after branch commit/done. Keep changes support-only and do not edit canonical/runtime files.",
+      "status": "done",
+      "created_at": "2026-05-13T05:42:01Z",
+      "resolved_at": "2026-05-13T05:42:01Z"
+    },
+    {
+      "task_id": "SVC-RENAME-003-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "SVC-RENAME-003 sidecar acceptance packet reworked with concrete Pair A checklist, dependency map, and parent-owner absorption notes. Support-only artifact is ready for Codex review: support/sidecars/SVC-RENAME-003/SVC-RENAME-003-SIDECAR-ACCEPTANCE.md.",
+      "status": "done",
+      "created_at": "2026-05-13T11:17:23Z",
+      "resolved_at": "2026-05-13T11:40:50Z"
+    },
+    {
+      "task_id": "SVC-RENAME-003-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved: support-only acceptance packet is scoped to SVC-RENAME-003 Pair A, replaces placeholder drift with concrete parent checklist, dependency map, and absorption notes, and does not imply canonical truth/runtime/registry/governance changes. Reviewer verification: read task brief, packet, parent owner evidence, Claude approval, and Pair A migration map; ran rg placeholder-drift check with no matches, git diff --check on the packet, and scoped diff/name-only review confirming only support/sidecars/SVC-RENAME-003/SVC-RENAME-003-SIDECAR-ACCEPTANCE.md is in this sidecar diff. Owner Codex2 should finalize review_approved -> done per closeout spec.",
+      "status": "done",
+      "created_at": "2026-05-13T11:40:50Z",
+      "resolved_at": "2026-05-13T11:48:42Z"
+    }
+  ],
+  "blockers": []
+}

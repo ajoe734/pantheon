@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-13 14:38:48
+Last updated: 2026-05-13 20:36:40
 
 ## Objective
 
@@ -37,10 +37,10 @@ Last updated: 2026-05-13 14:38:48
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Handoff packet ready. Summarizes all done evidence (BFF-CONSOL-001..014, 018), maps pending evidence for 015..026, provides verified route coverage, operator journey, and ACCEPTANCE.md template for Copilot to assemble BFF-CONSOL-027 final acceptance packet. No canonical truth modified.
+- `Claude`: execution, control-plane, governance-review; next: Review changes requested: support packet is support-only, but it overstates evidence status. Please update header reviewer to Codex or note the auto-reassignment, change BFF-CONSOL-017 from done to evidence-present/status todo per ai-status, keep BFF-CONSOL-016 entirely pending until support/evidence/BFF-CONSOL-016-detail-smoke-a.json exists, and remove verified checkmarks/operator-journey claims for strategy/persona/deployment/runtime that depend on BFF-CONSOL-016. Then hand off back to Codex.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 - `Codex`: integration, status-system, schema, acceptance; next: Supervisor auto-started BFF-CONSOL-017-SIDECAR-BFF-HANDOFF after successful dispatch.
-- `Codex2`: integration, status-system, schema, acceptance; next: Implementation ready for review. Frontend task files staged in ../execute-plans; handoff note: support/sidecars/BFF-CONSOL-015/implementation-bff-consol-015-codex2.md. Verification passed: focused Vitest 10 tests, targeted ESLint clean, npm run build passed, diff --check clean. BFF-CONSOL-015-SIDECAR-BFF-HANDOFF is still in progress; please confirm whether independent Copilot/taxonomy signoff is required before approval.
+- `Codex2`: integration, status-system, schema, acceptance; next: Support-only strict preview handoff packet refreshed and committed in 4c2ae7d8. It corrects stale archived closeout claims, documents current preview env/file-state, strict-mode route/SSE/operator journey gaps, parent soak evidence template, and scoped verification. No canonical truth/runtime/registry/governance implementation changed. Verification: git diff --check sidecar packet; py_compile probe_bff_authenticated_live.py and probe_bff_sse_stream.py; json.tool BFF-CONSOL-012 SSE evidence; pytest fixture pack A/B/C plus SSE backpressure suite (24 passed in 13.84s).
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: Assignment created
 - `Claude2`: execution, control-plane, governance-review; next: Assignment created
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Work is complete and ready for your review.
@@ -51,8 +51,6 @@ Last updated: 2026-05-13 14:38:48
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `SVC-RENAME-003-SIDECAR-ACCEPTANCE` | services Namespace Normalization 2026-05-10 | [Sidecar] [Auto] [Parent SVC-RENAME-003] Prepare SVC-RENAME-003 acceptance packet and dependency map | Codex2 | todo | - | 平行支援 SVC-RENAME-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
-| `BFF-CONSOL-015` | BFF Consolidation 2026-05-13 | Mock-only badge implementation (live mode) | Codex2 | review | `BFF-CONSOL-005`, `BFF-CONSOL-007` | live mode 下若頁面 fetch 失敗回 seed-only helper UI 自動掛 mock data badge;mock_only_dev helper 在 live mode 直接禁用 (raise 或 return null + 顯示空狀態)。讀 BFF-CONSOL-007 taxonomy 作為分類來源。 |
 | `BFF-CONSOL-016` | BFF Consolidation 2026-05-13 | Detail journey smoke A (strategy persona deployment runtime) | Codex2 | todo | `BFF-CONSOL-008` | detail journey smoke A: strategy/persona/deployment/runtime 各跑 list→detail→related tabs。每個 family ≥1 non-empty fixture (來自 008) detail drawer 渲染 tabs 切換 degraded path 都跑過。Evidence support/evidence/BFF-CONSOL-016-detail-smoke-a.json。 |
 | `BFF-CONSOL-017` | BFF Consolidation 2026-05-13 | Detail journey smoke B (evolution research v5 agora artifacts) | Codex2 | todo | `BFF-CONSOL-009` | detail journey smoke B: evolution/research/v5/agora/artifacts list→detail→related tabs。每個 family 走過 live detail 而非 mock。 |
 | `BFF-CONSOL-019` | BFF Consolidation 2026-05-13 | Command envelope adapter backend impl (gated on EP5 closeout) | Codex2 | todo | `BFF-CONSOL-004` | 後端 /bff/actions/* 在 BFF 內轉成 /bff/v1/commands admission：actor from auth/Idempotency-Key/trace_id+correlation_id/policy decision/audit action/target typed reference。**不可在 EP5 paper-canary closeout 之前 merge runtime change**;PR 準備好但 hold 在 review 直到 EP5 closeout signal。Reviewer Claude 在 EP5 closeout 後才會 approve。 |
@@ -71,7 +69,8 @@ Last updated: 2026-05-13 14:38:48
 | `BFF-CONSOL-015-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | [Sidecar] [Auto] [Parent BFF-CONSOL-015] Prepare BFF-CONSOL-015 BFF and frontend handoff packet | Codex | todo | `BFF-CONSOL-005`, `BFF-CONSOL-007` | 平行支援 BFF-CONSOL-015，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
 | `BFF-CONSOL-019-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | [Sidecar] [Auto] [Parent BFF-CONSOL-019] Prepare BFF-CONSOL-019 BFF and frontend handoff packet | Gemini2 | review | `BFF-CONSOL-004` | 平行支援 BFF-CONSOL-019，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
 | `BFF-CONSOL-025-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | [Sidecar] [Auto] [Parent BFF-CONSOL-025] Prepare BFF-CONSOL-025 BFF and frontend handoff packet | Codex | todo | `BFF-CONSOL-018` | 平行支援 BFF-CONSOL-025，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
-| `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | [Sidecar] [Auto] [Parent BFF-CONSOL-027] Prepare BFF-CONSOL-027 BFF and frontend handoff packet | Claude | review | `BFF-CONSOL-001`, `BFF-CONSOL-002`, `BFF-CONSOL-003`, `BFF-CONSOL-004`, `BFF-CONSOL-005`, `BFF-CONSOL-006`, `BFF-CONSOL-007`, `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-011`, `BFF-CONSOL-012`, `BFF-CONSOL-013`, `BFF-CONSOL-014`, `BFF-CONSOL-018` | 平行支援 BFF-CONSOL-027，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
+| `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | [Sidecar] [Auto] [Parent BFF-CONSOL-027] Prepare BFF-CONSOL-027 BFF and frontend handoff packet | Claude | in_progress | `BFF-CONSOL-001`, `BFF-CONSOL-002`, `BFF-CONSOL-003`, `BFF-CONSOL-004`, `BFF-CONSOL-005`, `BFF-CONSOL-006`, `BFF-CONSOL-007`, `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-011`, `BFF-CONSOL-012`, `BFF-CONSOL-013`, `BFF-CONSOL-014`, `BFF-CONSOL-018` | 平行支援 BFF-CONSOL-027，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
+| `BFF-CONSOL-022-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | [Sidecar] [Auto] [Parent BFF-CONSOL-022] Prepare BFF-CONSOL-022 BFF and frontend handoff packet | Codex2 | review | `BFF-CONSOL-015` | 平行支援 BFF-CONSOL-022，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -81,38 +80,17 @@ Last updated: 2026-05-13 14:38:48
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-13 14:29:03
-- Terminal tasks archived: `989` total, `971` completed, `18` superseded
+- Archive updated: 2026-05-13 20:17:21
+- Terminal tasks archived: `990` total, `972` completed, `18` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
-| `BFF-CONSOL-022-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | Prepare BFF-CONSOL-022 BFF and frontend handoff packet | Claude | completed | 2026-05-13 14:29:03 | `ai-task-archive/tasks/BFF-CONSOL-022-SIDECAR-BFF-HANDOFF.json` |
-| `EP5-BROKER-TW-002-RERUN-REAL-SIDECAR-ACCEPTANCE` | EP5 Broker TW Real Sandbox Smoke 2026-05-13 | Prepare EP5-BROKER-TW-002-RERUN-REAL acceptance packet and dependency map | Claude | superseded | 2026-05-13 14:13:02 | `ai-task-archive/tasks/EP5-BROKER-TW-002-RERUN-REAL-SIDECAR-ACCEPTANCE.json` |
-| `BFF-CONSOL-018` | BFF Consolidation 2026-05-13 | Detail journey smoke C (incident approval rebalance job audit) | Codex | completed | 2026-05-13 13:38:24 | `ai-task-archive/tasks/BFF-CONSOL-018.json` |
-| `BFF-CONSOL-013` | BFF Consolidation 2026-05-13 | Cookie-session write gate (/bff/me driven) | Codex | completed | 2026-05-13 13:35:28 | `ai-task-archive/tasks/BFF-CONSOL-013.json` |
-| `BFF-CONSOL-012` | BFF Consolidation 2026-05-13 | SSE backpressure & unbounded buffer test | Codex2 | completed | 2026-05-13 13:33:44 | `ai-task-archive/tasks/BFF-CONSOL-012.json` |
-| `BFF-CONSOL-011` | BFF Consolidation 2026-05-13 | SSE real stream replay test | Codex2 | completed | 2026-05-13 13:10:59 | `ai-task-archive/tasks/BFF-CONSOL-011.json` |
-| `BFF-CONSOL-014` | BFF Consolidation 2026-05-13 | Lovable CORS allowlist + JWKS strict test infra | Codex2 | completed | 2026-05-13 12:44:08 | `ai-task-archive/tasks/BFF-CONSOL-014.json` |
-| `BFF-CONSOL-010` | BFF Consolidation 2026-05-13 | Canonical fixture pack C (alerts incidents approvals audit jobs channels skills tools mcp) | Codex2 | completed | 2026-05-13 12:20:23 | `ai-task-archive/tasks/BFF-CONSOL-010.json` |
-| `BFF-CONSOL-006` | BFF Consolidation 2026-05-13 | Role vocabulary mapping doc | Codex | completed | 2026-05-13 12:07:03 | `ai-task-archive/tasks/BFF-CONSOL-006.json` |
-| `BFF-CONSOL-009` | BFF Consolidation 2026-05-13 | Canonical fixture pack B (evolution research artifacts v5 agora runtimes) | Claude | completed | 2026-05-13 12:06:19 | `ai-task-archive/tasks/BFF-CONSOL-009.json` |
-| `BFF-CONSOL-005` | BFF Consolidation 2026-05-13 | Live status banner UI (real/hybrid/mock) | Codex2 | completed | 2026-05-13 11:57:56 | `ai-task-archive/tasks/BFF-CONSOL-005.json` |
-| `BFF-CONSOL-007` | BFF Consolidation 2026-05-13 | Seed taxonomy spreadsheet | Codex | completed | 2026-05-13 11:51:47 | `ai-task-archive/tasks/BFF-CONSOL-007.json` |
-| `BFF-CONSOL-008` | BFF Consolidation 2026-05-13 | Canonical fixture pack A (strategies personas capital-pools rebalances deployments) | Codex2 | completed | 2026-05-13 11:43:54 | `ai-task-archive/tasks/BFF-CONSOL-008.json` |
-| `BFF-CONSOL-004` | BFF Consolidation 2026-05-13 | Command envelope mapping spec doc | Codex | completed | 2026-05-13 11:19:09 | `ai-task-archive/tasks/BFF-CONSOL-004.json` |
-| `BFF-CONSOL-003` | BFF Consolidation 2026-05-13 | CI route diff job (fail-but-warn baseline) | Codex2 | completed | 2026-05-13 11:10:35 | `ai-task-archive/tasks/BFF-CONSOL-003.json` |
-| `SVC-RENAME-003` | services Namespace Normalization 2026-05-10 | Pair A — control_plane snake/kebab importlib shim + import site rewrites | Codex2 | completed | 2026-05-13 10:50:33 | `ai-task-archive/tasks/SVC-RENAME-003.json` |
-| `BFF-CONSOL-001` | BFF Consolidation 2026-05-13 | Backend FastAPI route manifest extractor | Claude | completed | 2026-05-13 10:48:17 | `ai-task-archive/tasks/BFF-CONSOL-001.json` |
-| `EP5-BROKER-TW-002-RERUN-REAL-FIX` | EP5 Broker TW Real Sandbox Smoke 2026-05-13 | Fix RERUN-REAL: remove signed precheck in simulation mode, run stock-only smoke (no futures, no production signed verify) | Codex2 | completed | 2026-05-13 10:37:39 | `ai-task-archive/tasks/EP5-BROKER-TW-002-RERUN-REAL-FIX.json` |
-| `BFF-CONSOL-002` | BFF Consolidation 2026-05-13 | Frontend route manifest extractor (execute-plans) | Codex2 | completed | 2026-05-13 10:33:15 | `ai-task-archive/tasks/BFF-CONSOL-002.json` |
-| `EP5-BROKER-TW-002-RERUN-REAL` | EP5 Broker TW Real Sandbox Smoke 2026-05-13 | Re-run EP5-BROKER-TW-002 with real Shioaji SDK (no mock) for stock+futures sandbox smoke | Codex2 | superseded | 2026-05-13 09:15:13 | `ai-task-archive/tasks/EP5-BROKER-TW-002-RERUN-REAL.json` |
+| `BFF-CONSOL-015` | BFF Consolidation 2026-05-13 | Mock-only badge implementation (live mode) | Codex2 | completed | 2026-05-13 20:17:21 | `ai-task-archive/tasks/BFF-CONSOL-015.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `SVC-RENAME-003-SIDECAR-ACCEPTANCE` | services Namespace Normalization 2026-05-10 | [Sidecar] [Auto] [Parent SVC-RENAME-003] Prepare SVC-RENAME-003 acceptance packet and dependency map | 平行支援 SVC-RENAME-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Codex2 | Codex | todo | - | 2026-05-13 13:47:43 | Auto-reassigned ownership from Gemini2 to Codex2 after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex2 starts a fresh run. |
-| `BFF-CONSOL-015` | BFF Consolidation 2026-05-13 | Mock-only badge implementation (live mode) | live mode 下若頁面 fetch 失敗回 seed-only helper UI 自動掛 mock data badge;mock_only_dev helper 在 live mode 直接禁用 (raise 或 return null + 顯示空狀態)。讀 BFF-CONSOL-007 taxonomy 作為分類來源。 | Codex2 | Claude2 | review | `BFF-CONSOL-005`, `BFF-CONSOL-007` | 2026-05-13 13:57:40 | Implementation ready for review. Frontend task files staged in ../execute-plans; handoff note: support/sidecars/BFF-CONSOL-015/implementation-bff-consol-015-codex2.md. Verification passed: focused Vitest 10 tests, targeted ESLint clean, npm run build passed, diff --check clean. BFF-CONSOL-015-SIDECAR-BFF-HANDOFF is still in progress; please confirm whether independent Copilot/taxonomy signoff is required before approval. |
 | `BFF-CONSOL-016` | BFF Consolidation 2026-05-13 | Detail journey smoke A (strategy persona deployment runtime) | detail journey smoke A: strategy/persona/deployment/runtime 各跑 list→detail→related tabs。每個 family ≥1 non-empty fixture (來自 008) detail drawer 渲染 tabs 切換 degraded path 都跑過。Evidence support/evidence/BFF-CONSOL-016-detail-smoke-a.json。 | Codex2 | Claude | todo | `BFF-CONSOL-008` | 2026-05-13 14:13:39 | Supervisor preempted BFF-CONSOL-016 to free Codex2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
 | `BFF-CONSOL-017` | BFF Consolidation 2026-05-13 | Detail journey smoke B (evolution research v5 agora artifacts) | detail journey smoke B: evolution/research/v5/agora/artifacts list→detail→related tabs。每個 family 走過 live detail 而非 mock。 | Codex2 | Claude | todo | `BFF-CONSOL-009` | 2026-05-13 14:13:50 | Supervisor preempted BFF-CONSOL-017 to free Codex2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
 | `BFF-CONSOL-019` | BFF Consolidation 2026-05-13 | Command envelope adapter backend impl (gated on EP5 closeout) | 後端 /bff/actions/* 在 BFF 內轉成 /bff/v1/commands admission：actor from auth/Idempotency-Key/trace_id+correlation_id/policy decision/audit action/target typed reference。**不可在 EP5 paper-canary closeout 之前 merge runtime change**;PR 準備好但 hold 在 review 直到 EP5 closeout signal。Reviewer Claude 在 EP5 closeout 後才會 approve。 | Codex2 | Claude | todo | `BFF-CONSOL-004` | 2026-05-13 13:40:05 | Supervisor preempted BFF-CONSOL-019 to free Codex2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
@@ -131,16 +109,16 @@ Last updated: 2026-05-13 14:38:48
 | `BFF-CONSOL-015-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | [Sidecar] [Auto] [Parent BFF-CONSOL-015] Prepare BFF-CONSOL-015 BFF and frontend handoff packet | 平行支援 BFF-CONSOL-015，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Codex | Codex2 | todo | `BFF-CONSOL-005`, `BFF-CONSOL-007` | 2026-05-13 14:37:43 | Supervisor preempted BFF-CONSOL-015-SIDECAR-BFF-HANDOFF to free Codex for higher-priority review/finalize work; task returned to todo until a fresh run restarts it. |
 | `BFF-CONSOL-019-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | [Sidecar] [Auto] [Parent BFF-CONSOL-019] Prepare BFF-CONSOL-019 BFF and frontend handoff packet | 平行支援 BFF-CONSOL-019，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Gemini2 | Codex2 | review | `BFF-CONSOL-004` | 2026-05-13 14:06:45 | Work is complete and ready for your review. |
 | `BFF-CONSOL-025-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | [Sidecar] [Auto] [Parent BFF-CONSOL-025] Prepare BFF-CONSOL-025 BFF and frontend handoff packet | 平行支援 BFF-CONSOL-025，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Codex | Codex2 | todo | `BFF-CONSOL-018` | 2026-05-13 14:19:10 | Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex starts a fresh run. |
-| `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | [Sidecar] [Auto] [Parent BFF-CONSOL-027] Prepare BFF-CONSOL-027 BFF and frontend handoff packet | 平行支援 BFF-CONSOL-027，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Claude | Copilot | review | `BFF-CONSOL-001`, `BFF-CONSOL-002`, `BFF-CONSOL-003`, `BFF-CONSOL-004`, `BFF-CONSOL-005`, `BFF-CONSOL-006`, `BFF-CONSOL-007`, `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-011`, `BFF-CONSOL-012`, `BFF-CONSOL-013`, `BFF-CONSOL-014`, `BFF-CONSOL-018` | 2026-05-13 14:38:22 | Handoff packet ready. Summarizes all done evidence (BFF-CONSOL-001..014, 018), maps pending evidence for 015..026, provides verified route coverage, operator journey, and ACCEPTANCE.md template for Copilot to assemble BFF-CONSOL-027 final acceptance packet. No canonical truth modified. |
+| `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | [Sidecar] [Auto] [Parent BFF-CONSOL-027] Prepare BFF-CONSOL-027 BFF and frontend handoff packet | 平行支援 BFF-CONSOL-027，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Claude | Codex | in_progress | `BFF-CONSOL-001`, `BFF-CONSOL-002`, `BFF-CONSOL-003`, `BFF-CONSOL-004`, `BFF-CONSOL-005`, `BFF-CONSOL-006`, `BFF-CONSOL-007`, `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-011`, `BFF-CONSOL-012`, `BFF-CONSOL-013`, `BFF-CONSOL-014`, `BFF-CONSOL-018` | 2026-05-13 20:12:53 | Review changes requested: support packet is support-only, but it overstates evidence status. Please update header reviewer to Codex or note the auto-reassignment, change BFF-CONSOL-017 from done to evidence-present/status todo per ai-status, keep BFF-CONSOL-016 entirely pending until support/evidence/BFF-CONSOL-016-detail-smoke-a.json exists, and remove verified checkmarks/operator-journey claims for strategy/persona/deployment/runtime that depend on BFF-CONSOL-016. Then hand off back to Codex. |
+| `BFF-CONSOL-022-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | [Sidecar] [Auto] [Parent BFF-CONSOL-022] Prepare BFF-CONSOL-022 BFF and frontend handoff packet | 平行支援 BFF-CONSOL-022，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Codex2 | Gemini2 | review | `BFF-CONSOL-015` | 2026-05-13 20:36:40 | Support-only strict preview handoff packet refreshed and committed in 4c2ae7d8. It corrects stale archived closeout claims, documents current preview env/file-state, strict-mode route/SSE/operator journey gaps, parent soak evidence template, and scoped verification. No canonical truth/runtime/registry/governance implementation changed. Verification: git diff --check sidecar packet; py_compile probe_bff_authenticated_live.py and probe_bff_sse_stream.py; json.tool BFF-CONSOL-012 SSE evidence; pytest fixture pack A/B/C plus SSE backpressure suite (24 passed in 13.84s). |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
 | `EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE` | Gemini | Codex2 | Acceptance packet and dependency map for EP5-BROKER-TW-002 prepared at support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout. | pending | 2026-05-12 22:50:00 |
-| `BFF-CONSOL-015` | Codex2 | Claude2 | Implementation ready for review. Frontend task files staged in ../execute-plans; handoff note: support/sidecars/BFF-CONSOL-015/implementation-bff-consol-015-codex2.md. Verification passed: focused Vitest 10 tests, targeted ESLint clean, npm run build passed, diff --check clean. BFF-CONSOL-015-SIDECAR-BFF-HANDOFF is still in progress; please confirm whether independent Copilot/taxonomy signoff is required before approval. | pending | 2026-05-13 13:57:40 |
 | `BFF-CONSOL-019-SIDECAR-BFF-HANDOFF` | Gemini2 | Codex2 | Work is complete and ready for your review. | pending | 2026-05-13 14:06:45 |
-| `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` | Claude | Copilot | Handoff packet ready. Summarizes all done evidence (BFF-CONSOL-001..014, 018), maps pending evidence for 015..026, provides verified route coverage, operator journey, and ACCEPTANCE.md template for Copilot to assemble BFF-CONSOL-027 final acceptance packet. No canonical truth modified. | pending | 2026-05-13 14:38:22 |
+| `BFF-CONSOL-022-SIDECAR-BFF-HANDOFF` | Codex2 | Gemini2 | Support-only strict preview handoff packet refreshed and committed in 4c2ae7d8. It corrects stale archived closeout claims, documents current preview env/file-state, strict-mode route/SSE/operator journey gaps, parent soak evidence template, and scoped verification. No canonical truth/runtime/registry/governance implementation changed. Verification: git diff --check sidecar packet; py_compile probe_bff_authenticated_live.py and probe_bff_sse_stream.py; json.tool BFF-CONSOL-012 SSE evidence; pytest fixture pack A/B/C plus SSE backpressure suite (24 passed in 13.84s). | pending | 2026-05-13 20:36:40 |
 
 ## Blockers
 
@@ -223,23 +201,23 @@ Last updated: 2026-05-13 14:38:48
 
 ## Latest Checkpoints
 
-- 2026-05-13 14:38:16 Orchestrator: PostToolUse: TodoWrite
-- 2026-05-13 14:38:18 Orchestrator: `BFF-CONSOL-016-SIDECAR-BFF-HANDOFF` Wake-up queued for supervisor: owned_ready_dispatch
-- 2026-05-13 14:38:18 Orchestrator: `BFF-CONSOL-026-SIDECAR-BFF-HANDOFF` Wake-up queued for supervisor: owned_ready_dispatch
-- 2026-05-13 14:38:18 Orchestrator: `BFF-CONSOL-017-SIDECAR-BFF-HANDOFF` Wake-up queued for supervisor: owned_ready_dispatch
-- 2026-05-13 14:38:18 Orchestrator: `BFF-CONSOL-015-SIDECAR-BFF-HANDOFF` Wake-up queued for supervisor: owned_ready_dispatch
-- 2026-05-13 14:38:18 Orchestrator: `BFF-CONSOL-016-SIDECAR-BFF-HANDOFF` Worker started via codex: owned_ready_dispatch
-- 2026-05-13 14:38:18 Codex: `BFF-CONSOL-016-SIDECAR-BFF-HANDOFF` Supervisor auto-started BFF-CONSOL-016-SIDECAR-BFF-HANDOFF after successful dispatch.
-- 2026-05-13 14:38:21 Orchestrator: PreToolUse: Bash
-- 2026-05-13 14:38:22 Claude: `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` Handoff to Copilot: Handoff packet ready. Summarizes all done evidence (BFF-CONSOL-001..014, 018), maps pending evidence for 015..026, provides verified route coverage, operator journey, and ACCEPTANCE.md template for Copilot to assemble BFF-CONSOL-027 final acceptance packet. No canonical truth modified.
-- 2026-05-13 14:38:34 Orchestrator: `BFF-CONSOL-016-SIDECAR-BFF-HANDOFF` Supervisor auto-started BFF-CONSOL-016-SIDECAR-BFF-HANDOFF after successful dispatch.
-- 2026-05-13 14:38:35 Orchestrator: `BFF-CONSOL-026-SIDECAR-BFF-HANDOFF` Worker started via codex: owned_ready_dispatch
-- 2026-05-13 14:38:35 Codex: `BFF-CONSOL-026-SIDECAR-BFF-HANDOFF` Supervisor auto-started BFF-CONSOL-026-SIDECAR-BFF-HANDOFF after successful dispatch.
-- 2026-05-13 14:38:38 Orchestrator: PostToolUse: Bash
-- 2026-05-13 14:38:42 Orchestrator: PreToolUse: Bash
-- 2026-05-13 14:38:44 Orchestrator: PostToolUse: Bash
-- 2026-05-13 14:38:47 Orchestrator: PreToolUse: Bash
-- 2026-05-13 14:38:47 Orchestrator: PostToolUse: Bash
-- 2026-05-13 14:38:48 Orchestrator: `BFF-CONSOL-026-SIDECAR-BFF-HANDOFF` Supervisor auto-started BFF-CONSOL-026-SIDECAR-BFF-HANDOFF after successful dispatch.
-- 2026-05-13 14:38:48 Orchestrator: `BFF-CONSOL-017-SIDECAR-BFF-HANDOFF` Worker started via codex: owned_ready_dispatch
-- 2026-05-13 14:38:48 Codex: `BFF-CONSOL-017-SIDECAR-BFF-HANDOFF` Supervisor auto-started BFF-CONSOL-017-SIDECAR-BFF-HANDOFF after successful dispatch.
+- 2026-05-13 20:24:57 Orchestrator: PostToolUse: Bash
+- 2026-05-13 20:25:01 Orchestrator: PreToolUse: Read
+- 2026-05-13 20:25:02 Orchestrator: PostToolUse: Read
+- 2026-05-13 20:25:06 Orchestrator: PreToolUse: Bash
+- 2026-05-13 20:25:07 Orchestrator: PostToolUse: Bash
+- 2026-05-13 20:25:10 Orchestrator: PreToolUse: Read
+- 2026-05-13 20:25:10 Orchestrator: PostToolUse: Read
+- 2026-05-13 20:25:15 Orchestrator: `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` Dispatch pause for copilot expired at 2026-05-13 20:25:05; dispatch is enabled again.
+- 2026-05-13 20:25:53 Orchestrator: Stop: Stop
+- 2026-05-13 20:29:37 Codex: `BFF-CONSOL-022-SIDECAR-BFF-HANDOFF` Assigned BFF-CONSOL-022-SIDECAR-BFF-HANDOFF to Codex2 with reviewer Gemini2
+- 2026-05-13 20:29:47 Orchestrator: `BFF-CONSOL-022-SIDECAR-BFF-HANDOFF` Wake-up queued for supervisor: owned_ready_dispatch
+- 2026-05-13 20:29:47 Orchestrator: `BFF-CONSOL-022-SIDECAR-BFF-HANDOFF` Auto-created sidecar BFF-CONSOL-022-SIDECAR-BFF-HANDOFF for BFF-CONSOL-022 (bff_handoff_packet) while utilization remained below threshold.
+- 2026-05-13 20:29:47 Orchestrator: utilization 0.00 stayed below threshold 0.50; created 1 visible sidecar task(s)
+- 2026-05-13 20:29:47 Orchestrator: `BFF-CONSOL-022-SIDECAR-BFF-HANDOFF` Worker started via codex: owned_ready_dispatch
+- 2026-05-13 20:29:48 Codex2: `BFF-CONSOL-022-SIDECAR-BFF-HANDOFF` Supervisor auto-started BFF-CONSOL-022-SIDECAR-BFF-HANDOFF after successful dispatch.
+- 2026-05-13 20:29:59 Orchestrator: `BFF-CONSOL-022-SIDECAR-BFF-HANDOFF` Supervisor auto-started BFF-CONSOL-022-SIDECAR-BFF-HANDOFF after successful dispatch.
+- 2026-05-13 20:32:50 Codex2: `BFF-CONSOL-022-SIDECAR-BFF-HANDOFF` Refreshing support-only handoff packet for current Codex2 dispatch; correcting stale archived closeout claims and verifying strict-mode route/env/SSE references.
+- 2026-05-13 20:36:12 Orchestrator: `OPS-CHAIR-REVIEW` Chair review queued for Codex: chair_review:operational_review
+- 2026-05-13 20:36:12 Orchestrator: Worker started via codex: chair_review:operational_review
+- 2026-05-13 20:36:40 Codex2: `BFF-CONSOL-022-SIDECAR-BFF-HANDOFF` Handoff to Gemini2: Support-only strict preview handoff packet refreshed and committed in 4c2ae7d8. It corrects stale archived closeout claims, documents current preview env/file-state, strict-mode route/SSE/operator journey gaps, parent soak evidence template, and scoped verification. No canonical truth/runtime/registry/governance implementation changed. Verification: git diff --check sidecar packet; py_compile probe_bff_authenticated_live.py and probe_bff_sse_stream.py; json.tool BFF-CONSOL-012 SSE evidence; pytest fixture pack A/B/C plus SSE backpressure suite (24 passed in 13.84s).

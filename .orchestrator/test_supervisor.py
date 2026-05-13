@@ -1157,6 +1157,76 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["target_agent"], "Codex")
         self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
 
+    def test_dispatcher_does_not_helper_claim_when_target_workload_would_exceed_cap(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "require_owner_higher_priority_load": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Copilot": ["Claude"],
+                }
+            },
+            "agents": {
+                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {
+                "run-finalize": {
+                    "run_id": "run-finalize",
+                    "task_id": "LP-005",
+                    "provider": "copilot",
+                    "agent_id": "copilot",
+                    "status": "running",
+                    "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                }
+            },
+        }
+        status = {
+            "workload": {"Claude": 5, "Copilot": 95},
+            "tasks": [
+                {"id": "CL-001", "status": "blocked", "owner": "Claude", "reviewer": "Copilot", "depends_on": []},
+                {"id": "LP-005", "status": "review_approved", "owner": "Copilot", "reviewer": "Claude", "depends_on": []},
+                {"id": "FB-003", "status": "todo", "owner": "Copilot", "reviewer": "Claude", "depends_on": []},
+                *[
+                    {
+                        "id": f"CP-{index:03d}",
+                        "status": "todo",
+                        "owner": "Copilot",
+                        "reviewer": "Claude",
+                        "depends_on": [],
+                    }
+                    for index in range(17)
+                ],
+            ],
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state)
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        queue_delivery_event.assert_not_called()
+
     def test_dispatcher_does_not_helper_claim_when_owner_is_not_busy(self) -> None:
         config = {
             "schema": {

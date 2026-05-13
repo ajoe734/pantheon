@@ -4,7 +4,7 @@ import {
   laneLabelMap,
   scheduleOpenTaskStatuses,
   statusLabelMap,
-} from "./dashboard-config.js?v=20260428-0912";
+} from "./dashboard-config.js?v=20260513-workers";
 
 export const DISPLAY_TIME_ZONE = "Asia/Taipei";
 export const DISPLAY_TIME_ZONE_LABEL = "台灣時間 (UTC+8)";
@@ -68,6 +68,7 @@ export function defaultDashboardBundle() {
         chair_review: { running: 0, pending: 0, queued: 0 },
       },
       lanes: {},
+      dispatch_targets: {},
     },
     execution_summary: {
       ready_now: 0,
@@ -221,6 +222,7 @@ export function agentLabel(value) {
   if (normalized === "claude") return "Claude";
   if (normalized === "claude2") return "Claude (2)";
   if (normalized === "gemini") return "Gemini";
+  if (normalized === "gemini2") return "Gemini (2)";
   if (normalized === "codex") return "Codex";
   if (normalized === "codex2") return "Codex (2)";
   if (normalized === "grok") return "Copilot";
@@ -242,15 +244,80 @@ export function terminalTaskStatus(value) {
 }
 
 export function logicalWorkerAgentId(worker) {
+  const explicit = String(worker?.logical_agent_id || "").trim().toLowerCase().replace(/-/g, "_");
+  if (explicit) {
+    if (/^codex1_[1-4]$/.test(explicit)) return "codex";
+    if (/^codex2_[1-4]$/.test(explicit)) return "codex2";
+    return explicit;
+  }
   const candidates = [worker?.agent_id, worker?.target_agent, worker?.provider];
   for (const candidate of candidates) {
-    const normalized = String(candidate || "").trim().toLowerCase();
+    const normalized = String(candidate || "").trim().toLowerCase().replace(/-/g, "_");
     if (!normalized) continue;
-    if (["claude", "gemini", "codex", "codex2"].includes(normalized)) return normalized;
+    if (["claude", "claude2", "gemini", "gemini2", "codex", "codex2"].includes(normalized)) return normalized;
+    if (/^codex1_[1-4]$/.test(normalized)) return "codex";
+    if (/^codex2_[1-4]$/.test(normalized)) return "codex2";
     if (["grok", "copilot"].includes(normalized)) return "copilot";
   }
   if (String(worker?.provider || "").toLowerCase() === "copilot") return "copilot";
   return String(worker?.agent_id || worker?.provider || "").trim().toLowerCase() || "unknown";
+}
+
+export const codexWorkerSlots = [
+  { id: "codex1-1", agent_id: "codex1_1", logical_agent_id: "codex", quota_group: "codex1", account_label: "Codex1", auth_home: "~/.codex" },
+  { id: "codex1-2", agent_id: "codex1_2", logical_agent_id: "codex", quota_group: "codex1", account_label: "Codex1", auth_home: "~/.codex" },
+  { id: "codex1-3", agent_id: "codex1_3", logical_agent_id: "codex", quota_group: "codex1", account_label: "Codex1", auth_home: "~/.codex" },
+  { id: "codex1-4", agent_id: "codex1_4", logical_agent_id: "codex", quota_group: "codex1", account_label: "Codex1", auth_home: "~/.codex" },
+  { id: "codex2-1", agent_id: "codex2_1", logical_agent_id: "codex2", quota_group: "codex2", account_label: "Codex2", auth_home: "~/.codex2" },
+  { id: "codex2-2", agent_id: "codex2_2", logical_agent_id: "codex2", quota_group: "codex2", account_label: "Codex2", auth_home: "~/.codex2" },
+  { id: "codex2-3", agent_id: "codex2_3", logical_agent_id: "codex2", quota_group: "codex2", account_label: "Codex2", auth_home: "~/.codex2" },
+  { id: "codex2-4", agent_id: "codex2_4", logical_agent_id: "codex2", quota_group: "codex2", account_label: "Codex2", auth_home: "~/.codex2" },
+];
+
+function normalizeCodexSlotId(value) {
+  const normalized = String(value || "").trim().toLowerCase().replace(/_/g, "-");
+  return /^codex[12]-[1-4]$/.test(normalized) ? normalized : "";
+}
+
+function codexSlotWorkerScore(worker) {
+  const bucket = String(worker?.bucket || "").toLowerCase();
+  const priority = bucket === "running" ? 3 : bucket === "pending" ? 2 : bucket === "transition" ? 1 : 0;
+  const timestamp = Date.parse(worker?.last_event_at || worker?.updated_at || worker?.started_at || "") || 0;
+  return [priority, timestamp];
+}
+
+function preferCodexSlotWorker(candidate, current) {
+  if (!current) return true;
+  const [candidatePriority, candidateTimestamp] = codexSlotWorkerScore(candidate);
+  const [currentPriority, currentTimestamp] = codexSlotWorkerScore(current);
+  if (candidatePriority !== currentPriority) return candidatePriority > currentPriority;
+  return candidateTimestamp > currentTimestamp;
+}
+
+export function buildCodexSlotRoster(orchState, status) {
+  const workers = normalizeWorkerRecords(orchState, status);
+  const bySlot = new Map();
+  for (const worker of workers) {
+    const slotId = normalizeCodexSlotId(
+      worker.dispatch_slot || worker.slot_id || worker.provider || worker.agent_id || worker.dispatch_slot_id
+    );
+    if (!slotId || !preferCodexSlotWorker(worker, bySlot.get(slotId))) continue;
+    bySlot.set(slotId, worker);
+  }
+  return codexWorkerSlots.map((slot) => {
+    const worker = bySlot.get(slot.id) || null;
+    const active = worker && ["running", "pending"].includes(worker.bucket);
+    return {
+      ...slot,
+      label: slot.id.replace(/^codex/, "Codex"),
+      worker,
+      status: active ? worker.bucket : "idle",
+      task_id: active ? worker.task_id || null : null,
+      worker_status: active ? worker.status || null : null,
+      reason: active ? worker.reason || worker.request_snapshot?.reason || null : null,
+      last_event_at: active ? worker.last_event_at || null : null,
+    };
+  });
 }
 
 export function normalizeWorkerRecords(orchState, status) {

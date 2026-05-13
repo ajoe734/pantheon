@@ -1,4 +1,4 @@
-import { DATA_FILES } from "./js/dashboard-config.js?v=20260428-0912";
+import { DATA_FILES } from "./js/dashboard-config.js?v=20260513-workers";
 import {
   deriveAgentState,
   fetchJson,
@@ -12,7 +12,7 @@ import {
   requestDashboardRefresh,
   statusLabel,
   titleCase,
-} from "./js/dashboard-core.js?v=20260428-0912";
+} from "./js/dashboard-core.js?v=20260513-workers";
 import {
   applyModeVisibility,
   renderAlertStrip,
@@ -20,6 +20,8 @@ import {
   renderAgentLanes,
   renderArchiveRecords,
   renderAuditStatus,
+  renderAutoworkerPool,
+  renderBffConsolidationTrack,
   renderBoardSummary,
   renderBridgeCard,
   renderControlPlaneStrip,
@@ -46,7 +48,7 @@ import {
   renderTaskBoard,
   renderTruthMismatches,
   renderWorkload,
-} from "./js/dashboard-renderers.js?v=20260428-0912";
+} from "./js/dashboard-renderers.js?v=20260513-workers";
 
 let renderInFlight = false;
 
@@ -116,7 +118,12 @@ async function render({ syncFirst = false } = {}) {
     const projectName = titleCase(status.project || snapshot.project || "project");
     const projectBadge = qs("#project-badge");
 
-    qs("#objective").textContent = status.objective || snapshot.objective || "目前沒有可顯示的目標。";
+    {
+      const objectiveText = status.objective || snapshot.objective || "目前沒有可顯示的目標。";
+      const objectiveEl = qs("#objective");
+      objectiveEl.textContent = objectiveText;
+      objectiveEl.setAttribute("title", objectiveText);
+    }
     qs("#updated-at").textContent = formatTime(status.updated_at);
     if (projectBadge) {
       projectBadge.textContent = `${projectName} Runtime`;
@@ -129,9 +136,11 @@ async function render({ syncFirst = false } = {}) {
     runRenderStep("progress_bar", renderFailures, () => renderProgressBar(status.tasks, dashboardBundle));
     runRenderStep("progress_breakdown", renderFailures, () => renderProgressBreakdown(status, planningState, dashboardBundle));
     runRenderStep("overview_metrics", renderFailures, () => renderOverviewMetrics(status, orchState, approvalQueue, dashboardBundle));
+    runRenderStep("autoworker_pool", renderFailures, () => renderAutoworkerPool(status, orchState, dashboardBundle));
     runRenderStep("control_plane_strip", renderFailures, () => renderControlPlaneStrip(status, planningState, orchState, dashboardBundle));
     runRenderStep("focus_summary", renderFailures, () => renderFocusSummary(status, planningState, orchState, dashboardBundle));
     runRenderStep("alert_strip", renderFailures, () => renderAlertStrip(status, orchState, planningState, approvalQueue, dashboardBundle));
+    runRenderStep("bff_consolidation_track", renderFailures, () => renderBffConsolidationTrack(status, dashboardBundle));
     runRenderStep("bridge_card", renderFailures, () => renderBridgeCard(status, planningState, dashboardBundle));
     runRenderStep("execution_section_summary", renderFailures, () => renderExecutionSectionSummary(status, orchState, planningState, dashboardBundle));
     runRenderStep("mode_visibility", renderFailures, () => applyModeVisibility(status, planningState));
@@ -143,7 +152,7 @@ async function render({ syncFirst = false } = {}) {
     runRenderStep("planning_proposals", renderFailures, () => renderPlanningProposals(planningState, status, dashboardBundle));
     runRenderStep("system_status", renderFailures, () => renderSystemStatus(status, orchState, approvalQueue, agentStates, dashboardBundle));
     runRenderStep("truth_mismatches", renderFailures, () => renderTruthMismatches(status, orchState, approvalQueue, dashboardBundle));
-    runRenderStep("workload", renderFailures, () => renderWorkload(status));
+    runRenderStep("workload", renderFailures, () => renderWorkload(status, orchState));
     runRenderStep("delivery_layers", renderFailures, () => renderDeliveryLayers(status, planningState));
     runRenderStep("agent_lanes", renderFailures, () => renderAgentLanes(status, agentStates));
     runRenderStep("archive_records", renderFailures, () => renderArchiveRecords(dashboardBundle));

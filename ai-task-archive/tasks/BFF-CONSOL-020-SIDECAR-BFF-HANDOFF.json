@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-020-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-13T11:58:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-020-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BFF-CONSOL-020 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BFF-CONSOL-020，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-019"
+    ],
+    "artifacts": [
+      "support/sidecars/BFF-CONSOL-020/BFF-CONSOL-020-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only handoff packet. Artifact commit 0e7e7fee added support/sidecars/BFF-CONSOL-020/BFF-CONSOL-020-SIDECAR-BFF-HANDOFF.md; empty closeout marker 62baa190 was required because another worker advanced HEAD before the status transition. Verification: jq task status review_approved; sed artifact reread; LC_ALL=C grep non-ASCII no matches; git diff --no-index --check no whitespace errors; git diff --cached --check passed.",
+    "last_update": "2026-05-13T11:58:37Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BFF-CONSOL-020",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Approved with one narrow reviewer reconciliation: parent BFF-CONSOL-020 is now in review, not in_progress. Packet remains support-only, covers direct /bff/v1/commands caller, legacy /bff/actions compatibility, confirm-token/approval evidence, typed errors, idempotency, and absorption gates. Verification: sed -n 228,248p support/sidecars/BFF-CONSOL-020/BFF-CONSOL-020-SIDECAR-BFF-HANDOFF.md; LC_ALL=C grep -nP non-ASCII check returned no matches; git diff --no-index --check /dev/null support/sidecars/BFF-CONSOL-020/BFF-CONSOL-020-SIDECAR-BFF-HANDOFF.md produced no whitespace-error output."
+    ],
+    "review_file": "support/sidecars/BFF-CONSOL-020/BFF-CONSOL-020-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T11:58:37Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "62baa190a3170cbf778602408306448a9016cb2a",
+      "commit_subject": "BFF-CONSOL-020-SIDECAR-BFF-HANDOFF closeout marker",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-CONSOL-020-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex2",
+        "Verification": "task artifact commit 0e7e7fee is an ancestor of HEAD; latest marker is empty because another worker committed after the artifact commit before ai-status done could run. Scope remains support/sidecars/BFF-CONSOL-020/BFF-CONSOL-020-SIDECAR-BFF-HANDOFF.md; LC_ALL=C grep non-ASCII and git diff --no-index --check both returned no output."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 24,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 20,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-020-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: created support-only handoff packet at support/sidecars/BFF-CONSOL-020/BFF-CONSOL-020-SIDECAR-BFF-HANDOFF.md. Packet covers BFF-CONSOL-020 direct /bff/v1/commands caller gap, legacy /bff/actions adapter compatibility, operator journey, commandClient/runAction frontend handoff, confirm-token and approval evidence handling, typed error/idempotency test matrix, and EP5/021/024 absorption gates. Verification: read task-scoped context and focused BFF/frontend contract files; checked artifact is ASCII and git diff --check reported no whitespace issues for scoped path. No canonical truth or runtime files changed by this sidecar.",
+      "status": "done",
+      "created_at": "2026-05-13T11:12:42Z",
+      "resolved_at": "2026-05-13T11:15:56Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-020-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: support-only handoff packet is scoped correctly; reviewer reconciled the parent status line and verified ASCII/no whitespace-error output. Owner Codex should finalize with a task-scoped commit before done.",
+      "status": "done",
+      "created_at": "2026-05-13T11:15:56Z",
+      "resolved_at": "2026-05-13T11:58:37Z"
+    }
+  ],
+  "blockers": []
+}

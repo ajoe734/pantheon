@@ -130,4 +130,4 @@ export const planningHighSignalTypes = new Set([
   "human_gate_updated",
 ]);
 
-export const logicalAgents = ["claude", "gemini", "codex", "codex2", "copilot"];
+export const logicalAgents = ["claude", "claude2", "gemini", "gemini2", "codex", "codex2", "copilot"];

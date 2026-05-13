@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-017-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-13T11:48:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-017-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BFF-CONSOL-017 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BFF-CONSOL-017，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-009"
+    ],
+    "artifacts": [
+      "support/sidecars/BFF-CONSOL-017/BFF-CONSOL-017-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only BFF/frontend handoff packet. Scoped commits: a953d629 packet, 4dac9507 owner closeout addendum. Verification: git diff --check on packet; json.tool on BFF-CONSOL-017 evidence; py_compile detail smoke test; ASCII scan no matches; pytest detail smoke B 2 passed. No canonical truth, runtime, registry, governance, or execute-plans implementation changed.",
+    "last_update": "2026-05-13T11:48:52Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BFF-CONSOL-017",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Approved: support packet scope is limited to support/sidecars/BFF-CONSOL-017/BFF-CONSOL-017-SIDECAR-BFF-HANDOFF.md; commit a953d629 changes no canonical truth, runtime, registry, governance, or execute-plans implementation.",
+      "Reviewed route coverage against BFF-CONSOL-017 evidence/regression: Pack B evolution, research, v5 intervention, agora, artifact, and typed OBJECT_NOT_FOUND degraded paths match the handoff packet. Research strict API 404 caveat and BFF research-analysis proof are preserved.",
+      "Reviewer verification: git diff-tree --no-commit-id --name-only -r a953d629; git diff --check a953d629^ a953d629 -- support/sidecars/BFF-CONSOL-017/BFF-CONSOL-017-SIDECAR-BFF-HANDOFF.md; python3 -m json.tool support/evidence/BFF-CONSOL-017-detail-smoke-b.json; python3 -m py_compile services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py; LC_ALL=C rg -n '[^[:ascii:]]' support/sidecars/BFF-CONSOL-017/BFF-CONSOL-017-SIDECAR-BFF-HANDOFF.md (no matches); PANTHEON_BFF_AUTH_STUB=true PANTHEON_BFF_AUTH_MODE=permissive python3 -m pytest services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py -q -> 2 passed in 4.67s."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T11:48:52Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "4dac950704a367ebf6aa2eec5eafe59e3ac9664e",
+      "commit_subject": "BFF-CONSOL-017-SIDECAR-BFF-HANDOFF closeout addendum",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-CONSOL-017-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Verification": "git diff --check -- support/sidecars/BFF-CONSOL-017/BFF-CONSOL-017-SIDECAR-BFF-HANDOFF.md; python3 -m json.tool support/evidence/BFF-CONSOL-017-detail-smoke-b.json >/dev/null; python3 -m py_compile services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py; LC_ALL=C rg -n '[^[:ascii:]]' support/sidecars/BFF-CONSOL-017/BFF-CONSOL-017-SIDECAR-BFF-HANDOFF.md (no matches); PANTHEON_BFF_AUTH_STUB=true PANTHEON_BFF_AUTH_MODE=permissive python3 -m pytest services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py -q (2 passed)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 29,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 11,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-017-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-13T11:18:00Z",
+      "resolved_at": "2026-05-13T11:18:32Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-017-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for Codex review: created support-only handoff packet at support/sidecars/BFF-CONSOL-017/BFF-CONSOL-017-SIDECAR-BFF-HANDOFF.md and committed it in a953d629. Packet covers completed BFF-CONSOL-017 Pack B evidence, BFF route coverage, research/evolution caveats, frontend route/helper/page gaps, operator journeys, suggested tests, and support-only scope confirmation. Verification: git diff --check; python3 -m json.tool support/evidence/BFF-CONSOL-017-detail-smoke-b.json >/dev/null; python3 -m py_compile services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py; ASCII scan found no non-ASCII content. No canonical truth, runtime, registry, governance, or execute-plans implementation changed by this sidecar.",
+      "status": "done",
+      "created_at": "2026-05-13T11:26:39Z",
+      "resolved_at": "2026-05-13T11:41:47Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-017-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved for owner finalization: support-only BFF/frontend handoff packet is scoped, evidence-backed, and ready for Codex2 closeout.",
+      "status": "done",
+      "created_at": "2026-05-13T11:41:47Z",
+      "resolved_at": "2026-05-13T11:48:53Z"
+    }
+  ],
+  "blockers": []
+}

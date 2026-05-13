@@ -304,6 +304,48 @@
       "display_name": "Codex",
       "provider": "codex",
       "adapter": "codex",
+      "worker_slots": [
+        "codex1_1",
+        "codex1_2",
+        "codex1_3",
+        "codex1_4"
+      ],
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/codex.md"
+    },
+    "codex1_1": {
+      "display_name": "Codex",
+      "provider": "codex1-1",
+      "adapter": "codex",
+      "dispatch_slot_for": "codex",
+      "slot_id": "codex1-1",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/codex.md"
+    },
+    "codex1_2": {
+      "display_name": "Codex",
+      "provider": "codex1-2",
+      "adapter": "codex",
+      "dispatch_slot_for": "codex",
+      "slot_id": "codex1-2",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/codex.md"
+    },
+    "codex1_3": {
+      "display_name": "Codex",
+      "provider": "codex1-3",
+      "adapter": "codex",
+      "dispatch_slot_for": "codex",
+      "slot_id": "codex1-3",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/codex.md"
+    },
+    "codex1_4": {
+      "display_name": "Codex",
+      "provider": "codex1-4",
+      "adapter": "codex",
+      "dispatch_slot_for": "codex",
+      "slot_id": "codex1-4",
       "wake_template": ".orchestrator/templates/wakeup.txt",
       "file_inbox_path": ".llm-inbox/codex.md"
     },
@@ -311,6 +353,48 @@
       "display_name": "Codex2",
       "provider": "codex2",
       "adapter": "codex",
+      "worker_slots": [
+        "codex2_1",
+        "codex2_2",
+        "codex2_3",
+        "codex2_4"
+      ],
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/codex2.md"
+    },
+    "codex2_1": {
+      "display_name": "Codex2",
+      "provider": "codex2-1",
+      "adapter": "codex",
+      "dispatch_slot_for": "codex2",
+      "slot_id": "codex2-1",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/codex2.md"
+    },
+    "codex2_2": {
+      "display_name": "Codex2",
+      "provider": "codex2-2",
+      "adapter": "codex",
+      "dispatch_slot_for": "codex2",
+      "slot_id": "codex2-2",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/codex2.md"
+    },
+    "codex2_3": {
+      "display_name": "Codex2",
+      "provider": "codex2-3",
+      "adapter": "codex",
+      "dispatch_slot_for": "codex2",
+      "slot_id": "codex2-3",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/codex2.md"
+    },
+    "codex2_4": {
+      "display_name": "Codex2",
+      "provider": "codex2-4",
+      "adapter": "codex",
+      "dispatch_slot_for": "codex2",
+      "slot_id": "codex2-4",
       "wake_template": ".orchestrator/templates/wakeup.txt",
       "file_inbox_path": ".llm-inbox/codex2.md"
     },
@@ -474,12 +558,61 @@
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "api_key_env": "OPENAI_API_KEY",
+        "codex_home": "~/.codex",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
       },
       "approval": {
         "orchestrator_only": true,
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      }
+    },
+    "codex1-1": {
+      "delivery_mode": "codex",
+      "quota_group": "codex1",
+      "codex": {
+        "cli": ".orchestrator/bin/codex",
+        "api_key_env": "OPENAI_API_KEY",
+        "codex_home": "~/.codex",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      }
+    },
+    "codex1-2": {
+      "delivery_mode": "codex",
+      "quota_group": "codex1",
+      "codex": {
+        "cli": ".orchestrator/bin/codex",
+        "api_key_env": "OPENAI_API_KEY",
+        "codex_home": "~/.codex",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      }
+    },
+    "codex1-3": {
+      "delivery_mode": "codex",
+      "quota_group": "codex1",
+      "codex": {
+        "cli": ".orchestrator/bin/codex",
+        "api_key_env": "OPENAI_API_KEY",
+        "codex_home": "~/.codex",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      }
+    },
+    "codex1-4": {
+      "delivery_mode": "codex",
+      "quota_group": "codex1",
+      "codex": {
+        "cli": ".orchestrator/bin/codex",
+        "api_key_env": "OPENAI_API_KEY",
+        "codex_home": "~/.codex",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
@@ -500,6 +633,50 @@
       },
       "approval": {
         "orchestrator_only": true,
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      }
+    },
+    "codex2-1": {
+      "delivery_mode": "codex",
+      "quota_group": "codex2",
+      "codex": {
+        "cli": ".orchestrator/bin/codex",
+        "codex_home": "~/.codex2",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      }
+    },
+    "codex2-2": {
+      "delivery_mode": "codex",
+      "quota_group": "codex2",
+      "codex": {
+        "cli": ".orchestrator/bin/codex",
+        "codex_home": "~/.codex2",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      }
+    },
+    "codex2-3": {
+      "delivery_mode": "codex",
+      "quota_group": "codex2",
+      "codex": {
+        "cli": ".orchestrator/bin/codex",
+        "codex_home": "~/.codex2",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      }
+    },
+    "codex2-4": {
+      "delivery_mode": "codex",
+      "quota_group": "codex2",
+      "codex": {
+        "cli": ".orchestrator/bin/codex",
+        "codex_home": "~/.codex2",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
@@ -561,10 +738,7 @@
       "todo"
     ],
     "sidecar_only_agents": [],
-    "disabled_agents": [
-      "Copilot",
-      "Gemini"
-    ],
+    "disabled_agents": [],
     "dependency_done_statuses": [
       "done"
     ],
@@ -589,6 +763,15 @@
       "require_owner_higher_priority_load": true
     },
     "max_tasks_per_agent": 1,
-    "max_dispatches_per_tick": 4
+    "max_dispatches_per_tick": 8,
+    "target_workload": {
+      "Claude": 10,
+      "Claude2": 10,
+      "Gemini": 5,
+      "Gemini2": 5,
+      "Codex": 35,
+      "Codex2": 35,
+      "Copilot": 5
+    }
   }
 }

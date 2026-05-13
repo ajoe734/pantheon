@@ -4,11 +4,12 @@ import {
   logicalAgents,
   planningHighSignalTypes,
   workerStatusIcon,
-} from "./dashboard-config.js?v=20260428-0912";
+} from "./dashboard-config.js?v=20260513-workers";
 import {
   buildTruthMismatches,
   actorLabel,
   agentLabel,
+  buildCodexSlotRoster,
   buildDependencySchedule,
   dependencyBatchState,
   deriveAgentState,
@@ -28,7 +29,7 @@ import {
   titleCase,
   truncate,
   workerLifecycleBadge,
-} from "./dashboard-core.js?v=20260428-0912";
+} from "./dashboard-core.js?v=20260513-workers";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -94,7 +95,7 @@ function summarizePausedReason(reason, provider) {
   };
 }
 
-export function renderWorkload(status) {
+export function renderWorkload(status, orchState = null) {
   const container = qs("#workload-grid");
   if (!container) return;
   container.innerHTML = "";
@@ -104,26 +105,152 @@ export function renderWorkload(status) {
     container.innerHTML = '<p class="empty">尚無 lane workload 摘要。</p>';
     return;
   }
+  const pauseMap = new Map(
+    pausedProviderEntries(orchState).map((entry) => [normalizedProviderKey(entry.provider), entry])
+  );
+  const agentBlockedMap = new Map(
+    (status.agents || []).map((agent) => [normalizedProviderKey(agent.name), String(agent.status || "").toLowerCase()])
+  );
   for (const [name, summary] of entries) {
     const target = status.workload?.[name] ?? 0;
     const fill = Math.min(summary.total * 15, 100);
+    const providerKey = normalizedProviderKey(name);
+    const pauseEntry = pauseMap.get(providerKey);
+    const agentBlocked = agentBlockedMap.get(providerKey) === "blocked";
+    const paused = Boolean(pauseEntry) || agentBlocked;
+    const pauseReason = pauseEntry
+      ? summarizePausedReason(pauseEntry.summary || pauseEntry.reason, pauseEntry.provider)
+      : null;
+    const pauseLabel = pauseReason?.kind === "quota" ? "Quota 暫停" : (paused ? "暫停派工" : "");
+    const pauseHint = pauseEntry?.blocked_until ? ` (until ${formatTime(pauseEntry.blocked_until)})` : "";
     const card = document.createElement("article");
-    card.className = "workload-card";
+    card.className = `workload-card${paused ? " workload-card-paused" : ""}`;
     card.innerHTML = `
       <div class="lane-head">
         <strong>${name}</strong>
-        <span class="status-pill">目標 ${target}%</span>
+        <span class="status-pill ${paused ? "status-blocked" : ""}">${paused ? `${pauseLabel}${pauseHint}` : `目標 ${target}%`}</span>
       </div>
       <div class="workload-bar"><div class="workload-fill" style="width:${fill}%"></div></div>
       <div class="lane-meta">
         <span class="chip">總數 ${summary.total}</span>
-        <span class="chip">活躍 ${summary.active}</span>
+        <span class="chip">活躍 ${paused ? `${summary.active} (暫停)` : summary.active}</span>
         <span class="chip">阻塞 ${summary.blocked}</span>
         <span class="chip">完成 ${summary.done}</span>
       </div>
     `;
     container.appendChild(card);
   }
+}
+
+function slotStatusLabel(slot) {
+  if (slot.status === "running") return "running";
+  if (slot.status === "pending") return slot.worker_status || "pending";
+  return "idle";
+}
+
+function slotStatusClass(slot) {
+  if (slot.status === "running") return "slot-running";
+  if (slot.status === "pending") return "slot-pending";
+  return "slot-idle";
+}
+
+function slotShortId(slot) {
+  return String(slot.id || "").replace(/^codex/i, "Codex");
+}
+
+export function renderAutoworkerPool(status, orchState, dashboardBundle = null) {
+  const container = qs("#autoworker-pool");
+  const summaryEl = qs("#autoworker-summary");
+  if (!container) return;
+
+  const slots = buildCodexSlotRoster(orchState, status);
+  const runtimeSummary = dashboardBundle?.runtime_summary || {};
+  const dispatchTargets = runtimeSummary.dispatch_targets || status.workload || {};
+  const activeCount = slots.filter((slot) => slot.status === "running").length;
+  const pendingCount = slots.filter((slot) => slot.status === "pending").length;
+  const idleCount = slots.filter((slot) => slot.status === "idle").length;
+  const mismatchCount = Number.isFinite(runtimeSummary.mismatch_count) ? runtimeSummary.mismatch_count : 0;
+  const pausedKeys = new Set(pausedProviderEntries(orchState).map((entry) => normalizedProviderKey(entry.provider)));
+
+  if (summaryEl) {
+    summaryEl.innerHTML = `
+      <span class="chip">總計 ${activeCount}/${slots.length}</span>
+      <span class="chip">pending ${pendingCount}</span>
+      <span class="chip">idle ${idleCount}</span>
+      ${mismatchCount ? `<span class="chip status-blocked">mismatch ${mismatchCount}</span>` : `<span class="chip status-done">mismatch 0</span>`}
+    `;
+  }
+
+  const pools = [
+    {
+      id: "codex1",
+      label: "Codex1",
+      logical_label: "Codex",
+      auth_home: "~/.codex",
+      quota_group: "codex1",
+      target: dispatchTargets.Codex ?? status.workload?.Codex ?? 0,
+      slots: slots.filter((slot) => slot.quota_group === "codex1"),
+    },
+    {
+      id: "codex2",
+      label: "Codex2",
+      logical_label: "Codex2",
+      auth_home: "~/.codex2",
+      quota_group: "codex2",
+      target: dispatchTargets.Codex2 ?? status.workload?.Codex2 ?? 0,
+      slots: slots.filter((slot) => slot.quota_group === "codex2"),
+    },
+  ];
+
+  container.innerHTML = pools.map((pool) => {
+    const running = pool.slots.filter((slot) => slot.status === "running").length;
+    const pending = pool.slots.filter((slot) => slot.status === "pending").length;
+    const paused = pausedKeys.has(pool.id) || pausedKeys.has(pool.logical_label.toLowerCase());
+    return `
+      <article class="autoworker-account ${paused ? "autoworker-paused" : ""}">
+        <div class="autoworker-account-head">
+          <div>
+            <strong>${escapeHtml(pool.label)}</strong>
+            <span>${escapeHtml(pool.auth_home)}</span>
+          </div>
+          <div class="chip-row">
+            <span class="status-pill ${paused ? "status-blocked" : running ? "status-working" : "status-idle"}">${paused ? "paused" : `${running}/${pool.slots.length} running`}</span>
+            <span class="chip">quota ${escapeHtml(pool.quota_group)}</span>
+            <span class="chip">目標 ${escapeHtml(pool.target)}%</span>
+            ${pending ? `<span class="chip status-review">pending ${pending}</span>` : ""}
+          </div>
+        </div>
+        <div class="autoworker-slot-strip">
+          ${pool.slots.map((slot) => {
+            const task = slot.task_id || "空 slot";
+            const reason = slot.status === "idle"
+              ? ""
+              : slot.reason || slot.worker?.reason || slot.worker?.request_snapshot?.reason || "";
+            const title = [
+              slot.label,
+              slotStatusLabel(slot),
+              task,
+              reason,
+              slot.last_event_at ? timeAgo(slot.last_event_at) : "",
+            ].filter(Boolean).join(" / ");
+            return `
+              <div class="autoworker-slot ${slotStatusClass(slot)}" title="${escapeHtml(title)}">
+                <div class="autoworker-slot-top">
+                  <strong>${escapeHtml(slotShortId(slot))}</strong>
+                  <span class="status-pill ${slot.status === "running" ? "status-working" : slot.status === "pending" ? "status-review" : "status-idle"}">${escapeHtml(slotStatusLabel(slot))}</span>
+                </div>
+                <div class="autoworker-slot-task">${escapeHtml(task)}</div>
+                <div class="autoworker-slot-meta">
+                  ${reason ? `<span>${escapeHtml(reason)}</span>` : "<span>idle</span>"}
+                  ${slot.last_event_at ? `<span>${escapeHtml(timeAgo(slot.last_event_at))}</span>` : ""}
+                </div>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      </article>
+    `;
+  }).join("");
 }
 
 export function renderAgentLanes(status, agentStates) {
@@ -158,6 +285,7 @@ export function renderAgentLanes(status, agentStates) {
         <span class="chip">可開工 ${agent.ready_count || 0}</span>
         <span class="chip">等前置 ${agent.waiting_count || 0}</span>
         <span class="chip">已批准 ${agent.approved_count || 0}</span>
+        ${Number.isFinite(agent.target_workload) ? `<span class="chip">目標 ${agent.target_workload}%</span>` : ""}
       </div>
       ${focusTasks ? `<ul class="note-list compact">${focusTasks}</ul>` : ""}
       <p class="lane-copy">下一步：${truncate(agent.next, 120)}</p>
@@ -970,12 +1098,13 @@ export function renderOverviewMetrics(status, orchState, approvalQueue, dashboar
     return;
   }
 
+  const completedInSprint = Number.isFinite(archiveCounts.completed_in_sprint) ? archiveCounts.completed_in_sprint : 0;
   const items = [
     { label: "待開始",    value: todo,           tone: "" },
     { label: "進行中",    value: inProgress,     tone: inProgress  ? "card-active"   : "" },
     { label: "待審查",    value: review,         tone: review      ? "card-review"   : "" },
     { label: "待收尾",    value: reviewApproved, tone: reviewApproved ? "card-review" : "" },
-    { label: "本輪完成",  value: done,           tone: "card-done" },
+    { label: "本輪完成",  value: completedInSprint + done, tone: "card-done" },
     ...(archivedTotal
       ? [
           { label: "歷史完成", value: archivedDone, tone: "card-done" },
@@ -2388,6 +2517,16 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
   const pausedProviders = pausedProviderEntries(orchState);
   const activeWorkerCount = Number.isFinite(runtimeSummary.running_workers) ? runtimeSummary.running_workers : workers.filter((w) => w.bucket === "running").length;
   const pending = Number.isFinite(runtimeSummary.pending_approvals) ? runtimeSummary.pending_approvals : (approvalQueue?.pending || []).length;
+  const dispatchPolicy = dashboardBundle?.dispatch_policy || {};
+  const recentHelperClaims = Array.isArray(dashboardBundle?.recent_helper_claims) ? dashboardBundle.recent_helper_claims : [];
+  const idleClaimEnabled = Boolean(dispatchPolicy.claim_idle_work && dispatchPolicy.helper_claim_enabled !== false);
+  const sidecarClaimEnabled = Boolean(dispatchPolicy.claim_sidecars_when_idle);
+  const maxDispatchesPerTick = Number.isFinite(Number(dispatchPolicy.max_dispatches_per_tick))
+    ? Number(dispatchPolicy.max_dispatches_per_tick)
+    : "-";
+  const maxTasksPerAgent = Number.isFinite(Number(dispatchPolicy.max_tasks_per_agent))
+    ? Number(dispatchPolicy.max_tasks_per_agent)
+    : "-";
 
   const supervisorCard = document.createElement("article");
   supervisorCard.className = "sys-card";
@@ -2404,6 +2543,30 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
       </div>
   `;
   statusEl.appendChild(supervisorCard);
+
+  const workerClaimCard = document.createElement("article");
+  workerClaimCard.className = "sys-card";
+  workerClaimCard.innerHTML = `
+    <div class="sys-card-head"><span class="sys-icon">⇄</span><strong>Worker Claim Policy</strong></div>
+    <div class="sys-card-body">
+      <span class="status-pill ${idleClaimEnabled ? "status-working" : "status-review"}">${idleClaimEnabled ? "idle worker 可 claim" : "Supervisor 主導派工"}</span>
+      <span class="chip">own work first</span>
+      <span class="chip">idle claim ${idleClaimEnabled ? "on" : "off"}</span>
+      <span class="chip">sidecar claim ${sidecarClaimEnabled ? "on" : "off"}</span>
+      <span class="chip">per tick ${escapeHtml(maxDispatchesPerTick)}</span>
+      <span class="chip">per agent ${escapeHtml(maxTasksPerAgent)}</span>
+      <span class="chip">priority gate ${dispatchPolicy.require_owner_higher_priority_load ? "on" : "off"}</span>
+      ${recentHelperClaims.length ? recentHelperClaims.slice(0, 5).map((claim) => `
+        <div class="approval-item">
+          <span class="chip">${escapeHtml(claim.task_id || "-")}</span>
+          <span class="chip">${escapeHtml(actorLabel(claim.from_owner, null))} &rarr; ${escapeHtml(actorLabel(claim.to_owner, null))}</span>
+          ${claim.new_reviewer ? `<span class="chip">reviewer ${escapeHtml(actorLabel(claim.new_reviewer, null))}</span>` : ""}
+          <span class="chip">${escapeHtml(timeAgo(claim.ts))}</span>
+        </div>
+      `).join("") : '<div class="approval-item"><span class="chip">尚無 helper claim 紀錄</span></div>'}
+    </div>
+  `;
+  statusEl.appendChild(workerClaimCard);
 
   const chairCard = document.createElement("article");
   chairCard.className = "sys-card";
@@ -2444,6 +2607,42 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
     </div>
   `;
   statusEl.appendChild(dispatchCard);
+
+  const codexSlots = buildCodexSlotRoster(orchState, status);
+  const codexActiveCount = codexSlots.filter((slot) => slot.status === "running").length;
+  const codexPendingCount = codexSlots.filter((slot) => slot.status === "pending").length;
+  const codexIdleCount = codexSlots.filter((slot) => slot.status === "idle").length;
+  const codexSlotCard = document.createElement("article");
+  codexSlotCard.className = "sys-card codex-slot-card";
+  codexSlotCard.innerHTML = `
+    <div class="sys-card-head">
+      <span class="sys-icon">▦</span>
+      <strong>Codex Slot Debug Details</strong>
+      <span class="chip">active ${codexActiveCount}</span>
+      <span class="chip">pending ${codexPendingCount}</span>
+      <span class="chip">idle ${codexIdleCount}</span>
+      <span class="chip">total ${codexSlots.length}</span>
+    </div>
+    <div class="codex-slot-grid">
+      ${codexSlots.map((slot) => `
+        <div class="codex-slot-row codex-slot-${slot.status}">
+          <div class="codex-slot-name">
+            <strong>${escapeHtml(slot.label)}</strong>
+            <span class="chip">${escapeHtml(slot.quota_group)}</span>
+          </div>
+          <div class="codex-slot-meta">
+            <span class="status-pill ${slot.status === "running" ? "status-working" : slot.status === "pending" ? "status-review" : "status-idle"}">${slot.status === "idle" ? "idle" : slot.worker_status || slot.status}</span>
+            <span class="chip">${escapeHtml(slot.id)}</span>
+            ${slot.worker?.provider ? `<span class="chip">${escapeHtml(slot.worker.provider)}</span>` : ""}
+            ${slot.task_id ? `<span class="chip">${escapeHtml(slot.task_id)}</span>` : `<span class="chip">空 slot</span>`}
+            ${slot.worker?.reason ? `<span class="chip">${escapeHtml(slot.worker.reason)}</span>` : ""}
+            ${slot.last_event_at ? `<span class="chip">${escapeHtml(timeAgo(slot.last_event_at))}</span>` : ""}
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+  statusEl.appendChild(codexSlotCard);
 
   const approvalCard = document.createElement("article");
   approvalCard.className = "sys-card";
@@ -2580,6 +2779,7 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
                   <span class="chip"><code>${w.mode || "-"}</code></span>
                   <span class="chip">${w.display_actor}</span>
                   ${w.task_status ? `<span class="chip">task=${statusLabel(w.task_status)}</span>` : ""}
+                  ${w.reason ? `<span class="chip">${escapeHtml(w.reason)}</span>` : ""}
                   <span class="chip">${timeAgo(w.last_event_at)}</span>
                 </div>
                 ${w.last_error ? `<p class="meta-line">${truncate(w.last_error, 120)}</p>` : ""}
@@ -2617,14 +2817,17 @@ export function renderProgressBar(tasks, dashboardBundle = null) {
   const bridgeSummary = dashboardBundle?.bridge_summary || {};
   const archivedTotal = Number.isFinite(archiveCounts.total) ? archiveCounts.total : 0;
   const archivedDone = Number.isFinite(archiveCounts.completed) ? archiveCounts.completed : 0;
+  const completedInSprint = Number.isFinite(archiveCounts.completed_in_sprint) ? archiveCounts.completed_in_sprint : 0;
   const pendingBridge = Number.isFinite(bridgeSummary.pending_materialization_count) ? bridgeSummary.pending_materialization_count : 0;
-  const pct = total ? Math.round((done / total) * 100) : 0;
+  const sprintDone = completedInSprint + done;
+  const sprintTotal = sprintDone + open + approved;
+  const pct = sprintTotal ? Math.round((sprintDone / sprintTotal) * 100) : 0;
   const label = qs("#progress-label");
   const fill = qs("#progress-fill");
   if (label) {
     label.textContent = open === 0 && archivedTotal
       ? `Active board 已清空 · Archive completed ${archivedDone} / ${archivedTotal} · Pending bridge ${pendingBridge}`
-      : `Sprint 進度：正式完成 ${done} / ${total} (${pct}%) · 待收尾 ${approved} · 其他 open ${open}`;
+      : `Sprint 進度：本輪完成 ${sprintDone} / ${sprintTotal} (${pct}%) · 待收尾 ${approved} · 其他 open ${open}`;
   }
   if (fill) fill.style.width = open === 0 && archivedTotal ? "100%" : `${pct}%`;
 }
@@ -2931,5 +3134,91 @@ export function applyModeVisibility(status, planningState) {
       executionToggle.setAttribute("aria-expanded", String(!nextCollapsed));
       safeWriteStorage(activePreferenceKey, nextCollapsed ? "collapsed" : "expanded");
     });
+  }
+}
+
+
+export function renderBffConsolidationTrack(status, dashboardBundle = null) {
+  const section = qs("#bff-consol-section");
+  const container = qs("#bff-consol-waves");
+  const summaryEl = qs("#bff-consol-summary");
+  if (!container) return;
+
+  const waves = [
+    { label: "Wave 1 — Ground truth & spec", range: [1, 7] },
+    { label: "Wave 2 — Read depth & realtime & auth", range: [8, 15] },
+    { label: "Wave 3 — Detail journey & command adapter", range: [16, 22] },
+    { label: "Wave 4 — Cutover & cleanup", range: [23, 27] },
+  ];
+
+  const activeMap = new Map();
+  for (const t of status?.tasks || []) {
+    if (String(t.id || "").startsWith("BFF-CONSOL-") && /^BFF-CONSOL-\d{3}$/.test(t.id)) {
+      activeMap.set(t.id, t);
+    }
+  }
+  const archivedIdsArr = dashboardBundle?.archive_summary?.bff_consol_archived_ids || [];
+  const archivedIds = new Set(archivedIdsArr);
+  const recentTerminal = dashboardBundle?.archive_summary?.recent_terminal_tasks || [];
+  const recentOutcome = new Map();
+  for (const rec of recentTerminal) {
+    if (rec.task_id) recentOutcome.set(rec.task_id, rec.terminal_outcome || "completed");
+  }
+
+  let anyKnown = false;
+  const totals = { done: 0, review: 0, review_approved: 0, in_progress: 0, todo: 0, blocked: 0, superseded: 0, unknown: 0 };
+  const html = waves.map((wave) => {
+    const ids = [];
+    for (let n = wave.range[0]; n <= wave.range[1]; n += 1) {
+      ids.push(`BFF-CONSOL-${String(n).padStart(3, "0")}`);
+    }
+    const states = ids.map((id) => {
+      const active = activeMap.get(id);
+      if (active) {
+        anyKnown = true;
+        return { id, status: String(active.status || "todo").toLowerCase(), title: active.title || active.summary_zh || "" };
+      }
+      if (archivedIds.has(id)) {
+        anyKnown = true;
+        const outcome = recentOutcome.get(id);
+        return { id, status: outcome === "superseded" ? "superseded" : "done", title: "" };
+      }
+      return { id, status: "unknown", title: "" };
+    });
+    const completed = states.filter((s) => s.status === "done" || s.status === "superseded").length;
+    const pct = states.length ? Math.round((completed / states.length) * 100) : 0;
+    for (const s of states) totals[s.status] = (totals[s.status] || 0) + 1;
+    const taskHtml = states.map((s) => {
+      const num = s.id.replace("BFF-CONSOL-", "");
+      const label = s.status === "unknown" ? "未排入" : statusLabel(s.status);
+      return `
+        <div class="bff-consol-task">
+          <span class="bff-consol-task-id">${num}</span>
+          <span class="bff-consol-task-pill ${s.status}">${escapeHtml(label)}</span>
+          <span class="bff-consol-task-title">${s.title ? escapeHtml(s.title.slice(0, 80)) : ""}</span>
+        </div>
+      `;
+    }).join("");
+    return `
+      <section class="bff-consol-wave">
+        <div class="bff-consol-wave-head">
+          <strong>${escapeHtml(wave.label)}</strong>
+          <span class="chip">${completed}/${states.length} (${pct}%)</span>
+        </div>
+        <div class="bff-consol-progress-bar"><div class="bff-consol-progress-fill" style="width:${pct}%"></div></div>
+        <div class="bff-consol-task-list">${taskHtml}</div>
+      </section>
+    `;
+  }).join("");
+
+  if (section) {
+    if (anyKnown) section.removeAttribute("hidden");
+    else section.setAttribute("hidden", "");
+  }
+  container.innerHTML = html;
+  if (summaryEl) {
+    const totalCompleted = totals.done + totals.superseded;
+    const totalAll = 27;
+    summaryEl.innerHTML = `<span class="chip">完成 ${totalCompleted}/${totalAll}</span><span class="chip">進行 ${totals.in_progress}</span><span class="chip">審查 ${totals.review + totals.review_approved}</span><span class="chip">待開始 ${totals.todo}</span>${totals.blocked ? `<span class="chip">阻塞 ${totals.blocked}</span>` : ""}`;
   }
 }
