@@ -117,6 +117,24 @@ already published module-local handoff packets.
 |---|---|---|---|
 | `TW-03 Before/After Compare` | loop-complete — preview routes live and current frontend loop closed | preview read/refresh routes, warning hierarchy, `preview_unavailable` degraded branch, polling semantics, handoff bundle, and accepted frontend feedback are aligned for the current wave; no open Pantheon implementation gap remains for this slice | reopen only if a later preview-contract revision or runtime regression triggers a new delivery loop |
 
+### BFF Consolidation Track
+
+Status: active sprint track (`2026-05-13-ep5-qlib-bff-consolidation`).
+Scope: close the production gap left after BFF-LUV-FE loop_complete — route truth, command envelope unification, non-empty fixture & detail journey, SSE real stream proof, strict env cutover, seed-only surface elimination. Tracked at task granularity in `ai-status.json` as `BFF-CONSOL-001..027`.
+
+| Wave | Module | Pantheon-owned gap | Truth gate |
+|---|---|---|---|
+| W1 (Day 0–5) | Route truth & spec | Single-source manifest diff between FastAPI registered routes and execute-plans builders; command envelope mapping authored; live status banner shipped; role vocabulary and seed taxonomy documented | CI route diff produces baseline (`BFF-CONSOL-003`); mapping spec merged into `services/control-plane/bff/BFF_COMMAND_API_CONTRACT.md` (`BFF-CONSOL-004`); banner live (`BFF-CONSOL-005`) |
+| W2 (Day 5–12) | Read depth & realtime & auth | Non-empty canonical fixtures for all 20 management families; SSE replay/resync proven with real stream; cookie-session write gate live; Lovable CORS + JWKS strict CI in place; mock-only badge enforced | Every family detail route returns non-empty 2xx (`BFF-CONSOL-008..010`); SSE evidence contains open/message/replay/409 (`BFF-CONSOL-011`); `/bff/me`-driven write gate active (`BFF-CONSOL-013`) |
+| W3 (Day 12–19) | Detail journey & command adapter | List→detail→related tabs smoke per family; `/bff/actions/*` converted to `/bff/v1/commands` adapter with dual-write receipts; staging strict cutover on isolated Lovable preview branch | Detail smoke evidence per family (`BFF-CONSOL-016..018`); dual-write receipt shape diff = 0 (`BFF-CONSOL-021`); staging strict 7-day soak clean (`BFF-CONSOL-022`). Wave 3 command-adapter runtime change (`019/020/021`) is gated on EP5 paper-canary closeout |
+| W4 (Day 19–24) | Cutover & cleanup | Prod strict cutover; old action receipt deprecated; seed-only surface eliminated or badged; CI route diff fail-hard | Prod strict 7-day soak 0 regression (`BFF-CONSOL-023`); seed.ts no live-mode misuse (`BFF-CONSOL-025`); CI fail-hard active (`BFF-CONSOL-026`); final acceptance packet signed (`BFF-CONSOL-027`) |
+
+Cross-track gating:
+- Wave 1–2 run in parallel with the EP5/Qlib/SVC-RENAME tracks; they touch only read-side, spec, CI, and seed surfaces, so they do not interfere with EP5 paper-canary readiness.
+- Wave 3 detail-journey tasks (`016/017/018`) can also run pre-EP5-closeout, since they exercise read paths only.
+- Wave 3 command-adapter tasks (`019/020/021`) hold in review until EP5 paper-canary closeout — the `/bff/actions/*` write seam currently carries canary audit trail and must not be reshaped mid-canary.
+- Wave 4 cutover (`023`) holds until Wave 3 staging soak (`022`) is clean.
+
 ## 4. Cross-Family Order
 
 Use this order unless a narrower canonical doc says otherwise:
