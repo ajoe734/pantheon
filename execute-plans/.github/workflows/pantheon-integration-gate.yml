@@ -1,0 +1,216 @@
+name: Pantheon FE-BFF Integration Gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      fe_base_url:
+        description: "Hosted frontend URL"
+        required: false
+        default: "https://pantheon-dev.lovable.app"
+      bff_base_url:
+        description: "BFF base URL"
+        required: false
+        default: "https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io"
+      bff_sha:
+        description: "Pantheon backend/BFF SHA"
+        required: false
+        default: ""
+      soft_fail:
+        description: "Keep release gate in observation mode; set false after 2026-05-20 hard-gate switch."
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  integration-gate:
+    runs-on: ubuntu-latest
+    env:
+      PANTHEON_FE_BASE_URL: ${{ inputs.fe_base_url || 'https://pantheon-dev.lovable.app' }}
+      PANTHEON_BFF_BASE_URL: ${{ inputs.bff_base_url || 'https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io' }}
+      PANTHEON_OLD_BFF_URL: ${{ secrets.PANTHEON_OLD_BFF_URL || 'https://pantheon-dev-bff.35.236.178.81.sslip.io' }}
+      PANTHEON_FRONTEND_SHA: ${{ github.sha }}
+      PANTHEON_BFF_SHA: ${{ inputs.bff_sha || vars.PANTHEON_BFF_SHA || '' }}
+      PANTHEON_RELEASE_GATE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      PANTHEON_RELEASE_GATE_SOFT_FAIL: ${{ inputs.soft_fail || vars.PANTHEON_RELEASE_GATE_SOFT_FAIL || 'true' }}
+      PANTHEON_RELEASE_GATE_OBSERVATION_END: "2026-05-20"
+      VITE_BFF_MODE: live
+      VITE_BFF_FALLBACK: strict
+      PANTHEON_E2E_STRICT: "1"
+      PANTHEON_AUDIT_OUT_DIR: .lovable/audits/current-run
+      PANTHEON_BFF_SMOKE_BEARER_TOKEN: ${{ secrets.PANTHEON_BFF_SMOKE_BEARER_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Prepare audit directory
+        run: |
+          rm -rf "$PANTHEON_AUDIT_OUT_DIR"
+          mkdir -p "$PANTHEON_AUDIT_OUT_DIR"
+
+      - name: Install
+        id: install
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          npm ci 2>&1 | tee "$PANTHEON_AUDIT_OUT_DIR/npm-ci.log"
+
+      - name: Lint
+        id: lint
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          npm run lint 2>&1 | tee "$PANTHEON_AUDIT_OUT_DIR/npm-run-lint.log"
+
+      - name: Unit / integration tests
+        id: test
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          npm run test 2>&1 | tee "$PANTHEON_AUDIT_OUT_DIR/npm-run-test.log"
+
+      - name: Build
+        id: build
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee "$PANTHEON_AUDIT_OUT_DIR/npm-run-build.log"
+
+      - name: Contract drift
+        id: contract
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          npm run test:contract 2>&1 | tee "$PANTHEON_AUDIT_OUT_DIR/contract-drift.log"
+
+      - name: Anonymous BFF route probe
+        id: route_probe
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          node scripts/probe-bff-routes.mjs --anonymous 2>&1 | tee "$PANTHEON_AUDIT_OUT_DIR/bff-route-probe-anonymous.log"
+
+      - name: Authenticated BFF smoke
+        id: auth_smoke
+        if: env.PANTHEON_BFF_SMOKE_BEARER_TOKEN != ''
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          node scripts/probe-bff-authenticated-live.mjs 2>&1 | tee "$PANTHEON_AUDIT_OUT_DIR/bff-authenticated-live-smoke.log"
+
+      - name: Install Playwright
+        id: install_playwright
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          npx playwright install chromium --with-deps 2>&1 | tee "$PANTHEON_AUDIT_OUT_DIR/playwright-install.log"
+
+      - name: Hosted browser BFF probe
+        id: browser_probe
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          node scripts/probe-hosted-browser-bff.mjs 2>&1 | tee "$PANTHEON_AUDIT_OUT_DIR/hosted-browser-bff-probe.log"
+
+      - name: Playwright E2E
+        id: e2e
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          PLAYWRIGHT_JSON_OUTPUT_FILE="$PANTHEON_AUDIT_OUT_DIR/playwright-results.json" npx playwright test --reporter=list,html,json 2>&1 | tee "$PANTHEON_AUDIT_OUT_DIR/playwright-e2e.log"
+
+      - name: Record gate step outcomes
+        if: always()
+        run: |
+          cat > "$PANTHEON_AUDIT_OUT_DIR/release-gate-step-outcomes.json" <<JSON
+          {
+            "install": { "outcome": "${{ steps.install.outcome }}", "evidence": "${PANTHEON_AUDIT_OUT_DIR}/npm-ci.log" },
+            "lint": { "outcome": "${{ steps.lint.outcome }}", "evidence": "${PANTHEON_AUDIT_OUT_DIR}/npm-run-lint.log" },
+            "test": { "outcome": "${{ steps.test.outcome }}", "evidence": "${PANTHEON_AUDIT_OUT_DIR}/npm-run-test.log" },
+            "build": { "outcome": "${{ steps.build.outcome }}", "evidence": "${PANTHEON_AUDIT_OUT_DIR}/npm-run-build.log" },
+            "contract": { "outcome": "${{ steps.contract.outcome }}", "evidence": "${PANTHEON_AUDIT_OUT_DIR}/contract-drift.log" },
+            "route_probe": { "outcome": "${{ steps.route_probe.outcome }}", "evidence": "${PANTHEON_AUDIT_OUT_DIR}/bff-route-probe-anonymous.log" },
+            "auth_smoke": { "outcome": "${{ steps.auth_smoke.outcome }}", "evidence": "${PANTHEON_AUDIT_OUT_DIR}/bff-authenticated-live-smoke.log" },
+            "install_playwright": { "outcome": "${{ steps.install_playwright.outcome }}", "evidence": "${PANTHEON_AUDIT_OUT_DIR}/playwright-install.log" },
+            "browser_probe": { "outcome": "${{ steps.browser_probe.outcome }}", "evidence": "${PANTHEON_AUDIT_OUT_DIR}/hosted-browser-bff-probe.log" },
+            "e2e": { "outcome": "${{ steps.e2e.outcome }}", "evidence": "${PANTHEON_AUDIT_OUT_DIR}/playwright-e2e.log" }
+          }
+          JSON
+
+      - name: Aggregate release gate
+        id: aggregate
+        if: always()
+        continue-on-error: ${{ (inputs.soft_fail || vars.PANTHEON_RELEASE_GATE_SOFT_FAIL || 'true') == 'true' }}
+        run: node scripts/aggregate-release-gate.mjs
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pantheon-integration-evidence
+          path: |
+            .lovable/audits/*.md
+            .lovable/audits/*.json
+            .lovable/audits/current-run/**/*.md
+            .lovable/audits/current-run/**/*.json
+            .lovable/audits/current-run/**/*.log
+            playwright-report
+            test-results
+
+      - name: Comment release gate on PR
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- pantheon-release-gate-summary -->';
+            const summaryPath = '.lovable/audits/release-gate-summary.md';
+            const fallback = `${marker}\n# Pantheon FE-BFF Release Gate Summary\n\nRelease gate summary was not generated. Check the workflow logs.`;
+            const summary = fs.existsSync(summaryPath)
+              ? fs.readFileSync(summaryPath, 'utf8')
+              : fallback;
+            const body = summary.length > 60000
+              ? `${summary.slice(0, 59500)}\n\n...truncated; see uploaded pantheon-integration-evidence artifact.`
+              : summary;
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const existing = comments.data.find(comment =>
+              comment.user?.type === 'Bot' && comment.body?.includes(marker)
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
