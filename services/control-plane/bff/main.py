@@ -17273,18 +17273,36 @@ async def bff_create_persona(
         )
     snapshot_at = utc_now()
     persona_id = f"persona-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
-    overlay = {
-        "id": persona_id,
-        "name": name,
-        "owner": str(payload.get("owner") or identity.operator_id),
-        "updatedAt": snapshot_at,
-        "state": _normalize_lifecycle_state(payload.get("state") or "draft"),
-        "risk": _normalize_risk_level(payload.get("risk")),
-        "archetype": str(payload.get("archetype") or "generalist"),
-        "routedStrategies": int(payload.get("routedStrategies") or 0),
-        "successRate": float(payload.get("successRate") or 0.0),
-        "labelKey": f"persona.{persona_id}",
-    }
+    owner = str(payload.get("owner") or identity.operator_id)
+    archetype = str(payload.get("archetype") or "generalist")
+    risk = _normalize_risk_level(payload.get("risk") or "low")
+    lifecycle_state = _normalize_lifecycle_state(
+        payload.get("state") or payload.get("lifecycleStatus") or "draft"
+    )
+    persona_record = read_store.create_persona(
+        persona_id=persona_id,
+        name=name,
+        actor_id=owner,
+        created_at=snapshot_at,
+        archetype=archetype,
+        lifecycle_state=lifecycle_state,
+        risk_level=risk,
+        metadata={
+            "description": payload.get("description"),
+            "memo": payload.get("memo"),
+            "initial_mode": payload.get("initialMode"),
+            "execution_mode": payload.get("executionMode") or payload.get("initialMode"),
+            "success_rate": float(payload.get("successRate") or 0.0),
+        },
+    )
+    overlay = _project_persona_dto(
+        persona_record,
+        overlay={
+            "routedStrategies": int(payload.get("routedStrategies") or 0),
+            "successRate": float(payload.get("successRate") or 0.0),
+        },
+        routed_strategies=0,
+    )
     _PERSONA_BFF_OVERLAY[persona_id] = overlay
     result = {
         "data": overlay,

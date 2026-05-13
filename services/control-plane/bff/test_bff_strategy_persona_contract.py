@@ -276,6 +276,15 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
             assert create.status_code == 201, create.text
             persona_id = create.json()["data"]["id"]
 
+            bff_main._PERSONA_BFF_OVERLAY.clear()
+            bff_main.read_store = ReadSurfaceStore(
+                os.path.join(td, "read_surfaces.json"),
+                allow_local_snapshot_fallback=True,
+            )
+            detail = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
+            assert detail.status_code == 200, detail.text
+            assert detail.json()["data"]["id"] == persona_id
+
             for subpath in ("route-policy", "activity", "evaluations", "memory", "audit"):
                 resp = client.get(f"/bff/personas/{persona_id}/{subpath}", headers=HEADERS)
                 assert resp.status_code == 200, f"{subpath}: {resp.text}"
