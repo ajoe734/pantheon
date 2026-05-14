@@ -1,12 +1,14 @@
 {
   "version": 1,
-  "updated_at": "2026-05-14T08:19:32Z",
+  "updated_at": "2026-05-14T12:22:44Z",
   "counts": {
-    "total": 1016,
-    "completed": 998,
+    "total": 1018,
+    "completed": 1000,
     "superseded": 18
   },
   "recent_terminal_ids": [
+    "FE-INT-GATE-ALIGN-F02-SIDECAR-ACCEPTANCE",
+    "FE-INT-GATE-ALIGN-F02",
     "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
     "BFF-CONSOL-024-SIDECAR-BFF-HANDOFF",
     "BFF-CONSOL-024",
@@ -24,8 +26,6 @@
     "BFF-CONSOL-026-SIDECAR-BFF-HANDOFF",
     "BFF-CONSOL-020",
     "BFF-CONSOL-025",
-    "BFF-CONSOL-019",
-    "BFF-CONSOL-017",
-    "BFF-CONSOL-016"
+    "BFF-CONSOL-019"
   ]
 }
