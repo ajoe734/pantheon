@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-14T07:32:10Z",
+  "updated_at": "2026-05-14T08:19:32Z",
   "counts": {
-    "total": 1015,
-    "completed": 997,
+    "total": 1016,
+    "completed": 998,
     "superseded": 18
   },
   "recent_terminal_ids": [
+    "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
     "BFF-CONSOL-024-SIDECAR-BFF-HANDOFF",
     "BFF-CONSOL-024",
     "BFF-CONSOL-012-SIDECAR-BFF-HANDOFF",
@@ -23,7 +24,6 @@
     "BFF-CONSOL-026-SIDECAR-BFF-HANDOFF",
     "BFF-CONSOL-020",
     "BFF-CONSOL-025",
-    "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
     "BFF-CONSOL-019",
     "BFF-CONSOL-017",
     "BFF-CONSOL-016"

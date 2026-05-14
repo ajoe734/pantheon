@@ -3,7 +3,7 @@
   "sprint": "2026-05-13-ep5-qlib-bff-consolidation",
   "sprint_started_at": "2026-05-13T02:00:00Z",
   "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec，從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV，跑 production_activation_smoke.py --backend real，submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal，registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff，command envelope unification，non-empty fixture & detail journey，SSE real stream replay，strict env cutover，seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write 驗證通過後即可 deprecate 舊 receipt，後續 regression 追蹤不再以固定天數阻塞派工。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。",
-  "updated_at": "2026-05-14T07:32:10Z",
+  "updated_at": "2026-05-14T08:19:32Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -94,13 +94,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude-execution-control",
-      "next": "Auto-reassigned ownership from Codex to Claude after repeated Codex quota terminal: 402 You have no quota. Task returned to todo until Claude starts a fresh run.",
-      "last_update": "2026-05-14T07:30:56Z"
+      "next": "",
+      "last_update": "2026-05-14T07:36:01Z"
     },
     {
       "name": "Gemini",
@@ -300,50 +298,6 @@
       ],
       "next": "Assignment created",
       "last_update": "2026-05-13T02:05:17Z"
-    },
-    {
-      "id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare BFF-CONSOL-027 BFF and frontend handoff packet",
-      "summary_zh": "平行支援 BFF-CONSOL-027，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-      "phase": "BFF Consolidation 2026-05-13",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [
-        "BFF-CONSOL-001",
-        "BFF-CONSOL-002",
-        "BFF-CONSOL-003",
-        "BFF-CONSOL-004",
-        "BFF-CONSOL-005",
-        "BFF-CONSOL-006",
-        "BFF-CONSOL-007",
-        "BFF-CONSOL-008",
-        "BFF-CONSOL-009",
-        "BFF-CONSOL-010",
-        "BFF-CONSOL-011",
-        "BFF-CONSOL-012",
-        "BFF-CONSOL-013",
-        "BFF-CONSOL-014",
-        "BFF-CONSOL-015",
-        "BFF-CONSOL-018",
-        "BFF-CONSOL-021"
-      ],
-      "artifacts": [
-        "support/sidecars/BFF-CONSOL-027/BFF-CONSOL-027-SIDECAR-BFF-HANDOFF.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Auto-reassigned ownership from Codex to Claude after repeated Codex quota terminal: 402 You have no quota. Task returned to todo until Claude starts a fresh run.",
-      "last_update": "2026-05-14T07:30:56Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "BFF-CONSOL-027",
-      "helper_kind": "bff_handoff_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
     }
   ],
   "handoffs": [
@@ -363,42 +317,6 @@
       "status": "done",
       "created_at": "2026-04-17T11:50:38Z",
       "resolved_at": "2026-04-17T12:39:53Z"
-    },
-    {
-      "task_id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
-      "from": "Codex2",
-      "to": "Copilot",
-      "message": "Support-only BFF handoff packet refreshed for BFF-CONSOL-027. Artifact updated at support/sidecars/BFF-CONSOL-027/BFF-CONSOL-027-SIDECAR-BFF-HANDOFF.md; it corrects stale pending/7-day gate notes, maps evidence for 001..026, and flags 022 blocked, 023 todo, 024 review as current acceptance blockers. Verification: git diff --check on artifact passed; referenced evidence JSON files parse.",
-      "status": "done",
-      "created_at": "2026-05-14T07:16:42Z",
-      "resolved_at": "2026-05-14T07:25:19Z"
-    },
-    {
-      "task_id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
-      "from": "Copilot",
-      "to": "Codex",
-      "message": "Auto-reassigned review from Copilot to Codex after repeated Copilot quota terminal: 402 You have no quota",
-      "status": "done",
-      "created_at": "2026-05-14T07:25:19Z",
-      "resolved_at": "2026-05-14T07:27:53Z"
-    },
-    {
-      "task_id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Changes requested: refresh the handoff packet after reviewer reassignment and BFF-CONSOL-024 closeout. Update header/reviewer/status from Copilot to Codex, replace 024 review/provisional blockers with archived done evidence from 2026-05-14T07:23:05Z / Pantheon commit 5225c289, remove checklist items that ask reviewers to confirm 024 is still review, and rerun git diff --check plus the referenced jq evidence checks.",
-      "status": "done",
-      "created_at": "2026-05-14T07:27:53Z",
-      "resolved_at": "2026-05-14T07:27:53Z"
-    },
-    {
-      "task_id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-14T07:30:35Z",
-      "resolved_at": "2026-05-14T07:30:35Z"
     }
   ],
   "blockers": [
@@ -422,13 +340,13 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Claude2": {
       "total": 0,

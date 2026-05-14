@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-14 15:32:10
+Last updated: 2026-05-14 16:19:32
 
 ## Objective
 
@@ -37,7 +37,7 @@ Last updated: 2026-05-14 15:32:10
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Auto-reassigned ownership from Codex to Claude after repeated Codex quota terminal: 402 You have no quota. Task returned to todo until Claude starts a fresh run.
+- `Claude`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 - `Codex`: integration, status-system, schema, acceptance; next: No active assignment
 - `Codex2`: integration, status-system, schema, acceptance; next: Initialized and committed preview strict env plus evidence in d972f8b9; local prereq tests passed. Blocked on Lovable preview URL plus authenticated staging BFF smoke credentials/reachability. Fixed elapsed-day soak gate has been removed.
@@ -54,7 +54,6 @@ Last updated: 2026-05-14 15:32:10
 | `BFF-CONSOL-022` | BFF Consolidation 2026-05-13 | Lovable staging strict cutover (isolated preview branch) | Codex2 | blocked | `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-015` | 開 Lovable preview branch 設 VITE_BFF_MODE=live + VITE_BFF_FALLBACK=strict + VITE_BFF_REAL_WRITES=false。現有 staging 維持 auto fallback 不切。用 strict mode read/SSE/detail journey regression evidence 決定是否推進，不再用固定天數 gate。 |
 | `BFF-CONSOL-023` | BFF Consolidation 2026-05-13 | Lovable prod strict cutover (staging verification gate) | Gemini2 | todo | `BFF-CONSOL-022` | 等 022 staging strict verification 0 regression 後 prod 切 VITE_BFF_FALLBACK=strict (REAL_WRITES 仍 false 直到 operator onboard)。Prod cutover 以 smoke/regression evidence 完成，不再用固定天數 gate。 |
 | `BFF-CONSOL-027` | BFF Consolidation 2026-05-13 | Final BFF consolidation acceptance packet | Copilot | todo | `BFF-CONSOL-001`, `BFF-CONSOL-002`, `BFF-CONSOL-003`, `BFF-CONSOL-004`, `BFF-CONSOL-005`, `BFF-CONSOL-006`, `BFF-CONSOL-007`, `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-011`, `BFF-CONSOL-012`, `BFF-CONSOL-013`, `BFF-CONSOL-014`, `BFF-CONSOL-015`, `BFF-CONSOL-016`, `BFF-CONSOL-017`, `BFF-CONSOL-018`, `BFF-CONSOL-019`, `BFF-CONSOL-020`, `BFF-CONSOL-021`, `BFF-CONSOL-022`, `BFF-CONSOL-023`, `BFF-CONSOL-024`, `BFF-CONSOL-025`, `BFF-CONSOL-026` | 集合 001..026 evidence 輸出 support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md。內容含 contract diff baseline/live smoke (read+write)/SSE evidence/command receipt sample/staging+prod cutover log/regression follow-up/seed.ts post-state。Copilot 統整 Claude 最終簽核。 |
-| `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | [Sidecar] [Auto] [Parent BFF-CONSOL-027] Prepare BFF-CONSOL-027 BFF and frontend handoff packet | Claude | todo | `BFF-CONSOL-001`, `BFF-CONSOL-002`, `BFF-CONSOL-003`, `BFF-CONSOL-004`, `BFF-CONSOL-005`, `BFF-CONSOL-006`, `BFF-CONSOL-007`, `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-011`, `BFF-CONSOL-012`, `BFF-CONSOL-013`, `BFF-CONSOL-014`, `BFF-CONSOL-015`, `BFF-CONSOL-018`, `BFF-CONSOL-021` | 平行支援 BFF-CONSOL-027，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -64,11 +63,12 @@ Last updated: 2026-05-14 15:32:10
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-14 15:32:10
-- Terminal tasks archived: `1015` total, `997` completed, `18` superseded
+- Archive updated: 2026-05-14 16:19:32
+- Terminal tasks archived: `1016` total, `998` completed, `18` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | Prepare BFF-CONSOL-027 BFF and frontend handoff packet | Codex2 | completed | 2026-05-14 16:19:32 | `ai-task-archive/tasks/BFF-CONSOL-027-SIDECAR-BFF-HANDOFF.json` |
 | `BFF-CONSOL-024-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | Prepare BFF-CONSOL-024 BFF and frontend handoff packet | Claude | completed | 2026-05-14 15:32:10 | `ai-task-archive/tasks/BFF-CONSOL-024-SIDECAR-BFF-HANDOFF.json` |
 | `BFF-CONSOL-024` | BFF Consolidation 2026-05-13 | Deprecate old action receipt | Codex2 | completed | 2026-05-14 15:23:05 | `ai-task-archive/tasks/BFF-CONSOL-024.json` |
 | `BFF-CONSOL-012-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | Prepare BFF-CONSOL-012 BFF and frontend handoff packet | Claude | completed | 2026-05-14 14:55:39 | `ai-task-archive/tasks/BFF-CONSOL-012-SIDECAR-BFF-HANDOFF.json` |
@@ -82,7 +82,6 @@ Last updated: 2026-05-14 15:32:10
 | `BFF-CONSOL-022` | BFF Consolidation 2026-05-13 | Lovable staging strict cutover (isolated preview branch) | 開 Lovable preview branch 設 VITE_BFF_MODE=live + VITE_BFF_FALLBACK=strict + VITE_BFF_REAL_WRITES=false。現有 staging 維持 auto fallback 不切。用 strict mode read/SSE/detail journey regression evidence 決定是否推進，不再用固定天數 gate。 | Codex2 | Gemini | blocked | `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-015` | 2026-05-13 17:56:02 | Initialized and committed preview strict env plus evidence in d972f8b9; local prereq tests passed. Blocked on Lovable preview URL plus authenticated staging BFF smoke credentials/reachability. Fixed elapsed-day soak gate has been removed. |
 | `BFF-CONSOL-023` | BFF Consolidation 2026-05-13 | Lovable prod strict cutover (staging verification gate) | 等 022 staging strict verification 0 regression 後 prod 切 VITE_BFF_FALLBACK=strict (REAL_WRITES 仍 false 直到 operator onboard)。Prod cutover 以 smoke/regression evidence 完成，不再用固定天數 gate。 | Gemini2 | Gemini | todo | `BFF-CONSOL-022` | 2026-05-13 10:04:44 | Assignment created |
 | `BFF-CONSOL-027` | BFF Consolidation 2026-05-13 | Final BFF consolidation acceptance packet | 集合 001..026 evidence 輸出 support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md。內容含 contract diff baseline/live smoke (read+write)/SSE evidence/command receipt sample/staging+prod cutover log/regression follow-up/seed.ts post-state。Copilot 統整 Claude 最終簽核。 | Copilot | Claude | todo | `BFF-CONSOL-001`, `BFF-CONSOL-002`, `BFF-CONSOL-003`, `BFF-CONSOL-004`, `BFF-CONSOL-005`, `BFF-CONSOL-006`, `BFF-CONSOL-007`, `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-011`, `BFF-CONSOL-012`, `BFF-CONSOL-013`, `BFF-CONSOL-014`, `BFF-CONSOL-015`, `BFF-CONSOL-016`, `BFF-CONSOL-017`, `BFF-CONSOL-018`, `BFF-CONSOL-019`, `BFF-CONSOL-020`, `BFF-CONSOL-021`, `BFF-CONSOL-022`, `BFF-CONSOL-023`, `BFF-CONSOL-024`, `BFF-CONSOL-025`, `BFF-CONSOL-026` | 2026-05-13 10:05:17 | Assignment created |
-| `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | [Sidecar] [Auto] [Parent BFF-CONSOL-027] Prepare BFF-CONSOL-027 BFF and frontend handoff packet | 平行支援 BFF-CONSOL-027，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Claude | Codex2 | todo | `BFF-CONSOL-001`, `BFF-CONSOL-002`, `BFF-CONSOL-003`, `BFF-CONSOL-004`, `BFF-CONSOL-005`, `BFF-CONSOL-006`, `BFF-CONSOL-007`, `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-011`, `BFF-CONSOL-012`, `BFF-CONSOL-013`, `BFF-CONSOL-014`, `BFF-CONSOL-015`, `BFF-CONSOL-018`, `BFF-CONSOL-021` | 2026-05-14 15:30:56 | Auto-reassigned ownership from Codex to Claude after repeated Codex quota terminal: 402 You have no quota. Task returned to todo until Claude starts a fresh run. |
 
 ## Handoff Queue
 
@@ -171,23 +170,23 @@ Last updated: 2026-05-14 15:32:10
 
 ## Latest Checkpoints
 
-- 2026-05-14 15:31:03 Orchestrator: PreToolUse: Read
-- 2026-05-14 15:31:03 Orchestrator: PostToolUse: Read
-- 2026-05-14 15:31:03 Orchestrator: PostToolUse: Read
-- 2026-05-14 15:31:05 Orchestrator: `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` Auto-reassigned ownership from Codex to Claude after repeated Codex quota terminal: 402 You have no quota. Task returned to todo until Claude starts a fresh run.
-- 2026-05-14 15:31:09 Orchestrator: PreToolUse: Read
-- 2026-05-14 15:31:09 Orchestrator: PostToolUse: Read
-- 2026-05-14 15:31:09 Orchestrator: PreToolUse: Read
-- 2026-05-14 15:31:09 Orchestrator: PostToolUse: Read
-- 2026-05-14 15:31:15 Orchestrator: PreToolUse: Read
-- 2026-05-14 15:31:15 Orchestrator: PostToolUse: Read
-- 2026-05-14 15:31:16 Orchestrator: PreToolUse: Bash
-- 2026-05-14 15:31:16 Orchestrator: PostToolUse: Bash
-- 2026-05-14 15:31:49 Orchestrator: PreToolUse: Edit
-- 2026-05-14 15:31:49 Orchestrator: PostToolUse: Edit
-- 2026-05-14 15:31:53 Orchestrator: PreToolUse: Bash
-- 2026-05-14 15:31:53 Orchestrator: PostToolUse: Bash
-- 2026-05-14 15:32:02 Orchestrator: PreToolUse: Bash
-- 2026-05-14 15:32:03 Orchestrator: PostToolUse: Bash
-- 2026-05-14 15:32:10 Orchestrator: PreToolUse: Bash
-- 2026-05-14 15:32:10 Claude: `BFF-CONSOL-024-SIDECAR-BFF-HANDOFF` Closeout complete: packet status updated to review_approved/closed, task-scoped commit fd214238. Artifact covers deprecation headers, frontend runAction migration, command_executor audit tracking, operator journey, BFF query gap analysis (5 open items, 3 parent-owner questions noted). Codex2 approved; no canonical truth modified.
+- 2026-05-14 16:12:31 Orchestrator: PostToolUse: Bash
+- 2026-05-14 16:12:31 Orchestrator: PreToolUse: Read
+- 2026-05-14 16:12:32 Orchestrator: PostToolUse: Read
+- 2026-05-14 16:13:17 Orchestrator: PreToolUse: Bash
+- 2026-05-14 16:13:17 Orchestrator: PostToolUse: Bash
+- 2026-05-14 16:13:56 Orchestrator: PreToolUse: Write
+- 2026-05-14 16:13:56 Orchestrator: PostToolUse: Write
+- 2026-05-14 16:14:01 Orchestrator: PreToolUse: Write
+- 2026-05-14 16:14:02 Orchestrator: PostToolUse: Write
+- 2026-05-14 16:14:12 Orchestrator: Stop: Stop
+- 2026-05-14 16:14:12 Orchestrator: SessionEnd: SessionEnd
+- 2026-05-14 16:17:11 Orchestrator: Paused new dispatches for claude until 2026-05-14 16:32:11 after terminal quota failure: 402 You have no quota
+- 2026-05-14 16:17:11 Orchestrator: 402 You have no quota
+- 2026-05-14 16:17:11 Orchestrator: `OPS-CHAIR-REVIEW` Three idle workers (Claude, Claude2, Codex) available; critical path blocked on Gemini lane pause; sidecars can absorb idle capacity on non-Gemini-gated parents without blocking the main line.
+- 2026-05-14 16:17:11 Orchestrator: `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` Wake-up queued for supervisor: owned_finalize_dispatch
+- 2026-05-14 16:17:12 Orchestrator: underutilized but no sidecar candidates matched the catalog or dynamic fallback
+- 2026-05-14 16:17:12 Orchestrator: `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` Worker started via codex: owned_finalize_dispatch
+- 2026-05-14 16:17:12 Codex2: `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` Supervisor resumed BFF-CONSOL-027-SIDECAR-BFF-HANDOFF for finalize after successful dispatch.
+- 2026-05-14 16:17:20 Orchestrator: `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` Supervisor resumed BFF-CONSOL-027-SIDECAR-BFF-HANDOFF for finalize after successful dispatch.
+- 2026-05-14 16:19:32 Codex2: `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` Owner closeout complete for support-only BFF handoff packet. Task-scoped artifact commit 8f6533d8; Claude review approved at 2026-05-14 15:42:31. Verified status slice, BFF-CONSOL-024 archive, seed taxonomy counts, route-diff locked metrics, SSE/read/write evidence JSON parsing, and git diff --check. No canonical truth or runtime implementation changes.
