@@ -3,7 +3,7 @@
   "sprint": "2026-05-13-ep5-qlib-bff-consolidation",
   "sprint_started_at": "2026-05-13T02:00:00Z",
   "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec，從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV，跑 production_activation_smoke.py --backend real，submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal，registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff，command envelope unification，non-empty fixture & detail journey，SSE real stream replay，strict env cutover，seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write 驗證通過後即可 deprecate 舊 receipt，後續 regression 追蹤不再以固定天數阻塞派工。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。",
-  "updated_at": "2026-05-14T12:49:16Z",
+  "updated_at": "2026-05-14T12:50:34Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -178,12 +178,10 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "finalize",
-      "current_task_ids": [
-        "FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude2-execution-control",
-      "next": "Supervisor resumed FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE for finalize after successful dispatch.",
+      "next": "",
       "last_update": "2026-05-14T12:48:55Z"
     },
     {
@@ -422,32 +420,6 @@
       "waiting_for": "Gemini2"
     },
     {
-      "id": "FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE",
-      "title": "Prepare FE-INT-GATE-ALIGN-F01 acceptance packet and dependency map",
-      "summary_zh": "平行支援 FE-INT-GATE-ALIGN-F01，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
-      "phase": "Pantheon FE Integration Gate 2026-05-13",
-      "owner": "Claude2",
-      "reviewer": "Gemini2",
-      "status": "review_approved",
-      "depends_on": [],
-      "artifacts": [
-        "support/sidecars/FE-INT-GATE-ALIGN-F01/FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Supervisor resumed FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE for finalize after successful dispatch.",
-      "last_update": "2026-05-14T12:48:55Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "FE-INT-GATE-ALIGN-F01",
-      "helper_kind": "acceptance_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
-    },
-    {
       "id": "FE-INT-GATE-FOLLOWUP-ME-STARTUP",
       "title": "Wire hosted startup session to /bff/me before local role fallback",
       "summary_zh": "Hosted Lovable startup 會打 live BFF list/v5/SSE routes，但目前未在 startup 請求 /bff/me；TopBar 仍由 local platform role control 顯示 admin。需要接上 /bff/me 作為 current-user/session source，401 時顯示 auth/error state，且不得 fallback 到 mock current-user。F01 已在 test annotation 與 startup-bff-network attachment 記錄此 gap。",
@@ -651,15 +623,6 @@
       "resolved_at": "2026-05-14T11:37:37Z"
     },
     {
-      "task_id": "FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE",
-      "from": "Gemini2",
-      "to": "Codex",
-      "message": "Prepared acceptance packet and ready for review.",
-      "status": "done",
-      "created_at": "2026-05-14T11:39:23Z",
-      "resolved_at": "2026-05-14T12:05:20Z"
-    },
-    {
       "task_id": "FE-INT-GATE-ALIGN-F01",
       "from": "Codex",
       "to": "Codex2",
@@ -705,15 +668,6 @@
       "resolved_at": "2026-05-14T12:18:01Z"
     },
     {
-      "task_id": "FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE",
-      "from": "Codex",
-      "to": "Gemini2",
-      "message": "Review returned: packet is still a generic template. Please add a concrete F01 dependency map and handoff packet: map parent task FE-INT-GATE-ALIGN-F01 evidence/artifacts (01-startup-session.spec.ts, hosted strict two-pass verification, headed run, execute-plans commit a685175, and FE-INT-GATE-FOLLOWUP-ME-STARTUP product gap), mark which acceptance criteria are satisfied vs pending, and keep it support-only with no L1/runtime/registry/governance changes.",
-      "status": "done",
-      "created_at": "2026-05-14T12:05:20Z",
-      "resolved_at": "2026-05-14T12:05:20Z"
-    },
-    {
       "task_id": "FE-INT-GATE-ALIGN-F01",
       "from": "Codex2",
       "to": "Codex",
@@ -721,15 +675,6 @@
       "status": "done",
       "created_at": "2026-05-14T12:05:27Z",
       "resolved_at": "2026-05-14T12:19:10Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE",
-      "from": "Gemini2",
-      "to": "Claude2",
-      "message": "Helper-claimed by Claude2 while Gemini2 is dispatch-paused.",
-      "status": "done",
-      "created_at": "2026-05-14T12:09:45Z",
-      "resolved_at": "2026-05-14T12:09:46Z"
     },
     {
       "task_id": "FE-INT-GATE-ALIGN-F07",
@@ -757,15 +702,6 @@
       "status": "done",
       "created_at": "2026-05-14T12:18:01Z",
       "resolved_at": "2026-05-14T12:18:01Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE",
-      "from": "Claude2",
-      "to": "Gemini2",
-      "message": "Concrete F01 acceptance packet prepared at support/sidecars/FE-INT-GATE-ALIGN-F01/FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE.md (committed in 2154e992). Documents: (1) commit a685175 scope — e2e/01-startup-session.spec.ts only, +43/-9; (2) all 5 parent acceptance criteria satisfied; (3) test coverage map for all 4 tests (live BFF, no fixture); (4) BFF contract surface; (5) dependency map; (6) verification evidence — 3 owner runs + reviewer 2 runs, all 4/4; (7) FE-INT-GATE-FOLLOWUP-ME-STARTUP product gap register (interceptedMeRequests=0, fix at commit 20dfe79 in review). Support-only; no canonical truth modified.",
-      "status": "done",
-      "created_at": "2026-05-14T12:18:22Z",
-      "resolved_at": "2026-05-14T12:44:06Z"
     },
     {
       "task_id": "BFF-CONSOL-022",
@@ -827,14 +763,6 @@
       "status": "done",
       "created_at": "2026-05-14T12:41:50Z",
       "resolved_at": "2026-05-14T12:42:25Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE",
-      "from": "Gemini2",
-      "to": "Claude2",
-      "message": "Review approved for FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE. Acceptance packet prepared and committed (2154e992). Verification evidence shows all acceptance criteria met. Task is support-only and no canonical truth was modified. Returning to owner Claude2 for finalization.",
-      "status": "pending",
-      "created_at": "2026-05-14T12:44:06Z"
     },
     {
       "task_id": "FE-INT-GATE-F07-RUNTIME-LIVE-WIRING",
@@ -940,12 +868,12 @@
       "todo": 0
     },
     "Claude2": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 1,
+      "review_approved": 0,
       "todo": 0
     },
     "Gemini": {
