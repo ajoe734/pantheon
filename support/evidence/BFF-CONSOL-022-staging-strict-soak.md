@@ -1,25 +1,29 @@
-# BFF-CONSOL-022 Staging Strict Soak Evidence
+# BFF-CONSOL-022 Dev BFF Preview Strict Soak Evidence
 
-Task: BFF-CONSOL-022 - Lovable staging strict cutover (isolated preview branch)
+Task: BFF-CONSOL-022 - Lovable dev BFF strict cutover (isolated preview branch)
 Owner: Codex2
 Reviewer: Gemini
 Evidence status: initialized, blocked before Day 1 remote soak
 Created: 2026-05-13T09:53:21Z
+Rebased: 2026-05-14 — corrected fabricated staging hostname to the
+authoritative dev BFF target (no staging tier exists in Pantheon today).
 
 ## Cutover Boundary
 
-This task is scoped to an isolated Lovable preview branch only.
+This task is scoped to an isolated Lovable preview branch only, targeting
+the existing dev BFF. Pantheon currently deploys only the dev BFF tier;
+staging and prod tiers are future work and must not be assumed to exist.
 
 The committed preview env is `execute-plans/.lovable/preview-strict.env`:
 
 ```env
 VITE_BFF_MODE=live
-VITE_BFF_BASE_URL=https://pantheon-staging-bff.34.81.225.122.sslip.io
+VITE_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io
 VITE_BFF_FALLBACK=strict
 VITE_BFF_REAL_WRITES=false
 ```
 
-Main staging must remain on its current auto/as-is fallback configuration during this soak. No production env is changed by this task. `VITE_BFF_REAL_WRITES=false` keeps write commands blocked at the frontend during the entire staging soak.
+The Lovable main deployment must remain on its current auto fallback configuration during this soak. No production env is changed by this task. `VITE_BFF_REAL_WRITES=false` keeps write commands blocked at the frontend during the entire soak.
 
 ## Soak Gate
 
@@ -56,8 +60,9 @@ Each day must record:
 
 | Day | Date UTC | Preview URL | Read smoke | SSE smoke | Detail smoke | Regression count | Notes |
 |---:|---|---|---|---|---|---:|---|
-| 0 | 2026-05-13 | pending | local Pack A/B/C prereq passed | not run | local Pack A/B detail prereq passed | n/a | Env artifact initialized. Remote staging BFF unauthenticated `/health` and `/openapi.json` timed out from this worker with `curl --max-time 10`; no authenticated bearer/JWT secret or Lovable preview URL is available in this worker context. |
-| 1 | pending | pending | pending | pending | pending | pending | Requires deployed Lovable preview branch and staging BFF credentials. |
+| 0 | 2026-05-13 | pending | local Pack A/B/C prereq passed | not run | local Pack A/B detail prereq passed | n/a | Initial env artifact pointed at a fabricated staging hostname; `/health` and `/openapi.json` timed out because that hostname does not exist. |
+| 0b | 2026-05-14 | pending | pending | pending | pending | n/a | Rebased: preview env now targets dev BFF (`https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io`). Awaiting Lovable preview branch URL + dev BFF JWT secret for Day 1 soak start. |
+| 1 | pending | pending | pending | pending | pending | pending | Requires deployed Lovable preview branch and dev BFF JWT secret. |
 | 2 | pending | pending | pending | pending | pending | pending |  |
 | 3 | pending | pending | pending | pending | pending | pending |  |
 | 4 | pending | pending | pending | pending | pending | pending |  |
