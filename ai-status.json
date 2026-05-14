@@ -3,7 +3,7 @@
   "sprint": "2026-05-13-ep5-qlib-bff-consolidation",
   "sprint_started_at": "2026-05-13T02:00:00Z",
   "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec，從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV，跑 production_activation_smoke.py --backend real，submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal，registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff，command envelope unification，non-empty fixture & detail journey，SSE real stream replay，strict env cutover，seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write 驗證通過後即可 deprecate 舊 receipt，後續 regression 追蹤不再以固定天數阻塞派工。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。",
-  "updated_at": "2026-05-14T12:25:01Z",
+  "updated_at": "2026-05-14T12:26:30Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -131,8 +131,8 @@
         "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Working in /home/lupin/code/execute-plans on the strict runtime fallback hook; preserving concurrent F05/F07 dirty changes and keeping F15 acceptance strict.",
-      "last_update": "2026-05-14T12:24:10Z"
+      "next": "Dev BFF strict preview prerequisites reverified: preview-strict.env targets lupin dev BFF with REAL_WRITES=false, dev /health and /openapi.json return 200, and focused Pack A/B/C + detail pytest passed. Blocked until Lovable preview branch URL and dev BFF smoke JWT/bearer credential are provided for Day 1 probe_bff_authenticated_live.py.",
+      "last_update": "2026-05-14T12:26:30Z"
     },
     {
       "name": "Codex2",
@@ -208,7 +208,7 @@
       "phase": "BFF Consolidation 2026-05-13",
       "owner": "Codex",
       "reviewer": "Codex2",
-      "status": "in_progress",
+      "status": "blocked",
       "depends_on": [
         "BFF-CONSOL-008",
         "BFF-CONSOL-009",
@@ -228,8 +228,9 @@
         "SSE replay/read smoke 都 pass against dev BFF",
         "evidence 紀錄 strict 下無 fallback regression"
       ],
-      "next": "Supervisor re-dispatched BFF-CONSOL-022; task remains in progress.",
-      "last_update": "2026-05-14T12:21:25Z"
+      "next": "Dev BFF strict preview prerequisites reverified: preview-strict.env targets lupin dev BFF with REAL_WRITES=false, dev /health and /openapi.json return 200, and focused Pack A/B/C + detail pytest passed. Blocked until Lovable preview branch URL and dev BFF smoke JWT/bearer credential are provided for Day 1 probe_bff_authenticated_live.py.",
+      "last_update": "2026-05-14T12:26:30Z",
+      "waiting_for": "Gemini"
     },
     {
       "id": "BFF-CONSOL-023",
@@ -804,6 +805,14 @@
       "message": "Closeout blocked: current hosted strict verification of e2e/01-startup-session.spec.ts fails after FE-INT-GATE-FOLLOWUP-ME-STARTUP changed the spec to require startup /bff/me. Command: PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io VITE_BFF_FALLBACK=strict npx playwright test e2e/01-startup-session.spec.ts --trace=on --reporter=list --output=/tmp/fe-int-gate-align-f01-closeout-run1 => 3 passed, 1 failed; interceptedMeRequests=0. Approved F01 commit a685175 remains durable, but owner closeout cannot mark done until the follow-up is fixed or F01 scope is explicitly decoupled from the newer spec.",
       "status": "open",
       "created_at": "2026-05-14T12:19:10Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-022",
+      "owner": "Codex",
+      "waiting_for": "Gemini",
+      "message": "Dev BFF strict preview prerequisites reverified: preview-strict.env targets lupin dev BFF with REAL_WRITES=false, dev /health and /openapi.json return 200, and focused Pack A/B/C + detail pytest passed. Blocked until Lovable preview branch URL and dev BFF smoke JWT/bearer credential are provided for Day 1 probe_bff_authenticated_live.py.",
+      "status": "open",
+      "created_at": "2026-05-14T12:26:30Z"
     }
   ],
   "workload": {
@@ -855,11 +864,11 @@
     "Codex": {
       "total": 6,
       "active": 5,
-      "blocked": 2,
+      "blocked": 3,
       "done": 0,
       "review": 0,
       "review_approved": 1,
-      "todo": 3
+      "todo": 2
     },
     "Codex2": {
       "total": 4,

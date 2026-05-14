@@ -1,12 +1,15 @@
 # BFF-CONSOL-022 Dev BFF Preview Strict Soak Evidence
 
 Task: BFF-CONSOL-022 - Lovable dev BFF strict cutover (isolated preview branch)
-Owner: Codex2
-Reviewer: Gemini
+Owner: Codex
+Reviewer: Codex2
 Evidence status: initialized, blocked before Day 1 remote soak
 Created: 2026-05-13T09:53:21Z
 Rebased: 2026-05-14 — corrected fabricated staging hostname to the
 authoritative dev BFF target (no staging tier exists in Pantheon today).
+Reverified: 2026-05-14T12:24:48Z — dev BFF unauthenticated health/openapi
+reachability is good, but Day 1 cannot start without a Lovable preview URL and
+dev BFF authenticated smoke credentials.
 
 ## Cutover Boundary
 
@@ -29,7 +32,7 @@ The Lovable main deployment must remain on its current auto fallback configurati
 
 The 7-day soak cannot be marked complete until a deployed Lovable preview URL is available and daily remote smoke evidence covers at least seven elapsed days with zero strict-mode regressions.
 
-Earliest possible completion is seven 24-hour periods after the first successful preview smoke. If Day 1 starts on 2026-05-13 UTC, completion is not before 2026-05-20 UTC.
+Earliest possible completion is seven 24-hour periods after the first successful preview smoke. Day 1 has not started as of 2026-05-14T12:24:48Z; if Day 1 starts on 2026-05-14 UTC, completion is not before 2026-05-21 UTC.
 
 ## Required Daily Checks
 
@@ -61,7 +64,7 @@ Each day must record:
 | Day | Date UTC | Preview URL | Read smoke | SSE smoke | Detail smoke | Regression count | Notes |
 |---:|---|---|---|---|---|---:|---|
 | 0 | 2026-05-13 | pending | local Pack A/B/C prereq passed | not run | local Pack A/B detail prereq passed | n/a | Initial env artifact pointed at a fabricated staging hostname; `/health` and `/openapi.json` timed out because that hostname does not exist. |
-| 0b | 2026-05-14 | pending | pending | pending | pending | n/a | Rebased: preview env now targets dev BFF (`https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io`). Awaiting Lovable preview branch URL + dev BFF JWT secret for Day 1 soak start. |
+| 0b | 2026-05-14 | pending | local prereq passed; remote preview pending | pending | local prereq passed; remote preview pending | n/a | Rebased: preview env targets dev BFF (`https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io`). Dev BFF `/health` and `/openapi.json` returned 200 unauthenticated. Auth credentials and Lovable preview URL are absent in this worker, so Day 1 cannot start. |
 | 1 | pending | pending | pending | pending | pending | pending | Requires deployed Lovable preview branch and dev BFF JWT secret. |
 | 2 | pending | pending | pending | pending | pending | pending |  |
 | 3 | pending | pending | pending | pending | pending | pending |  |
@@ -73,28 +76,42 @@ Each day must record:
 ## Verification Commands Run
 
 ```bash
-bash -c 'set -a; . execute-plans/.lovable/preview-strict.env; test "$VITE_BFF_MODE" = live; test "$VITE_BFF_BASE_URL" = https://pantheon-staging-bff.34.81.225.122.sslip.io; test "$VITE_BFF_FALLBACK" = strict; test "$VITE_BFF_REAL_WRITES" = false'
+bash -lc 'for name in PANTHEON_BFF_SMOKE_BEARER_TOKEN PANTHEON_BFF_SMOKE_JWT_SECRET PANTHEON_BFF_JWT_SECRET BFF_AUTH_TOKEN; do if [ -n "${!name:-}" ]; then printf "%s=present\n" "$name"; else printf "%s=absent\n" "$name"; fi; done'
+bash -lc 'set -a; . execute-plans/.lovable/preview-strict.env; test "$VITE_BFF_MODE" = live; test "$VITE_BFF_BASE_URL" = https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io; test "$VITE_BFF_FALLBACK" = strict; test "$VITE_BFF_REAL_WRITES" = false'
 git diff --check -- execute-plans/.lovable/preview-strict.env support/evidence/BFF-CONSOL-022-staging-strict-soak.md
 python3 -m pytest services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py -q
-curl --max-time 10 -sS -o /tmp/bff-consol-022-staging-health.txt -w '%{http_code} %{time_total}\n' https://pantheon-staging-bff.34.81.225.122.sslip.io/health
-curl --max-time 10 -sS -o /tmp/bff-consol-022-staging-openapi.json -w '%{http_code} %{time_total}\n' https://pantheon-staging-bff.34.81.225.122.sslip.io/openapi.json
+curl --max-time 10 -sS -o /tmp/bff-consol-022-dev-health.txt -w '%{http_code} %{time_total}\n' https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io/health
+curl --max-time 10 -sS -o /tmp/bff-consol-022-dev-openapi.json -w '%{http_code} %{time_total}\n' https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io/openapi.json
 ```
 
 Observed local results:
 
+- Credential precheck: `PANTHEON_BFF_SMOKE_BEARER_TOKEN`, `PANTHEON_BFF_SMOKE_JWT_SECRET`, `PANTHEON_BFF_JWT_SECRET`, and `BFF_AUTH_TOKEN` are absent in this worker.
 - Env assertion command: passed.
 - `git diff --check`: passed.
-- Focused pytest: `25 passed in 34.80s`.
+- Focused pytest: `25 passed in 48.42s`.
 
-Observed remote staging reachability result for both curl commands: HTTP code `000`, timeout after 10 seconds.
+Observed dev BFF reachability:
+
+- `/health`: HTTP `200`, `0.284418s`.
+- `/openapi.json`: HTTP `200`, `0.365360s`.
+
+Credential-gated Day 1 probe is still pending:
+
+```bash
+PANTHEON_BFF_SMOKE_JWT_SECRET=<redacted> \
+  python3 scripts/probe_bff_authenticated_live.py \
+  --base-url https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io \
+  --output support/evidence/BFF-CONSOL-022-day1-authenticated-live.json
+```
 
 ## Open Blockers
 
 1. Lovable preview branch URL is not available in this worker context.
-2. Authenticated staging BFF smoke credentials are not available in this worker context.
-3. Staging BFF reachability from this worker timed out for unauthenticated health/openapi checks.
+2. Authenticated dev BFF smoke credentials are not available in this worker context.
+3. Credential-gated Day 1 `probe_bff_authenticated_live.py` smoke has not run.
 4. The required seven elapsed soak days have not completed.
 
 ## Next Action
 
-Gemini/runtime ops should deploy the isolated Lovable preview branch using `execute-plans/.lovable/preview-strict.env`, provide the preview URL and authenticated smoke credentials, then append Day 1 through Day 7 results here. Codex2 can hand off for review only after this file records seven clean daily checks with zero strict fallback regression.
+Runtime ops should deploy the isolated Lovable preview branch using `execute-plans/.lovable/preview-strict.env`, provide the preview URL and authenticated dev BFF smoke credentials, then append Day 1 through Day 7 results here. Codex can hand off to Codex2 for review only after this file records seven clean daily checks with zero strict fallback regression.

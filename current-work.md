@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-14 20:25:01
+Last updated: 2026-05-14 20:26:30
 
 ## Objective
 
@@ -39,7 +39,7 @@ Last updated: 2026-05-14 20:25:01
 
 - `Claude`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Working in /home/lupin/code/execute-plans on the strict runtime fallback hook; preserving concurrent F05/F07 dirty changes and keeping F15 acceptance strict.
+- `Codex`: integration, status-system, schema, acceptance; next: Dev BFF strict preview prerequisites reverified: preview-strict.env targets lupin dev BFF with REAL_WRITES=false, dev /health and /openapi.json return 200, and focused Pack A/B/C + detail pytest passed. Blocked until Lovable preview branch URL and dev BFF smoke JWT/bearer credential are provided for Day 1 probe_bff_authenticated_live.py.
 - `Codex2`: integration, status-system, schema, acceptance; next: F07 ready for review: hosted Lovable run passed twice (trace headless: 4 passed/1 skipped; xvfb headed trace: 4 passed/1 skipped). Spec aligns fixtures/render labels to actual hosted DOM; runtime surface still renders legacy executor-us-east-1 without reading /bff/runtimes, so follow-up FE-INT-GATE-F07-RUNTIME-LIVE-WIRING was filed. Evidence note: execute-plans/.lovable/audits/current-run/fe-int-gate-align-f07-hosted-dom.md.
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: Assignment created
 - `Claude2`: execution, control-plane, governance-review; next: Concrete F01 acceptance packet prepared at support/sidecars/FE-INT-GATE-ALIGN-F01/FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE.md (committed in 2154e992). Documents: (1) commit a685175 scope — e2e/01-startup-session.spec.ts only, +43/-9; (2) all 5 parent acceptance criteria satisfied; (3) test coverage map for all 4 tests (live BFF, no fixture); (4) BFF contract surface; (5) dependency map; (6) verification evidence — 3 owner runs + reviewer 2 runs, all 4/4; (7) FE-INT-GATE-FOLLOWUP-ME-STARTUP product gap register (interceptedMeRequests=0, fix at commit 20dfe79 in review). Support-only; no canonical truth modified.
@@ -51,7 +51,7 @@ Last updated: 2026-05-14 20:25:01
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `BFF-CONSOL-022` | BFF Consolidation 2026-05-13 | Lovable dev BFF strict cutover (isolated preview branch) | Codex | in_progress | `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-015` | 開 Lovable preview branch 設 VITE_BFF_MODE=live + VITE_BFF_FALLBACK=strict + VITE_BFF_REAL_WRITES=false 指向 dev BFF (https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io)。現有 Lovable main 部署維持 auto fallback 不切。Pantheon 目前只有 dev BFF 一個 tier;staging/prod 是後續工作,不可假設已存在。Soak ≥7 day 紀錄 dev BFF strict mode 下 read/SSE/detail journey 沒 regression。Day 1 soak 啟動條件:Lovable preview branch URL provided + dev BFF authenticated JWT secret available (走 probe_bff_authenticated_live.py)。 |
+| `BFF-CONSOL-022` | BFF Consolidation 2026-05-13 | Lovable dev BFF strict cutover (isolated preview branch) | Codex | blocked | `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-015` | 開 Lovable preview branch 設 VITE_BFF_MODE=live + VITE_BFF_FALLBACK=strict + VITE_BFF_REAL_WRITES=false 指向 dev BFF (https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io)。現有 Lovable main 部署維持 auto fallback 不切。Pantheon 目前只有 dev BFF 一個 tier;staging/prod 是後續工作,不可假設已存在。Soak ≥7 day 紀錄 dev BFF strict mode 下 read/SSE/detail journey 沒 regression。Day 1 soak 啟動條件:Lovable preview branch URL provided + dev BFF authenticated JWT secret available (走 probe_bff_authenticated_live.py)。 |
 | `BFF-CONSOL-023` | BFF Consolidation 2026-05-13 | Lovable prod strict cutover (preview-soak verification gate) | Gemini2 | in_progress | `BFF-CONSOL-022` | 等 022 dev BFF preview strict soak 0 regression 後，把 Lovable main 部署切 VITE_BFF_FALLBACK=strict (REAL_WRITES 仍 false 直到 operator onboard)。Prod cutover 以 smoke/regression evidence 完成，不再用固定天數 gate。注意:Pantheon 後端目前只有 dev BFF;真正的 prod BFF tier 是未來工作,本 task 處理的是 Lovable 前端 strict cutover,非後端環境晉升。 |
 | `BFF-CONSOL-027` | BFF Consolidation 2026-05-13 | Final BFF consolidation acceptance packet | Copilot | todo | `BFF-CONSOL-001`, `BFF-CONSOL-002`, `BFF-CONSOL-003`, `BFF-CONSOL-004`, `BFF-CONSOL-005`, `BFF-CONSOL-006`, `BFF-CONSOL-007`, `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-011`, `BFF-CONSOL-012`, `BFF-CONSOL-013`, `BFF-CONSOL-014`, `BFF-CONSOL-015`, `BFF-CONSOL-016`, `BFF-CONSOL-017`, `BFF-CONSOL-018`, `BFF-CONSOL-019`, `BFF-CONSOL-020`, `BFF-CONSOL-021`, `BFF-CONSOL-022`, `BFF-CONSOL-023`, `BFF-CONSOL-024`, `BFF-CONSOL-025`, `BFF-CONSOL-026` | 集合 001..026 evidence 輸出 support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md。內容含 contract diff baseline/live smoke (read+write)/SSE evidence/command receipt sample/staging+prod cutover log/regression follow-up/seed.ts post-state。Copilot 統整 Claude 最終簽核。 |
 | `FE-INT-GATE-ALIGN-F01` | Pantheon FE Integration Gate 2026-05-13 | Align 01-startup-session.spec.ts to hosted Lovable DOM | Codex | blocked | - | hard-gate 首次 run 25846710728 (commit 4774678) e2e step fail：F01 startup session spec 01-startup-session.spec.ts 對 hosted Lovable assertion 對不上。Symptoms: MeResponse shape assert、strict 模式 serving-mock banner 缺、SSE EventSource open、401 不 fallback mock 4 個 case 全 fail. 必須 (1) PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io 環境下實際跑 npx playwright test <file> --trace=on / --headed，產出 playwright-report/ 抓真實 DOM；(2) 不可以憑空猜 selector；(3) 對 hosted Lovable 已 render 的 UI 對齊 assertion，不可降級 acceptance；(4) 若發現 hosted Lovable 真有 product gap（非 selector 錯），在 task next 註明並 file follow-up；(5) 修完後本地 npx playwright test 對該 spec 至少連續 2 次綠；(6) closeout commit 必須在 /home/lupin/code/execute-plans/ 上 bff-luv-fe-006-dev-deploy branch（不要再產生 phantom mirror，FE-INT-GATE-A10 處理 root cause）。 |
@@ -93,7 +93,7 @@ Last updated: 2026-05-14 20:25:01
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `BFF-CONSOL-022` | BFF Consolidation 2026-05-13 | Lovable dev BFF strict cutover (isolated preview branch) | 開 Lovable preview branch 設 VITE_BFF_MODE=live + VITE_BFF_FALLBACK=strict + VITE_BFF_REAL_WRITES=false 指向 dev BFF (https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io)。現有 Lovable main 部署維持 auto fallback 不切。Pantheon 目前只有 dev BFF 一個 tier;staging/prod 是後續工作,不可假設已存在。Soak ≥7 day 紀錄 dev BFF strict mode 下 read/SSE/detail journey 沒 regression。Day 1 soak 啟動條件:Lovable preview branch URL provided + dev BFF authenticated JWT secret available (走 probe_bff_authenticated_live.py)。 | Codex | Codex2 | in_progress | `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-015` | 2026-05-14 20:21:25 | Supervisor re-dispatched BFF-CONSOL-022; task remains in progress. |
+| `BFF-CONSOL-022` | BFF Consolidation 2026-05-13 | Lovable dev BFF strict cutover (isolated preview branch) | 開 Lovable preview branch 設 VITE_BFF_MODE=live + VITE_BFF_FALLBACK=strict + VITE_BFF_REAL_WRITES=false 指向 dev BFF (https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io)。現有 Lovable main 部署維持 auto fallback 不切。Pantheon 目前只有 dev BFF 一個 tier;staging/prod 是後續工作,不可假設已存在。Soak ≥7 day 紀錄 dev BFF strict mode 下 read/SSE/detail journey 沒 regression。Day 1 soak 啟動條件:Lovable preview branch URL provided + dev BFF authenticated JWT secret available (走 probe_bff_authenticated_live.py)。 | Codex | Codex2 | blocked | `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-015` | 2026-05-14 20:26:30 | Dev BFF strict preview prerequisites reverified: preview-strict.env targets lupin dev BFF with REAL_WRITES=false, dev /health and /openapi.json return 200, and focused Pack A/B/C + detail pytest passed. Blocked until Lovable preview branch URL and dev BFF smoke JWT/bearer credential are provided for Day 1 probe_bff_authenticated_live.py. |
 | `BFF-CONSOL-023` | BFF Consolidation 2026-05-13 | Lovable prod strict cutover (preview-soak verification gate) | 等 022 dev BFF preview strict soak 0 regression 後，把 Lovable main 部署切 VITE_BFF_FALLBACK=strict (REAL_WRITES 仍 false 直到 operator onboard)。Prod cutover 以 smoke/regression evidence 完成，不再用固定天數 gate。注意:Pantheon 後端目前只有 dev BFF;真正的 prod BFF tier 是未來工作,本 task 處理的是 Lovable 前端 strict cutover,非後端環境晉升。 | Gemini2 | Gemini | in_progress | `BFF-CONSOL-022` | 2026-05-14 19:40:37 | Starting work on Lovable prod strict cutover, pending staging verification. |
 | `BFF-CONSOL-027` | BFF Consolidation 2026-05-13 | Final BFF consolidation acceptance packet | 集合 001..026 evidence 輸出 support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md。內容含 contract diff baseline/live smoke (read+write)/SSE evidence/command receipt sample/staging+prod cutover log/regression follow-up/seed.ts post-state。Copilot 統整 Claude 最終簽核。 | Copilot | Claude | todo | `BFF-CONSOL-001`, `BFF-CONSOL-002`, `BFF-CONSOL-003`, `BFF-CONSOL-004`, `BFF-CONSOL-005`, `BFF-CONSOL-006`, `BFF-CONSOL-007`, `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-011`, `BFF-CONSOL-012`, `BFF-CONSOL-013`, `BFF-CONSOL-014`, `BFF-CONSOL-015`, `BFF-CONSOL-016`, `BFF-CONSOL-017`, `BFF-CONSOL-018`, `BFF-CONSOL-019`, `BFF-CONSOL-020`, `BFF-CONSOL-021`, `BFF-CONSOL-022`, `BFF-CONSOL-023`, `BFF-CONSOL-024`, `BFF-CONSOL-025`, `BFF-CONSOL-026` | 2026-05-13 10:05:17 | Assignment created |
 | `FE-INT-GATE-ALIGN-F01` | Pantheon FE Integration Gate 2026-05-13 | Align 01-startup-session.spec.ts to hosted Lovable DOM | hard-gate 首次 run 25846710728 (commit 4774678) e2e step fail：F01 startup session spec 01-startup-session.spec.ts 對 hosted Lovable assertion 對不上。Symptoms: MeResponse shape assert、strict 模式 serving-mock banner 缺、SSE EventSource open、401 不 fallback mock 4 個 case 全 fail. 必須 (1) PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io 環境下實際跑 npx playwright test <file> --trace=on / --headed，產出 playwright-report/ 抓真實 DOM；(2) 不可以憑空猜 selector；(3) 對 hosted Lovable 已 render 的 UI 對齊 assertion，不可降級 acceptance；(4) 若發現 hosted Lovable 真有 product gap（非 selector 錯），在 task next 註明並 file follow-up；(5) 修完後本地 npx playwright test 對該 spec 至少連續 2 次綠；(6) closeout commit 必須在 /home/lupin/code/execute-plans/ 上 bff-luv-fe-006-dev-deploy branch（不要再產生 phantom mirror，FE-INT-GATE-A10 處理 root cause）。 | Codex | Codex2 | blocked | - | 2026-05-14 20:19:10 | Closeout blocked: current hosted strict verification of e2e/01-startup-session.spec.ts fails after FE-INT-GATE-FOLLOWUP-ME-STARTUP changed the spec to require startup /bff/me. Command: PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io VITE_BFF_FALLBACK=strict npx playwright test e2e/01-startup-session.spec.ts --trace=on --reporter=list --output=/tmp/fe-int-gate-align-f01-closeout-run1 => 3 passed, 1 failed; interceptedMeRequests=0. Approved F01 commit a685175 remains durable, but owner closeout cannot mark done until the follow-up is fixed or F01 scope is explicitly decoupled from the newer spec. |
@@ -124,6 +124,7 @@ Last updated: 2026-05-14 20:25:01
 | `FE-INT-GATE-ALIGN-F15` | Codex2 | Gemini2 | Blocked on hosted Lovable strict-mode product/deployment gap: PANTHEON_E2E_STRICT selects the test branch, but the deployed bundle still renders hybrid fallback and seed rows for injected 503. Evidence: execute-plans/.lovable/audits/current-run/f15-strict-product-gap.md. Follow-up filed: FE-INT-GATE-FOLLOWUP-F15-STRICT-LOVABLE. | open |
 | `FE-INT-GATE-ALIGN-F05` | Codex | Gemini | Blocked by hosted Lovable deploy product gap, not selector drift: hosted pantheon-dev bundle index-BYfBkno5.js lacks VITE_BFF_REAL_WRITES/VITE_BFF_FALLBACK so actions render but do not POST /remediate. Evidence committed in execute-plans 7801cff; local Vite with VITE_BFF_REAL_WRITES=true passed e2e/04-sentinel-remediation.spec.ts twice. Follow-up filed as FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE. | open |
 | `FE-INT-GATE-ALIGN-F01` | Codex | Claude2 | Closeout blocked: current hosted strict verification of e2e/01-startup-session.spec.ts fails after FE-INT-GATE-FOLLOWUP-ME-STARTUP changed the spec to require startup /bff/me. Command: PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io VITE_BFF_FALLBACK=strict npx playwright test e2e/01-startup-session.spec.ts --trace=on --reporter=list --output=/tmp/fe-int-gate-align-f01-closeout-run1 => 3 passed, 1 failed; interceptedMeRequests=0. Approved F01 commit a685175 remains durable, but owner closeout cannot mark done until the follow-up is fixed or F01 scope is explicitly decoupled from the newer spec. | open |
+| `BFF-CONSOL-022` | Codex | Gemini | Dev BFF strict preview prerequisites reverified: preview-strict.env targets lupin dev BFF with REAL_WRITES=false, dev /health and /openapi.json return 200, and focused Pack A/B/C + detail pytest passed. Blocked until Lovable preview branch URL and dev BFF smoke JWT/bearer credential are provided for Day 1 probe_bff_authenticated_live.py. | open |
 
 ## Review Notes
 
@@ -201,23 +202,23 @@ Last updated: 2026-05-14 20:25:01
 
 ## Latest Checkpoints
 
-- 2026-05-14 20:24:23 Orchestrator: PreToolUse: Bash
-- 2026-05-14 20:24:25 Orchestrator: PreToolUse: Bash
-- 2026-05-14 20:24:26 Claude2: `FE-INT-GATE-ALIGN-F03` Closeout: commit 6bd0e67 in execute-plans bff-luv-fe-006-dev-deploy — e2e/03-execution-loop.spec.ts only (+2 lines adding PANTHEON_FE_BASE_URL/PANTHEON_BFF_BASE_URL env var lookup). Reviewer Codex2 verified 2 passed, 2 skipped x2 runs plus trace run. Skips expected: live BFF gate (opt-in) and drill-down fixme (documented product gap, no acceptance downgrade).
-- 2026-05-14 20:24:30 Orchestrator: PreToolUse: Bash
-- 2026-05-14 20:24:30 Orchestrator: PostToolUse: Bash
-- 2026-05-14 20:24:37 Orchestrator: PreToolUse: Bash
-- 2026-05-14 20:24:40 Orchestrator: PostToolUse: Bash
-- 2026-05-14 20:24:42 Orchestrator: PreToolUse: Bash
-- 2026-05-14 20:24:42 Orchestrator: PostToolUse: Bash
-- 2026-05-14 20:24:44 Orchestrator: PostToolUse: Bash
-- 2026-05-14 20:24:45 Orchestrator: PreToolUse: Bash
-- 2026-05-14 20:24:45 Orchestrator: PostToolUse: Bash
-- 2026-05-14 20:24:49 Orchestrator: Stop: Stop
-- 2026-05-14 20:24:50 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-14 20:24:52 Orchestrator: PreToolUse: Bash
-- 2026-05-14 20:24:55 Orchestrator: PreToolUse: Bash
-- 2026-05-14 20:24:55 Orchestrator: PostToolUse: Bash
 - 2026-05-14 20:24:59 Orchestrator: PreToolUse: Bash
 - 2026-05-14 20:25:00 Orchestrator: PostToolUse: Bash
 - 2026-05-14 20:25:01 Codex2: `FE-INT-GATE-ALIGN-F07` Handoff to Claude: F07 ready for review: hosted Lovable run passed twice (trace headless: 4 passed/1 skipped; xvfb headed trace: 4 passed/1 skipped). Spec aligns fixtures/render labels to actual hosted DOM; runtime surface still renders legacy executor-us-east-1 without reading /bff/runtimes, so follow-up FE-INT-GATE-F07-RUNTIME-LIVE-WIRING was filed. Evidence note: execute-plans/.lovable/audits/current-run/fe-int-gate-align-f07-hosted-dom.md.
+- 2026-05-14 20:25:05 Orchestrator: PreToolUse: Bash
+- 2026-05-14 20:25:05 Orchestrator: PostToolUse: Bash
+- 2026-05-14 20:25:15 Orchestrator: PreToolUse: Bash
+- 2026-05-14 20:25:16 Orchestrator: PostToolUse: Bash
+- 2026-05-14 20:25:21 Orchestrator: PreToolUse: Bash
+- 2026-05-14 20:25:22 Orchestrator: PostToolUse: Bash
+- 2026-05-14 20:25:35 Orchestrator: PreToolUse: Bash
+- 2026-05-14 20:25:37 Orchestrator: PostToolUse: Bash
+- 2026-05-14 20:25:42 Orchestrator: PreToolUse: Bash
+- 2026-05-14 20:25:43 Orchestrator: PostToolUse: Bash
+- 2026-05-14 20:25:52 Orchestrator: PreToolUse: Bash
+- 2026-05-14 20:25:56 Orchestrator: PreToolUse: Bash
+- 2026-05-14 20:26:07 Orchestrator: PreToolUse: Bash
+- 2026-05-14 20:26:09 Orchestrator: PostToolUse: Bash
+- 2026-05-14 20:26:24 Orchestrator: PreToolUse: Bash
+- 2026-05-14 20:26:24 Orchestrator: PostToolUse: Bash
+- 2026-05-14 20:26:30 Codex: `BFF-CONSOL-022` Blocked on Gemini: Dev BFF strict preview prerequisites reverified: preview-strict.env targets lupin dev BFF with REAL_WRITES=false, dev /health and /openapi.json return 200, and focused Pack A/B/C + detail pytest passed. Blocked until Lovable preview branch URL and dev BFF smoke JWT/bearer credential are provided for Day 1 probe_bff_authenticated_live.py.
