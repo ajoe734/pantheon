@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-14T13:05:06Z",
+  "updated_at": "2026-05-14T13:16:07Z",
   "counts": {
-    "total": 1022,
-    "completed": 1004,
+    "total": 1023,
+    "completed": 1005,
     "superseded": 18
   },
   "recent_terminal_ids": [
+    "FE-INT-GATE-F07-RUNTIME-LIVE-WIRING",
     "FE-INT-GATE-ALIGN-F07",
     "FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE",
     "FE-INT-GATE-ALIGN-F04",
@@ -25,7 +26,6 @@
     "BFF-CONSOL-021-SIDECAR-BFF-HANDOFF",
     "BFF-CONSOL-025-SIDECAR-BFF-HANDOFF",
     "BFF-CONSOL-019-SIDECAR-BFF-HANDOFF",
-    "BFF-CONSOL-017-SIDECAR-BFF-HANDOFF",
-    "SVC-RENAME-003-SIDECAR-ACCEPTANCE"
+    "BFF-CONSOL-017-SIDECAR-BFF-HANDOFF"
   ]
 }
