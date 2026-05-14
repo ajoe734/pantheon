@@ -131,12 +131,18 @@ _DEFAULT_LOVABLE_CORS_ORIGINS = [
     "https://pantheon-ai-system-front-staging-live.lovable.app",
     "https://pantheon.lovable.app",
     "https://pantheon-ai-system-front.lovable.app",
+    # BFF-CONSOL-022: Pantheon Frontend Lovable project preview URLs.
+    "https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com",
+    "https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app",
 ]
 _DEV_LOVABLE_CORS_ORIGINS = {
     "https://preview--pantheon-dev.lovable.app",
     "https://preview--pantheon-ai-system-front-dev.lovable.app",
     "https://pantheon-dev.lovable.app",
     "https://pantheon-ai-system-front-dev.lovable.app",
+    # Pantheon Frontend Lovable project preview URLs (dev tier).
+    "https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com",
+    "https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app",
 }
 
 
