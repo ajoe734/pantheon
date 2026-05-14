@@ -59,12 +59,12 @@ KNOWN_AGENTS = {
     "Claude": {
         "capability_lane": ["execution", "control-plane", "governance-review"],
         "default_branch": "feat/claude-execution-control",
-        "target_workload": 10,
+        "target_workload": 5,
     },
     "Claude2": {
         "capability_lane": ["execution", "control-plane", "governance-review"],
         "default_branch": "feat/claude2-execution-control",
-        "target_workload": 10,
+        "target_workload": 5,
     },
     "Gemini": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
@@ -643,10 +643,14 @@ def int_config_setting(settings: dict[str, Any], key: str, default: int) -> int:
 def build_dispatch_policy_summary(config: dict[str, Any]) -> dict[str, Any]:
     ready_dispatcher = config.get("ready_dispatcher") if isinstance(config.get("ready_dispatcher"), dict) else {}
     helper_claim = ready_dispatcher.get("helper_claim") if isinstance(ready_dispatcher.get("helper_claim"), dict) else {}
+    worker_self_claim = ready_dispatcher.get("worker_self_claim") if isinstance(ready_dispatcher.get("worker_self_claim"), dict) else {}
     claim_idle_work = bool_config_setting(helper_claim, "claim_idle_work", False)
     helper_claim_enabled = bool_config_setting(helper_claim, "enabled", True)
+    worker_self_claim_enabled = bool_config_setting(worker_self_claim, "enabled", False)
     return {
-        "mode": "idle_worker_claim" if helper_claim_enabled and claim_idle_work else "supervisor_owned_dispatch",
+        "mode": "worker_self_claim" if worker_self_claim_enabled else ("idle_worker_claim" if helper_claim_enabled and claim_idle_work else "supervisor_owned_dispatch"),
+        "worker_self_claim_enabled": worker_self_claim_enabled,
+        "worker_self_claim_command": worker_self_claim.get("claim_command") or "",
         "helper_claim_enabled": helper_claim_enabled,
         "claim_idle_work": claim_idle_work,
         "claim_sidecars_when_idle": bool_config_setting(helper_claim, "claim_sidecars_when_idle", False),

@@ -1,4 +1,4 @@
-import { DATA_FILES } from "./js/dashboard-config.js?v=20260513-focus";
+import { DATA_FILES } from "./js/dashboard-config.js?v=20260514-paused-slots";
 import {
   deriveAgentState,
   fetchJson,
@@ -12,7 +12,7 @@ import {
   requestDashboardRefresh,
   statusLabel,
   titleCase,
-} from "./js/dashboard-core.js?v=20260513-focus";
+} from "./js/dashboard-core.js?v=20260514-paused-slots";
 import {
   applyModeVisibility,
   renderAlertStrip,
@@ -49,7 +49,7 @@ import {
   renderTaskBoard,
   renderTruthMismatches,
   renderWorkload,
-} from "./js/dashboard-renderers.js?v=20260513-focus";
+} from "./js/dashboard-renderers.js?v=20260514-paused-slots";
 
 let renderInFlight = false;
 

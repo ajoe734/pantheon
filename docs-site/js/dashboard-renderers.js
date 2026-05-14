@@ -4,7 +4,7 @@ import {
   logicalAgents,
   planningHighSignalTypes,
   workerStatusIcon,
-} from "./dashboard-config.js?v=20260513-focus";
+} from "./dashboard-config.js?v=20260514-paused-slots";
 import {
   buildTruthMismatches,
   actorLabel,
@@ -29,7 +29,7 @@ import {
   titleCase,
   truncate,
   workerLifecycleBadge,
-} from "./dashboard-core.js?v=20260513-focus";
+} from "./dashboard-core.js?v=20260514-paused-slots";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -105,9 +105,7 @@ export function renderWorkload(status, orchState = null) {
     container.innerHTML = '<p class="empty">尚無 lane workload 摘要。</p>';
     return;
   }
-  const pauseMap = new Map(
-    pausedProviderEntries(orchState).map((entry) => [normalizedProviderKey(entry.provider), entry])
-  );
+  const pauseMap = pausedProviderMap(orchState);
   const agentBlockedMap = new Map(
     (status.agents || []).map((agent) => [normalizedProviderKey(agent.name), String(agent.status || "").toLowerCase()])
   );
@@ -145,12 +143,14 @@ export function renderWorkload(status, orchState = null) {
 function slotStatusLabel(slot) {
   if (slot.status === "running") return "running";
   if (slot.status === "pending") return slot.worker_status || "pending";
+  if (slot.status === "paused") return "paused";
   return "idle";
 }
 
 function slotStatusClass(slot) {
   if (slot.status === "running") return "slot-running";
   if (slot.status === "pending") return "slot-pending";
+  if (slot.status === "paused") return "slot-paused";
   return "slot-idle";
 }
 
@@ -168,14 +168,16 @@ export function renderAutoworkerPool(status, orchState, dashboardBundle = null) 
   const dispatchTargets = runtimeSummary.dispatch_targets || status.workload || {};
   const activeCount = slots.filter((slot) => slot.status === "running").length;
   const pendingCount = slots.filter((slot) => slot.status === "pending").length;
+  const pausedCount = slots.filter((slot) => slot.status === "paused").length;
   const idleCount = slots.filter((slot) => slot.status === "idle").length;
   const mismatchCount = Number.isFinite(runtimeSummary.mismatch_count) ? runtimeSummary.mismatch_count : 0;
-  const pausedKeys = new Set(pausedProviderEntries(orchState).map((entry) => normalizedProviderKey(entry.provider)));
+  const pausedKeys = pausedProviderKeySet(orchState);
 
   if (summaryEl) {
     summaryEl.innerHTML = `
       <span class="chip">總計 ${activeCount}/${slots.length}</span>
       <span class="chip">pending ${pendingCount}</span>
+      <span class="chip status-blocked">paused ${pausedCount}</span>
       <span class="chip">idle ${idleCount}</span>
       ${mismatchCount ? `<span class="chip status-blocked">mismatch ${mismatchCount}</span>` : `<span class="chip status-done">mismatch 0</span>`}
     `;
@@ -225,6 +227,8 @@ export function renderAutoworkerPool(status, orchState, dashboardBundle = null) 
             const task = slot.task_id || "空 slot";
             const reason = slot.status === "idle"
               ? ""
+              : slot.status === "paused"
+              ? slot.reason || slot.pause_entry?.summary || slot.pause_entry?.reason || "dispatch paused"
               : slot.reason || slot.worker?.reason || slot.worker?.request_snapshot?.reason || "";
             const title = [
               slot.label,
@@ -237,11 +241,11 @@ export function renderAutoworkerPool(status, orchState, dashboardBundle = null) 
               <div class="autoworker-slot ${slotStatusClass(slot)}" title="${escapeHtml(title)}">
                 <div class="autoworker-slot-top">
                   <strong>${escapeHtml(slotShortId(slot))}</strong>
-                  <span class="status-pill ${slot.status === "running" ? "status-working" : slot.status === "pending" ? "status-review" : "status-idle"}">${escapeHtml(slotStatusLabel(slot))}</span>
+                  <span class="status-pill ${slot.status === "running" ? "status-working" : slot.status === "pending" ? "status-review" : slot.status === "paused" ? "status-blocked" : "status-idle"}">${escapeHtml(slotStatusLabel(slot))}</span>
                 </div>
                 <div class="autoworker-slot-task">${escapeHtml(task)}</div>
                 <div class="autoworker-slot-meta">
-                  ${reason ? `<span>${escapeHtml(reason)}</span>` : "<span>idle</span>"}
+                  ${reason ? `<span>${escapeHtml(reason)}</span>` : `<span>${slot.status === "paused" ? "paused" : "idle"}</span>`}
                   ${slot.last_event_at ? `<span>${escapeHtml(timeAgo(slot.last_event_at))}</span>` : ""}
                 </div>
               </div>
@@ -1265,14 +1269,57 @@ function pausedProviderEntries(orchState) {
   const pauses = orchState?.provider_guardrails?.dispatch_pauses;
   if (!pauses || typeof pauses !== "object") return [];
   return Object.entries(pauses)
-    .map(([provider, info]) => ({ provider, ...(info || {}) }))
+    .map(([pauseKey, info]) => {
+      const record = info && typeof info === "object" ? info : {};
+      const canonicalKey = record.pause_key || record.quota_group || pauseKey;
+      return {
+        ...record,
+        provider: canonicalKey,
+        pause_key: canonicalKey,
+        trigger_provider: record.provider || record.trigger_provider || null,
+      };
+    })
     .sort((a, b) => String(b.blocked_until || b.paused_at || "").localeCompare(String(a.blocked_until || a.paused_at || "")));
 }
 
 function normalizedProviderKey(value) {
-  const normalized = String(value || "").trim().toLowerCase();
+  const normalized = String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   if (normalized === "grok") return "copilot";
+  if (normalized === "codex_2") return "codex2";
   return normalized;
+}
+
+function providerKeyAliases(value) {
+  const key = normalizedProviderKey(value);
+  if (!key) return [];
+  const aliases = [key];
+  if (key === "codex1") aliases.push("codex");
+  if (key === "codex") aliases.push("codex1");
+  return aliases;
+}
+
+function pauseEntryKeys(entry) {
+  const keys = new Set();
+  for (const value of [entry?.provider, entry?.pause_key, entry?.quota_group, entry?.trigger_provider]) {
+    for (const alias of providerKeyAliases(value)) keys.add(alias);
+  }
+  return Array.from(keys);
+}
+
+function pausedProviderKeySet(orchState) {
+  const keys = new Set();
+  for (const entry of pausedProviderEntries(orchState)) {
+    for (const key of pauseEntryKeys(entry)) keys.add(key);
+  }
+  return keys;
+}
+
+function pausedProviderMap(orchState) {
+  const map = new Map();
+  for (const entry of pausedProviderEntries(orchState)) {
+    for (const key of pauseEntryKeys(entry)) map.set(key, entry);
+  }
+  return map;
 }
 
 function pauseSeverity(entry) {
@@ -2726,6 +2773,7 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
   const codexSlots = buildCodexSlotRoster(orchState, status);
   const codexActiveCount = codexSlots.filter((slot) => slot.status === "running").length;
   const codexPendingCount = codexSlots.filter((slot) => slot.status === "pending").length;
+  const codexPausedCount = codexSlots.filter((slot) => slot.status === "paused").length;
   const codexIdleCount = codexSlots.filter((slot) => slot.status === "idle").length;
   const codexSlotCard = document.createElement("article");
   codexSlotCard.className = "sys-card codex-slot-card";
@@ -2735,6 +2783,7 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
       <strong>Codex Slot Debug Details</strong>
       <span class="chip">active ${codexActiveCount}</span>
       <span class="chip">pending ${codexPendingCount}</span>
+      <span class="chip status-blocked">paused ${codexPausedCount}</span>
       <span class="chip">idle ${codexIdleCount}</span>
       <span class="chip">total ${codexSlots.length}</span>
     </div>
@@ -2746,11 +2795,11 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
             <span class="chip">${escapeHtml(slot.quota_group)}</span>
           </div>
           <div class="codex-slot-meta">
-            <span class="status-pill ${slot.status === "running" ? "status-working" : slot.status === "pending" ? "status-review" : "status-idle"}">${slot.status === "idle" ? "idle" : slot.worker_status || slot.status}</span>
+            <span class="status-pill ${slot.status === "running" ? "status-working" : slot.status === "pending" ? "status-review" : slot.status === "paused" ? "status-blocked" : "status-idle"}">${slot.status === "idle" ? "idle" : slot.worker_status || slot.status}</span>
             <span class="chip">${escapeHtml(slot.id)}</span>
             ${slot.worker?.provider ? `<span class="chip">${escapeHtml(slot.worker.provider)}</span>` : ""}
             ${slot.task_id ? `<span class="chip">${escapeHtml(slot.task_id)}</span>` : `<span class="chip">空 slot</span>`}
-            ${slot.worker?.reason ? `<span class="chip">${escapeHtml(slot.worker.reason)}</span>` : ""}
+            ${slot.reason ? `<span class="chip">${escapeHtml(slot.reason)}</span>` : ""}
             ${slot.last_event_at ? `<span class="chip">${escapeHtml(timeAgo(slot.last_event_at))}</span>` : ""}
           </div>
         </div>
@@ -2805,12 +2854,12 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
   }
 
   const agentStateMap = new Map((agentStates || []).map((a) => [normalizedProviderKey(a.name), a]));
-  const pauseMap = new Map(pausedProviders.map((entry) => [normalizedProviderKey(entry.provider), entry]));
+  const pauseMap = pausedProviderMap(orchState);
   const runtimeAgentIds = Array.from(new Set([
     ...logicalAgents,
     ...(agentStates || []).map((agent) => normalizedProviderKey(agent.name)),
     ...workers.map((worker) => normalizedProviderKey(worker.logical_agent_id || worker.provider || worker.agent_id)),
-    ...pausedProviders.map((entry) => normalizedProviderKey(entry.provider)),
+    ...pausedProviders.flatMap((entry) => pauseEntryKeys(entry)),
   ].filter(Boolean)));
   for (const agentId of runtimeAgentIds) {
     const pw = workers.filter((w) => normalizedProviderKey(w.logical_agent_id || w.provider || w.agent_id) === agentId);

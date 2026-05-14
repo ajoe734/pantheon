@@ -386,6 +386,11 @@ h1 {
   background: rgba(166, 117, 28, 0.07);
 }
 
+.autoworker-slot.slot-paused {
+  border-left-color: var(--red);
+  background: rgba(196, 75, 63, 0.07);
+}
+
 .autoworker-slot-top,
 .autoworker-slot-meta {
   display: flex;
@@ -1211,6 +1216,11 @@ details[open].cockpit-details .cockpit-details-summary::before {
 .codex-slot-row.codex-slot-pending {
   border-left-color: var(--orange);
   background: rgba(166, 117, 28, 0.06);
+}
+
+.codex-slot-row.codex-slot-paused {
+  border-left-color: var(--red);
+  background: rgba(196, 75, 63, 0.06);
 }
 
 .codex-slot-name,
