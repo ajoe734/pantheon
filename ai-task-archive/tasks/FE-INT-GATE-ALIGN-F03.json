@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "FE-INT-GATE-ALIGN-F03",
+  "archived_at": "2026-05-14T12:24:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "FE-INT-GATE-ALIGN-F03",
+    "title": "Align 03-execution-loop.spec.ts to hosted Lovable DOM",
+    "summary_zh": "hard-gate 首次 run 25846710728 (commit 4774678) e2e step fail：F03 execution loop persona health spec 03-execution-loop.spec.ts 對 hosted Lovable assertion 對不上。Symptoms: PersonaHealthMatrix mode/status/score/strategies/findings render、redacted evidence metadata-only 2 個 case 全 fail. 必須 (1) PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io 環境下實際跑 npx playwright test <file> --trace=on / --headed，產出 playwright-report/ 抓真實 DOM；(2) 不可以憑空猜 selector；(3) 對 hosted Lovable 已 render 的 UI 對齊 assertion，不可降級 acceptance；(4) 若發現 hosted Lovable 真有 product gap（非 selector 錯），在 task next 註明並 file follow-up；(5) 修完後本地 npx playwright test 對該 spec 至少連續 2 次綠；(6) closeout commit 必須在 /home/lupin/code/execute-plans/ 上 bff-luv-fe-006-dev-deploy branch（不要再產生 phantom mirror，FE-INT-GATE-A10 處理 root cause）。",
+    "phase": "Pantheon FE Integration Gate 2026-05-13",
+    "owner": "Claude2",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "execute-plans/e2e/03-execution-loop.spec.ts",
+      "execute-plans/.lovable/audits/baseline/hardgate-postmerge/pantheon-integration-evidence/.lovable/audits/current-run/playwright-results.json"
+    ],
+    "acceptance": [
+      "cd execute-plans 後 npx playwright test e2e/03-execution-loop.spec.ts 連續 2 次全綠",
+      "assertion 用真實 hosted Lovable DOM/network 對齊",
+      "不可降級 blueprint pass condition",
+      "若 hosted Lovable 真有 product gap 改 file follow-up task 而非 mask spec",
+      "closeout commit 在 execute-plans repo bff-luv-fe-006-dev-deploy branch"
+    ],
+    "next": "Closeout: commit 6bd0e67 in execute-plans bff-luv-fe-006-dev-deploy — e2e/03-execution-loop.spec.ts only (+2 lines adding PANTHEON_FE_BASE_URL/PANTHEON_BFF_BASE_URL env var lookup). Reviewer Codex2 verified 2 passed, 2 skipped x2 runs plus trace run. Skips expected: live BFF gate (opt-in) and drill-down fixme (documented product gap, no acceptance downgrade).",
+    "last_update": "2026-05-14T12:24:26Z",
+    "review_notes_zh": [
+      "Reviewed commit 6bd0e67 in /home/lupin/code/execute-plans on bff-luv-fe-006-dev-deploy; only e2e/03-execution-loop.spec.ts changed. Verified no later diff on that spec and no dirty hunk in the spec. Ran hosted Lovable/dev BFF focused spec twice plus one trace run: each completed with 2 passed, 2 skipped. Existing drill-down fixme remains a documented product gap; no acceptance downgrade observed."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-14T12:24:26Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "ba74fc375ecb11506be2180bafc81429ad00c52f",
+      "commit_subject": "FE-INT-GATE-ALIGN-F03: closeout finalization",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Reviewer Codex2 verified": "2 passed, 2 skipped x2 runs plus trace run.",
+        "Skips are expected": "live BFF gate (opt-in) and drill-down fixme (documented",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "FE-INT-GATE-ALIGN-F03",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 7,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F03",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Helper-claimed by idle Claude2; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-14T11:36:16Z",
+      "resolved_at": "2026-05-14T11:37:14Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F03",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Fixed frontendUrl() and bffUrl() to check PANTHEON_FE_BASE_URL/PANTHEON_BFF_BASE_URL first. 2 consecutive passes (2 passed, 2 skipped) on https://pantheon-dev.lovable.app. Commit 6bd0e67 on bff-luv-fe-006-dev-deploy. Drill-down test remains fixme (product gap noted in spec). Ready for review.",
+      "status": "done",
+      "created_at": "2026-05-14T11:45:42Z",
+      "resolved_at": "2026-05-14T12:18:55Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F03",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Review approved: 6bd0e67 scope verified; hosted Lovable/dev BFF focused spec passed twice plus trace run (2 passed, 2 skipped each). Owner Claude2 should finalize to done with task closeout commit/push handling.",
+      "status": "done",
+      "created_at": "2026-05-14T12:18:55Z",
+      "resolved_at": "2026-05-14T12:24:27Z"
+    }
+  ],
+  "blockers": []
+}

@@ -3,7 +3,7 @@
   "sprint": "2026-05-13-ep5-qlib-bff-consolidation",
   "sprint_started_at": "2026-05-13T02:00:00Z",
   "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec，從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV，跑 production_activation_smoke.py --backend real，submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal，registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff，command envelope unification，non-empty fixture & detail journey，SSE real stream replay，strict env cutover，seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write 驗證通過後即可 deprecate 舊 receipt，後續 regression 追蹤不再以固定天數阻塞派工。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。",
-  "updated_at": "2026-05-14T12:24:27Z",
+  "updated_at": "2026-05-14T12:25:01Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -148,8 +148,8 @@
         "FE-INT-GATE-ALIGN-F15"
       ],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Codex2 resumed F07: validating hosted Lovable DOM evidence and current spec before patching assertions.",
-      "last_update": "2026-05-14T12:14:28Z"
+      "next": "F07 ready for review: hosted Lovable run passed twice (trace headless: 4 passed/1 skipped; xvfb headed trace: 4 passed/1 skipped). Spec aligns fixtures/render labels to actual hosted DOM; runtime surface still renders legacy executor-us-east-1 without reading /bff/runtimes, so follow-up FE-INT-GATE-F07-RUNTIME-LIVE-WIRING was filed. Evidence note: execute-plans/.lovable/audits/current-run/fe-int-gate-align-f07-hosted-dom.md.",
+      "last_update": "2026-05-14T12:25:01Z"
     },
     {
       "name": "Copilot",
@@ -397,7 +397,7 @@
       "phase": "Pantheon FE Integration Gate 2026-05-13",
       "owner": "Codex2",
       "reviewer": "Claude",
-      "status": "in_progress",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
         "execute-plans/e2e/06-entity-registry.spec.ts",
@@ -410,8 +410,8 @@
         "若 hosted Lovable 真有 product gap 改 file follow-up task 而非 mask spec",
         "closeout commit 在 execute-plans repo bff-luv-fe-006-dev-deploy branch"
       ],
-      "next": "Codex2 resumed F07: validating hosted Lovable DOM evidence and current spec before patching assertions.",
-      "last_update": "2026-05-14T12:14:28Z"
+      "next": "F07 ready for review: hosted Lovable run passed twice (trace headless: 4 passed/1 skipped; xvfb headed trace: 4 passed/1 skipped). Spec aligns fixtures/render labels to actual hosted DOM; runtime surface still renders legacy executor-us-east-1 without reading /bff/runtimes, so follow-up FE-INT-GATE-F07-RUNTIME-LIVE-WIRING was filed. Evidence note: execute-plans/.lovable/audits/current-run/fe-int-gate-align-f07-hosted-dom.md.",
+      "last_update": "2026-05-14T12:25:01Z"
     },
     {
       "id": "FE-INT-GATE-ALIGN-F15",
@@ -761,6 +761,14 @@
       "message": "Review approved. Codex2 verified scoped commit 7f317c90ed0a6179182ef16c22db125fe47439cb and reran hosted Lovable/dev BFF Playwright twice: /tmp/fe-int-gate-align-f04-codex2-review-run1 and run2, both 3/3. Owner Codex should finalize review_approved -> done per closeout checklist.",
       "status": "pending",
       "created_at": "2026-05-14T12:20:14Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F07",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "F07 ready for review: hosted Lovable run passed twice (trace headless: 4 passed/1 skipped; xvfb headed trace: 4 passed/1 skipped). Spec aligns fixtures/render labels to actual hosted DOM; runtime surface still renders legacy executor-us-east-1 without reading /bff/runtimes, so follow-up FE-INT-GATE-F07-RUNTIME-LIVE-WIRING was filed. Evidence note: execute-plans/.lovable/audits/current-run/fe-int-gate-align-f07-hosted-dom.md.",
+      "status": "pending",
+      "created_at": "2026-05-14T12:25:01Z"
     }
   ],
   "blockers": [
@@ -858,9 +866,9 @@
       "active": 2,
       "blocked": 1,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
-      "todo": 3
+      "todo": 2
     },
     "Copilot": {
       "total": 1,
