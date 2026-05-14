@@ -277,6 +277,19 @@
         ]
       }
     },
+    "sessions": {
+      "session-pack-a-momentum-activity": {
+        "id": "session-pack-a-momentum-activity",
+        "session_id": "session-pack-a-momentum-activity",
+        "persona_id": "persona-pack-a-momentum",
+        "session_type": "operator_activity",
+        "status": "completed",
+        "topic": "Pack A persona routed strategy activity",
+        "started_at": "2026-05-13T00:21:30Z",
+        "ended_at": "2026-05-13T00:22:30Z",
+        "summary": "Fixture activity row for persona detail smoke; no runtime side effect."
+      }
+    },
     "teaching_sessions": {
       "eval-pack-a-momentum-001": {
         "session_id": "eval-pack-a-momentum-001",

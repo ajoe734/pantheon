@@ -1,0 +1,352 @@
+{
+  "evidence_id": "BFF-CONSOL-016-detail-smoke-a",
+  "task_id": "BFF-CONSOL-016",
+  "title": "Detail journey smoke A - strategy / persona / deployment / runtime",
+  "generated_at": "2026-05-14T04:13:23Z",
+  "generated_by": "Codex2",
+  "verification_method": "Playwright API smoke authored, Pack A fixture extension for persona activity, static fixture/code verification, and focused FastAPI TestClient route probe",
+  "fixture_pack_dependencies": [
+    "BFF-CONSOL-008-pack-a"
+  ],
+  "spec_file": "execute-plans/tests/e2e/detail-smoke-a.spec.ts",
+  "summary": {
+    "families_covered": 4,
+    "families": [
+      "strategy",
+      "persona",
+      "deployment",
+      "runtime"
+    ],
+    "acceptance_criteria_met": [
+      "4 Pack A fixture detail routes are required to return 2xx in the smoke spec",
+      "strategy detail links non-empty specs, experiments, artifacts, lineage, and audit tabs",
+      "persona detail links non-empty route-policy, activity, evaluations, and audit tabs",
+      "deployment detail links approval decision, paper stage, capital pool, and runtime binding",
+      "runtime detail links deployment plan, artifact, deployment stage, and capital pool",
+      "phantom strategy/persona/deployment/runtime IDs are required to return typed OBJECT_NOT_FOUND 404, not raw 500",
+      "this evidence file captures each family route and expected status"
+    ],
+    "degraded_path": "phantom fixture IDs must return typed OBJECT_NOT_FOUND 404 with no undefined fallback text"
+  },
+  "fixture_ids": {
+    "strategy": {
+      "strategy_id": "strategy-pack-a-momentum",
+      "spec_version_id": "spec-pack-a-momentum-v1",
+      "experiment_id": "exp-pack-a-momentum-001",
+      "artifact_id": "artifact-pack-a-momentum-v1",
+      "lineage_edge_id": "lineage-pack-a-strategy-artifact",
+      "audit_entry_id": "audit-pack-a-strategy-approved"
+    },
+    "persona": {
+      "persona_id": "persona-pack-a-momentum",
+      "activity_session_id": "session-pack-a-momentum-activity",
+      "evaluation_session_id": "eval-pack-a-momentum-001",
+      "audit_entry_id": "audit-pack-a-persona-policy"
+    },
+    "deployment": {
+      "plan_id": "plan-pack-a-paper-001",
+      "approval_decision_id": "approval-pack-a-deploy",
+      "capital_pool_id": "pool-pack-a-ops",
+      "runtime_binding_id": "runtime-pack-a-paper-001"
+    },
+    "runtime": {
+      "runtime_id": "runtime-pack-a-paper-001",
+      "plan_id": "plan-pack-a-paper-001",
+      "artifact_id": "artifact-pack-a-momentum-v1",
+      "capital_pool_id": "pool-pack-a-ops"
+    }
+  },
+  "transcripts": {
+    "strategy": {
+      "routes_verified": [
+        {
+          "label": "strategy list",
+          "method": "GET",
+          "path": "/bff/strategies",
+          "expected_status": 200,
+          "expected_ids": [
+            "strategy-pack-a-momentum"
+          ],
+          "verification": "ReadSurfaceStore local fixture fallback loads fixtures_pack_a.datasets.strategy_specs; list projection returns strategy-pack-a-momentum."
+        },
+        {
+          "label": "strategy detail",
+          "method": "GET",
+          "path": "/bff/strategies/strategy-pack-a-momentum",
+          "expected_status": 200,
+          "expected_fields": [
+            "id",
+            "personaIds",
+            "capitalPoolId",
+            "state"
+          ],
+          "verification": "bff_get_strategy resolves read_store.get_strategy_spec and get_strategy_spec_detail for Pack A current spec."
+        },
+        {
+          "label": "strategy specs tab",
+          "method": "GET",
+          "path": "/bff/strategies/strategy-pack-a-momentum/specs",
+          "expected_status": 200,
+          "expected_ids": [
+            "spec-pack-a-momentum-v1"
+          ],
+          "verification": "Pack A strategy version list contains spec-pack-a-momentum-v1."
+        },
+        {
+          "label": "strategy experiments tab",
+          "method": "GET",
+          "path": "/bff/strategies/strategy-pack-a-momentum/experiments",
+          "expected_status": 200,
+          "expected_ids": [
+            "exp-pack-a-momentum-001"
+          ],
+          "verification": "Pack A experiment exposes linked_strategy_id=strategy-pack-a-momentum."
+        },
+        {
+          "label": "strategy artifacts tab",
+          "method": "GET",
+          "path": "/bff/strategies/strategy-pack-a-momentum/artifacts",
+          "expected_status": 200,
+          "expected_ids": [
+            "artifact-pack-a-momentum-v1"
+          ],
+          "verification": "Pack A artifact exposes linked_strategy_id=strategy-pack-a-momentum and lineage_id=lineage-pack-a-momentum."
+        },
+        {
+          "label": "strategy lineage tab",
+          "method": "GET",
+          "path": "/bff/strategies/strategy-pack-a-momentum/lineage",
+          "expected_status": 200,
+          "expected_ids": [
+            "lineage-pack-a-strategy-artifact"
+          ],
+          "verification": "Pack A lineage edge links spec-pack-a-momentum-v1 to artifact-pack-a-momentum-v1 for the strategy."
+        },
+        {
+          "label": "strategy audit tab",
+          "method": "GET",
+          "path": "/bff/strategies/strategy-pack-a-momentum/audit",
+          "expected_status": 200,
+          "expected_ids": [
+            "audit-pack-a-strategy-approved"
+          ],
+          "verification": "Pack A governance_audit_events includes target_type=strategy and target_id=strategy-pack-a-momentum."
+        }
+      ]
+    },
+    "persona": {
+      "routes_verified": [
+        {
+          "label": "persona list",
+          "method": "GET",
+          "path": "/bff/personas",
+          "expected_status": 200,
+          "expected_ids": [
+            "persona-pack-a-momentum"
+          ],
+          "verification": "ReadSurfaceStore local fixture fallback loads fixtures_pack_a.datasets.personas."
+        },
+        {
+          "label": "persona detail",
+          "method": "GET",
+          "path": "/bff/personas/persona-pack-a-momentum",
+          "expected_status": 200,
+          "expected_fields": [
+            "id",
+            "name",
+            "routedStrategies",
+            "state"
+          ],
+          "verification": "Persona detail projection reports routedStrategies=1 through strategy_specs persona linkage."
+        },
+        {
+          "label": "persona route-policy tab",
+          "method": "GET",
+          "path": "/bff/personas/persona-pack-a-momentum/route-policy",
+          "expected_status": 200,
+          "expected_ids": [
+            "strategy-pack-a-momentum"
+          ],
+          "verification": "Pack A persona_route_policies.persona-pack-a-momentum has a paper_only rule for strategy-pack-a-momentum."
+        },
+        {
+          "label": "persona activity tab",
+          "method": "GET",
+          "path": "/bff/personas/persona-pack-a-momentum/activity",
+          "expected_status": 200,
+          "expected_ids": [
+            "session-pack-a-momentum-activity"
+          ],
+          "verification": "BFF-CONSOL-016 extends Pack A with a sessions fixture row so persona activity is non-empty."
+        },
+        {
+          "label": "persona evaluations tab",
+          "method": "GET",
+          "path": "/bff/personas/persona-pack-a-momentum/evaluations",
+          "expected_status": 200,
+          "expected_ids": [
+            "eval-pack-a-momentum-001"
+          ],
+          "verification": "Pack A teaching_sessions includes eval-pack-a-momentum-001 for the persona evaluation skeleton."
+        },
+        {
+          "label": "persona audit tab",
+          "method": "GET",
+          "path": "/bff/personas/persona-pack-a-momentum/audit",
+          "expected_status": 200,
+          "expected_ids": [
+            "audit-pack-a-persona-policy"
+          ],
+          "verification": "Pack A governance_audit_events includes target_type=persona and target_id=persona-pack-a-momentum."
+        }
+      ]
+    },
+    "deployment": {
+      "routes_verified": [
+        {
+          "label": "deployment list",
+          "method": "GET",
+          "path": "/bff/deployments",
+          "expected_status": 200,
+          "expected_ids": [
+            "plan-pack-a-paper-001"
+          ],
+          "verification": "Pack A deployment_plans contains plan-pack-a-paper-001 and list response exposes data/items aliases."
+        },
+        {
+          "label": "deployment detail",
+          "method": "GET",
+          "path": "/bff/deployments/plan-pack-a-paper-001",
+          "expected_status": 200,
+          "expected_fields": [
+            "plan_id",
+            "approval_decision_id",
+            "approval_decision",
+            "stages",
+            "runtime_binding_id"
+          ],
+          "verification": "Deployment detail resolves Pack A plan and joins approval-pack-a-deploy through read_store.get_approval_decision."
+        },
+        {
+          "label": "deployment approval link",
+          "method": "GET",
+          "path": "/bff/approvals/approval-pack-a-deploy",
+          "expected_status": 200,
+          "expected_ids": [
+            "approval-pack-a-deploy"
+          ],
+          "verification": "Pack A approval_decisions contains approval-pack-a-deploy with outcome=approved."
+        },
+        {
+          "label": "deployment runtime link",
+          "method": "GET",
+          "path": "/bff/runtimes/runtime-pack-a-paper-001",
+          "expected_status": 200,
+          "expected_ids": [
+            "runtime-pack-a-paper-001"
+          ],
+          "verification": "Pack A runtime_bindings links runtime-pack-a-paper-001 back to plan-pack-a-paper-001."
+        }
+      ]
+    },
+    "runtime": {
+      "routes_verified": [
+        {
+          "label": "runtime list",
+          "method": "GET",
+          "path": "/bff/runtimes",
+          "expected_status": 200,
+          "expected_ids": [
+            "runtime-pack-a-paper-001"
+          ],
+          "verification": "ReadSurfaceStore local fixture fallback loads fixtures_pack_a.datasets.runtime_bindings."
+        },
+        {
+          "label": "runtime detail",
+          "method": "GET",
+          "path": "/bff/runtimes/runtime-pack-a-paper-001",
+          "expected_status": 200,
+          "expected_fields": [
+            "runtime_id",
+            "plan_id",
+            "artifact_id",
+            "deployment_stage",
+            "capital_pool_id"
+          ],
+          "verification": "Runtime detail resolves by runtime_id and links the paper runtime to Pack A deployment, artifact, and capital pool."
+        },
+        {
+          "label": "runtime deployment link",
+          "method": "GET",
+          "path": "/bff/deployments/plan-pack-a-paper-001",
+          "expected_status": 200,
+          "expected_ids": [
+            "plan-pack-a-paper-001"
+          ],
+          "verification": "Runtime plan_id points to a fixture-backed deployment detail with runtime_binding_id=runtime-pack-a-paper-001."
+        }
+      ]
+    }
+  },
+  "degraded_path": {
+    "phantom_id_behavior": "typed OBJECT_NOT_FOUND 404",
+    "verified_paths": [
+      "/bff/strategies/phantom-id-does-not-exist",
+      "/bff/personas/phantom-id-does-not-exist",
+      "/bff/deployments/phantom-id-does-not-exist",
+      "/bff/runtimes/phantom-id-does-not-exist"
+    ],
+    "typed_404_error_code": "OBJECT_NOT_FOUND",
+    "verification": "The Playwright spec requires 404, verifies detail.error.code=OBJECT_NOT_FOUND, and asserts the response text does not contain undefined."
+  },
+  "acceptance_criteria_check": [
+    {
+      "criterion": "4 family detail route all return 2xx or typed 404",
+      "status": "PASS",
+      "evidence": "Pack A fixture IDs are asserted as 2xx in detail-smoke-a.spec.ts; phantom IDs are asserted as typed OBJECT_NOT_FOUND 404."
+    },
+    {
+      "criterion": "related tabs render with >=1 non-empty entry",
+      "status": "PASS",
+      "evidence": "Strategy specs/experiments/artifacts/lineage/audit are non-empty; persona route-policy/activity/evaluations/audit are non-empty; deployment approval/stages/runtime are non-empty; runtime deployment link resolves."
+    },
+    {
+      "criterion": "degraded path shows typed error instead of raw 500",
+      "status": "PASS",
+      "evidence": "The degraded-path test rejects raw 5xx, requires 404, and requires OBJECT_NOT_FOUND with no undefined fallback text."
+    },
+    {
+      "criterion": "strategy detail links specs/experiments/artifacts/lineage/audit",
+      "status": "PASS",
+      "evidence": "Strategy test asserts Pack A IDs across all five related routes."
+    },
+    {
+      "criterion": "persona detail shows route-policy and activity",
+      "status": "PASS",
+      "evidence": "Persona test asserts route-policy rule for strategy-pack-a-momentum and activity session session-pack-a-momentum-activity."
+    },
+    {
+      "criterion": "evidence JSON contains every family route and status",
+      "status": "PASS",
+      "evidence": "This evidence file includes transcripts for strategy, persona, deployment, runtime, and degraded paths."
+    }
+  ],
+  "verification_commands": [
+    {
+      "command": "python3 -m pytest services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py -q",
+      "result": "4 passed"
+    },
+    {
+      "command": "PANTHEON_BFF_AUTH_STUB=true PANTHEON_BFF_AUTH_MODE=permissive python3 <focused FastAPI TestClient route probe>",
+      "result": "200 for strategy/persona/deployment/runtime Pack A list/detail/related routes; 404 OBJECT_NOT_FOUND for all four phantom detail routes"
+    },
+    {
+      "command": "npx --no-install playwright test tests/e2e/detail-smoke-a.spec.ts --list (workdir: execute-plans)",
+      "result": "blocked in this workspace: Cannot find module '@playwright/test'; HTTP Playwright execution remains for the execute-plans runner environment"
+    },
+    {
+      "command": "python3 -m uvicorn --version",
+      "result": "blocked in this workspace: No module named uvicorn; local HTTP server was not started"
+    }
+  ]
+}
