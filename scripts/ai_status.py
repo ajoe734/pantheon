@@ -34,7 +34,12 @@ from task_archive import (
     task_satisfies_dependency,
     terminal_outcome_for,
 )
-from multi_repo_registry import repository_local_path
+from multi_repo_registry import (
+    repository_local_path,
+    repository_slug,
+    task_artifact_repository_ids,
+    task_primary_repository_id,
+)
 from runtime_state import load_runtime_state
 
 STATUS_FILE = ROOT / "ai-status.json"
@@ -910,10 +915,16 @@ def commit_convention_settings() -> dict[str, Any]:
     return settings
 
 
-def run_git_command(args: list[str], *, required: bool = True, failure_message: str | None = None) -> str:
+def run_git_command(
+    args: list[str],
+    *,
+    cwd: Path | None = None,
+    required: bool = True,
+    failure_message: str | None = None,
+) -> str:
     result = subprocess.run(
         ["git", *args],
-        cwd=ROOT,
+        cwd=cwd or ROOT,
         capture_output=True,
         text=True,
         check=False,
@@ -953,12 +964,29 @@ def parse_commit_metadata_lines(body: str) -> dict[str, str]:
 def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str, Any]:
     settings = delivery_gate_settings()
     commit_rules = commit_convention_settings()
+    config = load_config()
+    repository_id = task_primary_repository_id(config, task)
+    if repository_id is None:
+        repo_ids = [repo_id for repo_id in task_artifact_repository_ids(config, task) if repo_id != "pantheon"]
+        raise SystemExit(
+            "Cannot finalize task: task artifacts span multiple non-Pantheon repositories; "
+            f"split closeout or set a single artifact prefix. Repositories: {', '.join(repo_ids)}."
+        )
+    repository_root = repository_local_path(config, repository_id)
+    if repository_root is None:
+        raise SystemExit(f"Cannot finalize task: repository `{repository_id}` has no local_path configured.")
+    repository_root = repository_root.resolve(strict=False)
+    repository_slug_value = repository_slug(config, repository_id)
     branch = run_git_command(
         ["rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=repository_root,
         failure_message="Cannot finalize task: git branch information is unavailable.",
     )
     delivery: dict[str, Any] = {
         "recorded_at": iso_now(),
+        "repository_id": repository_id,
+        "repository_path": str(repository_root),
+        "repository_slug": repository_slug_value,
         "branch": branch,
         "git_clean_required": settings["require_git_clean"],
     }
@@ -966,6 +994,7 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
     if settings["require_commit_hash"]:
         commit_hash = run_git_command(
             ["rev-parse", "HEAD"],
+            cwd=repository_root,
             failure_message="Cannot finalize task: a HEAD commit hash is required before moving to done.",
         )
         if not commit_hash:
@@ -973,18 +1002,22 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
         delivery["commit"] = commit_hash
         subject = run_git_command(
             ["show", "-s", "--format=%s", "HEAD"],
+            cwd=repository_root,
             failure_message="Cannot finalize task: latest commit subject is unavailable.",
         )
         body = run_git_command(
             ["show", "-s", "--format=%b", "HEAD"],
+            cwd=repository_root,
             failure_message="Cannot finalize task: latest commit body is unavailable.",
         )
         author_name = run_git_command(
             ["show", "-s", "--format=%an", "HEAD"],
+            cwd=repository_root,
             failure_message="Cannot finalize task: latest commit author name is unavailable.",
         )
         author_email = run_git_command(
             ["show", "-s", "--format=%ae", "HEAD"],
+            cwd=repository_root,
             failure_message="Cannot finalize task: latest commit author email is unavailable.",
         )
         delivery["commit_subject"] = subject
@@ -1032,6 +1065,7 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
 
     porcelain = run_git_command(
         ["status", "--porcelain"],
+        cwd=repository_root,
         failure_message="Cannot finalize task: git status is unavailable.",
     )
     dirty_entries = [line for line in porcelain.splitlines() if line.strip()]
@@ -1045,6 +1079,7 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
 
     remotes_output = run_git_command(
         ["remote"],
+        cwd=repository_root,
         required=False,
     )
     remote_names = [line.strip() for line in remotes_output.splitlines() if line.strip()]
@@ -1055,12 +1090,14 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
     if settings["record_remote_status"] and remote_names:
         upstream = run_git_command(
             ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+            cwd=repository_root,
             required=False,
         )
         delivery["upstream"] = upstream or None
         if upstream:
             counts = run_git_command(
                 ["rev-list", "--left-right", "--count", f"{upstream}...HEAD"],
+                cwd=repository_root,
                 failure_message="Cannot finalize task: unable to compute branch push status against upstream.",
             )
             try:

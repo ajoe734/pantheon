@@ -186,6 +186,44 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertIn("`Task-ID: ...`", message)
         self.assertIn("`Reviewer: ...`", message)
 
+    def test_collect_done_delivery_metadata_uses_execute_plans_artifact_repo(self) -> None:
+        responses = iter(
+            [
+                "bff-luv-fe-006-dev-deploy",
+                "abc123",
+                "FE-INT-GATE-DUMMY finalize execute-plans artifact",
+                "LLM-Agent: Codex2\nTask-ID: FE-INT-GATE-DUMMY\nReviewer: Claude\n",
+                "Codex2",
+                "codex2@example.com",
+                "",
+                "",
+            ]
+        )
+        calls: list[tuple[list[str], Path | None]] = []
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            calls.append((args, kwargs.get("cwd") if isinstance(kwargs.get("cwd"), Path) else None))
+            return next(responses)
+
+        task = {
+            "id": "FE-INT-GATE-DUMMY",
+            "owner": "Codex2",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "artifacts": ["execute-plans/e2e/dummy.spec.ts"],
+        }
+        execute_plans_root = ai_status.ROOT.parent / "execute-plans"
+
+        with mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command):
+            delivery = ai_status.collect_done_delivery_metadata(task, "Codex2")
+
+        self.assertEqual(delivery["repository_id"], "execute_plans")
+        self.assertEqual(delivery["repository_path"], str(execute_plans_root))
+        self.assertEqual(delivery["repository_slug"], "ajoe734/execute-plans")
+        self.assertEqual(delivery["branch"], "bff-luv-fe-006-dev-deploy")
+        self.assertTrue(calls)
+        self.assertTrue(all(cwd == execute_plans_root for _, cwd in calls))
+
 
 class ArchiveWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:

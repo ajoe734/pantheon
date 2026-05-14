@@ -39,6 +39,10 @@ archived
 docs/commit-plan-uncommitted-worktree-*.md
 tools/storage-state.json
 
+# execute-plans is a sibling repository registered in .orchestrator/multi_repo_registry.py.
+# New files under this legacy in-repo path are phantom mirror artifacts and should not be added here.
+execute-plans/
+
 # Local sprint-pivot backups (operator-only, kept on disk for safety)
 ai-status.json.bak.*
 
