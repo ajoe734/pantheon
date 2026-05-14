@@ -4,7 +4,7 @@ import {
   logicalAgents,
   planningHighSignalTypes,
   workerStatusIcon,
-} from "./dashboard-config.js?v=20260513-workers";
+} from "./dashboard-config.js?v=20260513-focus";
 import {
   buildTruthMismatches,
   actorLabel,
@@ -29,7 +29,7 @@ import {
   titleCase,
   truncate,
   workerLifecycleBadge,
-} from "./dashboard-core.js?v=20260513-workers";
+} from "./dashboard-core.js?v=20260513-focus";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -1063,7 +1063,7 @@ export function renderOverviewMetrics(status, orchState, approvalQueue, dashboar
   const tasks = status.tasks || [];
   const archiveCounts = dashboardBundle?.archive_summary?.counts || {};
   const bridgeSummary = dashboardBundle?.bridge_summary || {};
-  const coordinationCounts = dashboardBundle?.coordination_summary?.counts || {};
+  const executionSummary = dashboardBundle?.execution_summary || {};
 
   const todo          = tasks.filter((t) => String(t.status || "").toLowerCase() === "todo").length;
   const inProgress    = tasks.filter((t) => String(t.status || "").toLowerCase() === "in_progress").length;
@@ -1076,23 +1076,24 @@ export function renderOverviewMetrics(status, orchState, approvalQueue, dashboar
   const archivedTotal = Number.isFinite(archiveCounts.total) ? archiveCounts.total : 0;
   const archivedDone = Number.isFinite(archiveCounts.completed) ? archiveCounts.completed : 0;
   const archivedSuperseded = Number.isFinite(archiveCounts.superseded) ? archiveCounts.superseded : 0;
+  const readyNow = Number.isFinite(executionSummary.ready_now) ? executionSummary.ready_now : todo;
+  const dependencyReady = Number.isFinite(executionSummary.dependency_ready) ? executionSummary.dependency_ready : readyNow;
+  const liveWorkers = normalizeWorkerRecords(orchState, status).filter((worker) => worker.bucket === "running").length;
+  const mismatches = buildTruthMismatches(status, orchState, approvalQueue).counts.total;
   if (!activeOpen && archivedTotal) {
     const pendingBridge = Number.isFinite(bridgeSummary.pending_materialization_count) ? bridgeSummary.pending_materialization_count : 0;
-    const trackedFeatures = Number.isFinite(coordinationCounts.tracked_features) ? coordinationCounts.tracked_features : 0;
-    const runtimeVerified = Number.isFinite(coordinationCounts.runtime_verified) ? coordinationCounts.runtime_verified : 0;
     const items = [
-      { label: "Active Open", value: 0, tone: "card-done" },
-      { label: "Archived Done", value: archivedDone, tone: "card-done" },
-      { label: "Superseded", value: archivedSuperseded, tone: archivedSuperseded ? "card-review" : "" },
-      { label: "Frontend Loops", value: trackedFeatures, tone: trackedFeatures ? "card-active" : "" },
-      { label: "Runtime Proof", value: trackedFeatures ? `${runtimeVerified}/${trackedFeatures}` : "0/0", tone: runtimeVerified < trackedFeatures ? "card-review" : "card-done" },
-      { label: "Pending Bridge", value: pendingBridge, tone: pendingBridge ? "card-review" : "card-done" },
+      { label: "Active Open", value: 0, tone: "card-done", note: "目前 active task board 已清空" },
+      { label: "Archived Done", value: archivedDone, tone: "card-done", note: "歷史完成數來自 archive index" },
+      { label: "Superseded", value: archivedSuperseded, tone: archivedSuperseded ? "card-review" : "card-done", note: "已由後續工作接手結案" },
+      { label: "Pending Bridge", value: pendingBridge, tone: pendingBridge ? "card-review" : "card-done", note: "planning 候選尚未 materialize" },
     ];
 
     container.innerHTML = items.map((item) => `
       <article class="metric-card ${item.tone}">
         <div class="metric-label">${item.label}</div>
         <div class="metric-value">${item.value}</div>
+        <p class="metric-note">${item.note}</p>
       </article>
     `).join("");
     return;
@@ -1100,27 +1101,141 @@ export function renderOverviewMetrics(status, orchState, approvalQueue, dashboar
 
   const completedInSprint = Number.isFinite(archiveCounts.completed_in_sprint) ? archiveCounts.completed_in_sprint : 0;
   const items = [
-    { label: "待開始",    value: todo,           tone: "" },
-    { label: "進行中",    value: inProgress,     tone: inProgress  ? "card-active"   : "" },
-    { label: "待審查",    value: review,         tone: review      ? "card-review"   : "" },
-    { label: "待收尾",    value: reviewApproved, tone: reviewApproved ? "card-review" : "" },
-    { label: "本輪完成",  value: completedInSprint + done, tone: "card-done" },
-    ...(archivedTotal
-      ? [
-          { label: "歷史完成", value: archivedDone, tone: "card-done" },
-          { label: "封存總數", value: archivedTotal, tone: "card-done" },
-          { label: "已取代", value: archivedSuperseded, tone: archivedSuperseded ? "card-review" : "card-done" },
-        ]
-      : []),
-    { label: "阻塞",      value: blocked,        tone: blocked     ? "card-blocked"  : "" },
+    { label: "Open Work", value: activeOpen, tone: activeOpen ? "card-active" : "card-done", note: `${todo} 待開始 · ${inProgress} 進行中 · ${review + reviewApproved} 審查/收尾` },
+    { label: "可派工", value: readyNow, tone: readyNow ? "card-active" : "card-review", note: `依賴已完成 ${dependencyReady}；已扣除 lane 佔用與 guardrail` },
+    { label: "Live Workers", value: liveWorkers, tone: liveWorkers ? "card-active" : "card-done", note: "目前 runtime 實際掛載中的 worker" },
+    { label: "待審查", value: review + reviewApproved, tone: review + reviewApproved ? "card-review" : "card-done", note: `${review} review · ${reviewApproved} approved-to-close` },
+    { label: "Mismatch", value: mismatches, tone: mismatches ? "card-blocked" : "card-done", note: mismatches ? "runtime / queue / task board 有差異需追" : "runtime 與 task board 對齊" },
+    { label: "本輪完成", value: completedInSprint + done, tone: "card-done", note: archivedTotal ? `active done ${done} · sprint archive ${completedInSprint} · archive total ${archivedDone}` : "目前 active board done 數" },
+    ...(blocked ? [{ label: "阻塞", value: blocked, tone: "card-blocked", note: "已標記 blocker 的 active task" }] : []),
+    ...(archivedSuperseded ? [{ label: "已取代", value: archivedSuperseded, tone: "card-review", note: "由後續任務接手結案的歷史項目" }] : []),
   ];
 
   container.innerHTML = items.map((item) => `
     <article class="metric-card ${item.tone}">
       <div class="metric-label">${item.label}</div>
       <div class="metric-value">${item.value}</div>
+      <p class="metric-note">${item.note}</p>
     </article>
   `).join("");
+}
+
+function activeTaskStatusCounts(tasks) {
+  return (tasks || []).reduce((acc, task) => {
+    const key = String(task.status || "unknown").toLowerCase();
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+}
+
+function sameNumber(left, right) {
+  return Number(left) === Number(right);
+}
+
+export function renderDataIntegrity(status, orchState, approvalQueue, dashboardBundle = null) {
+  const container = qs("#data-integrity");
+  if (!container) return;
+
+  const tasks = status.tasks || [];
+  const counts = activeTaskStatusCounts(tasks);
+  const runtimeSummary = dashboardBundle?.runtime_summary || {};
+  const executionSummary = dashboardBundle?.execution_summary || {};
+  const workers = normalizeWorkerRecords(orchState, status);
+  const truth = buildTruthMismatches(status, orchState, approvalQueue);
+  const statusUpdatedAt = status.updated_at || null;
+  const bundleGeneratedAt = dashboardBundle?.generated_at || null;
+  const statusMs = Date.parse(statusUpdatedAt || "");
+  const bundleMs = Date.parse(bundleGeneratedAt || "");
+  const bundleFresh = Number.isFinite(statusMs) && Number.isFinite(bundleMs)
+    ? bundleMs + 2 * 60 * 1000 >= statusMs
+    : Boolean(bundleGeneratedAt);
+  const runningWorkerCount = workers.filter((worker) => worker.bucket === "running").length;
+  const pendingApprovalCount = (approvalQueue?.pending || []).length;
+
+  const summaryComparisons = [
+    {
+      label: "in_progress",
+      expected: counts.in_progress || 0,
+      actual: executionSummary.in_progress,
+    },
+    {
+      label: "review",
+      expected: counts.review || 0,
+      actual: executionSummary.in_review,
+    },
+    {
+      label: "review_approved",
+      expected: counts.review_approved || 0,
+      actual: executionSummary.review_approved,
+    },
+    {
+      label: "blocked",
+      expected: counts.blocked || 0,
+      actual: executionSummary.blocked,
+    },
+  ];
+  const executionSummaryOk = summaryComparisons.every((item) => sameNumber(item.expected, item.actual));
+  const runtimeSummaryOk = sameNumber(runtimeSummary.running_workers, runningWorkerCount)
+    && sameNumber(runtimeSummary.pending_approvals, pendingApprovalCount)
+    && sameNumber(runtimeSummary.mismatch_count, truth.counts.total);
+  const openCount = tasks.filter((task) => !terminalTaskStatus(task.status)).length;
+  const operationalMismatchNote = truth.counts.total
+    ? `${truth.counts.total} 個 operational mismatch 會在告警與 Truth Mismatches 顯示`
+    : "目前沒有 runtime / task board mismatch";
+
+  const cards = [
+    {
+      label: "資料時間",
+      value: bundleFresh ? "fresh" : "stale",
+      tone: bundleFresh ? "integrity-ok" : "integrity-warn",
+      note: `status ${formatTime(statusUpdatedAt)} · bundle ${formatTime(bundleGeneratedAt)}`,
+    },
+    {
+      label: "Active board",
+      value: `${openCount}/${tasks.length}`,
+      tone: "integrity-ok",
+      note: `${counts.todo || 0} todo · ${counts.in_progress || 0} running · ${counts.review || 0} review`,
+    },
+    {
+      label: "Execution summary",
+      value: executionSummaryOk ? "match" : "check",
+      tone: executionSummaryOk ? "integrity-ok" : "integrity-warn",
+      note: executionSummaryOk
+        ? "bundle summary 與 live task 狀態一致"
+        : summaryComparisons
+            .filter((item) => !sameNumber(item.expected, item.actual))
+            .map((item) => `${item.label}: live ${item.expected}, bundle ${item.actual ?? "-"}`)
+            .join(" · "),
+    },
+    {
+      label: "Runtime summary",
+      value: runtimeSummaryOk ? "match" : "check",
+      tone: runtimeSummaryOk ? "integrity-ok" : "integrity-warn",
+      note: runtimeSummaryOk
+        ? "worker、approval、mismatch 計數已對齊"
+        : `workers live ${runningWorkerCount} / bundle ${runtimeSummary.running_workers ?? "-"} · approvals live ${pendingApprovalCount} / bundle ${runtimeSummary.pending_approvals ?? "-"} · mismatch live ${truth.counts.total} / bundle ${runtimeSummary.mismatch_count ?? "-"}`,
+    },
+    {
+      label: "Operational drift",
+      value: truth.counts.total,
+      tone: truth.counts.total ? "integrity-warn" : "integrity-ok",
+      note: operationalMismatchNote,
+    },
+  ];
+
+  container.innerHTML = cards
+    .map(
+      (card) => `
+        <article class="integrity-card ${card.tone}">
+          <div class="stack-head">
+            <strong>${escapeHtml(card.label)}</strong>
+            <span class="status-pill ${card.tone === "integrity-ok" ? "status-ready" : "status-review"}">${escapeHtml(card.value)}</span>
+          </div>
+          <p class="metric-note">${escapeHtml(card.note)}</p>
+        </article>
+      `
+    )
+    .join("");
 }
 
 function executionStatusCounts(status, dashboardBundle = null) {

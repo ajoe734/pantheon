@@ -3,7 +3,7 @@
   "sprint": "2026-05-13-ep5-qlib-bff-consolidation",
   "sprint_started_at": "2026-05-13T12:05:22Z",
   "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec, 從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV, 跑 production_activation_smoke.py --backend real, submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal, registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff, command envelope unification, non-empty fixture & detail journey, SSE real stream replay, strict env cutover, seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write soak 1 週後 deprecate 舊 receipt。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。",
-  "updated_at": "2026-05-13T12:36:40Z",
+  "updated_at": "2026-05-14T01:48:16Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -94,13 +94,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
-      "current_task_ids": [
-        "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude-execution-control",
-      "next": "Review changes requested: support packet is support-only, but it overstates evidence status. Please update header reviewer to Codex or note the auto-reassignment, change BFF-CONSOL-017 from done to evidence-present/status todo per ai-status, keep BFF-CONSOL-016 entirely pending until support/evidence/BFF-CONSOL-016-detail-smoke-a.json exists, and remove verified checkmarks/operator-journey claims for strategy/persona/deployment/runtime that depend on BFF-CONSOL-016. Then hand off back to Codex.",
-      "last_update": "2026-05-13T12:12:53Z"
+      "next": "",
+      "last_update": "2026-05-14T01:41:30Z"
     },
     {
       "name": "Gemini",
@@ -114,7 +112,7 @@
       "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
       "next": "",
-      "last_update": "2026-05-13T06:18:02Z"
+      "last_update": "2026-05-14T00:42:02Z"
     },
     {
       "name": "Codex",
@@ -130,7 +128,7 @@
         "BFF-CONSOL-026-SIDECAR-BFF-HANDOFF",
         "BFF-CONSOL-017-SIDECAR-BFF-HANDOFF"
       ],
-      "branch": "feat/codex-collab-system",
+      "branch": "bff-luv-fe-006-dev-deploy",
       "next": "Supervisor auto-started BFF-CONSOL-017-SIDECAR-BFF-HANDOFF after successful dispatch.",
       "last_update": "2026-05-13T06:38:48Z"
     },
@@ -142,13 +140,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "reviewing",
+      "status": "working",
       "current_task_ids": [
-        "BFF-CONSOL-022-SIDECAR-BFF-HANDOFF"
+        "FE-INT-GATE-A10"
       ],
-      "branch": "feat/codex-collab-system",
-      "next": "Support-only strict preview handoff packet refreshed and committed in 4c2ae7d8. It corrects stale archived closeout claims, documents current preview env/file-state, strict-mode route/SSE/operator journey gaps, parent soak evidence template, and scoped verification. No canonical truth/runtime/registry/governance implementation changed. Verification: git diff --check sidecar packet; py_compile probe_bff_authenticated_live.py and probe_bff_sse_stream.py; json.tool BFF-CONSOL-012 SSE evidence; pytest fixture pack A/B/C plus SSE backpressure suite (24 passed in 13.84s).",
-      "last_update": "2026-05-13T12:36:40Z"
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "next": "Resuming implementation: inspecting multi-repo registry routing and closeout path selection for execute-plans artifacts.",
+      "last_update": "2026-05-14T01:46:29Z"
     },
     {
       "name": "Copilot",
@@ -158,13 +156,11 @@
         "spec-review",
         "critique"
       ],
-      "status": "waiting",
-      "current_task_ids": [
-        "BFF-CONSOL-027"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/grok-research-critique",
-      "next": "Assignment created",
-      "last_update": "2026-05-13T05:47:20Z"
+      "next": "",
+      "last_update": "2026-05-14T00:50:28Z"
     },
     {
       "name": "Claude2",
@@ -175,11 +171,13 @@
       ],
       "status": "waiting",
       "current_task_ids": [
-        "BFF-CONSOL-025"
+        "BFF-CONSOL-025",
+        "BFF-CONSOL-027",
+        "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF"
       ],
-      "branch": "feat/claude2-execution-control",
+      "branch": "bff-luv-fe-006-dev-deploy",
       "next": "Assignment created",
-      "last_update": "2026-05-13T02:03:55Z"
+      "last_update": "2026-05-13T23:01:29Z"
     },
     {
       "name": "Gemini2",
@@ -189,13 +187,14 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "reviewing",
+      "status": "waiting",
       "current_task_ids": [
-        "BFF-CONSOL-019-SIDECAR-BFF-HANDOFF"
+        "BFF-CONSOL-022",
+        "BFF-CONSOL-023"
       ],
       "branch": "feat/gemini2-research-runtime",
-      "next": "Work is complete and ready for your review.",
-      "last_update": "2026-05-13T06:06:45Z"
+      "next": "Assignment created",
+      "last_update": "2026-05-13T17:19:57Z"
     }
   ],
   "tasks": [
@@ -473,7 +472,7 @@
       "title": "Final BFF consolidation acceptance packet",
       "summary_zh": "集合 001..026 evidence 輸出 support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md。內容含 contract diff baseline/live smoke (read+write)/SSE evidence/command receipt sample/staging+prod cutover log/soak metric/seed.ts post-state。Copilot 統整 Claude 最終簽核。",
       "phase": "BFF Consolidation 2026-05-13",
-      "owner": "Copilot",
+      "owner": "Claude2",
       "reviewer": "Claude",
       "status": "todo",
       "depends_on": [
@@ -517,8 +516,8 @@
         "acceptance packet 含 seed.ts post-state",
         "Claude 最終簽核"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-05-13T02:05:17Z"
+      "next": "Chair reassigned owner from Copilot to Claude2: Copilot has hit a hard 402 quota failure and cannot run any tasks this cycle. BFF-CONSOL-027 is the final acceptance packet requiring Claude sign-off; Claude2 (execution + governance-review lane) is the best available substitute and is already handling BFF-CONSOL-027-SIDECAR-BFF-HANDOFF corrections. Reassignment should be deferred until BFF-CONSOL-001..026 dependencies are complete — apply now so the queue is correct when deps clear.. Task returned to todo for a fresh run.",
+      "last_update": "2026-05-13T20:00:13Z"
     },
     {
       "id": "BFF-CONSOL-016-SIDECAR-BFF-HANDOFF",
@@ -664,34 +663,6 @@
       "auto_created_by": "supervisor-underutilization"
     },
     {
-      "id": "BFF-CONSOL-019-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare BFF-CONSOL-019 BFF and frontend handoff packet",
-      "summary_zh": "平行支援 BFF-CONSOL-019，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-      "phase": "BFF Consolidation 2026-05-13",
-      "owner": "Gemini2",
-      "reviewer": "Codex2",
-      "status": "review",
-      "depends_on": [
-        "BFF-CONSOL-004"
-      ],
-      "artifacts": [
-        "support/sidecars/BFF-CONSOL-019/BFF-CONSOL-019-SIDECAR-BFF-HANDOFF.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Work is complete and ready for your review.",
-      "last_update": "2026-05-13T06:06:45Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "BFF-CONSOL-019",
-      "helper_kind": "bff_handoff_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
-    },
-    {
       "id": "BFF-CONSOL-025-SIDECAR-BFF-HANDOFF",
       "title": "Prepare BFF-CONSOL-025 BFF and frontend handoff packet",
       "summary_zh": "平行支援 BFF-CONSOL-025，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
@@ -724,9 +695,9 @@
       "title": "Prepare BFF-CONSOL-027 BFF and frontend handoff packet",
       "summary_zh": "平行支援 BFF-CONSOL-027，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
       "phase": "BFF Consolidation 2026-05-13",
-      "owner": "Claude",
+      "owner": "Claude2",
       "reviewer": "Codex",
-      "status": "in_progress",
+      "status": "todo",
       "depends_on": [
         "BFF-CONSOL-001",
         "BFF-CONSOL-002",
@@ -752,8 +723,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Review changes requested: support packet is support-only, but it overstates evidence status. Please update header reviewer to Codex or note the auto-reassignment, change BFF-CONSOL-017 from done to evidence-present/status todo per ai-status, keep BFF-CONSOL-016 entirely pending until support/evidence/BFF-CONSOL-016-detail-smoke-a.json exists, and remove verified checkmarks/operator-journey claims for strategy/persona/deployment/runtime that depend on BFF-CONSOL-016. Then hand off back to Codex.",
-      "last_update": "2026-05-13T12:12:53Z",
+      "next": "Chair reassigned owner from Claude to Claude2: Claude is chair this cycle and cannot implement sidecar corrections; Claude2 is available on a non-paused lane and can apply the changes_requested (fix reviewer header, correct BFF-CONSOL-017 status claim, remove unverified BFF-CONSOL-016 checkmarks) before handing packet to Codex reviewer. Task returned to todo for a fresh run.",
+      "last_update": "2026-05-13T18:50:18Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "BFF-CONSOL-027",
@@ -762,32 +733,113 @@
       "auto_created_by": "supervisor-underutilization"
     },
     {
-      "id": "BFF-CONSOL-022-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare BFF-CONSOL-022 BFF and frontend handoff packet",
-      "summary_zh": "平行支援 BFF-CONSOL-022，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-      "phase": "BFF Consolidation 2026-05-13",
+      "id": "FE-INT-GATE-C04",
+      "title": "F16 new — Audit and correlation chain",
+      "summary_zh": "新增 F16 Audit / Correlation spec：assert X-Request-Id 送出且 echo；X-Correlation-Id 一致；audit event 與 SSE event 共用 correlationId；mock overlay audit 只在 mock mode 顯示 ephemeral badge。",
+      "phase": "Pantheon FE Integration Gate 2026-05-13",
       "owner": "Codex2",
-      "reviewer": "Gemini2",
-      "status": "review",
+      "reviewer": "Claude",
+      "status": "review_approved",
       "depends_on": [
-        "BFF-CONSOL-015"
+        "FE-INT-GATE-C05"
       ],
       "artifacts": [
-        "support/sidecars/BFF-CONSOL-022/BFF-CONSOL-022-SIDECAR-BFF-HANDOFF.md"
+        "execute-plans/e2e/16-audit-correlation.spec.ts"
+      ],
+      "acceptance": [
+        "X-Request-Id echo",
+        "X-Correlation-Id 一致",
+        "audit event 與 SSE event 共用 correlationId",
+        "mock overlay 只在 mock mode 顯示"
+      ],
+      "next": "Supervisor resumed FE-INT-GATE-C04 for finalize after successful dispatch.",
+      "last_update": "2026-05-14T01:45:29Z",
+      "review_notes_zh": [
+        "審查通過：四項驗收標準均已滿足。X-Request-Id echo、X-Correlation-Id 一致性、audit/SSE correlationId 共用、mock overlay 僅在 mock mode 顯示。commit db38bc1a 交付完整覆蓋。"
+      ],
+      "review_file": ".orchestrator/reviews/FE-INT-GATE-C04-review-claude.md"
+    },
+    {
+      "id": "FE-INT-GATE-D03-SIDECAR-REVIEW",
+      "title": "Prepare FE-INT-GATE-D03 review packet and evidence summary",
+      "summary_zh": "平行支援 FE-INT-GATE-D03，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "phase": "Pantheon FE Integration Gate 2026-05-13",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "review_approved",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/FE-INT-GATE-D03/FE-INT-GATE-D03-SIDECAR-REVIEW.md"
       ],
       "acceptance": [
         "Create support artifacts only",
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Support-only strict preview handoff packet refreshed and committed in 4c2ae7d8. It corrects stale archived closeout claims, documents current preview env/file-state, strict-mode route/SSE/operator journey gaps, parent soak evidence template, and scoped verification. No canonical truth/runtime/registry/governance implementation changed. Verification: git diff --check sidecar packet; py_compile probe_bff_authenticated_live.py and probe_bff_sse_stream.py; json.tool BFF-CONSOL-012 SSE evidence; pytest fixture pack A/B/C plus SSE backpressure suite (24 passed in 13.84s).",
-      "last_update": "2026-05-13T12:36:40Z",
+      "next": "Review approved: packet matches parent archive/review/spec evidence, remains support-only, and reviewer rechecks passed. Return to Codex2 for closeout finalization.",
+      "last_update": "2026-05-14T01:43:20Z",
       "task_class": "sidecar",
       "auto_generated": true,
-      "helper_parent": "BFF-CONSOL-022",
-      "helper_kind": "bff_handoff_packet",
+      "helper_parent": "FE-INT-GATE-D03",
+      "helper_kind": "review_packet",
       "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "審查通過：FE-INT-GATE-D03 sidecar packet 與 parent archive、Claude review、parent commit metadata、F13 Agora spec acceptance anchors 對齊；scope 維持 support-only，未修改 canonical truth/runtime/registry/governance。Reviewer recheck：git diff --check passed；mirrored runner spec matches repo spec；esbuild bundle passed；Playwright --list 載入 3 tests；Playwright 3/3 passed。"
+      ],
+      "review_file": ".orchestrator/reviews/FE-INT-GATE-D03-SIDECAR-REVIEW-review-codex.md"
+    },
+    {
+      "id": "FE-INT-GATE-A09",
+      "title": "probe-hosted-browser-bff replace networkidle wait",
+      "summary_zh": "probe-hosted-browser-bff.mjs 用 page.goto({waitUntil:\"networkidle\"})，但 hosted Lovable 一旦載入就開 SSE stream，network 永遠不會 idle → 60s timeout 必 fail。修 probe：(1) 改 waitUntil 為 \"domcontentloaded\" 或 \"load\"；(2) 之後 page.waitForResponse 等核心 BFF 端點完成（如 /bff/me, /bff/v5/control-room）；(3) 給整體 timeout 90s 容錯；(4) 仍要驗證 oldUrlHitCount===0 + 含 intended BFF URL。Verification: 重跑 PR CI 時 browser_probe step outcome=success。",
+      "phase": "Pantheon FE Integration Gate 2026-05-13",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "review_approved",
+      "depends_on": [],
+      "artifacts": [
+        "execute-plans/scripts/probe-hosted-browser-bff.mjs"
+      ],
+      "acceptance": [
+        "waitUntil 不用 networkidle",
+        "改用 domcontentloaded+waitForResponse",
+        "timeout 容錯 90s",
+        "oldUrlHitCount===0 維持驗證",
+        "CI browser_probe step outcome=success"
+      ],
+      "next": "Review approved: all acceptance criteria met; domcontentloaded navigation + waitForResponse pattern correct; 90s timeout; oldUrlHitCount===0 preserved; Codex verified probe pass. Returned to owner Codex for finalization.",
+      "last_update": "2026-05-14T01:46:49Z",
+      "review_notes_zh": [
+        "審查通過：所有驗收條件符合",
+        "waitUntil 改為 domcontentloaded，waitForResponse 正確在 goto 前設置，90s timeout，oldUrlHitCount===0 驗證保留，Codex 實測通過"
+      ],
+      "review_file": ".orchestrator/reviews/FE-INT-GATE-A09-review-claude.md"
+    },
+    {
+      "id": "FE-INT-GATE-A10",
+      "title": "Register execute-plans in multi_repo_registry",
+      "summary_zh": "execute-plans 沒登錄在 .orchestrator/multi_repo_registry.py 的 DEFAULT_REPOSITORIES，autoworker 把 artifact 路徑 `execute-plans/...` 當 pantheon 子目錄寫 → phantom mirror at /home/lupin/code/pantheon/execute-plans/。Sprint B/C/D 16 個任務全部寫錯位置，chair 已手動 rsync 進真 repo（PR #3）。修：(1) 在 DEFAULT_REPOSITORIES 加 execute_plans entry，local_path=\"../execute-plans\"，repo=\"ajoe734/execute-plans\"，default_branch=\"main\"；(2) 確認 task closeout / commit 邏輯依 artifact 路徑前綴選對 repo；(3) 若已有 phantom mirror 殘留，加 cleanup 腳本或 ignore；(4) 寫 .orchestrator/multi_repo_registry 的更新文件 / unit test。Verification: 派一個 dummy FE-INT-GATE task artifact=\"execute-plans/e2e/dummy.spec.ts\"，autoworker closeout commit 必須在 /home/lupin/code/execute-plans/ 上 bff-luv-fe-006-dev-deploy branch，不再產生 phantom mirror。",
+      "phase": "Pantheon FE Integration Gate 2026-05-13",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "in_progress",
+      "depends_on": [],
+      "artifacts": [
+        ".orchestrator/multi_repo_registry.py",
+        ".orchestrator/coordination_repo_mirror.py",
+        ".orchestrator/common.py",
+        ".orchestrator/test_multi_repo_registry.py"
+      ],
+      "acceptance": [
+        "DEFAULT_REPOSITORIES 含 execute_plans entry 指向 ../execute-plans",
+        "closeout commit 依 artifact 前綴選對 repo",
+        "phantom mirror 不再產生",
+        "unit test 涵蓋 execute-plans 路由",
+        "文件更新含使用範例"
+      ],
+      "next": "Resuming implementation: inspecting multi-repo registry routing and closeout path selection for execute-plans artifacts.",
+      "last_update": "2026-05-14T01:46:29Z"
     }
   ],
   "handoffs": [
@@ -863,14 +915,6 @@
       "resolved_at": "2026-05-13T05:13:20Z"
     },
     {
-      "task_id": "BFF-CONSOL-019-SIDECAR-BFF-HANDOFF",
-      "from": "Gemini2",
-      "to": "Codex2",
-      "message": "Work is complete and ready for your review.",
-      "status": "pending",
-      "created_at": "2026-05-13T06:06:45Z"
-    },
-    {
       "task_id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
       "from": "Claude",
       "to": "Copilot",
@@ -898,18 +942,140 @@
       "resolved_at": "2026-05-13T12:12:53Z"
     },
     {
-      "task_id": "BFF-CONSOL-022-SIDECAR-BFF-HANDOFF",
-      "from": "Codex2",
-      "to": "Gemini2",
-      "message": "Support-only strict preview handoff packet refreshed and committed in 4c2ae7d8. It corrects stale archived closeout claims, documents current preview env/file-state, strict-mode route/SSE/operator journey gaps, parent soak evidence template, and scoped verification. No canonical truth/runtime/registry/governance implementation changed. Verification: git diff --check sidecar packet; py_compile probe_bff_authenticated_live.py and probe_bff_sse_stream.py; json.tool BFF-CONSOL-012 SSE evidence; pytest fixture pack A/B/C plus SSE backpressure suite (24 passed in 13.84s).",
+      "task_id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Chair reassigned owner from Claude to Claude2: Claude is chair this cycle and cannot implement sidecar corrections; Claude2 is available on a non-paused lane and can apply the changes_requested (fix reviewer header, correct BFF-CONSOL-017 status claim, remove unverified BFF-CONSOL-016 checkmarks) before handing packet to Codex reviewer. Task returned to todo for a fresh run.",
       "status": "pending",
-      "created_at": "2026-05-13T12:36:40Z"
+      "created_at": "2026-05-13T18:50:18Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-027",
+      "from": "Copilot",
+      "to": "Claude2",
+      "message": "Chair reassigned owner from Copilot to Claude2: Copilot has hit a hard 402 quota failure and cannot run any tasks this cycle. BFF-CONSOL-027 is the final acceptance packet requiring Claude sign-off; Claude2 (execution + governance-review lane) is the best available substitute and is already handling BFF-CONSOL-027-SIDECAR-BFF-HANDOFF corrections. Reassignment should be deferred until BFF-CONSOL-001..026 dependencies are complete — apply now so the queue is correct when deps clear.. Task returned to todo for a fresh run.",
+      "status": "pending",
+      "created_at": "2026-05-13T20:00:13Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-C04",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by idle Copilot; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-14T00:50:08Z",
+      "resolved_at": "2026-05-14T01:09:18Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-D03-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by idle Copilot; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-14T00:50:28Z",
+      "resolved_at": "2026-05-14T01:17:18Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-C04",
+      "from": "Copilot",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-14T01:09:17Z",
+      "resolved_at": "2026-05-14T01:09:24Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-C04",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Implementation complete in commit db38bc1a. Added execute-plans/e2e/16-audit-correlation.spec.ts with local BFF/SSE harness covering X-Request-Id request+response echo, X-Correlation-Id consistency across request/response/audit log/audit SSE, audit event and SSE correlationId parity, and mock-only ephemeral overlay audit badge. Verification: git diff --check -- execute-plans/e2e/16-audit-correlation.spec.ts; esbuild bundle passed; Playwright --list found 2 tests; focused Playwright run passed 2/2. Ready for Copilot review.",
+      "status": "done",
+      "created_at": "2026-05-14T01:16:03Z",
+      "resolved_at": "2026-05-14T01:39:08Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-D03-SIDECAR-REVIEW",
+      "from": "Copilot",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-14T01:17:18Z",
+      "resolved_at": "2026-05-14T01:17:24Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-D03-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Review packet ready at support/sidecars/FE-INT-GATE-D03/FE-INT-GATE-D03-SIDECAR-REVIEW.md. Summarizes archived parent FE-INT-GATE-D03 evidence: artifact execute-plans/e2e/13-agora.spec.ts, Claude approval .orchestrator/reviews/FE-INT-GATE-D03-review-claude.md, parent closeout commit c0bdaaac, and verification metadata (Playwright list 3 tests, esbuild clean, Playwright 3/3 passed). Sidecar changed support material only; no canonical truth or runtime implementation touched. Please confirm packet completeness and scope.",
+      "status": "done",
+      "created_at": "2026-05-14T01:20:29Z",
+      "resolved_at": "2026-05-14T01:39:15Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-C04",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Chair reassigned review from Copilot to Claude: Copilot lane is paused (402 quota failure history) and listed as a paused lane this cycle. FE-INT-GATE-C04 has been in 'review' since 2026-05-14T01:16 with no path to review completion. Claude has governance-review capability and will be available after completing FE-INT-GATE-A08 review.",
+      "status": "done",
+      "created_at": "2026-05-14T01:39:08Z",
+      "resolved_at": "2026-05-14T01:41:07Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-D03-SIDECAR-REVIEW",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Chair reassigned review from Copilot to Codex: Copilot lane is paused; FE-INT-GATE-D03-SIDECAR-REVIEW review packet has been ready since 2026-05-14T01:20 with no live reviewer. Codex is the original sidecar reviewer for D-series review packets (see D01, D02) and has integration/acceptance capability. If Codex zombie investigation resolves negatively, escalate reassignment to Claude.",
+      "status": "done",
+      "created_at": "2026-05-14T01:39:15Z",
+      "resolved_at": "2026-05-14T01:43:20Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-C04",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all four acceptance criteria satisfied. X-Request-Id echo, X-Correlation-Id chain, audit/SSE correlationId parity, and mock-only ephemeral badge all verified. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-14T01:41:07Z",
+      "resolved_at": "2026-05-14T01:45:29Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-A09",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation ready for review. Sibling execute-plans commit dbd8c37 and Pantheon mirror commit fae37123 update probe-hosted-browser-bff.mjs: no networkidle; domcontentloaded navigation; 90s probe timeout; waitForResponse records optional /bff/me and requires /bff/v5/control-room; oldUrlHitCount===0 and intended BFF URL checks preserved. Verification: node --check in sibling and mirror; git diff --check in sibling and mirror; PANTHEON_AUDIT_OUT_DIR=/tmp/fe-int-gate-a09-audits node scripts/probe-hosted-browser-bff.mjs passed with contains intended BFF URL=true, old BFF URL hit count 0, /bff/v5/control-room 200, request/response 9/9, failed 0.",
+      "status": "done",
+      "created_at": "2026-05-14T01:41:52Z",
+      "resolved_at": "2026-05-14T01:46:49Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-D03-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: packet matches parent archive/review/spec evidence, remains support-only, and reviewer rechecks passed. Return to Codex2 for closeout finalization.",
+      "status": "pending",
+      "created_at": "2026-05-14T01:43:20Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-C04",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Supervisor resumed FE-INT-GATE-C04 for finalize after successful dispatch.",
+      "status": "pending",
+      "created_at": "2026-05-14T01:46:29Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-A09",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all acceptance criteria met; domcontentloaded navigation + waitForResponse pattern correct; 90s timeout; oldUrlHitCount===0 preserved; Codex verified probe pass. Returned to owner Codex for finalization.",
+      "status": "pending",
+      "created_at": "2026-05-14T01:46:49Z"
     }
   ],
   "blockers": [],
   "workload": {
-    "Claude": 10,
-    "Claude2": 10,
+    "Claude": 5,
+    "Claude2": 5,
     "Gemini": 5,
     "Gemini2": 5,
     "Codex": 35,
@@ -918,22 +1084,22 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 1,
-      "active": 1,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 1
-    },
-    "Claude2": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
+    },
+    "Claude2": {
+      "total": 3,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 3
     },
     "Gemini": {
       "total": 0,
@@ -945,40 +1111,40 @@
       "todo": 0
     },
     "Gemini2": {
-      "total": 3,
-      "active": 1,
-      "blocked": 0,
-      "done": 0,
-      "review": 1,
-      "review_approved": 0,
-      "todo": 2
-    },
-    "Codex": {
-      "total": 8,
-      "active": 3,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 8
-    },
-    "Codex2": {
-      "total": 6,
-      "active": 1,
-      "blocked": 0,
-      "done": 0,
-      "review": 1,
-      "review_approved": 0,
-      "todo": 5
-    },
-    "Copilot": {
-      "total": 1,
+      "total": 2,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 2
+    },
+    "Codex": {
+      "total": 9,
+      "active": 3,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 1,
+      "todo": 8
+    },
+    "Codex2": {
+      "total": 8,
+      "active": 1,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 2,
+      "todo": 6
+    },
+    "Copilot": {
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
     }
   }
 }

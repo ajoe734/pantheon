@@ -1,4 +1,4 @@
-import { DATA_FILES } from "./js/dashboard-config.js?v=20260513-workers";
+import { DATA_FILES } from "./js/dashboard-config.js?v=20260513-focus";
 import {
   deriveAgentState,
   fetchJson,
@@ -12,7 +12,7 @@ import {
   requestDashboardRefresh,
   statusLabel,
   titleCase,
-} from "./js/dashboard-core.js?v=20260513-workers";
+} from "./js/dashboard-core.js?v=20260513-focus";
 import {
   applyModeVisibility,
   renderAlertStrip,
@@ -25,6 +25,7 @@ import {
   renderBoardSummary,
   renderBridgeCard,
   renderControlPlaneStrip,
+  renderDataIntegrity,
   renderDeliveryLayers,
   renderDependencySchedule,
   renderExecutionSectionSummary,
@@ -48,7 +49,7 @@ import {
   renderTaskBoard,
   renderTruthMismatches,
   renderWorkload,
-} from "./js/dashboard-renderers.js?v=20260513-workers";
+} from "./js/dashboard-renderers.js?v=20260513-focus";
 
 let renderInFlight = false;
 
@@ -140,6 +141,7 @@ async function render({ syncFirst = false } = {}) {
     runRenderStep("control_plane_strip", renderFailures, () => renderControlPlaneStrip(status, planningState, orchState, dashboardBundle));
     runRenderStep("focus_summary", renderFailures, () => renderFocusSummary(status, planningState, orchState, dashboardBundle));
     runRenderStep("alert_strip", renderFailures, () => renderAlertStrip(status, orchState, planningState, approvalQueue, dashboardBundle));
+    runRenderStep("data_integrity", renderFailures, () => renderDataIntegrity(status, orchState, approvalQueue, dashboardBundle));
     runRenderStep("bff_consolidation_track", renderFailures, () => renderBffConsolidationTrack(status, dashboardBundle));
     runRenderStep("bridge_card", renderFailures, () => renderBridgeCard(status, planningState, dashboardBundle));
     runRenderStep("execution_section_summary", renderFailures, () => renderExecutionSectionSummary(status, orchState, planningState, dashboardBundle));

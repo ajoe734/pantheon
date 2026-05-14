@@ -4,7 +4,7 @@ import {
   laneLabelMap,
   scheduleOpenTaskStatuses,
   statusLabelMap,
-} from "./dashboard-config.js?v=20260513-workers";
+} from "./dashboard-config.js?v=20260513-focus";
 
 export const DISPLAY_TIME_ZONE = "Asia/Taipei";
 export const DISPLAY_TIME_ZONE_LABEL = "台灣時間 (UTC+8)";
@@ -416,7 +416,19 @@ export function normalizeDispatchQueue(orchState, status) {
 }
 
 function normalizedActorName(value) {
-  return String(value || "").trim().toLowerCase();
+  const lowered = String(value || "").trim().toLowerCase();
+  const aliases = {
+    "claude 2": "claude2",
+    "gemini 2": "gemini2",
+    "codex (2)": "codex2",
+    "codex 2": "codex2",
+    "codex (3)": "codex",
+    "codex3": "codex",
+    grok: "copilot",
+    "copilot host": "copilot",
+    copilot_host: "copilot",
+  };
+  return aliases[lowered] || lowered;
 }
 
 function runtimeDispatchMode(payload) {
@@ -449,6 +461,8 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
   const workers = normalizeWorkerRecords(orchState, status);
   const queueEvents = normalizeDispatchQueue(orchState, status);
   const approvals = approvalQueue?.pending || [];
+  const pendingApprovalTaskIds = new Set(approvals.map((approval) => String(approval?.task_id || "").trim()).filter(Boolean));
+  const pendingApprovalRunIds = new Set(approvals.map((approval) => String(approval?.worker_run_id || "").trim()).filter(Boolean));
   const liveWorkers = workers.filter((worker) => ["running", "pending"].includes(worker.bucket));
   const liveWorkersByTask = new Map();
   const mismatches = [];
@@ -461,6 +475,30 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
     mismatches.push(payload);
   };
 
+  const workerMatchesExpectedActor = (worker, expectedActor) => {
+    const expected = normalizedActorName(expectedActor);
+    const actual = normalizedActorName(agentLabel(worker.logical_agent_id));
+    return Boolean(expected && actual && expected === actual);
+  };
+
+  const relatedLiveWorkerCoversTask = (task) => {
+    const expectedActor = expectedTaskActor(task);
+    if (!expectedActor) return false;
+    const taskId = String(task?.id || "").trim();
+    if (!taskId) return false;
+    const parentId = String(task?.helper_parent || "").trim();
+    if (parentId) {
+      const parentWorkers = liveWorkersByTask.get(parentId) || [];
+      if (parentWorkers.some((worker) => workerMatchesExpectedActor(worker, expectedActor))) return true;
+    }
+    for (const [relatedTaskId, relatedTask] of taskMap.entries()) {
+      if (String(relatedTask?.helper_parent || "").trim() !== taskId) continue;
+      const relatedWorkers = liveWorkersByTask.get(relatedTaskId) || [];
+      if (relatedWorkers.some((worker) => workerMatchesExpectedActor(worker, expectedActor))) return true;
+    }
+    return false;
+  };
+
   for (const worker of liveWorkers) {
     if (worker.task_id) {
       if (!liveWorkersByTask.has(worker.task_id)) liveWorkersByTask.set(worker.task_id, []);
@@ -468,6 +506,9 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
     }
 
     if (!worker.task_id) {
+      if (runtimeDispatchMode(worker) === "chair_review") {
+        continue;
+      }
       pushMismatch({
         id: `worker-without-task:${worker.run_id}`,
         type: "worker_without_task",
@@ -548,7 +589,13 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
   for (const task of status?.tasks || []) {
     const taskStatus = String(task.status || "").toLowerCase();
     const live = liveWorkersByTask.get(task.id) || [];
+    if (pendingApprovalTaskIds.has(String(task.id || "").trim())) {
+      continue;
+    }
     if (taskStatus === "in_progress" && live.length === 0) {
+      if (relatedLiveWorkerCoversTask(task)) {
+        continue;
+      }
       pushMismatch({
         id: `active-task-without-worker:${task.id}`,
         type: "active_task_without_worker",
@@ -565,6 +612,9 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
   for (const event of queueEvents) {
     const hasLiveWorker = liveWorkers.some((worker) => worker.queue_event_id === event.id);
     if (["discussion_planning", "coordination"].includes(runtimeDispatchMode(event))) {
+      continue;
+    }
+    if (pendingApprovalRunIds.has(String(event.run_id || "").trim()) || pendingApprovalTaskIds.has(String(event.task_id || "").trim())) {
       continue;
     }
     if (["started", "manual_pending"].includes(String(event.status || "").toLowerCase()) && !hasLiveWorker) {
