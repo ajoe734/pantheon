@@ -1,4 +1,4 @@
-import { DATA_FILES } from "./js/dashboard-config.js?v=20260514-paused-slots";
+import { DATA_FILES } from "./js/dashboard-config.js?v=20260513-fix8";
 import {
   deriveAgentState,
   fetchJson,
@@ -12,7 +12,7 @@ import {
   requestDashboardRefresh,
   statusLabel,
   titleCase,
-} from "./js/dashboard-core.js?v=20260514-paused-slots";
+} from "./js/dashboard-core.js?v=20260513-fix8";
 import {
   applyModeVisibility,
   renderAlertStrip,
@@ -20,12 +20,10 @@ import {
   renderAgentLanes,
   renderArchiveRecords,
   renderAuditStatus,
-  renderAutoworkerPool,
   renderBffConsolidationTrack,
   renderBoardSummary,
   renderBridgeCard,
   renderControlPlaneStrip,
-  renderDataIntegrity,
   renderDeliveryLayers,
   renderDependencySchedule,
   renderExecutionSectionSummary,
@@ -49,7 +47,7 @@ import {
   renderTaskBoard,
   renderTruthMismatches,
   renderWorkload,
-} from "./js/dashboard-renderers.js?v=20260514-paused-slots";
+} from "./js/dashboard-renderers.js?v=20260513-fix8";
 
 let renderInFlight = false;
 
@@ -137,11 +135,9 @@ async function render({ syncFirst = false } = {}) {
     runRenderStep("progress_bar", renderFailures, () => renderProgressBar(status.tasks, dashboardBundle));
     runRenderStep("progress_breakdown", renderFailures, () => renderProgressBreakdown(status, planningState, dashboardBundle));
     runRenderStep("overview_metrics", renderFailures, () => renderOverviewMetrics(status, orchState, approvalQueue, dashboardBundle));
-    runRenderStep("autoworker_pool", renderFailures, () => renderAutoworkerPool(status, orchState, dashboardBundle));
     runRenderStep("control_plane_strip", renderFailures, () => renderControlPlaneStrip(status, planningState, orchState, dashboardBundle));
     runRenderStep("focus_summary", renderFailures, () => renderFocusSummary(status, planningState, orchState, dashboardBundle));
     runRenderStep("alert_strip", renderFailures, () => renderAlertStrip(status, orchState, planningState, approvalQueue, dashboardBundle));
-    runRenderStep("data_integrity", renderFailures, () => renderDataIntegrity(status, orchState, approvalQueue, dashboardBundle));
     runRenderStep("bff_consolidation_track", renderFailures, () => renderBffConsolidationTrack(status, dashboardBundle));
     runRenderStep("bridge_card", renderFailures, () => renderBridgeCard(status, planningState, dashboardBundle));
     runRenderStep("execution_section_summary", renderFailures, () => renderExecutionSectionSummary(status, orchState, planningState, dashboardBundle));

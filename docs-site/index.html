@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>協作看板</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./style.css?v=20260514-paused-slots" />
+    <link rel="stylesheet" href="./style.css?v=20260513-fix8" />
   </head>
   <body>
     <div class="shell">
@@ -24,79 +24,13 @@
         </div>
       </header>
 
-      <section class="panel command-center-panel">
-        <div class="panel-head command-center-head">
-          <div>
-            <p class="panel-kicker">Command Center</p>
-            <h2>目前重點</h2>
-          </div>
-        </div>
-        <div class="panel-body command-center-body">
-          <section class="subpanel command-primary">
-            <div class="subpanel-head">
-              <h3>現在結論是什麼</h3>
-            </div>
-            <div id="focus-summary" class="focus-summary"></div>
-          </section>
-
-          <aside class="command-side">
-            <section class="subpanel alert-subpanel">
-              <div class="subpanel-head">
-                <h3>需要處理</h3>
-              </div>
-              <div id="alert-strip" class="alert-grid"></div>
-            </section>
-
-            <section class="subpanel data-quality-subpanel">
-              <div class="subpanel-head">
-                <h3>資訊核對</h3>
-              </div>
-              <div id="data-integrity" class="integrity-grid"></div>
-            </section>
-          </aside>
-
-          <section class="subpanel command-metrics">
-            <div class="subpanel-head">
-              <h3>關鍵數字</h3>
-            </div>
-            <div id="overview-metrics" class="overview-grid"></div>
-          </section>
-
-          <section class="subpanel command-progress">
-            <div class="subpanel-head">
-              <h3>整體進度</h3>
-            </div>
-            <div class="progress-panel">
-              <p id="progress-label" class="metric-note">進度計算中...</p>
-              <div class="progress-track">
-                <div id="progress-fill" class="progress-fill"></div>
-              </div>
-              <div id="progress-breakdown" class="mini-grid"></div>
-            </div>
-          </section>
-
-          <details class="diagnostic-details">
-            <summary class="diagnostic-summary">全局狀態與 Bridge 詳情</summary>
-            <div class="diagnostic-body">
-              <div id="control-plane-strip" class="mode-grid"></div>
-              <div id="bridge-card" class="bridge-grid"></div>
-            </div>
-          </details>
-        </div>
+      <section class="overview-strip">
+        <div id="overview-metrics" class="overview-grid"></div>
       </section>
 
-      <details class="panel autoworker-panel autoworker-details">
-        <summary class="panel-head autoworker-panel-head details-panel-summary">
-          <div>
-            <p class="panel-kicker">Autoworker Pool</p>
-            <h2>Codex 帳號池</h2>
-          </div>
-          <div id="autoworker-summary" class="inline-summary panel-summary"></div>
-        </summary>
-        <div class="panel-body autoworker-panel-body">
-          <div id="autoworker-pool" class="autoworker-pool"></div>
-        </div>
-      </details>
+      <section class="alert-section">
+        <div id="alert-strip" class="alert-grid"></div>
+      </section>
 
       <section id="bff-consol-section" class="panel bff-consol-panel" hidden>
         <div class="panel-head">
@@ -110,6 +44,36 @@
         <div class="panel-body">
           <div id="bff-consol-waves" class="bff-consol-waves"></div>
         </div>
+      </section>
+
+      <section class="panel cockpit-panel">
+        <div class="cockpit-focus-row">
+          <section class="subpanel cockpit-focus-main">
+            <div class="subpanel-head">
+              <h3>現在結論是什麼</h3>
+            </div>
+            <div id="focus-summary" class="focus-summary"></div>
+          </section>
+          <section class="subpanel cockpit-focus-side">
+            <div class="subpanel-head">
+              <h3>整體進度</h3>
+            </div>
+            <div class="progress-panel">
+              <p id="progress-label" class="metric-note">進度計算中...</p>
+              <div class="progress-track">
+                <div id="progress-fill" class="progress-fill"></div>
+              </div>
+              <div id="progress-breakdown" class="mini-grid"></div>
+            </div>
+          </section>
+        </div>
+        <details class="cockpit-details">
+          <summary class="cockpit-details-summary">全局判讀 &amp; Bridge 詳情</summary>
+          <div class="cockpit-details-body">
+            <div id="control-plane-strip" class="mode-grid"></div>
+            <div id="bridge-card" class="bridge-grid"></div>
+          </div>
+        </details>
       </section>
 
       <section id="planning-panel" class="panel planning-panel">
@@ -397,6 +361,6 @@
       </section>
     </div>
 
-    <script src="./script.js?v=20260514-paused-slots" type="module"></script>
+    <script src="./script.js?v=20260513-fix8" type="module"></script>
   </body>
 </html>

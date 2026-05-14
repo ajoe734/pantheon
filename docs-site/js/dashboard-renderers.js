@@ -4,7 +4,7 @@ import {
   logicalAgents,
   planningHighSignalTypes,
   workerStatusIcon,
-} from "./dashboard-config.js?v=20260514-paused-slots";
+} from "./dashboard-config.js?v=20260513-claim";
 import {
   buildTruthMismatches,
   actorLabel,
@@ -29,7 +29,7 @@ import {
   titleCase,
   truncate,
   workerLifecycleBadge,
-} from "./dashboard-core.js?v=20260514-paused-slots";
+} from "./dashboard-core.js?v=20260513-claim";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -55,7 +55,8 @@ function summarizePausedReason(reason, provider) {
   const raw = compactWhitespace(reason || "");
   const lower = raw.toLowerCase();
   const providerName = agentLabel(provider);
-  if (!raw) {
+  const looksLikeJsonDump = /^\s*[\{\[]/.test(raw) || raw.includes('"type":"assistant"') || raw.includes('"usage":{');
+  if (!raw || looksLikeJsonDump) {
     return {
       summary: `${providerName} provider guardrail 已暫停此 lane 的新 dispatch。`,
       detail: "",
@@ -105,7 +106,9 @@ export function renderWorkload(status, orchState = null) {
     container.innerHTML = '<p class="empty">尚無 lane workload 摘要。</p>';
     return;
   }
-  const pauseMap = pausedProviderMap(orchState);
+  const pauseMap = new Map(
+    pausedProviderEntries(orchState).map((entry) => [normalizedProviderKey(entry.provider), entry])
+  );
   const agentBlockedMap = new Map(
     (status.agents || []).map((agent) => [normalizedProviderKey(agent.name), String(agent.status || "").toLowerCase()])
   );
@@ -138,123 +141,6 @@ export function renderWorkload(status, orchState = null) {
     `;
     container.appendChild(card);
   }
-}
-
-function slotStatusLabel(slot) {
-  if (slot.status === "running") return "running";
-  if (slot.status === "pending") return slot.worker_status || "pending";
-  if (slot.status === "paused") return "paused";
-  return "idle";
-}
-
-function slotStatusClass(slot) {
-  if (slot.status === "running") return "slot-running";
-  if (slot.status === "pending") return "slot-pending";
-  if (slot.status === "paused") return "slot-paused";
-  return "slot-idle";
-}
-
-function slotShortId(slot) {
-  return String(slot.id || "").replace(/^codex/i, "Codex");
-}
-
-export function renderAutoworkerPool(status, orchState, dashboardBundle = null) {
-  const container = qs("#autoworker-pool");
-  const summaryEl = qs("#autoworker-summary");
-  if (!container) return;
-
-  const slots = buildCodexSlotRoster(orchState, status);
-  const runtimeSummary = dashboardBundle?.runtime_summary || {};
-  const dispatchTargets = runtimeSummary.dispatch_targets || status.workload || {};
-  const activeCount = slots.filter((slot) => slot.status === "running").length;
-  const pendingCount = slots.filter((slot) => slot.status === "pending").length;
-  const pausedCount = slots.filter((slot) => slot.status === "paused").length;
-  const idleCount = slots.filter((slot) => slot.status === "idle").length;
-  const mismatchCount = Number.isFinite(runtimeSummary.mismatch_count) ? runtimeSummary.mismatch_count : 0;
-  const pausedKeys = pausedProviderKeySet(orchState);
-
-  if (summaryEl) {
-    summaryEl.innerHTML = `
-      <span class="chip">總計 ${activeCount}/${slots.length}</span>
-      <span class="chip">pending ${pendingCount}</span>
-      <span class="chip status-blocked">paused ${pausedCount}</span>
-      <span class="chip">idle ${idleCount}</span>
-      ${mismatchCount ? `<span class="chip status-blocked">mismatch ${mismatchCount}</span>` : `<span class="chip status-done">mismatch 0</span>`}
-    `;
-  }
-
-  const pools = [
-    {
-      id: "codex1",
-      label: "Codex1",
-      logical_label: "Codex",
-      auth_home: "~/.codex",
-      quota_group: "codex1",
-      target: dispatchTargets.Codex ?? status.workload?.Codex ?? 0,
-      slots: slots.filter((slot) => slot.quota_group === "codex1"),
-    },
-    {
-      id: "codex2",
-      label: "Codex2",
-      logical_label: "Codex2",
-      auth_home: "~/.codex2",
-      quota_group: "codex2",
-      target: dispatchTargets.Codex2 ?? status.workload?.Codex2 ?? 0,
-      slots: slots.filter((slot) => slot.quota_group === "codex2"),
-    },
-  ];
-
-  container.innerHTML = pools.map((pool) => {
-    const running = pool.slots.filter((slot) => slot.status === "running").length;
-    const pending = pool.slots.filter((slot) => slot.status === "pending").length;
-    const paused = pausedKeys.has(pool.id) || pausedKeys.has(pool.logical_label.toLowerCase());
-    return `
-      <article class="autoworker-account ${paused ? "autoworker-paused" : ""}">
-        <div class="autoworker-account-head">
-          <div>
-            <strong>${escapeHtml(pool.label)}</strong>
-            <span>${escapeHtml(pool.auth_home)}</span>
-          </div>
-          <div class="chip-row">
-            <span class="status-pill ${paused ? "status-blocked" : running ? "status-working" : "status-idle"}">${paused ? "paused" : `${running}/${pool.slots.length} running`}</span>
-            <span class="chip">quota ${escapeHtml(pool.quota_group)}</span>
-            <span class="chip">目標 ${escapeHtml(pool.target)}%</span>
-            ${pending ? `<span class="chip status-review">pending ${pending}</span>` : ""}
-          </div>
-        </div>
-        <div class="autoworker-slot-strip">
-          ${pool.slots.map((slot) => {
-            const task = slot.task_id || "空 slot";
-            const reason = slot.status === "idle"
-              ? ""
-              : slot.status === "paused"
-              ? slot.reason || slot.pause_entry?.summary || slot.pause_entry?.reason || "dispatch paused"
-              : slot.reason || slot.worker?.reason || slot.worker?.request_snapshot?.reason || "";
-            const title = [
-              slot.label,
-              slotStatusLabel(slot),
-              task,
-              reason,
-              slot.last_event_at ? timeAgo(slot.last_event_at) : "",
-            ].filter(Boolean).join(" / ");
-            return `
-              <div class="autoworker-slot ${slotStatusClass(slot)}" title="${escapeHtml(title)}">
-                <div class="autoworker-slot-top">
-                  <strong>${escapeHtml(slotShortId(slot))}</strong>
-                  <span class="status-pill ${slot.status === "running" ? "status-working" : slot.status === "pending" ? "status-review" : slot.status === "paused" ? "status-blocked" : "status-idle"}">${escapeHtml(slotStatusLabel(slot))}</span>
-                </div>
-                <div class="autoworker-slot-task">${escapeHtml(task)}</div>
-                <div class="autoworker-slot-meta">
-                  ${reason ? `<span>${escapeHtml(reason)}</span>` : `<span>${slot.status === "paused" ? "paused" : "idle"}</span>`}
-                  ${slot.last_event_at ? `<span>${escapeHtml(timeAgo(slot.last_event_at))}</span>` : ""}
-                </div>
-              </div>
-            `;
-          }).join("")}
-        </div>
-      </article>
-    `;
-  }).join("");
 }
 
 export function renderAgentLanes(status, agentStates) {
@@ -1067,7 +953,7 @@ export function renderOverviewMetrics(status, orchState, approvalQueue, dashboar
   const tasks = status.tasks || [];
   const archiveCounts = dashboardBundle?.archive_summary?.counts || {};
   const bridgeSummary = dashboardBundle?.bridge_summary || {};
-  const executionSummary = dashboardBundle?.execution_summary || {};
+  const coordinationCounts = dashboardBundle?.coordination_summary?.counts || {};
 
   const todo          = tasks.filter((t) => String(t.status || "").toLowerCase() === "todo").length;
   const inProgress    = tasks.filter((t) => String(t.status || "").toLowerCase() === "in_progress").length;
@@ -1080,24 +966,23 @@ export function renderOverviewMetrics(status, orchState, approvalQueue, dashboar
   const archivedTotal = Number.isFinite(archiveCounts.total) ? archiveCounts.total : 0;
   const archivedDone = Number.isFinite(archiveCounts.completed) ? archiveCounts.completed : 0;
   const archivedSuperseded = Number.isFinite(archiveCounts.superseded) ? archiveCounts.superseded : 0;
-  const readyNow = Number.isFinite(executionSummary.ready_now) ? executionSummary.ready_now : todo;
-  const dependencyReady = Number.isFinite(executionSummary.dependency_ready) ? executionSummary.dependency_ready : readyNow;
-  const liveWorkers = normalizeWorkerRecords(orchState, status).filter((worker) => worker.bucket === "running").length;
-  const mismatches = buildTruthMismatches(status, orchState, approvalQueue).counts.total;
   if (!activeOpen && archivedTotal) {
     const pendingBridge = Number.isFinite(bridgeSummary.pending_materialization_count) ? bridgeSummary.pending_materialization_count : 0;
+    const trackedFeatures = Number.isFinite(coordinationCounts.tracked_features) ? coordinationCounts.tracked_features : 0;
+    const runtimeVerified = Number.isFinite(coordinationCounts.runtime_verified) ? coordinationCounts.runtime_verified : 0;
     const items = [
-      { label: "Active Open", value: 0, tone: "card-done", note: "目前 active task board 已清空" },
-      { label: "Archived Done", value: archivedDone, tone: "card-done", note: "歷史完成數來自 archive index" },
-      { label: "Superseded", value: archivedSuperseded, tone: archivedSuperseded ? "card-review" : "card-done", note: "已由後續工作接手結案" },
-      { label: "Pending Bridge", value: pendingBridge, tone: pendingBridge ? "card-review" : "card-done", note: "planning 候選尚未 materialize" },
+      { label: "Active Open", value: 0, tone: "card-done" },
+      { label: "Archived Done", value: archivedDone, tone: "card-done" },
+      { label: "Superseded", value: archivedSuperseded, tone: archivedSuperseded ? "card-review" : "" },
+      { label: "Frontend Loops", value: trackedFeatures, tone: trackedFeatures ? "card-active" : "" },
+      { label: "Runtime Proof", value: trackedFeatures ? `${runtimeVerified}/${trackedFeatures}` : "0/0", tone: runtimeVerified < trackedFeatures ? "card-review" : "card-done" },
+      { label: "Pending Bridge", value: pendingBridge, tone: pendingBridge ? "card-review" : "card-done" },
     ];
 
     container.innerHTML = items.map((item) => `
       <article class="metric-card ${item.tone}">
         <div class="metric-label">${item.label}</div>
         <div class="metric-value">${item.value}</div>
-        <p class="metric-note">${item.note}</p>
       </article>
     `).join("");
     return;
@@ -1105,141 +990,27 @@ export function renderOverviewMetrics(status, orchState, approvalQueue, dashboar
 
   const completedInSprint = Number.isFinite(archiveCounts.completed_in_sprint) ? archiveCounts.completed_in_sprint : 0;
   const items = [
-    { label: "Open Work", value: activeOpen, tone: activeOpen ? "card-active" : "card-done", note: `${todo} 待開始 · ${inProgress} 進行中 · ${review + reviewApproved} 審查/收尾` },
-    { label: "可派工", value: readyNow, tone: readyNow ? "card-active" : "card-review", note: `依賴已完成 ${dependencyReady}；已扣除 lane 佔用與 guardrail` },
-    { label: "Live Workers", value: liveWorkers, tone: liveWorkers ? "card-active" : "card-done", note: "目前 runtime 實際掛載中的 worker" },
-    { label: "待審查", value: review + reviewApproved, tone: review + reviewApproved ? "card-review" : "card-done", note: `${review} review · ${reviewApproved} approved-to-close` },
-    { label: "Mismatch", value: mismatches, tone: mismatches ? "card-blocked" : "card-done", note: mismatches ? "runtime / queue / task board 有差異需追" : "runtime 與 task board 對齊" },
-    { label: "本輪完成", value: completedInSprint + done, tone: "card-done", note: archivedTotal ? `active done ${done} · sprint archive ${completedInSprint} · archive total ${archivedDone}` : "目前 active board done 數" },
-    ...(blocked ? [{ label: "阻塞", value: blocked, tone: "card-blocked", note: "已標記 blocker 的 active task" }] : []),
-    ...(archivedSuperseded ? [{ label: "已取代", value: archivedSuperseded, tone: "card-review", note: "由後續任務接手結案的歷史項目" }] : []),
+    { label: "待開始",    value: todo,           tone: "" },
+    { label: "進行中",    value: inProgress,     tone: inProgress  ? "card-active"   : "" },
+    { label: "待審查",    value: review,         tone: review      ? "card-review"   : "" },
+    { label: "待收尾",    value: reviewApproved, tone: reviewApproved ? "card-review" : "" },
+    { label: "本輪完成",  value: completedInSprint + done, tone: "card-done" },
+    ...(archivedTotal
+      ? [
+          { label: "歷史完成", value: archivedDone, tone: "card-done" },
+          { label: "封存總數", value: archivedTotal, tone: "card-done" },
+          { label: "已取代", value: archivedSuperseded, tone: archivedSuperseded ? "card-review" : "card-done" },
+        ]
+      : []),
+    { label: "阻塞",      value: blocked,        tone: blocked     ? "card-blocked"  : "" },
   ];
 
   container.innerHTML = items.map((item) => `
     <article class="metric-card ${item.tone}">
       <div class="metric-label">${item.label}</div>
       <div class="metric-value">${item.value}</div>
-      <p class="metric-note">${item.note}</p>
     </article>
   `).join("");
-}
-
-function activeTaskStatusCounts(tasks) {
-  return (tasks || []).reduce((acc, task) => {
-    const key = String(task.status || "unknown").toLowerCase();
-    acc[key] = (acc[key] || 0) + 1;
-    return acc;
-  }, {});
-}
-
-function sameNumber(left, right) {
-  return Number(left) === Number(right);
-}
-
-export function renderDataIntegrity(status, orchState, approvalQueue, dashboardBundle = null) {
-  const container = qs("#data-integrity");
-  if (!container) return;
-
-  const tasks = status.tasks || [];
-  const counts = activeTaskStatusCounts(tasks);
-  const runtimeSummary = dashboardBundle?.runtime_summary || {};
-  const executionSummary = dashboardBundle?.execution_summary || {};
-  const workers = normalizeWorkerRecords(orchState, status);
-  const truth = buildTruthMismatches(status, orchState, approvalQueue);
-  const statusUpdatedAt = status.updated_at || null;
-  const bundleGeneratedAt = dashboardBundle?.generated_at || null;
-  const statusMs = Date.parse(statusUpdatedAt || "");
-  const bundleMs = Date.parse(bundleGeneratedAt || "");
-  const bundleFresh = Number.isFinite(statusMs) && Number.isFinite(bundleMs)
-    ? bundleMs + 2 * 60 * 1000 >= statusMs
-    : Boolean(bundleGeneratedAt);
-  const runningWorkerCount = workers.filter((worker) => worker.bucket === "running").length;
-  const pendingApprovalCount = (approvalQueue?.pending || []).length;
-
-  const summaryComparisons = [
-    {
-      label: "in_progress",
-      expected: counts.in_progress || 0,
-      actual: executionSummary.in_progress,
-    },
-    {
-      label: "review",
-      expected: counts.review || 0,
-      actual: executionSummary.in_review,
-    },
-    {
-      label: "review_approved",
-      expected: counts.review_approved || 0,
-      actual: executionSummary.review_approved,
-    },
-    {
-      label: "blocked",
-      expected: counts.blocked || 0,
-      actual: executionSummary.blocked,
-    },
-  ];
-  const executionSummaryOk = summaryComparisons.every((item) => sameNumber(item.expected, item.actual));
-  const runtimeSummaryOk = sameNumber(runtimeSummary.running_workers, runningWorkerCount)
-    && sameNumber(runtimeSummary.pending_approvals, pendingApprovalCount)
-    && sameNumber(runtimeSummary.mismatch_count, truth.counts.total);
-  const openCount = tasks.filter((task) => !terminalTaskStatus(task.status)).length;
-  const operationalMismatchNote = truth.counts.total
-    ? `${truth.counts.total} 個 operational mismatch 會在告警與 Truth Mismatches 顯示`
-    : "目前沒有 runtime / task board mismatch";
-
-  const cards = [
-    {
-      label: "資料時間",
-      value: bundleFresh ? "fresh" : "stale",
-      tone: bundleFresh ? "integrity-ok" : "integrity-warn",
-      note: `status ${formatTime(statusUpdatedAt)} · bundle ${formatTime(bundleGeneratedAt)}`,
-    },
-    {
-      label: "Active board",
-      value: `${openCount}/${tasks.length}`,
-      tone: "integrity-ok",
-      note: `${counts.todo || 0} todo · ${counts.in_progress || 0} running · ${counts.review || 0} review`,
-    },
-    {
-      label: "Execution summary",
-      value: executionSummaryOk ? "match" : "check",
-      tone: executionSummaryOk ? "integrity-ok" : "integrity-warn",
-      note: executionSummaryOk
-        ? "bundle summary 與 live task 狀態一致"
-        : summaryComparisons
-            .filter((item) => !sameNumber(item.expected, item.actual))
-            .map((item) => `${item.label}: live ${item.expected}, bundle ${item.actual ?? "-"}`)
-            .join(" · "),
-    },
-    {
-      label: "Runtime summary",
-      value: runtimeSummaryOk ? "match" : "check",
-      tone: runtimeSummaryOk ? "integrity-ok" : "integrity-warn",
-      note: runtimeSummaryOk
-        ? "worker、approval、mismatch 計數已對齊"
-        : `workers live ${runningWorkerCount} / bundle ${runtimeSummary.running_workers ?? "-"} · approvals live ${pendingApprovalCount} / bundle ${runtimeSummary.pending_approvals ?? "-"} · mismatch live ${truth.counts.total} / bundle ${runtimeSummary.mismatch_count ?? "-"}`,
-    },
-    {
-      label: "Operational drift",
-      value: truth.counts.total,
-      tone: truth.counts.total ? "integrity-warn" : "integrity-ok",
-      note: operationalMismatchNote,
-    },
-  ];
-
-  container.innerHTML = cards
-    .map(
-      (card) => `
-        <article class="integrity-card ${card.tone}">
-          <div class="stack-head">
-            <strong>${escapeHtml(card.label)}</strong>
-            <span class="status-pill ${card.tone === "integrity-ok" ? "status-ready" : "status-review"}">${escapeHtml(card.value)}</span>
-          </div>
-          <p class="metric-note">${escapeHtml(card.note)}</p>
-        </article>
-      `
-    )
-    .join("");
 }
 
 function executionStatusCounts(status, dashboardBundle = null) {
@@ -1269,57 +1040,14 @@ function pausedProviderEntries(orchState) {
   const pauses = orchState?.provider_guardrails?.dispatch_pauses;
   if (!pauses || typeof pauses !== "object") return [];
   return Object.entries(pauses)
-    .map(([pauseKey, info]) => {
-      const record = info && typeof info === "object" ? info : {};
-      const canonicalKey = record.pause_key || record.quota_group || pauseKey;
-      return {
-        ...record,
-        provider: canonicalKey,
-        pause_key: canonicalKey,
-        trigger_provider: record.provider || record.trigger_provider || null,
-      };
-    })
+    .map(([provider, info]) => ({ provider, ...(info || {}) }))
     .sort((a, b) => String(b.blocked_until || b.paused_at || "").localeCompare(String(a.blocked_until || a.paused_at || "")));
 }
 
 function normalizedProviderKey(value) {
-  const normalized = String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const normalized = String(value || "").trim().toLowerCase();
   if (normalized === "grok") return "copilot";
-  if (normalized === "codex_2") return "codex2";
   return normalized;
-}
-
-function providerKeyAliases(value) {
-  const key = normalizedProviderKey(value);
-  if (!key) return [];
-  const aliases = [key];
-  if (key === "codex1") aliases.push("codex");
-  if (key === "codex") aliases.push("codex1");
-  return aliases;
-}
-
-function pauseEntryKeys(entry) {
-  const keys = new Set();
-  for (const value of [entry?.provider, entry?.pause_key, entry?.quota_group, entry?.trigger_provider]) {
-    for (const alias of providerKeyAliases(value)) keys.add(alias);
-  }
-  return Array.from(keys);
-}
-
-function pausedProviderKeySet(orchState) {
-  const keys = new Set();
-  for (const entry of pausedProviderEntries(orchState)) {
-    for (const key of pauseEntryKeys(entry)) keys.add(key);
-  }
-  return keys;
-}
-
-function pausedProviderMap(orchState) {
-  const map = new Map();
-  for (const entry of pausedProviderEntries(orchState)) {
-    for (const key of pauseEntryKeys(entry)) map.set(key, entry);
-  }
-  return map;
 }
 
 function pauseSeverity(entry) {
@@ -2773,17 +2501,15 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
   const codexSlots = buildCodexSlotRoster(orchState, status);
   const codexActiveCount = codexSlots.filter((slot) => slot.status === "running").length;
   const codexPendingCount = codexSlots.filter((slot) => slot.status === "pending").length;
-  const codexPausedCount = codexSlots.filter((slot) => slot.status === "paused").length;
   const codexIdleCount = codexSlots.filter((slot) => slot.status === "idle").length;
   const codexSlotCard = document.createElement("article");
   codexSlotCard.className = "sys-card codex-slot-card";
   codexSlotCard.innerHTML = `
     <div class="sys-card-head">
       <span class="sys-icon">▦</span>
-      <strong>Codex Slot Debug Details</strong>
+      <strong>Codex Autoworker Slots</strong>
       <span class="chip">active ${codexActiveCount}</span>
       <span class="chip">pending ${codexPendingCount}</span>
-      <span class="chip status-blocked">paused ${codexPausedCount}</span>
       <span class="chip">idle ${codexIdleCount}</span>
       <span class="chip">total ${codexSlots.length}</span>
     </div>
@@ -2795,11 +2521,11 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
             <span class="chip">${escapeHtml(slot.quota_group)}</span>
           </div>
           <div class="codex-slot-meta">
-            <span class="status-pill ${slot.status === "running" ? "status-working" : slot.status === "pending" ? "status-review" : slot.status === "paused" ? "status-blocked" : "status-idle"}">${slot.status === "idle" ? "idle" : slot.worker_status || slot.status}</span>
+            <span class="status-pill ${slot.status === "running" ? "status-working" : slot.status === "pending" ? "status-review" : "status-idle"}">${slot.status === "idle" ? "idle" : slot.worker_status || slot.status}</span>
             <span class="chip">${escapeHtml(slot.id)}</span>
             ${slot.worker?.provider ? `<span class="chip">${escapeHtml(slot.worker.provider)}</span>` : ""}
             ${slot.task_id ? `<span class="chip">${escapeHtml(slot.task_id)}</span>` : `<span class="chip">空 slot</span>`}
-            ${slot.reason ? `<span class="chip">${escapeHtml(slot.reason)}</span>` : ""}
+            ${slot.worker?.reason ? `<span class="chip">${escapeHtml(slot.worker.reason)}</span>` : ""}
             ${slot.last_event_at ? `<span class="chip">${escapeHtml(timeAgo(slot.last_event_at))}</span>` : ""}
           </div>
         </div>
@@ -2854,12 +2580,12 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
   }
 
   const agentStateMap = new Map((agentStates || []).map((a) => [normalizedProviderKey(a.name), a]));
-  const pauseMap = pausedProviderMap(orchState);
+  const pauseMap = new Map(pausedProviders.map((entry) => [normalizedProviderKey(entry.provider), entry]));
   const runtimeAgentIds = Array.from(new Set([
     ...logicalAgents,
     ...(agentStates || []).map((agent) => normalizedProviderKey(agent.name)),
     ...workers.map((worker) => normalizedProviderKey(worker.logical_agent_id || worker.provider || worker.agent_id)),
-    ...pausedProviders.flatMap((entry) => pauseEntryKeys(entry)),
+    ...pausedProviders.map((entry) => normalizedProviderKey(entry.provider)),
   ].filter(Boolean)));
   for (const agentId of runtimeAgentIds) {
     const pw = workers.filter((w) => normalizedProviderKey(w.logical_agent_id || w.provider || w.agent_id) === agentId);
