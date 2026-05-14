@@ -1,371 +1,374 @@
 # BFF-CONSOL-027 Sidecar: BFF and Frontend Handoff Packet
 
-**Task ID:** BFF-CONSOL-027-SIDECAR-BFF-HANDOFF
-**Helper Kind:** bff_handoff_packet
-**Parent Task:** BFF-CONSOL-027 — Final BFF consolidation acceptance packet
-**Prepared by:** Claude
-**Reviewer:** Codex (reassigned from Copilot; Copilot in disabled_agents)
-**Date:** 2026-05-13
-**Review approved:** 2026-05-13T11:15:12Z
-**Mutates canonical:** false
-**Status:** review_approved → closeout
-
----
+| Field | Value |
+|---|---|
+| Task ID | `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` |
+| Helper kind | `bff_handoff_packet` |
+| Parent task | `BFF-CONSOL-027` - Final BFF consolidation acceptance packet |
+| Parent owner / reviewer | Copilot / Claude |
+| Prepared by | Codex2 |
+| Reviewer | Claude |
+| Date | 2026-05-14 |
+| Mutates canonical truth | false |
+| Status | review approved; owner closeout |
+| Review approved | Claude, 2026-05-14T07:42:31Z |
+| Refresh basis | Codex2 support-only refresh after `BFF-CONSOL-024` closeout and current `ai-status.json` dispatch |
 
 ## Purpose
 
-This sidecar slice prepares BFF query gap analysis, operator journey documentation, and frontend handoff materials needed by Copilot to assemble the final BFF consolidation acceptance packet (`support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md`).
+This support-only packet gives Copilot the current BFF query gap map, operator
+journey, frontend handoff notes, and acceptance-packet skeleton for
+`BFF-CONSOL-027`.
 
-This document is a support artifact only. It does not change L1 canonical truth, runtime implementation, or the BFF contract.
+The parent task must produce
+`support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md` from the evidence of
+`BFF-CONSOL-001` through `BFF-CONSOL-026`, then route it to Claude for final
+sign-off. This sidecar does not change L1 canonical truth, the BFF runtime,
+contract truth, route manifests, registry code, governance code, or
+execute-plans source.
 
----
+## Current State Snapshot
 
-## 1. BFF-CONSOL-027 Task Scope Recap
+Source of truth checked during this refresh:
 
-BFF-CONSOL-027 (`Final BFF consolidation acceptance packet`) requires Copilot to aggregate evidence from all 26 predecessor tasks and produce a single structured acceptance record. Claude's final sign-off is the last gate before the task closes.
+- Active `ai-status.json` entries for `BFF-CONSOL-022`, `023`, `027`, and this
+  sidecar.
+- Archived task snapshots for completed tasks, including `BFF-CONSOL-024`.
+- Existing evidence and sidecar files under `support/evidence/` and
+  `support/sidecars/BFF-CONSOL-*`.
+- Current route-diff and seed-taxonomy files already present in the repo.
 
-**Primary output artifact:** `support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md`
+Current parent blockers for final acceptance:
 
-**Required acceptance packet sections:**
+| Task | Current state | BFF-CONSOL-027 impact |
+|---|---|---|
+| `BFF-CONSOL-022` | `blocked`, owner Codex2, waiting for Gemini | Staging strict preview evidence is initialized but blocked on Lovable preview URL, staging credentials, and BFF reachability. Current durable status says the fixed elapsed-day soak gate has been removed; do not copy older "7 day" text as a hard gate without owner refresh. |
+| `BFF-CONSOL-023` | `todo`, owner Gemini2 | Prod strict cutover evidence is not available. It depends on the staging verification gate from 022. |
+| `BFF-CONSOL-024` | `done`, archived 2026-05-14T07:23:05Z | Old `/bff/actions/*` deprecation is accepted evidence, not provisional. Pantheon commit `5225c289` verifies deprecation headers/body markers, final `/bff/v1/commands` remains unmarked, and execute-plans default command routing landed at sibling commit `3da4830`. |
+| `BFF-CONSOL-027` | `todo`, owner Copilot, reviewer Claude | Final acceptance packet has not started. |
 
-| Section | Source Tasks |
+Important correction from the previous packet: `BFF-CONSOL-016`, `019`, `020`,
+`021`, `024`, `025`, and `026` are no longer pending in the current evidence
+set. Use their evidence/support files below instead of leaving blank acceptance
+sections.
+
+## Evidence Inventory for ACCEPTANCE.md
+
+Copilot should cite the narrowest durable evidence file for each section. When a
+task archive is not present in this checkout, cite the evidence file and support
+packet instead of inventing status.
+
+### Contract, Vocabulary, Fixtures
+
+| Section | Source tasks | Evidence to cite |
+|---|---|---|
+| Backend route manifest | `BFF-CONSOL-001` | `ai-task-archive/tasks/BFF-CONSOL-001.json`; backend snapshot `services/control-plane/bff/contract_snapshots/backend_routes_manifest.json`; closeout notes mention 371 routes and stable `{param}` normalization. |
+| Frontend route manifest | `BFF-CONSOL-002` | `ai-task-archive/tasks/BFF-CONSOL-002.json`; frontend snapshot `services/control-plane/bff/contract_snapshots/execute_plans_bff_routes.json`. |
+| Route diff baseline | `BFF-CONSOL-003`, `BFF-CONSOL-026` | `.github/workflows/bff-route-diff.yml`; `docs/bff/contract_snapshots/route-diff-baseline.json`; `support/evidence/BFF-CONSOL-026-closeout.md`. |
+| Command envelope spec | `BFF-CONSOL-004` | `services/control-plane/bff/BFF_COMMAND_API_CONTRACT.md`; `support/evidence/BFF-CONSOL-004-closeout.md`. |
+| Live status banner | `BFF-CONSOL-005` | `ai-task-archive/tasks/BFF-CONSOL-005.json`; review evidence under `support/evidence/BFF-CONSOL-005/`. |
+| Role vocabulary | `BFF-CONSOL-006` | `docs/bff/role-vocabulary-mapping-2026-05-13.md`; `support/sidecars/BFF-CONSOL-006/REVIEW-claude-2026-05-13.md`. |
+| Seed taxonomy | `BFF-CONSOL-007`, `015`, `025` | `docs/bff/seed-taxonomy.json`; `support/sidecars/BFF-CONSOL-015/BFF-CONSOL-015-SIDECAR-BFF-HANDOFF.md`; `support/sidecars/BFF-CONSOL-025/BFF-CONSOL-025-SIDECAR-BFF-HANDOFF.md`; `docs/bff/seed-elimination-2026-05-13.md`. |
+| Fixture packs | `BFF-CONSOL-008`, `009`, `010` | `services/control-plane/bff/data/fixtures_pack_a.json`; `fixtures_pack_b.json`; `fixtures_pack_c.json`; archives for 008/009/010. |
+
+Current seed taxonomy in this checkout has 83 helpers:
+
+| Category | Count |
+|---|---:|
+| `live_required` | 62 |
+| `deferred` | 15 |
+| `mock_only_dev` | 4 |
+| `deprecated` | 2 |
+
+### Read Path, Auth, SSE
+
+| Section | Source tasks | Evidence to cite |
+|---|---|---|
+| Pack A detail smoke | `BFF-CONSOL-016` | `support/evidence/BFF-CONSOL-016-detail-smoke-a.json`; `support/sidecars/BFF-CONSOL-016/BFF-CONSOL-016-SIDECAR-BFF-HANDOFF.md`; commit evidence in git log includes `6b59cbd2` and `72a65d78`. |
+| Pack B detail smoke | `BFF-CONSOL-017` | `support/evidence/BFF-CONSOL-017-detail-smoke-b.json`; `support/sidecars/BFF-CONSOL-017/BFF-CONSOL-017-SIDECAR-BFF-HANDOFF.md`; commit evidence in git log includes `83c42310` and `aea5d8b4`. |
+| Pack C detail smoke | `BFF-CONSOL-018` | `support/evidence/BFF-CONSOL-018-detail-smoke-c.json`; `ai-task-archive/tasks/BFF-CONSOL-018.json`. |
+| SSE replay | `BFF-CONSOL-011` | `support/evidence/BFF-CONSOL-011-sse-replay-smoke.json`; `ai-task-archive/tasks/BFF-CONSOL-011.json`. |
+| SSE backpressure | `BFF-CONSOL-012` | `support/evidence/BFF-CONSOL-012-sse-backpressure.json`; `ai-task-archive/tasks/BFF-CONSOL-012.json`. |
+| Cookie-session write gate | `BFF-CONSOL-013` | `ai-task-archive/tasks/BFF-CONSOL-013.json`; sibling execute-plans commit noted there. |
+| Lovable CORS + JWKS | `BFF-CONSOL-014` | `ai-task-archive/tasks/BFF-CONSOL-014.json`. |
+
+### Write Path and Cutover
+
+| Section | Source tasks | Evidence to cite |
+|---|---|---|
+| Backend actions-to-command adapter | `BFF-CONSOL-019` | `support/sidecars/BFF-CONSOL-019/BFF-CONSOL-019-SIDECAR-BFF-HANDOFF.md`; implementation commit `34fa7aec`; `services/control-plane/bff/tests/test_actions_to_commands_adapter.py`. |
+| Frontend command client migration | `BFF-CONSOL-020` | `support/evidence/BFF-CONSOL-020-closeout.md`; `support/sidecars/BFF-CONSOL-020/BFF-CONSOL-020-SIDECAR-BFF-HANDOFF.md`; sibling execute-plans commit `30b4ed394bcb036cb9f18b63c99f2910a657916e`. |
+| Receipt replay/conflict/idempotency | `BFF-CONSOL-021` | `support/evidence/BFF-CONSOL-021-dual-write-soak.json`; `ai-task-archive/tasks/BFF-CONSOL-021.json`. Fixed elapsed-day soak was removed; regression follow-up is non-blocking. |
+| Staging strict preview | `BFF-CONSOL-022` | `support/evidence/BFF-CONSOL-022-staging-strict-soak.md`; active task is blocked on Gemini for preview URL, credentials, and reachability. |
+| Prod strict cutover | `BFF-CONSOL-023` | Expected `support/evidence/BFF-CONSOL-023-prod-strict-soak.md`; not present/started yet. |
+| Old action receipt deprecation | `BFF-CONSOL-024` | `ai-task-archive/tasks/BFF-CONSOL-024.json`; Pantheon commit `5225c289`; support handoff `support/sidecars/BFF-CONSOL-024/BFF-CONSOL-024-SIDECAR-BFF-HANDOFF.md`. Accepted evidence: legacy `/bff/actions/*` receipts keep compatibility while returning `Deprecation`, `Sunset`, `Link`, and `Warning` headers plus `data`, `receipt`, and `meta` deprecation markers; final `/bff/v1/commands` remains unmarked. |
+| Seed-only surface elimination | `BFF-CONSOL-025` | `docs/bff/seed-elimination-2026-05-13.md`; `support/sidecars/BFF-CONSOL-025/BFF-CONSOL-025-SIDECAR-BFF-HANDOFF.md`; Pantheon commit `f37b1099`; sibling execute-plans commit `226d7e4`. |
+| CI route diff fail-hard | `BFF-CONSOL-026` | `support/evidence/BFF-CONSOL-026-closeout.md`; `support/sidecars/BFF-CONSOL-026/BFF-CONSOL-026-SIDECAR-BFF-HANDOFF.md`; workflow and baseline files listed above. |
+
+## BFF Query Coverage Summary
+
+### Verified read routes
+
+The following read journeys have evidence and should be treated as closed for
+the final packet, subject to 022/023 environment cutover verification:
+
+| Family | Representative routes | Evidence |
+|---|---|---|
+| Pack A strategy/persona/deployment/runtime | `/bff/strategies`, `/bff/strategies/{id}`, strategy related routes, `/bff/personas/{id}`, `/bff/deployments/{id}`, `/bff/runtimes/{id}` | `BFF-CONSOL-016-detail-smoke-a.json` |
+| Pack B evolution/research/v5/agora/artifacts | `/bff/evolution-programs/{id}`, `/bff/research-experiments/{id}`, `/bff/research-analyses/{id}`, `/bff/v5/interventions/{id}`, `/bff/agora/sessions/{id}`, `/bff/agora/sessions/{id}/messages`, `/bff/artifacts/{id}`, `/api/v1/lineage/inspiration/{artifact_id}` | `BFF-CONSOL-017-detail-smoke-b.json` |
+| Pack C incident/approval/rebalance/job/audit | `/api/v1/operator/incident-response/{id}`, `/bff/approvals/{id}`, `/bff/deployments/{id}`, `/bff/rebalances/{id}`, `/bff/jobs/{id}`, `/bff/audit`, `/bff/audit/entities/{entity_type}/{entity_id}` | `BFF-CONSOL-018-detail-smoke-c.json` |
+| SSE approval channel | `/bff/events/stream?channel=approval` | `BFF-CONSOL-011-sse-replay-smoke.json`, `BFF-CONSOL-012-sse-backpressure.json` |
+| Session/auth gates | `/bff/me`, `/bff/auth/refresh`, `/bff/logout` | 013/014 archives |
+
+Known degraded-path behavior verified by evidence:
+
+- Pack A/B detail phantom IDs return typed `OBJECT_NOT_FOUND` 404.
+- Pack C incident/approval/rebalance/job phantom IDs return typed 404; audit
+  entity trails may return 200 with an empty list because the audit trail is a
+  list-only surface.
+- SSE missing replay cursor returns 409 with resync-route guidance.
+- The live SSE mock generator is closed in live mode.
+
+### Write routes and command receipts
+
+Current write-path truth for the final packet:
+
+| Surface | State |
 |---|---|
-| Contract diff baseline | BFF-CONSOL-001 (backend manifest), BFF-CONSOL-002 (frontend manifest), BFF-CONSOL-003 (CI diff job) |
-| Live smoke — read path | BFF-CONSOL-008/009/010 fixtures + BFF-CONSOL-016/017/018 detail smokes |
-| Live smoke — write path | BFF-CONSOL-019 (command envelope adapter), BFF-CONSOL-020 (runAction.ts migration) |
-| SSE evidence | BFF-CONSOL-011 (stream replay), BFF-CONSOL-012 (backpressure) |
-| Command receipt sample | BFF-CONSOL-021 (dual-write + idempotency) |
-| Staging + prod cutover log | BFF-CONSOL-022 (staging soak), BFF-CONSOL-023 (prod cutover) |
-| 7-day soak metric | BFF-CONSOL-022 and BFF-CONSOL-023 soak records |
-| Seed.ts post-state | BFF-CONSOL-015 (mock-only badge), BFF-CONSOL-025 (seed-only elimination) |
-| CI fail-hard status | BFF-CONSOL-026 (fail-hard mode) |
-| Auth + CORS gates | BFF-CONSOL-013 (cookie-session write gate), BFF-CONSOL-014 (Lovable CORS + JWKS) |
-| Role vocabulary | BFF-CONSOL-006 |
-| Seed taxonomy post-state | BFF-CONSOL-007 |
+| `POST /bff/v1/commands` | Backend final command admission exists and is covered by 019/021 tests. |
+| `POST /bff/actions/{entityType}/{entityId}/{actionId}` | Backend legacy adapter routes through final command admission, records final admission/source route, and keeps `live_capital_side_effects=false`. |
+| Frontend direct command caller | `BFF-CONSOL-020` closeout points to sibling execute-plans commit `30b4ed3` with `commandClient.ts` and command-route tests. |
+| Replay/conflict/preconditions | `BFF-CONSOL-021-dual-write-soak.json` records legacy and direct receipt samples, stable replay, 409 conflict, `CONFIRM_TOKEN_REQUIRED`, and `APPROVAL_REQUIRED`. |
+| Old action deprecation | Accepted in `BFF-CONSOL-024` done archive from 2026-05-14T07:23:05Z. Verified markers include `Deprecation`, `Sunset`, `Link`, `Warning`, `meta.deprecated`, and `data.receipt.deprecated`; final `/bff/v1/commands` receipts stay free of deprecation markers. |
+| Live writes in strict preview | Must remain blocked with `VITE_BFF_REAL_WRITES=false` for 022/023 cutover evidence. |
 
----
+Do not claim live capital execution is enabled. The command path evidence proves
+admission, receipt, idempotency, and audit/foundation behavior, not production
+capital side effects.
 
-## 2. Completed Evidence Inventory (as of 2026-05-13)
+### Route diff gate
 
-All tasks listed here are `done`. Copilot should link each piece of evidence directly into the relevant ACCEPTANCE.md section.
+`BFF-CONSOL-026` makes route diff fail-hard by default. The current baseline is
+intentionally still in fail status because it locks grandfathered backend-only
+coverage debt:
 
-### 2.1 Contract and Route Baseline (Wave 1)
+| Metric | Current value |
+|---|---:|
+| Backend routes in snapshot | 371 |
+| Frontend routes in snapshot | 178 |
+| Fail-hard baseline failures | 209 |
+| Backend active routes missing frontend rows | 209 |
+| Frontend active routes missing backend rows | 0 |
+| Naming/family mismatches | 0 |
+| Warnings | 0 |
 
-| Task | Status | Evidence File / Artifact |
-|---|---|---|
-| BFF-CONSOL-001 | done | Backend FastAPI route manifest extractor; manifest snapshot in task archive |
-| BFF-CONSOL-002 | done | Frontend route manifest extractor; manifest snapshot in task archive |
-| BFF-CONSOL-003 | done | CI route diff job (fail-but-warn baseline); `.github/workflows/bff-route-diff.yml` |
-| BFF-CONSOL-004 | done | Command envelope mapping spec; `services/control-plane/bff/BFF_COMMAND_API_CONTRACT.md` §8; `CANONICAL_CONTRACT_MIGRATION_DECISION.md` §11; `support/evidence/BFF-CONSOL-004-closeout.md` |
-| BFF-CONSOL-005 | done | Live status banner UI; `docs-site/js/dashboard-core.js`; `support/evidence/BFF-CONSOL-005/review-claude-2026-05-13.md` |
-| BFF-CONSOL-006 | done | Role vocabulary mapping doc; task archive |
-| BFF-CONSOL-007 | done | Seed taxonomy spreadsheet; `support/evidence/BFF-CONSOL-007/review-claude-2026-05-13.md` |
+Final acceptance should say that the fail-hard gate locks the current failure
+surface and prevents silent growth. It should not say the BFF/frontend route
+manifests are fully parity-clean.
 
-### 2.2 Canonical Fixture Packs (Wave 1–2)
+## Operator Journey
 
-| Task | Status | Evidence File |
-|---|---|---|
-| BFF-CONSOL-008 | done | Pack A: strategies, personas, capital-pools, rebalances, deployments; `services/control-plane/bff/data/fixtures_pack_a.json` |
-| BFF-CONSOL-009 | done | Pack B: evolution, research, artifacts, v5 interventions, agora, runtimes; `services/control-plane/bff/data/fixtures_pack_b.json` |
-| BFF-CONSOL-010 | done | Pack C: alerts, incidents, approvals, audit, jobs, channels, skills, tools, mcp; `services/control-plane/bff/data/fixtures_pack_c.json` |
+### Strict live read journey
 
-### 2.3 Auth and SSE Gates (Wave 2)
-
-| Task | Status | Evidence File |
-|---|---|---|
-| BFF-CONSOL-011 | done | SSE real stream replay smoke; `support/evidence/BFF-CONSOL-011-sse-replay-smoke.json`; `mock_generator_closed_in_live_mode: true`; bearer+cookie dual auth modes verified |
-| BFF-CONSOL-012 | done | SSE backpressure + unbounded buffer guard; `support/evidence/BFF-CONSOL-012-sse-backpressure.json` |
-| BFF-CONSOL-013 | done | Cookie-session write gate (`/bff/me` driven); task archive |
-| BFF-CONSOL-014 | done | Lovable CORS allowlist + JWKS strict test infra; task archive |
-
-### 2.4 Detail Journey Smokes (Wave 2)
-
-| Task | Status | Evidence File | Families Covered |
-|---|---|---|---|
-| BFF-CONSOL-017 | done (evidence present) | `support/evidence/BFF-CONSOL-017-detail-smoke-b.json` | evolution, research, v5_interventions, agora, artifacts |
-| BFF-CONSOL-018 | done | `support/evidence/BFF-CONSOL-018-detail-smoke-c.json` | incident, approval, rebalance, job, audit |
-
-**Note on BFF-CONSOL-016 and BFF-CONSOL-017 task status:** BFF-CONSOL-017 has a completed evidence file from a prior run. BFF-CONSOL-016 (strategy/persona/deployment/runtime detail smoke) is still in `todo` state — its evidence file does not yet exist. Copilot should treat BFF-CONSOL-016 evidence as **pending** in the acceptance packet.
-
----
-
-## 3. Pending Evidence Map (Tasks 015–026)
-
-These tasks are **not yet `done`**. Copilot must insert placeholder sections in ACCEPTANCE.md and fill them as each task closes. The table below maps each task to its expected acceptance packet contribution.
-
-| Task | Current Status | Expected Evidence Artifact | ACCEPTANCE.md Section |
-|---|---|---|---|
-| BFF-CONSOL-015 | review | `support/sidecars/BFF-CONSOL-015/implementation-bff-consol-015-codex2.md`; seed.ts post-state diff | Seed.ts post-state |
-| BFF-CONSOL-016 | todo | `support/evidence/BFF-CONSOL-016-detail-smoke-a.json` | Live smoke — read path (strategy/persona/deployment/runtime) |
-| BFF-CONSOL-019 | todo | Command envelope adapter test evidence | Live smoke — write path (command admission) |
-| BFF-CONSOL-020 | todo | runAction.ts migration evidence | Live smoke — write path (frontend dispatch) |
-| BFF-CONSOL-021 | todo | Receipt dual-write + idempotency test evidence | Command receipt sample |
-| BFF-CONSOL-022 | todo | `support/evidence/BFF-CONSOL-022-staging-strict-soak.md` | Staging cutover log + 7-day soak metric |
-| BFF-CONSOL-023 | todo | `support/evidence/BFF-CONSOL-023-prod-strict-soak.md` | Prod cutover log + 7-day soak metric |
-| BFF-CONSOL-024 | todo | Deprecation notice diff; old action receipt marked deprecated | Command receipt sample (deprecation gate) |
-| BFF-CONSOL-025 | todo | seed-only surface elimination diff | Seed.ts post-state (full elimination) |
-| BFF-CONSOL-026 | todo | CI fail-hard mode activation evidence | CI fail-hard status |
-
-**Critical path note:** BFF-CONSOL-019 is gated on EP5 paper-canary closeout. BFF-CONSOL-023 is gated on BFF-CONSOL-022 staging soak completion (≥7 days, 0 regressions). BFF-CONSOL-024 is gated on BFF-CONSOL-021 dual-write soak. These gates mean the final acceptance packet cannot close until the soak windows complete.
-
----
-
-## 4. Verified BFF Route Coverage Summary
-
-Routes confirmed by completed fixture packs and detail smoke tests:
-
-### 4.1 Read routes — verified as non-empty (Pack A, B, C fixtures)
-
-**Pack A (BFF-CONSOL-008):**
-- `GET /bff/strategies`
-- `GET /bff/personas`
-- `GET /bff/capital-pools`
-- `GET /bff/rebalances`
-- `GET /bff/deployments`
-
-**Pack B (BFF-CONSOL-009):**
-- `GET /bff/evolution-programs`
-- `GET /bff/evolution-programs/{id}`
-- `GET /bff/research-experiments`
-- `GET /bff/research-experiments/{id}` (includes `analysis_ids` enrichment)
-- `GET /bff/research-analyses/{id}`
-- `GET /bff/v5/interventions`
-- `GET /bff/v5/interventions/{id}` (includes governed `remediation_skeleton`)
-- `GET /bff/agora/sessions`
-- `GET /bff/agora/sessions/{id}`
-- `GET /bff/agora/sessions/{id}/messages`
-- `GET /bff/artifacts`
-- `GET /bff/artifacts/{id}`
-- `GET /api/v1/lineage/inspiration/{artifact_id}`
-- `GET /bff/runtimes`
-
-**Pack C (BFF-CONSOL-010 / smoke C):**
-- `GET /bff/alerts`
-- `GET /bff/incidents`
-- `GET /api/v1/operator/incident-response/{id}` (composed detail with runtime context)
-- `GET /bff/approvals`
-- `GET /bff/approvals/{id}` (includes `deployment_ref`)
-- `GET /bff/deployments/{id}` (includes `approval_decision_id`)
-- `GET /bff/rebalances/{id}`
-- `GET /bff/jobs`
-- `GET /bff/jobs/{id}`
-- `GET /bff/audit`
-- `GET /bff/audit/entities/{entity_type}/{entity_id}`
-- `GET /bff/channels`
-- `GET /bff/skills`
-- `GET /bff/tools`
-- `GET /bff/mcp/tools`
-- `GET /bff/runtimes/{id}` (runtime detail, degraded path verified)
-
-**Auth / session routes (BFF-CONSOL-013/014):**
-- `GET /bff/me` — cookie-session driven; controls write gate
-- `POST /bff/auth/refresh`
-- `POST /bff/logout`
-
-**SSE route (BFF-CONSOL-011):**
-- `GET /bff/events/stream?channel=approval` — bearer + cookie auth, cursor replay, `mock_generator_closed_in_live_mode: true`
-
-### 4.2 Known BFF query gaps (pending write path tasks)
-
-These routes are specified in `BFF_COMMAND_API_CONTRACT.md` but **write-path integration is not yet verified**:
-
-- `POST /bff/v1/commands` — command admission; depends on BFF-CONSOL-019 adapter
-- `GET /bff/v1/commands/{command_id}` — command status poll
-- `POST /bff/actions/*` → adapter forwarding to `/bff/v1/commands` — depends on BFF-CONSOL-019
-- Old receipt path `POST /bff/actions/*` — dual-write depends on BFF-CONSOL-021
-
-Copilot should note these as "verified spec; runtime smoke pending" in the ACCEPTANCE.md write-path section.
-
-### 4.3 Degraded path (verified)
-
-| Scenario | Expected response | Verified |
-|---|---|---|
-| Phantom ID on evolution/research/v5/agora/artifacts | Typed 404 `OBJECT_NOT_FOUND` | Yes (BFF-CONSOL-017) |
-| Phantom ID on incident/approval/rebalance | Typed 404 `OBJECT_NOT_FOUND` | Yes (BFF-CONSOL-018) |
-| Phantom job ID | Typed 404 `OBJECT_NOT_FOUND`; no `undefined` in body | Yes (BFF-CONSOL-018) |
-| Audit entity trail for phantom entity | 200 with empty events (list-only) | Yes (BFF-CONSOL-018) |
-| SSE stream missing `Last-Event-Id` | 409 with `X-Resync-Routes` header | Yes (BFF-CONSOL-011) |
-| Mock SSE generator in live mode | Closed (`mock_generator_closed_in_live_mode: true`) | Yes (BFF-CONSOL-011) |
-
----
-
-## 5. Verified Operator Journey
-
-Based on smoke tests BFF-CONSOL-016 through 018, this is the verified read-path operator journey in live mode:
-
-```
-Operator opens Pantheon UI (VITE_BFF_MODE=live)
-  │
-  ├─ Strategy list page: GET /bff/strategies → data_count ≥ 1 ✓
-  │    └─ Strategy detail: GET /bff/strategies/{id} → pack-a-001 resolves ✓
-  │
-  ├─ Persona list page: GET /bff/personas → data_count ≥ 1 ✓
-  │    └─ Persona detail: GET /bff/personas/{id} → pack-a-001 resolves ✓
-  │
-  ├─ Capital pool / deployment pages:
-  │    GET /bff/capital-pools, /bff/rebalances, /bff/deployments → non-empty ✓
-  │
-  ├─ Evolution programs page:
-  │    GET /bff/evolution-programs → evoprog-pack-b-001 ✓
-  │    GET /bff/evolution-programs/evoprog-pack-b-001 → detail resolves ✓
-  │
-  ├─ Research page:
-  │    GET /bff/research-experiments → exp-pack-b-001 ✓
-  │    GET /bff/research-experiments/exp-pack-b-001 → detail with analysis_ids ✓
-  │    GET /bff/research-analyses/analysis-pack-b-001 → detail resolves ✓
-  │
-  ├─ V5 Intervention page:
-  │    GET /bff/v5/interventions → intv-pack-b-001 ✓
-  │    GET /bff/v5/interventions/intv-pack-b-001 → governed remediation_skeleton ✓
-  │
-  ├─ Incidents panel:
-  │    GET /bff/incidents → inc-pack-c-001 ✓
-  │    GET /api/v1/operator/incident-response/inc-pack-c-001
-  │         → incident + runtime context + canHardRollback slot ✓
-  │
-  ├─ Approvals panel:
-  │    GET /bff/approvals → approval-pack-c-deploy ✓
-  │    GET /bff/approvals/approval-pack-c-deploy
-  │         → target_type=DeploymentPlan, deployment_ref ✓
-  │
-  ├─ Audit panel:
-  │    GET /bff/audit → audit-pack-c-immutable-001 ✓
-  │    GET /bff/audit/entities/Incident/inc-pack-c-001 → entity trail ✓
-  │    (audit detail drawer disabled; list-only policy enforced)
-  │
-  ├─ Jobs page:
-  │    GET /bff/jobs → job-pack-c-tool-import-001 ✓
-  │    GET /bff/jobs/job-pack-c-tool-import-001 → detail (no undefined) ✓
-  │
-  └─ SSE live feed:
-       GET /bff/events/stream?channel=approval
-         → events delivered; no mock fallback; cursor replay verified ✓
+```text
+Operator opens execute-plans with VITE_BFF_MODE=live and VITE_BFF_FALLBACK=strict
+  -> UI calls /bff/me to establish session and write eligibility
+  -> list pages call Pack A/B/C BFF list routes
+  -> operator opens details for strategy, persona, deployment, runtime,
+     evolution, research, v5 intervention, agora session, artifact,
+     incident, approval, rebalance, job, or audit trail
+  -> detail routes return 2xx fixture-backed data or typed OBJECT_NOT_FOUND
+  -> UI must render a live-backed detail, explicit not-found, or explicit
+     unavailable/degraded state; it must not silently substitute seed data
+  -> SSE approval feed opens, replays by cursor, and advertises resync routes
 ```
 
-**Write path (REAL_WRITES=false — pending BFF-CONSOL-019..021):**
+### Strict live write journey
 
+```text
+Operator attempts a governed write
+  -> frontend checks authenticated session and VITE_BFF_REAL_WRITES
+  -> in 022/023 strict cutover evidence, VITE_BFF_REAL_WRITES=false blocks fetch
+  -> when writes are enabled in a controlled environment:
+       preferred path: POST /bff/v1/commands
+       compatibility path: POST /bff/actions/{entityType}/{entityId}/{actionId}
+  -> BFF derives actor, validates role/policy/preconditions, records
+     idempotency/audit/foundation context, and returns CommandResponse
+  -> exact retry with same idempotency key returns the same receipt
+  -> changed retry with same idempotency key returns 409 IDEMPOTENCY_CONFLICT
+  -> missing confirm/approval evidence returns typed non-2xx errors
 ```
-Operator attempts write action (deploy / approve / kill-switch)
-  → Frontend checks VITE_BFF_REAL_WRITES
-  → VITE_BFF_REAL_WRITES=false → action blocked at frontend (current state)
-  → When BFF-CONSOL-019 ships: POST /bff/v1/commands admitted, command receipt issued
-  → When BFF-CONSOL-021 ships: dual-write confirmed; old receipt deprecated after soak
+
+### Cutover journey
+
+```text
+Staging preview owner deploys isolated Lovable preview env
+  -> preview uses VITE_BFF_MODE=live, VITE_BFF_FALLBACK=strict,
+     VITE_BFF_REAL_WRITES=false
+  -> remote smoke records Pack A/B/C reads, detail routes, SSE, and no fallback
+  -> production strict cutover waits for staging verification
+  -> final packet records prod smoke/regression evidence before Claude sign-off
 ```
 
----
+The current 022 evidence file still contains older "7 day" wording, while the
+active task next message says the fixed elapsed-day soak gate has been removed.
+Copilot should ask the 022 owner/reviewer to refresh that evidence before
+copying it into final acceptance.
 
-## 6. Frontend Handoff: ACCEPTANCE.md Template for Copilot
+## Frontend Handoff Notes
 
-Copilot should create `support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md` using this structure. Filled sections are marked with the evidence source; pending sections show what to wait for.
+Use the sidecar packets for frontend absorption details. The final acceptance
+packet should keep only the acceptance-critical facts and link to sidecars for
+longer implementation guidance.
+
+| Area | Handoff to carry forward |
+|---|---|
+| Pack A detail UI | Add/verify path builders and adapters for strategy related tabs, persona route policy/activity/evaluations, deployment runtime binding, runtime detail, and typed 404 UI. See 016 sidecar. |
+| Pack B detail UI | Use `/bff/research-experiments/{id}` and `/bff/research-analyses/{id}` for research proof; add agora session/messages and artifact inspiration adapters; render v5 `remediation_skeleton`. See 017 sidecar. |
+| Pack C detail UI | Incident, approval, rebalance, job, and audit list-only behavior are verified; ensure UI does not display `undefined` for missing jobs and disables audit detail drawers with list-only copy. See 018 evidence. |
+| Mock/seed state | `mock_only_dev` and `deferred` helpers must show explicit badge/empty state in live-like modes and must not return seed rows as live truth. See 015/025 packets and `docs/bff/seed-taxonomy.json`. |
+| Commands | Prefer `/bff/v1/commands`; preserve idempotency headers, trace headers, confirm token, approval/two-man evidence, and typed non-2xx error handling. See 019/020/021 packets. |
+| Legacy action deprecation | Use accepted 024 evidence. Final packet should include a sample legacy receipt with deprecation headers/body markers and note the 2026-06-15 sunset floor. |
+| Route manifests | Route changes must update backend/frontend snapshots or explicitly mark rows non-blocking. The current fail-hard baseline has 209 locked backend-only rows and 0 frontend-only rows. |
+
+## ACCEPTANCE.md Skeleton for Copilot
+
+Create `support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md` with this structure:
 
 ```markdown
 # BFF Consolidation Final Acceptance Packet
 
+Task: BFF-CONSOL-027
+Owner: Copilot
+Reviewer: Claude
 Generated: <date>
-Assembled by: Copilot
-Signed off by: Claude (reviewer)
-Phase: BFF Consolidation 2026-05-13
 
-## 1. Contract Diff Baseline
-Source: BFF-CONSOL-001/002/003 task archives
-[ paste backend manifest snapshot ]
-[ paste frontend manifest snapshot ]
-[ paste diff output or CI run link ]
+## 1. Scope and Source List
+- State that the packet aggregates BFF-CONSOL-001..026.
+- Link this sidecar as a support index, not as canonical truth.
+- List unresolved blockers for 022/023 if still open, and record 024 as done.
 
-## 2. Role Vocabulary and Seed Taxonomy
-Source: BFF-CONSOL-006, BFF-CONSOL-007 evidence
-[ paste taxonomy table ]
-[ paste role mapping table ]
+## 2. Contract Diff Baseline
+- Backend manifest: BFF-CONSOL-001.
+- Frontend manifest: BFF-CONSOL-002.
+- Fail-but-warn baseline: BFF-CONSOL-003.
+- Fail-hard cutover: BFF-CONSOL-026.
+- Include current route-diff metrics: 371 backend routes, 178 frontend routes,
+  209 locked backend-only failures, 0 frontend-only failures, 0 naming mismatches.
 
-## 3. Canonical Fixture Pack Summary
-Source: BFF-CONSOL-008 (Pack A), BFF-CONSOL-009 (Pack B), BFF-CONSOL-010 (Pack C)
-[ fixture entity counts per pack ]
-[ fixture file paths ]
+## 3. Role Vocabulary and Seed Taxonomy
+- Role vocabulary from BFF-CONSOL-006.
+- Seed taxonomy from BFF-CONSOL-007 plus 015/025 post-state.
+- Current taxonomy count: 62 live_required, 15 deferred, 4 mock_only_dev, 2 deprecated.
 
-## 4. Live Smoke — Read Path
-Source: BFF-CONSOL-016 evidence (Pack A families), BFF-CONSOL-017 evidence (Pack B families),
-        BFF-CONSOL-018 evidence (Pack C families)
-PENDING: BFF-CONSOL-016 evidence file (strategy/persona/deployment/runtime)
-[ paste transcript summaries from each smoke evidence JSON ]
-[ paste degraded path verification table ]
+## 4. Fixture Pack Summary
+- Pack A, B, C fixture file paths and task closeouts.
+- Record stable fixture IDs used in read smoke evidence.
 
-## 5. SSE Evidence
-Source: BFF-CONSOL-011 (stream replay), BFF-CONSOL-012 (backpressure)
-[ paste assertions block from BFF-CONSOL-011-sse-replay-smoke.json ]
-[ paste backpressure evidence ]
+## 5. Live Smoke - Read Path
+- Pack A: cite BFF-CONSOL-016 evidence.
+- Pack B: cite BFF-CONSOL-017 evidence.
+- Pack C: cite BFF-CONSOL-018 evidence.
+- Include typed 404/list-only degraded-path table.
 
-## 6. Auth Gates
-Source: BFF-CONSOL-013 (write gate), BFF-CONSOL-014 (CORS + JWKS)
-[ paste cookie-session write gate verification ]
-[ paste CORS allowlist and JWKS verification ]
+## 6. SSE Evidence
+- Cite BFF-CONSOL-011 and BFF-CONSOL-012.
+- Include bearer/cookie open, cursor replay, 409 resync, bounded buffer,
+  disconnect reclamation, and no mock generator in live mode.
 
-## 7. Command Envelope Spec (Reference)
-Source: BFF-CONSOL-004 (BFF_COMMAND_API_CONTRACT.md §8)
-[ paste command envelope fields: actor, idempotency key, trace_id, policy decision, audit action ]
+## 7. Auth and Session Gates
+- Cite BFF-CONSOL-013 and BFF-CONSOL-014.
+- Include /bff/me write gate, CORS allowlist, and JWKS strict verification.
 
-## 8. Live Smoke — Write Path
-PENDING: BFF-CONSOL-019 (command envelope adapter) — gated on EP5 closeout
-PENDING: BFF-CONSOL-020 (runAction.ts migration)
-[ placeholder: paste command receipt sample when BFF-CONSOL-021 closes ]
+## 8. Live Smoke - Write Path
+- Cite BFF-CONSOL-019, 020, 021.
+- Record direct /bff/v1/commands and legacy /bff/actions/* compatibility.
+- Include idempotency replay/conflict and typed precondition errors.
+- Do not claim live capital side effects.
 
 ## 9. Command Receipt Sample
-PENDING: BFF-CONSOL-021 (dual-write + idempotency)
-[ placeholder: paste receipt JSON sample ]
+- Paste compact samples from BFF-CONSOL-021-dual-write-soak.json.
+- Add legacy deprecation headers/body markers from the BFF-CONSOL-024 archive
+  and commit `5225c289`.
 
-## 10. Seed.ts Post-State
-PENDING: BFF-CONSOL-015 (mock-only badge, live mode enforcement)
-PENDING: BFF-CONSOL-025 (seed-only surface elimination)
-[ placeholder: paste diff of seed.ts — mock_only_dev calls removed in live mode ]
+## 10. Staging Strict Cutover
+- Cite BFF-CONSOL-022 evidence.
+- If still blocked, mark BLOCKED with missing preview URL, credentials, and reachability.
+- Do not preserve stale fixed-day soak wording if the owner has removed that gate.
 
-## 11. Staging Cutover Log + 7-Day Soak
-PENDING: BFF-CONSOL-022 (Lovable staging strict cutover ≥7-day soak)
-[ placeholder: paste soak record from support/evidence/BFF-CONSOL-022-staging-strict-soak.md ]
+## 11. Prod Strict Cutover
+- Cite BFF-CONSOL-023 evidence when available.
+- If still todo, mark PENDING and explain dependency on 022.
 
-## 12. Prod Cutover Log + 7-Day Soak
-PENDING: BFF-CONSOL-023 (Lovable prod strict cutover ≥7-day soak; gated on 022)
-[ placeholder: paste soak record from support/evidence/BFF-CONSOL-023-prod-strict-soak.md ]
+## 12. Seed.ts Post-State
+- Cite BFF-CONSOL-015 and 025.
+- Record strict live seed-gating behavior and current taxonomy counts.
 
-## 13. Old Receipt Deprecation
-PENDING: BFF-CONSOL-024 (deprecated flag on old action receipt; after dual-write soak)
-[ placeholder: paste deprecated flag evidence ]
+## 13. CI Fail-Hard Status
+- Cite BFF-CONSOL-026.
+- Record fail-hard baseline metrics and workflow command.
 
-## 14. CI Fail-Hard Mode
-PENDING: BFF-CONSOL-026 (CI route diff switched from fail-but-warn to fail-hard)
-[ placeholder: paste CI workflow diff and a passing PR run link ]
+## 14. Open Follow-Ups and Non-Gates
+- List route parity backlog, legacy audit/replay tooling migration, and any
+  UI-visible deprecation banner follow-up if the parent keeps it non-gating.
+- Separate blockers from non-blocking regression follow-up.
 
 ## 15. Final Sign-Off
-Claude sign-off required after all sections above are filled.
-Scope: verify acceptance criteria against this packet and record approval in ai-status.json.
+- Claude review result and approval timestamp.
 ```
 
----
+## Reviewer Checklist for Claude
 
-## 7. Key Constraints for Copilot
+- Confirm the substantive task artifact is limited to
+  `support/sidecars/BFF-CONSOL-027/BFF-CONSOL-027-SIDECAR-BFF-HANDOFF.md`;
+  L0 state files may change only through `scripts/ai-status.sh` handoff/status
+  updates.
+- Confirm no L1 canonical truth, BFF runtime, contract truth, route snapshot,
+  registry, governance, or execute-plans implementation file changed here.
+- Confirm pending states are accurate: 022 blocked, 023 todo, and 024 archived
+  done at 2026-05-14T07:23:05Z.
+- Confirm final acceptance does not claim fixed-day soak gates after the sprint
+  state removed them.
+- Confirm 024 deprecation content is treated as accepted evidence, not
+  provisional review material.
+- Confirm route diff wording says "fail-hard baseline locked", not "route parity
+  clean".
 
-1. **Do not pre-fill pending sections with speculative content.** Leave explicit `PENDING: <task>` markers until the upstream task closes.
-2. **Soak gates are hard.** BFF-CONSOL-022 and BFF-CONSOL-023 each require ≥7 calendar days. ACCEPTANCE.md cannot close before these windows expire.
-3. **EP5 gate.** BFF-CONSOL-019 cannot be merged to runtime until EP5 paper-canary closeout signal is recorded. Do not bypass this gate in the write-path smoke section.
-4. **Dual-write soak.** BFF-CONSOL-024 (receipt deprecation) requires 1 week of BFF-CONSOL-021 dual-write soak before the old receipt is deprecated.
-5. **Claude's final sign-off is required.** After Copilot assembles all sections, handoff to Claude for governance review and approval before marking BFF-CONSOL-027 `done`.
+## Sidecar Verification
 
----
+Focused checks used for this refresh:
 
-## 8. Handoff Notes
+```bash
+AI_NAME=Codex2 ./scripts/ai-status.sh show BFF-CONSOL-027
+jq '{task_id,archived_at,terminal_status,next:.task.next,commit:.task.delivery.commit}' ai-task-archive/tasks/BFF-CONSOL-024.json
+jq '{source,total:(.helpers|length),categories:(.helpers|group_by(.category)|map({category:.[0].category,count:length}))}' docs/bff/seed-taxonomy.json
+python3 scripts/bff_route_diff.py --dump | jq '{summary,frontend_missing_backend_count:(.failures.frontend_missing_backend|length),naming_mismatches_count:(.failures.naming_mismatches|length)}'
+jq '{task_id,summary,verification_commands}' support/evidence/BFF-CONSOL-016-detail-smoke-a.json support/evidence/BFF-CONSOL-017-detail-smoke-b.json support/evidence/BFF-CONSOL-018-detail-smoke-c.json
+jq '{task_id,summary,assertions}' support/evidence/BFF-CONSOL-011-sse-replay-smoke.json support/evidence/BFF-CONSOL-012-sse-backpressure.json
+jq '{task_id,status,receipt_samples,regression_checks,regression_follow_up}' support/evidence/BFF-CONSOL-021-dual-write-soak.json
+jq '.tasks[] | select(.id=="BFF-CONSOL-022" or .id=="BFF-CONSOL-023" or .id=="BFF-CONSOL-027" or .id=="BFF-CONSOL-027-SIDECAR-BFF-HANDOFF") | {id,status,owner,reviewer,waiting_for,next,last_update}' ai-status.json
+git diff --check -- support/sidecars/BFF-CONSOL-027/BFF-CONSOL-027-SIDECAR-BFF-HANDOFF.md
+```
 
-- This packet is ready for Copilot to begin assembling `support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md`.
-- Copilot should bookmark this file as the evidence index and update ACCEPTANCE.md incrementally as upstream tasks close.
-- No canonical truth was modified by this sidecar.
-- All evidence references are derived from completed task archives and evidence files in `support/evidence/`.
-- The parent owner (Copilot) decides whether to absorb these materials verbatim or adapt them.
+Observed summary:
 
-## 9. Closeout Record
+- Parent `BFF-CONSOL-027` is active `todo`, owner Copilot, reviewer Claude, and
+  depends on `BFF-CONSOL-001` through `BFF-CONSOL-026`.
+- `BFF-CONSOL-024` is archived `done` at 2026-05-14T07:23:05Z with Pantheon
+  commit `5225c289`; its deprecation evidence is accepted, not provisional.
+- Current taxonomy has 83 helpers: 62 `live_required`, 15 `deferred`,
+  4 `mock_only_dev`, and 2 `deprecated`.
+- Route diff fail-hard baseline reports 371 backend routes, 178 frontend routes,
+  209 locked backend-only failures, 0 frontend-only failures, and 0 naming
+  mismatches.
+- Read path, SSE, and command receipt evidence JSON files are present and
+  parseable.
+- No canonical truth or runtime implementation was modified by this sidecar.
 
-| Field | Value |
-|---|---|
-| Review approved by | Codex (2026-05-13T11:15:12Z) |
-| Approval note | Support-only scope verified; no canonical/runtime changes; acceptance handoff content sufficient |
-| Closeout performed by | Claude |
-| Task-scoped artifact commit | `a9ad7dad` (initial creation) |
-| Closeout commit | see git log |
-| Canonical files modified | none |
-| Soak gates remaining in parent task | BFF-CONSOL-022 (≥7d staging), BFF-CONSOL-023 (≥7d prod) |
+## Owner Closeout Note
+
+Codex2 finalization scope is limited to this support artifact and generated L0
+status/archive updates from `scripts/ai-status.sh done`. The reviewer approval
+from Claude accepted this packet as support-only, accurate for current
+022/023/024 states, and free of canonical truth or runtime implementation
+changes.
