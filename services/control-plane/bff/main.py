@@ -13,7 +13,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
-from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request
+from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
@@ -492,6 +492,13 @@ def _bff_error(
 _FOUNDATION_COMMAND_ROUTE = "POST /api/v1/operator/commands"
 _FINAL_COMMAND_ROUTE = "POST /bff/v1/commands"
 _ACTIONS_TO_COMMANDS_SOURCE_ROUTE = "POST /bff/actions/{entityType}/{entityId}/{actionId}"
+_ACTIONS_DEPRECATION_SINCE = "2026-05-14"
+_ACTIONS_SUNSET_DATE = "2026-06-15"
+_ACTIONS_SUNSET_HTTP_DATE = "Mon, 15 Jun 2026 00:00:00 GMT"
+_ACTIONS_DEPRECATION_MESSAGE = (
+    "/bff/actions/* is deprecated; submit the equivalent command envelope to "
+    "/bff/v1/commands."
+)
 
 
 def _foundation_environment_scope() -> EnvironmentScope:
@@ -7384,6 +7391,7 @@ def _project_final_command_response(
     status: CommandStatus,
     staleness_warning: Optional[StalenessWarning],
     meta: Optional[Dict[str, Any]] = None,
+    deprecation: Optional[Dict[str, Any]] = None,
 ) -> CommandResponse[Dict[str, Any]]:
     final_status = _action_command_status_from_command_status(status)
     legacy_payload = _project_command_submission_response(
@@ -7396,7 +7404,38 @@ def _project_final_command_response(
     legacy_payload["status"] = final_status.value
     if isinstance(legacy_payload.get("receipt"), dict):
         legacy_payload["receipt"]["status"] = final_status.value
-    return CommandResponse[Dict[str, Any]](status=final_status, data=legacy_payload, meta=meta)
+    final_meta = dict(meta or {})
+    if deprecation:
+        legacy_payload["deprecated"] = True
+        legacy_payload["deprecation"] = dict(deprecation)
+        if isinstance(legacy_payload.get("receipt"), dict):
+            legacy_payload["receipt"]["deprecated"] = True
+            legacy_payload["receipt"]["deprecation"] = dict(deprecation)
+        final_meta["deprecated"] = True
+        final_meta["deprecation"] = dict(deprecation)
+    return CommandResponse[Dict[str, Any]](
+        status=final_status,
+        data=legacy_payload,
+        meta=final_meta or None,
+    )
+
+
+def _legacy_action_deprecation_notice() -> Dict[str, Any]:
+    return {
+        "route": "/bff/actions/{entityType}/{entityId}/{actionId}",
+        "replacement": "/bff/v1/commands",
+        "deprecated_since": _ACTIONS_DEPRECATION_SINCE,
+        "sunset": _ACTIONS_SUNSET_DATE,
+        "message": _ACTIONS_DEPRECATION_MESSAGE,
+    }
+
+
+def _apply_legacy_action_deprecation_headers(response: Response) -> None:
+    response.headers["Deprecation"] = "true"
+    response.headers["Sunset"] = _ACTIONS_SUNSET_HTTP_DATE
+    response.headers["Link"] = '</bff/v1/commands>; rel="successor-version"'
+    response.headers["Warning"] = f'299 - "{_ACTIONS_DEPRECATION_MESSAGE}"'
+    response.headers["X-Pantheon-Deprecated-Route"] = "/bff/actions/*"
 
 
 # --------------------------------------------------------------------------- #
@@ -13827,6 +13866,7 @@ def _submit_final_command_admission(
     extra_precondition: Optional[Callable[[OperatorIdentity, OperatorCommand], None]] = None,
     enqueue: bool = True,
     include_durable_meta: bool = False,
+    response_deprecation: Optional[Dict[str, Any]] = None,
 ) -> CommandResponse[Dict[str, Any]]:
     """Submit a final-contract command through the shared BFF command admission path."""
     identity = _extract_identity(authorization, mfa_token=x_mfa_token)
@@ -13888,6 +13928,7 @@ def _submit_final_command_admission(
             meta=_command_response_durable_meta(resolved_key, replayed=True)
             if include_durable_meta
             else None,
+            deprecation=response_deprecation,
         )
 
     active = command_store.get_active_commands_for_target(cmd.target.type.value, cmd.target.id)
@@ -13963,6 +14004,7 @@ def _submit_final_command_admission(
         meta=_command_response_durable_meta(resolved_key, replayed=False)
         if include_durable_meta
         else None,
+        deprecation=response_deprecation,
     )
 
 
@@ -22595,6 +22637,7 @@ def _sem_command_response(
 @app.post("/bff/actions/{entityType}/{entityId}/{actionId}", status_code=202)
 async def sem_canonical_action_command(
     background_tasks: BackgroundTasks,
+    response: Response,
     entityType: str,
     entityId: str,
     actionId: str,
@@ -22608,6 +22651,8 @@ async def sem_canonical_action_command(
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
+    deprecation = _legacy_action_deprecation_notice()
+    _apply_legacy_action_deprecation_headers(response)
     payload = dict(payload or {})
     _reject_body_idempotency_key(payload)
     command_payload = _action_adapter_command_payload(
@@ -22640,6 +22685,7 @@ async def sem_canonical_action_command(
         extra_precondition=lambda identity, _cmd: _require_operator_role(identity),
         enqueue=False,
         include_durable_meta=True,
+        response_deprecation=deprecation,
     )
 
 

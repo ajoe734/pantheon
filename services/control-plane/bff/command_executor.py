@@ -622,6 +622,7 @@ def _execute_bff_action_adapter(
     Domain-specific authorities can later consume the persisted command record.
     """
     del auth_token, mfa_token
+    source_route = params.get("frontend_source_route") or params.get("adapter_source_route")
     return {
         "command_id": command_id,
         "dispatch_path": "bff_action_adapter",
@@ -630,6 +631,11 @@ def _execute_bff_action_adapter(
         "entity_type": params.get("entity_type"),
         "entity_id": params.get("entity_id"),
         "audit_event": params.get("audit_event"),
+        "source_route": source_route,
+        "deprecated_action_receipt": (
+            params.get("adapter_source_route")
+            == "POST /bff/actions/{entityType}/{entityId}/{actionId}"
+        ),
         "live_capital_side_effects": False,
     }
 

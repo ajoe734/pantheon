@@ -43,9 +43,15 @@ def test_bff_actions_adapter_records_final_command_foundation_context() -> None:
         )
 
         assert response.status_code == 202, response.text
+        assert response.headers["Deprecation"] == "true"
+        assert response.headers["Sunset"] == "Mon, 15 Jun 2026 00:00:00 GMT"
+        assert response.headers["X-Pantheon-Deprecated-Route"] == "/bff/actions/*"
         body = response.json()
         assert body["status"] == "accepted"
         assert body["data"]["command"] == "StrategyAction"
+        assert body["data"]["deprecated"] is True
+        assert body["data"]["receipt"]["deprecated"] is True
+        assert body["meta"]["deprecation"]["replacement"] == "/bff/v1/commands"
 
         records = bff_main.command_store._get_all_commands()
         assert len(records) == 1

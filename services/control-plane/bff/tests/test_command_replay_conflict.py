@@ -71,9 +71,19 @@ def test_legacy_action_dual_writes_action_and_command_receipts() -> None:
         )
 
         assert response.status_code == 202, response.text
+        assert response.headers["Deprecation"] == "true"
+        assert response.headers["Sunset"] == "Mon, 15 Jun 2026 00:00:00 GMT"
+        assert response.headers["X-Pantheon-Deprecated-Route"] == "/bff/actions/*"
+        assert "/bff/v1/commands" in response.headers["Link"]
         body = response.json()
         action_receipt_id = _receipt_id(body)
         assert body["data"]["command"] == "StrategyAction"
+        assert body["data"]["deprecated"] is True
+        assert body["data"]["deprecation"]["deprecated_since"] == "2026-05-14"
+        assert body["data"]["deprecation"]["replacement"] == "/bff/v1/commands"
+        assert body["data"]["receipt"]["deprecated"] is True
+        assert body["meta"]["deprecated"] is True
+        assert body["meta"]["deprecation"]["sunset"] == "2026-06-15"
         assert body["meta"]["durable"] is True
         assert body["meta"]["idempotency"]["idempotencyKey"] == "bff-consol-021-action-dual"
         assert body["meta"]["idempotency"]["replayed"] is False
@@ -108,7 +118,11 @@ def test_legacy_action_idempotency_replay_returns_same_receipt() -> None:
 
         assert first.status_code == 202, first.text
         assert second.status_code == 202, second.text
+        assert second.headers["Deprecation"] == "true"
         assert _receipt_id(second.json()) == _receipt_id(first.json())
+        assert second.json()["data"]["deprecated"] is True
+        assert second.json()["data"]["receipt"]["deprecated"] is True
+        assert second.json()["meta"]["deprecation"]["replacement"] == "/bff/v1/commands"
         assert second.json()["meta"]["idempotency"]["replayed"] is True
         assert len(bff_main.command_store._get_all_commands()) == 1
 
@@ -146,8 +160,11 @@ def test_final_command_idempotency_replay_returns_same_receipt() -> None:
         second = client.post("/bff/v1/commands", headers=headers, json=payload)
 
         assert first.status_code == 202, first.text
+        assert "Deprecation" not in first.headers
         assert second.status_code == 202, second.text
+        assert "Deprecation" not in second.headers
         assert _receipt_id(second.json()) == _receipt_id(first.json())
+        assert "deprecated" not in first.json()["data"]
         records = bff_main.command_store._get_all_commands()
         assert len(records) == 1
         assert records[0]["type"] == "PauseExecution"
