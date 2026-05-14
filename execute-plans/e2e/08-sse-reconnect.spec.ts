@@ -31,6 +31,23 @@ type OpenSseResponse = {
   res: ServerResponse;
 };
 
+type SseTestState = {
+  connectionUrls: string[];
+  events: Array<{ id: string; lastEventId: string; type: string; data: Record<string, unknown> }>;
+  errors: number;
+  lastEventId: string;
+  opens: number;
+  resyncFetches: Array<{ route: string; status: number }>;
+};
+
+type SseTestWindow = Window & {
+  __pantheonSseTest: {
+    connect: () => void;
+    forceCloseEventSource: () => Promise<{ dropped: number }>;
+    state: SseTestState;
+  };
+};
+
 class SseHarness {
   private server: Server;
   private openResponses: OpenSseResponse[] = [];
@@ -250,11 +267,11 @@ async function installBrowserSseClient(
         }
       }
 
-      (window as any).__pantheonSseTest = {
+      (window as unknown as SseTestWindow).__pantheonSseTest = {
         connect,
         forceCloseEventSource: () =>
           fetch("/__test__/drop-sse", { credentials: "include" }).then((response) =>
-            response.json(),
+            response.json() as Promise<{ dropped: number }>,
           ),
         state,
       };
@@ -268,8 +285,8 @@ async function installBrowserSseClient(
   );
 }
 
-async function getSseState(page: Page): Promise<any> {
-  return page.evaluate(() => (window as any).__pantheonSseTest.state);
+async function getSseState(page: Page): Promise<SseTestState> {
+  return page.evaluate(() => (window as unknown as SseTestWindow).__pantheonSseTest.state);
 }
 
 async function mockResyncRoute(
@@ -317,7 +334,7 @@ test.describe("F14 SSE reconnect and replay", () => {
       .toBe("evt-first");
 
     const dropResult = await page.evaluate(() =>
-      (window as any).__pantheonSseTest.forceCloseEventSource(),
+      (window as unknown as SseTestWindow).__pantheonSseTest.forceCloseEventSource(),
     );
     expect(dropResult.dropped).toBeGreaterThan(0);
 

@@ -104,6 +104,21 @@ type BrowserResponse = {
   status: number;
 };
 
+type F13TestState = {
+  events: Array<{ channel: string; id: string; payload: Record<string, unknown>; type: string }>;
+  opens: Record<string, number>;
+};
+
+type F13Window = Window & {
+  __pantheonF13?: {
+    close: () => void;
+    getJson: (path: string) => Promise<BrowserResponse>;
+    patchJournal: (body: Record<string, unknown>) => Promise<BrowserResponse>;
+    postJson: (path: string, body: Record<string, unknown>) => Promise<BrowserResponse>;
+    state: F13TestState;
+  };
+};
+
 class AgoraHarness {
   private readonly server: Server;
   private readonly openSseResponses = new Map<SseChannel, ServerResponse[]>();
@@ -643,7 +658,7 @@ async function installAgoraClient(page: Page, baseUrl: string): Promise<void> {
       };
     }
 
-    (window as any).__pantheonF13 = {
+    (window as unknown as F13Window).__pantheonF13 = {
       close: () => sources.forEach((source) => source.close()),
       getJson,
       patchJournal,
@@ -658,7 +673,7 @@ async function waitForSseOpen(page: Page, channel: SseChannel): Promise<void> {
     .poll(
       () =>
         page.evaluate(
-          (name) => (window as any).__pantheonF13.state.opens[name] as number,
+          (name) => (window as unknown as F13Window).__pantheonF13!.state.opens[name],
           channel,
         ),
       { message: `${channel} SSE stream should open`, timeout: 5_000 },
@@ -669,7 +684,7 @@ async function waitForSseOpen(page: Page, channel: SseChannel): Promise<void> {
 async function eventsByType(page: Page, type: string): Promise<JsonRecord[]> {
   return page.evaluate(
     (eventType) =>
-      ((window as any).__pantheonF13.state.events as JsonRecord[]).filter(
+      (window as unknown as F13Window).__pantheonF13!.state.events.filter(
         (event) => event.type === eventType,
       ),
     type,
@@ -678,21 +693,21 @@ async function eventsByType(page: Page, type: string): Promise<JsonRecord[]> {
 
 async function postJson(page: Page, path: string, body: JsonRecord): Promise<BrowserResponse> {
   return page.evaluate(
-    ({ requestPath, payload }) => (window as any).__pantheonF13.postJson(requestPath, payload),
+    ({ requestPath, payload }) => (window as unknown as F13Window).__pantheonF13!.postJson(requestPath, payload),
     { requestPath: path, payload: body },
   );
 }
 
 async function getJson(page: Page, path: string): Promise<BrowserResponse> {
   return page.evaluate(
-    (requestPath) => (window as any).__pantheonF13.getJson(requestPath),
+    (requestPath) => (window as unknown as F13Window).__pantheonF13!.getJson(requestPath),
     path,
   );
 }
 
 async function patchJournal(page: Page, body: JsonRecord): Promise<BrowserResponse> {
   return page.evaluate(
-    (payload) => (window as any).__pantheonF13.patchJournal(payload),
+    (payload) => (window as unknown as F13Window).__pantheonF13!.patchJournal(payload),
     body,
   );
 }
@@ -705,7 +720,7 @@ test.beforeEach(async () => {
 });
 
 test.afterEach(async ({ page }) => {
-  await page.evaluate(() => (window as any).__pantheonF13?.close?.()).catch(() => undefined);
+  await page.evaluate(() => (window as unknown as F13Window).__pantheonF13?.close?.()).catch(() => undefined);
   await harness.stop();
 });
 

@@ -157,6 +157,15 @@ type BrowserState = {
   selected: string[];
 };
 
+type F12Window = Window & {
+  __f12Approvals: {
+    load: () => Promise<void>;
+    decide: (id: string, decision: Decision) => Promise<BrowserResponse>;
+    twoManSign: (id: string, signerId: string, roleFamily: string) => Promise<BrowserResponse>;
+    state: BrowserState & { rows: unknown[] };
+  };
+};
+
 class ApprovalHarness {
   private readonly server: Server;
   private commandSeq = 0;
@@ -878,7 +887,7 @@ async function installApprovalQueue(page: Page, baseUrl: string): Promise<void> 
     },
     { authHeader: AUTH_HEADER, baseUrl },
   );
-  await page.evaluate(() => (window as any).__f12Approvals.load());
+  await page.evaluate(() => (window as unknown as F12Window).__f12Approvals.load());
 }
 
 async function decideApproval(
@@ -888,7 +897,7 @@ async function decideApproval(
 ): Promise<BrowserResponse> {
   return page.evaluate(
     ({ approvalId, nextDecision }) =>
-      (window as any).__f12Approvals.decide(approvalId, nextDecision),
+      (window as unknown as F12Window).__f12Approvals.decide(approvalId, nextDecision),
     { approvalId: id, nextDecision: decision },
   );
 }
@@ -901,14 +910,14 @@ async function twoManSign(
 ): Promise<BrowserResponse> {
   return page.evaluate(
     ({ approvalId, nextRoleFamily, nextSignerId }) =>
-      (window as any).__f12Approvals.twoManSign(approvalId, nextSignerId, nextRoleFamily),
+      (window as unknown as F12Window).__f12Approvals.twoManSign(approvalId, nextSignerId, nextRoleFamily),
     { approvalId: id, nextRoleFamily: roleFamily, nextSignerId: signerId },
   );
 }
 
 async function browserState(page: Page): Promise<BrowserState> {
   return page.evaluate(() => {
-    const state = (window as any).__f12Approvals.state;
+    const state = (window as unknown as F12Window).__f12Approvals.state;
     return {
       bulkResult: state.bulkResult,
       drawerOpen: state.drawerOpen,

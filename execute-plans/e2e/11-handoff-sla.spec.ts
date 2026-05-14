@@ -72,6 +72,13 @@ type BrowserResponse = {
   status: number;
 };
 
+type HandoffTestGlobals = Window & {
+  __handoffEvents: Array<Record<string, unknown>>;
+  __handoffEventSource: EventSource;
+  __handoff: HandoffDto;
+  __renderHandoff: () => Promise<void>;
+};
+
 class HandoffSlaHarness {
   private readonly server: Server;
   private readonly openSseResponses: ServerResponse[] = [];
@@ -423,8 +430,8 @@ async function installHandoffEventRecorder(page: Page, baseUrl: string): Promise
     source.addEventListener("handoff.reopened", (event) => {
       events.push(JSON.parse((event as MessageEvent<string>).data) as Record<string, unknown>);
     });
-    (window as any).__handoffEvents = events;
-    (window as any).__handoffEventSource = source;
+    (window as unknown as HandoffTestGlobals).__handoffEvents = events;
+    (window as unknown as HandoffTestGlobals).__handoffEventSource = source;
   }, baseUrl);
 }
 
@@ -455,10 +462,10 @@ async function renderHandoffSegments(page: Page, baseUrl: string): Promise<void>
         "</section>",
         "</main>",
       ].join("");
-      (window as any).__handoff = handoff;
+      (window as unknown as HandoffTestGlobals).__handoff = handoff;
     }
     await render();
-    (window as any).__renderHandoff = render;
+    (window as unknown as HandoffTestGlobals).__renderHandoff = render;
   }, { pageBaseUrl: baseUrl, handoffId: HANDOFF_ID });
 }
 
@@ -505,14 +512,14 @@ test.describe("F11 handoff reopen SLA", () => {
       .poll(
         () =>
           page.evaluate(
-            () => ((window as any).__handoffEvents as Array<Record<string, unknown>>).length,
+            () => (window as unknown as HandoffTestGlobals).__handoffEvents.length,
           ),
         { message: "handoff.reopened SSE event should be published", timeout: 5_000 },
       )
       .toBeGreaterThan(0);
 
     const events = await page.evaluate(
-      () => (window as any).__handoffEvents as Array<Record<string, unknown>>,
+      () => (window as unknown as HandoffTestGlobals).__handoffEvents,
     );
     expect(events[0]).toMatchObject({
       channel: "handoff",
@@ -577,7 +584,7 @@ test.describe("F11 handoff reopen SLA", () => {
       visibleToOperator: true,
     });
 
-    await page.evaluate(() => (window as any).__renderHandoff());
+    await page.evaluate(() => (window as unknown as HandoffTestGlobals).__renderHandoff());
 
     await expect(page.getByRole("heading", { name: "SlaSegment" })).toBeVisible();
     await expect(page.getByText("sla-segment-reset-f11-001")).toBeVisible();

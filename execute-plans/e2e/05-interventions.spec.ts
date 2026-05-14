@@ -74,6 +74,18 @@ type BrowserActionResult = {
   status: number;
 };
 
+type B05Window = Window & {
+  __pantheonB05?: {
+    close: () => void;
+    postAction: (action: string, body?: Record<string, unknown>) => Promise<BrowserActionResult>;
+    state: {
+      events: Array<{ channel: string; id: string; payload: Record<string, unknown>; type: string }>;
+      opens: number;
+      errors: number;
+    };
+  };
+};
+
 class InterventionHarness {
   private readonly server: Server;
   private readonly openSseResponses: ServerResponse[] = [];
@@ -376,7 +388,7 @@ async function installBrowserClient(page: Page, baseUrl: string): Promise<void> 
         return { status: response.status, body: json };
       }
 
-      (window as any).__pantheonB05 = {
+      (window as unknown as B05Window).__pantheonB05 = {
         close: () => source.close(),
         postAction,
         state,
@@ -393,13 +405,13 @@ async function postAction(
 ): Promise<BrowserActionResult> {
   return page.evaluate(
     ({ actionName, payload }) =>
-      (window as any).__pantheonB05.postAction(actionName, payload),
+      (window as unknown as B05Window).__pantheonB05!.postAction(actionName, payload),
     { actionName: action, payload: body },
   );
 }
 
 async function sseEvents(page: Page): Promise<Array<{ type: string; payload: Record<string, unknown> }>> {
-  return page.evaluate(() => (window as any).__pantheonB05.state.events);
+  return page.evaluate(() => (window as unknown as B05Window).__pantheonB05!.state.events);
 }
 
 function commandResponseAt(value: unknown, label: string): CommandResponse {
@@ -426,7 +438,7 @@ test.describe("F06 HIQ interventions", () => {
   });
 
   test.afterEach(async ({ page }) => {
-    await page.evaluate(() => (window as any).__pantheonB05?.close?.()).catch(() => undefined);
+    await page.evaluate(() => (window as unknown as B05Window).__pantheonB05?.close?.()).catch(() => undefined);
     await harness.stop();
   });
 
@@ -470,7 +482,7 @@ test.describe("F06 HIQ interventions", () => {
 
     await expect
       .poll(
-        () => page.evaluate(() => (window as any).__pantheonB05.state.opens),
+        () => page.evaluate(() => (window as unknown as B05Window).__pantheonB05!.state.opens),
         { message: "intervention SSE stream should open before deciding" },
       )
       .toBeGreaterThan(0);
