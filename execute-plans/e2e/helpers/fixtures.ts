@@ -51,6 +51,20 @@ export const SEEDED_RESOURCE_IDS = {
 export type SeededResource = keyof typeof SEEDED_RESOURCE_IDS;
 export type SeededIdKey = keyof typeof SEEDED_IDS;
 
+export const CREATE_INTENT_RESOURCE_KEYS = [
+  "strategies",
+  "personas",
+  "capital-pools",
+  "ranking-formulas",
+  "rebalances",
+  "deployments",
+  "evolution-programs",
+  "research-experiments",
+  "artifacts",
+] as const;
+
+export type CreateIntentResource = (typeof CREATE_INTENT_RESOURCE_KEYS)[number];
+
 export function seededId(key: SeededIdKey): string {
   return SEEDED_IDS[key];
 }
