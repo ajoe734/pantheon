@@ -1,4 +1,4 @@
-import { DATA_FILES } from "./js/dashboard-config.js?v=20260513-fix7";
+import { DATA_FILES } from "./js/dashboard-config.js?v=20260513-fix8";
 import {
   deriveAgentState,
   fetchJson,
@@ -12,7 +12,7 @@ import {
   requestDashboardRefresh,
   statusLabel,
   titleCase,
-} from "./js/dashboard-core.js?v=20260513-fix7";
+} from "./js/dashboard-core.js?v=20260513-fix8";
 import {
   applyModeVisibility,
   renderAlertStrip,
@@ -47,7 +47,7 @@ import {
   renderTaskBoard,
   renderTruthMismatches,
   renderWorkload,
-} from "./js/dashboard-renderers.js?v=20260513-fix7";
+} from "./js/dashboard-renderers.js?v=20260513-fix8";
 
 let renderInFlight = false;
 

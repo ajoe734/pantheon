@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-14 14:55:39
+Last updated: 2026-05-14 15:23:05
 
 ## Objective
 
@@ -37,10 +37,10 @@ Last updated: 2026-05-14 14:55:39
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: No active assignment
+- `Claude`: execution, control-plane, governance-review; next: BFF-CONSOL-024 handoff packet ready at support/sidecars/BFF-CONSOL-024/BFF-CONSOL-024-SIDECAR-BFF-HANDOFF.md. Covers deprecation headers + body markers, frontend runAction.ts default-path migration, command_executor audit source tracking, operator journey post-deprecation, BFF query gap analysis (3 open gaps flagged), and BFF-CONSOL-027 acceptance checklist. Three open questions for parent owner noted in §7.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 - `Codex`: integration, status-system, schema, acceptance; next: No active assignment
-- `Codex2`: integration, status-system, schema, acceptance; next: Supervisor auto-started BFF-CONSOL-024 after successful dispatch.
+- `Codex2`: integration, status-system, schema, acceptance; next: Support-only BFF handoff packet refreshed for BFF-CONSOL-027. Artifact updated at support/sidecars/BFF-CONSOL-027/BFF-CONSOL-027-SIDECAR-BFF-HANDOFF.md; it corrects stale pending/7-day gate notes, maps evidence for 001..026, and flags 022 blocked, 023 todo, 024 review as current acceptance blockers. Verification: git diff --check on artifact passed; referenced evidence JSON files parse.
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: Assignment created
 - `Claude2`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Assignment created
@@ -53,8 +53,9 @@ Last updated: 2026-05-14 14:55:39
 |---|---|---|---|---|---|---|
 | `BFF-CONSOL-022` | BFF Consolidation 2026-05-13 | Lovable staging strict cutover (isolated preview branch) | Codex2 | blocked | `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-015` | 開 Lovable preview branch 設 VITE_BFF_MODE=live + VITE_BFF_FALLBACK=strict + VITE_BFF_REAL_WRITES=false。現有 staging 維持 auto fallback 不切。用 strict mode read/SSE/detail journey regression evidence 決定是否推進，不再用固定天數 gate。 |
 | `BFF-CONSOL-023` | BFF Consolidation 2026-05-13 | Lovable prod strict cutover (staging verification gate) | Gemini2 | todo | `BFF-CONSOL-022` | 等 022 staging strict verification 0 regression 後 prod 切 VITE_BFF_FALLBACK=strict (REAL_WRITES 仍 false 直到 operator onboard)。Prod cutover 以 smoke/regression evidence 完成，不再用固定天數 gate。 |
-| `BFF-CONSOL-024` | BFF Consolidation 2026-05-13 | Deprecate old action receipt | Codex2 | in_progress | `BFF-CONSOL-021` | 021 dual-write 驗證通過後標 deprecated 保留 /bff/actions/* 路徑但 receipt schema 加 deprecated flag。前端 runAction.ts 預設改打 /bff/v1/commands。 |
 | `BFF-CONSOL-027` | BFF Consolidation 2026-05-13 | Final BFF consolidation acceptance packet | Copilot | todo | `BFF-CONSOL-001`, `BFF-CONSOL-002`, `BFF-CONSOL-003`, `BFF-CONSOL-004`, `BFF-CONSOL-005`, `BFF-CONSOL-006`, `BFF-CONSOL-007`, `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-011`, `BFF-CONSOL-012`, `BFF-CONSOL-013`, `BFF-CONSOL-014`, `BFF-CONSOL-015`, `BFF-CONSOL-016`, `BFF-CONSOL-017`, `BFF-CONSOL-018`, `BFF-CONSOL-019`, `BFF-CONSOL-020`, `BFF-CONSOL-021`, `BFF-CONSOL-022`, `BFF-CONSOL-023`, `BFF-CONSOL-024`, `BFF-CONSOL-025`, `BFF-CONSOL-026` | 集合 001..026 evidence 輸出 support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md。內容含 contract diff baseline/live smoke (read+write)/SSE evidence/command receipt sample/staging+prod cutover log/regression follow-up/seed.ts post-state。Copilot 統整 Claude 最終簽核。 |
+| `BFF-CONSOL-024-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | [Sidecar] [Auto] [Parent BFF-CONSOL-024] Prepare BFF-CONSOL-024 BFF and frontend handoff packet | Claude | review | `BFF-CONSOL-021` | 平行支援 BFF-CONSOL-024，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
+| `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | [Sidecar] [Auto] [Parent BFF-CONSOL-027] Prepare BFF-CONSOL-027 BFF and frontend handoff packet | Codex2 | review | `BFF-CONSOL-001`, `BFF-CONSOL-002`, `BFF-CONSOL-003`, `BFF-CONSOL-004`, `BFF-CONSOL-005`, `BFF-CONSOL-006`, `BFF-CONSOL-007`, `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-011`, `BFF-CONSOL-012`, `BFF-CONSOL-013`, `BFF-CONSOL-014`, `BFF-CONSOL-015`, `BFF-CONSOL-018`, `BFF-CONSOL-021` | 平行支援 BFF-CONSOL-027，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -64,15 +65,15 @@ Last updated: 2026-05-14 14:55:39
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-14 14:55:39
-- Terminal tasks archived: `1013` total, `995` completed, `18` superseded
+- Archive updated: 2026-05-14 15:23:05
+- Terminal tasks archived: `1014` total, `996` completed, `18` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `BFF-CONSOL-024` | BFF Consolidation 2026-05-13 | Deprecate old action receipt | Codex2 | completed | 2026-05-14 15:23:05 | `ai-task-archive/tasks/BFF-CONSOL-024.json` |
 | `BFF-CONSOL-012-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | Prepare BFF-CONSOL-012 BFF and frontend handoff packet | Claude | completed | 2026-05-14 14:55:39 | `ai-task-archive/tasks/BFF-CONSOL-012-SIDECAR-BFF-HANDOFF.json` |
 | `BFF-CONSOL-028` | BFF Consolidation follow-up 2026-05-13 | Deferred seed adjunct live route follow-up | Codex | completed | 2026-05-14 14:55:01 | `ai-task-archive/tasks/BFF-CONSOL-028.json` |
 | `BFF-CONSOL-021` | BFF Consolidation 2026-05-13 | Receipt dual-write + replay/conflict/idempotency tests | Codex | completed | 2026-05-14 14:50:24 | `ai-task-archive/tasks/BFF-CONSOL-021.json` |
-| `BFF-CONSOL-015` | BFF Consolidation 2026-05-13 | Mock-only badge implementation (live mode) | Codex2 | completed | 2026-05-13 17:08:32 | `ai-task-archive/tasks/BFF-CONSOL-015.json` |
 
 ## Task Board
 
@@ -80,14 +81,17 @@ Last updated: 2026-05-14 14:55:39
 |---|---|---|---|---|---|---|---|---|---|
 | `BFF-CONSOL-022` | BFF Consolidation 2026-05-13 | Lovable staging strict cutover (isolated preview branch) | 開 Lovable preview branch 設 VITE_BFF_MODE=live + VITE_BFF_FALLBACK=strict + VITE_BFF_REAL_WRITES=false。現有 staging 維持 auto fallback 不切。用 strict mode read/SSE/detail journey regression evidence 決定是否推進，不再用固定天數 gate。 | Codex2 | Gemini | blocked | `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-015` | 2026-05-13 17:56:02 | Initialized and committed preview strict env plus evidence in d972f8b9; local prereq tests passed. Blocked on Lovable preview URL plus authenticated staging BFF smoke credentials/reachability. Fixed elapsed-day soak gate has been removed. |
 | `BFF-CONSOL-023` | BFF Consolidation 2026-05-13 | Lovable prod strict cutover (staging verification gate) | 等 022 staging strict verification 0 regression 後 prod 切 VITE_BFF_FALLBACK=strict (REAL_WRITES 仍 false 直到 operator onboard)。Prod cutover 以 smoke/regression evidence 完成，不再用固定天數 gate。 | Gemini2 | Gemini | todo | `BFF-CONSOL-022` | 2026-05-13 10:04:44 | Assignment created |
-| `BFF-CONSOL-024` | BFF Consolidation 2026-05-13 | Deprecate old action receipt | 021 dual-write 驗證通過後標 deprecated 保留 /bff/actions/* 路徑但 receipt schema 加 deprecated flag。前端 runAction.ts 預設改打 /bff/v1/commands。 | Codex2 | Codex | in_progress | `BFF-CONSOL-021` | 2026-05-14 14:52:15 | Supervisor auto-started BFF-CONSOL-024 after successful dispatch. |
 | `BFF-CONSOL-027` | BFF Consolidation 2026-05-13 | Final BFF consolidation acceptance packet | 集合 001..026 evidence 輸出 support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md。內容含 contract diff baseline/live smoke (read+write)/SSE evidence/command receipt sample/staging+prod cutover log/regression follow-up/seed.ts post-state。Copilot 統整 Claude 最終簽核。 | Copilot | Claude | todo | `BFF-CONSOL-001`, `BFF-CONSOL-002`, `BFF-CONSOL-003`, `BFF-CONSOL-004`, `BFF-CONSOL-005`, `BFF-CONSOL-006`, `BFF-CONSOL-007`, `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-011`, `BFF-CONSOL-012`, `BFF-CONSOL-013`, `BFF-CONSOL-014`, `BFF-CONSOL-015`, `BFF-CONSOL-016`, `BFF-CONSOL-017`, `BFF-CONSOL-018`, `BFF-CONSOL-019`, `BFF-CONSOL-020`, `BFF-CONSOL-021`, `BFF-CONSOL-022`, `BFF-CONSOL-023`, `BFF-CONSOL-024`, `BFF-CONSOL-025`, `BFF-CONSOL-026` | 2026-05-13 10:05:17 | Assignment created |
+| `BFF-CONSOL-024-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | [Sidecar] [Auto] [Parent BFF-CONSOL-024] Prepare BFF-CONSOL-024 BFF and frontend handoff packet | 平行支援 BFF-CONSOL-024，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Claude | Codex2 | review | `BFF-CONSOL-021` | 2026-05-14 15:11:55 | BFF-CONSOL-024 handoff packet ready at support/sidecars/BFF-CONSOL-024/BFF-CONSOL-024-SIDECAR-BFF-HANDOFF.md. Covers deprecation headers + body markers, frontend runAction.ts default-path migration, command_executor audit source tracking, operator journey post-deprecation, BFF query gap analysis (3 open gaps flagged), and BFF-CONSOL-027 acceptance checklist. Three open questions for parent owner noted in §7. |
+| `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | [Sidecar] [Auto] [Parent BFF-CONSOL-027] Prepare BFF-CONSOL-027 BFF and frontend handoff packet | 平行支援 BFF-CONSOL-027，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。 | Codex2 | Copilot | review | `BFF-CONSOL-001`, `BFF-CONSOL-002`, `BFF-CONSOL-003`, `BFF-CONSOL-004`, `BFF-CONSOL-005`, `BFF-CONSOL-006`, `BFF-CONSOL-007`, `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-011`, `BFF-CONSOL-012`, `BFF-CONSOL-013`, `BFF-CONSOL-014`, `BFF-CONSOL-015`, `BFF-CONSOL-018`, `BFF-CONSOL-021` | 2026-05-14 15:16:42 | Support-only BFF handoff packet refreshed for BFF-CONSOL-027. Artifact updated at support/sidecars/BFF-CONSOL-027/BFF-CONSOL-027-SIDECAR-BFF-HANDOFF.md; it corrects stale pending/7-day gate notes, maps evidence for 001..026, and flags 022 blocked, 023 todo, 024 review as current acceptance blockers. Verification: git diff --check on artifact passed; referenced evidence JSON files parse. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
 | `EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE` | Gemini | Codex2 | Acceptance packet and dependency map for EP5-BROKER-TW-002 prepared at support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout. | pending | 2026-05-12 22:50:00 |
+| `BFF-CONSOL-024-SIDECAR-BFF-HANDOFF` | Claude | Codex2 | BFF-CONSOL-024 handoff packet ready at support/sidecars/BFF-CONSOL-024/BFF-CONSOL-024-SIDECAR-BFF-HANDOFF.md. Covers deprecation headers + body markers, frontend runAction.ts default-path migration, command_executor audit source tracking, operator journey post-deprecation, BFF query gap analysis (3 open gaps flagged), and BFF-CONSOL-027 acceptance checklist. Three open questions for parent owner noted in §7. | pending | 2026-05-14 15:11:55 |
+| `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` | Codex2 | Copilot | Support-only BFF handoff packet refreshed for BFF-CONSOL-027. Artifact updated at support/sidecars/BFF-CONSOL-027/BFF-CONSOL-027-SIDECAR-BFF-HANDOFF.md; it corrects stale pending/7-day gate notes, maps evidence for 001..026, and flags 022 blocked, 023 todo, 024 review as current acceptance blockers. Verification: git diff --check on artifact passed; referenced evidence JSON files parse. | pending | 2026-05-14 15:16:42 |
 
 ## Blockers
 
@@ -170,23 +174,24 @@ Last updated: 2026-05-14 14:55:39
 
 ## Latest Checkpoints
 
-- 2026-05-14 14:54:06 Orchestrator: PostToolUse: Read
-- 2026-05-14 14:54:14 Orchestrator: PreToolUse: Bash
-- 2026-05-14 14:54:14 Orchestrator: PostToolUse: Bash
-- 2026-05-14 14:55:01 Codex: `BFF-CONSOL-028` Closeout complete: approved artifacts re-read; verified npm seedTaxonomy test 8/8, taxonomy JSON/count/deferred-only jq checks, and scoped git diff check. Task commits: pantheon db72641a, execute-plans 75a455f, review record 660db826. Pre-existing unrelated dirty worktree files were left unstaged.
-- 2026-05-14 14:55:05 Orchestrator: PreToolUse: Write
-- 2026-05-14 14:55:06 Orchestrator: PostToolUse: Write
-- 2026-05-14 14:55:10 Orchestrator: PreToolUse: Bash
-- 2026-05-14 14:55:11 Orchestrator: PostToolUse: Bash
-- 2026-05-14 14:55:12 Orchestrator: PreToolUse: Bash
-- 2026-05-14 14:55:12 Orchestrator: PostToolUse: Bash
-- 2026-05-14 14:55:15 Orchestrator: PreToolUse: Bash
-- 2026-05-14 14:55:19 Orchestrator: PostToolUse: Bash
-- 2026-05-14 14:55:22 Orchestrator: PreToolUse: Bash
-- 2026-05-14 14:55:23 Orchestrator: PostToolUse: Bash
-- 2026-05-14 14:55:26 Orchestrator: PreToolUse: Bash
-- 2026-05-14 14:55:26 Orchestrator: PostToolUse: Bash
-- 2026-05-14 14:55:33 Orchestrator: PreToolUse: Bash
-- 2026-05-14 14:55:33 Orchestrator: PostToolUse: Bash
-- 2026-05-14 14:55:39 Orchestrator: PreToolUse: Bash
-- 2026-05-14 14:55:39 Claude: `BFF-CONSOL-012-SIDECAR-BFF-HANDOFF` Owner finalized approved support-only handoff packet. Artifact created at support/sidecars/BFF-CONSOL-012/BFF-CONSOL-012-SIDECAR-BFF-HANDOFF.md. Closeout commit 09fa5b27. Verification: json.tool on evidence valid; git diff --check clean; pytest test_sse_backpressure.py -q => 3 passed in 2.57s.
+- 2026-05-14 15:13:16 Orchestrator: PostToolUse: Write
+- 2026-05-14 15:13:24 Orchestrator: Stop: Stop
+- 2026-05-14 15:13:24 Orchestrator: SessionEnd: SessionEnd
+- 2026-05-14 15:14:34 Codex: `BFF-CONSOL-024` Review approved: deprecated action receipts, final command default wiring, source-route audit markers, and contract timeline verified. Owner Codex2 should perform task closeout per finalization spec.
+- 2026-05-14 15:14:52 Orchestrator: `BFF-CONSOL-024` Worker superseded after task responsibility moved to another agent.
+- 2026-05-14 15:14:53 Orchestrator: Chair review worker exited; supervisor will validate the review artifacts.
+- 2026-05-14 15:14:53 Orchestrator: `BFF-CONSOL-024-SIDECAR-BFF-HANDOFF` Worker superseded after task responsibility moved to another agent.
+- 2026-05-14 15:14:53 Orchestrator: `OPS-CHAIR-REVIEW` Both sidecar slots are occupied (BFF-CONSOL-024-SIDECAR + BFF-CONSOL-027-SIDECAR); no new sidecar wave needed. Gemini lane still paused, BFF-CONSOL-024 needs Codex review dispatch.
+- 2026-05-14 15:14:53 Orchestrator: Temporarily added Claude allow rule: Bash(git add docs-site/js/dashboard-renderers.js docs-site/index.html docs-site/script.js
+git diff --cached --stat)
+- 2026-05-14 15:14:53 Orchestrator: Approval allow for Bash (apr-20260514T070605Z-baddb8c6)
+- 2026-05-14 15:14:53 Orchestrator: `BFF-CONSOL-024` Wake-up queued for supervisor: owned_finalize_dispatch
+- 2026-05-14 15:14:53 Orchestrator: `BFF-CONSOL-024` Worker started via codex: owned_finalize_dispatch
+- 2026-05-14 15:14:53 Codex2: `BFF-CONSOL-024` Supervisor resumed BFF-CONSOL-024 for finalize after successful dispatch.
+- 2026-05-14 15:15:00 Orchestrator: `BFF-CONSOL-024` Supervisor resumed BFF-CONSOL-024 for finalize after successful dispatch.
+- 2026-05-14 15:16:42 Codex2: `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` Handoff to Copilot: Support-only BFF handoff packet refreshed for BFF-CONSOL-027. Artifact updated at support/sidecars/BFF-CONSOL-027/BFF-CONSOL-027-SIDECAR-BFF-HANDOFF.md; it corrects stale pending/7-day gate notes, maps evidence for 001..026, and flags 022 blocked, 023 todo, 024 review as current acceptance blockers. Verification: git diff --check on artifact passed; referenced evidence JSON files parse.
+- 2026-05-14 15:19:10 Codex2: `BFF-CONSOL-024` Closeout in progress: re-verifying deprecated action receipt scope, separating task-owned diffs, and preparing task-scoped commit.
+- 2026-05-14 15:20:08 Orchestrator: `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` Worker superseded after task responsibility moved to another agent.
+- 2026-05-14 15:20:08 Orchestrator: `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-14 15:20:09 Orchestrator: `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` Worker started via copilot_local: review_ready_dispatch
+- 2026-05-14 15:23:05 Codex2: `BFF-CONSOL-024` Closeout complete: deprecated /bff/actions/* receipts retain compatibility with Deprecation/Sunset/Link/Warning headers and data/receipt/meta markers; /bff/v1/commands remains unmarked; command_executor source-route audit marker verified. Pantheon commit 5225c289; execute-plans commit 3da4830. Verification: backend pytest 59 passed; execute-plans vitest 43 passed; execute-plans tsc passed.

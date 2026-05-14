@@ -55,7 +55,8 @@ function summarizePausedReason(reason, provider) {
   const raw = compactWhitespace(reason || "");
   const lower = raw.toLowerCase();
   const providerName = agentLabel(provider);
-  if (!raw) {
+  const looksLikeJsonDump = /^\s*[\{\[]/.test(raw) || raw.includes('"type":"assistant"') || raw.includes('"usage":{');
+  if (!raw || looksLikeJsonDump) {
     return {
       summary: `${providerName} provider guardrail 已暫停此 lane 的新 dispatch。`,
       detail: "",
