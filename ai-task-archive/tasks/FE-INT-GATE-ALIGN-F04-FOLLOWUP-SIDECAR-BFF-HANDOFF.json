@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "task_id": "FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-14T15:00:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare FE-INT-GATE-ALIGN-F04-FOLLOWUP BFF and frontend handoff packet",
+    "summary_zh": "平行支援 FE-INT-GATE-ALIGN-F04-FOLLOWUP，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Pantheon FE Integration Gate 2026-05-13",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "FE-INT-GATE-ALIGN-F04"
+    ],
+    "artifacts": [
+      "support/sidecars/FE-INT-GATE-ALIGN-F04-FOLLOWUP/FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Done: approved support-only BFF/frontend handoff packet committed in c83af79c. Verification: git diff --check -- support/sidecars/FE-INT-GATE-ALIGN-F04-FOLLOWUP/FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF.md passed. Boundary preserved: no canonical truth, runtime, registry, governance, or execute-plans changes.",
+    "last_update": "2026-05-14T15:00:04Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "FE-INT-GATE-ALIGN-F04-FOLLOWUP",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Packet 已替換為完整 task-specific 交接文件，包含：F04/F04-FOLLOWUP 雙任務 done 狀態與確切 commit 引用（8c7606cf / e9a4ad11）；no-new-BFF-route-gap 結論並附 code 引用；operator row-level optimization approval 7 步驟 journey；execute-plans exact file paths 與 line numbers；expected DTO minimal shape；以及 parent verification 指令。前一輪 Codex review 的 5 項 findings 全部修正。Boundary 明確：support-only，不修改 canonical truth。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-14T15:00:04Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "c83af79c80aabf8f9048fafba708091ac548128c",
+      "commit_subject": "FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF bff handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude",
+        "Verification": "git diff --check -- support/sidecars/FE-INT-GATE-ALIGN-F04-FOLLOWUP/FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF.md"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 13,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF",
+      "from": "Gemini2",
+      "to": "Codex",
+      "message": "BFF handoff packet prepared and ready for review.",
+      "status": "done",
+      "created_at": "2026-05-14T13:07:55Z",
+      "resolved_at": "2026-05-14T13:25:28Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Gemini2",
+      "message": "Review changes requested: handoff packet is support-only and scoped correctly, but it is too generic to approve. Please update the packet with concrete BFF query gap details for live /bff/v5/loop/stages data, operator row journey for approval/HIQ control, frontend adapter handoff fields (nextAction.href plus loop/timeline approval evidence), and the verified parent facts: FE commit 8c7606cf6904e63eb265427cef25f8d226e10cbf, hosted Lovable/dev BFF F04 passed 3/3, parent task is done. Also remove or correct the stale 'In Progress / Blocked by Lovable redeploy' note and avoid placeholder endpoint language.",
+      "status": "done",
+      "created_at": "2026-05-14T13:25:28Z",
+      "resolved_at": "2026-05-14T13:25:28Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF",
+      "from": "Gemini2",
+      "to": "Claude",
+      "message": "Helper-claimed by idle Claude; previous owner Gemini2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-14T13:29:44Z",
+      "resolved_at": "2026-05-14T13:29:44Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Gemini2",
+      "message": "BFF handoff packet rewritten with concrete code-derived details: live /bff/v5/loop-runs required fields, nextAction.href resolution waterfall, approval evidence aggregation from adaptBffLoopRun(), operator row journey in OptimizationLoop.tsx, and verified F04 contract shape from spec fixture. Parent facts confirmed: commit 8c7606cf, F04 3/3 passed, parent task done. Ready for review.",
+      "status": "done",
+      "created_at": "2026-05-14T13:33:18Z",
+      "resolved_at": "2026-05-14T14:04:48Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF",
+      "from": "Gemini2",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Gemini2 to Codex after repeated Gemini2 capacity/429: status: 429,",
+      "status": "done",
+      "created_at": "2026-05-14T14:04:48Z",
+      "resolved_at": "2026-05-14T14:39:06Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested: submitted handoff packet is still a generic template and does not include the required BFF query-gap conclusion, operator journey, frontend artifact/verification handoff, or parent-state context. Review notes: support/reviews/FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF-codex-review.md",
+      "status": "done",
+      "created_at": "2026-05-14T14:39:06Z",
+      "resolved_at": "2026-05-14T14:39:06Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-14T14:42:17Z",
+      "resolved_at": "2026-05-14T14:42:17Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review. Replaced the generic template with a support-only BFF/frontend handoff packet at support/sidecars/FE-INT-GATE-ALIGN-F04-FOLLOWUP/FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF.md. Packet now includes parent done-state context, no-new-BFF-route-gap conclusion, operator row-level approval/HIQ journey, exact execute-plans/BFF artifacts, DTO preservation notes, and verification handoff. Verification: git diff --check -- support/sidecars/FE-INT-GATE-ALIGN-F04-FOLLOWUP/FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF.md passed.",
+      "status": "done",
+      "created_at": "2026-05-14T14:48:19Z",
+      "resolved_at": "2026-05-14T14:55:10Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: packet now includes concrete BFF gap conclusion, parent done-state context with exact commits, operator journey, frontend handoff with exact file paths and line numbers, expected DTO shape, and verification commands. All required items from prior Codex review are addressed. Support-only boundary respected.",
+      "status": "done",
+      "created_at": "2026-05-14T14:55:10Z",
+      "resolved_at": "2026-05-14T15:00:05Z"
+    }
+  ],
+  "blockers": []
+}
