@@ -3,7 +3,7 @@
   "sprint": "2026-05-13-ep5-qlib-bff-consolidation",
   "sprint_started_at": "2026-05-13T02:00:00Z",
   "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec，從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV，跑 production_activation_smoke.py --backend real，submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal，registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff，command envelope unification，non-empty fixture & detail journey，SSE real stream replay，strict env cutover，seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write 驗證通過後即可 deprecate 舊 receipt，後續 regression 追蹤不再以固定天數阻塞派工。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。",
-  "updated_at": "2026-05-14T12:22:46Z",
+  "updated_at": "2026-05-14T12:24:27Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -131,8 +131,8 @@
         "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Supervisor re-dispatched BFF-CONSOL-022; task remains in progress.",
-      "last_update": "2026-05-14T12:21:25Z"
+      "next": "Working in /home/lupin/code/execute-plans on the strict runtime fallback hook; preserving concurrent F05/F07 dirty changes and keeping F15 acceptance strict.",
+      "last_update": "2026-05-14T12:24:10Z"
     },
     {
       "name": "Codex2",
@@ -339,32 +339,6 @@
       "waiting_for": "Claude2"
     },
     {
-      "id": "FE-INT-GATE-ALIGN-F03",
-      "title": "Align 03-execution-loop.spec.ts to hosted Lovable DOM",
-      "summary_zh": "hard-gate 首次 run 25846710728 (commit 4774678) e2e step fail：F03 execution loop persona health spec 03-execution-loop.spec.ts 對 hosted Lovable assertion 對不上。Symptoms: PersonaHealthMatrix mode/status/score/strategies/findings render、redacted evidence metadata-only 2 個 case 全 fail. 必須 (1) PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io 環境下實際跑 npx playwright test <file> --trace=on / --headed，產出 playwright-report/ 抓真實 DOM；(2) 不可以憑空猜 selector；(3) 對 hosted Lovable 已 render 的 UI 對齊 assertion，不可降級 acceptance；(4) 若發現 hosted Lovable 真有 product gap（非 selector 錯），在 task next 註明並 file follow-up；(5) 修完後本地 npx playwright test 對該 spec 至少連續 2 次綠；(6) closeout commit 必須在 /home/lupin/code/execute-plans/ 上 bff-luv-fe-006-dev-deploy branch（不要再產生 phantom mirror，FE-INT-GATE-A10 處理 root cause）。",
-      "phase": "Pantheon FE Integration Gate 2026-05-13",
-      "owner": "Claude2",
-      "reviewer": "Codex2",
-      "status": "review_approved",
-      "depends_on": [],
-      "artifacts": [
-        "execute-plans/e2e/03-execution-loop.spec.ts",
-        "execute-plans/.lovable/audits/baseline/hardgate-postmerge/pantheon-integration-evidence/.lovable/audits/current-run/playwright-results.json"
-      ],
-      "acceptance": [
-        "cd execute-plans 後 npx playwright test e2e/03-execution-loop.spec.ts 連續 2 次全綠",
-        "assertion 用真實 hosted Lovable DOM/network 對齊",
-        "不可降級 blueprint pass condition",
-        "若 hosted Lovable 真有 product gap 改 file follow-up task 而非 mask spec",
-        "closeout commit 在 execute-plans repo bff-luv-fe-006-dev-deploy branch"
-      ],
-      "next": "Supervisor resumed FE-INT-GATE-ALIGN-F03 for finalize after successful dispatch.",
-      "last_update": "2026-05-14T12:20:57Z",
-      "review_notes_zh": [
-        "Reviewed commit 6bd0e67 in /home/lupin/code/execute-plans on bff-luv-fe-006-dev-deploy; only e2e/03-execution-loop.spec.ts changed. Verified no later diff on that spec and no dirty hunk in the spec. Ran hosted Lovable/dev BFF focused spec twice plus one trace run: each completed with 2 passed, 2 skipped. Existing drill-down fixme remains a documented product gap; no acceptance downgrade observed."
-      ]
-    },
-    {
       "id": "FE-INT-GATE-ALIGN-F04",
       "title": "Align 04b-optimization-loop.spec.ts to hosted Lovable DOM",
       "summary_zh": "hard-gate 首次 run 25846710728 (commit 4774678) e2e step fail：F04 optimization loop timeline spec 04b-optimization-loop.spec.ts 對 hosted Lovable assertion 對不上。Symptoms: ranking → rebalance → approval → apply → promotion stage render、awaiting approval link 到 Approvals/HIQ 2 個 case 全 fail. 必須 (1) PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io 環境下實際跑 npx playwright test <file> --trace=on / --headed，產出 playwright-report/ 抓真實 DOM；(2) 不可以憑空猜 selector；(3) 對 hosted Lovable 已 render 的 UI 對齊 assertion，不可降級 acceptance；(4) 若發現 hosted Lovable 真有 product gap（非 selector 錯），在 task next 註明並 file follow-up；(5) 修完後本地 npx playwright test 對該 spec 至少連續 2 次綠；(6) closeout commit 必須在 /home/lupin/code/execute-plans/ 上 bff-luv-fe-006-dev-deploy branch（不要再產生 phantom mirror，FE-INT-GATE-A10 處理 root cause）。",
@@ -554,8 +528,8 @@
         "FE-INT-GATE-ALIGN-F15 passes twice with PANTHEON_E2E_STRICT=1",
         "Do not change F15 to accept seed fallback in strict mode"
       ],
-      "next": "Supervisor auto-started FE-INT-GATE-FOLLOWUP-F15-STRICT-LOVABLE after successful dispatch.",
-      "last_update": "2026-05-14T12:20:09Z"
+      "next": "Working in /home/lupin/code/execute-plans on the strict runtime fallback hook; preserving concurrent F05/F07 dirty changes and keeping F15 acceptance strict.",
+      "last_update": "2026-05-14T12:24:10Z"
     },
     {
       "id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
@@ -629,15 +603,6 @@
       "resolved_at": "2026-05-14T11:36:58Z"
     },
     {
-      "task_id": "FE-INT-GATE-ALIGN-F03",
-      "from": "Codex2",
-      "to": "Claude2",
-      "message": "Helper-claimed by idle Claude2; previous owner Codex2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-14T11:36:16Z",
-      "resolved_at": "2026-05-14T11:37:14Z"
-    },
-    {
       "task_id": "FE-INT-GATE-ALIGN-F04",
       "from": "Codex2",
       "to": "Codex",
@@ -663,15 +628,6 @@
       "status": "done",
       "created_at": "2026-05-14T11:39:23Z",
       "resolved_at": "2026-05-14T12:05:20Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-ALIGN-F03",
-      "from": "Claude2",
-      "to": "Codex2",
-      "message": "Fixed frontendUrl() and bffUrl() to check PANTHEON_FE_BASE_URL/PANTHEON_BFF_BASE_URL first. 2 consecutive passes (2 passed, 2 skipped) on https://pantheon-dev.lovable.app. Commit 6bd0e67 on bff-luv-fe-006-dev-deploy. Drill-down test remains fixme (product gap noted in spec). Ready for review.",
-      "status": "done",
-      "created_at": "2026-05-14T11:45:42Z",
-      "resolved_at": "2026-05-14T12:18:55Z"
     },
     {
       "task_id": "FE-INT-GATE-ALIGN-F01",
@@ -790,14 +746,6 @@
       "created_at": "2026-05-14T12:18:22Z"
     },
     {
-      "task_id": "FE-INT-GATE-ALIGN-F03",
-      "from": "Codex2",
-      "to": "Claude2",
-      "message": "Review approved: 6bd0e67 scope verified; hosted Lovable/dev BFF focused spec passed twice plus trace run (2 passed, 2 skipped each). Owner Claude2 should finalize to done with task closeout commit/push handling.",
-      "status": "pending",
-      "created_at": "2026-05-14T12:18:55Z"
-    },
-    {
       "task_id": "BFF-CONSOL-022",
       "from": "Codex2",
       "to": "Codex",
@@ -870,12 +818,12 @@
       "todo": 0
     },
     "Claude2": {
-      "total": 3,
+      "total": 2,
       "active": 2,
       "blocked": 0,
       "done": 0,
       "review": 1,
-      "review_approved": 1,
+      "review_approved": 0,
       "todo": 1
     },
     "Gemini": {
