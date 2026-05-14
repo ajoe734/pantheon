@@ -4,6 +4,7 @@ Status: owner closeout
 Owner: Codex2
 Reviewer: Claude
 Finalized at: 2026-05-14
+Task artifact commit: `84004bfd`
 
 ## Approved Scope
 
