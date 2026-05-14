@@ -3,7 +3,7 @@
   "sprint": "2026-05-13-ep5-qlib-bff-consolidation",
   "sprint_started_at": "2026-05-13T02:00:00Z",
   "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec，從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV，跑 production_activation_smoke.py --backend real，submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal，registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff，command envelope unification，non-empty fixture & detail journey，SSE real stream replay，strict env cutover，seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write 驗證通過後即可 deprecate 舊 receipt，後續 regression 追蹤不再以固定天數阻塞派工。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。",
-  "updated_at": "2026-05-14T12:50:34Z",
+  "updated_at": "2026-05-14T12:58:37Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -134,8 +134,8 @@
         "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Working in /home/lupin/code/execute-plans on row-level optimization approval/HIQ control; preserving unrelated dirty files and tightening F04 spec fallback.",
-      "last_update": "2026-05-14T12:45:00Z"
+      "next": "Ready for review. execute-plans commit 8c7606cf6904e63eb265427cef25f8d226e10cbf pushed to bff-luv-fe-006-dev-deploy. Scope: v5 loop adapter preserves nextAction href, derives approval evidence from loop/timeline approval fields, OptimizationLoop renders row-level approval links, and F04 spec now requires row-scoped Approvals/HIQ control with generic shell-nav fallback removed. Verification: npm run build passed; local preview F04 passed twice (/tmp/fe-int-gate-align-f04-followup-run1, run2, 3/3 each); hosted Lovable F04 passed twice against pantheon-dev.lovable.app + dev BFF (/tmp/fe-int-gate-align-f04-followup-hosted-run2, run3, 3/3 each).",
+      "last_update": "2026-05-14T12:55:35Z"
     },
     {
       "name": "Codex2",
@@ -178,11 +178,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "reviewing",
+      "current_task_ids": [
+        "FE-INT-GATE-ALIGN-F07-SIDECAR-REVIEW"
+      ],
       "branch": "feat/claude2-execution-control",
-      "next": "",
-      "last_update": "2026-05-14T12:48:55Z"
+      "next": "Review packet prepared at support/sidecars/FE-INT-GATE-ALIGN-F07/FE-INT-GATE-ALIGN-F07-SIDECAR-REVIEW.md. Covers: parent task F07 scope and status (review_approved), spec alignment evidence (4 passed/1 skipped twice), Claude reviewer approval notes, acceptance criteria check, runtime surface gap and follow-up FE-INT-GATE-F07-RUNTIME-LIVE-WIRING, dependency map, closeout instructions for Codex2, and handoff notes for Gemini2. Support-only — no canonical truth modified. Please review and approve or raise any gaps.",
+      "last_update": "2026-05-14T12:58:37Z"
     },
     {
       "name": "Gemini2",
@@ -194,12 +196,11 @@
       ],
       "status": "blocked",
       "current_task_ids": [
-        "BFF-CONSOL-023",
-        "FE-INT-GATE-ALIGN-F07-SIDECAR-REVIEW"
+        "BFF-CONSOL-023"
       ],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Supervisor auto-started FE-INT-GATE-ALIGN-F07-SIDECAR-REVIEW after successful dispatch.",
-      "last_update": "2026-05-14T12:49:16Z"
+      "next": "Blocked by BFF-CONSOL-022, which is waiting for credentials.",
+      "last_update": "2026-05-14T12:45:33Z"
     }
   ],
   "tasks": [
@@ -449,7 +450,7 @@
       "phase": "Pantheon FE Integration Gate 2026-05-13",
       "owner": "Codex",
       "reviewer": "Codex2",
-      "status": "in_progress",
+      "status": "review",
       "depends_on": [
         "FE-INT-GATE-ALIGN-F04"
       ],
@@ -464,8 +465,8 @@
         "row-level control 可導向 /management/approvals 或 /management/interventions",
         "F04 spec 可移除 generic navigation fallback 並仍綠"
       ],
-      "next": "Working in /home/lupin/code/execute-plans on row-level optimization approval/HIQ control; preserving unrelated dirty files and tightening F04 spec fallback.",
-      "last_update": "2026-05-14T12:45:00Z"
+      "next": "Ready for review. execute-plans commit 8c7606cf6904e63eb265427cef25f8d226e10cbf pushed to bff-luv-fe-006-dev-deploy. Scope: v5 loop adapter preserves nextAction href, derives approval evidence from loop/timeline approval fields, OptimizationLoop renders row-level approval links, and F04 spec now requires row-scoped Approvals/HIQ control with generic shell-nav fallback removed. Verification: npm run build passed; local preview F04 passed twice (/tmp/fe-int-gate-align-f04-followup-run1, run2, 3/3 each); hosted Lovable F04 passed twice against pantheon-dev.lovable.app + dev BFF (/tmp/fe-int-gate-align-f04-followup-hosted-run2, run3, 3/3 each).",
+      "last_update": "2026-05-14T12:55:35Z"
     },
     {
       "id": "FE-INT-GATE-FOLLOWUP-F15-STRICT-LOVABLE",
@@ -564,9 +565,9 @@
       "title": "Prepare FE-INT-GATE-ALIGN-F07 review packet and evidence summary",
       "summary_zh": "平行支援 FE-INT-GATE-ALIGN-F07，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
       "phase": "Pantheon FE Integration Gate 2026-05-13",
-      "owner": "Gemini2",
-      "reviewer": "Codex2",
-      "status": "in_progress",
+      "owner": "Claude2",
+      "reviewer": "Gemini2",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
         "support/sidecars/FE-INT-GATE-ALIGN-F07/FE-INT-GATE-ALIGN-F07-SIDECAR-REVIEW.md"
@@ -576,8 +577,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Supervisor auto-started FE-INT-GATE-ALIGN-F07-SIDECAR-REVIEW after successful dispatch.",
-      "last_update": "2026-05-14T12:49:16Z",
+      "next": "Review packet prepared at support/sidecars/FE-INT-GATE-ALIGN-F07/FE-INT-GATE-ALIGN-F07-SIDECAR-REVIEW.md. Covers: parent task F07 scope and status (review_approved), spec alignment evidence (4 passed/1 skipped twice), Claude reviewer approval notes, acceptance criteria check, runtime surface gap and follow-up FE-INT-GATE-F07-RUNTIME-LIVE-WIRING, dependency map, closeout instructions for Codex2, and handoff notes for Gemini2. Support-only — no canonical truth modified. Please review and approve or raise any gaps.",
+      "last_update": "2026-05-14T12:58:37Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "FE-INT-GATE-ALIGN-F07",
@@ -771,6 +772,31 @@
       "message": "Ready for review: /management/runtimes now uses bff-v1 lists.runtimes via useLiveListV1 and F07 no longer has the runtime hosted exception. Verified in /home/lupin/code/execute-plans with npm run build; and VITE_BFF_MODE=live VITE_BFF_FALLBACK=strict dev server plus FRONTEND_BASE_URL=http://127.0.0.1:5173 npx playwright test e2e/06-entity-registry.spec.ts --project=chromium (4 passed, 1 live probe skipped).",
       "status": "pending",
       "created_at": "2026-05-14T12:44:18Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F07-SIDECAR-REVIEW",
+      "from": "Gemini2",
+      "to": "Claude2",
+      "message": "Helper-claimed by idle Claude2; previous owner Gemini2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-14T12:54:55Z",
+      "resolved_at": "2026-05-14T12:55:00Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F04-FOLLOWUP",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review. execute-plans commit 8c7606cf6904e63eb265427cef25f8d226e10cbf pushed to bff-luv-fe-006-dev-deploy. Scope: v5 loop adapter preserves nextAction href, derives approval evidence from loop/timeline approval fields, OptimizationLoop renders row-level approval links, and F04 spec now requires row-scoped Approvals/HIQ control with generic shell-nav fallback removed. Verification: npm run build passed; local preview F04 passed twice (/tmp/fe-int-gate-align-f04-followup-run1, run2, 3/3 each); hosted Lovable F04 passed twice against pantheon-dev.lovable.app + dev BFF (/tmp/fe-int-gate-align-f04-followup-hosted-run2, run3, 3/3 each).",
+      "status": "pending",
+      "created_at": "2026-05-14T12:55:35Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F07-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Gemini2",
+      "message": "Review packet prepared at support/sidecars/FE-INT-GATE-ALIGN-F07/FE-INT-GATE-ALIGN-F07-SIDECAR-REVIEW.md. Covers: parent task F07 scope and status (review_approved), spec alignment evidence (4 passed/1 skipped twice), Claude reviewer approval notes, acceptance criteria check, runtime surface gap and follow-up FE-INT-GATE-F07-RUNTIME-LIVE-WIRING, dependency map, closeout instructions for Codex2, and handoff notes for Gemini2. Support-only — no canonical truth modified. Please review and approve or raise any gaps.",
+      "status": "pending",
+      "created_at": "2026-05-14T12:58:37Z"
     }
   ],
   "blockers": [
@@ -868,11 +894,11 @@
       "todo": 0
     },
     "Claude2": {
-      "total": 0,
-      "active": 0,
+      "total": 1,
+      "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
       "todo": 0
     },
@@ -886,22 +912,22 @@
       "todo": 0
     },
     "Gemini2": {
-      "total": 2,
-      "active": 2,
+      "total": 1,
+      "active": 1,
       "blocked": 1,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Codex": {
       "total": 6,
       "active": 6,
       "blocked": 5,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Codex2": {
       "total": 4,
