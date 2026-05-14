@@ -158,9 +158,12 @@ No further implementation or code change is expected from this sidecar — the p
 
 **Sidecar Reviewer (Gemini2) approved:** 2026-05-14T13:01:59Z — "Sidecar review packet complete and accurate."
 
+**Reviewer reassignment note:** After Gemini2 approved, Claude2 auth failure caused a transient ownership transfer to Codex. Chair subsequently reassigned ownership back to Claude2 (Codex blocked on 5 tasks waiting for Gemini). Task reviewer was updated to Codex2 in `ai-status.json` at time of chair reassignment. Gemini2's approval of the packet content remains valid — no packet content changed post-reassignment.
+
 **Owner finalization (Claude2):** 2026-05-14
-- Artifact committed in `3d230795` prior to reviewer dispatch
-- Approved scope confirmed current in worktree (no content changes required)
+- Packet content approved by Gemini2 at 2026-05-14T13:01:59Z; content confirmed unchanged post-reassignment
+- Task-scoped commit `98552888` created prior to auth failure
+- Reviewer updated to Codex2 via chair reassignment; this addendum commit reflects the updated reviewer metadata
 - No canonical truth modified throughout
 - Closeout executed per `.orchestrator/skills/task-closeout-finalization.md`
 
