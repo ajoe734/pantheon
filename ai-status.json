@@ -3,7 +3,7 @@
   "sprint": "2026-05-13-ep5-qlib-bff-consolidation",
   "sprint_started_at": "2026-05-13T02:00:00Z",
   "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec，從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV，跑 production_activation_smoke.py --backend real，submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal，registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff，command envelope unification，non-empty fixture & detail journey，SSE real stream replay，strict env cutover，seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write 驗證通過後即可 deprecate 舊 receipt，後續 regression 追蹤不再以固定天數阻塞派工。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。",
-  "updated_at": "2026-05-14T12:26:30Z",
+  "updated_at": "2026-05-14T12:35:52Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -94,11 +94,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "working",
+      "current_task_ids": [
+        "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE-SIDECAR-ACCEPTANCE"
+      ],
       "branch": "feat/claude-execution-control",
-      "next": "",
-      "last_update": "2026-05-14T12:20:36Z"
+      "next": "Supervisor auto-started FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE-SIDECAR-ACCEPTANCE after successful dispatch.",
+      "last_update": "2026-05-14T12:35:52Z"
     },
     {
       "name": "Gemini",
@@ -131,8 +133,8 @@
         "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Dev BFF strict preview prerequisites reverified: preview-strict.env targets lupin dev BFF with REAL_WRITES=false, dev /health and /openapi.json return 200, and focused Pack A/B/C + detail pytest passed. Blocked until Lovable preview branch URL and dev BFF smoke JWT/bearer credential are provided for Day 1 probe_bff_authenticated_live.py.",
-      "last_update": "2026-05-14T12:26:30Z"
+      "next": "Code remediation committed and pushed in execute-plans (104f06b, artifact update 49899d0). Production-preview F05 passed twice, but pantheon-dev.lovable.app still serves old asset /assets/index-BYfBkno5.js as of 2026-05-14T12:32:26Z; hosted F05 rerun is waiting on Lovable dev redeploy/refresh.",
+      "last_update": "2026-05-14T12:33:18Z"
     },
     {
       "name": "Codex2",
@@ -144,12 +146,13 @@
       ],
       "status": "blocked",
       "current_task_ids": [
-        "FE-INT-GATE-ALIGN-F07",
-        "FE-INT-GATE-ALIGN-F15"
+        "FE-INT-GATE-ALIGN-F15",
+        "FE-INT-GATE-FOLLOWUP-ME-STARTUP",
+        "FE-INT-GATE-F07-RUNTIME-LIVE-WIRING"
       ],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "F07 ready for review: hosted Lovable run passed twice (trace headless: 4 passed/1 skipped; xvfb headed trace: 4 passed/1 skipped). Spec aligns fixtures/render labels to actual hosted DOM; runtime surface still renders legacy executor-us-east-1 without reading /bff/runtimes, so follow-up FE-INT-GATE-F07-RUNTIME-LIVE-WIRING was filed. Evidence note: execute-plans/.lovable/audits/current-run/fe-int-gate-align-f07-hosted-dom.md.",
-      "last_update": "2026-05-14T12:25:01Z"
+      "next": "Rechecking committed /bff/me startup wiring in /home/lupin/code/execute-plans; focused verification next.",
+      "last_update": "2026-05-14T12:30:46Z"
     },
     {
       "name": "Copilot",
@@ -165,7 +168,7 @@
       ],
       "branch": "feat/grok-research-critique",
       "next": "Assignment created",
-      "last_update": "2026-05-14T11:38:11Z"
+      "last_update": "2026-05-14T12:28:38Z"
     },
     {
       "name": "Claude2",
@@ -174,10 +177,9 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
+      "status": "reviewing",
       "current_task_ids": [
-        "FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE",
-        "FE-INT-GATE-FOLLOWUP-ME-STARTUP"
+        "FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE"
       ],
       "branch": "feat/claude2-execution-control",
       "next": "Concrete F01 acceptance packet prepared at support/sidecars/FE-INT-GATE-ALIGN-F01/FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE.md (committed in 2154e992). Documents: (1) commit a685175 scope — e2e/01-startup-session.spec.ts only, +43/-9; (2) all 5 parent acceptance criteria satisfied; (3) test coverage map for all 4 tests (live BFF, no fixture); (4) BFF contract surface; (5) dependency map; (6) verification evidence — 3 owner runs + reviewer 2 runs, all 4/4; (7) FE-INT-GATE-FOLLOWUP-ME-STARTUP product gap register (interceptedMeRequests=0, fix at commit 20dfe79 in review). Support-only; no canonical truth modified.",
@@ -359,8 +361,8 @@
         "若 hosted Lovable 真有 product gap 改 file follow-up task 而非 mask spec",
         "closeout commit 在 execute-plans repo bff-luv-fe-006-dev-deploy branch"
       ],
-      "next": "Review approved. Codex2 verified scoped commit 7f317c90ed0a6179182ef16c22db125fe47439cb and reran hosted Lovable/dev BFF Playwright twice: /tmp/fe-int-gate-align-f04-codex2-review-run1 and run2, both 3/3. Owner Codex should finalize review_approved -> done per closeout checklist.",
-      "last_update": "2026-05-14T12:20:14Z",
+      "next": "Supervisor resumed FE-INT-GATE-ALIGN-F04 for finalize after successful dispatch.",
+      "last_update": "2026-05-14T12:35:25Z",
       "review_notes_zh": [
         "審查通過：commit 7f317c9 只變更 e2e/04b-optimization-loop.spec.ts，使用 PANTHEON_FE_BASE_URL 對齊 hosted Lovable，awaiting approval 測試保留 row-level Approvals/HIQ 優先路徑並只在目前 hosted product gap 下 fallback 到已渲染的 Approvals/Interventions shell nav。",
         "驗證：PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io npx playwright test e2e/04b-optimization-loop.spec.ts --trace=on --reporter=list --output=/tmp/fe-int-gate-align-f04-codex2-review-run1 與 run2 均通過 3/3。",
@@ -398,7 +400,7 @@
       "phase": "Pantheon FE Integration Gate 2026-05-13",
       "owner": "Codex2",
       "reviewer": "Claude",
-      "status": "review",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [
         "execute-plans/e2e/06-entity-registry.spec.ts",
@@ -411,8 +413,14 @@
         "若 hosted Lovable 真有 product gap 改 file follow-up task 而非 mask spec",
         "closeout commit 在 execute-plans repo bff-luv-fe-006-dev-deploy branch"
       ],
-      "next": "F07 ready for review: hosted Lovable run passed twice (trace headless: 4 passed/1 skipped; xvfb headed trace: 4 passed/1 skipped). Spec aligns fixtures/render labels to actual hosted DOM; runtime surface still renders legacy executor-us-east-1 without reading /bff/runtimes, so follow-up FE-INT-GATE-F07-RUNTIME-LIVE-WIRING was filed. Evidence note: execute-plans/.lovable/audits/current-run/fe-int-gate-align-f07-hosted-dom.md.",
-      "last_update": "2026-05-14T12:25:01Z"
+      "next": "Review approved: spec aligns 11/12 registry surfaces to hosted Lovable via fixture routes; runtime surface product gap documented transparently with follow-up FE-INT-GATE-F07-RUNTIME-LIVE-WIRING filed. Owner should create task-scoped commit of e2e/06-entity-registry.spec.ts and evidence note during closeout.",
+      "last_update": "2026-05-14T12:32:27Z",
+      "review_notes_zh": [
+        "審查通過：spec diff 確認 PANTHEON_BFF_BASE_URL、expectsHostedListRead/hostedRenderLabel 欄位、fixtures 資料對齊真實 hosted DOM、gotoRegistry 使用 hostedRenderLabel、第一個 test 條件分支記錄 runtimes product gap 而非 mask。",
+        "驗證：evidence note 顯示兩次 run（headless + xvfb headed）均 4 passed/1 skipped，skipped 為需 FE_INT_GATE_LIVE_BFF=1 的 live probe（預期跳過）。",
+        "Closeout 注意：F07 變更尚未 commit；owner 須 stage 僅 e2e/06-entity-registry.spec.ts 與 evidence note 建立 task-scoped commit。",
+        "後續：FE-INT-GATE-F07-RUNTIME-LIVE-WIRING 已正確建立於 ai-status.json，runtime gap 透明記錄。"
+      ]
     },
     {
       "id": "FE-INT-GATE-ALIGN-F15",
@@ -469,8 +477,8 @@
       "title": "Wire hosted startup session to /bff/me before local role fallback",
       "summary_zh": "Hosted Lovable startup 會打 live BFF list/v5/SSE routes，但目前未在 startup 請求 /bff/me；TopBar 仍由 local platform role control 顯示 admin。需要接上 /bff/me 作為 current-user/session source，401 時顯示 auth/error state，且不得 fallback 到 mock current-user。F01 已在 test annotation 與 startup-bff-network attachment 記錄此 gap。",
       "phase": "Pantheon FE Integration Gate 2026-05-13",
-      "owner": "Claude2",
-      "reviewer": "Codex",
+      "owner": "Codex2",
+      "reviewer": "Claude2",
       "status": "in_progress",
       "depends_on": [],
       "artifacts": [
@@ -483,8 +491,8 @@
         "/bff/me 401 renders auth or error state and never falls back to mock current-user",
         "F01 startup session 401 coverage can require at least one intercepted /bff/me request"
       ],
-      "next": "Review failed on hosted strict closeout verification: PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io VITE_BFF_FALLBACK=strict npx playwright test e2e/01-startup-session.spec.ts --trace=on --reporter=list --output=/tmp/fe-int-gate-align-f01-closeout-run1 returned 3 passed, 1 failed; 401 startup case still records interceptedMeRequests=0, so hosted startup does not request /bff/me yet.",
-      "last_update": "2026-05-14T12:18:01Z"
+      "next": "Rechecking committed /bff/me startup wiring in /home/lupin/code/execute-plans; focused verification next.",
+      "last_update": "2026-05-14T12:30:46Z"
     },
     {
       "id": "FE-INT-GATE-ALIGN-F04-FOLLOWUP",
@@ -539,7 +547,7 @@
       "phase": "Pantheon FE Integration Gate 2026-05-13",
       "owner": "Codex",
       "reviewer": "Gemini",
-      "status": "in_progress",
+      "status": "blocked",
       "depends_on": [],
       "artifacts": [
         "execute-plans/.lovable/audits/current-run/fe-int-gate-align-f05-hosted-write-gate-gap.md",
@@ -550,8 +558,9 @@
         "F05 hosted headed run observes remediation POST",
         "F05 hosted npx playwright test passes twice"
       ],
-      "next": "Supervisor auto-started FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE after successful dispatch.",
-      "last_update": "2026-05-14T12:03:33Z"
+      "next": "Code remediation committed and pushed in execute-plans (104f06b, artifact update 49899d0). Production-preview F05 passed twice, but pantheon-dev.lovable.app still serves old asset /assets/index-BYfBkno5.js as of 2026-05-14T12:32:26Z; hosted F05 rerun is waiting on Lovable dev redeploy/refresh.",
+      "last_update": "2026-05-14T12:33:18Z",
+      "waiting_for": "Gemini"
     },
     {
       "id": "FE-INT-GATE-F07-RUNTIME-LIVE-WIRING",
@@ -560,7 +569,7 @@
       "phase": "Pantheon FE Integration Gate 2026-05-13",
       "owner": "Codex2",
       "reviewer": "Claude",
-      "status": "todo",
+      "status": "in_progress",
       "depends_on": [],
       "artifacts": [
         "execute-plans/e2e/06-entity-registry.spec.ts",
@@ -572,8 +581,34 @@
         "No seed fallback banner or legacy runtime-only label is required",
         "F07 runtime exception can be removed and full 12 list-route assertion remains green"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-05-14T12:20:52Z"
+      "next": "Supervisor auto-started FE-INT-GATE-F07-RUNTIME-LIVE-WIRING after successful dispatch.",
+      "last_update": "2026-05-14T12:28:05Z"
+    },
+    {
+      "id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE-SIDECAR-ACCEPTANCE",
+      "title": "Prepare FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE acceptance packet and dependency map",
+      "summary_zh": "平行支援 FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Pantheon FE Integration Gate 2026-05-13",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "status": "in_progress",
+      "depends_on": [],
+      "artifacts": [
+        "support/sidecars/FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE/FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE-SIDECAR-ACCEPTANCE.md"
+      ],
+      "acceptance": [
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
+      ],
+      "next": "Supervisor auto-started FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE-SIDECAR-ACCEPTANCE after successful dispatch.",
+      "last_update": "2026-05-14T12:35:52Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
+      "helper_kind": "acceptance_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization"
     }
   ],
   "handoffs": [
@@ -768,8 +803,35 @@
       "from": "Codex2",
       "to": "Claude",
       "message": "F07 ready for review: hosted Lovable run passed twice (trace headless: 4 passed/1 skipped; xvfb headed trace: 4 passed/1 skipped). Spec aligns fixtures/render labels to actual hosted DOM; runtime surface still renders legacy executor-us-east-1 without reading /bff/runtimes, so follow-up FE-INT-GATE-F07-RUNTIME-LIVE-WIRING was filed. Evidence note: execute-plans/.lovable/audits/current-run/fe-int-gate-align-f07-hosted-dom.md.",
+      "status": "done",
+      "created_at": "2026-05-14T12:25:01Z",
+      "resolved_at": "2026-05-14T12:32:27Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-FOLLOWUP-ME-STARTUP",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-14T12:27:30Z",
+      "resolved_at": "2026-05-14T12:27:31Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F07",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: spec aligns 11/12 registry surfaces to hosted Lovable via fixture routes; runtime surface product gap documented transparently with follow-up FE-INT-GATE-F07-RUNTIME-LIVE-WIRING filed. Owner should create task-scoped commit of e2e/06-entity-registry.spec.ts and evidence note during closeout.",
       "status": "pending",
-      "created_at": "2026-05-14T12:25:01Z"
+      "created_at": "2026-05-14T12:32:27Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by idle Claude; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-14T12:34:47Z",
+      "resolved_at": "2026-05-14T12:35:52Z"
     }
   ],
   "blockers": [
@@ -813,6 +875,14 @@
       "message": "Dev BFF strict preview prerequisites reverified: preview-strict.env targets lupin dev BFF with REAL_WRITES=false, dev /health and /openapi.json return 200, and focused Pack A/B/C + detail pytest passed. Blocked until Lovable preview branch URL and dev BFF smoke JWT/bearer credential are provided for Day 1 probe_bff_authenticated_live.py.",
       "status": "open",
       "created_at": "2026-05-14T12:26:30Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
+      "owner": "Codex",
+      "waiting_for": "Gemini",
+      "message": "Code remediation committed and pushed in execute-plans (104f06b, artifact update 49899d0). Production-preview F05 passed twice, but pantheon-dev.lovable.app still serves old asset /assets/index-BYfBkno5.js as of 2026-05-14T12:32:26Z; hosted F05 rerun is waiting on Lovable dev redeploy/refresh.",
+      "status": "open",
+      "created_at": "2026-05-14T12:33:18Z"
     }
   ],
   "workload": {
@@ -826,22 +896,22 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 0,
-      "active": 0,
+      "total": 1,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Claude2": {
-      "total": 2,
-      "active": 2,
+      "total": 1,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 1,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Gemini": {
       "total": 0,
@@ -864,20 +934,20 @@
     "Codex": {
       "total": 6,
       "active": 5,
-      "blocked": 3,
+      "blocked": 4,
       "done": 0,
       "review": 0,
       "review_approved": 1,
-      "todo": 2
+      "todo": 1
     },
     "Codex2": {
-      "total": 4,
-      "active": 2,
+      "total": 5,
+      "active": 3,
       "blocked": 1,
       "done": 0,
-      "review": 1,
-      "review_approved": 0,
-      "todo": 2
+      "review": 0,
+      "review_approved": 1,
+      "todo": 3
     },
     "Copilot": {
       "total": 1,
