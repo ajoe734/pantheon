@@ -3,10 +3,12 @@
 Task ID: BFF-CONSOL-012-SIDECAR-BFF-HANDOFF
 Parent Task: BFF-CONSOL-012 - SSE backpressure & unbounded buffer test
 Helper Kind: bff_handoff_packet
-Prepared by: Claude
-Reviewer: Codex
-Date: 2026-05-13
+Prepared by: Codex
+Reviewer: Codex2
+Date: 2026-05-14
 Mutates canonical truth: false
+Provenance: refreshed from the tracked support packet after the sidecar was
+auto-reassigned to Codex.
 
 ## Purpose
 
@@ -83,7 +85,7 @@ Channel-to-resync-route mapping (as of `main.py` `_SSE_RESYNC_ROUTES`):
 |---|---|
 | `approval` | `/bff/approvals`, `/bff/v5/interventions` |
 | `ask` | `/bff/agora/ask/sessions/{id}` |
-| `runtime`, `incident`, `system` | (none defined - full page reload or reconnect) |
+| All other `SSE_CHANNEL_CATALOG` channels, plus legacy incident streams | (none defined - use channel-specific REST bootstrap, full page reload, or reconnect policy) |
 
 ## SSE Event Envelope Format
 
@@ -245,7 +247,7 @@ Frontend unit test matrix recommended for consuming this contract:
 - This sidecar is support-only. It does not modify `main.py`, test files,
   evidence files, or canonical documents.
 
-## Handoff Checklist for Codex (Reviewer)
+## Handoff Checklist for Codex2 (Reviewer)
 
 - Confirm the backpressure contract table matches the values asserted in
   `test_sse_backpressure.py` and measured in
@@ -258,11 +260,13 @@ Frontend unit test matrix recommended for consuming this contract:
 
 ## Verification for This Sidecar
 
-Performed as read-only context checks plus artifact creation:
+Performed by Codex as read-only context checks plus a support-packet refresh:
 
 - Read task-scoped context: `AI_COLLABORATION_GUIDE.md`,
   `.orchestrator/task-briefs/bff_consol_012_sidecar_bff_handoff.md`,
   `.orchestrator/skills/task-closeout-finalization.md`, and `ai-status.json`.
+- Verified active task state with
+  `AI_NAME=Codex ./scripts/ai-status.sh show BFF-CONSOL-012-SIDECAR-BFF-HANDOFF`.
 - Read parent task archive: `ai-task-archive/tasks/BFF-CONSOL-012.json`.
 - Read review artifact: `.orchestrator/reviews/BFF-CONSOL-012-review-codex.md`.
 - Read evidence file: `support/evidence/BFF-CONSOL-012-sse-backpressure.json`.
@@ -273,8 +277,17 @@ Performed as read-only context checks plus artifact creation:
   `_replay_from`, `_handle_sse_stream`, `_sse_replay_headers`.
 - Read BFF-CONSOL-011 archive for context on the preceding real stream replay
   work.
-- Read BFF-CONSOL-020 sidecar handoff as format reference.
-- Confirmed the sidecar artifact path did not exist before this packet.
+- Confirmed this sidecar refresh only updates
+  `support/sidecars/BFF-CONSOL-012/BFF-CONSOL-012-SIDECAR-BFF-HANDOFF.md`.
+
+Focused verification commands run for this refresh:
+
+```bash
+python3 -m json.tool support/evidence/BFF-CONSOL-012-sse-backpressure.json >/dev/null
+pytest services/control-plane/bff/tests/test_sse_backpressure.py -q
+# => 3 passed in 11.88s
+git diff --check -- support/sidecars/BFF-CONSOL-012/BFF-CONSOL-012-SIDECAR-BFF-HANDOFF.md
+```
 
 No canonical truth, core contract truth, runtime implementation, registry code,
 or governance implementation was modified by this sidecar.
