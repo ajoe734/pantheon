@@ -7288,6 +7288,41 @@ def _project_command_submission_response(
     )
 
 
+def _command_dual_write_receipts(
+    *,
+    command_id: str,
+    command: str,
+    status: str,
+    accepted_at: Optional[str] = None,
+) -> Dict[str, Dict[str, Any]]:
+    tracking_url = f"/api/v1/operator/commands/{command_id}"
+    action_receipt = {
+        "receipt_type": "action",
+        "id": command_id,
+        "receipt_id": command_id,
+        "command_id": command_id,
+        "status": status,
+        "trackingUrl": tracking_url,
+        "tracking_url": tracking_url,
+    }
+    command_receipt = {
+        "receipt_type": "command",
+        "receipt_id": command_id,
+        "command_id": command_id,
+        "command": command,
+        "status": status,
+        "trackingUrl": tracking_url,
+        "tracking_url": tracking_url,
+    }
+    if accepted_at:
+        action_receipt["accepted_at"] = accepted_at
+        command_receipt["accepted_at"] = accepted_at
+    return {
+        "action_receipt": action_receipt,
+        "command_receipt": command_receipt,
+    }
+
+
 def _action_command_status_from_command_status(status: CommandStatus) -> ActionCommandStatus:
     try:
         return _ACTION_COMMAND_STATUS_MAP[status.value]
@@ -7316,6 +7351,17 @@ def _project_final_command_response(
     legacy_payload["status"] = final_status.value
     if isinstance(legacy_payload.get("receipt"), dict):
         legacy_payload["receipt"]["status"] = final_status.value
+    receipts = _command_dual_write_receipts(
+        command_id=command_id,
+        command=command.value,
+        status=final_status.value,
+        accepted_at=accepted_at,
+    )
+    legacy_payload["receipt_dual_write"] = receipts
+    legacy_payload["action_receipt"] = receipts["action_receipt"]
+    legacy_payload["actionReceipt"] = receipts["action_receipt"]
+    legacy_payload["command_receipt"] = receipts["command_receipt"]
+    legacy_payload["commandReceipt"] = receipts["command_receipt"]
     return CommandResponse[Dict[str, Any]](status=final_status, data=legacy_payload)
 
 
@@ -13819,6 +13865,12 @@ async def submit_final_command(
     foundation_context["idempotency_record"] = idempotency_record
     command_id = command_envelope.command_id
     submitted_at = utc_now()
+    receipt_dual_write = _command_dual_write_receipts(
+        command_id=command_id,
+        command=cmd.command.value,
+        status=ActionCommandStatus.ACCEPTED.value,
+        accepted_at=submitted_at,
+    )
 
     raw_token = None
     if authorization and authorization.startswith("Bearer "):
@@ -13839,6 +13891,7 @@ async def submit_final_command(
         "auth_token": raw_token,
         "mfa_token": mfa_token,
         "foundation": _serialize_foundation_context(foundation_context),
+        "receipt_dual_write": receipt_dual_write,
     }
 
     command_store.submit_command(
@@ -22117,13 +22170,14 @@ def _sem_command_payload_from_record(
 ) -> Dict[str, Any]:
     command_id = str(record.get("command_id") or "")
     command_type = str(record.get("type") or "")
-    receipt = {
-        "id": command_id,
-        "command_id": command_id,
-        "status": "accepted",
-        "trackingUrl": f"/api/v1/operator/commands/{command_id}",
-        "tracking_url": f"/api/v1/operator/commands/{command_id}",
-    }
+    receipts = _command_dual_write_receipts(
+        command_id=command_id,
+        command=command_type,
+        status=ActionCommandStatus.ACCEPTED.value,
+        accepted_at=str(record.get("submitted_at") or ""),
+    )
+    receipt = dict(receipts["command_receipt"])
+    receipt["id"] = command_id
     return {
         "status": "accepted",
         "data": {
@@ -22133,6 +22187,11 @@ def _sem_command_payload_from_record(
             "command_id": command_id,
             "receipt_id": command_id,
             "receipt": receipt,
+            "receipt_dual_write": receipts,
+            "action_receipt": receipts["action_receipt"],
+            "actionReceipt": receipts["action_receipt"],
+            "command_receipt": receipts["command_receipt"],
+            "commandReceipt": receipts["command_receipt"],
         },
         "meta": {
             "durable": True,
@@ -22201,6 +22260,12 @@ def _sem_command_response(
 
     now = utc_now()
     command_id = f"cmd-{uuid.uuid4().hex[:16]}"
+    receipt_dual_write = _command_dual_write_receipts(
+        command_id=command_id,
+        command=command_type.value,
+        status=ActionCommandStatus.ACCEPTED.value,
+        accepted_at=now,
+    )
     record = command_store.submit_command(
         command_id,
         command_type,
@@ -22211,6 +22276,7 @@ def _sem_command_response(
             "actor": identity.operator_id,
             "reason": str(payload.get("reason") or command_type.value),
             "live_capital_side_effects": False,
+            "receipt_dual_write": receipt_dual_write,
         },
         {
             "idempotency_record": {

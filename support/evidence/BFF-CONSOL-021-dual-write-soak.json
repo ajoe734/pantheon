@@ -1,0 +1,51 @@
+{
+  "task_id": "BFF-CONSOL-021",
+  "title": "Receipt dual-write + replay/conflict/idempotency tests",
+  "status": "soak_started",
+  "created_at": "2026-05-14T04:16:21Z",
+  "soak_window": {
+    "started_at": "2026-05-14T04:16:21Z",
+    "minimum_duration_days": 7,
+    "eligible_for_bff_consol_024_after": "2026-05-21T04:16:21Z",
+    "regression_status": "pending_observation"
+  },
+  "dual_write_contract": {
+    "receipt_log": "BFF command audit records include receipt_dual_write.action_receipt and receipt_dual_write.command_receipt.",
+    "response_projection": "Final/action command responses expose both action_receipt/actionReceipt and command_receipt/commandReceipt while preserving receipt_id.",
+    "idempotency_binding": "The same Idempotency-Key binds the action receipt and command receipt for replay/conflict reconciliation."
+  },
+  "acceptance_coverage": {
+    "receipt_dual_write_log_contains_action_and_command_receipts": "services/control-plane/bff/tests/test_command_replay_conflict.py::test_action_receipt_and_command_receipt_dual_write_replay_and_conflict",
+    "same_idempotency_same_body_replays": "services/control-plane/bff/tests/test_command_replay_conflict.py::test_action_receipt_and_command_receipt_dual_write_replay_and_conflict",
+    "same_idempotency_different_body_returns_409": "services/control-plane/bff/tests/test_command_replay_conflict.py::test_action_receipt_and_command_receipt_dual_write_replay_and_conflict",
+    "missing_confirm_token_returns_confirm_token_required": "services/control-plane/bff/tests/test_command_replay_conflict.py::test_bff_v1_commands_missing_confirm_token_returns_confirm_token_required",
+    "missing_approval_evidence_returns_approval_required": "services/control-plane/bff/tests/test_command_replay_conflict.py::test_bff_v1_commands_missing_approval_returns_approval_required"
+  },
+  "verification": [
+    {
+      "command": "pytest services/control-plane/bff/tests/test_command_replay_conflict.py -q",
+      "result": "passed",
+      "summary": "3 passed in 7.64s"
+    },
+    {
+      "command": "pytest services/control-plane/bff/test_final_precondition_errors.py -q",
+      "result": "passed",
+      "summary": "3 passed in 9.22s"
+    },
+    {
+      "command": "pytest services/control-plane/bff/test_governance_command_submission.py -q -k 'bff_v1_commands or legacy_api_v1_commands'",
+      "result": "passed",
+      "summary": "9 passed, 12 deselected in 11.35s"
+    },
+    {
+      "command": "pytest services/control-plane/bff/test_final_command_execution_bridge.py -q",
+      "result": "passed",
+      "summary": "11 passed in 13.38s"
+    }
+  ],
+  "follow_up_gate": {
+    "task_id": "BFF-CONSOL-024",
+    "gate": "Do not deprecate old action receipt before the 7-day soak window ends and regression_status is updated to no_regression.",
+    "earliest_start": "2026-05-21T04:16:21Z"
+  }
+}
