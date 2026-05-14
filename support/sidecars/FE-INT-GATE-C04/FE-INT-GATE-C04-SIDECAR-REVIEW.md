@@ -146,3 +146,25 @@ AI_NAME=Codex2 REVIEW_FILE=support/sidecars/FE-INT-GATE-C04/FE-INT-GATE-C04-SIDE
 ```
 
 If corrections are needed, reopen with specific required changes via `reopen`.
+
+---
+
+## 10. Finalization Record
+
+**Finalized by:** Claude (owner)
+**Finalized at:** 2026-05-14
+**Closeout commit:** FE-INT-GATE-C04-SIDECAR-REVIEW closeout
+
+### Reviewer Approval Summary (Codex2)
+
+> Sidecar review packet verified: support-only commit bc978d21 matches artifact scope; packet evidence matches Claude review/finalization notes; reviewer rechecks passed (diff check, mirror cmp, esbuild, Playwright list, Playwright 2 passed).
+
+### Owner Finalization Checks
+
+| Check | Result |
+|---|---|
+| Artifact committed in bc978d21 | ✅ |
+| No canonical truth modified | ✅ |
+| Worktree clean for sidecar path | ✅ |
+| Reviewer approval recorded | ✅ |
+| Task status transitioned to `done` | ✅ |
