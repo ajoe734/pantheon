@@ -197,8 +197,9 @@ jobs:
         with:
           script: |
             const fs = require('fs');
+            const path = require('path');
             const marker = '<!-- pantheon-release-gate-summary -->';
-            const summaryPath = '.lovable/audits/release-gate-summary.md';
+            const summaryPath = path.join(process.env.PANTHEON_AUDIT_OUT_DIR || '.lovable/audits', 'release-gate-summary.md');
             const fallback = `${marker}\n# Pantheon FE-BFF Release Gate Summary\n\nRelease gate summary was not generated. Check the workflow logs.`;
             const summary = fs.existsSync(summaryPath)
               ? fs.readFileSync(summaryPath, 'utf8')

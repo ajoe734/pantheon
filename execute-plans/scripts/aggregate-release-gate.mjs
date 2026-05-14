@@ -22,9 +22,10 @@ for (let i = 2; i < process.argv.length; i += 1) {
 const AUDIT_DIR = path.resolve(ROOT, argv.get("audit-dir") || process.env.PANTHEON_AUDIT_OUT_DIR || ".lovable/audits");
 const PLAYWRIGHT_REPORT_DIR = path.resolve(ROOT, argv.get("playwright-report") || "playwright-report");
 const TEST_RESULTS_DIR = path.resolve(ROOT, argv.get("test-results") || "test-results");
-const OUT_PATH = path.resolve(ROOT, argv.get("out") || path.join(".lovable", "audits", "release-gate-summary.md"));
-const JSON_OUT_PATH = path.resolve(ROOT, argv.get("json-out") || path.join(".lovable", "audits", "release-gate-summary.json"));
-const CHECKLIST_TEMPLATE_PATH = path.resolve(ROOT, argv.get("checklist") || process.env.PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE || "");
+const OUT_PATH = path.resolve(ROOT, argv.get("out") || path.join(AUDIT_DIR, "release-gate-summary.md"));
+const JSON_OUT_PATH = path.resolve(ROOT, argv.get("json-out") || path.join(AUDIT_DIR, "release-gate-summary.json"));
+const CHECKLIST_TEMPLATE_ARG = argv.get("checklist") || process.env.PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE || "";
+const CHECKLIST_TEMPLATE_PATH = CHECKLIST_TEMPLATE_ARG ? path.resolve(ROOT, CHECKLIST_TEMPLATE_ARG) : "";
 const CHECKLIST_OUT_PATH = path.resolve(ROOT, argv.get("checklist-out") || process.env.PANTHEON_RELEASE_GATE_CHECKLIST_OUT || path.join(".lovable", "audits", "Release_Gate_Checklist.md"));
 const RUN_URL = process.env.PANTHEON_RELEASE_GATE_RUN_URL ||
   (process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY && process.env.GITHUB_RUN_ID
