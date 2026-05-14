@@ -4,7 +4,7 @@ import {
   laneLabelMap,
   scheduleOpenTaskStatuses,
   statusLabelMap,
-} from "./dashboard-config.js?v=20260428-0912";
+} from "./dashboard-config.js?v=20260513-claim";
 
 export const DISPLAY_TIME_ZONE = "Asia/Taipei";
 export const DISPLAY_TIME_ZONE_LABEL = "台灣時間 (UTC+8)";
@@ -139,6 +139,19 @@ export function defaultDashboardBundle() {
       pending_review_agent: null,
       sidecar_approved_until: null,
     },
+    dispatch_policy: {
+      mode: "supervisor_owned_dispatch",
+      helper_claim_enabled: true,
+      claim_idle_work: false,
+      claim_sidecars_when_idle: false,
+      require_owner_higher_priority_load: true,
+      owned_work_first: true,
+      max_dispatches_per_tick: 4,
+      max_tasks_per_agent: 1,
+      sidecar_only_agents: [],
+      disabled_agents: [],
+    },
+    recent_helper_claims: [],
     worker_task_links: [],
     truth_mismatches: [],
   };
@@ -161,6 +174,17 @@ export function normalizeDashboardBundle(value) {
     },
     bridge_summary: { ...base.bridge_summary, ...(value.bridge_summary || {}) },
     chair_summary: { ...base.chair_summary, ...(value.chair_summary || {}) },
+    dispatch_policy: {
+      ...base.dispatch_policy,
+      ...(value.dispatch_policy || {}),
+      sidecar_only_agents: Array.isArray((value.dispatch_policy || {}).sidecar_only_agents)
+        ? value.dispatch_policy.sidecar_only_agents
+        : base.dispatch_policy.sidecar_only_agents,
+      disabled_agents: Array.isArray((value.dispatch_policy || {}).disabled_agents)
+        ? value.dispatch_policy.disabled_agents
+        : base.dispatch_policy.disabled_agents,
+    },
+    recent_helper_claims: Array.isArray(value.recent_helper_claims) ? value.recent_helper_claims : [],
     worker_task_links: Array.isArray(value.worker_task_links) ? value.worker_task_links : [],
     truth_mismatches: Array.isArray(value.truth_mismatches) ? value.truth_mismatches : [],
   };
@@ -352,6 +376,7 @@ export function normalizeWorkerRecords(orchState, status) {
       task_status: taskStatus,
       dispatch_mode: runtimeDispatchMode(worker),
       bucket,
+      reason: worker?.reason || worker?.request_snapshot?.reason || null,
       display_actor: actorLabel(logicalAgentId, worker?.provider),
     };
   });

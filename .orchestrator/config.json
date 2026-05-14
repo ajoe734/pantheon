@@ -28,8 +28,8 @@
     "max_seen_events": 2000
   },
   "supervisor": {
-    "poll_interval_seconds": 15,
-    "heartbeat_warn_after_seconds": 45.0,
+    "poll_interval_seconds": 300,
+    "heartbeat_warn_after_seconds": 360.0,
     "stall_after_seconds": 300,
     "max_worker_history": 200,
     "auto_refresh_provider_capabilities": true
@@ -810,7 +810,9 @@
         "todo",
         "in_progress"
       ],
-      "require_owner_higher_priority_load": true
+      "require_owner_higher_priority_load": false,
+      "claim_idle_work": true,
+      "claim_sidecars_when_idle": true
     },
     "target_workload": {
       "Claude": 10,
@@ -822,6 +824,6 @@
       "Copilot": 5
     },
     "max_tasks_per_agent": 1,
-    "max_dispatches_per_tick": 4
+    "max_dispatches_per_tick": 8
   }
 }

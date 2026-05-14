@@ -4737,6 +4737,8 @@ def helper_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("task_statuses", ["todo", "in_progress"])
     settings.setdefault("paused_owner_task_statuses", ["in_progress"])
     settings.setdefault("require_owner_higher_priority_load", True)
+    settings.setdefault("claim_idle_work", False)
+    settings.setdefault("claim_sidecars_when_idle", False)
     return settings
 
 
@@ -5620,6 +5622,8 @@ def choose_helper_claim_agent(
         return False
     if owner_paused:
         return idle_agent_name in fallbacks
+    if helper_settings.get("claim_idle_work", False):
+        return idle_agent_name in fallbacks
     owner_loads = agent_loads.get(owner_name, [])
     if helper_settings.get("require_owner_higher_priority_load", True):
         dispatch_reason_for_status = {
@@ -5692,6 +5696,8 @@ def higher_priority_ready_task_exists(
     reviewer_field = schema.get("reviewer_field", "reviewer")
     current_task = task_map.get(current_task_id)
     higher_priority_task_ids: set[str] = set()
+    slot_count = len(logical_worker_slot_ids(config, logical_agent_id))
+    urgent_priority_cutoff = dispatch_reason_priority("owned_finalize_dispatch")
 
     for task_id, task in task_map.items():
         if task_id == current_task_id:
@@ -5727,6 +5733,12 @@ def higher_priority_ready_task_exists(
             candidate_priority = 3
 
         if candidate_priority is not None and candidate_priority < current_priority:
+            if (
+                slot_count
+                and urgent_priority_cutoff is not None
+                and candidate_priority > urgent_priority_cutoff
+            ):
+                continue
             higher_priority_task_ids.add(str(task_id))
 
     if not higher_priority_task_ids:
@@ -6008,6 +6020,7 @@ def dispatch_ready_tasks(
         target_has_primary_work = agent_has_dispatchable_primary_work(config, status, target_agent, task_map)
 
         candidates: list[tuple[int, int, dict[str, Any], str]] = []
+        helper_candidates: list[tuple[int, int, dict[str, Any], str, str, str, bool]] = []
         for index, task in enumerate(tasks):
             task_id = str(task.get(task_id_field) or "")
             if not task_id:
@@ -6053,11 +6066,16 @@ def dispatch_ready_tasks(
             if reason is not None and chair_reassignment_triage_needed_for_task(config, state, task_id, target_agent):
                 continue
 
+            sidecar_claim_allowed = (
+                not task_is_sidecar(task)
+                or owner_paused
+                or bool(helper_settings.get("claim_sidecars_when_idle", False))
+            )
             helper_claim_candidate = (
                 dependencies_satisfied(task, task_map, dependency_done_statuses)
                 and task_id not in active_task_ids
                 and task_id not in pending_task_ids
-                and (not task_is_sidecar(task) or owner_paused)
+                and sidecar_claim_allowed
                 and choose_helper_claim_agent(
                     config,
                     task=task,
@@ -6071,70 +6089,27 @@ def dispatch_ready_tasks(
             )
 
             if helper_claim_candidate:
-                helper_dispatch_reason = "owned_in_progress_dispatch" if task_status == "in_progress" else "owned_ready_dispatch"
-                helper_message = (
-                    f"Helper-claimed by {target_agent} while {task_owner} is dispatch-paused."
-                    if owner_paused
-                    else f"Helper-claimed by {target_agent} while {task_owner} completes higher-priority work."
+                helper_dispatch_reason = (
+                    "owned_in_progress_dispatch"
+                    if task_status == "in_progress"
+                    else "owned_ready_dispatch"
                 )
-                if persist_task_reassignment(
-                    config,
-                    task_id=task_id,
-                    new_owner=target_agent,
-                    new_reviewer=str(task_owner or task_reviewer or ""),
-                    message=helper_message,
-                    handoff_to=target_agent,
-                    handoff_from=str(task_owner or ""),
-                ):
-                    new_reviewer = str(task_owner or task_reviewer or "")
-                    task[owner_field] = target_agent
-                    task[reviewer_field] = new_reviewer
-                    task["next"] = helper_message
-
-                    # Re-read the persisted task before signing the dispatch event. The
-                    # status writer owns last_update; using a separate utc_now() here
-                    # makes the queued event immediately look stale.
-                    persisted_status = load_status(config)
-                    persisted_task_map = task_index_from_status(config, persisted_status)
-                    persisted_task = persisted_task_map.get(task_id)
-                    if (
-                        persisted_task
-                        and persisted_task.get(owner_field) == target_agent
-                        and persisted_task.get(reviewer_field) == new_reviewer
-                    ):
-                        task.update(persisted_task)
-                        task_map = dict(task_map)
-                        task_map[task_id] = task
-                    else:
-                        task["last_update"] = utc_now()
-
-                    event = build_dispatch_event(task, target_agent, helper_dispatch_reason, task_map)
-                    if event["key"] not in pending_event_keys and queue_delivery_event(config, event):
-                        seen[event["key"]] = utc_now()
-                        pending_event_keys.add(event["key"])
-                        pending_agents.add(agent_id)
-                        agent_loads.setdefault(target_agent, []).append(
-                            dispatch_reason_priority(helper_dispatch_reason) or 9
-                        )
-                        active_task_ids.add(task_id)
-                        changed = True
-                        dispatches += 1
-                        write_activity_log(
-                            config,
-                            {
-                                "type": "task_helper_claimed",
-                                "task_id": task_id,
-                                "message": helper_message,
-                                "from_owner": task_owner,
-                                "to_owner": target_agent,
-                                "new_reviewer": str(task_owner or task_reviewer or ""),
-                            },
-                        )
-                        console_log(
-                            f"helper claim: task={task_id} from={task_owner} to={target_agent}",
-                            quiet=SUPERVISOR_LOG_QUIET,
-                        )
-                        break
+                helper_priority = 4 if task_status == "in_progress" else 5
+                if owner_paused:
+                    helper_priority -= 2
+                if task_is_sidecar(task):
+                    helper_priority += 2
+                helper_candidates.append(
+                    (
+                        helper_priority,
+                        index,
+                        task,
+                        helper_dispatch_reason,
+                        str(task_owner or ""),
+                        str(task_reviewer or ""),
+                        owner_paused,
+                    )
+                )
 
             if reason is None or priority is None:
                 continue
@@ -6146,6 +6121,7 @@ def dispatch_ready_tasks(
 
         candidates.sort(key=lambda item: (item[0], item[1]))
         per_occurrence_limit = 1 if weighted_dispatch_enabled else available_agent_slots
+        queued_for_agent = 0
         for _, _, task, reason in candidates[:per_occurrence_limit]:
             event = build_dispatch_event(task, target_agent, reason, task_map)
             if queue_delivery_event(config, event):
@@ -6154,6 +6130,95 @@ def dispatch_ready_tasks(
                 agent_loads.setdefault(target_agent, []).append(dispatch_reason_priority(reason) or 9)
                 changed = True
                 dispatches += 1
+                queued_for_agent += 1
+                if dispatches >= max_dispatches_per_tick:
+                    break
+
+        if dispatches >= max_dispatches_per_tick:
+            break
+
+        remaining_occurrence_slots = max(0, per_occurrence_limit - queued_for_agent)
+        helper_candidates.sort(key=lambda item: (item[0], item[1]))
+        for (
+            _,
+            _,
+            task,
+            helper_dispatch_reason,
+            task_owner,
+            task_reviewer,
+            owner_paused,
+        ) in helper_candidates[:remaining_occurrence_slots]:
+            task_id = str(task.get(task_id_field) or "")
+            if not task_id or task_id in active_task_ids or task_id in pending_task_ids:
+                continue
+            helper_message = (
+                f"Helper-claimed by {target_agent} while {task_owner} is dispatch-paused."
+                if owner_paused
+                else (
+                    f"Helper-claimed by idle {target_agent}; previous owner {task_owner} becomes reviewer."
+                    if helper_settings.get("claim_idle_work", False)
+                    else f"Helper-claimed by {target_agent} while {task_owner} completes higher-priority work."
+                )
+            )
+            new_reviewer = str(task_owner or task_reviewer or "")
+            if not persist_task_reassignment(
+                config,
+                task_id=task_id,
+                new_owner=target_agent,
+                new_reviewer=new_reviewer,
+                message=helper_message,
+                handoff_to=target_agent,
+                handoff_from=str(task_owner or ""),
+            ):
+                continue
+
+            task[owner_field] = target_agent
+            task[reviewer_field] = new_reviewer
+            task["next"] = helper_message
+
+            # Re-read the persisted task before signing the dispatch event. The
+            # status writer owns last_update; using a separate utc_now() here
+            # makes the queued event immediately look stale.
+            persisted_status = load_status(config)
+            persisted_task_map = task_index_from_status(config, persisted_status)
+            persisted_task = persisted_task_map.get(task_id)
+            if (
+                persisted_task
+                and persisted_task.get(owner_field) == target_agent
+                and persisted_task.get(reviewer_field) == new_reviewer
+            ):
+                task.update(persisted_task)
+                task_map = dict(task_map)
+                task_map[task_id] = task
+            else:
+                task["last_update"] = utc_now()
+
+            event = build_dispatch_event(task, target_agent, helper_dispatch_reason, task_map)
+            if event["key"] not in pending_event_keys and queue_delivery_event(config, event):
+                seen[event["key"]] = utc_now()
+                pending_event_keys.add(event["key"])
+                pending_agents.add(agent_id)
+                agent_loads.setdefault(target_agent, []).append(
+                    dispatch_reason_priority(helper_dispatch_reason) or 9
+                )
+                active_task_ids.add(task_id)
+                changed = True
+                dispatches += 1
+                write_activity_log(
+                    config,
+                    {
+                        "type": "task_helper_claimed",
+                        "task_id": task_id,
+                        "message": helper_message,
+                        "from_owner": task_owner,
+                        "to_owner": target_agent,
+                        "new_reviewer": new_reviewer,
+                    },
+                )
+                console_log(
+                    f"helper claim: task={task_id} from={task_owner} to={target_agent}",
+                    quiet=SUPERVISOR_LOG_QUIET,
+                )
                 if dispatches >= max_dispatches_per_tick:
                     break
 
