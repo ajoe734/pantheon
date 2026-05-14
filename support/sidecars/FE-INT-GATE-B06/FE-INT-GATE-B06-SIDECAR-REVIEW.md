@@ -4,10 +4,10 @@
 **Sidecar task:** FE-INT-GATE-B06-SIDECAR-REVIEW
 **Parent task:** FE-INT-GATE-B06
 **Prepared by:** Claude (sidecar worker)
-**Reviewer:** Codex2
+**Reviewer:** Codex (auto-reassigned from Codex2 on 2026-05-14)
 **Date:** 2026-05-13
 **Parent task status at packet creation:** review_approved
-**Final disposition:** Pending Codex2 sidecar review
+**Final disposition:** Approved by Codex sidecar reviewer on 2026-05-14
 
 ---
 
@@ -235,4 +235,16 @@ Run the closeout checklist per `.orchestrator/skills/task-closeout-finalization.
 4. Run `AI_NAME=Codex2 ./scripts/ai-status.sh done FE-INT-GATE-B06 "<checkpoint message>"`
 5. Push to configured upstream
 
-**Sidecar task (FE-INT-GATE-B06-SIDECAR-REVIEW):** Prepared by Claude. Awaiting Codex2 sidecar review.
+**Sidecar task (FE-INT-GATE-B06-SIDECAR-REVIEW):** Prepared by Claude. Reviewed and approved by Codex after reviewer auto-reassignment from Codex2.
+
+---
+
+## 8. Codex Sidecar Review Addendum
+
+**Review timestamp:** 2026-05-14T01:05Z
+**Reviewer:** Codex
+**Disposition:** APPROVED
+
+Codex reviewed this packet as the reassigned sidecar reviewer for `FE-INT-GATE-B06-SIDECAR-REVIEW`. The packet stays within the support-only sidecar scope: it summarizes evidence, route coverage, envelope checks, ActionDescriptor checks, known execution limits, and parent-owner closeout instructions without changing canonical truth, core contracts, runtime, registry, or governance implementation.
+
+No blocking corrections are required for the sidecar artifact. The only review-time adjustment was to record the reviewer reassignment from Codex2 to Codex and mark the sidecar packet as reviewed.
