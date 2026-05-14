@@ -2,8 +2,8 @@
   "project": "pantheon",
   "sprint": "2026-05-13-ep5-qlib-bff-consolidation",
   "sprint_started_at": "2026-05-13T02:00:00Z",
-  "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec, 從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV, 跑 production_activation_smoke.py --backend real, submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal, registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff, command envelope unification, non-empty fixture & detail journey, SSE real stream replay, strict env cutover, seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write soak 1 週後 deprecate 舊 receipt。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。",
-  "updated_at": "2026-05-13T11:56:22Z",
+  "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec，從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV，跑 production_activation_smoke.py --backend real，submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal，registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff，command envelope unification，non-empty fixture & detail journey，SSE real stream replay，strict env cutover，seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write 驗證通過後即可 deprecate 舊 receipt，後續 regression 追蹤不再以固定天數阻塞派工。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。",
+  "updated_at": "2026-05-14T06:50:10Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -99,8 +99,8 @@
         "BFF-CONSOL-012-SIDECAR-BFF-HANDOFF"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Supervisor resumed BFF-CONSOL-012-SIDECAR-BFF-HANDOFF for finalize after successful dispatch.",
-      "last_update": "2026-05-13T11:43:52Z"
+      "next": "Supervisor paused finalize on BFF-CONSOL-012-SIDECAR-BFF-HANDOFF to free Claude for higher-priority review work; task remains review_approved.",
+      "last_update": "2026-05-13T12:04:06Z"
     },
     {
       "name": "Gemini",
@@ -124,14 +124,14 @@
         "schema",
         "acceptance"
       ],
-      "status": "blocked",
+      "status": "finalize",
       "current_task_ids": [
         "BFF-CONSOL-021",
         "BFF-CONSOL-028"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Implementation commit c127ee7b added parent replay/conflict/precondition tests and initialized dual-write evidence. Blocked before review on the required seven elapsed clean soak days; earliest eligible completion is 2026-05-20T11:53:20Z, and BFF-CONSOL-024 must remain held until this evidence records seven clean days.",
-      "last_update": "2026-05-13T11:56:01Z"
+      "next": "Supervisor resumed BFF-CONSOL-021 for finalize after successful dispatch.",
+      "last_update": "2026-05-14T06:48:14Z"
     },
     {
       "name": "Codex2",
@@ -143,12 +143,11 @@
       ],
       "status": "blocked",
       "current_task_ids": [
-        "BFF-CONSOL-022",
-        "BFF-CONSOL-015-SIDECAR-BFF-HANDOFF"
+        "BFF-CONSOL-022"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Refreshing support-only handoff packet after review: distinguish original BFF-CONSOL-015 83-helper snapshot from current post-025/028 62/15/4/2 taxonomy state; no canonical/runtime edits.",
-      "last_update": "2026-05-13T11:53:19Z"
+      "next": "Initialized and committed preview strict env plus evidence in d972f8b9; local prereq tests passed. Blocked on Lovable preview URL plus authenticated staging BFF smoke credentials/reachability. Fixed elapsed-day soak gate has been removed.",
+      "last_update": "2026-05-13T09:56:02Z"
     },
     {
       "name": "Copilot",
@@ -200,11 +199,11 @@
     {
       "id": "BFF-CONSOL-021",
       "title": "Receipt dual-write + replay/conflict/idempotency tests",
-      "summary_zh": "舊 action receipt + 新 command receipt 並存。Test cases: same idempotency + same body→replay;same idempotency + diff body→409;missing confirm token→CONFIRM_TOKEN_REQUIRED;missing approval evidence→APPROVAL_REQUIRED。Soak 1 週後啟動 024。",
+      "summary_zh": "舊 action receipt + 新 command receipt 並存。Test cases: same idempotency + same body→replay;same idempotency + diff body→409;missing confirm token→CONFIRM_TOKEN_REQUIRED;missing approval evidence→APPROVAL_REQUIRED。驗證通過後立即啟動 024，後續 regression 追蹤不阻塞派工。",
       "phase": "BFF Consolidation 2026-05-13",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "blocked",
+      "status": "review_approved",
       "depends_on": [
         "BFF-CONSOL-019",
         "BFF-CONSOL-020"
@@ -219,16 +218,19 @@
         "idempotency conflict test 回 409",
         "missing confirm token 回 CONFIRM_TOKEN_REQUIRED",
         "missing approval evidence 回 APPROVAL_REQUIRED",
-        "soak window ≥7 day 紀錄無 regression"
+        "dual-write regression follow-up 已拆成非阻塞追蹤，不再要求固定 7 day soak gate"
       ],
-      "next": "Implementation commit c127ee7b added parent replay/conflict/precondition tests and initialized dual-write evidence. Blocked before review on the required seven elapsed clean soak days; earliest eligible completion is 2026-05-20T11:53:20Z, and BFF-CONSOL-024 must remain held until this evidence records seven clean days.",
-      "last_update": "2026-05-13T11:56:01Z",
-      "waiting_for": "Codex"
+      "next": "Supervisor resumed BFF-CONSOL-021 for finalize after successful dispatch.",
+      "last_update": "2026-05-14T06:48:14Z",
+      "review_notes_zh": [
+        "確認 021 dual-write/replay/conflict/precondition 測試紀錄完整；固定 7 天 soak gate 已依 operator 指示拆成非阻塞 follow-up，024 可開始。"
+      ],
+      "review_file": ".orchestrator/reviews/BFF-CONSOL-021-review-claude.md"
     },
     {
       "id": "BFF-CONSOL-022",
       "title": "Lovable staging strict cutover (isolated preview branch)",
-      "summary_zh": "開 Lovable preview branch 設 VITE_BFF_MODE=live + VITE_BFF_FALLBACK=strict + VITE_BFF_REAL_WRITES=false。現有 staging 維持 auto fallback 不切。Soak ≥7 day 紀錄 strict mode 下 read/SSE/detail journey 沒 regression。",
+      "summary_zh": "開 Lovable preview branch 設 VITE_BFF_MODE=live + VITE_BFF_FALLBACK=strict + VITE_BFF_REAL_WRITES=false。現有 staging 維持 auto fallback 不切。用 strict mode read/SSE/detail journey regression evidence 決定是否推進，不再用固定天數 gate。",
       "phase": "BFF Consolidation 2026-05-13",
       "owner": "Codex2",
       "reviewer": "Gemini",
@@ -247,18 +249,18 @@
         "preview branch 切 strict 模式運行",
         "REAL_WRITES 維持 false",
         "現有 staging 保留 auto fallback",
-        "7 day soak 完成",
+        "strict mode regression evidence 完成",
         "SSE replay/read smoke 都 pass",
         "evidence 紀錄 strict 下無 fallback regression"
       ],
-      "next": "Initialized and committed preview strict env plus soak evidence in d972f8b9; local prereq tests passed. Blocked on Lovable preview URL, authenticated staging BFF smoke credentials/reachability, and seven elapsed clean soak days before review.",
+      "next": "Initialized and committed preview strict env plus evidence in d972f8b9; local prereq tests passed. Blocked on Lovable preview URL plus authenticated staging BFF smoke credentials/reachability. Fixed elapsed-day soak gate has been removed.",
       "last_update": "2026-05-13T09:56:02Z",
       "waiting_for": "Gemini"
     },
     {
       "id": "BFF-CONSOL-023",
-      "title": "Lovable prod strict cutover (staging soak gate)",
-      "summary_zh": "等 022 staging soak 1 週 0 regression prod 切 VITE_BFF_FALLBACK=strict (REAL_WRITES 仍 false 直到 operator onboard)。Prod soak ≥7 day 才算 cutover 完成。",
+      "title": "Lovable prod strict cutover (staging verification gate)",
+      "summary_zh": "等 022 staging strict verification 0 regression 後 prod 切 VITE_BFF_FALLBACK=strict (REAL_WRITES 仍 false 直到 operator onboard)。Prod cutover 以 smoke/regression evidence 完成，不再用固定天數 gate。",
       "phase": "BFF Consolidation 2026-05-13",
       "owner": "Gemini2",
       "reviewer": "Gemini",
@@ -273,7 +275,7 @@
       "acceptance": [
         "prod 切 strict 模式運行",
         "REAL_WRITES 仍 false",
-        "prod 7 day soak 完成",
+        "prod smoke/regression evidence 完成",
         "operator 體感 0 regression",
         "SSE/read smoke 在 prod 都 pass",
         "evidence 紀錄 cutover 過程與監控指標"
@@ -283,8 +285,8 @@
     },
     {
       "id": "BFF-CONSOL-024",
-      "title": "Deprecate old action receipt (after 1-week soak)",
-      "summary_zh": "021 dual-write soak 1 週後標 deprecated 保留 /bff/actions/* 路徑但 receipt schema 加 deprecated flag。前端 runAction.ts 預設改打 /bff/v1/commands。",
+      "title": "Deprecate old action receipt",
+      "summary_zh": "021 dual-write 驗證通過後標 deprecated 保留 /bff/actions/* 路徑但 receipt schema 加 deprecated flag。前端 runAction.ts 預設改打 /bff/v1/commands。",
       "phase": "BFF Consolidation 2026-05-13",
       "owner": "Codex",
       "reviewer": "Claude",
@@ -309,7 +311,7 @@
     {
       "id": "BFF-CONSOL-027",
       "title": "Final BFF consolidation acceptance packet",
-      "summary_zh": "集合 001..026 evidence 輸出 support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md。內容含 contract diff baseline/live smoke (read+write)/SSE evidence/command receipt sample/staging+prod cutover log/soak metric/seed.ts post-state。Copilot 統整 Claude 最終簽核。",
+      "summary_zh": "集合 001..026 evidence 輸出 support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md。內容含 contract diff baseline/live smoke (read+write)/SSE evidence/command receipt sample/staging+prod cutover log/regression follow-up/seed.ts post-state。Copilot 統整 Claude 最終簽核。",
       "phase": "BFF Consolidation 2026-05-13",
       "owner": "Copilot",
       "reviewer": "Claude",
@@ -351,43 +353,12 @@
         "acceptance packet 含 SSE evidence",
         "acceptance packet 含 command receipt sample",
         "acceptance packet 含 staging+prod cutover log",
-        "acceptance packet 含 7-day soak metric",
+        "acceptance packet 含 regression follow-up 狀態",
         "acceptance packet 含 seed.ts post-state",
         "Claude 最終簽核"
       ],
       "next": "Assignment created",
       "last_update": "2026-05-13T02:05:17Z"
-    },
-    {
-      "id": "BFF-CONSOL-016-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare BFF-CONSOL-016 BFF and frontend handoff packet",
-      "summary_zh": "平行支援 BFF-CONSOL-016，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-      "phase": "BFF Consolidation 2026-05-13",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "review_approved",
-      "depends_on": [
-        "BFF-CONSOL-008"
-      ],
-      "artifacts": [
-        "support/sidecars/BFF-CONSOL-016/BFF-CONSOL-016-SIDECAR-BFF-HANDOFF.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Supervisor resumed BFF-CONSOL-016-SIDECAR-BFF-HANDOFF for finalize after successful dispatch.",
-      "last_update": "2026-05-13T11:56:09Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "BFF-CONSOL-016",
-      "helper_kind": "bff_handoff_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization",
-      "review_notes_zh": [
-        "Codex2 review approved. Scope is support-only: commit aba7daca adds only support/sidecars/BFF-CONSOL-016/BFF-CONSOL-016-SIDECAR-BFF-HANDOFF.md. Packet route list and Pack A IDs match support/evidence/BFF-CONSOL-016-detail-smoke-a.json and services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py. Verification passed: python3 -m json.tool support/evidence/BFF-CONSOL-016-detail-smoke-a.json >/dev/null; python3 -m py_compile services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py; python3 -m pytest services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py -q (6 passed)."
-      ]
     },
     {
       "id": "BFF-CONSOL-012-SIDECAR-BFF-HANDOFF",
@@ -408,8 +379,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Supervisor resumed BFF-CONSOL-012-SIDECAR-BFF-HANDOFF for finalize after successful dispatch.",
-      "last_update": "2026-05-13T11:43:52Z",
+      "next": "Supervisor paused finalize on BFF-CONSOL-012-SIDECAR-BFF-HANDOFF to free Claude for higher-priority review work; task remains review_approved.",
+      "last_update": "2026-05-13T12:04:06Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "BFF-CONSOL-012",
@@ -422,42 +393,13 @@
       ]
     },
     {
-      "id": "BFF-CONSOL-015-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare BFF-CONSOL-015 BFF and frontend handoff packet",
-      "summary_zh": "平行支援 BFF-CONSOL-015，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-      "phase": "BFF Consolidation 2026-05-13",
-      "owner": "Codex2",
-      "reviewer": "Claude",
-      "status": "in_progress",
-      "depends_on": [
-        "BFF-CONSOL-005",
-        "BFF-CONSOL-007"
-      ],
-      "artifacts": [
-        "support/sidecars/BFF-CONSOL-015/BFF-CONSOL-015-SIDECAR-BFF-HANDOFF.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Refreshing support-only handoff packet after review: distinguish original BFF-CONSOL-015 83-helper snapshot from current post-025/028 62/15/4/2 taxonomy state; no canonical/runtime edits.",
-      "last_update": "2026-05-13T11:53:19Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "BFF-CONSOL-015",
-      "helper_kind": "bff_handoff_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
-    },
-    {
       "id": "BFF-CONSOL-028",
       "title": "Deferred seed adjunct live route follow-up",
       "summary_zh": "承接 BFF-CONSOL-025 deferred seed adjunct helpers；為尚無安全 live replacement 的 governance/evolution/capital adjunct surfaces 補 BFF route、折入既有 detail DTO，或在 strict live UI 明確隱藏/不可用，避免任何 seed fallback 被當成 live truth。",
       "phase": "BFF Consolidation follow-up 2026-05-13",
       "owner": "Codex",
-      "reviewer": "Claude2",
-      "status": "review",
+      "reviewer": "Claude",
+      "status": "review_approved",
       "depends_on": [
         "BFF-CONSOL-025"
       ],
@@ -472,40 +414,13 @@
         "strict live tests cover each remaining adjunct family",
         "no seed fallback masquerades as live truth"
       ],
-      "next": "Ready for review. execute-plans commit 75a455f wires BFF-CONSOL-028 routeable seed adjuncts through persona/evolution/strategy live routes and adds strict-live coverage for all remaining adjunct families. Pantheon commit db72641a updates seed taxonomy/docs: 62 live_required, 15 deferred explicit empty/unavailable, no deferred helper points at BFF-CONSOL-025 or BFF-CONSOL-028. Verified: npm test seedTaxonomy; npm test seedTaxonomy+lists+client; npm run build; jq empty taxonomy copies; scoped git diff --check.",
-      "last_update": "2026-05-13T11:35:22Z"
-    },
-    {
-      "id": "BFF-CONSOL-020-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare BFF-CONSOL-020 BFF and frontend handoff packet",
-      "summary_zh": "平行支援 BFF-CONSOL-020，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-      "phase": "BFF Consolidation 2026-05-13",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "review_approved",
-      "depends_on": [
-        "BFF-CONSOL-019"
-      ],
-      "artifacts": [
-        "support/sidecars/BFF-CONSOL-020/BFF-CONSOL-020-SIDECAR-BFF-HANDOFF.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Supervisor resumed BFF-CONSOL-020-SIDECAR-BFF-HANDOFF for finalize after successful dispatch.",
-      "last_update": "2026-05-13T11:56:22Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "BFF-CONSOL-020",
-      "helper_kind": "bff_handoff_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization",
+      "next": "Review approved: all 4 acceptance criteria satisfied. Routeable adjuncts folded into live parent routes; deferred adjuncts explicit strict-live empty/unavailable; no seed fallback masquerades as live truth. Returning to Codex for closeout.",
+      "last_update": "2026-05-14T06:50:10Z",
       "review_notes_zh": [
-        "Approved with one narrow reviewer reconciliation: parent BFF-CONSOL-020 is now in review, not in_progress. Packet remains support-only, covers direct /bff/v1/commands caller, legacy /bff/actions compatibility, confirm-token/approval evidence, typed errors, idempotency, and absorption gates. Verification: sed -n 228,248p support/sidecars/BFF-CONSOL-020/BFF-CONSOL-020-SIDECAR-BFF-HANDOFF.md; LC_ALL=C grep -nP non-ASCII check returned no matches; git diff --no-index --check /dev/null support/sidecars/BFF-CONSOL-020/BFF-CONSOL-020-SIDECAR-BFF-HANDOFF.md produced no whitespace-error output."
+        "審查通過：62 live_required / 15 deferred 計數一致，兩份 taxonomy 副本同步；所有可路由 adjunct 已折入既有 persona/evolution/strategy live route，無路由的 deferred helper 在 strict live 均回傳明確 empty/unavailable，無靜默 seed fallback；所有 acceptance criteria 通過",
+        "次要：elimination_order P0 labels 在兩份 taxonomy 中有一字差異（bff.mutations vs mutations），為人可讀欄位不影響執行，無須修正"
       ],
-      "review_file": "support/sidecars/BFF-CONSOL-020/BFF-CONSOL-020-SIDECAR-BFF-HANDOFF.md"
+      "review_file": ".orchestrator/reviews/BFF-CONSOL-028-review-claude.md"
     }
   ],
   "handoffs": [
@@ -527,23 +442,6 @@
       "resolved_at": "2026-04-17T12:39:53Z"
     },
     {
-      "task_id": "BFF-CONSOL-020-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Ready for review: created support-only handoff packet at support/sidecars/BFF-CONSOL-020/BFF-CONSOL-020-SIDECAR-BFF-HANDOFF.md. Packet covers BFF-CONSOL-020 direct /bff/v1/commands caller gap, legacy /bff/actions adapter compatibility, operator journey, commandClient/runAction frontend handoff, confirm-token and approval evidence handling, typed error/idempotency test matrix, and EP5/021/024 absorption gates. Verification: read task-scoped context and focused BFF/frontend contract files; checked artifact is ASCII and git diff --check reported no whitespace issues for scoped path. No canonical truth or runtime files changed by this sidecar.",
-      "status": "done",
-      "created_at": "2026-05-13T11:12:42Z",
-      "resolved_at": "2026-05-13T11:15:56Z"
-    },
-    {
-      "task_id": "BFF-CONSOL-020-SIDECAR-BFF-HANDOFF",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Review approved: support-only handoff packet is scoped correctly; reviewer reconciled the parent status line and verified ASCII/no whitespace-error output. Owner Codex should finalize with a task-scoped commit before done.",
-      "status": "pending",
-      "created_at": "2026-05-13T11:15:56Z"
-    },
-    {
       "task_id": "BFF-CONSOL-012-SIDECAR-BFF-HANDOFF",
       "from": "Codex",
       "to": "Claude",
@@ -551,15 +449,6 @@
       "status": "done",
       "created_at": "2026-05-13T11:17:46Z",
       "resolved_at": "2026-05-13T11:18:23Z"
-    },
-    {
-      "task_id": "BFF-CONSOL-016-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Ready for review: created support-only handoff packet at support/sidecars/BFF-CONSOL-016/BFF-CONSOL-016-SIDECAR-BFF-HANDOFF.md and committed it in aba7daca. Packet covers BFF-CONSOL-016 Pack A route evidence, stale route-manifest caveat, BFF/frontend query gaps, operator journeys, frontend absorption checklist, suggested tests, and explicit support-only scope confirmation. Verification: git diff --cached --check before commit; git diff --check for scoped path; ASCII scan; python3 -m json.tool support/evidence/BFF-CONSOL-016-detail-smoke-a.json >/dev/null; python3 -m py_compile services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py. No canonical truth, runtime, registry, governance, or execute-plans files changed by this sidecar.",
-      "status": "done",
-      "created_at": "2026-05-13T11:19:35Z",
-      "resolved_at": "2026-05-13T11:26:31Z"
     },
     {
       "task_id": "BFF-CONSOL-012-SIDECAR-BFF-HANDOFF",
@@ -571,38 +460,13 @@
       "resolved_at": "2026-05-13T11:43:47Z"
     },
     {
-      "task_id": "BFF-CONSOL-015-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Helper-claimed by idle Claude; previous owner Codex becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-13T11:23:35Z",
-      "resolved_at": "2026-05-13T11:23:47Z"
-    },
-    {
-      "task_id": "BFF-CONSOL-016-SIDECAR-BFF-HANDOFF",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Review approved: support-only handoff packet matches parent evidence/test route set; commit aba7daca is scoped to the sidecar artifact; verification passed (json.tool, py_compile, focused pytest 6 passed). Owner Codex should run closeout finalization before done.",
-      "status": "pending",
-      "created_at": "2026-05-13T11:26:31Z"
-    },
-    {
-      "task_id": "BFF-CONSOL-015-SIDECAR-BFF-HANDOFF",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Support-only BFF/frontend handoff packet created at support/sidecars/BFF-CONSOL-015/BFF-CONSOL-015-SIDECAR-BFF-HANDOFF.md and committed in b9c69a2d. Packet covers mock-only badge contract (4 category->behavior mapping), taxonomy count baseline (83 helpers: 52/25/4/2), live-mode seed gate rules (liveEmpty/delaySeed), wired UI surfaces table, operator journey for live/mock/strict modes, gap matrix for deferred helpers and BFF-CONSOL-025/028 follow-ups, frontend test matrix, and parent absorption risks. Verification: git diff --check and ASCII scan clean. No canonical truth, runtime, registry, or governance files changed by this sidecar.",
-      "status": "done",
-      "created_at": "2026-05-13T11:27:47Z",
-      "resolved_at": "2026-05-13T11:45:36Z"
-    },
-    {
       "task_id": "BFF-CONSOL-028",
       "from": "Codex",
       "to": "Claude2",
       "message": "Ready for review. execute-plans commit 75a455f wires BFF-CONSOL-028 routeable seed adjuncts through persona/evolution/strategy live routes and adds strict-live coverage for all remaining adjunct families. Pantheon commit db72641a updates seed taxonomy/docs: 62 live_required, 15 deferred explicit empty/unavailable, no deferred helper points at BFF-CONSOL-025 or BFF-CONSOL-028. Verified: npm test seedTaxonomy; npm test seedTaxonomy+lists+client; npm run build; jq empty taxonomy copies; scoped git diff --check.",
-      "status": "pending",
-      "created_at": "2026-05-13T11:35:22Z"
+      "status": "done",
+      "created_at": "2026-05-13T11:35:22Z",
+      "resolved_at": "2026-05-13T12:03:54Z"
     },
     {
       "task_id": "BFF-CONSOL-012-SIDECAR-BFF-HANDOFF",
@@ -613,22 +477,47 @@
       "created_at": "2026-05-13T11:43:47Z"
     },
     {
-      "task_id": "BFF-CONSOL-015-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
+      "task_id": "BFF-CONSOL-028",
+      "from": "Claude2",
       "to": "Claude",
-      "message": "Review returned: handoff packet is support-only and commit b9c69a2d touches only the expected sidecar file, but taxonomy/gap facts need refresh before approval. Packet states 83 helpers as 52 live_required / 25 deferred / 4 mock_only_dev / 2 deprecated and says BFF-CONSOL-025 seed elimination is still open. Current durable taxonomy docs and ../execute-plans HEAD are 62 live_required / 15 deferred / 4 mock_only_dev / 2 deprecated after BFF-CONSOL-025, and BFF-CONSOL-028 is now in review with the same 62/15/4/2 baseline. Please update the packet to distinguish the BFF-CONSOL-015 snapshot from current post-025/028 state, adjust deferred-helper and follow-up language, then hand back to Codex.",
+      "message": "Chair reassigned review from Claude2 to Claude: Claude2 is paused by provider guardrail until 2026-05-13T17:00:00Z, while BFF-CONSOL-028 is ready for review and Claude is the nearest available reviewer lane with related BFF context.",
       "status": "done",
-      "created_at": "2026-05-13T11:45:36Z",
-      "resolved_at": "2026-05-13T11:45:36Z"
+      "created_at": "2026-05-13T12:03:54Z",
+      "resolved_at": "2026-05-14T06:50:10Z"
     },
     {
-      "task_id": "BFF-CONSOL-015-SIDECAR-BFF-HANDOFF",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "task_id": "BFF-CONSOL-021",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "BFF-CONSOL-021 ready for approval. Fixed 7-day soak gate has been removed and converted to non-blocking regression follow-up; evidence updated at support/evidence/BFF-CONSOL-021-dual-write-soak.json; review file .orchestrator/reviews/BFF-CONSOL-021-review-claude.md.",
       "status": "done",
-      "created_at": "2026-05-13T11:51:33Z",
-      "resolved_at": "2026-05-13T11:51:34Z"
+      "created_at": "2026-05-14T06:46:57Z",
+      "resolved_at": "2026-05-14T06:47:03Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-021",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Approved BFF-CONSOL-021; 7-day soak gate removed, evidence converted to non-blocking regression follow-up, BFF-CONSOL-024 may start.",
+      "status": "done",
+      "created_at": "2026-05-14T06:47:03Z",
+      "resolved_at": "2026-05-14T06:48:14Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-021",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Supervisor resumed BFF-CONSOL-021 for finalize after successful dispatch.",
+      "status": "pending",
+      "created_at": "2026-05-14T06:49:56Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-028",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 4 acceptance criteria satisfied. Routeable adjuncts folded into live parent routes; deferred adjuncts explicit strict-live empty/unavailable; no seed fallback masquerades as live truth. Returning to Codex for closeout.",
+      "status": "pending",
+      "created_at": "2026-05-14T06:50:10Z"
     }
   ],
   "blockers": [
@@ -636,7 +525,7 @@
       "task_id": "BFF-CONSOL-022",
       "owner": "Codex2",
       "waiting_for": "Gemini",
-      "message": "Initialized and committed preview strict env plus soak evidence in d972f8b9; local prereq tests passed. Blocked on Lovable preview URL, authenticated staging BFF smoke credentials/reachability, and seven elapsed clean soak days before review.",
+      "message": "Initialized and committed preview strict env plus evidence in d972f8b9; local prereq tests passed. Blocked on Lovable preview URL plus authenticated staging BFF smoke credentials/reachability. Fixed elapsed-day soak gate has been removed.",
       "status": "open",
       "created_at": "2026-05-13T09:56:02Z"
     },
@@ -644,9 +533,10 @@
       "task_id": "BFF-CONSOL-021",
       "owner": "Codex",
       "waiting_for": "Codex",
-      "message": "Implementation commit c127ee7b added parent replay/conflict/precondition tests and initialized dual-write evidence. Blocked before review on the required seven elapsed clean soak days; earliest eligible completion is 2026-05-20T11:53:20Z, and BFF-CONSOL-024 must remain held until this evidence records seven clean days.",
-      "status": "open",
-      "created_at": "2026-05-13T11:56:01Z"
+      "message": "Implementation commit c127ee7b added parent replay/conflict/precondition tests and initialized dual-write evidence. Fixed elapsed-day soak gate was later removed by operator directive, and BFF-CONSOL-024 may proceed after BFF-CONSOL-021 closeout.",
+      "status": "resolved",
+      "created_at": "2026-05-13T11:56:01Z",
+      "resolved_at": "2026-05-14T06:46:50Z"
     }
   ],
   "workload": {
@@ -696,22 +586,22 @@
       "todo": 1
     },
     "Codex": {
-      "total": 5,
-      "active": 2,
-      "blocked": 1,
+      "total": 3,
+      "active": 0,
+      "blocked": 0,
       "done": 0,
-      "review": 1,
+      "review": 0,
       "review_approved": 2,
       "todo": 1
     },
     "Codex2": {
-      "total": 2,
-      "active": 2,
+      "total": 1,
+      "active": 1,
       "blocked": 1,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Copilot": {
       "total": 1,

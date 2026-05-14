@@ -1,8 +1,8 @@
 {
   "task_id": "BFF-CONSOL-021",
-  "status": "soak_pending_elapsed_time",
+  "status": "implementation_verified_gate_removed",
   "created_at": "2026-05-13T11:53:20Z",
-  "updated_at": "2026-05-13T11:53:20Z",
+  "updated_at": "2026-05-14T06:44:12Z",
   "owner": "Codex",
   "reviewer": "Claude",
   "dependencies": {
@@ -141,16 +141,16 @@
       "recorded_at": "2026-05-13T11:54:00Z"
     }
   ],
-  "soak": {
-    "required_clean_days": 7,
+  "regression_follow_up": {
+    "gate_change": "Fixed elapsed-day soak gate removed by operator directive on 2026-05-14T06:44:12Z; BFF-CONSOL-024 can start after BFF-CONSOL-021 closeout.",
+    "required_clean_days": 0,
     "elapsed_clean_days": 0,
     "started_at": "2026-05-13T11:53:20Z",
-    "earliest_completion_at": "2026-05-20T11:53:20Z",
+    "earliest_completion_at": "2026-05-14T06:44:12Z",
     "completion_criteria": [
-      "At least seven elapsed calendar days after started_at",
       "No replay/conflict/precondition regression in daily checks",
       "Legacy action adapter and final command direct receipt samples remain reconcilable",
-      "No live capital side effects are enabled during this soak"
+      "No live capital side effects are enabled during this follow-up"
     ],
     "days": [
       {
@@ -166,8 +166,10 @@
       }
     ]
   },
-  "blockers": [
-    "Seven elapsed clean soak days have not completed; earliest eligible review completion is 2026-05-20T11:53:20Z.",
-    "BFF-CONSOL-024 must remain blocked until this evidence records seven clean elapsed days."
-  ]
+  "blockers": [],
+  "bff_consol_024_release": {
+    "task_id": "BFF-CONSOL-024",
+    "gate": "BFF-CONSOL-024 is no longer blocked by a fixed soak window; proceed after verified BFF-CONSOL-021 tests and closeout.",
+    "earliest_start": "2026-05-14T06:44:12Z"
+  }
 }
