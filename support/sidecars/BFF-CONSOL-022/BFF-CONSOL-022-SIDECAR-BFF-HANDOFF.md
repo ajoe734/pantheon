@@ -295,3 +295,31 @@ python3 -m pytest services/control-plane/bff/test_bff_consol_008_fixture_pack_a.
 ```
 
 Result: passed, 24 passed in 23.21s.
+
+## Final Owner Closeout Record
+
+After ownership reassignment from Codex2 to Codex, Codex re-read the task
+brief, Claude2 approval, and this sidecar artifact on 2026-05-14. The approved
+scope remains support-only: no L1 canonical truth, runtime, registry, or
+governance files are modified by this sidecar. The parent BFF-CONSOL-022 owner
+still owns preview deployment, Day 1 live probes, and the 7-day soak evidence.
+
+Commands rerun during final owner closeout:
+
+```bash
+git diff --check -- support/sidecars/BFF-CONSOL-022/BFF-CONSOL-022-SIDECAR-BFF-HANDOFF.md
+```
+
+Result: passed.
+
+```bash
+python3 -m py_compile scripts/probe_bff_authenticated_live.py scripts/probe_bff_sse_stream.py
+```
+
+Result: passed.
+
+```bash
+python3 -m json.tool support/evidence/BFF-CONSOL-012-sse-backpressure.json >/tmp/bff-consol-012-sse-finalize.json
+```
+
+Result: passed.
