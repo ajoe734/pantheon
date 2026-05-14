@@ -79,8 +79,8 @@ checks and route-fixtured UI checks.
 
 ## 5. Parent Review Decision
 
-**Reviewer:** Claude  
-**Decision:** APPROVED  
+**Reviewer:** Claude
+**Decision:** APPROVED
 **Review file:** `.orchestrator/reviews/FE-INT-GATE-D01-review-claude.md`
 
 Claude's review records all five acceptance criteria as satisfied and calls out:
@@ -155,6 +155,16 @@ Sidecar recheck result:
   - `execute API returns RollbackSagaDTO with stepper state`
   - `dry-run review renders gates and advances the saga stepper from SSE`
   - `failure UI renders failureReasonCode and compensation state`
+
+Reopen whitespace fix recheck, 2026-05-14:
+
+```bash
+git diff --check -- support/sidecars/FE-INT-GATE-D01/FE-INT-GATE-D01-SIDECAR-REVIEW.md
+git diff --check bfee138e^ -- support/sidecars/FE-INT-GATE-D01/FE-INT-GATE-D01-SIDECAR-REVIEW.md
+```
+
+Both checks passed with no output after removing the hard-break trailing spaces
+from the parent review decision lines.
 
 ---
 
