@@ -3,8 +3,8 @@
 **Sidecar Task ID:** FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE-SIDECAR-ACCEPTANCE
 **Parent Task:** FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE — Restore hosted Lovable dev real-write gate for F05
 **Helper Kind:** acceptance_packet
-**Prepared by:** Claude (2026-05-14)
-**Reviewer:** Codex2
+**Prepared by:** Claude (2026-05-14); revised by Codex (2026-05-14T13:32Z)
+**Reviewer:** Claude
 **Parent Owner:** Codex
 **Parent Reviewer:** Gemini
 
@@ -22,6 +22,8 @@ Hard-gate run 25846710728 (commit 4774678) failed F05 with two timeouts on `POST
 - The hosted bundle (`/assets/index-BYfBkno5.js`) was built with `VITE_BFF_MODE=live` and `VITE_BFF_BASE_URL` set, but **without** `VITE_BFF_REAL_WRITES` or `VITE_BFF_FALLBACK`.
 - As a result, `realWritesEnabled()` returns `false` in the hosted browser, and every remediation action is routed through the v5 overlay path instead of issuing the live `POST /bff/v5/interventions/{id}/remediate`.
 - The spec expects a real POST; the overlay provides none.
+
+Current hosted evidence has moved past that exact old asset but has **not** satisfied the gate. As of `2026-05-14T13:32Z`, `https://pantheon-dev.lovable.app/` references `/assets/index-CrXlErW2.js`, not `/assets/index-BYfBkno5.js`. The new hosted bundle exposes `VITE_BFF_REAL_WRITES` / `VITE_BFF_FALLBACK` strings, but it still does **not** expose the expected sessionStorage override literals `pantheon.integration.realWrites` / `pantheon.integration.fallback` from commit `104f06b`. Codex2's hosted F05 review check at `2026-05-14T13:24:10Z` still failed both tests with `waitForResponse` timeouts.
 
 ### Fix Applied (execute-plans commits 104f06b + 49899d0)
 
@@ -66,9 +68,9 @@ A dev-host-scoped browser runtime gate was introduced:
 
 | # | Criterion | Status |
 |---|-----------|--------|
-| 1 | Hosted bundle exposes dev-scoped real-write integration gate | ✅ Satisfied — runtime gate reads `sessionStorage["pantheon.integration.realWrites"]` and is honored on `pantheon-dev.lovable.app` |
-| 2 | F05 hosted headed run observes remediation POST | ⏳ Pending — code fix committed and pushed; hosted rerun blocked on Lovable dev redeploy (asset check at 2026-05-14T12:32:26Z still shows old bundle `/assets/index-BYfBkno5.js`) |
-| 3 | F05 hosted `npx playwright test` passes twice | ⏳ Pending — same redeploy dependency as criterion 2; production-preview F05 has passed twice as interim evidence |
+| 1 | Hosted bundle exposes dev-scoped real-write integration gate | ❌ Not yet — source contains the runtime gate at `104f06b`, but current hosted `/assets/index-CrXlErW2.js` lacks `pantheon.integration.realWrites` / `pantheon.integration.fallback` literals |
+| 2 | F05 hosted headed run observes remediation POST | ❌ Not yet — Codex2 hosted check at `2026-05-14T13:24:10Z` still failed both tests with `waitForResponse` timeouts |
+| 3 | F05 hosted `npx playwright test` passes twice | ⏳ Pending — requires a correct Lovable branch/artifact deploy, then two hosted passes; production-preview F05 has passed twice as interim source-level evidence |
 
 ### Pre-Hosted Verification Evidence (interim)
 
@@ -80,7 +82,7 @@ Production-preview F05 (`npm run build` + `npx vite preview`) passed twice as st
 |---|-----------|--------|
 | S1 | Support artifacts only — no canonical truth edits | ✅ This file is support-only |
 | S2 | No L1 policy, registry, runtime, or governance changes | ✅ Not touched |
-| S3 | Handoff to reviewer upon completion | ✅ Will hand off to Codex2 |
+| S3 | Handoff to reviewer upon completion | ✅ Will hand off to Claude |
 
 ---
 
@@ -124,13 +126,13 @@ All routes are intercepted via `page.route("**/*", ...)`. No live BFF calls esca
 | `execute-plans/src/lib/bff-v1/liveTransport.ts` | Modified | ✅ Committed at `104f06b` |
 | `execute-plans/src/lib/bff/client.ts` | Modified | ✅ Committed at `104f06b` |
 | `bff-luv-fe-006-dev-deploy` branch in `execute-plans` | Git | ✅ Commits `55ca952`, `104f06b`, `49899d0` pushed to `origin` |
-| Lovable dev redeployment | External env | ⏳ Pending — `pantheon-dev.lovable.app` must refresh bundle to pick up `104f06b` |
+| Lovable dev branch/artifact deployment | External env | ❌ Still open — current hosted `/assets/index-CrXlErW2.js` is newer than `/assets/index-BYfBkno5.js` but still lacks the `104f06b` sessionStorage override literals; this is not satisfied by just any redeploy refresh |
 | `PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app` | Runtime env | Required for hosted F05 run |
 | `PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io` | Runtime env | Required for hosted F05 run |
-| `FE-INT-GATE-ALIGN-F05` | Parent blocker context | Blocked — F05 parent is waiting on the same Lovable redeploy |
-| `FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE` | Parent task | Blocked waiting for Gemini/Lovable redeploy |
+| `FE-INT-GATE-ALIGN-F05` | Parent blocker context | Blocked — F05 parent is waiting on the same correct Lovable artifact deploy |
+| `FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE` | Parent task | Blocked waiting for Gemini/Lovable to deploy the branch/artifact containing `104f06b` |
 
-**No code-level `depends_on` tasks.** The only open dependency is the Lovable dev redeployment trigger, which is an external ops action owned by Gemini.
+**No code-level `depends_on` tasks.** The only open dependency is the Lovable dev deployment selecting the correct branch/artifact that contains `104f06b`; a refresh to a different artifact does not clear the gate.
 
 ---
 
@@ -215,7 +217,49 @@ https://pantheon-dev.lovable.app/ still references /assets/index-BYfBkno5.js
 
 This is the pre-fix bundle. The remediation commits have been pushed to `origin/bff-luv-fe-006-dev-deploy`, but Lovable dev has not yet redeployed.
 
-**Hosted F05 rerun remains pending until the Lovable dev deployment refreshes.**
+This older observation has been superseded by Evidence G. It remains useful only as the first deploy-wait checkpoint.
+
+### Evidence G — Current Hosted Asset / Bundle String Check (by Codex sidecar)
+
+Hosted checks performed at `2026-05-14T13:32Z`:
+
+```bash
+curl -fsSL https://pantheon-dev.lovable.app/ \
+  | rg -o "/assets/index-[A-Za-z0-9_-]+\\.js" \
+  | head -n 5
+# /assets/index-CrXlErW2.js
+
+curl -fsSL https://pantheon-dev.lovable.app/assets/index-CrXlErW2.js \
+  | rg -o "pantheon\\.integration\\.realWrites|pantheon\\.integration\\.fallback|VITE_BFF_REAL_WRITES|VITE_BFF_FALLBACK|getRuntimeEnv|realWritesEnabled" \
+  | sort \
+  | uniq -c
+#       3 VITE_BFF_FALLBACK
+#       1 VITE_BFF_REAL_WRITES
+```
+
+There were no matches for `pantheon.integration.realWrites`, `pantheon.integration.fallback`, `getRuntimeEnv`, or `realWritesEnabled` in the current hosted bundle. Source verification against `/home/lupin/code/execute-plans` on `bff-luv-fe-006-dev-deploy` still shows commit `104f06b` and the expected sessionStorage literals in `e2e/04-sentinel-remediation.spec.ts` plus `src/lib/bff-v1/runtimeEnv.ts`.
+
+Codex2 review evidence at `2026-05-14T13:24:10Z` also found current hosted F05 still failed 2/2 with `waitForResponse` timeouts. Therefore the remaining gate is deployment of the correct branch/artifact, not merely observing a new asset hash.
+
+### Closeout Verification — Codex (2026-05-14T13:54Z)
+
+Codex re-ran the hosted asset string gate during owner closeout:
+
+```bash
+asset=$(curl -fsSL https://pantheon-dev.lovable.app/ \
+  | rg -o "/assets/index-[A-Za-z0-9_-]+\\.js" \
+  | head -n 1)
+printf 'asset=%s\n' "$asset"
+curl -fsSL "https://pantheon-dev.lovable.app${asset}" \
+  | rg -o "pantheon\\.integration\\.realWrites|pantheon\\.integration\\.fallback|VITE_BFF_REAL_WRITES|VITE_BFF_FALLBACK|getRuntimeEnv|realWritesEnabled" \
+  | sort \
+  | uniq -c
+# asset=/assets/index-CrXlErW2.js
+#       3 VITE_BFF_FALLBACK
+#       1 VITE_BFF_REAL_WRITES
+```
+
+No `pantheon.integration.realWrites`, `pantheon.integration.fallback`, `getRuntimeEnv`, or `realWritesEnabled` match was present in the hosted bundle at closeout time, so the packet's open external deployment gate remains current.
 
 ---
 
@@ -225,9 +269,20 @@ The parent task `FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE` is **blocked** on an e
 
 | Gate | Owned by | Required action |
 |------|----------|----------------|
-| Lovable dev redeploy | Gemini | Trigger redeploy of `pantheon-dev.lovable.app` to pick up `origin/bff-luv-fe-006-dev-deploy` commits |
+| Lovable dev correct artifact deploy | Gemini | Ensure `pantheon-dev.lovable.app` is built from the branch/artifact containing `104f06b`, with the sessionStorage override literals present in the hosted bundle |
 
-Once the hosted bundle refreshes:
+Before rerunning F05, use a quick asset gate:
+
+```bash
+asset=$(curl -fsSL https://pantheon-dev.lovable.app/ \
+  | rg -o "/assets/index-[A-Za-z0-9_-]+\\.js" \
+  | head -n 1)
+curl -fsSL "https://pantheon-dev.lovable.app${asset}" \
+  | rg "pantheon\\.integration\\.realWrites|pantheon\\.integration\\.fallback"
+# Expected: both sessionStorage key literals are present, or an equivalent hosted proof explains why minification removed them.
+```
+
+Once the hosted bundle is the correct artifact:
 
 ```bash
 cd /home/lupin/code/execute-plans
@@ -239,16 +294,16 @@ npx playwright test e2e/04-sentinel-remediation.spec.ts --trace=on --reporter=li
 # Expected: 2 passed (run 2)
 ```
 
-The parent task's acceptance criteria 2 and 3 will be satisfied after these two runs pass.
+The parent task's acceptance criteria 1-3 will be satisfied after the hosted bundle exposes the dev-scoped gate and these two runs pass.
 
 ---
 
-## 8. Handoff Notes for Parent Reviewer (Gemini)
+## 8. Handoff Notes for Sidecar Reviewer (Claude) and Parent Reviewer (Gemini)
 
 - The write-gate gap is a **deploy-side issue** only; all spec selectors and assertion logic were correct from the start.
 - The sessionStorage runtime override is scoped to `localhost` and `pantheon-dev.lovable.app` only — no production risk.
 - Unit tests, type checks, and production-preview F05 (×2) confirm the fix is structurally sound.
-- The **only remaining action** is a Lovable dev redeploy to pick up commit `104f06b` from `origin/bff-luv-fe-006-dev-deploy`, then a hosted two-pass F05 rerun.
+- The current hosted asset hash has changed to `/assets/index-CrXlErW2.js`, but the bundle still lacks the `pantheon.integration.*` sessionStorage keys, so the remaining action is a correct Lovable branch/artifact deployment, then a hosted two-pass F05 rerun.
 - Once the hosted runs pass, the parent task can proceed to review and closeout.
 - No changes to `pantheon` canonical files (L1/L2/registry/runtime/governance untouched).
 
