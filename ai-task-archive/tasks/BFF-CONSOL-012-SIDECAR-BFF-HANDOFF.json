@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-012-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-14T06:55:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-012-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BFF-CONSOL-012 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BFF-CONSOL-012，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-011"
+    ],
+    "artifacts": [
+      "support/sidecars/BFF-CONSOL-012/BFF-CONSOL-012-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved support-only handoff packet. Artifact created at support/sidecars/BFF-CONSOL-012/BFF-CONSOL-012-SIDECAR-BFF-HANDOFF.md. Closeout commit 09fa5b27. Verification: json.tool on evidence valid; git diff --check clean; pytest test_sse_backpressure.py -q => 3 passed in 2.57s.",
+    "last_update": "2026-05-14T06:55:39Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BFF-CONSOL-012",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "批准：handoff packet matches BFF-CONSOL-012 backpressure evidence and main.py SSE contract after reviewer-side support-only precision edits. Verified replay buffer 500, subscriber queue 1000, newest-drop subscriber behavior, oldest-drop replay window, disconnect cleanup, 409 SSE_REPLAY_UNAVAILABLE details, resync routes, heartbeat semantics, and per-aggregate ordering guidance.",
+      "Reviewer adjusted the packet to include SseEventEnvelope timestamp and to clarify that native browser EventSource cannot read response headers/status from onerror; fetch-based SSE clients may inspect X-SSE-* headers, while native EventSource clients need channel metadata/bootstrap mapping for resync."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-14T06:55:39Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "09fa5b27b6f9ef44978b6e9c01a8175d95c03e56",
+      "commit_subject": "BFF-CONSOL-012-SIDECAR-BFF-HANDOFF: add BFF and frontend handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BFF-CONSOL-012-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 10,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 26,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-012-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by idle Claude; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-13T11:17:46Z",
+      "resolved_at": "2026-05-13T11:18:23Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-012-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "BFF-CONSOL-012 SSE backpressure handoff packet created at support/sidecars/BFF-CONSOL-012/BFF-CONSOL-012-SIDECAR-BFF-HANDOFF.md. Packet covers: SSE replay buffer/subscriber queue bounds (500/1000), drop strategies (newest for subscriber, oldest for replay), disconnect cleanup, 409 SSE_REPLAY_UNAVAILABLE resync flow, per-aggregate ordering fields, heartbeat semantics, channel-to-resync-route table, operator journey for normal/replay/evicted/slow-consumer scenarios, and frontend test matrix. No canonical truth or runtime files modified.",
+      "status": "done",
+      "created_at": "2026-05-13T11:23:13Z",
+      "resolved_at": "2026-05-13T11:43:47Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-012-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. Support-only packet checked against main.py, backpressure tests, and evidence; reviewer precision edits added timestamp and native EventSource header/status caveat. Verification: pytest services/control-plane/bff/tests/test_sse_backpressure.py -q => 3 passed; pytest services/control-plane/bff/test_pkt005_sse_substrate_contract.py services/control-plane/bff/tests/test_sse_backpressure.py -q => 17 passed; python3 -m json.tool support/evidence/BFF-CONSOL-012-sse-backpressure.json => passed; python3 -m py_compile scripts/probe_bff_sse_stream.py => passed; git diff/no-index check and ASCII scan on sidecar artifact produced no findings.",
+      "status": "done",
+      "created_at": "2026-05-13T11:43:47Z",
+      "resolved_at": "2026-05-14T06:55:39Z"
+    }
+  ],
+  "blockers": []
+}
