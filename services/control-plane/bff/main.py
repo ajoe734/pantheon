@@ -1103,7 +1103,7 @@ _REMEDIATE_SENTINEL_REQUIRED = {"intervention_id", "remediation_action"}
 _VALID_REMEDIATION_ACTIONS = {"resolve", "dismiss", "escalate"}
 
 _EXECUTE_EVO_REQUIRED = {"evolution_decision_id", "action_type"}
-_VALID_EVO_ACTION_TYPES = {"freeze", "retrain", "mutate", "retire"}
+_VALID_EVO_ACTION_TYPES = {"freeze", "retrain", "revalidate", "mutate", "retire"}
 
 _OPERATOR_ALERTS_ROUTE = "/alerts"
 _OPERATOR_INCIDENT_HOME_ROUTE = "/operator/incidents"

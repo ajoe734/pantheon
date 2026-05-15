@@ -309,6 +309,44 @@ class TestEvolutionActionExecutor(unittest.TestCase):
             mfa_token=None,
         )
 
+    @patch("command_executor._post_json")
+    def test_execute_revalidate_action_preserves_research_dispatch_result(self, mock_post):
+        mock_post.return_value = {
+            "decision_id": "evo-reval-002",
+            "action_type": "revalidate",
+            "decision_state": "executed",
+            "execution_result": {
+                "status": "submitted",
+                "plane": "research",
+                "executed_at": "2026-05-15T12:05:00Z",
+                "execution_ref_id": "dispatch-evo-reval-002",
+            },
+            "cooldown_ends_at": "2026-05-18T12:05:00Z",
+            "observation_window_ends_at": "2026-05-22T12:05:00Z",
+        }
+        auth_token = "op-admin:admin"
+        result = _execute_evolution_action("cmd-reval-006", {
+            "evolution_decision_id": "evo-reval-002",
+            "action_type": "revalidate",
+            "note": "Execute approved revalidation",
+        }, auth_token=auth_token)
+
+        self.assertEqual(result["evolution_decision_id"], "evo-reval-002")
+        self.assertEqual(result["action_type"], "revalidate")
+        self.assertEqual(result["decision_state"], "executed")
+        self.assertEqual(result["execution_ref_id"], "dispatch-evo-reval-002")
+        self.assertEqual(result["execution_result"]["plane"], "research")
+        mock_post.assert_called_once_with(
+            "http://localhost:5001/api/evolution/proposals/evo-reval-002/execute",
+            {
+                "actor_id": "op-admin",
+                "actor_role": "admin",
+                "note": "Execute approved revalidation",
+            },
+            auth_token=auth_token,
+            mfa_token=None,
+        )
+
 
 class TestMutationReviewExecutors(unittest.TestCase):
     def setUp(self):

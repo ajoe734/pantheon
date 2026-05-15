@@ -492,6 +492,24 @@ class TestOperatorBFF(unittest.TestCase):
         )
         self.assertEqual(r.status_code, 202, r.text)
 
+    def test_execute_evolution_revalidate_action_submit(self):
+        r = self.client.post(
+            "/api/v1/operator/commands",
+            json={
+                "command": "ExecuteEvolutionAction",
+                "target": {"type": "EvolutionDecision", "id": "evo-reval-002"},
+                "action": "execute",
+                "params": {
+                    "evolution_decision_id": "evo-reval-002",
+                    "action_type": "revalidate",
+                    "target_scope": {"type": "strategy", "id": "strat-reval-1"},
+                },
+                "audit_context": {"reason": "test revalidate dispatch"},
+            },
+            headers=_command_headers(ADMIN_TOKEN),
+        )
+        self.assertEqual(r.status_code, 202, r.text)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
