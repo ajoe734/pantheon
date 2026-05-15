@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-15T18:11:01Z",
+  "updated_at": "2026-05-15T18:14:08Z",
   "counts": {
-    "total": 1091,
-    "completed": 1073,
+    "total": 1092,
+    "completed": 1074,
     "superseded": 18
   },
   "recent_terminal_ids": [
+    "MGMT-EVO-005",
     "MGMT-SAFE-006",
     "MGMT-EVO-007",
     "MGMT-EVO-002",
@@ -25,7 +26,6 @@
     "MGMT-SAFE-004",
     "MGMT-PAPER-004",
     "MGMT-PAPER-003",
-    "MGMT-SYN-003",
-    "MGMT-BROKER-001"
+    "MGMT-SYN-003"
   ]
 }
