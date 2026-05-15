@@ -1,0 +1,226 @@
+{
+  "task_id": "MGMT-EVO-001",
+  "milestone_id": "MGMT-OODA-M6",
+  "epic": "EPIC-06 Evolution Follow-Through",
+  "environment": "paper",
+  "link_id": "telemetry-evolution-link-paper-001",
+  "link_type": "telemetry_to_evolution",
+  "generated_at": "2026-05-15T16:05:14Z",
+  "source_packets": {
+    "telemetry_packet": "support/evidence/MGMT-PAPER-005-paper-telemetry-packet.json",
+    "paper_ooda_packet": "support/evidence/MGMT-PAPER-007-complete-paper-ooda-packet.json"
+  },
+  "telemetry_summary": {
+    "packet_id": "telemetry-packet-paper-mgmt-001",
+    "event_count": 4,
+    "event_ids": [
+      "631f17dc-bbba-4593-9ad3-9ed24c5b3001",
+      "631f17dc-bbba-4593-9ad3-9ed24c5b3002",
+      "631f17dc-bbba-4593-9ad3-9ed24c5b3003",
+      "631f17dc-bbba-4593-9ad3-9ed24c5b3004"
+    ],
+    "event_refs": [
+      "telemetry-event://631f17dc-bbba-4593-9ad3-9ed24c5b3001",
+      "telemetry-event://631f17dc-bbba-4593-9ad3-9ed24c5b3002",
+      "telemetry-event://631f17dc-bbba-4593-9ad3-9ed24c5b3003",
+      "telemetry-event://631f17dc-bbba-4593-9ad3-9ed24c5b3004"
+    ],
+    "runtime_summary_projection": {
+      "runtime_id": "rt-paper-mgmt-001",
+      "runtime_binding_id": "8d706784-2678-4c49-9b70-e05d89f7b001",
+      "deployment_stage": "paper",
+      "capital_pool_id": "capital-pool-paper-001",
+      "strategy_id": "strategy-spec-paper-qlib-lgbm-001",
+      "deployment_plan_id": "deployment-plan-paper-001",
+      "last_event_id": "631f17dc-bbba-4593-9ad3-9ed24c5b3004",
+      "last_heartbeat_at": "2026-05-15T15:05:00Z",
+      "state": "degraded",
+      "health_summary": {
+        "paper_runtime": "ok",
+        "bridge": "ok",
+        "telemetry": "degraded",
+        "broker": "not_applicable"
+      },
+      "pnl": 125.5
+    },
+    "safety_assertions": {
+      "paper_stage_only": true,
+      "live_broker_telemetry_disabled": true,
+      "capital_binding_live_disabled": true,
+      "bracket_logged_only": true,
+      "no_real_order": true,
+      "no_real_capital": true
+    }
+  },
+  "evidence_ref": {
+    "ref_type": "telemetry_summary",
+    "ref_id": "telemetry-packet-paper-mgmt-001",
+    "storage_ref": {
+      "backend": "support/evidence",
+      "path": "support/evidence/MGMT-PAPER-005-paper-telemetry-packet.json",
+      "packet_id": "telemetry-packet-paper-mgmt-001"
+    },
+    "note": "Post-action paper telemetry summary for evolution review input; proposal-only, no live mutation."
+  },
+  "proposal_request": {
+    "decision_id": "evolution-telemetry-link-paper-001",
+    "target_type": "strategy_spec",
+    "target_id": "strategy-spec-paper-qlib-lgbm-001",
+    "target_version": "1.0.0",
+    "action_type": "revalidate",
+    "rationale": "Link the paper telemetry packet into governed evolution review. This proposal remains review-gated and cannot mutate runtime state.",
+    "created_by_id": "evolution-controller-paper-telemetry-link",
+    "created_by_role": "evolution_controller",
+    "risk_level": "low",
+    "target_stage": null,
+    "persona_id": "persona-quant-paper-01",
+    "capital_pool_id": "capital-pool-paper-001",
+    "linked_incident_id": null,
+    "linked_postmortem_id": null,
+    "evidence_refs": [
+      {
+        "ref_type": "telemetry_summary",
+        "ref_id": "telemetry-packet-paper-mgmt-001",
+        "storage_ref": {
+          "backend": "support/evidence",
+          "path": "support/evidence/MGMT-PAPER-005-paper-telemetry-packet.json",
+          "packet_id": "telemetry-packet-paper-mgmt-001"
+        },
+        "note": "Post-action paper telemetry summary for evolution review input; proposal-only, no live mutation."
+      }
+    ],
+    "threshold_snapshots": [
+      {
+        "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md \u00a711.3",
+        "signal_type": "manual_review",
+        "metric_name": "telemetry_packet_ready_for_evolution_review",
+        "comparator": "gte",
+        "observed_value": 1,
+        "threshold_value": 1,
+        "window": "paper-loop",
+        "breached": true,
+        "note": "Telemetry packet is complete enough to enter governed evolution review."
+      }
+    ],
+    "metadata": {
+      "task_id": "MGMT-EVO-001",
+      "link_id": "telemetry-evolution-link-paper-001",
+      "source_ooda_packet_id": "ooda-paper-mgmt-loop-001",
+      "telemetry_packet_id": "telemetry-packet-paper-mgmt-001",
+      "telemetry_refs": [
+        "telemetry-event://631f17dc-bbba-4593-9ad3-9ed24c5b3001",
+        "telemetry-event://631f17dc-bbba-4593-9ad3-9ed24c5b3002",
+        "telemetry-event://631f17dc-bbba-4593-9ad3-9ed24c5b3003",
+        "telemetry-event://631f17dc-bbba-4593-9ad3-9ed24c5b3004"
+      ],
+      "proposal_only": true,
+      "live_mutation_allowed": false,
+      "runtime_binding_mutation_allowed": false
+    }
+  },
+  "evolution_decision": {
+    "decision_id": "evolution-telemetry-link-paper-001",
+    "target_type": "strategy_spec",
+    "target_id": "strategy-spec-paper-qlib-lgbm-001",
+    "target_version": "1.0.0",
+    "action_type": "revalidate",
+    "decision_state": "proposed",
+    "risk_level": "low",
+    "created_at": "2026-05-15T15:08:00Z",
+    "created_by_role": "evolution_controller",
+    "created_by_id": "evolution-controller-paper-telemetry-link",
+    "rationale": "Link the paper telemetry packet into governed evolution review. This proposal remains review-gated and cannot mutate runtime state.",
+    "approval_decision_id": null,
+    "evidence_refs": [
+      {
+        "ref_type": "telemetry_summary",
+        "ref_id": "telemetry-packet-paper-mgmt-001",
+        "storage_ref": {
+          "backend": "support/evidence",
+          "path": "support/evidence/MGMT-PAPER-005-paper-telemetry-packet.json",
+          "packet_id": "telemetry-packet-paper-mgmt-001"
+        },
+        "note": "Post-action paper telemetry summary for evolution review input; proposal-only, no live mutation."
+      }
+    ],
+    "threshold_snapshots": [
+      {
+        "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md \u00a711.3",
+        "signal_type": "manual_review",
+        "metric_name": "telemetry_packet_ready_for_evolution_review",
+        "comparator": "gte",
+        "observed_value": 1,
+        "threshold_value": 1,
+        "window": "paper-loop",
+        "breached": true,
+        "note": "Telemetry packet is complete enough to enter governed evolution review."
+      }
+    ],
+    "review_chain": [],
+    "linked_postmortem_id": null,
+    "linked_incident_id": null,
+    "capital_pool_id": "capital-pool-paper-001",
+    "persona_id": "persona-quant-paper-01",
+    "target_stage": null,
+    "cooldown_started_at": null,
+    "cooldown_ends_at": null,
+    "observation_window_started_at": null,
+    "observation_window_ends_at": null,
+    "execution_result": null,
+    "superseded_by": null,
+    "supersedes_decision_id": null,
+    "metadata": {
+      "task_id": "MGMT-EVO-001",
+      "link_id": "telemetry-evolution-link-paper-001",
+      "source_ooda_packet_id": "ooda-paper-mgmt-loop-001",
+      "telemetry_packet_id": "telemetry-packet-paper-mgmt-001",
+      "telemetry_refs": [
+        "telemetry-event://631f17dc-bbba-4593-9ad3-9ed24c5b3001",
+        "telemetry-event://631f17dc-bbba-4593-9ad3-9ed24c5b3002",
+        "telemetry-event://631f17dc-bbba-4593-9ad3-9ed24c5b3003",
+        "telemetry-event://631f17dc-bbba-4593-9ad3-9ed24c5b3004"
+      ],
+      "proposal_only": true,
+      "live_mutation_allowed": false,
+      "runtime_binding_mutation_allowed": false
+    }
+  },
+  "ooda_link": {
+    "source_packet_id": "ooda-paper-mgmt-loop-001",
+    "learn_patch": {
+      "packet_id": "ooda-paper-mgmt-loop-001",
+      "operation": "append_learn_refs",
+      "expected_stage": "acted_or_evolving",
+      "learn": {
+        "telemetry_refs": [
+          "telemetry-event://631f17dc-bbba-4593-9ad3-9ed24c5b3001",
+          "telemetry-event://631f17dc-bbba-4593-9ad3-9ed24c5b3002",
+          "telemetry-event://631f17dc-bbba-4593-9ad3-9ed24c5b3003",
+          "telemetry-event://631f17dc-bbba-4593-9ad3-9ed24c5b3004"
+        ],
+        "postmortem_refs": [],
+        "evolution_followthrough_refs": [
+          "evolution-decision://evolution-telemetry-link-paper-001/proposal"
+        ],
+        "trainer_refs": [],
+        "retrain_refs": [],
+        "observation_window": null
+      },
+      "status_after_patch": "evolving"
+    }
+  },
+  "policy_refs": [
+    "EVOLUTION_REVIEW_AND_THRESHOLDS.md \u00a711.3",
+    "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md \u00a75.2-\u00a75.3",
+    "docs/04/pantheon_sa_supplemental_2026-05-15/SD_management_console_multi_persona_ooda.md \u00a77.5"
+  ],
+  "safety_assertions": {
+    "proposal_only": true,
+    "evolution_decision_state_proposed": true,
+    "no_live_capital_side_effects": true,
+    "no_runtime_binding_mutation": true,
+    "no_broker_order": true,
+    "live_mutation_allowed_false": true
+  },
+  "validation_errors": []
+}
