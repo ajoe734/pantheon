@@ -1,6 +1,5 @@
 """Smoke test for ensuring capital binding checks are enforced."""
 
-import os
 import sys
 from pathlib import Path
 
@@ -9,13 +8,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # Add runtime-manager directory to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "services" / "runtime-manager"))
 
-from service import RuntimeManagerService, RuntimeManagerError
+from service import RuntimeManagerError, RuntimeManagerService
 
-def test_capital_binding_disabled():
+
+DISABLED_BINDING_STATUS = "suspended"
+
+
+def _deploy_with_disabled_capital_binding():
     # Instantiate in-memory store
     service = RuntimeManagerService(store_path=None)
 
-    # Deploy request with inactive capital binding
+    # Deploy request with a canonical non-active capital binding.
     request = {
         "plan_id": "test-plan",
         "plan_status": "approved",
@@ -24,27 +27,40 @@ def test_capital_binding_disabled():
         "artifact_version": "1.0",
         "capital_pool_id": "pool-1",
         "persona_capital_binding_id": "pcb-1",
-        "persona_capital_binding_status": "inactive", # Should fail
+        "persona_capital_binding_status": DISABLED_BINDING_STATUS,
         "allowed_deployment_scope": "paper",
-        "loader_checks_passed": True
+        "loader_checks_passed": True,
     }
 
-    print("Running capital binding disabled smoke test...")
     try:
         service.deploy(request)
-        print("FAIL: Expected RuntimeManagerError, but deploy() succeeded")
-        sys.exit(1)
     except RuntimeManagerError as e:
-        print(f"PASS: Caught expected error: {e}")
-        if "not 'active'" in str(e):
-            print("PASS: Error message contains expected reason")
-            sys.exit(0)
-        else:
-            print(f"FAIL: Error message does not contain expected reason. Got: {e}")
-            sys.exit(1)
+        return e
+
+    raise AssertionError("Expected RuntimeManagerError, but deploy() succeeded")
+
+
+def test_capital_binding_disabled():
+    error = _deploy_with_disabled_capital_binding()
+    message = str(error)
+
+    assert DISABLED_BINDING_STATUS in message
+    assert "not 'active'" in message
+
+
+def main():
+    print("Running capital binding disabled smoke test...")
+    try:
+        test_capital_binding_disabled()
+    except AssertionError as e:
+        print(f"FAIL: {e}")
+        return 1
     except Exception as e:
         print(f"FAIL: Caught unexpected exception: {e}")
-        sys.exit(1)
+        return 1
+
+    print("PASS: Suspended capital binding was rejected before RuntimeBinding creation")
+    return 0
 
 if __name__ == "__main__":
-    test_capital_binding_disabled()
+    sys.exit(main())
