@@ -246,10 +246,13 @@ export function deriveOodaStageRows(packet: OodaLoopPacket): OodaStageRow[] {
   });
 }
 
-export function isOodaNonLiveCapitalSafe(packet: OodaLoopPacket): boolean {
+export type OodaCapitalSafetyState = "no_side_effects" | "live_asserted" | "non_live_unsafe";
+
+export function oodaCapitalSafetyState(packet: OodaLoopPacket): OodaCapitalSafetyState {
   const environment = String(packet.environment ?? "").toLowerCase();
   const liveSideEffects = asRecord(packet.act).live_capital_side_effects === true;
-  return environment === "live" || !liveSideEffects;
+  if (!liveSideEffects) return "no_side_effects";
+  return environment === "live" ? "live_asserted" : "non_live_unsafe";
 }
 
 export function oodaPacketDisplayName(packet: OodaLoopPacket): string {

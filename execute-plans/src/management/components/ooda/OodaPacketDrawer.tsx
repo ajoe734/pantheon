@@ -24,9 +24,10 @@ import { managementClient } from "@/lib/bff/client";
 import {
   collectOodaAuditRefs,
   deriveOodaStageRows,
-  isOodaNonLiveCapitalSafe,
+  oodaCapitalSafetyState,
   oodaPacketDisplayName,
   oodaSourceState,
+  type OodaCapitalSafetyState,
   type OodaEvidenceRef,
   type OodaLoopPacket,
   type OodaPacketDetail,
@@ -209,10 +210,22 @@ function LoadingState() {
   );
 }
 
+const capitalSafetyTone: Record<OodaCapitalSafetyState, string> = {
+  no_side_effects: "bg-status-success/15 text-status-success border-status-success/30",
+  live_asserted: "bg-status-warning/15 text-status-warning border-status-warning/30",
+  non_live_unsafe: "bg-status-failed/15 text-status-failed border-status-failed/30",
+};
+
+const capitalSafetyLabel: Record<OodaCapitalSafetyState, string> = {
+  no_side_effects: "no live capital side effects",
+  live_asserted: "live capital side effects",
+  non_live_unsafe: "live side effects: non-live env",
+};
+
 function PacketHeader({ packet, meta }: { packet: OodaLoopPacket; meta?: OodaPacketMeta }) {
   const status = String(packet.status ?? "open").toLowerCase();
   const source = oodaSourceState(meta);
-  const nonLiveSafe = isOodaNonLiveCapitalSafe(packet);
+  const safetyState = oodaCapitalSafetyState(packet);
   return (
     <section className="rounded-md border border-border p-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -222,18 +235,15 @@ function PacketHeader({ packet, meta }: { packet: OodaLoopPacket; meta?: OodaPac
         <SourceStatusBadge source={source} />
         <Badge
           variant="outline"
-          className={
-            nonLiveSafe
-              ? "bg-status-success/15 text-status-success border-status-success/30"
-              : "bg-status-failed/15 text-status-failed border-status-failed/30"
-          }
+          className={capitalSafetyTone[safetyState]}
+          data-safety={safetyState}
         >
-          {nonLiveSafe ? (
+          {safetyState === "no_side_effects" ? (
             <ShieldCheck className="mr-1 h-3 w-3" />
           ) : (
             <ShieldAlert className="mr-1 h-3 w-3" />
           )}
-          {nonLiveSafe ? "no live capital side effects" : "live side effects asserted"}
+          {capitalSafetyLabel[safetyState]}
         </Badge>
       </div>
 

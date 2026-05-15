@@ -135,4 +135,34 @@ describe("OodaPacketDrawer", () => {
       expect(getSpy).toHaveBeenCalledWith("ooda-paper-001");
     });
   });
+
+  it("shows live capital side effects badge (warning) for live-env packet with live_capital_side_effects=true", () => {
+    renderDrawer({
+      packet: {
+        ...completePacket,
+        packet_id: "ooda-live-001",
+        environment: "live",
+        act: { ...completePacket.act, live_capital_side_effects: true },
+      },
+    });
+
+    expect(screen.getByText("live capital side effects")).toBeInTheDocument();
+    expect(screen.queryByText("no live capital side effects")).not.toBeInTheDocument();
+    expect(screen.queryByText("live side effects: non-live env")).not.toBeInTheDocument();
+  });
+
+  it("shows unsafe badge for non-live-env packet with live_capital_side_effects=true", () => {
+    renderDrawer({
+      packet: {
+        ...completePacket,
+        packet_id: "ooda-paper-unsafe-001",
+        environment: "paper",
+        act: { ...completePacket.act, live_capital_side_effects: true },
+      },
+    });
+
+    expect(screen.getByText("live side effects: non-live env")).toBeInTheDocument();
+    expect(screen.queryByText("no live capital side effects")).not.toBeInTheDocument();
+    expect(screen.queryByText("live capital side effects")).not.toBeInTheDocument();
+  });
 });
