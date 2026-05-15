@@ -24,6 +24,13 @@ from .models import (
     SynthesisError,
     validate_persona_allocation_proposal_json,
 )
+from .conflict_classifier import (
+    AllocationConflict,
+    AllocationConflictReport,
+    AllocationConflictType,
+    ConflictSeverity,
+    classify_allocation_conflicts,
+)
 from .synthesizer import PoolRiskPolicy, PortfolioSynthesizer
 
 __all__ = [
@@ -37,7 +44,12 @@ __all__ = [
     "VetoRecord",
     "CommitteeReferral",
     "SynthesisError",
+    "AllocationConflict",
+    "AllocationConflictReport",
+    "AllocationConflictType",
+    "ConflictSeverity",
     "PoolRiskPolicy",
     "PortfolioSynthesizer",
+    "classify_allocation_conflicts",
     "validate_persona_allocation_proposal_json",
 ]
