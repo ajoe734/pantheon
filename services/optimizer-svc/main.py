@@ -133,15 +133,21 @@ async def synthesize(req: SynthesizeRequest):
 
     if isinstance(result, CommitteeReferral):
         _policies[result.referral_id] = result
+        referral_payload = result.to_dict()
+        log_payload = log.to_dict()
         return {
             "outcome": "committee_referral",
             "referral_id": result.referral_id,
             "trigger_reason": result.trigger_reason,
             "proposal_ids": result.proposal_ids,
             "conflict_resolution_log_id": log.log_id,
+            "committee_referral": referral_payload,
+            "conflict_resolution_log": log_payload,
         }
 
     _policies[result.artifact_id] = result
+    artifact_payload = result.to_dict()
+    log_payload = log.to_dict()
     return {
         "outcome": "artifact",
         "artifact_id": result.artifact_id,
@@ -149,6 +155,8 @@ async def synthesize(req: SynthesizeRequest):
         "synthesis_method": result.synthesis_method,
         "target_weights": result.target_weights,
         "conflict_resolution_log_id": log.log_id,
+        "allocation_policy_artifact": artifact_payload,
+        "conflict_resolution_log": log_payload,
     }
 
 
@@ -158,10 +166,8 @@ async def get_policy(policy_id: str):
     if entry is None:
         raise HTTPException(status_code=404, detail="policy not found")
     if isinstance(entry, AllocationPolicyArtifact):
-        import dataclasses
-        return dataclasses.asdict(entry)
-    import dataclasses
-    return dataclasses.asdict(entry)
+        return entry.to_dict()
+    return entry.to_dict()
 
 
 @app.get("/api/optimizer/logs/{log_id}")
@@ -169,8 +175,7 @@ async def get_log(log_id: str):
     entry = _logs.get(log_id)
     if entry is None:
         raise HTTPException(status_code=404, detail="conflict resolution log not found")
-    import dataclasses
-    return dataclasses.asdict(entry)
+    return entry.to_dict()
 
 
 if __name__ == "__main__":
