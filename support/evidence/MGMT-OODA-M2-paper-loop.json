@@ -3,7 +3,7 @@
   "milestone_id": "MGMT-OODA-M2",
   "epic": "EPIC-02 Management Paper Loop Proof",
   "environment": "paper",
-  "generated_at": "2026-05-15T15:23:43Z",
+  "generated_at": "2026-05-15T15:37:14Z",
   "live_capital_side_effects": false,
   "strategy_spec": {
     "spec_version": "1.0",
@@ -78,8 +78,8 @@
     "actor_role": "risk_owner",
     "actor_id": "governance-reviewer-paper-01",
     "rationale": "StrategySpec strategy-spec-paper-qlib-lgbm-001@1.0.0 reviewed and approved for paper-stage deployment. Live broker and capital-binding side effects remain fail-closed. Evidence: paper evaluator result attached.",
-    "created_at": "2026-05-15T15:23:43Z",
-    "decided_at": "2026-05-15T15:23:43Z",
+    "created_at": "2026-05-15T15:37:14Z",
+    "decided_at": "2026-05-15T15:37:14Z",
     "conditions": [],
     "risk_level": "medium",
     "evidence_refs": [
@@ -112,7 +112,7 @@
     "transition_type": "activate",
     "runtime_action": "deploy_new_binding",
     "status": "approved",
-    "created_at": "2026-05-15T15:23:43Z",
+    "created_at": "2026-05-15T15:37:14Z",
     "created_by": null,
     "sponsor_persona_id": "persona-quant-paper-01",
     "runtime_config_ref": "launch-manifest://paper-runtime-mgmt-001",
@@ -170,7 +170,7 @@
         ],
         "strategy_spec_ref": "strategy-spec://strategy-spec-paper-qlib-lgbm-001@1.0.0"
       },
-      "created_at": "2026-05-15T15:23:43Z",
+      "created_at": "2026-05-15T15:37:14Z",
       "approved_at": "2026-05-15T15:05:00Z",
       "sponsor_persona_id": "persona-quant-paper-01",
       "capital_scale_pct": 0.0,
@@ -401,7 +401,7 @@
     "action_type": "revalidate",
     "decision_state": "executed",
     "risk_level": "low",
-    "created_at": "2026-05-15T15:23:43Z",
+    "created_at": "2026-05-15T15:37:14Z",
     "created_by_role": "evolution_controller",
     "created_by_id": "evolution-controller-paper-01",
     "rationale": "Revalidate the paper StrategySpec after telemetry confirms logged-only paper execution.",
@@ -572,8 +572,8 @@
       "audit://paper-loop/no-live-side-effects"
     ],
     "created_at": "2026-05-15T15:05:00Z",
-    "updated_at": "2026-05-15T15:23:43Z",
-    "closed_at": "2026-05-15T15:23:43Z"
+    "updated_at": "2026-05-15T15:37:14Z",
+    "closed_at": "2026-05-15T15:37:14Z"
   },
   "stage_transitions": [
     {
@@ -582,7 +582,7 @@
       "from_status": "open",
       "to_status": "observing",
       "actor_id": "operator-paper-loop-01",
-      "transitioned_at": "2026-05-15T15:23:43Z"
+      "transitioned_at": "2026-05-15T15:37:14Z"
     },
     {
       "packet_id": "ooda-paper-mgmt-loop-001",
@@ -590,7 +590,7 @@
       "from_status": "observing",
       "to_status": "oriented",
       "actor_id": "operator-paper-loop-01",
-      "transitioned_at": "2026-05-15T15:23:43Z"
+      "transitioned_at": "2026-05-15T15:37:14Z"
     },
     {
       "packet_id": "ooda-paper-mgmt-loop-001",
@@ -598,7 +598,7 @@
       "from_status": "oriented",
       "to_status": "decided",
       "actor_id": "operator-paper-loop-01",
-      "transitioned_at": "2026-05-15T15:23:43Z"
+      "transitioned_at": "2026-05-15T15:37:14Z"
     },
     {
       "packet_id": "ooda-paper-mgmt-loop-001",
@@ -606,7 +606,7 @@
       "from_status": "decided",
       "to_status": "acted",
       "actor_id": "operator-paper-loop-01",
-      "transitioned_at": "2026-05-15T15:23:43Z"
+      "transitioned_at": "2026-05-15T15:37:14Z"
     },
     {
       "packet_id": "ooda-paper-mgmt-loop-001",
@@ -614,7 +614,7 @@
       "from_status": "acted",
       "to_status": "evolving",
       "actor_id": "operator-paper-loop-01",
-      "transitioned_at": "2026-05-15T15:23:43Z"
+      "transitioned_at": "2026-05-15T15:37:14Z"
     },
     {
       "packet_id": "ooda-paper-mgmt-loop-001",
@@ -622,7 +622,7 @@
       "from_status": "evolving",
       "to_status": "closed",
       "actor_id": "operator-paper-loop-01",
-      "transitioned_at": "2026-05-15T15:23:43Z"
+      "transitioned_at": "2026-05-15T15:37:14Z"
     }
   ],
   "replay_validation": {
