@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-05-15T01:37:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE",
+    "title": "Prepare FE-INT-GATE-A11Y-BREADCRUMB acceptance packet and dependency map",
+    "summary_zh": "平行支援 FE-INT-GATE-A11Y-BREADCRUMB，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Pantheon FE Integration Gate 2026-05-13",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/FE-INT-GATE-A11Y-BREADCRUMB/FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: sidecar acceptance packet finalized in ba9c796e after Claude approval; support-only scope preserved, parent FE-INT-GATE-A11Y-BREADCRUMB already done, verification reran jq task status, Claude review readback, and git diff --check on the packet.",
+    "last_update": "2026-05-15T01:37:59Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "FE-INT-GATE-A11Y-BREADCRUMB",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "驗收包正確涵蓋 WCAG 1.3.1 list 語意問題、6 項 acceptance checklist 與 verification 指令；不觸及 canonical truth；父任務已於 2026-05-15 done，所有標準均達成。"
+    ],
+    "review_file": "support/reviews/FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T01:37:59Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "ba9c796ee84c2130a949af37f41f0c6e4102ba2f",
+      "commit_subject": "FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude",
+        "Verification": "jq task status review_approved; sed review file; git diff --check sidecar packet."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 12,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Acceptance packet and dependency map for FE-INT-GATE-A11Y-BREADCRUMB prepared at support/sidecars/FE-INT-GATE-A11Y-BREADCRUMB/FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout.",
+      "status": "done",
+      "created_at": "2026-05-15T01:10:00Z",
+      "resolved_at": "2026-05-15T01:26:30Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Sidecar acceptance packet reviewed and approved. Packet accurately captured the breadcrumb list semantic violation requirements. All 6 acceptance criteria were satisfied by the parent closeout. Minor artifact path discrepancy noted but non-blocking. Owner may finalize.",
+      "status": "done",
+      "created_at": "2026-05-15T01:26:30Z",
+      "resolved_at": "2026-05-15T01:30:20Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-05-15T01:30:21Z",
+      "resolved_at": "2026-05-15T01:37:59Z"
+    }
+  ],
+  "blockers": []
+}
