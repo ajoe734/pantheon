@@ -23,3 +23,9 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/broker/shioaji/test_ada
 ```
 
 Result: all focused verification commands passed.
+
+Closeout verification:
+
+- 2026-05-15 owner finalization re-ran the focused commands against the current worktree.
+- Results: Shioaji adapter tests 40 passed; Shioaji sandbox smoke tests 7 passed; EP5 canary readiness tests 8 passed; broker sandbox order smoke tests 8 passed; py_compile passed.
+- Review artifact: `support/reviews/MGMT-BROKER-005-review-codex.md`.
