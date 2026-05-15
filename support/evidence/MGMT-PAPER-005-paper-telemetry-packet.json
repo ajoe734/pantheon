@@ -1,0 +1,405 @@
+{
+  "task_id": "MGMT-PAPER-005",
+  "epic": "EPIC-02 Management Paper Loop Proof",
+  "environment": "paper",
+  "generated_at": "2026-05-15T15:21:44Z",
+  "live_capital_side_effects": false,
+  "runtime_binding_id": "8d706784-2678-4c49-9b70-e05d89f7b001",
+  "telemetry_packet": {
+    "packet_id": "telemetry-packet-paper-mgmt-001",
+    "event_count": 4,
+    "event_ids": [
+      "631f17dc-bbba-4593-9ad3-9ed24c5b3001",
+      "631f17dc-bbba-4593-9ad3-9ed24c5b3002",
+      "631f17dc-bbba-4593-9ad3-9ed24c5b3003",
+      "631f17dc-bbba-4593-9ad3-9ed24c5b3004"
+    ],
+    "events": [
+      {
+        "event_id": "631f17dc-bbba-4593-9ad3-9ed24c5b3001",
+        "event_type": "heartbeat",
+        "created_at": "2026-05-15T15:05:00Z",
+        "execution_mode": "paper",
+        "environment": "paper",
+        "deployment_stage": "paper",
+        "binding_id": "8d706784-2678-4c49-9b70-e05d89f7b001",
+        "runtime_id": "rt-paper-mgmt-001",
+        "capital_pool_id": "capital-pool-paper-001",
+        "artifact_id": "artifact-paper-qlib-lgbm-001",
+        "artifact_version": "1.0.0",
+        "plan_id": "deployment-plan-paper-001",
+        "persona_capital_binding_id": "pcb-paper-quant-001",
+        "authority_refs": {
+          "write_owner": "runtime-manager",
+          "authority_source": "runtime_binding",
+          "runtime_role": "paper",
+          "runtime_mode": "paper",
+          "workspace_ref": "workspace-paper-mgmt-001",
+          "auth_profile_ref": "auth-profile-paper-mgmt-001",
+          "persona_id": "persona-quant-paper-01",
+          "session_id": "session-paper-mgmt-001",
+          "trace_id": "03829d25-2c9f-44f0-981e-56a94d8ff001",
+          "request_id": "request-paper-mgmt-001"
+        },
+        "target": {
+          "registry_id": "artifact-paper-qlib-lgbm-001",
+          "strategy_id": "strategy-spec-paper-qlib-lgbm-001",
+          "artifact_version": "1.0.0",
+          "artifact_type": "execution_bundle",
+          "promotion_state": "paper"
+        },
+        "metrics": {
+          "heartbeat": 1
+        },
+        "metadata": {
+          "runtime_role": "paper",
+          "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+          "engine_bridge_path": "pantheon/lean",
+          "engine_bridge_commit": "paper-loop-bridge-commit-001",
+          "runtime_adapter_version": "0.1.0",
+          "context_source": "launch_manifest",
+          "runtime_package": "paper_execution_runtime"
+        },
+        "trace_id": "03829d25-2c9f-44f0-981e-56a94d8ff001"
+      },
+      {
+        "event_id": "631f17dc-bbba-4593-9ad3-9ed24c5b3002",
+        "event_type": "deploy_completed",
+        "created_at": "2026-05-15T15:05:05Z",
+        "execution_mode": "paper",
+        "environment": "paper",
+        "deployment_stage": "paper",
+        "binding_id": "8d706784-2678-4c49-9b70-e05d89f7b001",
+        "runtime_id": "rt-paper-mgmt-001",
+        "capital_pool_id": "capital-pool-paper-001",
+        "artifact_id": "artifact-paper-qlib-lgbm-001",
+        "artifact_version": "1.0.0",
+        "plan_id": "deployment-plan-paper-001",
+        "persona_capital_binding_id": "pcb-paper-quant-001",
+        "authority_refs": {
+          "write_owner": "runtime-manager",
+          "authority_source": "runtime_binding",
+          "runtime_role": "paper",
+          "runtime_mode": "paper",
+          "workspace_ref": "workspace-paper-mgmt-001",
+          "auth_profile_ref": "auth-profile-paper-mgmt-001",
+          "persona_id": "persona-quant-paper-01",
+          "session_id": "session-paper-mgmt-001",
+          "trace_id": "03829d25-2c9f-44f0-981e-56a94d8ff001",
+          "request_id": "request-paper-mgmt-001"
+        },
+        "target": {
+          "registry_id": "artifact-paper-qlib-lgbm-001",
+          "strategy_id": "strategy-spec-paper-qlib-lgbm-001",
+          "artifact_version": "1.0.0",
+          "artifact_type": "execution_bundle",
+          "promotion_state": "paper"
+        },
+        "metrics": {
+          "action": "deploy_completed"
+        },
+        "metadata": {
+          "runtime_role": "paper",
+          "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+          "engine_bridge_path": "pantheon/lean",
+          "engine_bridge_commit": "paper-loop-bridge-commit-001",
+          "runtime_adapter_version": "0.1.0",
+          "context_source": "launch_manifest",
+          "runtime_package": "paper_execution_runtime"
+        },
+        "trace_id": "03829d25-2c9f-44f0-981e-56a94d8ff001"
+      },
+      {
+        "event_id": "631f17dc-bbba-4593-9ad3-9ed24c5b3003",
+        "event_type": "pnl_snapshot",
+        "created_at": "2026-05-15T15:05:10Z",
+        "execution_mode": "paper",
+        "environment": "paper",
+        "deployment_stage": "paper",
+        "binding_id": "8d706784-2678-4c49-9b70-e05d89f7b001",
+        "runtime_id": "rt-paper-mgmt-001",
+        "capital_pool_id": "capital-pool-paper-001",
+        "artifact_id": "artifact-paper-qlib-lgbm-001",
+        "artifact_version": "1.0.0",
+        "plan_id": "deployment-plan-paper-001",
+        "persona_capital_binding_id": "pcb-paper-quant-001",
+        "authority_refs": {
+          "write_owner": "runtime-manager",
+          "authority_source": "runtime_binding",
+          "runtime_role": "paper",
+          "runtime_mode": "paper",
+          "workspace_ref": "workspace-paper-mgmt-001",
+          "auth_profile_ref": "auth-profile-paper-mgmt-001",
+          "persona_id": "persona-quant-paper-01",
+          "session_id": "session-paper-mgmt-001",
+          "trace_id": "03829d25-2c9f-44f0-981e-56a94d8ff001",
+          "request_id": "request-paper-mgmt-001"
+        },
+        "target": {
+          "registry_id": "artifact-paper-qlib-lgbm-001",
+          "strategy_id": "strategy-spec-paper-qlib-lgbm-001",
+          "artifact_version": "1.0.0",
+          "artifact_type": "execution_bundle",
+          "promotion_state": "paper"
+        },
+        "metrics": {
+          "pnl": 125.5
+        },
+        "metadata": {
+          "runtime_role": "paper",
+          "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+          "engine_bridge_path": "pantheon/lean",
+          "engine_bridge_commit": "paper-loop-bridge-commit-001",
+          "runtime_adapter_version": "0.1.0",
+          "context_source": "launch_manifest",
+          "observation_window": "paper-session-open"
+        },
+        "trace_id": "03829d25-2c9f-44f0-981e-56a94d8ff001"
+      },
+      {
+        "event_id": "631f17dc-bbba-4593-9ad3-9ed24c5b3004",
+        "event_type": "bracket_order_logged",
+        "created_at": "2026-05-15T15:05:15Z",
+        "execution_mode": "paper",
+        "environment": "paper",
+        "deployment_stage": "paper",
+        "binding_id": "8d706784-2678-4c49-9b70-e05d89f7b001",
+        "runtime_id": "rt-paper-mgmt-001",
+        "capital_pool_id": "capital-pool-paper-001",
+        "artifact_id": "artifact-paper-qlib-lgbm-001",
+        "artifact_version": "1.0.0",
+        "plan_id": "deployment-plan-paper-001",
+        "persona_capital_binding_id": "pcb-paper-quant-001",
+        "authority_refs": {
+          "write_owner": "runtime-manager",
+          "authority_source": "runtime_binding",
+          "runtime_role": "paper",
+          "runtime_mode": "paper",
+          "workspace_ref": "workspace-paper-mgmt-001",
+          "auth_profile_ref": "auth-profile-paper-mgmt-001",
+          "persona_id": "persona-quant-paper-01",
+          "session_id": "session-paper-mgmt-001",
+          "trace_id": "03829d25-2c9f-44f0-981e-56a94d8ff001",
+          "request_id": "request-paper-mgmt-001"
+        },
+        "target": {
+          "registry_id": "artifact-paper-qlib-lgbm-001",
+          "strategy_id": "strategy-spec-paper-qlib-lgbm-001",
+          "artifact_version": "1.0.0",
+          "artifact_type": "execution_bundle",
+          "promotion_state": "paper"
+        },
+        "metrics": {
+          "action": "bracket_logged_only"
+        },
+        "metadata": {
+          "runtime_role": "paper",
+          "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+          "engine_bridge_path": "pantheon/lean",
+          "engine_bridge_commit": "paper-loop-bridge-commit-001",
+          "runtime_adapter_version": "0.1.0",
+          "context_source": "launch_manifest",
+          "broker_submission_status": "logged_only",
+          "submitted_to_broker": false,
+          "is_real_order": false,
+          "is_real_capital": false
+        },
+        "trace_id": "03829d25-2c9f-44f0-981e-56a94d8ff001"
+      }
+    ]
+  },
+  "ingest_validation": {
+    "accepted_event_ids": [
+      "631f17dc-bbba-4593-9ad3-9ed24c5b3001",
+      "631f17dc-bbba-4593-9ad3-9ed24c5b3002",
+      "631f17dc-bbba-4593-9ad3-9ed24c5b3003",
+      "631f17dc-bbba-4593-9ad3-9ed24c5b3004"
+    ],
+    "heartbeat_first_accepted": true,
+    "heartbeat_duplicate_accepted": true,
+    "stage_mismatch_rejected": true,
+    "missing_binding_rejected": true,
+    "stats": {
+      "service": {
+        "started": false,
+        "uptime_seconds": 0.17,
+        "total_ingested": 4,
+        "total_rejected": 2,
+        "total_duplicates": 1,
+        "dedup_tracked_ids": 4
+      },
+      "buffer": {
+        "type": "in_memory",
+        "size": 0,
+        "capacity": 100000,
+        "total_enqueued": 4,
+        "total_dequeued": 4,
+        "total_rejected": 0,
+        "is_closed": true,
+        "utilization_pct": 0.0
+      },
+      "writer": {
+        "running": false,
+        "total_written": 4,
+        "total_failed": 0,
+        "total_retried": 0,
+        "total_dlq": 0,
+        "batches_flushed": 1,
+        "batch_size": 10,
+        "batch_interval": 0.01,
+        "max_retries": 5
+      },
+      "dead_letter_queue": {
+        "memory_entries": 2,
+        "total_rejected": 2,
+        "incident_threshold": 100,
+        "incident_fired": false,
+        "spill_path": null,
+        "tag_counts": {
+          "binding_mismatch": 1,
+          "schema_violation": 1
+        }
+      },
+      "backpressure": {
+        "pressure_level": "normal",
+        "current_concurrency": 4,
+        "min_concurrency": 1,
+        "max_concurrency": 8,
+        "buffer_utilization_high": 0.7,
+        "buffer_utilization_critical": 0.9,
+        "error_rate_high": 0.1,
+        "error_rate_critical": 0.3,
+        "recent_writes": 1,
+        "recent_errors": 0,
+        "last_evaluated_at": 0.0
+      },
+      "runtime_summary_projection": {
+        "summary_count": 1,
+        "path": null,
+        "heartbeat_stale_after_seconds": 60
+      }
+    },
+    "runtime_summary": {
+      "id": "rt-paper-mgmt-001",
+      "runtime_id": "rt-paper-mgmt-001",
+      "runtime_binding_id": "8d706784-2678-4c49-9b70-e05d89f7b001",
+      "binding_id": "8d706784-2678-4c49-9b70-e05d89f7b001",
+      "deployment_stage": "paper",
+      "capital_pool_id": "capital-pool-paper-001",
+      "artifact_id": "artifact-paper-qlib-lgbm-001",
+      "artifact_version": "1.0.0",
+      "plan_id": "deployment-plan-paper-001",
+      "deployment_plan_id": "deployment-plan-paper-001",
+      "persona_capital_binding_id": "pcb-paper-quant-001",
+      "last_event_id": "631f17dc-bbba-4593-9ad3-9ed24c5b3004",
+      "last_event_type": "bracket_order_logged",
+      "last_event_at": "2026-05-15T15:05:15Z",
+      "collected_at": "2026-05-15T15:05:15Z",
+      "window": "latest",
+      "projection_source": "telemetry_ingest",
+      "projection_updated_at": "2026-05-15T15:21:44Z",
+      "last_heartbeat_at": "2026-05-15T15:05:00Z",
+      "state": "degraded",
+      "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+      "engine_bridge_commit": "paper-loop-bridge-commit-001",
+      "engine_bridge_path": "pantheon/lean",
+      "runtime_adapter_version": "0.1.0",
+      "health_summary": {
+        "paper_runtime": "ok",
+        "bridge": "ok",
+        "telemetry": "degraded",
+        "broker": "not_applicable"
+      },
+      "pnl": 125.5,
+      "staleness": {
+        "last_known_at": "2026-05-15T15:05:00Z",
+        "age_seconds": 1004,
+        "threshold_seconds": 60
+      }
+    },
+    "dlq_reasons": [
+      "Evidence contract violation: deployment_stage 'live' does not match binding deployment_mode 'paper' (Evidence E-2)",
+      "Schema validation failed: 'binding_id' is a required property"
+    ]
+  },
+  "runtime_summary_projection": {
+    "id": "rt-paper-mgmt-001",
+    "runtime_id": "rt-paper-mgmt-001",
+    "runtime_binding_id": "8d706784-2678-4c49-9b70-e05d89f7b001",
+    "binding_id": "8d706784-2678-4c49-9b70-e05d89f7b001",
+    "deployment_stage": "paper",
+    "capital_pool_id": "capital-pool-paper-001",
+    "artifact_id": "artifact-paper-qlib-lgbm-001",
+    "artifact_version": "1.0.0",
+    "plan_id": "deployment-plan-paper-001",
+    "deployment_plan_id": "deployment-plan-paper-001",
+    "persona_capital_binding_id": "pcb-paper-quant-001",
+    "last_event_id": "631f17dc-bbba-4593-9ad3-9ed24c5b3004",
+    "last_event_type": "bracket_order_logged",
+    "last_event_at": "2026-05-15T15:05:15Z",
+    "collected_at": "2026-05-15T15:05:15Z",
+    "window": "latest",
+    "projection_source": "telemetry_ingest",
+    "projection_updated_at": "2026-05-15T15:21:44Z",
+    "last_heartbeat_at": "2026-05-15T15:05:00Z",
+    "state": "degraded",
+    "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+    "engine_bridge_commit": "paper-loop-bridge-commit-001",
+    "engine_bridge_path": "pantheon/lean",
+    "runtime_adapter_version": "0.1.0",
+    "health_summary": {
+      "paper_runtime": "ok",
+      "bridge": "ok",
+      "telemetry": "degraded",
+      "broker": "not_applicable"
+    },
+    "pnl": 125.5,
+    "staleness": {
+      "last_known_at": "2026-05-15T15:05:00Z",
+      "age_seconds": 1004,
+      "threshold_seconds": 60
+    }
+  },
+  "ooda_refs": {
+    "observe": {
+      "telemetry_refs": [
+        "631f17dc-bbba-4593-9ad3-9ed24c5b3001"
+      ],
+      "runtime_health_ref": "631f17dc-bbba-4593-9ad3-9ed24c5b3001"
+    },
+    "act": {
+      "runtime_binding_id": "8d706784-2678-4c49-9b70-e05d89f7b001",
+      "command_receipt_refs": [],
+      "live_capital_side_effects": false
+    },
+    "learn": {
+      "telemetry_refs": [
+        "631f17dc-bbba-4593-9ad3-9ed24c5b3003",
+        "631f17dc-bbba-4593-9ad3-9ed24c5b3004"
+      ],
+      "observation_window": {
+        "start_at": "2026-05-15T15:05:00Z",
+        "end_at": "2026-05-15T15:05:15Z",
+        "duration_hours": 0.003
+      }
+    }
+  },
+  "safety_assertions": {
+    "paper_stage_only": true,
+    "live_broker_telemetry_disabled": true,
+    "capital_binding_live_disabled": true,
+    "bracket_logged_only": true,
+    "no_real_order": true,
+    "no_real_capital": true
+  },
+  "validation_errors": [],
+  "paper_loop_chain": [
+    "MGMT-PAPER-001: candidate StrategySpec",
+    "MGMT-PAPER-002: ApprovalDecision packet",
+    "MGMT-PAPER-003: DeploymentPlan packet",
+    "MGMT-PAPER-004: paper RuntimeBinding packet",
+    "MGMT-PAPER-005: telemetry packet  <- this artifact",
+    "MGMT-PAPER-006: EvolutionDecision review packet",
+    "MGMT-PAPER-007: complete OODA packet"
+  ]
+}
