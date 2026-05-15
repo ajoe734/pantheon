@@ -46,6 +46,36 @@ refreshed = adapter.get_status(order.order_id)
 adapter.reject_live_order()  # raises ShioajiBrokerError(SHIOAJI_LIVE_DISABLED)
 ```
 
+## Management Facade
+
+`ShioajiSandboxFacade` wraps the same fail-closed adapter for Management/OODA
+surfaces. It does not write evidence files, approve canary/live activation, or
+enable capital binding.
+
+```python
+from services.broker.shioaji import ShioajiSandboxFacade
+
+payload = ShioajiSandboxFacade().run_lifecycle(
+    capital_pool_id="pool-mgmt-broker-001",
+    strategy_id="strategy-mgmt-broker-001",
+    symbol="2890",
+    qty=1.0,
+    side="buy",
+    order_type="limit",
+    limit_price=18.0,
+    account_kind="stock",
+)
+```
+
+The facade output includes:
+
+- `broker="shioaji"` and `environment="sandbox"`
+- `account_status` as `ready`, `missing`, or `unsigned`
+- `place_result`, `cancel_result`, `readback_result`, and `reconcile_result`
+- `production_live_enabled=false`
+- `capital_binding_enabled=false`
+- `human_gate_required=true`
+
 ## Order Shape
 
 `ShioajiOrder` mirrors `PaperOrder` from `services/broker/paper_simulation.py`:
@@ -85,6 +115,7 @@ Install in the broker Docker image only — not in shared requirements.
 ```bash
 cd services/broker/shioaji
 python -m pytest test_adapter.py -v
+python -m pytest test_facade.py -v
 ```
 
 Tests use a mock API and do not require the Shioaji SDK or credentials.
