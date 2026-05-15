@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-15 16:02:18
+Last updated: 2026-05-15 20:16:17
 
 ## Objective
 
@@ -39,9 +39,9 @@ Last updated: 2026-05-15 16:02:18
 
 - `Claude`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Pre-cutover smoke evidence recorded, but hosted main asset /assets/index-vlevju41.js does not contain build-time VITE_BFF_FALLBACK=strict; waiting for Lovable main env publish/rebuild before review.
+- `Codex`: integration, status-system, schema, acceptance; next: No active assignment
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
-- `Copilot`: research-ingest, external-search, spec-review, critique; next: Assignment created
+- `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
 - `Claude2`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 
@@ -51,8 +51,7 @@ Last updated: 2026-05-15 16:02:18
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `BFF-CONSOL-023` | BFF Consolidation 2026-05-13 | Lovable prod strict cutover (preview-soak verification gate) | Codex | blocked | `BFF-CONSOL-022` | 等 022 dev BFF preview strict soak 0 regression 後，把 Lovable main 部署切 VITE_BFF_FALLBACK=strict (REAL_WRITES 仍 false 直到 operator onboard)。Prod cutover 以 smoke/regression evidence 完成，不再用固定天數 gate。注意:Pantheon 後端目前只有 dev BFF;真正的 prod BFF tier 是未來工作,本 task 處理的是 Lovable 前端 strict cutover,非後端環境晉升。 |
-| `BFF-CONSOL-027` | BFF Consolidation 2026-05-13 | Final BFF consolidation acceptance packet | Copilot | todo | `BFF-CONSOL-001`, `BFF-CONSOL-002`, `BFF-CONSOL-003`, `BFF-CONSOL-004`, `BFF-CONSOL-005`, `BFF-CONSOL-006`, `BFF-CONSOL-007`, `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-011`, `BFF-CONSOL-012`, `BFF-CONSOL-013`, `BFF-CONSOL-014`, `BFF-CONSOL-015`, `BFF-CONSOL-016`, `BFF-CONSOL-017`, `BFF-CONSOL-018`, `BFF-CONSOL-019`, `BFF-CONSOL-020`, `BFF-CONSOL-021`, `BFF-CONSOL-022`, `BFF-CONSOL-023`, `BFF-CONSOL-024`, `BFF-CONSOL-025`, `BFF-CONSOL-026` | 集合 001..026 evidence 輸出 support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md。內容含 contract diff baseline/live smoke (read+write)/SSE evidence/command receipt sample/staging+prod cutover log/regression follow-up/seed.ts post-state。Copilot 統整 Claude 最終簽核。 |
+| _(none)_ | - | - | - | - | - | - |
 
 ### External / Upstream Integration Work
 
@@ -62,11 +61,13 @@ Last updated: 2026-05-15 16:02:18
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-15 16:02:18
-- Terminal tasks archived: `1049` total, `1031` completed, `18` superseded
+- Archive updated: 2026-05-15 20:16:17
+- Terminal tasks archived: `1051` total, `1033` completed, `18` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `BFF-CONSOL-027` | BFF Consolidation 2026-05-13 | Final BFF consolidation acceptance packet | Copilot | completed | 2026-05-15 20:16:17 | `ai-task-archive/tasks/BFF-CONSOL-027.json` |
+| `BFF-CONSOL-023` | BFF Consolidation 2026-05-13 | Lovable prod strict cutover (preview-soak verification gate) | Codex | completed | 2026-05-15 20:13:13 | `ai-task-archive/tasks/BFF-CONSOL-023.json` |
 | `FE-INT-GATE-OIDC-DEV-LOGIN` | Pantheon FE Integration Gate 2026-05-13 | Dev BFF OIDC short-lived JWT for CI + hosted Lovable | Codex | completed | 2026-05-15 16:02:18 | `ai-task-archive/tasks/FE-INT-GATE-OIDC-DEV-LOGIN.json` |
 | `BFF-CONSOL-023-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | Prepare BFF-CONSOL-023 BFF and frontend handoff packet | Codex2 | completed | 2026-05-15 16:00:07 | `ai-task-archive/tasks/BFF-CONSOL-023-SIDECAR-BFF-HANDOFF.json` |
 | `FE-INT-GATE-OIDC-DEV-LOGIN-SIDECAR-BFF-HANDOFF` | Pantheon FE Integration Gate 2026-05-13 | Prepare FE-INT-GATE-OIDC-DEV-LOGIN BFF and frontend handoff packet | Claude | completed | 2026-05-15 15:52:46 | `ai-task-archive/tasks/FE-INT-GATE-OIDC-DEV-LOGIN-SIDECAR-BFF-HANDOFF.json` |
@@ -85,15 +86,11 @@ Last updated: 2026-05-15 16:02:18
 | `FE-INT-GATE-A11Y-BREADCRUMB` | Pantheon FE Integration Gate 2026-05-13 | Fix Breadcrumb list semantic violation | Claude | completed | 2026-05-15 09:20:43 | `ai-task-archive/tasks/FE-INT-GATE-A11Y-BREADCRUMB.json` |
 | `FE-INT-GATE-A11Y-OVERLAY` | Pantheon FE Integration Gate 2026-05-13 | Fix drawer focus return and overlay stack ESC handling | Claude2 | completed | 2026-05-15 09:07:45 | `ai-task-archive/tasks/FE-INT-GATE-A11Y-OVERLAY.json` |
 | `FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF` | Pantheon FE Integration Gate 2026-05-13 | Prepare FE-INT-GATE-ALIGN-F04-FOLLOWUP BFF and frontend handoff packet | Codex | completed | 2026-05-14 23:00:04 | `ai-task-archive/tasks/FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF.json` |
-| `FE-INT-GATE-FOLLOWUP-ME-STARTUP-SIDECAR-BFF-HANDOFF` | Pantheon FE Integration Gate 2026-05-13 | Prepare FE-INT-GATE-FOLLOWUP-ME-STARTUP BFF and frontend handoff packet | Codex2 | completed | 2026-05-14 22:50:52 | `ai-task-archive/tasks/FE-INT-GATE-FOLLOWUP-ME-STARTUP-SIDECAR-BFF-HANDOFF.json` |
-| `FE-INT-GATE-ALIGN-F15-SIDECAR-ACCEPTANCE` | Pantheon FE Integration Gate 2026-05-13 | Prepare FE-INT-GATE-ALIGN-F15 acceptance packet and dependency map | Codex2 | completed | 2026-05-14 22:44:56 | `ai-task-archive/tasks/FE-INT-GATE-ALIGN-F15-SIDECAR-ACCEPTANCE.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `BFF-CONSOL-023` | BFF Consolidation 2026-05-13 | Lovable prod strict cutover (preview-soak verification gate) | 等 022 dev BFF preview strict soak 0 regression 後，把 Lovable main 部署切 VITE_BFF_FALLBACK=strict (REAL_WRITES 仍 false 直到 operator onboard)。Prod cutover 以 smoke/regression evidence 完成，不再用固定天數 gate。注意:Pantheon 後端目前只有 dev BFF;真正的 prod BFF tier 是未來工作,本 task 處理的是 Lovable 前端 strict cutover,非後端環境晉升。 | Codex | Gemini2 | blocked | `BFF-CONSOL-022` | 2026-05-15 15:37:11 | Pre-cutover smoke evidence recorded, but hosted main asset /assets/index-vlevju41.js does not contain build-time VITE_BFF_FALLBACK=strict; waiting for Lovable main env publish/rebuild before review. |
-| `BFF-CONSOL-027` | BFF Consolidation 2026-05-13 | Final BFF consolidation acceptance packet | 集合 001..026 evidence 輸出 support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md。內容含 contract diff baseline/live smoke (read+write)/SSE evidence/command receipt sample/staging+prod cutover log/regression follow-up/seed.ts post-state。Copilot 統整 Claude 最終簽核。 | Copilot | Claude | todo | `BFF-CONSOL-001`, `BFF-CONSOL-002`, `BFF-CONSOL-003`, `BFF-CONSOL-004`, `BFF-CONSOL-005`, `BFF-CONSOL-006`, `BFF-CONSOL-007`, `BFF-CONSOL-008`, `BFF-CONSOL-009`, `BFF-CONSOL-010`, `BFF-CONSOL-011`, `BFF-CONSOL-012`, `BFF-CONSOL-013`, `BFF-CONSOL-014`, `BFF-CONSOL-015`, `BFF-CONSOL-016`, `BFF-CONSOL-017`, `BFF-CONSOL-018`, `BFF-CONSOL-019`, `BFF-CONSOL-020`, `BFF-CONSOL-021`, `BFF-CONSOL-022`, `BFF-CONSOL-023`, `BFF-CONSOL-024`, `BFF-CONSOL-025`, `BFF-CONSOL-026` | 2026-05-13 10:05:17 | Assignment created |
 
 ## Handoff Queue
 
@@ -105,7 +102,7 @@ Last updated: 2026-05-15 16:02:18
 
 | Task | Owner | Waiting For | Message | Status |
 |---|---|---|---|---|
-| `BFF-CONSOL-023` | Codex | Gemini2 | Pre-cutover smoke evidence recorded, but hosted main asset /assets/index-vlevju41.js does not contain build-time VITE_BFF_FALLBACK=strict; waiting for Lovable main env publish/rebuild before review. | open |
+| _(none)_ | - | - | - | - |
 
 ## Review Notes
 
@@ -182,23 +179,23 @@ Last updated: 2026-05-15 16:02:18
 
 ## Latest Checkpoints
 
-- 2026-05-15 15:53:41 Orchestrator: PreToolUse: Bash
-- 2026-05-15 15:53:43 Orchestrator: PostToolUse: Bash
-- 2026-05-15 15:53:51 Orchestrator: Stop: Stop
-- 2026-05-15 15:53:51 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-15 15:56:54 Orchestrator: `FE-INT-GATE-OIDC-DEV-LOGIN` Worker superseded after task responsibility moved to another agent.
-- 2026-05-15 15:56:54 Orchestrator: `BFF-CONSOL-023-SIDECAR-BFF-HANDOFF` Worker superseded after task responsibility moved to another agent.
-- 2026-05-15 15:56:54 Orchestrator: `FE-INT-GATE-OIDC-DEV-LOGIN-SIDECAR-BFF-HANDOFF` Worker superseded after task responsibility moved to another agent.
-- 2026-05-15 15:56:54 Orchestrator: `FE-INT-GATE-OIDC-DEV-LOGIN` Wake-up queued for supervisor: owned_finalize_dispatch
-- 2026-05-15 15:56:54 Orchestrator: `BFF-CONSOL-023-SIDECAR-BFF-HANDOFF` Wake-up queued for supervisor: owned_finalize_dispatch
-- 2026-05-15 15:56:54 Orchestrator: `FE-INT-GATE-OIDC-DEV-LOGIN-SIDECAR-BFF-HANDOFF` Failed to create sidecar for FE-INT-GATE-OIDC-DEV-LOGIN: Task FE-INT-GATE-OIDC-DEV-LOGIN-SIDECAR-BFF-HANDOFF is archived. Create a new follow-up task instead of reusing the archived task id.
-- 2026-05-15 15:56:54 Orchestrator: `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` Failed to create sidecar for BFF-CONSOL-027: Task BFF-CONSOL-027-SIDECAR-BFF-HANDOFF is archived. Create a new follow-up task instead of reusing the archived task id.
-- 2026-05-15 15:56:54 Orchestrator: underutilized but no sidecar candidate could be assigned safely
-- 2026-05-15 15:56:54 Orchestrator: `FE-INT-GATE-OIDC-DEV-LOGIN` Worker started via codex: owned_finalize_dispatch
-- 2026-05-15 15:56:55 Codex: `FE-INT-GATE-OIDC-DEV-LOGIN` Supervisor resumed FE-INT-GATE-OIDC-DEV-LOGIN for finalize after successful dispatch.
-- 2026-05-15 15:57:11 Orchestrator: `FE-INT-GATE-OIDC-DEV-LOGIN` Supervisor resumed FE-INT-GATE-OIDC-DEV-LOGIN for finalize after successful dispatch.
-- 2026-05-15 15:57:12 Orchestrator: `BFF-CONSOL-023-SIDECAR-BFF-HANDOFF` Worker started via codex: owned_finalize_dispatch
-- 2026-05-15 15:57:12 Codex2: `BFF-CONSOL-023-SIDECAR-BFF-HANDOFF` Supervisor resumed BFF-CONSOL-023-SIDECAR-BFF-HANDOFF for finalize after successful dispatch.
-- 2026-05-15 15:57:32 Orchestrator: `BFF-CONSOL-023-SIDECAR-BFF-HANDOFF` Supervisor resumed BFF-CONSOL-023-SIDECAR-BFF-HANDOFF for finalize after successful dispatch.
-- 2026-05-15 16:00:07 Codex2: `BFF-CONSOL-023-SIDECAR-BFF-HANDOFF` Owner closeout complete. Artifact: support/sidecars/BFF-CONSOL-023/BFF-CONSOL-023-SIDECAR-BFF-HANDOFF.md. Commits: 5c9995d5 initial packet + 15076fd5 owner closeout record. Verification: jq task state; git show --stat --format=fuller 5c9995d5 --; git diff --check -- support/sidecars/BFF-CONSOL-023/BFF-CONSOL-023-SIDECAR-BFF-HANDOFF.md; git diff --cached --check. Scope remains support-only; no L1 canonical truth, runtime, route manifest, registry/governance, or execute-plans source modified by this sidecar. Parent BFF-CONSOL-023 remains blocked on Lovable main build-time strict publish/rebuild and post-publish smoke.
-- 2026-05-15 16:02:18 Codex: `FE-INT-GATE-OIDC-DEV-LOGIN` Owner finalized approved dev-login JWT flow. Implementation commit b590d095. Verification rerun: session auth 16 passed; auth facade/OIDC/JWKS 77 passed; route/openapi focused 2 passed; node probe checks, workflow YAML parse, and runAction esbuild bundle passed. Deploy-time credential/rebuild/live-smoke/staging-live rejection checks remain recorded in support/evidence/FE-INT-GATE-OIDC-DEV-LOGIN.md.
+- 2026-05-15 19:48:19 Orchestrator: PreToolUse: Write
+- 2026-05-15 19:48:19 Orchestrator: PostToolUse: Write
+- 2026-05-15 19:48:25 Orchestrator: PreToolUse: Write
+- 2026-05-15 19:48:25 Orchestrator: PostToolUse: Write
+- 2026-05-15 19:48:37 Orchestrator: Stop: Stop
+- 2026-05-15 19:48:38 Orchestrator: SessionEnd: SessionEnd
+- 2026-05-15 19:51:07 Orchestrator: Chair review worker exited; supervisor will validate the review artifacts.
+- 2026-05-15 19:51:07 Orchestrator: `OPS-CHAIR-REVIEW` Five idle workers available; only external blocker (Lovable main env rebuild) prevents main execution; sidecar window open for any safe parallelizable support work excluding BFF-CONSOL-023
+- 2026-05-15 19:51:07 Orchestrator: `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` Failed to create sidecar for BFF-CONSOL-027: Task BFF-CONSOL-027-SIDECAR-BFF-HANDOFF is archived. Create a new follow-up task instead of reusing the archived task id.
+- 2026-05-15 19:51:07 Orchestrator: underutilized but no sidecar candidate could be assigned safely
+- 2026-05-15 20:06:38 Orchestrator: `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` Failed to create sidecar for BFF-CONSOL-027: Task BFF-CONSOL-027-SIDECAR-BFF-HANDOFF is archived. Create a new follow-up task instead of reusing the archived task id.
+- 2026-05-15 20:06:38 Orchestrator: underutilized but no sidecar candidate could be assigned safely
+- 2026-05-15 20:12:26 Codex: `BFF-CONSOL-023` Runtime strict cutover evidence complete; hosted asset contains runtime strict hook, read/SSE/browser/F15/F01 strict checks passed; build-time Lovable env publish is non-blocking follow-up.
+- 2026-05-15 20:12:39 Codex: `BFF-CONSOL-023` Handoff to Gemini2: Ready for review: BFF-CONSOL-023 runtime strict main cutover evidence complete; authenticated read smoke 32/32, hosted browser probe pass with SSE, F15 strict and focused F01 strict checks passed. Evidence updated in support/evidence/BFF-CONSOL-023-prod-strict-soak.md.
+- 2026-05-15 20:12:52 Gemini2: `BFF-CONSOL-023` Approved: runtime strict main cutover evidence complete; build-time env publish is non-blocking follow-up.
+- 2026-05-15 20:13:13 Codex: `BFF-CONSOL-023` Done: runtime strict main cutover verified; BFF/read/SSE/browser/F15/F01 strict evidence complete; build-time Lovable env publish tracked as non-blocking follow-up.
+- 2026-05-15 20:14:20 Copilot: `BFF-CONSOL-027` Starting final BFF consolidation acceptance packet now that BFF-CONSOL-023 is done; will include archive-gap notes for 016/017/019/020/025/026 evidence.
+- 2026-05-15 20:15:48 Copilot: `BFF-CONSOL-027` Handoff to Claude: Ready for final review: acceptance packet created at support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md, covering contract diff baseline, live smoke, SSE evidence, command receipts, cutover log, regression follow-ups, and seed post-state.
+- 2026-05-15 20:16:00 Claude: `BFF-CONSOL-027` Approved: final BFF consolidation acceptance packet complete and reviewable evidence is present.
+- 2026-05-15 20:16:17 Copilot: `BFF-CONSOL-027` Done: final BFF consolidation acceptance packet is approved; all 001..026 evidence is summarized and remaining build-time Lovable env publish is non-blocking follow-up.

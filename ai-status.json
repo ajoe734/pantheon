@@ -3,7 +3,7 @@
   "sprint": "2026-05-13-ep5-qlib-bff-consolidation",
   "sprint_started_at": "2026-05-13T02:00:00Z",
   "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec，從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV，跑 production_activation_smoke.py --backend real，submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal，registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff，command envelope unification，non-empty fixture & detail journey，SSE real stream replay，strict env cutover，seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write 驗證通過後即可 deprecate 舊 receipt，後續 regression 追蹤不再以固定天數阻塞派工。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。",
-  "updated_at": "2026-05-15T08:02:18Z",
+  "updated_at": "2026-05-15T12:16:17Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -122,13 +122,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "blocked",
-      "current_task_ids": [
-        "BFF-CONSOL-023"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/codex-collab-system",
-      "next": "Pre-cutover smoke evidence recorded, but hosted main asset /assets/index-vlevju41.js does not contain build-time VITE_BFF_FALLBACK=strict; waiting for Lovable main env publish/rebuild before review.",
-      "last_update": "2026-05-15T07:37:11Z"
+      "next": "",
+      "last_update": "2026-05-15T12:12:52Z"
     },
     {
       "name": "Codex2",
@@ -152,13 +150,11 @@
         "spec-review",
         "critique"
       ],
-      "status": "waiting",
-      "current_task_ids": [
-        "BFF-CONSOL-027"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/grok-research-critique",
-      "next": "Assignment created",
-      "last_update": "2026-05-14T13:59:20Z"
+      "next": "",
+      "last_update": "2026-05-15T12:16:00Z"
     },
     {
       "name": "Claude2",
@@ -188,87 +184,7 @@
       "last_update": "2026-05-15T07:25:34Z"
     }
   ],
-  "tasks": [
-    {
-      "id": "BFF-CONSOL-023",
-      "title": "Lovable prod strict cutover (preview-soak verification gate)",
-      "summary_zh": "等 022 dev BFF preview strict soak 0 regression 後，把 Lovable main 部署切 VITE_BFF_FALLBACK=strict (REAL_WRITES 仍 false 直到 operator onboard)。Prod cutover 以 smoke/regression evidence 完成，不再用固定天數 gate。注意:Pantheon 後端目前只有 dev BFF;真正的 prod BFF tier 是未來工作,本 task 處理的是 Lovable 前端 strict cutover,非後端環境晉升。",
-      "phase": "BFF Consolidation 2026-05-13",
-      "owner": "Codex",
-      "reviewer": "Gemini2",
-      "status": "blocked",
-      "depends_on": [
-        "BFF-CONSOL-022"
-      ],
-      "artifacts": [
-        "execute-plans/.lovable/prod-strict.env",
-        "support/evidence/BFF-CONSOL-023-prod-strict-soak.md"
-      ],
-      "acceptance": [
-        "prod 切 strict 模式運行",
-        "REAL_WRITES 仍 false",
-        "prod smoke/regression evidence 完成",
-        "operator 體感 0 regression",
-        "SSE/read smoke 在 prod 都 pass",
-        "evidence 紀錄 cutover 過程與監控指標"
-      ],
-      "next": "Pre-cutover smoke evidence recorded, but hosted main asset /assets/index-vlevju41.js does not contain build-time VITE_BFF_FALLBACK=strict; waiting for Lovable main env publish/rebuild before review.",
-      "last_update": "2026-05-15T07:37:11Z",
-      "waiting_for": "Gemini2"
-    },
-    {
-      "id": "BFF-CONSOL-027",
-      "title": "Final BFF consolidation acceptance packet",
-      "summary_zh": "集合 001..026 evidence 輸出 support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md。內容含 contract diff baseline/live smoke (read+write)/SSE evidence/command receipt sample/staging+prod cutover log/regression follow-up/seed.ts post-state。Copilot 統整 Claude 最終簽核。",
-      "phase": "BFF Consolidation 2026-05-13",
-      "owner": "Copilot",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [
-        "BFF-CONSOL-001",
-        "BFF-CONSOL-002",
-        "BFF-CONSOL-003",
-        "BFF-CONSOL-004",
-        "BFF-CONSOL-005",
-        "BFF-CONSOL-006",
-        "BFF-CONSOL-007",
-        "BFF-CONSOL-008",
-        "BFF-CONSOL-009",
-        "BFF-CONSOL-010",
-        "BFF-CONSOL-011",
-        "BFF-CONSOL-012",
-        "BFF-CONSOL-013",
-        "BFF-CONSOL-014",
-        "BFF-CONSOL-015",
-        "BFF-CONSOL-016",
-        "BFF-CONSOL-017",
-        "BFF-CONSOL-018",
-        "BFF-CONSOL-019",
-        "BFF-CONSOL-020",
-        "BFF-CONSOL-021",
-        "BFF-CONSOL-022",
-        "BFF-CONSOL-023",
-        "BFF-CONSOL-024",
-        "BFF-CONSOL-025",
-        "BFF-CONSOL-026"
-      ],
-      "artifacts": [
-        "support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md"
-      ],
-      "acceptance": [
-        "acceptance packet 含 contract diff baseline",
-        "acceptance packet 含 read+write live smoke",
-        "acceptance packet 含 SSE evidence",
-        "acceptance packet 含 command receipt sample",
-        "acceptance packet 含 staging+prod cutover log",
-        "acceptance packet 含 regression follow-up 狀態",
-        "acceptance packet 含 seed.ts post-state",
-        "Claude 最終簽核"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-13T02:05:17Z"
-    }
-  ],
+  "tasks": [],
   "handoffs": [
     {
       "task_id": "EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE",
@@ -286,45 +202,9 @@
       "status": "done",
       "created_at": "2026-04-17T11:50:38Z",
       "resolved_at": "2026-04-17T12:39:53Z"
-    },
-    {
-      "task_id": "BFF-CONSOL-023",
-      "from": "Gemini2",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Gemini2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-15T07:27:53Z",
-      "resolved_at": "2026-05-15T07:27:53Z"
     }
   ],
-  "blockers": [
-    {
-      "task_id": "BFF-CONSOL-023",
-      "owner": "Gemini2",
-      "waiting_for": "Gemini",
-      "message": "Blocked by BFF-CONSOL-022, which is waiting for credentials.",
-      "status": "resolved",
-      "created_at": "2026-05-14T12:45:33Z",
-      "resolved_at": "2026-05-15T07:25:34Z"
-    },
-    {
-      "task_id": "BFF-CONSOL-023",
-      "owner": "Gemini2",
-      "waiting_for": "Gemini",
-      "message": "Task is blocked waiting for Gemini to provide credentials for BFF-CONSOL-022.",
-      "status": "resolved",
-      "created_at": "2026-05-14T13:08:35Z",
-      "resolved_at": "2026-05-15T07:25:34Z"
-    },
-    {
-      "task_id": "BFF-CONSOL-023",
-      "owner": "Codex",
-      "waiting_for": "Gemini2",
-      "message": "Pre-cutover smoke evidence recorded, but hosted main asset /assets/index-vlevju41.js does not contain build-time VITE_BFF_FALLBACK=strict; waiting for Lovable main env publish/rebuild before review.",
-      "status": "open",
-      "created_at": "2026-05-15T07:37:11Z"
-    }
-  ],
+  "blockers": [],
   "workload": {
     "Claude": 10,
     "Claude2": 10,
@@ -372,9 +252,9 @@
       "todo": 0
     },
     "Codex": {
-      "total": 1,
-      "active": 1,
-      "blocked": 1,
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
@@ -390,13 +270,13 @@
       "todo": 0
     },
     "Copilot": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     }
   }
 }
