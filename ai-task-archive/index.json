@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-15T15:52:30Z",
+  "updated_at": "2026-05-15T15:55:39Z",
   "counts": {
-    "total": 1061,
-    "completed": 1043,
+    "total": 1062,
+    "completed": 1044,
     "superseded": 18
   },
   "recent_terminal_ids": [
+    "MGMT-SYN-007",
     "MGMT-OODA-001",
     "MGMT-SYN-002",
     "MGMT-OODA-007",
@@ -25,7 +26,6 @@
     "OPS-GEM-REDEPLOY-001",
     "BFF-CONSOL-022",
     "FE-INT-GATE-ALIGN-F15",
-    "FE-INT-GATE-ALIGN-F01",
-    "FE-INT-GATE-FOLLOWUP-ME-STARTUP"
+    "FE-INT-GATE-ALIGN-F01"
   ]
 }
