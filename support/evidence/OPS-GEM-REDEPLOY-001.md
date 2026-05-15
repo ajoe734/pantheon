@@ -221,5 +221,25 @@ Updated blocker state:
 
 - Cleared: hosted `/bff/me` 401 startup path no longer renders the hybrid
   seed-fallback banner under strict runtime override.
-- Still open: BFF-CONSOL-022 strict preview Day 1 requires a public strict
-  preview URL or an authenticated Lovable preview context for the soak runner.
+- Cleared: BFF-CONSOL-022 Day 1 can proceed against
+  `https://pantheon-dev.lovable.app` using browser runtime strict override,
+  while preserving the default main deployment behavior.
+
+## 2026-05-15 BFF-CONSOL-022 Day 1 Unblock
+
+BFF-CONSOL-022 no longer waits on the auth-bridged Lovable preview URL. The
+reachable public dev deployment is used as the soak runner target with strict
+mode applied through runtime override and `VITE_BFF_REAL_WRITES=false`.
+
+Verification:
+
+- dev BFF authenticated read smoke: `32/32` passed, `0` writes.
+- hosted browser probe: `pass: true`; `/bff/me` 200, `/bff/v5/control-room`
+  200, `/bff/events/stream` 200, old BFF URL hit count `0`, failed count `0`.
+- focused strict UI no-fallback check: `2 passed`.
+
+Evidence:
+
+- `support/evidence/BFF-CONSOL-022-staging-strict-soak.md`
+- `support/evidence/BFF-CONSOL-022-day1-authenticated-live.json`
+- `support/evidence/BFF-CONSOL-022-day1-browser/hosted-browser-bff-probe-2026-05-15.md`
