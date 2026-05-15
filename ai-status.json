@@ -3,7 +3,7 @@
   "sprint": "2026-05-13-ep5-qlib-bff-consolidation",
   "sprint_started_at": "2026-05-13T02:00:00Z",
   "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec，從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV，跑 production_activation_smoke.py --backend real，submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal，registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff，command envelope unification，non-empty fixture & detail journey，SSE real stream replay，strict env cutover，seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write 驗證通過後即可 deprecate 舊 receipt，後續 regression 追蹤不再以固定天數阻塞派工。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。",
-  "updated_at": "2026-05-15T05:21:40Z",
+  "updated_at": "2026-05-15T07:53:06Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -98,7 +98,7 @@
       "current_task_ids": [],
       "branch": "feat/claude-execution-control",
       "next": "",
-      "last_update": "2026-05-15T05:15:03Z"
+      "last_update": "2026-05-15T07:51:10Z"
     },
     {
       "name": "Gemini",
@@ -124,13 +124,11 @@
       ],
       "status": "blocked",
       "current_task_ids": [
-        "BFF-CONSOL-022",
-        "FE-INT-GATE-ALIGN-F01",
-        "OPS-GEM-REDEPLOY-001"
+        "BFF-CONSOL-023"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Evidence committed at a165abe7: pantheon-dev refresh verified (/assets/index-vlevju41.js, sha256 8f7acc9b...), dev BFF bearer smoke passed 32/32, F05 and F15 hosted blockers reverified twice, ME-STARTUP remaining blocker recorded. Still waiting for Gemini/Lovable to make the strict preview URL usable by the soak runner: candidate id-preview-a7067bd5--140c41d5-...lovable.app redirects through Lovable auth bridge in this worker.",
-      "last_update": "2026-05-15T05:07:45Z"
+      "next": "Pre-cutover smoke evidence recorded, but hosted main asset /assets/index-vlevju41.js does not contain build-time VITE_BFF_FALLBACK=strict; waiting for Lovable main env publish/rebuild before review.",
+      "last_update": "2026-05-15T07:37:11Z"
     },
     {
       "name": "Codex2",
@@ -140,14 +138,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "blocked",
+      "status": "finalize",
       "current_task_ids": [
-        "FE-INT-GATE-ALIGN-F15",
-        "FE-INT-GATE-FOLLOWUP-ME-STARTUP"
+        "BFF-CONSOL-023-SIDECAR-BFF-HANDOFF"
       ],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "OPS-GEM-REDEPLOY-001 rechecked hosted after Lovable refresh: pantheon-dev now serves /assets/index-vlevju41.js and the focused 401 test no longer has interceptedMeRequests=0, but still fails because the page renders HYBRID / live seed fallback armed under injected /bff/me 401. Evidence: support/evidence/OPS-GEM-REDEPLOY-001.md and commit a165abe7.",
-      "last_update": "2026-05-15T05:08:41Z"
+      "next": "Review approved. Support-only handoff packet is scoped correctly and may return to Codex2 for owner closeout; parent BFF-CONSOL-023 remains blocked on Lovable main build-time strict publish/rebuild and post-publish smoke.",
+      "last_update": "2026-05-15T07:53:06Z"
     },
     {
       "name": "Copilot",
@@ -186,54 +183,21 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "blocked",
-      "current_task_ids": [
-        "BFF-CONSOL-023"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Task is blocked waiting for Gemini to provide credentials for BFF-CONSOL-022.",
-      "last_update": "2026-05-14T13:08:35Z"
+      "next": "",
+      "last_update": "2026-05-15T07:25:34Z"
     }
   ],
   "tasks": [
-    {
-      "id": "BFF-CONSOL-022",
-      "title": "Lovable dev BFF strict cutover (isolated preview branch)",
-      "summary_zh": "開 Lovable preview branch 設 VITE_BFF_MODE=live + VITE_BFF_FALLBACK=strict + VITE_BFF_REAL_WRITES=false 指向 dev BFF (https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io)。現有 Lovable main 部署維持 auto fallback 不切。Pantheon 目前只有 dev BFF 一個 tier;staging/prod 是後續工作,不可假設已存在。Soak ≥7 day 紀錄 dev BFF strict mode 下 read/SSE/detail journey 沒 regression。Day 1 soak 啟動條件:Lovable preview branch URL provided + dev BFF authenticated JWT secret available (走 probe_bff_authenticated_live.py)。",
-      "phase": "BFF Consolidation 2026-05-13",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "blocked",
-      "depends_on": [
-        "BFF-CONSOL-008",
-        "BFF-CONSOL-009",
-        "BFF-CONSOL-010",
-        "BFF-CONSOL-015"
-      ],
-      "artifacts": [
-        "execute-plans/.lovable/preview-strict.env",
-        "support/evidence/BFF-CONSOL-022-staging-strict-soak.md"
-      ],
-      "acceptance": [
-        "preview branch 切 strict 模式運行指向 dev BFF (https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io)",
-        "REAL_WRITES 維持 false 全程",
-        "現有 Lovable main 部署保留 auto fallback 不切",
-        "target_url 與 dev BFF 一致;不可引用虛構的 staging hostname",
-        "7 day soak 完成 read+SSE+detail smoke against dev BFF",
-        "SSE replay/read smoke 都 pass against dev BFF",
-        "evidence 紀錄 strict 下無 fallback regression"
-      ],
-      "next": "OPS-GEM-REDEPLOY-001 verified dev BFF bearer smoke with PANTHEON_BFF_SMOKE_BEARER_TOKEN=pantheon-dev-browser:reviewer (32/32 read probes passed) and pantheon-dev refresh to /assets/index-vlevju41.js. Still blocked on Gemini/Lovable for a strict preview URL reachable by the soak runner: candidate id-preview-a7067bd5--140c41d5-...lovable.app redirects through Lovable auth bridge in this worker.",
-      "last_update": "2026-05-15T05:07:08Z",
-      "waiting_for": "Gemini"
-    },
     {
       "id": "BFF-CONSOL-023",
       "title": "Lovable prod strict cutover (preview-soak verification gate)",
       "summary_zh": "等 022 dev BFF preview strict soak 0 regression 後，把 Lovable main 部署切 VITE_BFF_FALLBACK=strict (REAL_WRITES 仍 false 直到 operator onboard)。Prod cutover 以 smoke/regression evidence 完成，不再用固定天數 gate。注意:Pantheon 後端目前只有 dev BFF;真正的 prod BFF tier 是未來工作,本 task 處理的是 Lovable 前端 strict cutover,非後端環境晉升。",
       "phase": "BFF Consolidation 2026-05-13",
-      "owner": "Gemini2",
-      "reviewer": "Gemini",
+      "owner": "Codex",
+      "reviewer": "Gemini2",
       "status": "blocked",
       "depends_on": [
         "BFF-CONSOL-022"
@@ -250,9 +214,9 @@
         "SSE/read smoke 在 prod 都 pass",
         "evidence 紀錄 cutover 過程與監控指標"
       ],
-      "next": "Task is blocked waiting for Gemini to provide credentials for BFF-CONSOL-022.",
-      "last_update": "2026-05-14T13:08:35Z",
-      "waiting_for": "Gemini"
+      "next": "Pre-cutover smoke evidence recorded, but hosted main asset /assets/index-vlevju41.js does not contain build-time VITE_BFF_FALLBACK=strict; waiting for Lovable main env publish/rebuild before review.",
+      "last_update": "2026-05-15T07:37:11Z",
+      "waiting_for": "Gemini2"
     },
     {
       "id": "BFF-CONSOL-027",
@@ -307,116 +271,13 @@
       "last_update": "2026-05-13T02:05:17Z"
     },
     {
-      "id": "FE-INT-GATE-ALIGN-F01",
-      "title": "Align 01-startup-session.spec.ts to hosted Lovable DOM",
-      "summary_zh": "hard-gate 首次 run 25846710728 (commit 4774678) e2e step fail：F01 startup session spec 01-startup-session.spec.ts 對 hosted Lovable assertion 對不上。Symptoms: MeResponse shape assert、strict 模式 serving-mock banner 缺、SSE EventSource open、401 不 fallback mock 4 個 case 全 fail. 必須 (1) PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io 環境下實際跑 npx playwright test <file> --trace=on / --headed，產出 playwright-report/ 抓真實 DOM；(2) 不可以憑空猜 selector；(3) 對 hosted Lovable 已 render 的 UI 對齊 assertion，不可降級 acceptance；(4) 若發現 hosted Lovable 真有 product gap（非 selector 錯），在 task next 註明並 file follow-up；(5) 修完後本地 npx playwright test 對該 spec 至少連續 2 次綠；(6) closeout commit 必須在 /home/lupin/code/execute-plans/ 上 bff-luv-fe-006-dev-deploy branch（不要再產生 phantom mirror，FE-INT-GATE-A10 處理 root cause）。",
-      "phase": "Pantheon FE Integration Gate 2026-05-13",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "blocked",
-      "depends_on": [],
-      "artifacts": [
-        "execute-plans/e2e/01-startup-session.spec.ts",
-        "execute-plans/.lovable/audits/baseline/hardgate-postmerge/pantheon-integration-evidence/.lovable/audits/current-run/playwright-results.json"
-      ],
-      "acceptance": [
-        "cd execute-plans 後 npx playwright test e2e/01-startup-session.spec.ts 連續 2 次全綠",
-        "assertion 用真實 hosted Lovable DOM/network 對齊",
-        "不可降級 blueprint pass condition",
-        "若 hosted Lovable 真有 product gap 改 file follow-up task 而非 mask spec",
-        "closeout commit 在 execute-plans repo bff-luv-fe-006-dev-deploy branch"
-      ],
-      "next": "Closeout blocked: current hosted strict verification of e2e/01-startup-session.spec.ts fails after FE-INT-GATE-FOLLOWUP-ME-STARTUP changed the spec to require startup /bff/me. Command: PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io VITE_BFF_FALLBACK=strict npx playwright test e2e/01-startup-session.spec.ts --trace=on --reporter=list --output=/tmp/fe-int-gate-align-f01-closeout-run1 => 3 passed, 1 failed; interceptedMeRequests=0. Approved F01 commit a685175 remains durable, but owner closeout cannot mark done until the follow-up is fixed or F01 scope is explicitly decoupled from the newer spec.",
-      "last_update": "2026-05-14T12:19:10Z",
-      "review_notes_zh": [
-        "Reviewed execute-plans commit a685175 on branch bff-luv-fe-006-dev-deploy; F01 change is scoped to e2e/01-startup-session.spec.ts and the file has no local diff.",
-        "Verified hosted Lovable strict target twice as reviewer: PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io VITE_BFF_FALLBACK=strict npx playwright test e2e/01-startup-session.spec.ts --trace=on --output=.lovable/audits/current-run/f01-review-test-results --reporter=list,json; both runs passed 4/4.",
-        "Confirmed the /bff/me startup product gap is not hidden: test annotation records interceptedMeRequests=0 while live /bff/* routes and SSE are exercised, and follow-up FE-INT-GATE-FOLLOWUP-ME-STARTUP exists/in_progress to tighten the 401 path."
-      ],
-      "waiting_for": "Claude2"
-    },
-    {
-      "id": "FE-INT-GATE-ALIGN-F15",
-      "title": "Align 09-strict-vs-hybrid.spec.ts to hosted Lovable DOM",
-      "summary_zh": "hard-gate 首次 run 25846710728 (commit 4774678) e2e step fail：F15 strict vs hybrid spec 09-strict-vs-hybrid.spec.ts 對 hosted Lovable assertion 對不上。Symptoms: strict 5xx 注入 fail-closed 沒看到 mock data 的 assertion fail（可能 5xx 注入 mock 機制沒生效或 banner selector 抓錯）. 必須 (1) PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io 環境下實際跑 npx playwright test <file> --trace=on / --headed，產出 playwright-report/ 抓真實 DOM；(2) 不可以憑空猜 selector；(3) 對 hosted Lovable 已 render 的 UI 對齊 assertion，不可降級 acceptance；(4) 若發現 hosted Lovable 真有 product gap（非 selector 錯），在 task next 註明並 file follow-up；(5) 修完後本地 npx playwright test 對該 spec 至少連續 2 次綠；(6) closeout commit 必須在 /home/lupin/code/execute-plans/ 上 bff-luv-fe-006-dev-deploy branch（不要再產生 phantom mirror，FE-INT-GATE-A10 處理 root cause）。",
-      "phase": "Pantheon FE Integration Gate 2026-05-13",
-      "owner": "Codex2",
-      "reviewer": "Claude",
-      "status": "blocked",
-      "depends_on": [],
-      "artifacts": [
-        "execute-plans/e2e/09-strict-vs-hybrid.spec.ts",
-        "execute-plans/.lovable/audits/baseline/hardgate-postmerge/pantheon-integration-evidence/.lovable/audits/current-run/playwright-results.json"
-      ],
-      "acceptance": [
-        "cd execute-plans 後 npx playwright test e2e/09-strict-vs-hybrid.spec.ts 連續 2 次全綠",
-        "assertion 用真實 hosted Lovable DOM/network 對齊",
-        "不可降級 blueprint pass condition",
-        "若 hosted Lovable 真有 product gap 改 file follow-up task 而非 mask spec",
-        "closeout commit 在 execute-plans repo bff-luv-fe-006-dev-deploy branch"
-      ],
-      "next": "Blocked on hosted Lovable strict-mode product/deployment gap: PANTHEON_E2E_STRICT selects the test branch, but the deployed bundle still renders hybrid fallback and seed rows for injected 503. Evidence: execute-plans/.lovable/audits/current-run/f15-strict-product-gap.md. Follow-up filed: FE-INT-GATE-FOLLOWUP-F15-STRICT-LOVABLE.",
-      "last_update": "2026-05-14T11:57:04Z",
-      "waiting_for": "Gemini2"
-    },
-    {
-      "id": "FE-INT-GATE-FOLLOWUP-ME-STARTUP",
-      "title": "Wire hosted startup session to /bff/me before local role fallback",
-      "summary_zh": "Hosted Lovable startup 會打 live BFF list/v5/SSE routes，但目前未在 startup 請求 /bff/me；TopBar 仍由 local platform role control 顯示 admin。需要接上 /bff/me 作為 current-user/session source，401 時顯示 auth/error state，且不得 fallback 到 mock current-user。F01 已在 test annotation 與 startup-bff-network attachment 記錄此 gap。",
-      "phase": "Pantheon FE Integration Gate 2026-05-13",
-      "owner": "Codex2",
-      "reviewer": "Claude2",
-      "status": "blocked",
-      "depends_on": [],
-      "artifacts": [
-        "execute-plans/src/platform/components/TopBar.tsx",
-        "execute-plans/src/lib/v4/session/me.ts",
-        "execute-plans/e2e/01-startup-session.spec.ts"
-      ],
-      "acceptance": [
-        "hosted startup requests /bff/me before showing current-user or role UI",
-        "/bff/me 401 renders auth or error state and never falls back to mock current-user",
-        "F01 startup session 401 coverage can require at least one intercepted /bff/me request"
-      ],
-      "next": "OPS-GEM-REDEPLOY-001 rechecked hosted after Lovable refresh: pantheon-dev now serves /assets/index-vlevju41.js and the focused 401 test no longer has interceptedMeRequests=0, but still fails because the page renders HYBRID / live seed fallback armed under injected /bff/me 401. Evidence: support/evidence/OPS-GEM-REDEPLOY-001.md and commit a165abe7.",
-      "last_update": "2026-05-15T05:08:41Z",
-      "waiting_for": "Gemini2"
-    },
-    {
-      "id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
-      "title": "Restore hosted Lovable dev real-write gate for F05",
-      "summary_zh": "F05 hosted Lovable DOM selector 已確認正確，但 pantheon-dev.lovable.app bundle 缺 VITE_BFF_REAL_WRITES/VITE_BFF_FALLBACK；remediation action 只走 overlay，不會 POST /bff/v5/interventions/{id}/remediate。需更新 dev Lovable deploy/write-gate 設定後重跑 F05 hosted 兩次。",
-      "phase": "Pantheon FE Integration Gate 2026-05-13",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "review_approved",
-      "depends_on": [],
-      "artifacts": [
-        "execute-plans/.lovable/audits/current-run/fe-int-gate-align-f05-hosted-write-gate-gap.md",
-        "execute-plans/e2e/04-sentinel-remediation.spec.ts"
-      ],
-      "acceptance": [
-        "hosted bundle exposes dev-scoped real-write integration gate",
-        "F05 hosted headed run observes remediation POST",
-        "F05 hosted npx playwright test passes twice"
-      ],
-      "next": "Supervisor resumed FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE for finalize after successful dispatch.",
-      "last_update": "2026-05-15T05:21:11Z",
-      "review_notes_zh": [
-        "Codex2 review approved: pantheon-dev hosted asset now references /assets/index-vlevju41.js and bundle contains VITE_BFF_REAL_WRITES/VITE_BFF_FALLBACK plus the dev BFF URL/token marker.",
-        "Reviewer reran hosted e2e/04-sentinel-remediation.spec.ts twice against pantheon-dev + dev BFF with VITE_BFF_FALLBACK=strict and VITE_BFF_REAL_WRITES=true; both runs passed 2/2 with traces under support/evidence/FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE-codex2-review/.",
-        "The original stale-bundle gap artifact is superseded by support/evidence/OPS-GEM-REDEPLOY-001.md and this review evidence; no selector masking or acceptance downgrade found."
-      ],
-      "review_file": "support/reviews/FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE-codex2-review.md"
-    },
-    {
       "id": "FE-INT-GATE-OIDC-DEV-LOGIN",
       "title": "Dev BFF OIDC short-lived JWT for CI + hosted Lovable",
       "summary_zh": "lupin dev BFF (https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io) 已切到 strict JWT auth。當前狀態：(1) curl -H \"Authorization: Bearer pantheon-dev-browser:reviewer\" /bff/me 回 401 INVALID_TOKEN/AUTH_TOKEN_FORMAT；(2) openapi 只暴露 /bff/auth/refresh，沒有 /login 或 /token endpoint；(3) hosted Lovable bundle 用 VITE_BFF_DEV_BEARER_TOKEN=pantheon-dev-browser:reviewer 也全 401；(4) CI 的 PANTHEON_BFF_SMOKE_BEARER_TOKEN 失效，auth_smoke step 全 fail。需求：設計 CI-friendly dev OIDC login flow 讓 hard-gate auth_smoke 重新綠。實作方案請 backend owner 在以下 3 條路徑選或混合：(A) BFF 新增 /bff/auth/dev-login endpoint，接 client_id+secret 換短期 JWT (5min~1hr)，CI 之前 step 先 fetch 一次塞到 env；(B) OIDC issuer (Keycloak/Auth0) staging instance 跑 client_credentials grant，CI 拿 issuer URL + dev client secret 自己換 token；(C) BFF 提供 pre-minted long-lived test JWT (例：90 天)，當 GitHub repo secret，CI 直接用。優先順序 A > B > C（A 最安全 + 短 TTL + 可 revoke）。同時要更新：(i) execute-plans/.github/workflows/pantheon-integration-gate.yml 加 'Acquire BFF JWT' step (在 auth_smoke / e2e 前)；(ii) Lovable dev project 環境變數從 VITE_BFF_DEV_BEARER_TOKEN=stub 改成 VITE_BFF_OIDC_CLIENT_ID+CLIENT_SECRET 或 runtime fetch；(iii) GitHub repo secret 新增 PANTHEON_BFF_OIDC_CLIENT_ID / CLIENT_SECRET (替換 PANTHEON_BFF_SMOKE_BEARER_TOKEN)；(iv) execute-plans/scripts/probe-bff-authenticated-live.mjs 讀新 env var；(v) docs/deployment/lovable-dev-staging-operating-rules.md 更新 dev auth 方案說明。Verification: 重跑 PR CI auth_smoke + browser_probe step outcome=success；hosted bundle 對 /bff/me 不再 401；chair Claude 收 JWT 在 staging-live 環境驗證不可用 (security boundary)。",
       "phase": "Pantheon FE Integration Gate 2026-05-13",
-      "owner": "Codex2",
-      "reviewer": "Claude",
-      "status": "todo",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "review_approved",
       "depends_on": [
         "BFF-CONSOL-022"
       ],
@@ -441,34 +302,47 @@
         "security: dev JWT 在 staging-live BFF 拒絕 (環境隔離)",
         "docs 更新 dev auth 方案"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T00:58:56Z"
+      "next": "Review approved for repo-side implementation. Verified dev-login JWT issuance/validation, staging-live disable guard, CI token acquisition path, probe env migration, docs, workflow YAML, and runAction bundle. Deploy-time credential/rebuild/live-smoke checks remain explicitly recorded for owner closeout.",
+      "last_update": "2026-05-15T07:51:33Z",
+      "review_notes_zh": [
+        "無 blocking findings: dev-only /bff/auth/dev-login 使用短期 HS256 JWT、TTL clamp 300-3600s、bad secret 401、staging-live/canary/live/prod disable path 均有測試覆蓋。",
+        "Reviewer verification: pytest auth/session/OIDC/JWKS 93 passed; execute-plans route/openapi focused tests 2 passed; node --check probes passed; workflow YAML parse passed; runAction esbuild bundle passed。",
+        "Deploy-time checks仍需外部 credentials/hosted rebuild: GitHub/Lovable/dev-BFF client credentials, live CI auth_smoke/browser_probe rerun, staging-live rejection verification。"
+      ]
     },
     {
-      "id": "OPS-GEM-REDEPLOY-001",
-      "title": "Gemini Lovable redeploy and dev BFF credential unblock",
-      "summary_zh": "Gemini 直接處理目前全線 idle 的根因：提供 BFF-CONSOL-022 Lovable preview branch URL、dev BFF JWT/bearer credential，並觸發/驗證 pantheon-dev.lovable.app 重新部署到 execute-plans 最新 bundle。這是 unblock 任務，不是 sidecar；不可重用 archived sidecar id。",
-      "phase": "Unassigned",
-      "owner": "Codex",
-      "reviewer": "Gemini",
-      "status": "blocked",
-      "depends_on": [],
+      "id": "BFF-CONSOL-023-SIDECAR-BFF-HANDOFF",
+      "title": "Prepare BFF-CONSOL-023 BFF and frontend handoff packet",
+      "summary_zh": "平行支援 BFF-CONSOL-023，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+      "phase": "BFF Consolidation 2026-05-13",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "review_approved",
+      "depends_on": [
+        "BFF-CONSOL-022"
+      ],
       "artifacts": [
-        ".orchestrator/chair-reviews/20260515-043829-claude2.md",
-        ".orchestrator/chair-reviews/20260515-044342-codex.md",
-        "support/evidence/OPS-GEM-REDEPLOY-001.md"
+        "support/sidecars/BFF-CONSOL-023/BFF-CONSOL-023-SIDECAR-BFF-HANDOFF.md"
       ],
       "acceptance": [
-        "提供 Lovable preview branch URL",
-        "提供 dev BFF JWT/bearer credential 或明確說明不可取得原因",
-        "pantheon-dev.lovable.app bundle refresh/redeploy 已觸發並記錄 asset hash",
-        "BFF-CONSOL-022 Day 1 probe 所需 env 可用",
-        "FE hosted blockers F05/F15/ME-STARTUP 可重新驗證或有明確剩餘 blocker",
-        "不使用 archived sidecar task id"
+        "Create support artifacts only",
+        "Do not edit canonical truth",
+        "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Evidence committed at a165abe7: pantheon-dev refresh verified (/assets/index-vlevju41.js, sha256 8f7acc9b...), dev BFF bearer smoke passed 32/32, F05 and F15 hosted blockers reverified twice, ME-STARTUP remaining blocker recorded. Still waiting for Gemini/Lovable to make the strict preview URL usable by the soak runner: candidate id-preview-a7067bd5--140c41d5-...lovable.app redirects through Lovable auth bridge in this worker.",
-      "last_update": "2026-05-15T05:07:45Z",
-      "waiting_for": "Gemini"
+      "next": "Review approved. Support-only handoff packet is scoped correctly and may return to Codex2 for owner closeout; parent BFF-CONSOL-023 remains blocked on Lovable main build-time strict publish/rebuild and post-publish smoke.",
+      "last_update": "2026-05-15T07:53:06Z",
+      "task_class": "sidecar",
+      "auto_generated": true,
+      "helper_parent": "BFF-CONSOL-023",
+      "helper_kind": "bff_handoff_packet",
+      "mutates_canonical": false,
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "審查通過：commit 5c9995d5 只新增 support/sidecars/BFF-CONSOL-023/BFF-CONSOL-023-SIDECAR-BFF-HANDOFF.md，未修改 L1 canonical truth、runtime、route manifest、registry/governance 或 execute-plans source。",
+        "審查通過：packet 未宣稱 BFF-CONSOL-023 完成，清楚標出 Lovable main build-time strict fallback 尚未發布的 blocker，並保留 dev-BFF-only 與 VITE_BFF_REAL_WRITES=false 邊界。",
+        "審查通過：route/data wording 區分路由 contract smoke pass 與 live-empty business data；抽查 support/evidence/BFF-CONSOL-023-prod-strict-soak.md、hosted browser probe、authenticated-live.json 與 runAction write gate 後一致。",
+        "Verification: git diff-tree --no-commit-id --name-status -r 5c9995d5; git diff --check -- support/sidecars/BFF-CONSOL-023/BFF-CONSOL-023-SIDECAR-BFF-HANDOFF.md; rg evidence checks for strict blocker/REAL_WRITES/old BFF/runtime.read."
+      ]
     }
   ],
   "handoffs": [
@@ -490,205 +364,84 @@
       "resolved_at": "2026-04-17T12:39:53Z"
     },
     {
-      "task_id": "FE-INT-GATE-ALIGN-F01",
+      "task_id": "FE-INT-GATE-OIDC-DEV-LOGIN",
       "from": "Codex2",
       "to": "Codex",
       "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
       "status": "done",
-      "created_at": "2026-05-14T11:35:59Z",
-      "resolved_at": "2026-05-14T11:36:58Z"
+      "created_at": "2026-05-15T07:21:57Z",
+      "resolved_at": "2026-05-15T07:22:10Z"
     },
     {
-      "task_id": "FE-INT-GATE-ALIGN-F01",
+      "task_id": "BFF-CONSOL-023",
+      "from": "Gemini2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Gemini2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T07:27:53Z",
+      "resolved_at": "2026-05-15T07:27:53Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-OIDC-DEV-LOGIN",
       "from": "Codex",
       "to": "Codex2",
-      "message": "Ready for review. execute-plans commit a685175 updates e2e/01-startup-session.spec.ts to consume PANTHEON_FE_BASE_URL/PANTHEON_BFF_BASE_URL, assert hosted /bff/me session.state=active when session_kind is absent, open native EventSource from the Lovable origin, and attach startup BFF network evidence for the 401 path. Verification: hosted strict npx playwright test e2e/01-startup-session.spec.ts --trace=on passed twice consecutively (4/4 each), plus hosted strict xvfb-run headed --trace=on passed (4/4). Product gap filed as FE-INT-GATE-FOLLOWUP-ME-STARTUP: hosted startup exercises live BFF list/v5/SSE routes but does not request /bff/me before showing local role UI.",
+      "message": "Implemented dev-only /bff/auth/dev-login short-lived JWT flow, CI JWT acquisition, execute-plans probe/runtime fetch updates, and deployment docs. Evidence: support/evidence/FE-INT-GATE-OIDC-DEV-LOGIN.md. Verification: BFF session/openapi focused tests 18 passed; auth facade/OIDC/JWKS 77 passed; node script checks and workflow YAML parse passed; runAction esbuild bundle passed. Deploy-time checks remain: configure GitHub/Lovable/dev-BFF credentials, rerun live CI/browser probe, and verify dev JWT rejected by staging-live.",
       "status": "done",
-      "created_at": "2026-05-14T11:52:44Z",
-      "resolved_at": "2026-05-14T12:05:27Z"
+      "created_at": "2026-05-15T07:39:59Z",
+      "resolved_at": "2026-05-15T07:51:33Z"
     },
     {
-      "task_id": "FE-INT-GATE-FOLLOWUP-ME-STARTUP",
-      "from": "Codex",
-      "to": "Claude2",
-      "message": "Helper-claimed by idle Claude2; previous owner Codex becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-14T11:57:00Z",
-      "resolved_at": "2026-05-14T11:57:22Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
-      "from": "Gemini",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Gemini is dispatch-paused.",
-      "status": "done",
-      "created_at": "2026-05-14T12:03:07Z",
-      "resolved_at": "2026-05-14T12:03:33Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-FOLLOWUP-ME-STARTUP",
-      "from": "Claude2",
-      "to": "Codex",
-      "message": "Implementation complete. TopBar now calls useMe() on mount; /bff/me 401 renders Lock+Auth error state, never falls back to mock current-user. F01 spec product-gap bypass removed; strict interceptedMeRequests > 0 assertion added. Commit 20dfe79 on bff-luv-fe-006-dev-deploy in execute-plans. Ready for review.",
-      "status": "done",
-      "created_at": "2026-05-14T12:04:50Z",
-      "resolved_at": "2026-05-14T12:18:01Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-ALIGN-F01",
+      "task_id": "BFF-CONSOL-023-SIDECAR-BFF-HANDOFF",
       "from": "Codex2",
       "to": "Codex",
-      "message": "Approved F01. Reviewer reran hosted strict Playwright spec twice (4/4 both), reviewed a685175 scope, and confirmed /bff/me startup gap is tracked by FE-INT-GATE-FOLLOWUP-ME-STARTUP.",
+      "message": "Ready for review. Added support-only BFF/frontend handoff packet at support/sidecars/BFF-CONSOL-023/BFF-CONSOL-023-SIDECAR-BFF-HANDOFF.md in commit 5c9995d5. Packet documents the 023 build-time strict publish blocker, dev-BFF-only boundary, query/data gaps, operator read/write journey, and post-publish smoke checklist. Verification: git diff --cached --check passed before commit; no canonical truth or runtime implementation changed.",
       "status": "done",
-      "created_at": "2026-05-14T12:05:27Z",
-      "resolved_at": "2026-05-14T12:19:10Z"
+      "created_at": "2026-05-15T07:46:07Z",
+      "resolved_at": "2026-05-15T07:53:06Z"
     },
     {
-      "task_id": "BFF-CONSOL-022",
-      "from": "Gemini",
-      "to": "Codex2",
-      "message": "Reopening: Codex2 originally pointed preview-strict.env at a fabricated staging BFF hostname; Pantheon only deploys dev today. preview-strict.env now points VITE_BFF_BASE_URL at the dev BFF (https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io). Codex2 to refresh evidence and start Day 1 soak once Lovable preview branch URL + dev BFF JWT secret are provided.",
-      "status": "done",
-      "created_at": "2026-05-14T12:11:11Z",
-      "resolved_at": "2026-05-14T12:11:11Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-FOLLOWUP-ME-STARTUP",
-      "from": "Codex",
-      "to": "Claude2",
-      "message": "Review failed on hosted strict closeout verification: PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io VITE_BFF_FALLBACK=strict npx playwright test e2e/01-startup-session.spec.ts --trace=on --reporter=list --output=/tmp/fe-int-gate-align-f01-closeout-run1 returned 3 passed, 1 failed; 401 startup case still records interceptedMeRequests=0, so hosted startup does not request /bff/me yet.",
-      "status": "done",
-      "created_at": "2026-05-14T12:18:01Z",
-      "resolved_at": "2026-05-14T12:18:01Z"
-    },
-    {
-      "task_id": "BFF-CONSOL-022",
+      "task_id": "FE-INT-GATE-OIDC-DEV-LOGIN",
       "from": "Codex2",
       "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-14T12:19:53Z",
-      "resolved_at": "2026-05-14T12:19:54Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-FOLLOWUP-ME-STARTUP",
-      "from": "Claude2",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-14T12:27:30Z",
-      "resolved_at": "2026-05-14T12:27:31Z"
-    },
-    {
-      "task_id": "OPS-GEM-REDEPLOY-001",
-      "from": "Gemini",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Gemini becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-15T04:52:28Z",
-      "resolved_at": "2026-05-15T04:52:42Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
-      "from": "Codex",
-      "to": "Gemini",
-      "message": "Hosted write-gate redeploy verification complete: pantheon-dev now serves /assets/index-vlevju41.js, F05 hosted e2e/04-sentinel-remediation.spec.ts passed twice with VITE_BFF_REAL_WRITES=true and strict fallback. Evidence: support/evidence/OPS-GEM-REDEPLOY-001.md and commit a165abe7.",
-      "status": "done",
-      "created_at": "2026-05-15T05:06:23Z",
-      "resolved_at": "2026-05-15T05:14:26Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
-      "from": "Gemini",
-      "to": "Codex2",
-      "message": "Auto-reassigned review from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure",
-      "status": "done",
-      "created_at": "2026-05-15T05:14:26Z",
-      "resolved_at": "2026-05-15T05:19:51Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Review approved: hosted Lovable dev write gate is restored and F05 hosted passed twice under strict real-writes verification.",
+      "message": "Review approved for repo-side implementation. Verified dev-login JWT issuance/validation, staging-live disable guard, CI token acquisition path, probe env migration, docs, workflow YAML, and runAction bundle. Deploy-time credential/rebuild/live-smoke checks remain explicitly recorded for owner closeout.",
       "status": "pending",
-      "created_at": "2026-05-15T05:19:51Z"
+      "created_at": "2026-05-15T07:51:33Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-023-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. Support-only handoff packet is scoped correctly and may return to Codex2 for owner closeout; parent BFF-CONSOL-023 remains blocked on Lovable main build-time strict publish/rebuild and post-publish smoke.",
+      "status": "pending",
+      "created_at": "2026-05-15T07:53:06Z"
     }
   ],
   "blockers": [
-    {
-      "task_id": "BFF-CONSOL-022",
-      "owner": "Codex2",
-      "waiting_for": "Gemini",
-      "message": "Initialized and committed preview strict env plus evidence in d972f8b9; local prereq tests passed. Blocked on Lovable preview URL plus authenticated staging BFF smoke credentials/reachability. Fixed elapsed-day soak gate has been removed.",
-      "status": "resolved",
-      "created_at": "2026-05-13T09:56:02Z",
-      "resolved_at": "2026-05-14T12:11:11Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-ALIGN-F15",
-      "owner": "Codex2",
-      "waiting_for": "Gemini2",
-      "message": "Blocked on hosted Lovable strict-mode product/deployment gap: PANTHEON_E2E_STRICT selects the test branch, but the deployed bundle still renders hybrid fallback and seed rows for injected 503. Evidence: execute-plans/.lovable/audits/current-run/f15-strict-product-gap.md. Follow-up filed: FE-INT-GATE-FOLLOWUP-F15-STRICT-LOVABLE.",
-      "status": "open",
-      "created_at": "2026-05-14T11:57:04Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-ALIGN-F01",
-      "owner": "Codex",
-      "waiting_for": "Claude2",
-      "message": "Closeout blocked: current hosted strict verification of e2e/01-startup-session.spec.ts fails after FE-INT-GATE-FOLLOWUP-ME-STARTUP changed the spec to require startup /bff/me. Command: PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io VITE_BFF_FALLBACK=strict npx playwright test e2e/01-startup-session.spec.ts --trace=on --reporter=list --output=/tmp/fe-int-gate-align-f01-closeout-run1 => 3 passed, 1 failed; interceptedMeRequests=0. Approved F01 commit a685175 remains durable, but owner closeout cannot mark done until the follow-up is fixed or F01 scope is explicitly decoupled from the newer spec.",
-      "status": "open",
-      "created_at": "2026-05-14T12:19:10Z"
-    },
-    {
-      "task_id": "BFF-CONSOL-022",
-      "owner": "Codex",
-      "waiting_for": "Gemini",
-      "message": "Dev BFF strict preview prerequisites reverified: preview-strict.env targets lupin dev BFF with REAL_WRITES=false, dev /health and /openapi.json return 200, and focused Pack A/B/C + detail pytest passed. Blocked until Lovable preview branch URL and dev BFF smoke JWT/bearer credential are provided for Day 1_probe_bff_authenticated_live.py.",
-      "status": "open",
-      "created_at": "2026-05-14T12:26:30Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
-      "owner": "Codex",
-      "waiting_for": "Gemini",
-      "message": "Code remediation committed and pushed in execute-plans (104f06b, artifact update 49899d0). Production-preview F05 passed twice, but pantheon-dev.lovable.app still serves old asset /assets/index-BYfBkno5.js as of 2026-05-14T12:32:26Z; hosted F05 rerun is waiting on Lovable dev redeploy/refresh.",
-      "status": "resolved",
-      "created_at": "2026-05-14T12:33:18Z",
-      "resolved_at": "2026-05-15T05:06:23Z"
-    },
     {
       "task_id": "BFF-CONSOL-023",
       "owner": "Gemini2",
       "waiting_for": "Gemini",
       "message": "Blocked by BFF-CONSOL-022, which is waiting for credentials.",
-      "status": "open",
-      "created_at": "2026-05-14T12:45:33Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-FOLLOWUP-ME-STARTUP",
-      "owner": "Codex2",
-      "waiting_for": "Gemini2",
-      "message": "Source fix pushed in execute-plans commits b09d22e/df73c3d and evidence committed in pantheon 0bec9136. Local focused 401 passes and build passes, but hosted https://pantheon-dev.lovable.app still serves old bundle index-DmMAo3dQ.js with local admin role; hosted focused 401 fails with interceptedMeRequests=0. Waiting for Lovable deployment refresh or correct preview URL tracking df73c3d.",
-      "status": "open",
-      "created_at": "2026-05-14T12:48:20Z"
+      "status": "resolved",
+      "created_at": "2026-05-14T12:45:33Z",
+      "resolved_at": "2026-05-15T07:25:34Z"
     },
     {
       "task_id": "BFF-CONSOL-023",
       "owner": "Gemini2",
       "waiting_for": "Gemini",
       "message": "Task is blocked waiting for Gemini to provide credentials for BFF-CONSOL-022.",
-      "status": "open",
-      "created_at": "2026-05-14T13:08:35Z"
+      "status": "resolved",
+      "created_at": "2026-05-14T13:08:35Z",
+      "resolved_at": "2026-05-15T07:25:34Z"
     },
     {
-      "task_id": "OPS-GEM-REDEPLOY-001",
+      "task_id": "BFF-CONSOL-023",
       "owner": "Codex",
-      "waiting_for": "Gemini",
-      "message": "Evidence committed at a165abe7: pantheon-dev refresh verified (/assets/index-vlevju41.js, sha256 8f7acc9b...), dev BFF bearer smoke passed 32/32, F05 and F15 hosted blockers reverified twice, ME-STARTUP remaining blocker recorded. Still waiting for Gemini/Lovable to make the strict preview URL usable by the soak runner: candidate id-preview-a7067bd5--140c41d5-...lovable.app redirects through Lovable auth bridge in this worker.",
+      "waiting_for": "Gemini2",
+      "message": "Pre-cutover smoke evidence recorded, but hosted main asset /assets/index-vlevju41.js does not contain build-time VITE_BFF_FALLBACK=strict; waiting for Lovable main env publish/rebuild before review.",
       "status": "open",
-      "created_at": "2026-05-15T05:07:45Z"
+      "created_at": "2026-05-15T07:37:11Z"
     }
   ],
   "workload": {
@@ -729,31 +482,31 @@
       "todo": 0
     },
     "Gemini2": {
-      "total": 1,
-      "active": 1,
-      "blocked": 1,
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
       "todo": 0
     },
     "Codex": {
-      "total": 4,
-      "active": 3,
-      "blocked": 3,
+      "total": 2,
+      "active": 1,
+      "blocked": 1,
       "done": 0,
       "review": 0,
       "review_approved": 1,
       "todo": 0
     },
     "Codex2": {
-      "total": 3,
-      "active": 2,
-      "blocked": 2,
+      "total": 1,
+      "active": 0,
+      "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 0,
-      "todo": 1
+      "review_approved": 1,
+      "todo": 0
     },
     "Copilot": {
       "total": 1,
