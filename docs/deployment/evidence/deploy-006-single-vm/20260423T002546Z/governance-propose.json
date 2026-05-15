@@ -1,0 +1,9 @@
+{
+  "decision_id": "approval-single-vm-adfd703b",
+  "target_type": "registry_entry",
+  "target_id": "reg-strat-single-vm-1.0.0-32a26839",
+  "target_version": "1.0.0",
+  "risk_level": "low",
+  "capital_pool_id": "pool-single-vm-adfd703b",
+  "persona_id": "persona-ops"
+}

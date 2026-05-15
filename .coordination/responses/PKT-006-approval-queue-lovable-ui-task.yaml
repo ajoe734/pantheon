@@ -1,7 +1,7 @@
 feature_id: PKT-006-approval-queue
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: loop-complete
+status: ready
 pantheon_pr: null
 base_url: null
 workbench: governance-workbench
@@ -45,5 +45,5 @@ gap_handoff_path: .coordination/requests/PKT-006-approval-queue-bff-gap.yaml
 gap_handoff_template: .coordination/requests/PKT-006-approval-queue-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/PKT-006-approval-queue-ui-done.yaml
 completion_handoff_template: .coordination/requests/PKT-006-approval-queue-ui-done.example.yaml
-frontend_feedback_handoff_path: .coordination/requests/PKT-006-approval-queue-frontend-feedback.yaml
-review_findings_ref: .coordination/reviews/PKT-006-approval-queue-review.md
+feedback_handoff_path: .coordination/requests/PKT-006-approval-queue-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/PKT-006-approval-queue-frontend-feedback.example.yaml

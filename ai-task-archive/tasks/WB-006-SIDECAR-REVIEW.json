@@ -1,0 +1,166 @@
+{
+  "version": 1,
+  "task_id": "WB-006-SIDECAR-REVIEW",
+  "archived_at": "2026-04-14T16:58:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "WB-006-SIDECAR-REVIEW",
+    "title": "Prepare WB-006 review packet and evidence summary",
+    "summary_zh": "平行支援 WB-006，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Workbench Backlog",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LOOP-001"
+    ],
+    "artifacts": [
+      "support/sidecars/WB-006/WB-006-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner close-out complete. Review packet stays support-only, records Claude approval, and confirms parent WB-006 remains archived done with no reopen required.",
+    "last_update": "2026-04-14T16:58:12Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "WB-006",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過｜所有五個審查閘門均通過：母任務 WB-006 確認已封存完成、Consultation 保持 backlog-only 狀態正確、Acceptance Sidecar 的後端依賴問題已於母任務中解決、此 packet 未修改任何 canonical truth、無需重開母任務。"
+    ],
+    "review_file": "support/sidecars/WB-006/WB-006-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T16:58:12Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "05cc7390f1490685a624291cb9ba3054e902f517",
+      "commit_subject": "WB-006-SIDECAR-REVIEW: align review packet with Claude approval",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "WB-006-SIDECAR-REVIEW",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 173,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "WB-006-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Qwen is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-14T15:26:47Z",
+      "resolved_at": "2026-04-14T15:26:47Z"
+    },
+    {
+      "task_id": "WB-006-SIDECAR-REVIEW",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-14T15:28:30Z",
+      "resolved_at": "2026-04-14T15:28:30Z"
+    },
+    {
+      "task_id": "WB-006-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-14T15:38:29Z",
+      "resolved_at": "2026-04-14T15:38:29Z"
+    },
+    {
+      "task_id": "WB-006-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-14T15:51:19Z",
+      "resolved_at": "2026-04-14T15:51:19Z"
+    },
+    {
+      "task_id": "WB-006-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-14T15:57:50Z",
+      "resolved_at": "2026-04-14T15:57:50Z"
+    },
+    {
+      "task_id": "WB-006-SIDECAR-REVIEW",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-14T16:12:05Z",
+      "resolved_at": "2026-04-14T16:12:05Z"
+    },
+    {
+      "task_id": "WB-006-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-14T16:25:24Z",
+      "resolved_at": "2026-04-14T16:25:24Z"
+    },
+    {
+      "task_id": "WB-006-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Qwen is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-14T16:40:16Z",
+      "resolved_at": "2026-04-14T16:40:16Z"
+    },
+    {
+      "task_id": "WB-006-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review packet is ready at support/sidecars/WB-006/WB-006-SIDECAR-REVIEW.md. It records that parent WB-006 is already archived done, that the earlier category-level backend-gap concern has been resolved in the main Consultation backlog section, and that no parent reopen is needed unless the packet misstates current source truth.",
+      "status": "done",
+      "created_at": "2026-04-14T16:44:35Z",
+      "resolved_at": "2026-04-14T16:54:51Z"
+    },
+    {
+      "task_id": "WB-006-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-14T16:54:51Z",
+      "resolved_at": "2026-04-14T16:55:47Z"
+    },
+    {
+      "task_id": "WB-006-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all five reviewer gates pass. Parent WB-006 is correctly stated as archived done. Consultation backlog-only status is accurate and supported by source scan. Per-module backend gap concern from acceptance sidecar is confirmed resolved in the parent artifact. Packet does not mutate canonical truth. No parent reopen warranted. Returning to owner (Codex) for finalization.",
+      "status": "done",
+      "created_at": "2026-04-14T16:55:47Z",
+      "resolved_at": "2026-04-14T16:58:12Z"
+    }
+  ],
+  "blockers": []
+}

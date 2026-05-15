@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "task_id": "EVO-004-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EVO-004-SIDECAR-ACCEPTANCE",
+    "title": "Prepare EVO-004 acceptance packet and dependency map",
+    "summary_zh": "平行支援 EVO-004，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 4: Evolution Governance",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "EVO-003",
+      "EX-002",
+      "INC-001"
+    ],
+    "artifacts": [
+      "support/sidecars/EVO-004/EVO-004-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized the reviewer-approved EVO-004 acceptance packet as a support-only artifact. Dependency map, action-boundary checklist, and parent deliverable guidance are locked and absorbed into EVO-004 as the dependency-unblocked starting frame; no canonical truth or runtime/governance implementation changed.",
+    "last_update": "2026-04-11T01:26:14Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EVO-004",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization"
+  },
+  "handoffs": [
+    {
+      "task_id": "EVO-004-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only acceptance packet created at support/sidecars/EVO-004/EVO-004-SIDECAR-ACCEPTANCE.md. It confirms EVO-004 is dependency-unblocked, maps freeze/rollback/retrain/redeploy boundaries, and expands the parent acceptance checklist without changing canonical truth. Use it to resume the parent task, then hand EVO-004 to Gemini for formal review.",
+      "status": "done",
+      "created_at": "2026-04-10T22:59:31Z",
+      "resolved_at": "2026-04-11T01:24:46Z"
+    },
+    {
+      "task_id": "EVO-004-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved. Packet accurately maps all three dependencies as done (EVO-003/EX-002/INC-001), correctly separates locked canonical truth from EVO-004 open items, and provides a concrete 10-item acceptance checklist (A1-A10) and 3 suggested deliverables. Freeze/rollback boundary analysis is correct and does not collapse the distinction. Packet is a support artifact only — no canonical truth modified. Absorbed into EVO-004 parent work as the dependency-unblocked starting frame.",
+      "status": "done",
+      "created_at": "2026-04-11T01:24:46Z",
+      "resolved_at": "2026-04-11T01:26:14Z"
+    }
+  ],
+  "blockers": []
+}

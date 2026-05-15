@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "task_id": "OC-003",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OC-003",
+    "title": "Define Pantheon StrategySpec and upstream OpenClaw handoff objects",
+    "phase": "Epic B",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "P4-001",
+      "OC-001"
+    ],
+    "artifacts": [
+      "services/control-plane/specs/"
+    ],
+    "acceptance": [
+      "StrategySpec documented",
+      "handoff object schema defined",
+      "registry-ready fields included"
+    ],
+    "next": "OC-003 APPROVED for v1 lock. Review at services/control-plane/specs/review_oc003_claude.md. StrategySpec boundary correct (no execution detail leak), governance_context aligned with OC-001/P4-001, registry_hints not over-coupled to storage. Two minor open items: oneOf discriminator clarity in workflow_handoff schema, and from_stage/to_stage should eventually be enum-constrained.",
+    "last_update": "2026-04-02T05:37:22Z",
+    "summary_zh": "定義 Pantheon 的 StrategySpec 與 upstream OpenClaw workflow handoff 物件，讓 orchestration 輸出能被 registry、research 與 execution 穩定接手。"
+  },
+  "handoffs": [
+    {
+      "task_id": "OC-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Drafted StrategySpec and WorkflowHandoff contracts plus machine-readable schemas so OpenClaw orchestration outputs are now explicit, governance-aware, and registry-ready.",
+      "status": "done",
+      "created_at": "2026-04-02T03:53:23Z",
+      "resolved_at": "2026-04-02T05:37:22Z"
+    }
+  ],
+  "blockers": []
+}

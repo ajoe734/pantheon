@@ -1,0 +1,373 @@
+{
+  "task_id": "EP5-BROKER-TW-002-RERUN-REAL-FIX",
+  "generated_at": "2026-05-13T01:31:41Z",
+  "completed_at": "2026-05-13T01:31:47Z",
+  "provider": "Shioaji",
+  "adapter": "services.broker.shioaji.ShioajiBrokerAdapter",
+  "account_kind": "stock",
+  "run_mode": "shioaji_simulation_sdk",
+  "status": "passed",
+  "proof_boundary": "broker_adapter_sandbox_smoke; not canary/live/capital proof",
+  "environment": {
+    "BROKER_SHIOAJI_SANDBOX_ENABLED": true,
+    "BROKER_SHIOAJI_API_KEY_configured": true,
+    "BROKER_SHIOAJI_SECRET_KEY_configured": true,
+    "raw_secret_material_persisted": false
+  },
+  "taipei_sandbox_window": {
+    "start": {
+      "label": "stock_smoke_start",
+      "timezone": "Asia/Taipei",
+      "observed_at": "2026-05-13T09:31:41+08:00",
+      "window_start_hour": 8,
+      "window_end_hour_exclusive": 20,
+      "within_window": true
+    },
+    "end": {
+      "label": "stock_smoke_end",
+      "timezone": "Asia/Taipei",
+      "observed_at": "2026-05-13T09:31:47+08:00",
+      "window_start_hour": 8,
+      "window_end_hour_exclusive": 20,
+      "within_window": true
+    },
+    "fail_fast_enforced": true
+  },
+  "submit_spacing_gate": {
+    "scope": "per-account thread-local adapter gate",
+    "configured_seconds": 1.0
+  },
+  "place_to_cancel_delay": {
+    "configured_seconds": 1.0,
+    "applied": true,
+    "meets_minimum_seconds": true,
+    "rationale": "Sinopac simulation audit flow requires waiting at least one second after place_order before cancel_order."
+  },
+  "request": {
+    "capital_pool_id": "pool-ep5-broker-tw-sandbox",
+    "strategy_id": "strategy-ep5-broker-tw-smoke",
+    "symbol": "2890",
+    "qty": 1.0,
+    "side": "buy",
+    "order_type": "limit",
+    "limit_price": 18.0,
+    "account_kind": "stock",
+    "futures_category": null
+  },
+  "place": {
+    "request": {
+      "capital_pool_id": "pool-ep5-broker-tw-sandbox",
+      "strategy_id": "strategy-ep5-broker-tw-smoke",
+      "symbol": "2890",
+      "qty": 1.0,
+      "side": "buy",
+      "order_type": "limit",
+      "limit_price": 18.0,
+      "account_kind": "stock",
+      "futures_category": null
+    },
+    "response": {
+      "order_id": "b7a7a3c9cd2c43c5b8f58ed152283fe8",
+      "capital_pool_id": "pool-ep5-broker-tw-sandbox",
+      "strategy_id": "strategy-ep5-broker-tw-smoke",
+      "symbol": "2890",
+      "qty": 1.0,
+      "side": "buy",
+      "order_type": "limit",
+      "limit_price": 18.0,
+      "created_at": "2026-05-13T01:31:46.001690Z",
+      "filled_at": null,
+      "fill_price": 18.0,
+      "fill_qty": 0.0,
+      "status": "submitted",
+      "sim_fill_flag": true,
+      "is_real_order": false,
+      "is_real_capital": false,
+      "deployment_stage": "sandbox",
+      "reject_reason": null,
+      "shioaji_trade_id": "10054A",
+      "account_kind": "stock",
+      "submit_spacing_seconds": 1.0,
+      "submit_spacing_wait_seconds": 0.0,
+      "submit_spacing_previous_elapsed_seconds": null,
+      "shioaji_order_status_id": "10054A",
+      "shioaji_order_status": "PendingSubmit",
+      "shioaji_order_status_code": "00",
+      "shioaji_order_status_message": ""
+    },
+    "sdk_trace": "not_captured_for_real_sdk"
+  },
+  "readback": {
+    "after_place": {
+      "order_id": "b7a7a3c9cd2c43c5b8f58ed152283fe8",
+      "capital_pool_id": "pool-ep5-broker-tw-sandbox",
+      "strategy_id": "strategy-ep5-broker-tw-smoke",
+      "symbol": "2890",
+      "qty": 1.0,
+      "side": "buy",
+      "order_type": "limit",
+      "limit_price": 18.0,
+      "created_at": "2026-05-13T01:31:46.001690Z",
+      "filled_at": null,
+      "fill_price": 18.0,
+      "fill_qty": 0.0,
+      "status": "submitted",
+      "sim_fill_flag": true,
+      "is_real_order": false,
+      "is_real_capital": false,
+      "deployment_stage": "sandbox",
+      "reject_reason": null,
+      "shioaji_trade_id": "10054A",
+      "account_kind": "stock",
+      "submit_spacing_seconds": 1.0,
+      "submit_spacing_wait_seconds": 0.0,
+      "submit_spacing_previous_elapsed_seconds": null,
+      "shioaji_order_status_id": "10054A",
+      "shioaji_order_status": "Failed",
+      "shioaji_order_status_code": "88",
+      "shioaji_order_status_message": "價格超過漲跌幅範圍"
+    },
+    "after_cancel": {
+      "order_id": "b7a7a3c9cd2c43c5b8f58ed152283fe8",
+      "capital_pool_id": "pool-ep5-broker-tw-sandbox",
+      "strategy_id": "strategy-ep5-broker-tw-smoke",
+      "symbol": "2890",
+      "qty": 1.0,
+      "side": "buy",
+      "order_type": "limit",
+      "limit_price": 18.0,
+      "created_at": "2026-05-13T01:31:46.001690Z",
+      "filled_at": "2026-05-13T01:31:47.138425Z",
+      "fill_price": 18.0,
+      "fill_qty": 0.0,
+      "status": "cancelled",
+      "sim_fill_flag": true,
+      "is_real_order": false,
+      "is_real_capital": false,
+      "deployment_stage": "sandbox",
+      "reject_reason": null,
+      "shioaji_trade_id": "10054A",
+      "account_kind": "stock",
+      "submit_spacing_seconds": 1.0,
+      "submit_spacing_wait_seconds": 0.0,
+      "submit_spacing_previous_elapsed_seconds": null,
+      "shioaji_order_status_id": "10054A",
+      "shioaji_order_status": "Failed",
+      "shioaji_order_status_code": "88",
+      "shioaji_order_status_message": "價格超過漲跌幅範圍"
+    }
+  },
+  "cancel": {
+    "request": {
+      "order_id": "b7a7a3c9cd2c43c5b8f58ed152283fe8"
+    },
+    "response": {
+      "order_id": "b7a7a3c9cd2c43c5b8f58ed152283fe8",
+      "capital_pool_id": "pool-ep5-broker-tw-sandbox",
+      "strategy_id": "strategy-ep5-broker-tw-smoke",
+      "symbol": "2890",
+      "qty": 1.0,
+      "side": "buy",
+      "order_type": "limit",
+      "limit_price": 18.0,
+      "created_at": "2026-05-13T01:31:46.001690Z",
+      "filled_at": "2026-05-13T01:31:47.138425Z",
+      "fill_price": 18.0,
+      "fill_qty": 0.0,
+      "status": "cancelled",
+      "sim_fill_flag": true,
+      "is_real_order": false,
+      "is_real_capital": false,
+      "deployment_stage": "sandbox",
+      "reject_reason": null,
+      "shioaji_trade_id": "10054A",
+      "account_kind": "stock",
+      "submit_spacing_seconds": 1.0,
+      "submit_spacing_wait_seconds": 0.0,
+      "submit_spacing_previous_elapsed_seconds": null,
+      "shioaji_order_status_id": "10054A",
+      "shioaji_order_status": "Failed",
+      "shioaji_order_status_code": "88",
+      "shioaji_order_status_message": "價格超過漲跌幅範圍"
+    }
+  },
+  "order_ids": {
+    "pantheon_order_id": "b7a7a3c9cd2c43c5b8f58ed152283fe8",
+    "shioaji_trade_id": "10054A"
+  },
+  "status_transitions": [
+    {
+      "step": "place",
+      "order_id": "b7a7a3c9cd2c43c5b8f58ed152283fe8",
+      "status": "submitted",
+      "observed_at": "2026-05-13T01:31:46.001690Z"
+    },
+    {
+      "step": "readback_after_place",
+      "order_id": "b7a7a3c9cd2c43c5b8f58ed152283fe8",
+      "status": "submitted",
+      "observed_at": "2026-05-13T01:31:47Z"
+    },
+    {
+      "step": "cancel",
+      "order_id": "b7a7a3c9cd2c43c5b8f58ed152283fe8",
+      "status": "cancelled",
+      "observed_at": "2026-05-13T01:31:47.138425Z"
+    },
+    {
+      "step": "readback_after_cancel",
+      "order_id": "b7a7a3c9cd2c43c5b8f58ed152283fe8",
+      "status": "cancelled",
+      "observed_at": "2026-05-13T01:31:47Z"
+    }
+  ],
+  "live_gate": {
+    "status": "rejected",
+    "response": {
+      "status": "broker_error",
+      "error_code": "SHIOAJI_LIVE_DISABLED",
+      "message": "Live broker execution is permanently disabled. The Shioaji adapter operates in sandbox (simulation) mode only.",
+      "status_code": 403
+    }
+  },
+  "reconciliation": {
+    "status": "passed",
+    "diff": [
+      {
+        "field": "place.symbol",
+        "expected": "2890",
+        "observed": "2890",
+        "status": "match"
+      },
+      {
+        "field": "place.qty",
+        "expected": 1.0,
+        "observed": 1.0,
+        "status": "match"
+      },
+      {
+        "field": "place.side",
+        "expected": "buy",
+        "observed": "buy",
+        "status": "match"
+      },
+      {
+        "field": "place.account_kind",
+        "expected": "stock",
+        "observed": "stock",
+        "status": "match"
+      },
+      {
+        "field": "place.status",
+        "expected": "submitted",
+        "observed": "submitted",
+        "status": "match"
+      },
+      {
+        "field": "readback_after_place.order_id",
+        "expected": "b7a7a3c9cd2c43c5b8f58ed152283fe8",
+        "observed": "b7a7a3c9cd2c43c5b8f58ed152283fe8",
+        "status": "match"
+      },
+      {
+        "field": "readback_after_place.status",
+        "expected": "submitted",
+        "observed": "submitted",
+        "status": "match"
+      },
+      {
+        "field": "cancel.order_id",
+        "expected": "b7a7a3c9cd2c43c5b8f58ed152283fe8",
+        "observed": "b7a7a3c9cd2c43c5b8f58ed152283fe8",
+        "status": "match"
+      },
+      {
+        "field": "cancel.status",
+        "expected": "cancelled",
+        "observed": "cancelled",
+        "status": "match"
+      },
+      {
+        "field": "readback_after_cancel.order_id",
+        "expected": "b7a7a3c9cd2c43c5b8f58ed152283fe8",
+        "observed": "b7a7a3c9cd2c43c5b8f58ed152283fe8",
+        "status": "match"
+      },
+      {
+        "field": "readback_after_cancel.status",
+        "expected": "cancelled",
+        "observed": "cancelled",
+        "status": "match"
+      },
+      {
+        "field": "is_real_order",
+        "expected": false,
+        "observed": false,
+        "status": "match"
+      },
+      {
+        "field": "is_real_capital",
+        "expected": false,
+        "observed": false,
+        "status": "match"
+      },
+      {
+        "field": "deployment_stage",
+        "expected": "sandbox",
+        "observed": "sandbox",
+        "status": "match"
+      },
+      {
+        "field": "live_reject.error_code",
+        "expected": "SHIOAJI_LIVE_DISABLED",
+        "observed": "SHIOAJI_LIVE_DISABLED",
+        "status": "match"
+      },
+      {
+        "field": "shioaji_trade_id",
+        "expected": "present",
+        "observed": "10054A",
+        "status": "match"
+      }
+    ]
+  },
+  "no_real_capital": {
+    "status": "passed",
+    "real_capital_used": false,
+    "real_capital_reserved": false,
+    "production_live_order_submitted": false,
+    "production_live_cancel_submitted": false
+  },
+  "error": null,
+  "notes": [
+    "BROKER_SHIOAJI_SANDBOX_ENABLED must be explicitly true; default-false adapter behavior is not bypassed.",
+    "Live execution remains SHIOAJI_LIVE_DISABLED.",
+    "No capital binding, registry admission, paper promotion, canary activation, or live order is performed."
+  ],
+  "sdk_stdout_observations": {
+    "captured": true,
+    "raw_stdout_persisted": false,
+    "session_response_code_0_observed": true,
+    "session_up_observed": true,
+    "contract_subscription_observed": true,
+    "response_events": [
+      {
+        "response_code": "0",
+        "event_code": "0",
+        "event": "Session up"
+      },
+      {
+        "response_code": "200",
+        "event_code": "16",
+        "event": "Subscribe or Unsubscribe ok"
+      }
+    ],
+    "order_state_events": [
+      {
+        "state": "StockOrder",
+        "operation_code": "88",
+        "operation_message": "價格超過漲跌幅範圍"
+      }
+    ]
+  }
+}

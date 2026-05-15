@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "BG-004",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BG-004",
+    "title": "Operational reassign: move BG-004 onto healthy Gemini lane while Claude is paused and Qwen is saturated by BG-001/BG-000/BG-003.",
+    "summary_zh": "補齊 persona memory、institutional memory、retrieval 與 write-back 的設計說明。",
+    "phase": "Blueprint Gap P2",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "depends_on": [
+      "PLAN-002"
+    ],
+    "artifacts": [],
+    "acceptance": [],
+    "status": "done",
+    "next": "Finalized after re-review approval. MEMORY_LAYER_DESIGN_NOTE plus persona/institutional memory schemas are aligned; consultation_closed coverage and retrieval example session_id are both verified.",
+    "last_update": "2026-04-13T07:37:10Z",
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+      "phase": "phase2",
+      "profile": "blueprint-gap-convergence",
+      "planning_dir": "docs/02-architecture/consensus/phase2",
+      "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-13T07:05:23Z",
+      "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+    },
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-13T07:37:10Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "18c10cec98cbf401f3810d834b8d28945ec0ce60",
+      "commit_subject": "BG-004 Finalize memory layer design note",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "ajoe734@local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Qwen",
+        "Task-ID": "BG-004",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 78,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BG-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Memory Layer Design Note ready for review. Artifacts: services/memory/MEMORY_LAYER_DESIGN_NOTE.md, services/memory/persona_memory.schema.json, services/memory/institutional_memory_entry.schema.json. Closes GAP-04. All 4 acceptance criteria met: 2 object schemas, write-back pipeline, retrieval query path, postmortem→institutional memory→research reuse example.",
+      "status": "done",
+      "created_at": "2026-04-13T02:22:01Z",
+      "resolved_at": "2026-04-13T03:21:28Z"
+    },
+    {
+      "task_id": "BG-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review found 2 required fixes: align InstitutionalMemory source_event_type with the consultation write-back trigger, and make the retrieval example include required session_id. See services/memory/review_bg004_codex.md.",
+      "status": "done",
+      "created_at": "2026-04-13T03:21:28Z",
+      "resolved_at": "2026-04-13T03:21:28Z"
+    },
+    {
+      "task_id": "BG-004",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Both Codex review findings fixed: (1) added consultation_closed to institutional_memory source_event_type enum; (2) added required session_id to worked retrieval example. JSON schemas validated. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-13T05:54:40Z",
+      "resolved_at": "2026-04-13T05:55:58Z"
+    },
+    {
+      "task_id": "BG-004",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Re-review complete: MEMORY_LAYER_DESIGN_NOTE and both memory schemas are aligned. consultation_closed is present in InstitutionalMemoryEntry.source_event_type, the worked retrieval example includes required session_id, and both schema files parse successfully. Approving for Qwen final closure.",
+      "status": "done",
+      "created_at": "2026-04-13T05:55:58Z",
+      "resolved_at": "2026-04-13T07:37:10Z"
+    }
+  ],
+  "blockers": []
+}

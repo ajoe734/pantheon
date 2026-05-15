@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Runnable support work exists and current blockers are scoped, not global.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-OPENCLAW-PAPER-BROKER-ADAPTER"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260430T075134Z-7a202a52",
+      "decision": "allow",
+      "reason": "Scoped git add for the active task's declared artifacts; no destructive action or unrelated state files are included.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-OPENCLAW-PAPER-BROKER-ADAPTER",
+    "SVC-SEARCH-RETRIEVAL-AND-CUTOFF-SIDECAR-BFF-HANDOFF"
+  ]
+}

@@ -1,0 +1,178 @@
+{
+  "version": 1,
+  "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-23T07:35:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare APP-003-PKT001-PUBLICATION-REPLAY-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 APP-003-PKT001-PUBLICATION-REPLAY-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / Frontend Publication Replay",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "APP-003-PKT001-BFF-ALIGN-001"
+    ],
+    "artifacts": [
+      "support/sidecars/APP-003-PKT001-PUBLICATION-REPLAY-001/APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized accepted sidecar support packet after Claude2 review approval. The acceptance artifact is now committed at 0c5d5a274a79eb3a22b31a75c4b03111dcc627ce, no canonical truth was modified, and parent absorption remains a mainline owner decision.",
+    "last_update": "2026-04-23T07:35:16Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-PKT001-PUBLICATION-REPLAY-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已獨立驗證 origin/pkt-004-detail-fix HEAD = 2c8ec3f74beddfba1ef73bb4df355b54f9b5cd2f，並確認該 commit 樹公布 PKT-001 request pair 與完整 feedback bundle（含 API_GAP_REQUESTS.json status=no_open_gaps）",
+      "已確認兩個已發布 request 檔案的 source_commit 皆指向 reviewed UI snapshot dbc4a16dc0e9f0b8d33e1576908341ea056c660d",
+      "已確認 Pantheon response frontend-feedback YAML 正確維持 PKT-001 BFF 已關閉、PKT-005 SSE 為已核准 cross-cut、meta.surfaces 驗證 follow-up 為 front-owned 且與本 sidecar 範圍分離",
+      "acceptance packet 為純 support artifact，未改動任何 canonical truth；parent APP-003-PKT001-PUBLICATION-REPLAY-001 已於 2026-04-23 archive 為 done，本 sidecar 可作為對應的 acceptance 紀錄"
+    ],
+    "review_file": "support/sidecars/APP-003-PKT001-PUBLICATION-REPLAY-001/APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-23T07:35:16Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "0c5d5a2ccf4c8556a503f224f7c237dc476842c9",
+      "commit_subject": "APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE finalize acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1174,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T17:38:23Z",
+      "resolved_at": "2026-04-22T17:42:31Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet refreshed at support/sidecars/APP-003-PKT001-PUBLICATION-REPLAY-001/APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE.md. It confirms PKT-001 BFF scope is already closed, transport commit de8a284eb7318c07465c6abbdf5741949cf5a0d9 is the clean local replay bundle, current HEAD eee2bc2765073f333895611edad80a5d053c864d repoints both request files to invalid SHA de8a284e6f2cf5d0ca8cee908058a90f506d9cb3, and origin/pkt-004-detail-fix is still at dbc4a16dc0e9f0b8d33e1576908341ea056c660d.",
+      "status": "done",
+      "created_at": "2026-04-22T17:46:45Z",
+      "resolved_at": "2026-04-23T01:56:08Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Requeued to Gemini review because Claude, Claude2, and Codex2 reviewer lanes are currently failing authentication or quota checks.",
+      "status": "done",
+      "created_at": "2026-04-23T01:56:08Z",
+      "resolved_at": "2026-04-23T05:44:21Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE",
+      "from": "Gemini",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Gemini to Codex3 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T05:44:21Z",
+      "resolved_at": "2026-04-23T05:59:12Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Acceptance packet refreshed at support/sidecars/APP-003-PKT001-PUBLICATION-REPLAY-001/APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE.md. Reviewer routing now matches Codex3, and the packet still confirms PKT-001 BFF scope is already closed, local transport commit de8a284eb7318c07465c6abbdf5741949cf5a0d9 is the clean replay bundle, current local HEAD eee2bc2765073f333895611edad80a5d053c864d still repoints both request files to invalid SHA de8a284e6f2cf5d0ca8cee908058a90f506d9cb3, and origin/pkt-004-detail-fix remains at dbc4a16dc0e9f0b8d33e1576908341ea056c660d.",
+      "status": "done",
+      "created_at": "2026-04-23T05:59:12Z",
+      "resolved_at": "2026-04-23T06:19:01Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Acceptance packet refreshed: origin/pkt-004-detail-fix now publishes PKT-001 replay commit 2c8ec3f74beddfba1ef73bb4df355b54f9b5cd2f with the request pair plus feedback bundle, both published request files point back to reviewed UI commit dbc4a16dc0e9f0b8d33e1576908341ea056c660d, and the narrow publication-replay slice is now closure-clean. Keep the broader meta.surfaces follow-up separate.",
+      "status": "done",
+      "created_at": "2026-04-23T06:19:01Z",
+      "resolved_at": "2026-04-23T07:15:25Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Acceptance packet refreshed at support/sidecars/APP-003-PKT001-PUBLICATION-REPLAY-001/APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE.md. It now explicitly aligns the sidecar reviewer to Codex3, records that the parent publication-replay residual was finalized on 2026-04-23 after independent review, and preserves the same narrow evidence: origin/pkt-004-detail-fix publishes replay commit 2c8ec3f74beddfba1ef73bb4df355b54f9b5cd2f, both request files pin source_commit to dbc4a16dc0e9f0b8d33e1576908341ea056c660d, and the broader meta.surfaces follow-up stays separate.",
+      "status": "done",
+      "created_at": "2026-04-23T07:15:25Z",
+      "resolved_at": "2026-04-23T07:16:40Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex3 to Gemini after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T07:16:40Z",
+      "resolved_at": "2026-04-23T07:17:08Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T07:17:08Z",
+      "resolved_at": "2026-04-23T07:18:32Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet refreshed at support/sidecars/APP-003-PKT001-PUBLICATION-REPLAY-001/APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE.md. Reviewer routing now matches Codex2, the parent publication-replay residual remains finalized on 2026-04-23, published replay commit 2c8ec3f74beddfba1ef73bb4df355b54f9b5cd2f is still the Git-visible bundle, both request files still pin source_commit dbc4a16dc0e9f0b8d33e1576908341ea056c660d, and the broader meta.surfaces caveat stays separate from this sidecar slice.",
+      "status": "done",
+      "created_at": "2026-04-23T07:18:32Z",
+      "resolved_at": "2026-04-23T07:19:01Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T07:19:01Z",
+      "resolved_at": "2026-04-23T07:21:12Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet approved: all factual claims independently verified against front remote, published request pair, and parent archive. Support artifact only; no canonical truth modified.",
+      "status": "done",
+      "created_at": "2026-04-23T07:21:12Z",
+      "resolved_at": "2026-04-23T07:35:16Z"
+    }
+  ],
+  "blockers": []
+}

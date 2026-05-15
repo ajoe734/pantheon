@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "SVC-SOURCE-SEARCH-PROD-HARDENING",
+  "archived_at": "2026-04-30T09:10:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-SOURCE-SEARCH-PROD-HARDENING",
+    "title": "Harden source and search production posture",
+    "summary_zh": "收斂 source/search staging/prod posture：Postgres/object-store backend 強制、metrics/health/alerts、idempotency、compose profiles、end-to-end smoke。",
+    "phase": "Source / Search Platform",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER",
+      "SVC-SOURCE-EVIDENCE-NORMALIZATION",
+      "SVC-SEARCH-INDEXING-PIPELINE",
+      "SVC-SEARCH-RETRIEVAL-AND-CUTOFF",
+      "SVC-SOURCE-SEARCH-OPS-BFF"
+    ],
+    "artifacts": [
+      "services/source_ingestion",
+      "services/search",
+      "docker-compose.yml",
+      "docker-compose.control.yml",
+      "docker-compose.exec.yml",
+      "env",
+      "docs/deployment",
+      "scripts"
+    ],
+    "acceptance": [
+      "staging production env rejects jsonl only source search backend",
+      "Postgres and object store ownership are documented and enforced",
+      "health live ready metrics expose consistent service state",
+      "idempotency keys protect ingest index and reindex commands",
+      "end-to-end smoke covers connector to evidence to index to BFF query"
+    ],
+    "next": "Finalized after Claude review approval. Implementation commit b99ebcb hardens source/search production posture; closeout commit e93aaf9 records review evidence and clarifies honest-stack smoke before posture smoke. Verification rerun: python3 -m pytest -q services/test_source_search_posture.py services/source_ingestion/test_compose_activation.py services/search/tests/test_service_activation_contract.py (9 passed); python3 -m pytest -q services/search/tests/test_http_service.py services/source_ingestion/test_service.py (21 passed); python3 -m pytest -q services/source_ingestion/test_postgres_store.py services/search/test_postgres_store.py services/search/test_index_pipeline.py (42 passed); python3 -m py_compile services/source_search_posture.py scripts/smoke_source_search_prod_posture.py; git diff --check for closeout files.",
+    "last_update": "2026-04-30T09:10:51Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-materialization-20260430",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：5 項驗收標準全數滿足。fail-closed startup posture、Postgres/object-store 強制、health/metrics posture 暴露、idempotency 確認、smoke 覆蓋均正確實作並測試通過（72 tests pass）。",
+      "非阻塞：smoke script 需服務已啟動，docs 可補充說明需先執行 honest-stack smoke。"
+    ],
+    "review_file": ".orchestrator/reviews/SVC-SOURCE-SEARCH-PROD-HARDENING-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T09:10:51Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "e93aaf91e748a96a669e163a640287b00eaea9a9",
+      "commit_subject": "SVC-SOURCE-SEARCH-PROD-HARDENING closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-SOURCE-SEARCH-PROD-HARDENING",
+        "Reviewer": "Claude",
+        "Verification": "python3 -m pytest -q services/test_source_search_posture.py services/source_ingestion/test_compose_activation.py services/search/tests/test_service_activation_contract.py; python3 -m pytest -q services/search/tests/test_http_service.py services/source_ingestion/test_service.py; python3 -m pytest -q services/source_ingestion/test_postgres_store.py services/search/test_postgres_store.py services/search/test_index_pipeline.py; python3 -m py_compile services/source_search_posture.py scripts/smoke_source_search_prod_posture.py; git diff --check -- docs/deployment/source-search-prod-hardening.md .orchestrator/reviews/SVC-SOURCE-SEARCH-PROD-HARDENING-review-claude.md"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 62,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 42,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-SOURCE-SEARCH-PROD-HARDENING",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implemented and committed source/search production posture hardening in b99ebcb: staging/prod fail-closed checks for Postgres durable stores, durable-index-only search, object-store env, health/metrics posture alerts, prod smoke script, docs, and compose/env contract tests. Verification: 30 source/search HTTP+compose tests, 42 Postgres/pipeline tests, docker compose config, python3 py_compile.",
+      "status": "done",
+      "created_at": "2026-04-30T09:04:19Z",
+      "resolved_at": "2026-04-30T09:07:44Z"
+    },
+    {
+      "task_id": "SVC-SOURCE-SEARCH-PROD-HARDENING",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all 5 acceptance criteria met. Fail-closed startup posture, Postgres/object-store enforcement, health/metrics posture, idempotency confirmation, and smoke coverage all correct. 72 tests pass. Return to Codex2 for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-04-30T09:07:44Z",
+      "resolved_at": "2026-04-30T09:10:52Z"
+    }
+  ],
+  "blockers": []
+}

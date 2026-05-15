@@ -1,0 +1,12 @@
+{
+  "status": "simulation_payload_validated",
+  "cancel_request": {
+    "order_ref": "shioaji-simulation-order-ref",
+    "account_ref": "SHIOAJI-SIM-REF"
+  },
+  "replace_request": {
+    "order_ref": "shioaji-simulation-order-ref",
+    "price": 949.0
+  },
+  "side_effect": "simulation_only"
+}

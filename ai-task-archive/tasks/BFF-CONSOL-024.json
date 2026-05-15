@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-024",
+  "archived_at": "2026-05-14T07:23:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-024",
+    "title": "Deprecate old action receipt",
+    "summary_zh": "021 dual-write 驗證通過後標 deprecated 保留 /bff/actions/* 路徑但 receipt schema 加 deprecated flag。前端 runAction.ts 預設改打 /bff/v1/commands。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-021"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/command_executor.py",
+      "services/control-plane/bff/BFF_COMMAND_API_CONTRACT.md"
+    ],
+    "acceptance": [
+      "舊 action receipt schema 加 deprecated flag",
+      "前端 default caller 改為 /bff/v1/commands",
+      "/bff/actions/* 仍可運作但加 deprecation warning header",
+      "audit 工具 confirm 已 consume 新 receipt",
+      "contract doc 更新 deprecation 時間表"
+    ],
+    "next": "Closeout complete: deprecated /bff/actions/* receipts retain compatibility with Deprecation/Sunset/Link/Warning headers and data/receipt/meta markers; /bff/v1/commands remains unmarked; command_executor source-route audit marker verified. Pantheon commit 5225c289; execute-plans commit 3da4830. Verification: backend pytest 59 passed; execute-plans vitest 43 passed; execute-plans tsc passed.",
+    "last_update": "2026-05-14T07:23:05Z",
+    "review_notes_zh": [
+      "No blocking findings. Legacy /bff/actions/* remains operational with Deprecation/Sunset/Link/Warning headers and data/receipt/meta deprecation markers on accepted and replayed receipts.",
+      "Final /bff/v1/commands stays free of deprecation markers; command_executor distinguishes final frontend_source_route from legacy adapter_source_route.",
+      "Frontend runAction and bff-v1 writes now default live writes to /bff/v1/commands, with explicit legacy-actions opt-in preserved.",
+      "Verified: python3 -m pytest services/control-plane/bff/tests/test_actions_to_commands_adapter.py services/control-plane/bff/tests/test_command_replay_conflict.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/test_governance_command_submission.py -q => 59 passed; npx vitest run src/lib/bff/__tests__/runAction.test.ts src/lib/bff-v1/__tests__/writes.test.ts => 43 passed; npx tsc --noEmit --pretty false => passed."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-14T07:23:05Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "5225c289c9921e2d0936ee74814ec826fbb476f6",
+      "commit_subject": "BFF-CONSOL-024: deprecate legacy action receipts",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-CONSOL-024",
+        "Reviewer": "Codex",
+        "- /home/lupin/code/execute-plans": "npx tsc --noEmit --pretty false => passed"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 8,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-024",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-14T06:52:03Z",
+      "resolved_at": "2026-05-14T06:52:15Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-024",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implementation complete: /bff/actions/* still works but now returns Deprecation/Sunset/Link/Warning headers plus data/receipt/meta deprecated markers; command_executor records final vs legacy action source; BFF_COMMAND_API_CONTRACT documents the 2026-05-14 deprecation and 2026-06-15 sunset floor. execute-plans runAction and bff-v1 writes now default live actions to /bff/v1/commands, with explicit legacy-actions opt-in preserved. Verification: python3 -m pytest services/control-plane/bff/tests/test_actions_to_commands_adapter.py services/control-plane/bff/tests/test_command_replay_conflict.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/test_governance_command_submission.py -q => 59 passed; python3 -m pytest services/control-plane/bff/test_command_executor.py -q => 28 passed after style cleanup; cd /home/lupin/code/execute-plans && npx vitest run src/lib/bff/__tests__/runAction.test.ts src/lib/bff-v1/__tests__/writes.test.ts => 43 passed; npx tsc --noEmit --pretty false => passed. Note: existing unrelated dirty files remain in pantheon state/docs-site and execute-plans UI/audit output paths.",
+      "status": "done",
+      "created_at": "2026-05-14T07:04:27Z",
+      "resolved_at": "2026-05-14T07:14:34Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-024",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: deprecated action receipts, final command default wiring, source-route audit markers, and contract timeline verified. Owner Codex2 should perform task closeout per finalization spec.",
+      "status": "done",
+      "created_at": "2026-05-14T07:14:34Z",
+      "resolved_at": "2026-05-14T07:23:05Z"
+    }
+  ],
+  "blockers": []
+}

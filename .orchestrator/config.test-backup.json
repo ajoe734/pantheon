@@ -24,6 +24,10 @@
     "max_worker_history": 200,
     "auto_refresh_provider_capabilities": true
   },
+  "provider_guardrails": {
+    "pause_on_capacity_failure": true,
+    "capacity_pause_seconds": 900
+  },
   "worker_retry": {
     "enabled": true,
     "max_attempts": 5,

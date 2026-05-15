@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization is low and safe approval-gated work exists; block parents with open or archived sidecar pressure.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-RESEARCH-ORCHESTRATOR-SERVICE",
+    "SVC-RESEARCH-WORKER-GATEWAY",
+    "SVC-HEALTH-OBSERVABILITY-UNIFICATION"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260429T025843Z-e856dbc2",
+      "decision": "allow",
+      "reason": "Read-only docker compose configuration validation with bounded output; it does not start services or mutate files.",
+      "remember": false
+    },
+    {
+      "approval_id": "apr-20260429T025850Z-e4b0a9e4",
+      "decision": "allow",
+      "reason": "Read-only docker compose configuration validation with an explicit exit-code echo; it does not start services or mutate files.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+    "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+    "SVC-DOCS-CODE-TRUTH-SYNC"
+  ]
+}

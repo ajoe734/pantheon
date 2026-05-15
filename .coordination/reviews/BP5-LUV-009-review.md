@@ -41,8 +41,8 @@ the Pantheon-side contract lock before allowing `BP5-LUV-009` to move to
   - `docs/examples/PKT-002-incident-detail.json`
   - `docs/pantheon-handoffs/PKT-005-degradation-banner/FRONTEND_CHANGE_SPEC.md`
 - Verified the sibling frontend review anchor:
-  - `git -C /home/edna/code/front-ai-trading-system rev-parse --verify 7406990a8311ef6865491fcdb883b677a98ff6c9^{commit}`
-  - `git -C /home/edna/code/front-ai-trading-system ls-tree -r --name-only 7406990a8311ef6865491fcdb883b677a98ff6c9 -- <PKT-005 files>`
+  - `git -C /home/lupin/code/front-ai-trading-system rev-parse --verify 7406990a8311ef6865491fcdb883b677a98ff6c9^{commit}`
+  - `git -C /home/lupin/code/front-ai-trading-system ls-tree -r --name-only 7406990a8311ef6865491fcdb883b677a98ff6c9 -- <PKT-005 files>`
 - Verified the Pantheon contract publication anchor:
   - `git show --stat --oneline --decorate --no-patch 77443032a240a3df49c329100ef2477a72a70e53`
 - Compared the returned `frontend-feedback` and `ui-done` payloads against the

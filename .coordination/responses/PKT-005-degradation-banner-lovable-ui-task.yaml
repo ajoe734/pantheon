@@ -44,3 +44,5 @@ gap_handoff_path: .coordination/requests/PKT-005-degradation-banner-bff-gap.yaml
 gap_handoff_template: .coordination/requests/PKT-005-degradation-banner-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/PKT-005-degradation-banner-ui-done.yaml
 completion_handoff_template: .coordination/requests/PKT-005-degradation-banner-ui-done.example.yaml
+feedback_handoff_path: .coordination/requests/PKT-005-degradation-banner-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/PKT-005-degradation-banner-frontend-feedback.example.yaml

@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "BFF-FINAL-SIDECAR-GEMINI-SMOKE-MATRIX",
+  "archived_at": "2026-05-08T02:27:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-FINAL-SIDECAR-GEMINI-SMOKE-MATRIX",
+    "title": "BFF final smoke and CI matrix sidecar",
+    "summary_zh": "平行支援 BFF-FINAL-010，先整理 focused smoke、full-suite gate 與 replay prerequisite，不修改 canonical code。",
+    "phase": "BFF Final Contract 2026-05-07",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-FINAL-001"
+    ],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-07-final/sidecars/BFF-FINAL-SIDECAR-GEMINI-SMOKE-MATRIX.md"
+    ],
+    "acceptance": [
+      "focused smoke matrix prepared",
+      "final gate commands listed",
+      "no canonical code edits"
+    ],
+    "next": "Owner finalized approved support-only smoke matrix. Artifact commit 60fea52f. Verification: git diff --check on sidecar artifact passed; pytest collect-only over final smoke matrix files collected 105 tests. Pre-existing unrelated dirty worktree changes were left untouched.",
+    "last_update": "2026-05-08T02:27:54Z",
+    "task_class": "sidecar",
+    "helper_parent": "BFF-FINAL-010",
+    "helper_kind": "smoke_matrix",
+    "auto_created_by": "Codex",
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "支援文件符合 sidecar scope：只提供 BFF-FINAL-010 smoke/CI matrix、full-suite gate 與 replay prerequisite，未要求修改 canonical/runtime/registry/governance truth。",
+      "Reviewer verification: git diff --check -- docs/bff/execution-tasks/2026-05-07-final/sidecars/BFF-FINAL-SIDECAR-GEMINI-SMOKE-MATRIX.md passed; pytest collect-only over matrix files with current 006/009 filenames collected 105 tests.",
+      "Time-sensitive note for parent owner: sidecar snapshot marked BFF-FINAL-006/009 pending at 2026-05-08T01:59Z; current worktree has BFF-FINAL-006 test_mcp_tool_import.py and BFF-FINAL-009 test_v5_interventions.py. BFF-FINAL-010 must use exact owner-provided files and still run full BFF suite plus release verifier."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-08T02:27:54Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "60fea52fb725f66957c9ae3f38c52ccce3d750e9",
+      "commit_subject": "BFF-FINAL-SIDECAR-GEMINI-SMOKE-MATRIX closeout artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-FINAL-SIDECAR-GEMINI-SMOKE-MATRIX",
+        "Reviewer": "Codex",
+        "Verification": "git diff --check -- docs/bff/execution-tasks/2026-05-07-final/sidecars/BFF-FINAL-SIDECAR-GEMINI-SMOKE-MATRIX.md passed; python3 -m pytest --collect-only over final smoke matrix files collected 105 tests."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 18,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 21,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-FINAL-SIDECAR-GEMINI-SMOKE-MATRIX",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Smoke matrix artifact prepared; focused smoke, full-suite gate, and replay prerequisites are ready for reviewer inspection.",
+      "status": "done",
+      "created_at": "2026-05-08T02:00:51Z",
+      "resolved_at": "2026-05-08T02:22:54Z"
+    },
+    {
+      "task_id": "BFF-FINAL-SIDECAR-GEMINI-SMOKE-MATRIX",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved support-only smoke matrix for BFF-FINAL-010; owner should finalize, and parent owner must refresh 006/009 exact test filenames before final gate.",
+      "status": "done",
+      "created_at": "2026-05-08T02:22:54Z",
+      "resolved_at": "2026-05-08T02:27:55Z"
+    }
+  ],
+  "blockers": []
+}

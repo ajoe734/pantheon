@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "SD-SRC-EVIDENCE-002",
+  "archived_at": "2026-04-28T09:27:38Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SD-SRC-EVIDENCE-002",
+    "title": "Durable source evidence and search store",
+    "summary_zh": "把 source/evidence/search 從 first-slice in-memory repository 推進到 service-owned durable store 與 replayable search refs。",
+    "phase": "SD Residual / Source Evidence Search",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SD-SRC-EVIDENCE-001",
+      "SD-FND-003"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-28-foundation-source-consultation-execution-task-packet.md",
+      "docs/reviews/2026-04-27-sd-src-evidence-001-claude-review.md"
+    ],
+    "acceptance": [
+      "restart preserves source evidence knowledge refs",
+      "search returns evidence bundle refs not raw blobs",
+      "BFF RW02 governed evidence stable after replay"
+    ],
+    "next": "Owner finalized approved task and closed it. Review approved durable source/evidence/search store plus RW-02 replay fix; targeted suite reported 22 passed.",
+    "last_update": "2026-04-28T09:27:38Z",
+    "task_class": "sd_materialization",
+    "source_packet": "docs/reviews/2026-04-28-foundation-source-consultation-execution-task-packet.md",
+    "auto_dispatch_boundary": "respect_dependencies_and_human_gates",
+    "review_notes_zh": [
+      "已審核 Codex2 修正；RW-02 durable replay 現已先依當前 eligible result_id scope 後才 ranking，broad-then-artifact regression 與 targeted suite 22 passed。"
+    ],
+    "review_file": "docs/reviews/2026-04-28-sd-src-evidence-002-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T09:27:38Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 30,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SD-SRC-EVIDENCE-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented durable JSONL source/evidence repository, replayable search refs store, and RW-02 durable replay tests. Verification: source_ingestion/evidence/search/RW02/KW03 targeted suite passed (21 passed).",
+      "status": "done",
+      "created_at": "2026-04-28T08:51:11Z",
+      "resolved_at": "2026-04-28T09:15:36Z"
+    },
+    {
+      "task_id": "SD-SRC-EVIDENCE-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review needs changes: durable RW-02 replay can pollute narrower match_type searches after a broad search; see docs/reviews/2026-04-28-sd-src-evidence-002-codex-review.md.",
+      "status": "done",
+      "created_at": "2026-04-28T09:15:36Z",
+      "resolved_at": "2026-04-28T09:15:36Z"
+    },
+    {
+      "task_id": "SD-SRC-EVIDENCE-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented review fix: RW-02 durable replay is scoped to current eligible result_ids before ranking; added broad-then-artifact replay regression. Verified repro and targeted suite: 22 passed.",
+      "status": "done",
+      "created_at": "2026-04-28T09:18:51Z",
+      "resolved_at": "2026-04-28T09:23:55Z"
+    },
+    {
+      "task_id": "SD-SRC-EVIDENCE-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: durable source/evidence/search store and RW-02 replay fix verified; targeted suite 22 passed.",
+      "status": "done",
+      "created_at": "2026-04-28T09:23:55Z",
+      "resolved_at": "2026-04-28T09:27:38Z"
+    }
+  ],
+  "blockers": []
+}

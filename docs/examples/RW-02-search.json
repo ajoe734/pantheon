@@ -1,0 +1,77 @@
+{
+  "_note": "Contract-published example payloads for RW-02 Search. Use as the implementation target for the BFF and frontend integration. Do not use as mock production state.",
+  "_packet_status": "contract-published",
+  "_task": "RW-02-SEARCH-001",
+  "search_request": {
+    "q": "momentum decay volatility",
+    "match_type": "all",
+    "status": "in_progress",
+    "date_range": "30d",
+    "page_token": null,
+    "page_size": 25
+  },
+  "search_response": {
+    "data": [
+      {
+        "result_id": "rt-20260419-007",
+        "match_type": "ticket",
+        "title": "Evaluate momentum factor decay in high-volatility regime",
+        "excerpt": "Research ticket asks whether momentum factors lose predictive power during sustained volatility spikes and whether current rebalancing windows are too slow.",
+        "linked_ticket_id": "rt-20260419-007",
+        "relevance_score": 0.98,
+        "links": {
+          "result_detail": "/research/tickets/rt-20260419-007",
+          "linked_ticket_detail": "/research/tickets/rt-20260419-007"
+        }
+      },
+      {
+        "result_id": "exp-20260419-012",
+        "match_type": "experiment",
+        "title": "Momentum decay replay on March volatility cluster",
+        "excerpt": "Experiment replay compares signal half-life before and after the March volatility cluster and shows reduced persistence after regime break.",
+        "linked_ticket_id": "rt-20260419-007",
+        "relevance_score": 0.91,
+        "links": {
+          "result_detail": "/research/experiments/exp-20260419-012",
+          "linked_ticket_detail": "/research/tickets/rt-20260419-007"
+        }
+      },
+      {
+        "result_id": "artifact-20260418-005",
+        "match_type": "artifact",
+        "title": "Momentum regime-break feature set v5",
+        "excerpt": "Artifact notes include volatility-regime bucketing and a shorter half-life decay coefficient intended for stressed market windows.",
+        "linked_ticket_id": "rt-20260419-007",
+        "relevance_score": 0.87,
+        "links": {
+          "result_detail": "/research/artifacts/artifact-20260418-005",
+          "linked_ticket_detail": "/research/tickets/rt-20260419-007"
+        }
+      }
+    ],
+    "page_info": {
+      "next_page_token": "search-20260419-page-2",
+      "total": 17
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T20:15:00Z",
+      "surfaces": {
+        "search_results": "fresh"
+      },
+      "index_adapter": {
+        "snapshot_at": "2026-04-19T20:14:30Z",
+        "adapter_state": "fresh",
+        "indexed_match_types": [
+          "ticket",
+          "experiment",
+          "artifact"
+        ],
+        "source_watermarks": {
+          "tickets": "2026-04-19T20:14:10Z",
+          "experiments": "2026-04-19T20:13:42Z",
+          "artifacts": "2026-04-19T20:12:58Z"
+        }
+      }
+    }
+  }
+}

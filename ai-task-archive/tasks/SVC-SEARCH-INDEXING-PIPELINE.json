@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "SVC-SEARCH-INDEXING-PIPELINE",
+  "archived_at": "2026-04-30T07:39:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-SEARCH-INDEXING-PIPELINE",
+    "title": "Build incremental search indexing pipeline",
+    "summary_zh": "把 search materialized index 推成正式 indexing pipeline：ingest completion trigger、incremental refresh、schema versioned snapshots、freshness SLA 與 retention。",
+    "phase": "Source / Search Platform",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER",
+      "SVC-SOURCE-EVIDENCE-NORMALIZATION"
+    ],
+    "artifacts": [
+      "services/search",
+      "services/source_ingestion",
+      "docker-compose.yml",
+      "scripts/smoke_honest_stack.py"
+    ],
+    "acceptance": [
+      "ingest completion can trigger incremental index refresh",
+      "index snapshots are schema versioned and retained",
+      "normal query path does not rebuild from request documents",
+      "index freshness status is queryable",
+      "tests cover incremental update delete or stale source handling"
+    ],
+    "next": "Closeout complete in task-scoped commit 8c3bec0. Verified 44 search/source ingest pipeline tests passed, 26 source_ingestion tests passed, py_compile passed, and docker compose config --quiet passed. Reviewer approval by Codex2 captured in .orchestrator/reviews/SVC-SEARCH-INDEXING-PIPELINE-review-codex2.md.",
+    "last_update": "2026-04-30T07:39:22Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-materialization-20260430",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：ingest completion 會透過 SEARCH_INGEST_NOTIFY_URL 觸發 search incremental refresh；pipeline snapshot 有 schema_version 與 retention；query path 預設仍走 durable evidence repository，request documents 只在 compat path；freshness API 與 pipeline run API 可查詢；增量、新增/移除、freshness、retention、HTTP endpoint 與 source-ingest notification 測試均覆蓋。|驗證通過：pytest search/source_ingestion 聚焦測試 70 passed；py_compile 通過；docker compose config --quiet 通過。"
+    ],
+    "review_file": ".orchestrator/reviews/SVC-SEARCH-INDEXING-PIPELINE-review-codex2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T07:39:22Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "8c3bec024803f0a3d85a52e49dcb32d5584af69d",
+      "commit_subject": "SVC-SEARCH-INDEXING-PIPELINE add incremental search indexing pipeline",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-SEARCH-INDEXING-PIPELINE",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 56,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 27,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-SEARCH-INDEXING-PIPELINE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T07:22:03Z",
+      "resolved_at": "2026-04-30T07:26:27Z"
+    },
+    {
+      "task_id": "SVC-SEARCH-INDEXING-PIPELINE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Implemented incremental search indexing pipeline: ingest-completion trigger, schema-versioned retained pipeline snapshots, freshness SLA API, compose env, and honest-stack smoke coverage. Verification: python3 -m pytest services/search/test_index_pipeline.py services/search/tests/test_http_service.py services/search/tests/test_materialized_index.py services/source_ingestion/tests/test_ingest_run.py; python3 -m pytest services/source_ingestion/test_service.py services/source_ingestion/tests/test_scheduled_connector.py; python3 -m py_compile services/search/index_pipeline.py services/search/main.py services/source_ingestion/main.py scripts/smoke_honest_stack.py; docker compose config --quiet.",
+      "status": "done",
+      "created_at": "2026-04-30T07:31:54Z",
+      "resolved_at": "2026-04-30T07:35:07Z"
+    },
+    {
+      "task_id": "SVC-SEARCH-INDEXING-PIPELINE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: incremental search indexing pipeline satisfies ingest-completion trigger, schema-versioned retained snapshots, durable default query path, freshness API, and stale/removal coverage. Verification passed: 70 focused pytest tests, py_compile, docker compose config --quiet. Owner to finalize with task-scoped commit.",
+      "status": "done",
+      "created_at": "2026-04-30T07:35:07Z",
+      "resolved_at": "2026-04-30T07:39:22Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "APP-003-PKT003-CLOSEOUT-001",
+  "archived_at": "2026-04-24T05:44:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-PKT003-CLOSEOUT-001",
+    "title": "Reopen the remaining PKT-003 front-owned closeout follow-up",
+    "summary_zh": "PKT-003 不是新的 BFF gap，但 replayable request pair、meta.staleness shape、以及 host-screen SSE reconciliation 仍未完全對齊；重開具名 execution task 追蹤剩餘前端 follow-up。",
+    "phase": "Execution / Frontend Closeout",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-24-cross-repo-reopen-execution-packet.md",
+      ".coordination/responses/PKT-003-post-incident-review-frontend-feedback.yaml",
+      "../front-ai-trading-system/docs/lovable/2026-04-24-pkt001-pkt003-followup-prompt.md"
+    ],
+    "acceptance": [
+      "PKT-003 follow-up is represented by a named execution task instead of only a generic closeout note",
+      "Closure criteria point at replayable request transport, canonical PKT-005 staleness handling, and host-screen SSE reconciliation",
+      "The reopened PKT-003 closeout work is visible on the execution board"
+    ],
+    "next": "Owner finalized reopened PKT-003 closeout tracking. Execution board, reopen packet, frontend-feedback disposition, and front follow-up prompt all align on front-owned remaining work: replayable request transport, canonical PKT-005 staleness handling, and host-screen SSE reconciliation; no new Pantheon BFF gap was opened.",
+    "last_update": "2026-04-24T05:44:02Z",
+    "feature_id": "PKT-003-post-incident-review",
+    "coordination_stage": "follow_up_required",
+    "coordination_next_action": "Front repo must repair transport truth, staleness handling, and selected-detail SSE reconciliation before Pantheon can close the loop.",
+    "task_class": "execution_candidate",
+    "auto_generated": true,
+    "auto_created_by": "2026-04-24-cross-repo-reopen-execution-packet",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "reopen truth 已在 execution packet、Pantheon frontend-feedback、front follow-up prompt 與 ai-status execution board 之間對齊。",
+      "handoff 摘要中的 in_progress 描述屬於時間差，review 時 live task 已在 review，這不影響 reopen materialization truth。"
+    ],
+    "review_file": "docs/reviews/2026-04-24-app-003-pkt003-closeout-001-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T05:44:02Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "31351702e014f7e4f90637f8c0802681dffdfa65",
+      "commit_subject": "APP-003-PKT003-CLOSEOUT-001: finalize reopened PKT-003 closeout tracking",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-PKT003-CLOSEOUT-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1220,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-PKT003-CLOSEOUT-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T05:35:40Z",
+      "resolved_at": "2026-04-24T05:37:40Z"
+    },
+    {
+      "task_id": "APP-003-PKT003-CLOSEOUT-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Reopen truth is aligned across the cross-repo execution packet, PKT-003 frontend-feedback response, front follow-up prompt, and ai-status execution board. Review docs/reviews/2026-04-24-app-003-pkt003-closeout-001-codex2-handoff.md for the evidence summary; this task is ready to move from reopen materialization into review.",
+      "status": "done",
+      "created_at": "2026-04-24T05:39:59Z",
+      "resolved_at": "2026-04-24T05:41:58Z"
+    },
+    {
+      "task_id": "APP-003-PKT003-CLOSEOUT-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. Reopened PKT-003 closeout truth is aligned across packet, frontend-feedback, front follow-up prompt, and execution board; owner may finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-24T05:41:58Z",
+      "resolved_at": "2026-04-24T05:44:02Z"
+    }
+  ],
+  "blockers": []
+}

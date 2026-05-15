@@ -1,0 +1,334 @@
+{
+  "version": 1,
+  "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+  "archived_at": "2026-04-25T09:44:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-RLLIB-DEFERRED-PREP-001",
+    "title": "Scaffold RLlib deferred prep lane",
+    "summary_zh": "在不重開 RL gate 的前提下，先完成 RLlib 的 governed train/eval prep lane：adapter 邊界、rollout/result schema、local smoke scaffold 與非預設 backend wiring。",
+    "phase": "Phase 5 / Deferred Prep",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "APP-003-FINRL-DEFERRED-PREP-001"
+    ],
+    "artifacts": [
+      "services/research/rllib/",
+      "services/learning/rl/",
+      "docs/reviews/2026-04-25-deferred-prep-execution-packet.md",
+      "OSS_INTEGRATION_CHECKLIST.md",
+      "RESEARCH_BACKEND_MATURITY_MATRIX.md"
+    ],
+    "acceptance": [
+      "RLlib deferred prep scaffold lands behind a non-default gate",
+      "Train eval schema and local smoke coverage land without reopening RL",
+      "Canonical docs and packet preserve version-pinned deferred truth"
+    ],
+    "next": "Owner finalized the approved RLlib deferred-prep lane after Codex2 revalidation; pytest, smoke, and worker evidence remain prep-only, non-default, draft-only, gate-closed, and canonical docs still preserve RLlib as version-pinned.",
+    "last_update": "2026-04-25T09:44:20Z",
+    "deferred_scope": "prep_only",
+    "activation_boundary": "does_not_reopen_rl_gate",
+    "canonical_status_expected": "version-pinned",
+    "materialization_packet": "docs/reviews/2026-04-25-deferred-prep-execution-packet.md",
+    "task_class": "execution",
+    "auto_created_by": "Codex-deferred-prep-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "已重跑 pytest、smoke、worker 驗證；RLlib deferred-prep lane 仍為非預設、draft-only、gate-closed，且 canonical 文件維持 version-pinned truth。"
+    ],
+    "review_file": "docs/reviews/2026-04-25-app-003-rllib-deferred-prep-001-codex2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-25T09:44:20Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "b601b45ea7dc95c74ba1aab2f81d7b140d4ecaa2",
+      "commit_subject": "APP-003-RLLIB-DEFERRED-PREP-001 Finalize RLlib deferred prep lane",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-RLLIB-DEFERRED-PREP-001",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 62,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-25T05:19:04Z",
+      "resolved_at": "2026-04-25T05:20:12Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "RLlib deferred-prep scaffold landed in services/research/rllib/ with governed train/eval adapter, rollout/result schema, non-default backend selector, worker, smoke, tests, and sample dataset. Verified: pytest services/research/rllib/test_adapter.py -q => 13 passed; smoke confirms artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed; worker emits stub_rllib draft summary. Canonical docs keep RLlib version-pinned and gate-closed. Review note: docs/reviews/2026-04-25-app-003-rllib-deferred-prep-001-codex-handoff.md",
+      "status": "done",
+      "created_at": "2026-04-25T05:33:48Z",
+      "resolved_at": "2026-04-25T05:48:33Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-25T05:48:33Z",
+      "resolved_at": "2026-04-25T05:49:03Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T05:49:03Z",
+      "resolved_at": "2026-04-25T05:53:03Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated 2026-04-25 UTC: pytest services/research/rllib/test_adapter.py -q => 13 passed; smoke and worker still emit draft-only gate-closed RLlib prep evidence (artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, backend=stub_rllib). Review against docs/reviews/2026-04-25-app-003-rllib-deferred-prep-001-codex-handoff.md and support/sidecars/APP-003-RLLIB-DEFERRED-PREP-001/.",
+      "status": "done",
+      "created_at": "2026-04-25T05:53:03Z",
+      "resolved_at": "2026-04-25T05:54:26Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T05:54:26Z",
+      "resolved_at": "2026-04-25T06:09:29Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T06:09:29Z",
+      "resolved_at": "2026-04-25T06:13:17Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated 2026-04-25 UTC after review_ready_dispatch: python3 -m pytest services/research/rllib/test_adapter.py -q => 13 passed; smoke and worker still reproduce prep-only, gate-closed RLlib evidence (artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy, backend=stub_rllib). Please review against docs/reviews/2026-04-25-app-003-rllib-deferred-prep-001-codex-handoff.md and support/sidecars/APP-003-RLLIB-DEFERRED-PREP-001/.",
+      "status": "done",
+      "created_at": "2026-04-25T06:13:17Z",
+      "resolved_at": "2026-04-25T06:13:47Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T06:13:47Z",
+      "resolved_at": "2026-04-25T06:28:53Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T06:28:53Z",
+      "resolved_at": "2026-04-25T06:37:19Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T06:37:19Z",
+      "resolved_at": "2026-04-25T06:52:22Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T06:52:22Z",
+      "resolved_at": "2026-04-25T07:11:46Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated 2026-04-25 UTC after review_ready_dispatch: python3 -m pytest services/research/rllib/test_adapter.py -q => 13 passed; smoke and worker still reproduce prep-only, gate-closed RLlib evidence (artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy, backend=stub_rllib). Please review against docs/reviews/2026-04-25-app-003-rllib-deferred-prep-001-codex-handoff.md and support/sidecars/APP-003-RLLIB-DEFERRED-PREP-001/.",
+      "status": "done",
+      "created_at": "2026-04-25T07:11:46Z",
+      "resolved_at": "2026-04-25T07:13:59Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated 2026-04-25 UTC on wake-up: python3 -m pytest services/research/rllib/test_adapter.py -q => 13 passed; smoke and worker still remain prep-only and gate-closed (artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy, backend=stub_rllib). Review against docs/reviews/2026-04-25-app-003-rllib-deferred-prep-001-codex-handoff.md and support/sidecars/APP-003-RLLIB-DEFERRED-PREP-001/.",
+      "status": "done",
+      "created_at": "2026-04-25T07:13:59Z",
+      "resolved_at": "2026-04-25T07:14:28Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-25T07:14:28Z",
+      "resolved_at": "2026-04-25T07:14:41Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T07:14:41Z",
+      "resolved_at": "2026-04-25T07:33:24Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated on 2026-04-25 UTC after review_ready_dispatch: python3 -m pytest services/research/rllib/test_adapter.py -q => 13 passed; python3 services/research/rllib/smoke_test.py --enable-deferred-prep keeps artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy, backend=stub_rllib; env PANTHEON_RLLIB_PREP_ENABLED=1 python3 services/research/rllib/worker.py still emits the draft-only stub_rllib summary with train_steps=4, eval_steps=2, search_strategy=pbt. Please review against docs/reviews/2026-04-25-app-003-rllib-deferred-prep-001-codex-handoff.md and support/sidecars/APP-003-RLLIB-DEFERRED-PREP-001/.",
+      "status": "done",
+      "created_at": "2026-04-25T07:33:24Z",
+      "resolved_at": "2026-04-25T07:34:16Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T07:34:16Z",
+      "resolved_at": "2026-04-25T07:49:25Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T07:49:25Z",
+      "resolved_at": "2026-04-25T08:10:22Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T08:10:22Z",
+      "resolved_at": "2026-04-25T08:25:23Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T08:25:23Z",
+      "resolved_at": "2026-04-25T08:44:41Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated on 2026-04-25 UTC for this review_ready_dispatch: python3 -m pytest services/research/rllib/test_adapter.py -q => 13 passed; python3 services/research/rllib/smoke_test.py --enable-deferred-prep keeps backend=stub_rllib, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy, optimizer_method=rllib_ppo; env PANTHEON_RLLIB_PREP_ENABLED=1 python3 services/research/rllib/worker.py still emits the offline draft-only stub_rllib summary with train_steps=4, eval_steps=2, search_strategy=pbt. Please review against docs/reviews/2026-04-25-app-003-rllib-deferred-prep-001-codex-handoff.md and support/sidecars/APP-003-RLLIB-DEFERRED-PREP-001/.",
+      "status": "done",
+      "created_at": "2026-04-25T08:44:41Z",
+      "resolved_at": "2026-04-25T08:45:28Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T08:45:28Z",
+      "resolved_at": "2026-04-25T09:01:08Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T09:01:08Z",
+      "resolved_at": "2026-04-25T09:04:28Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated on 2026-04-25 UTC after wake-up: python3 -m pytest services/research/rllib/test_adapter.py -q => 13 passed; python3 services/research/rllib/smoke_test.py --enable-deferred-prep keeps backend=stub_rllib, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy, optimizer_method=rllib_ppo; env PANTHEON_RLLIB_PREP_ENABLED=1 python3 services/research/rllib/worker.py still emits the offline draft-only stub_rllib summary with train_steps=4, eval_steps=2, search_strategy=pbt. Please review against docs/reviews/2026-04-25-app-003-rllib-deferred-prep-001-codex-handoff.md and support/sidecars/APP-003-RLLIB-DEFERRED-PREP-001/.",
+      "status": "done",
+      "created_at": "2026-04-25T09:04:28Z",
+      "resolved_at": "2026-04-25T09:04:54Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T09:04:54Z",
+      "resolved_at": "2026-04-25T09:19:55Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T09:19:55Z",
+      "resolved_at": "2026-04-25T09:39:34Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated on 2026-04-25 UTC after wake-up: python3 -m pytest services/research/rllib/test_adapter.py -q => 13 passed; python3 services/research/rllib/smoke_test.py --enable-deferred-prep keeps backend=stub_rllib, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy, optimizer_method=rllib_ppo; env PANTHEON_RLLIB_PREP_ENABLED=1 python3 services/research/rllib/worker.py still emits the offline draft-only stub_rllib summary with train_steps=4, eval_steps=2, search_strategy=pbt. Please review against docs/reviews/2026-04-25-app-003-rllib-deferred-prep-001-codex-handoff.md and support/sidecars/APP-003-RLLIB-DEFERRED-PREP-001/.",
+      "status": "done",
+      "created_at": "2026-04-25T09:39:34Z",
+      "resolved_at": "2026-04-25T09:42:26Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Reviewer revalidated the deferred-prep lane on 2026-04-25 UTC: tests still pass, smoke/worker remain draft-only and gate-closed, and canonical docs preserve RLlib as version-pinned. Owner may finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-25T09:42:26Z",
+      "resolved_at": "2026-04-25T09:44:20Z"
+    }
+  ],
+  "blockers": []
+}

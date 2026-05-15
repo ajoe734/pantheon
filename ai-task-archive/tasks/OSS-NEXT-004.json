@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "OSS-NEXT-004",
+  "archived_at": "2026-04-17T06:10:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-NEXT-004",
+    "title": "Decide W&B backend parity versus explicit defer with re-entry criteria",
+    "summary_zh": "明確決定 W&B 在下一輪是要進入 backend parity 實作，還是正式 defer 並寫清 re-entry gate，避免一直停在模糊 criteria-defined。",
+    "phase": "Phase 6: OSS Ecosystem Closure",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "OSS-NEXT-008"
+    ],
+    "artifacts": [
+      "services/registry/experiments/WANDB_ACTIVATION.md",
+      "OSS_INTEGRATION_CHECKLIST.md",
+      "RESEARCH_BACKEND_MATURITY_MATRIX.md",
+      "docs/reviews/2026-04-16-oss-ecosystem-gap-analysis.md"
+    ],
+    "acceptance": [
+      "the next-wave decision for W&B is explicit rather than implicit",
+      "either a backend parity implementation slice exists or a documented defer with re-entry gate is recorded"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T02:20:54Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized: W&B formal defer with six-condition re-entry gate documented across WANDB_ACTIVATION.md §7, OSS_INTEGRATION_CHECKLIST.md, RESEARCH_BACKEND_MATURITY_MATRIX.md, and DEFERRED_OSS_ACTIVATION_MAP.md. Last Updated header corrected to 2026-04-17. No implementation started — explicit defer, earliest reopen 2026-05-15.",
+    "last_update": "2026-04-17T06:10:39Z",
+    "review_notes_zh": [
+      "已核對 W&B 正式 defer 決策與 supporting docs；六項未達條件、2026-05-15 最早重開日、以及 checklist/matrix/deferred-map 的同步敘述一致。",
+      "非阻塞備註：services/learning/DEFERRED_OSS_ACTIVATION_MAP.md 標頭的 Last Updated 仍為 2026-04-16，可在 owner finalization 時一併校正。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T06:10:39Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "130ac13795c4f964a46bfc67b1ecf6ed72bf8796",
+      "commit_subject": "OSS-NEXT-004: correct Last Updated header to 2026-04-17 in DEFERRED_OSS_ACTIVATION_MAP.md",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "OSS-NEXT-004",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 363,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-NEXT-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T03:57:07Z",
+      "resolved_at": "2026-04-17T03:57:39Z"
+    },
+    {
+      "task_id": "OSS-NEXT-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Formal defer decision written. All 6 W&B entry criteria unmet (MLflow <2 days history vs 30-day gate, no operator preference, adapter not generalized, state migration not landed, no SDK pin, infra unverified). Re-entry gate written in WANDB_ACTIVATION.md §7 with 6 measurable conditions and earliest reopen date 2026-05-15. OSS_INTEGRATION_CHECKLIST.md, RESEARCH_BACKEND_MATURITY_MATRIX.md, and DEFERRED_OSS_ACTIVATION_MAP.md all updated. No implementation work started — this is an explicit defer, not a backend generalization task. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-04-17T04:08:08Z",
+      "resolved_at": "2026-04-17T04:11:34Z"
+    },
+    {
+      "task_id": "OSS-NEXT-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: formal W&B defer and six-condition re-entry gate are documented consistently across the canonical tracking docs; owner can finalize to done after any optional metadata cleanup.",
+      "status": "done",
+      "created_at": "2026-04-17T04:11:34Z",
+      "resolved_at": "2026-04-17T06:10:39Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "task_id": "RS-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RS-001",
+    "title": "Begin research ingestion workflow implementation with verified adapters",
+    "phase": "Epic E",
+    "owner": "Copilot",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "OC-002"
+    ],
+    "artifacts": [
+      "services/research/ingest/"
+    ],
+    "acceptance": [
+      "ingestion workflow defined",
+      "source normalization rules documented",
+      "raw research kept outside live path",
+      "[CODEX NOTE] ingestion sources must use structured APIs only: OpenAlex API for academic papers, GitHub REST API + repository contents endpoints for code repos — general web scraping is not acceptable"
+    ],
+    "next": "RS-001 完成：實現完整的 research ingestion workflow，使用已驗證的 OpenAlex 和 GitHub 適配器。ResearchIngestionManager 編排發現、正規化、交接；ResearchStore 在 services/research/ingest/store/ 保留治理審計記錄。22 個單元測試和 5 個煙霧測試全部通過。所有接受標準已滿足。交接 RS-002。",
+    "last_update": "2026-04-06T11:52:48.198525Z",
+    "summary_zh": "建立研究素材 ingestion workflow，讓 Pantheon 透過受控 API 管道發現論文、repo 與研究筆記，而不是自由漫遊抓網頁。",
+    "review_notes_zh": "RS-001 實作完整。核心特性：(1) ResearchIngestionManager 與已驗證的 OpenAlex/GitHub 適配器整合；(2) 完整的 discovery → normalization → handoff 流程；(3) ResearchStore 在隔離路徑中保存，完整保留治理元數據；(4) 支持批准實施 (GitHub 倉庫白名單)；(5) 完整的錯誤處理與日誌記錄。27 個測試通過 (22 單元 + 5 煙霧)。已驗證與 AUD-GROK-002 適配器的集成。準備交接。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

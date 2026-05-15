@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "task_id": "DEP-002",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DEP-002",
+    "title": "Implement deployment orchestration saga consistency backbone",
+    "summary_zh": "建立 deployment orchestration saga、outbox/inbox 與 compensation 規則，確保跨服務部署一致性。",
+    "phase": "Phase 1: Registry and Governance Split",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "DEP-001"
+    ],
+    "artifacts": [
+      "CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md",
+      "EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md"
+    ],
+    "acceptance": [
+      "business write plus event outbox is atomic",
+      "ordering and idempotent consumer behavior are verified",
+      "compensation boundaries are documented"
+    ],
+    "next": "Owner finalize complete. DEP-002 closed as done. Reviewer approval is recorded in services/control-plane/governance/review_dep002_claude_approved_zh.md. Re-verified with 7 deployment saga unit tests, 12/12 deployment saga smoke checks, 9 cron unit tests, and cron smoke PASS. DeploymentSaga bootstrap/outbox atomicity, per-aggregate ordering plus inbox idempotency, compensation write-owner boundaries, and DeploymentPlan-sourced rollback linkage are locked for follow-on EX-002/runtime-manager work.",
+    "last_update": "2026-04-09T17:36:03Z"
+  },
+  "handoffs": [
+    {
+      "task_id": "DEP-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "DEP-002 ready for review. Added a first-class deployment saga backbone under services/control-plane/governance/ (deployment_saga.py, deployment_saga.contract.md, test_deployment_saga.py, smoke_test_deployment_saga.py), wired pantheon.deploy to emit a deployment_saga bootstrap plus consistency_contract=DEP-002, and anchored the L1 policy docs to the implementation. Verified with python3 -m unittest discover -s services/control-plane/governance -p 'test_deployment_saga.py', python3 -m unittest discover -s services/control-plane/governance -p 'test_deployment_plan.py', python3 -m unittest discover -s services/control-plane/cron -p 'test_*.py', python3 services/control-plane/governance/smoke_test_deployment_saga.py, python3 services/control-plane/cron/smoke_test.py, and python3 -m py_compile services/control-plane/governance/deployment_saga.py services/control-plane/cron/service.py. Review notes: services/control-plane/governance/review_dep002_codex_zh.md. Known unrelated repo issue: governance-wide discover with -p 'test_*.py' still hits existing pytest-only CAP-001 tests.",
+      "status": "done",
+      "created_at": "2026-04-09T17:31:32Z",
+      "resolved_at": "2026-04-09T17:34:10Z"
+    },
+    {
+      "task_id": "DEP-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All 3 acceptance criteria met: atomic bootstrap verified, idempotent consumer ordering aligns with EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md, compensation write-owner boundaries preserved per DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md. Rollback linkage correctly sourced from DeploymentPlan. Tests: 7/7 unit + 12/12 smoke. See review_dep002_claude_approved_zh.md.",
+      "status": "done",
+      "created_at": "2026-04-09T17:34:10Z",
+      "resolved_at": "2026-04-09T17:36:03Z"
+    }
+  ],
+  "blockers": []
+}

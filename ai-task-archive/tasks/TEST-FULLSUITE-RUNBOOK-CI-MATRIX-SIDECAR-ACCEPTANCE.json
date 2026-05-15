@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-30T14:48:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE",
+    "title": "Prepare TEST-FULLSUITE-RUNBOOK-CI-MATRIX acceptance packet and dependency map",
+    "summary_zh": "平行支援 TEST-FULLSUITE-RUNBOOK-CI-MATRIX，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Full Test Stabilization",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "TEST-FULLSUITE-HARNESS-ISOLATION",
+      "TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT",
+      "SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN",
+      "SVC-SOURCE-SEARCH-TEST-CLOSURE",
+      "SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE",
+      "SVC-RESEARCH-REPLICATION-SMOKE-FIX",
+      "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
+      "SVC-BFF-INCIDENT-SMOKE-FIXTURE",
+      "SVC-OPENCLAW-HONEST-STACK-SEMANTICS"
+    ],
+    "artifacts": [
+      "support/sidecars/TEST-FULLSUITE-RUNBOOK-CI-MATRIX/TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed support-only full-suite runbook sidecar after Codex approval; packet is committed as audit support and parent runbook task is already archived.",
+    "last_update": "2026-04-30T14:48:42Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "TEST-FULLSUITE-RUNBOOK-CI-MATRIX",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Codex review approved the support-only runbook sidecar packet: it stays non-canonical, maps acceptance/dependencies, and warns not to overclaim full-suite or CI automation coverage."
+    ],
+    "review_file": ".orchestrator/reviews/TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T14:48:42Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "3de97947a92536e6a6dfbf4fe06ae0f0194e89bc",
+      "commit_subject": "TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE finalize review",
+      "commit_author": {
+        "name": "Codex2",
+        "email": "codex2@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verification": "docker compose config --quiet",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 10,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 11,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Acceptance packet and dependency map prepared at support/sidecars/TEST-FULLSUITE-RUNBOOK-CI-MATRIX/TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE.md; support-only scope, no canonical/runtime changes.",
+      "status": "done",
+      "created_at": "2026-04-30T14:47:17Z",
+      "resolved_at": "2026-04-30T14:48:22Z"
+    },
+    {
+      "task_id": "TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Codex approved support-only runbook sidecar packet; owner may finalize with review artifact .orchestrator/reviews/TEST-FULLSUITE-RUNBOOK-CI-MATRIX-SIDECAR-ACCEPTANCE-review-codex.md.",
+      "status": "done",
+      "created_at": "2026-04-30T14:48:22Z",
+      "resolved_at": "2026-04-30T14:48:42Z"
+    }
+  ],
+  "blockers": []
+}

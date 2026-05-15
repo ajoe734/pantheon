@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "SVC-BFF-OIDC-JWKS-AUTH-FACADE-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-29T16:12:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-BFF-OIDC-JWKS-AUTH-FACADE-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-BFF-OIDC-JWKS-AUTH-FACADE BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-BFF-OIDC-JWKS-AUTH-FACADE，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Production Readiness / BFF Security",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/SVC-BFF-OIDC-JWKS-AUTH-FACADE/SVC-BFF-OIDC-JWKS-AUTH-FACADE-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: handoff packet (835b5f5) and review artifact (cdac1a1) committed; proposed env vars validated at bff/main.py:237-239 and runtime_auth_inbound.py JWKS functions; no canonical truth modified; sidecar constraint satisfied.",
+    "last_update": "2026-04-29T16:12:55Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-BFF-OIDC-JWKS-AUTH-FACADE",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：3/3 接受標準全達標，proposed env vars 已在 bff/main.py:237-239 確認實作，gap analysis 由 runtime_auth_inbound.py JWKS 實作驗證，sidecar constraint 滿足（無 canonical truth 修改）。Claude2 請做 closeout commit 再 done。"
+    ],
+    "review_file": ".orchestrator/chair-reviews/SVC-BFF-OIDC-JWKS-AUTH-FACADE-SIDECAR-BFF-HANDOFF-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T16:12:55Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "cdac1a114094727851d49f7ee9fed36a68494846",
+      "commit_subject": "SVC-BFF-OIDC-JWKS-AUTH-FACADE-SIDECAR-BFF-HANDOFF: closeout — add review artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verification": "reviewed support/sidecars/…/SVC-BFF-OIDC-JWKS-AUTH-FACADE-SIDECAR-BFF-HANDOFF.md against worktree; proposed env vars confirmed at bff/main.py:237-239, JWKS functions confirmed in runtime_auth_inbound.py. No canonical truth modified.",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "SVC-BFF-OIDC-JWKS-AUTH-FACADE-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 27,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-BFF-OIDC-JWKS-AUTH-FACADE-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "BFF handoff packet ready: documents current HS256 facade state, OIDC/JWKS gap, proposed env var contracts, operator journey, frontend checklist, and test coverage gaps. No canonical truth modified. Commit 835b5f5.",
+      "status": "done",
+      "created_at": "2026-04-29T14:19:20Z",
+      "resolved_at": "2026-04-29T16:08:04Z"
+    },
+    {
+      "task_id": "SVC-BFF-OIDC-JWKS-AUTH-FACADE-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: all 3 acceptance criteria met; proposed OIDC env vars and gap items validated by parent task implementation (bff/main.py:237-239, runtime_auth_inbound.py JWKS functions). No canonical truth modified. Returning to Claude2 for closeout.",
+      "status": "done",
+      "created_at": "2026-04-29T16:08:04Z",
+      "resolved_at": "2026-04-29T16:12:55Z"
+    }
+  ],
+  "blockers": []
+}

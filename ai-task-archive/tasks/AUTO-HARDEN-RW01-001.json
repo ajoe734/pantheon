@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "task_id": "AUTO-HARDEN-RW01-001",
+  "archived_at": "2026-04-20T03:33:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AUTO-HARDEN-RW01-001",
+    "title": "Harden RW-01 research ticket truth source",
+    "summary_zh": "把已 live 的 RW-01 research ticket 路徑從 local fallback 推進到 service-owned truth，減少 snapshot 依賴。",
+    "phase": "Execution / Auto Worker - Truth Hardening",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/read_store.py"
+    ],
+    "acceptance": [
+      "RW-01 不再主要依賴 local fallback",
+      "Read path 有明確 truth source",
+      "Regression tests 更新"
+    ],
+    "next": "Owner finalized approved RW-01 truth hardening. Service-backed research ticket read/write path is the primary truth source when configured, with reviewer-approved regression coverage and passing RW-01/RW-02 checks.",
+    "last_update": "2026-04-20T03:33:51Z",
+    "task_class": "auto_worker_implementation",
+    "auto_created_by": "auto-worker-implementation-materialization-20260420",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：（1）read path 正確：list_research_tickets 透過 _read_dataset_records 優先讀取 service store，fallback 到 local snapshot；get_research_ticket 透過 _service.record 優先讀取，unavailable 才 fallback；（2）write path 正確：create_research_ticket 與 patch_research_ticket 在 PANTHEON_BFF_RESEARCH_TICKET_STORE 設定時透過 write_records 持久化至 service store，否則 _save() 到 local fallback；（3）regression coverage 完整：新增 test_rw01_service_backed_reads_override_seeded_snapshot 與 test_rw01_create_and_patch_persist_to_service_store 兩個 service-backed 測試；（4）全部 6 個 RW-01 測試通過，RW-02 regression 4/4 通過，無新增失敗。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T03:33:51Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "1e4463408f392d48f706725728ee153d626c72b0",
+      "commit_subject": "AUTO-HARDEN-RW01-001 finalize owner checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "AUTO-HARDEN-RW01-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 797,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AUTO-HARDEN-RW01-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "RW-01 now reads service-backed research ticket truth before local fallback, persists create/patch to PANTHEON_BFF_RESEARCH_TICKET_STORE when configured, and adds regression coverage for service-backed read/write.",
+      "status": "done",
+      "created_at": "2026-04-20T03:26:32Z",
+      "resolved_at": "2026-04-20T03:31:14Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-RW01-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: service-backed read path (list + detail) reads service store first with local fallback, write path persists to service store when PANTHEON_BFF_RESEARCH_TICKET_STORE is configured. All 6 RW-01 tests pass, RW-02 regressions 4/4 pass.",
+      "status": "done",
+      "created_at": "2026-04-20T03:31:14Z",
+      "resolved_at": "2026-04-20T03:33:51Z"
+    }
+  ],
+  "blockers": []
+}

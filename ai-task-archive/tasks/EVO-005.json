@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "task_id": "EVO-005",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EVO-005",
+    "title": "Implement kill-switch and safe-mode fast path",
+    "summary_zh": "建立 kill switch / safe mode 的緊急 fast path，仍經由 runtime-manager 執行並保留 audit trail。",
+    "phase": "Phase 4: Evolution Governance",
+    "owner": "Codex",
+    "reviewer": "Qwen",
+    "status": "done",
+    "depends_on": [
+      "EVO-004"
+    ],
+    "artifacts": [
+      "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md",
+      "services/execution/"
+    ],
+    "acceptance": [
+      "emergency actions bypass normal review queues but still flow through runtime-manager",
+      "audit trail is preserved",
+      "latency target is benchmarked"
+    ],
+    "next": "Review complete. EVO-005 marked done. Review artifact at services/execution/runtime-manager/review_evo005_qwen_approved.md.",
+    "last_update": "2026-04-11T04:48:45Z",
+    "review_file": "services/execution/runtime-manager/review_evo005_qwen_approved.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "EVO-005",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "EVO-005 ready for review. KillSwitchController now emits explicit runtime_manager_fast_path commands that bypass normal review queues without bypassing Runtime Manager, REPLACE requires fallback artifact id+version, recovery transitions remain audited, and the runtime-manager contract documents the fast path plus benchmark target. Verification: python3 -m unittest discover -s services/execution/runtime-manager -p 'test_*.py' (8 tests PASS); python3 services/execution/runtime-manager/smoke_test_kill_switch_controller.py (4/4 groups PASS, p95=0.0260ms <= 5.0ms).",
+      "status": "done",
+      "created_at": "2026-04-11T04:42:50Z",
+      "resolved_at": "2026-04-11T04:44:29Z"
+    },
+    {
+      "task_id": "EVO-005",
+      "from": "Gemini",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Gemini to Qwen after repeated Gemini unknown critical error: An unexpected critical error occurred:[object Object]",
+      "status": "done",
+      "created_at": "2026-04-11T04:44:29Z",
+      "resolved_at": "2026-04-11T04:48:28Z"
+    },
+    {
+      "task_id": "EVO-005",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review approved. KillSwitchController implements L1 kill-switch and safe-mode fast path. All 8 unit tests + 4/4 smoke tests pass. p95=0.031ms ≤ 5ms target. All 6 v1 decisions enforced. Action selection matrix aligned with §7. Safe mode state machine with all 6 states and valid transitions. Audit trail immutable and complete. No LEAN bypass invariant preserved. Review at services/execution/runtime-manager/review_evo005_qwen_approved.md.",
+      "status": "done",
+      "created_at": "2026-04-11T04:48:28Z",
+      "resolved_at": "2026-04-11T04:48:34Z"
+    }
+  ],
+  "blockers": []
+}

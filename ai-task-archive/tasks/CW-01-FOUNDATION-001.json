@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "task_id": "CW-01-FOUNDATION-001",
+  "archived_at": "2026-04-19T17:23:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "CW-01-FOUNDATION-001",
+    "title": "Publish Consult Request identity and request-to-session contract",
+    "summary_zh": "為 Consultation Workbench 建立第一個真實 module：consult request create/list/detail/cancel truth 與 request-to-session handoff semantics。",
+    "phase": "Execution / Wave 2 - Blocked Module Activation",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "STATE-REBASE-001",
+      "DEPTH-REBASE-001"
+    ],
+    "artifacts": [
+      "WORKBENCH_DELIVERY_BACKLOG.md",
+      "docs/lovable/PANTHEON_FRONTEND_SA.md",
+      "docs/bff/PKT-consultation-workbench.md"
+    ],
+    "acceptance": [
+      "consult request create list detail and cancel truth are published",
+      "request-to-session handoff semantics are explicit",
+      "overview can anchor to one truthful module"
+    ],
+    "next": "Finalized CW-01 consult request contract publication after review approval; canonical docs and coordination artifacts stay aligned on contract-published / pending-bff truth.",
+    "last_update": "2026-04-19T17:23:41Z",
+    "source_plane": "gap_reconciliation",
+    "source_ref": {
+      "type": "gap_reconciliation",
+      "recorded_at": "2026-04-19T00:00:00Z",
+      "summary": "Materialized from the 2026-04-19 complete-system gap audit and Lovable master SA reconciliation",
+      "canonical_refs": [
+        "current-work.md",
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "DEVELOPMENT_WORKBREAKDOWN.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md"
+      ]
+    },
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-19-system-completion-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：CW-01 contract bundle、coordination responses、backlog 與 frontend SA 對齊 contract-published / pending-bff truth。",
+      "request create/list/detail/cancel 與 request-to-session handoff 邊界明確；overview-only 與 pending-bff gate 也維持一致。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T17:23:41Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "65eb4c7dfcdca7ab27785c5ed7483f3686b037dc",
+      "commit_subject": "CW-01-FOUNDATION-001: publish consult request contract and consultation overview handoff bundle",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "CW-01-FOUNDATION-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 720,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "CW-01-FOUNDATION-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T16:26:47Z",
+      "resolved_at": "2026-04-19T16:28:58Z"
+    },
+    {
+      "task_id": "CW-01-FOUNDATION-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T16:28:58Z",
+      "resolved_at": "2026-04-19T16:32:58Z"
+    },
+    {
+      "task_id": "CW-01-FOUNDATION-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T16:32:57Z",
+      "resolved_at": "2026-04-19T16:40:55Z"
+    },
+    {
+      "task_id": "CW-01-FOUNDATION-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T16:40:55Z",
+      "resolved_at": "2026-04-19T16:41:13Z"
+    },
+    {
+      "task_id": "CW-01-FOUNDATION-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Inspected the published CW-01 contract bundle and coordination artifacts. docs/bff/CW-01-consult-request.md, docs/screens/CW-01-consult-request.md, docs/examples/CW-01-consult-request.json, docs/pantheon-handoffs/CW-01-consult-request/FRONTEND_CHANGE_SPEC.md, WORKBENCH_DELIVERY_BACKLOG.md, and docs/lovable/PANTHEON_FRONTEND_SA.md are aligned on contract-published / pending-bff truth. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-19T16:49:41Z",
+      "resolved_at": "2026-04-19T17:19:35Z"
+    },
+    {
+      "task_id": "CW-01-FOUNDATION-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: CW-01 consult request contract bundle and coordination artifacts are aligned on contract-published / pending-bff truth; owner can finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-19T17:19:35Z",
+      "resolved_at": "2026-04-19T17:23:41Z"
+    }
+  ],
+  "blockers": []
+}

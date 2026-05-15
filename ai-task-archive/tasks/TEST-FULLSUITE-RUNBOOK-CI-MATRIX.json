@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "TEST-FULLSUITE-RUNBOOK-CI-MATRIX",
+  "archived_at": "2026-04-30T14:47:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "TEST-FULLSUITE-RUNBOOK-CI-MATRIX",
+    "title": "Canonical full-suite runbook and CI matrix",
+    "summary_zh": "After the concrete failures are closed define one canonical full-suite matrix so future reruns are reproducible instead of ad hoc across pytest smoke direct entrypoints compose profiles and gated production-posture checks.",
+    "phase": "Full Test Stabilization",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "TEST-FULLSUITE-HARNESS-ISOLATION",
+      "TEST-ORCHESTRATOR-REGRESSION-CLOSEOUT",
+      "SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN",
+      "SVC-SOURCE-SEARCH-TEST-CLOSURE",
+      "SVC-TELEMETRY-ORDER-SCHEMA-CLOSURE",
+      "SVC-RESEARCH-REPLICATION-SMOKE-FIX",
+      "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
+      "SVC-BFF-INCIDENT-SMOKE-FIXTURE",
+      "SVC-OPENCLAW-HONEST-STACK-SEMANTICS"
+    ],
+    "artifacts": [
+      "docs/testing",
+      "ci",
+      "scripts",
+      "ai-status.json",
+      "current-work.md"
+    ],
+    "acceptance": [
+      "full-suite runbook lists root pytest per-service smoke compile compose config full compose smoke and gated production-posture commands",
+      "required PYTHONPATH and env flags are explicit",
+      "no command activates Qlib TRL RL W&B paper canary or live execution by default",
+      "runbook is linked from current work or CI documentation"
+    ],
+    "next": "Closed canonical full-suite runbook and CI matrix after Claude approval; docs/testing/full-suite-runbook.md now defines the safe default matrix and links from pytest harness docs.",
+    "last_update": "2026-04-30T14:47:09Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-fulltest-materialization-20260430",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Claude review approved canonical full-suite runbook: it covers root pytest, direct smokes, compose config/full smoke, and gated production-posture rows; default commands do not activate OSS, paper, canary, or live execution."
+    ],
+    "review_file": ".orchestrator/reviews/TEST-FULLSUITE-RUNBOOK-CI-MATRIX-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T14:47:09Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "b6625eaf2343b954c30c237510b80aa285742e0e",
+      "commit_subject": "TEST-FULLSUITE-RUNBOOK-CI-MATRIX finalize review",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verification": "python3 -m pytest -q scripts/test_ci_stage0.py scripts/test_smoke_openclaw_activation_ready_e2e.py scripts/test_smoke_oss_activation_ready_matrix.py -> 12 passed",
+        "LLM-Agent": "Codex",
+        "Task-ID": "TEST-FULLSUITE-RUNBOOK-CI-MATRIX",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 10,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 10,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TEST-FULLSUITE-RUNBOOK-CI-MATRIX",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Canonical full-suite runbook and CI matrix is ready for review. Artifact: docs/testing/full-suite-runbook.md linked from docs/testing/pytest-harness.md. Verification: ci_stage0 validate passed; py_compile smoke/gate scripts passed; pytest scripts/test_ci_stage0.py scripts/test_smoke_openclaw_activation_ready_e2e.py scripts/test_smoke_oss_activation_ready_matrix.py passed 12 tests; git diff --check passed.",
+      "status": "done",
+      "created_at": "2026-04-30T14:46:17Z",
+      "resolved_at": "2026-04-30T14:46:52Z"
+    },
+    {
+      "task_id": "TEST-FULLSUITE-RUNBOOK-CI-MATRIX",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Claude approved canonical full-suite runbook and CI matrix; owner may finalize with review artifact .orchestrator/reviews/TEST-FULLSUITE-RUNBOOK-CI-MATRIX-review-claude.md.",
+      "status": "done",
+      "created_at": "2026-04-30T14:46:52Z",
+      "resolved_at": "2026-04-30T14:47:09Z"
+    }
+  ],
+  "blockers": []
+}

@@ -181,7 +181,7 @@ def _make_binding(**kwargs) -> PersonaCapitalBinding:
         persona_id="persona-alpha",
         capital_pool_id="pool-001",
         role="advisor",
-        allowed_deployment_scope="live",
+        allowed_deployment_scope="none",
         status="pending",
         created_at="2026-04-10T00:00:00Z",
     )
@@ -232,12 +232,37 @@ check(
 )
 
 # permits_deployment_to
-canary_b = _make_active(allowed_deployment_scope="canary")
+canary_b = _make_active(role="live_owner", allowed_deployment_scope="canary")
 check("canary scope permits paper", canary_b.permits_deployment_to("paper"))
 check("canary scope permits canary", canary_b.permits_deployment_to("canary"))
 check("canary scope does not permit live", not canary_b.permits_deployment_to("live"))
-pending_b = _make_binding(allowed_deployment_scope="live")
+pending_b = _make_binding(role="live_owner", allowed_deployment_scope="live")
 check("pending binding does not permit any deployment", not pending_b.permits_deployment_to("paper"))
+check(
+    "advisor role cannot claim paper deployment scope",
+    any("deployment ceiling" in e for e in validate_binding(_make_binding(allowed_deployment_scope="paper"))),
+)
+check(
+    "paper_owner cannot claim canary deployment scope",
+    any(
+        "deployment ceiling" in e
+        for e in validate_binding(_make_binding(role="paper_owner", allowed_deployment_scope="canary"))
+    ),
+)
+check(
+    "effective_to must be later than effective_from",
+    any(
+        "effective_to" in e
+        for e in validate_binding(
+            _make_binding(
+                role="live_owner",
+                allowed_deployment_scope="paper",
+                effective_from="2026-04-12T00:00:00Z",
+                effective_to="2026-04-11T00:00:00Z",
+            )
+        )
+    ),
+)
 
 # to_dict / from_dict roundtrip
 b2 = _make_active(mandate="grow alpha", budget=100_000)
@@ -352,9 +377,42 @@ check("persona_may_deploy_to canary (at ceiling)", adm.persona_may_deploy_to("pe
 check("persona_may_deploy_to live (above ceiling) returns False", not adm.persona_may_deploy_to("persona-alpha", "pool-001", "live"))
 
 adm2 = PersonaCapitalBindingStore()
-adm2.create(_make_binding(allowed_deployment_scope="live"))
+adm2.create(_make_binding(role="live_owner", allowed_deployment_scope="live"))
 check("pending binding: persona_may_deploy_to returns False", not adm2.persona_may_deploy_to("persona-alpha", "pool-001", "paper"))
 check("no binding: persona_may_deploy_to returns False", not adm2.persona_may_deploy_to("unknown", "pool-001", "paper"))
+
+adm3 = PersonaCapitalBindingStore()
+adm3.create(_make_binding(role="advisor", allowed_deployment_scope="none"))
+adm3.activate("binding-001", "appr-010")
+check("advisor binding never permits deployment", not adm3.persona_may_deploy_to("persona-alpha", "pool-001", "paper"))
+
+adm4 = PersonaCapitalBindingStore()
+adm4.create(
+    _make_binding(
+        role="live_owner",
+        allowed_deployment_scope="paper",
+        effective_from="2099-01-01T00:00:00Z",
+    )
+)
+adm4.activate("binding-001", "appr-011")
+check(
+    "future-dated binding is not yet admissible",
+    not adm4.persona_may_deploy_to("persona-alpha", "pool-001", "paper"),
+)
+
+adm5 = PersonaCapitalBindingStore()
+adm5.create(
+    _make_binding(
+        role="live_owner",
+        allowed_deployment_scope="paper",
+        effective_to="2000-01-01T00:00:00Z",
+    )
+)
+adm5.activate("binding-001", "appr-012")
+check(
+    "expired binding is not admissible",
+    not adm5.persona_may_deploy_to("persona-alpha", "pool-001", "paper"),
+)
 
 # ---------------------------------------------------------------------------
 # PersonaCapitalBinding persistence

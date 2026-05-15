@@ -1,0 +1,35 @@
+{
+  "feature_id": "PKT-007-deployment-diff",
+  "status": "blocked",
+  "backend_commit": "1700d2100e4d0e3c1d0c086bbf6c462191a0efb3",
+  "bff_contract_version": "pantheon-bff@1700d2100e4d0e3c1d0c086bbf6c462191a0efb3",
+  "source_payload": ".coordination/requests/PKT-007-deployment-diff-ui-done.yaml",
+  "source_commit": "87340e96ce4247ccc177e8dff7579e804991b895",
+  "verified_front_workspace_head": "87340e96ce4247ccc177e8dff7579e804991b895",
+  "review_file": ".coordination/reviews/PKT-007-deployment-diff-review.md",
+  "feedback_request": ".coordination/requests/PKT-007-deployment-diff-frontend-feedback.yaml",
+  "endpoints": [
+    "GET /api/v1/operator/deployment-diff/{plan_id}",
+    "POST /api/v1/operator/commands"
+  ],
+  "contract_paths": [
+    "docs/bff/PKT-007-deployment-diff.md",
+    "docs/examples/PKT-007-deployment-diff.json",
+    "docs/screens/PKT-007-deployment-diff.md",
+    "docs/pantheon-handoffs/PKT-007-deployment-diff/FRONTEND_CHANGE_SPEC.md"
+  ],
+  "pantheon_api_gap": true,
+  "verification_evidence": [
+    "Sibling front production build passed: npm run build",
+    "Targeted sibling ESLint passed for App, AppSidebar, bffClient, GovernanceDeploymentDiff, and governance types",
+    "Pantheon TestClient returns 404 for GET /api/v1/operator/deployment-diff/{plan_id}",
+    "Pantheon TestClient returns 422 for EscalateDiff on POST /api/v1/operator/commands because the command enum omits EscalateDiff",
+    "The mirrored frontend-feedback request exists in Pantheon while the feedback docs remain canonical in the front repo per .coordination/README"
+  ],
+  "followup_scope": [
+    "Implement the published GET /api/v1/operator/deployment-diff/{plan_id} route in Pantheon BFF without inventing new endpoint fields or shadow state",
+    "Add EscalateDiff command acceptance to the existing POST /api/v1/operator/commands surface and keep the published command envelope stable",
+    "Add regression coverage for the deployment diff read path, first_deployment behavior, allowedActions gating, degradation semantics, and EscalateDiff command acceptance",
+    "After Pantheon BFF delivery lands, republish the canonical frontend-feedback and ui-done pair from a truthful Git-visible front commit that contains the request pair, PKT-007 feedback bundle, and GovernanceDeploymentDiff UI files"
+  ]
+}

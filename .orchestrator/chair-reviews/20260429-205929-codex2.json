@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Only Claude2 is paused; idle unpaused capacity can safely support the remaining truth-sync task.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC",
+      "role": "owner",
+      "from": "Claude2",
+      "to": "Codex2",
+      "reason": "Claude2 is rate-limit paused until 2026-04-30T13:30:00Z and this is the only active mainline task; Codex2 can take ownership while Codex remains reviewer."
+    }
+  ],
+  "recommended_focus": [
+    "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC"
+  ]
+}

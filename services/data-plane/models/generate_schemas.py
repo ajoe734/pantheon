@@ -15,7 +15,14 @@ CONTRACT_TYPES = ["future", "option", "future_option", "swap", "forward", "sprea
 OPTION_RIGHTS = ["call", "put"]
 SETTLEMENT_TYPES = ["cash", "physical"]
 MARGIN_TYPES = ["portfolio", "strat_scan", "fixed", "none"]
-SOURCE_CLASSES = ["market", "fundamental", "event", "alternative", "execution_internal", "human_feedback"]
+SOURCE_CLASSES = [
+    "official_reference",
+    "broker_execution",
+    "research_grade",
+    "derivative_analytics",
+    "crypto_analytics",
+    "internal_can",
+]
 AVAILABLE_TIME_POLICIES = ["at_open", "at_reported", "at_ingest", "delayed_minutes", "custom"]
 TIME_PATTERN = "^([01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d$"
 

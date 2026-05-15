@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "PKT-004-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-14T13:07:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PKT-004-SIDECAR-ACCEPTANCE",
+    "title": "Prepare PKT-004 acceptance packet and dependency map",
+    "summary_zh": "平行支援 PKT-004，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "APP-002 Packetization",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "LOOP-001",
+      "LOOP-003"
+    ],
+    "artifacts": [
+      "support/sidecars/PKT-004/PKT-004-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized sidecar acceptance packet: support artifact complete, all three acceptance criteria verified, and parent task PKT-004 reviewed and approved in same pass.",
+    "last_update": "2026-04-14T13:07:01Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PKT-004",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "複審通過：support packet 已對齊目前 ai-status 指派，parent reviewer 與 sidecar reviewer 均改為 Codex。",
+      "複審通過：artifact 仍維持 support-only 範圍，只整理 acceptance checklist、dependency map 與 reviewer gates，未觸碰 canonical truth 或 runtime。",
+      "複審通過：內容已覆蓋 PKT-004 所需的六模組 drilldown taxonomy、Wave 1/Wave 2 readiness 與 inherited caveats，可供 parent owner 吸收到主線 packet。"
+    ],
+    "review_file": "support/sidecars/PKT-004/PKT-004-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T13:07:01Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "b63d3005ec4c559b3a254acdbf77accea5e8591c",
+      "commit_subject": "PKT-004-SIDECAR-ACCEPTANCE: absorb Codex review notes into finalization record",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "PKT-004-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 146,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PKT-004-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Acceptance packet complete: AC checklist (3 criteria), six-module drilldown taxonomy (33 surfaces across Modules A-F), per-module Lovable readiness table with Wave 1/Wave 2 assignments, dependency map (LOOP-001 + LOOP-003 both done), and six reviewer gates. No canonical truth modified. Ready for Qwen review.",
+      "status": "done",
+      "created_at": "2026-04-14T11:25:01Z",
+      "resolved_at": "2026-04-14T11:33:33Z"
+    },
+    {
+      "task_id": "PKT-004-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Qwen to Codex after repeated Qwen capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-14T11:33:33Z",
+      "resolved_at": "2026-04-14T11:50:20Z"
+    },
+    {
+      "task_id": "PKT-004-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support packet reviewed and aligned with current reviewer assignment; owner can finalize after absorbing the packet into the parent workflow.",
+      "status": "done",
+      "created_at": "2026-04-14T11:50:20Z",
+      "resolved_at": "2026-04-14T13:07:01Z"
+    }
+  ],
+  "blockers": []
+}

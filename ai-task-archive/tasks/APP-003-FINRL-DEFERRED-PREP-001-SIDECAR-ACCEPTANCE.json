@@ -1,0 +1,892 @@
+{
+  "version": 1,
+  "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-27T12:47:38Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare APP-003-FINRL-DEFERRED-PREP-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 APP-003-FINRL-DEFERRED-PREP-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5 / Deferred Prep",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved support-only acceptance sidecar. Packet is committed and remains bounded to deferred-prep acceptance/dependency mapping; no canonical FinRL maturity, RL gate, runtime, registry, or governance truth was changed.",
+    "last_update": "2026-04-27T12:47:38Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-FINRL-DEFERRED-PREP-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "support artifact only; acceptance packet matches current repo evidence; FinRL remains criteria-defined and non-activated; no canonical/runtime changes requested"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-27T12:47:38Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "8666cb31f28c8fbf56bc382f295747afd78bee36",
+      "commit_subject": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 120,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet is ready at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Current repo read: FinRL remains criteria-defined; pin + Dockerfile exist; governed adapter, policy I/O mapping, smoke path, and FinRLTool integration proof are still pending in the parent lane.",
+      "status": "done",
+      "created_at": "2026-04-25T04:38:58Z",
+      "resolved_at": "2026-04-25T04:39:09Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet created at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Packet keeps parent in_progress, marks FinRL scaffold evidence as partial, calls out missing adapter/workflow/smoke surfaces, and maps the downstream RLlib/Ray Tune dependency chain.",
+      "status": "done",
+      "created_at": "2026-04-25T04:39:09Z",
+      "resolved_at": "2026-04-25T04:44:17Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T04:44:17Z",
+      "resolved_at": "2026-04-25T04:59:20Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T04:59:20Z",
+      "resolved_at": "2026-04-25T05:01:44Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet refreshed at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Re-verified against current repo: pytest now reports 14 passed, smoke confirms artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only and keeps FinRL canonical truth at criteria-defined.",
+      "status": "done",
+      "created_at": "2026-04-25T05:01:44Z",
+      "resolved_at": "2026-04-25T05:02:13Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T05:02:13Z",
+      "resolved_at": "2026-04-25T05:17:48Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T05:17:48Z",
+      "resolved_at": "2026-04-25T05:22:11Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for post-close review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Parent APP-003-FINRL-DEFERRED-PREP-001 is now archived done; packet now matches that terminal state, re-verifies pytest (14 passed) and smoke (--enable-deferred-prep), and keeps FinRL canonical truth at criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T05:22:11Z",
+      "resolved_at": "2026-04-25T05:24:09Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet is ready for review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Re-verified on 2026-04-25 UTC: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed; python3 services/research/finrl/smoke_test.py --enable-deferred-prep confirms artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only and keeps FinRL canonical truth at criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T05:24:09Z",
+      "resolved_at": "2026-04-25T05:24:48Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T05:24:48Z",
+      "resolved_at": "2026-04-25T05:39:57Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T05:39:57Z",
+      "resolved_at": "2026-04-25T05:51:12Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet is ready for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Current repo read stays bounded: parent is archived done, pytest still reports 14 passed, smoke with --enable-deferred-prep keeps artifact_state=draft and gate_state=closed, and FinRL canonical truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T05:51:12Z",
+      "resolved_at": "2026-04-25T06:30:15Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet remains ready for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Reconfirmed from task-scoped context on 2026-04-25 UTC: parent stays archived done, pytest remains 14 passed, smoke with --enable-deferred-prep keeps artifact_state=draft and gate_state=closed, and FinRL canonical truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T06:30:15Z",
+      "resolved_at": "2026-04-25T06:31:09Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-25T06:31:09Z",
+      "resolved_at": "2026-04-25T06:31:42Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T06:31:42Z",
+      "resolved_at": "2026-04-25T06:53:41Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet remains ready for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Reconfirmed on 2026-04-25 UTC from task-scoped context plus fresh local verification: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed; python3 services/research/finrl/smoke_test.py --enable-deferred-prep keeps artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only and keeps FinRL canonical truth at criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T06:53:41Z",
+      "resolved_at": "2026-04-25T06:53:59Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T06:53:59Z",
+      "resolved_at": "2026-04-25T07:08:59Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T07:08:59Z",
+      "resolved_at": "2026-04-25T07:16:09Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet refreshed with Codex2 review-dispatch note at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Packet remains support-only, parent stays archived done, and reviewer should keep FinRL canonical truth at criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T07:16:09Z",
+      "resolved_at": "2026-04-25T07:16:46Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T07:16:46Z",
+      "resolved_at": "2026-04-25T07:32:02Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T07:32:02Z",
+      "resolved_at": "2026-04-25T07:50:36Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet remains ready for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Reconfirmed on 2026-04-25 UTC from task-scoped context: parent stays archived done, packet scope remains support-only, and no owner-side changes are pending; reviewer should validate the deferred-prep boundary and keep FinRL canonical truth at criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T07:50:36Z",
+      "resolved_at": "2026-04-25T07:51:20Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T07:51:20Z",
+      "resolved_at": "2026-04-25T08:06:29Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T08:06:29Z",
+      "resolved_at": "2026-04-25T08:26:52Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Re-verified current repo evidence with pytest (14 passed) and smoke_test --enable-deferred-prep; packet still frames the parent as deferred-prep only, keeps canonical FinRL truth at criteria-defined, and maps RLlib/Ray Tune downstream dependencies explicitly.",
+      "status": "done",
+      "created_at": "2026-04-25T08:26:52Z",
+      "resolved_at": "2026-04-25T08:27:33Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T08:27:33Z",
+      "resolved_at": "2026-04-25T08:42:47Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T08:42:47Z",
+      "resolved_at": "2026-04-25T09:02:33Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Reconfirmed on 2026-04-25 UTC: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed; python3 services/research/finrl/smoke_test.py --enable-deferred-prep keeps artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only; parent stays archived done; canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T09:02:33Z",
+      "resolved_at": "2026-04-25T09:21:44Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Reconfirmed on 2026-04-25 UTC after current wake-up: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed; python3 services/research/finrl/smoke_test.py --enable-deferred-prep keeps backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only; parent stays archived done; canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T09:21:44Z",
+      "resolved_at": "2026-04-25T09:22:23Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T09:22:23Z",
+      "resolved_at": "2026-04-25T09:37:27Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T09:37:27Z",
+      "resolved_at": "2026-04-25T09:44:10Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet remains ready for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Reconfirmed on 2026-04-25 UTC from task-scoped context: parent stays archived done, packet scope remains support-only, and no owner-side changes are pending; reviewer should validate the deferred-prep boundary and keep FinRL canonical truth at criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T09:44:10Z",
+      "resolved_at": "2026-04-25T09:45:11Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T09:45:11Z",
+      "resolved_at": "2026-04-25T10:00:22Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T10:00:22Z",
+      "resolved_at": "2026-04-25T10:26:07Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25 UTC for the current dispatch: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.18s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep => assertions OK with backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only; reviewer should keep FinRL canonical truth at criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T10:26:07Z",
+      "resolved_at": "2026-04-25T10:26:35Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25 UTC for the current dispatch: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.18s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep => assertions OK with backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only; reviewer should keep FinRL canonical truth at criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T10:26:35Z",
+      "resolved_at": "2026-04-25T10:27:18Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T10:27:18Z",
+      "resolved_at": "2026-04-25T10:42:32Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T10:42:32Z",
+      "resolved_at": "2026-04-25T11:04:38Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25 UTC for the current dispatch: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.14s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep => assertions OK with backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only, reviewer references now point to existing archived evidence, and canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T11:04:38Z",
+      "resolved_at": "2026-04-25T11:05:14Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T11:05:14Z",
+      "resolved_at": "2026-04-25T11:20:23Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T11:20:23Z",
+      "resolved_at": "2026-04-25T11:23:43Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T11:23:04Z: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.15s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep => assertions OK with backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only; parent stays done; canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T11:23:43Z",
+      "resolved_at": "2026-04-25T11:24:16Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T11:24:16Z",
+      "resolved_at": "2026-04-25T11:39:22Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T11:39:22Z",
+      "resolved_at": "2026-04-25T11:43:02Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T11:42:15Z: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.13s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep => assertions OK with backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only; parent stays done; canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T11:43:02Z",
+      "resolved_at": "2026-04-25T11:44:23Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet remains current for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Reconfirmed on 2026-04-25T11:42:15Z: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.13s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep => assertions OK with backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet stays support-only; parent remains done; canonical FinRL truth stays criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T11:44:23Z",
+      "resolved_at": "2026-04-25T11:45:05Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T11:45:05Z",
+      "resolved_at": "2026-04-25T12:00:06Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T12:00:06Z",
+      "resolved_at": "2026-04-25T12:02:09Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T12:01:26Z: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.21s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep => assertions OK with backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only; parent stays done; canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T12:02:09Z",
+      "resolved_at": "2026-04-25T12:04:19Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T12:12:25Z: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.13s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep => assertions OK with backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only; parent stays done; canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T12:04:19Z",
+      "resolved_at": "2026-04-25T12:04:46Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T12:04:46Z",
+      "resolved_at": "2026-04-25T12:19:53Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T12:19:53Z",
+      "resolved_at": "2026-04-25T12:23:37Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T12:22:48Z: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.14s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep => assertions OK with backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed. Packet remains support-only; parent stays done; canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T12:23:37Z",
+      "resolved_at": "2026-04-25T12:25:28Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T12:25:05Z: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.31s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep => assertions OK with backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only; parent stays done; canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T12:25:28Z",
+      "resolved_at": "2026-04-25T12:26:15Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T12:26:15Z",
+      "resolved_at": "2026-04-25T12:41:15Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T12:41:15Z",
+      "resolved_at": "2026-04-25T12:43:14Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T12:42:45Z: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.13s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep => assertions OK with backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only; parent stays done; canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T12:43:14Z",
+      "resolved_at": "2026-04-25T12:45:09Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T12:44:21Z: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.13s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep => assertions OK with backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only; parent stays done; canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T12:45:09Z",
+      "resolved_at": "2026-04-25T12:45:51Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T12:45:51Z",
+      "resolved_at": "2026-04-25T13:01:04Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T13:01:04Z",
+      "resolved_at": "2026-04-25T13:21:40Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet remains ready for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Reconfirmed from task-scoped context on 2026-04-25T13:19:20Z: pytest remains 14 passed, smoke with --enable-deferred-prep keeps artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy, and canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T13:21:40Z",
+      "resolved_at": "2026-04-25T13:22:07Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-25T13:22:07Z",
+      "resolved_at": "2026-04-25T13:22:20Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T13:22:20Z",
+      "resolved_at": "2026-04-25T13:41:13Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T13:40:49Z: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.15s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep => assertions OK with backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only; parent stays done; canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T13:41:13Z",
+      "resolved_at": "2026-04-25T13:41:50Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-25T13:41:50Z",
+      "resolved_at": "2026-04-25T13:42:04Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T13:42:04Z",
+      "resolved_at": "2026-04-25T14:01:04Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T14:00:42Z: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.14s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep => assertions OK with backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only; parent stays done; canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T14:01:04Z",
+      "resolved_at": "2026-04-25T14:01:33Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-25T14:01:33Z",
+      "resolved_at": "2026-04-25T14:01:50Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T14:01:50Z",
+      "resolved_at": "2026-04-25T14:05:28Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T14:04:57Z: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.22s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep => assertions OK with backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only; parent stays done; canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T14:05:28Z",
+      "resolved_at": "2026-04-25T14:06:05Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T14:06:05Z",
+      "resolved_at": "2026-04-25T14:21:17Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T14:21:17Z",
+      "resolved_at": "2026-04-25T14:41:33Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T14:41:33Z",
+      "resolved_at": "2026-04-25T14:56:43Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T14:56:43Z",
+      "resolved_at": "2026-04-25T15:00:34Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T14:59:56Z: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.14s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep => assertions OK with backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only; parent stays done; canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T15:00:34Z",
+      "resolved_at": "2026-04-25T15:01:19Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T15:01:19Z",
+      "resolved_at": "2026-04-25T15:16:31Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T15:16:31Z",
+      "resolved_at": "2026-04-25T15:36:13Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T15:35:46Z: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.15s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep preserves backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only; parent stays done; canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T15:36:13Z",
+      "resolved_at": "2026-04-25T15:38:00Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T15:37:35Z: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.18s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep preserves backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only; parent stays done; canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T15:38:00Z",
+      "resolved_at": "2026-04-25T15:38:45Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T15:38:45Z",
+      "resolved_at": "2026-04-25T15:53:46Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T15:53:46Z",
+      "resolved_at": "2026-04-25T16:13:17Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T16:12:34Z: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.14s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep preserves backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only; parent stays done; canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T16:13:17Z",
+      "resolved_at": "2026-04-25T16:15:26Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T16:15:26Z",
+      "resolved_at": "2026-04-25T16:30:34Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T16:30:34Z",
+      "resolved_at": "2026-04-25T16:34:44Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T16:34:20Z: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.14s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep => assertions OK with backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only; parent stays done; canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T16:34:44Z",
+      "resolved_at": "2026-04-25T16:36:36Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T16:34:20Z: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.14s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep => assertions OK with backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only; parent stays done; canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-25T16:36:36Z",
+      "resolved_at": "2026-04-25T16:37:13Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-25T16:37:13Z",
+      "resolved_at": "2026-04-25T16:37:26Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T16:37:26Z",
+      "resolved_at": "2026-04-27T12:25:12Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-FINRL-DEFERRED-PREP-001/APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-27T12:24:50Z: python3 -m pytest services/research/finrl/test_adapter.py -q => 14 passed in 0.14s; python3 services/research/finrl/smoke_test.py --enable-deferred-prep => assertions OK with backend=stub_finrl, artifact_state=draft, deployment_stage=none, candidate_next_state=candidate, gate_state=closed, artifact_family=rl_policy. Packet remains support-only; parent stays done; canonical FinRL truth remains criteria-defined with no RL gate reopen claim.",
+      "status": "done",
+      "created_at": "2026-04-27T12:25:12Z",
+      "resolved_at": "2026-04-27T12:26:11Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-27T12:26:11Z",
+      "resolved_at": "2026-04-27T12:26:34Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-27T12:26:34Z",
+      "resolved_at": "2026-04-27T12:45:39Z"
+    },
+    {
+      "task_id": "APP-003-FINRL-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Codex2 review approved: support-only acceptance packet matches live verification (FinRL tests 14 passed; deferred-prep smoke preserves draft/no-deployment/closed-gate semantics). Keep canonical FinRL truth at criteria-defined; no RL gate reopen or activation claim.",
+      "status": "done",
+      "created_at": "2026-04-27T12:45:39Z",
+      "resolved_at": "2026-04-27T12:47:38Z"
+    }
+  ],
+  "blockers": []
+}

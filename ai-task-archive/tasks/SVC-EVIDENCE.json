@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "SVC-EVIDENCE",
+  "archived_at": "2026-04-28T11:37:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-EVIDENCE",
+    "title": "Wrap telemetry-ingest and lineage-read into deployable HTTP services",
+    "summary_zh": "替 telemetry-ingest 和 lineage-read 補 HTTP wrapper、Dockerfile、health endpoint 與 compose wiring。",
+    "phase": "Phase 4: Service Layer Completion",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "depends_on": [
+      "SVC-BASELINE"
+    ],
+    "artifacts": [
+      "services/telemetry/ingest_svc.py",
+      "services/telemetry/lineage_read/service.py"
+    ],
+    "acceptance": [
+      "telemetry-ingest and lineage-read are deployable services with health surfaces",
+      "evidence services are wired into the target single-VM stack"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase4-2026-04-15-service-layer-completion",
+      "phase": "phase4",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion",
+      "session_file": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-28T09:09:29Z",
+      "session_id": "phase4-2026-04-15-service-layer-completion",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized approved task and closed it. Telemetry-ingest and lineage-read deployable HTTP service evidence is accepted and wired into compose.",
+    "last_update": "2026-04-28T11:37:30Z",
+    "review_notes_zh": [
+      "已審閱 telemetry-ingest/lineage-read HTTP surfaces、health endpoints 與 compose wiring；review 中補上 lineage-read script-mode/Docker entrypoint 的 repo root import 修正，避免 /workspace/services/lineage-read/main.py 直接啟動時找不到 services package。",
+      "驗證通過：python3 -m unittest services/lineage-read/test_main.py；python3 -m unittest services.telemetry.test_main_routes services.telemetry.lineage_read.test_service；docker compose -f docker-compose.yml config；docker compose -f docker-compose.control.yml config；另以 PORT=39094 timeout 3 python3 services/lineage-read/main.py 確認 server 可啟動並載入 corpus。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T11:37:30Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "82a6efd2491979f8711cf89f59977907f9841c15",
+      "commit_subject": "SVC-EVIDENCE finalize evidence services",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-EVIDENCE",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 26,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 9,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-EVIDENCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented deployable evidence HTTP surfaces: lineage-read now wraps the LIN-002 LineageReadService projection engine with health/readiness semantics and projection routes; compose wiring sets LINEAGE_READ_CORPUS_PATH. Verification: python3 -m unittest services/lineage-read/test_main.py; python3 -m unittest services.telemetry.test_main_routes services.telemetry.lineage_read.test_service; docker compose -f docker-compose.yml config; docker compose -f docker-compose.control.yml config.",
+      "status": "done",
+      "created_at": "2026-04-28T11:29:54Z",
+      "resolved_at": "2026-04-28T11:36:05Z"
+    },
+    {
+      "task_id": "SVC-EVIDENCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved after fixing lineage-read direct-entry import path; HTTP surfaces, health routes, projection routes, and compose wiring verified. Owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-28T11:36:05Z",
+      "resolved_at": "2026-04-28T11:37:30Z"
+    }
+  ],
+  "blockers": []
+}

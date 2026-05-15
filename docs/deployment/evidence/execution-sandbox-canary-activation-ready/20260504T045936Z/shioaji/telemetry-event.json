@@ -1,0 +1,17 @@
+{
+  "status": "event_shape_validated",
+  "event": {
+    "event_type": "broker_order_smoke.validate_only",
+    "task_id": "P2-BROKER-SANDBOX-ORDER-001",
+    "source_task_id": "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY",
+    "provider": "Shioaji",
+    "mode": "test_key_simulation",
+    "generated_at": "2026-05-04T05:00:08Z",
+    "account_ref": "SHIOAJI-SIM-001",
+    "symbol": "2330.TW",
+    "side": "BUY",
+    "quantity": 1,
+    "production_live_enabled": false,
+    "raw_secret_material_present": false
+  }
+}

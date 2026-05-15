@@ -1,6 +1,6 @@
 # DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY
 
-Last updated: 2026-04-09
+Last updated: 2026-05-04
 Status: canonical database ownership and cluster policy for Pantheon
 Tier: L1 Platform Architecture & Policy
 Scope: shared PostgreSQL cluster policy, schema ownership, write boundaries, and cross-service read/write rules
@@ -28,7 +28,7 @@ Pantheon v1 採：
 > **shared Postgres cluster + strict write ownership + API/read-only sharing**
 
 ### 2.2 不採 DB-per-service
-v1 不強制每個服務獨立 DB instance。  
+v1 不強制每個服務獨立 DB instance。
 原因：
 - domain 關聯性強
 - 需要高效 lineage / governance / reconciliation join
@@ -75,6 +75,93 @@ v1 不強制每個服務獨立 DB instance。
 | runtime | runtime-manager-svc |
 | telemetry | telemetry-svc |
 | incident / postmortem / evolution | telemetry-evolution-svc |
+
+---
+
+## 4.1 Production ownership wave 2 inventory
+
+This inventory records the service stores migrated or fenced in
+`SVC-POSTGRES-PRODUCTION-OWNERSHIP-WAVE2`. Dev/local rollback remains JSON or
+JSONL by backend env, but staging/prod env examples select Postgres owner
+stores so services do not require cross-service volume writes.
+
+| Service | Dev fallback | Postgres owner table | Write owner | Non-owner read contract |
+|---|---|---|---|---|
+| consultation-svc | `consultation` JSONL store | `consult_svc.lifecycle_events`, `consult_svc.audit_events`, `consult_svc.memo_publications`, `consult_svc.outbox_records` | consultation-svc | owner API or read role only |
+| source-ingest | `source_evidence.jsonl` | `source_ingest.source_evidence` | source-ingest | owner API or read role only |
+| search-svc | `search-index.jsonl` | `search_svc.search_index_snapshots` | search-svc | owner API or read role only |
+| search-svc evidence view | source evidence JSONL read fallback | `source_ingest.source_evidence` | source-ingest | search-svc reads through read-only repository/role |
+| training-session-svc | `teaching_events.jsonl` | `training_session.teaching_events` | training-session-svc | owner API or read role only |
+| policy-learning-svc | `policy_learning_jobs.json` | `policy_learning.jobs` | policy-learning-svc | owner API or read role only |
+| research-orchestrator-svc | `research_events.jsonl` | `research_orchestrator.research_events` | research-orchestrator-svc | owner API or read role only |
+| research-worker-gateway-svc | `worker_events.jsonl` | `research_worker_gateway.worker_events` | research-worker-gateway-svc | owner API or read role only |
+
+Compose wiring keeps the JSON/JSONL paths mounted for dev rollback. The
+production env example selects the Postgres backends with `DATABASE_URL` as the
+shared cluster DSN; service-specific `*_DSN` values can override it for stricter
+role separation.
+
+## 4.2 Production ownership wave 3 inventory
+
+This inventory records the control-plane stores migrated in
+`SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3`. Dev/local rollback remains JSON or
+JSONL by backend env; staging/prod env examples select Postgres owner stores.
+
+| Service | Dev fallback | Postgres owner table | Write owner | Non-owner read contract |
+|---|---|---|---|---|
+| governance-svc | `approval_decisions.json` | `governance.approval_decisions` | governance-svc | owner API or read role only |
+| governance-svc audit | `audit.jsonl` | `governance.audit_events` | governance-svc | owner API or read role only |
+| capital-pool-svc | `capital_pools.json` | `capital.capital_pools` | capital-pool-svc | owner API or read role only |
+| capital-pool-svc bindings | `persona_capital_bindings.json` | `capital.persona_capital_bindings` | capital-pool-svc | owner API or read role only |
+| capital-pool-svc audit | `capital_audit.jsonl` | `capital.audit_events` | capital-pool-svc | owner API or read role only |
+| incident-svc | `incidents.json` incident records | `incident.incident_cases` | incident-svc | owner API or read role only |
+| postmortem-svc | `incidents.json` postmortem records | `incident.postmortems` | postmortem-svc | owner API or read role only |
+| promotion-svc approvals | `approval_decisions.json` | `promotion.approval_decisions` | promotion-svc | owner API or read role only |
+| promotion-svc deployment plans | `deployment_plans.json` | `promotion.deployment_plans` | promotion-svc | owner API or read role only |
+| promotion-svc deployment extensions | `deployment_plan_extensions.json` | `promotion.deployment_plan_extensions` | promotion-svc | owner API or read role only |
+| reconciliation-drift-svc evaluations | `drift_evaluations.json` | `reconciliation_drift.drift_evaluations` | reconciliation-drift-svc | owner API or read role only |
+| reconciliation-drift-svc alerts | `alert_handoffs.json` | `reconciliation_drift.alert_handoffs` | reconciliation-drift-svc | owner API or read role only |
+| memory-svc | `institutional_memory_entries.json` | `memory.institutional_memory_entries` | memory-svc | owner API or read role only |
+
+The `PostgresJsonOwnerStore` foundation primitive enforces explicit owner-store
+construction and supports read-only mode for non-owner consumers. Compose keeps
+the local data volumes so operators can roll staging/prod back to JSON/JSONL by
+changing only the backend env values.
+
+## 4.3 Production ownership wave 4 — hard enforcement
+
+Wave 4 (`SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4`) pushes Postgres ownership
+from *env-gated adoption* to *staging/prod hard enforcement*.
+
+### What changed
+
+| Component | Before wave 4 | After wave 4 |
+|---|---|---|
+| `docker-compose.control.yml` service defaults | `PANTHEON_PERSISTENCE_POSTURE:-dev`, backends `:-json`/`:-jsonl` | `PANTHEON_PERSISTENCE_POSTURE:-production`, backends `:-postgres` |
+| `docker-compose.staging-full.yml` service overrides | No posture override; inherits `dev` from dev compose | Adds `PANTHEON_PERSISTENCE_POSTURE:-production` + postgres backend defaults for all extended services |
+| `services/source_search_posture.py` ENFORCED_MODES | `{"staging", "prod", "production"}` — missing `staging-live` | `{"stage", "staging", "staging-live", "prod", "production"}` + `startswith` check matching `persistence_posture.py` |
+
+### Enforcement contract
+
+- **Staging/prod**: `docker-compose.control.yml` and `docker-compose.staging-full.yml` default backends to `postgres` and posture to `production`. A service that starts without a valid Postgres DSN and postgres backends will fail during module import via `require_persistence_posture` or `require_source_search_posture`.
+- **Dev single-VM**: `docker-compose.yml` retains `PANTHEON_PERSISTENCE_POSTURE:-dev` and `*_BACKEND:-json`/`:-jsonl` defaults. Dev rollback remains available.
+- **Override**: Operators may still set `PANTHEON_PERSISTENCE_POSTURE=dev` explicitly to use json/jsonl fallback, but this must be a deliberate choice — not the staging compose default.
+
+### Migration path
+
+For operators migrating an existing staging deployment:
+
+1. Ensure all wave 2 and wave 3 Postgres stores are bootstrapped (tables exist in the shared cluster).
+2. Deploy with the updated compose and `env/prod-control.env.example` (unchanged — already selects postgres backends).
+3. If rollback is needed for a specific service, set `PANTHEON_PERSISTENCE_POSTURE=dev` and the relevant `*_BACKEND=json` or `*_BACKEND=jsonl` in the env file. The local data volume retains the JSONL/JSON fallback data.
+4. Re-enable the Postgres backend by removing the dev override and restarting.
+
+### Services covered
+
+All services from waves 2 and 3 are now hard-enforced in staging/prod:
+
+- Control-plane compose: governance, capital, incidents, postmortems, promotion, memory, reconciliation-drift
+- Staging-full overlay: consultation, training-session, policy-learning, research-orchestrator, research-worker-gateway, source-ingest, search
 
 ---
 

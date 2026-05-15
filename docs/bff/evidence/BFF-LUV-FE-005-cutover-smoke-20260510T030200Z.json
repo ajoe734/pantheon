@@ -1,0 +1,78 @@
+{
+  "task_id": "BFF-LUV-FE-005",
+  "generated_at": "2026-05-10T03:02:00Z",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "target_url": "https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io",
+
+  "dependency_smoke_refs": {
+    "anonymous_route_smoke": {
+      "evidence_ref": "docs/bff/evidence/BFF-LUV-SEM-006-lupin-dev-live-probe-20260509T113136Z.json",
+      "source_task": "BFF-LUV-SEM-006",
+      "result": "63 passed, 6 warnings",
+      "openapi_path_count": 338
+    },
+    "authenticated_dto_write_smoke": {
+      "evidence_ref": "docs/bff/evidence/BFF-LUV-AUTHED-LIVE-001-live-smoke-20260510T024935Z.json",
+      "source_task": "BFF-LUV-AUTHED-LIVE-001",
+      "result": {
+        "passed": 37,
+        "failed": 0,
+        "read_probes": 30,
+        "write_probes": 5,
+        "live_capital_side_effects": false
+      }
+    }
+  },
+
+  "execute_plans_checks": {
+    "branch": "feat/bff-luv-fe-001",
+    "commit_before_closeout": "3f33e60",
+    "commit_after_closeout": "b276e50",
+    "remote": "origin https://github.com/ajoe734/execute-plans.git",
+    "push_status": "pushed",
+    "env_file": ".env",
+    "env_vars_confirmed": {
+      "VITE_BFF_MODE": "live",
+      "VITE_BFF_BASE_URL": "https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io"
+    },
+    "npm_test": {
+      "command": "npm run test -- --run",
+      "result": "47 test files passed, 418 tests passed",
+      "duration_seconds": 108
+    },
+    "npm_build": {
+      "command": "npm run build",
+      "result": "✓ built in 1m 1s — 2835 modules transformed, dist/assets/index-DYyrWY1z.js 1903kB (gzip 527kB)",
+      "warnings": [
+        "chunk size >500kB (pre-existing, not task-introduced)",
+        "realtime.ts mixed static/dynamic import (pre-existing)"
+      ]
+    },
+    "dirty_files_after_commit": []
+  },
+
+  "pantheon_checks": {
+    "branch": "backend-dev-publish-20260429",
+    "commit": "3a0a2d01",
+    "remote": "origin https://github.com/ajoe734/pantheon.git"
+  },
+
+  "handoff_decision": {
+    "VITE_BFF_MODE_live_allowed": true,
+    "VITE_BFF_REAL_WRITES_true_allowed": true,
+    "live_capital_side_effects_gate": "blocked — liveCapitalSideEffects=false confirmed in smoke; production real-capital paths remain fail-closed per PAPER_CANARY_LIVE_POLICY",
+    "remaining_route_families": "all authenticated+write families pass smoke; no blocked families",
+    "operator_recommendation": "execute-plans is ready for Lovable live cutover on feat/bff-luv-fe-001; VITE_BFF_REAL_WRITES may be enabled in Lovable env for write flows; no capital-side effects gate is lifted"
+  },
+
+  "acceptance_criteria": {
+    "all_dependencies_done": true,
+    "evidence_published": true,
+    "execute_plans_commit_recorded": "b276e50",
+    "pantheon_commit_recorded": "3a0a2d01",
+    "final_lovable_env_live_write_handoff_published": true
+  },
+
+  "summary": "All 5 dependency tasks are done. Anonymous smoke: 63 passed. Authenticated DTO+write smoke: 37/37 passed. Execute-plans: 418 tests pass, build succeeds. VITE_BFF_MODE=live already set in .env. VITE_BFF_REAL_WRITES=true allowed. execute-plans commit b276e50 pushed. Pantheon commit 3a0a2d01."
+}

@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "task_id": "SVC-OSS-ACTIVATION-READY-DISPATCH-KERNEL",
+  "archived_at": "2026-04-30T05:14:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OSS-ACTIVATION-READY-DISPATCH-KERNEL",
+    "title": "Build gate-aware research and learning dispatch kernel",
+    "summary_zh": "建立 research-worker-gateway / research-orchestrator / policy-learning 的 gate-aware 實際 job dispatch kernel：gate 預設關閉但開 gate 後可執行 offline/activation-ready worker。",
+    "phase": "OSS Activation-Ready Development",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE"
+    ],
+    "artifacts": [
+      "services/research-worker-gateway",
+      "services/research",
+      "services/policy-learning",
+      "services/registry/experiments",
+      "docker-compose.yml"
+    ],
+    "acceptance": [
+      "default env still rejects production paper canary live modes",
+      "explicit activation gate can execute declared local worker entrypoints",
+      "job state persists input status artifact refs stdout stderr and exit code",
+      "research and policy-learning route activation-ready jobs through gateway",
+      "focused closed-gate and enabled-offline tests pass"
+    ],
+    "next": "Finalized review-approved gate-aware dispatch kernel. Task commit 11fcac7 routes explicit offline activation-ready jobs from research-orchestrator and policy-learning through research-worker-gateway, requires requested_mode=offline plus dispatch_mode=offline, records gateway refs/job state, and keeps production/paper/canary/live fail-closed. Verification: python3 -m pytest services/research-worker-gateway/tests/test_research_worker_gateway_gate_dispatch.py services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py services/research-worker-gateway/tests/test_research_worker_gateway_rejection_policy.py services/research-worker-gateway/tests/test_research_worker_gateway_http_service.py services/research/tests/test_research_orchestrator_http_service.py services/policy-learning/tests/test_policy_learning_http_service.py services/policy-learning/tests/test_policy_learning_gateway_routing.py services/policy-learning/tests/test_policy_learning_compose_activation.py (39 passed).",
+    "last_update": "2026-04-30T05:14:48Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-materialization-20260430",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Review approved: gateway、research-orchestrator、policy-learning 的 open-gate path 都要求 explicit offline mode，paper/canary/live 仍 fail-closed。",
+      "Verification: python3 -m pytest services/research-worker-gateway/tests/test_research_worker_gateway_gate_dispatch.py services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py services/research-worker-gateway/tests/test_research_worker_gateway_rejection_policy.py services/research-worker-gateway/tests/test_research_worker_gateway_http_service.py services/research/tests/test_research_orchestrator_http_service.py services/policy-learning/tests/test_policy_learning_http_service.py services/policy-learning/tests/test_policy_learning_gateway_routing.py services/policy-learning/tests/test_policy_learning_compose_activation.py (39 passed)."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T05:14:48Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "11fcac785d153677d9131874741b84e171986219",
+      "commit_subject": "SVC-OSS-ACTIVATION-READY-DISPATCH-KERNEL gate offline dispatch",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-OSS-ACTIVATION-READY-DISPATCH-KERNEL",
+        "Reviewer": "Codex",
+        "Verification": "python3 -m pytest services/research-worker-gateway/tests/test_research_worker_gateway_gate_dispatch.py services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py services/research-worker-gateway/tests/test_research_worker_gateway_rejection_policy.py services/research-worker-gateway/tests/test_research_worker_gateway_http_service.py services/research/tests/test_research_orchestrator_http_service.py services/policy-learning/tests/test_policy_learning_http_service.py services/policy-learning/tests/test_policy_learning_gateway_routing.py services/policy-learning/tests/test_policy_learning_compose_activation.py (39 passed)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 50,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 6,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OSS-ACTIVATION-READY-DISPATCH-KERNEL",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T04:37:52Z",
+      "resolved_at": "2026-04-30T04:39:43Z"
+    },
+    {
+      "task_id": "SVC-OSS-ACTIVATION-READY-DISPATCH-KERNEL",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T04:42:42Z",
+      "resolved_at": "2026-04-30T04:44:19Z"
+    },
+    {
+      "task_id": "SVC-OSS-ACTIVATION-READY-DISPATCH-KERNEL",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Gate-aware dispatch kernel ready for review: gateway closed/open gate tests pass; research-orchestrator and policy-learning route offline activation-ready adapters through research-worker-gateway; production/paper/canary/live remain fail-closed. Verification: pytest -q services/research-worker-gateway/tests/test_research_worker_gateway_gate_dispatch.py services/research-worker-gateway/tests/test_research_worker_gateway_http_service.py services/research/tests/test_research_orchestrator_http_service.py services/policy-learning/tests/test_policy_learning_gateway_routing.py services/policy-learning/tests/test_policy_learning_http_service.py services/research-worker-gateway/tests/test_research_worker_gateway_compose_activation.py services/research/tests/test_research_orchestrator_compose_activation.py services/policy-learning/tests/test_policy_learning_compose_activation.py (30 passed).",
+      "status": "done",
+      "created_at": "2026-04-30T04:46:52Z",
+      "resolved_at": "2026-04-30T04:51:20Z"
+    },
+    {
+      "task_id": "SVC-OSS-ACTIVATION-READY-DISPATCH-KERNEL",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Changes requested: open-gate dispatch must remain explicitly offline-only. Current research-orchestrator accepts dispatch_mode=not_a_mode for qlib with PANTHEON_OFFLINE_GATE_ENABLED=true and records 201 dispatched via gateway; gateway also executes qlib with requested_mode=stub plus dispatch_mode=offline. Add fail-closed tests and require explicit offline mode before routing/executing. Focused handoff suite still passes: 30 passed.",
+      "status": "done",
+      "created_at": "2026-04-30T04:51:20Z",
+      "resolved_at": "2026-04-30T04:51:20Z"
+    },
+    {
+      "task_id": "SVC-OSS-ACTIVATION-READY-DISPATCH-KERNEL",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review requested after tightening open-gate dispatch to explicit offline-only: research-orchestrator now requires requested_mode=offline and dispatch_mode=offline before gateway routing; research-worker-gateway rejects dispatch_mode=offline unless requested_mode=offline before worker execution; policy-learning requires requested_mode=offline before gateway routing. Added fail-closed regression tests for invalid mixed modes. Verification: pytest services/research-worker-gateway/tests/test_research_worker_gateway_gate_dispatch.py services/research-worker-gateway/tests/test_research_worker_gateway_qlib_activation.py services/research-worker-gateway/tests/test_research_worker_gateway_rejection_policy.py services/research-worker-gateway/tests/test_research_worker_gateway_http_service.py services/research/tests/test_research_orchestrator_http_service.py services/policy-learning/tests/test_policy_learning_http_service.py services/policy-learning/tests/test_policy_learning_gateway_routing.py services/policy-learning/tests/test_policy_learning_compose_activation.py (39 passed).",
+      "status": "done",
+      "created_at": "2026-04-30T04:54:27Z",
+      "resolved_at": "2026-04-30T04:57:33Z"
+    },
+    {
+      "task_id": "SVC-OSS-ACTIVATION-READY-DISPATCH-KERNEL",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: explicit offline-only dispatch guards verified across gateway, research-orchestrator, and policy-learning; focused pytest suite passed (39 passed). Owner should finalize with task-scoped commit and done closeout.",
+      "status": "done",
+      "created_at": "2026-04-30T04:57:33Z",
+      "resolved_at": "2026-04-30T05:14:49Z"
+    }
+  ],
+  "blockers": []
+}

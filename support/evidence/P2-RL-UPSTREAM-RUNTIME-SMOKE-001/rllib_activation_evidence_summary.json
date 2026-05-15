@@ -1,0 +1,78 @@
+{
+  "created_at": "2026-05-02T12:00:30Z",
+  "dataset_evidence": {
+    "data_frequency": "daily",
+    "decision_focus": "rebalance",
+    "instruments": [
+      "EQ_AAA",
+      "EQ_BBB",
+      "EQ_CCC"
+    ],
+    "num_instruments": 3,
+    "ohlcv_fields_present": true,
+    "periods_per_instrument": 30,
+    "prepared_dataset": {
+      "activation_floor_check": {
+        "eval_passes": true,
+        "min_eval_steps_required": 3,
+        "min_train_steps_required": 10,
+        "train_passes": true
+      },
+      "flattened_observation_dim": 72,
+      "joint_action_cardinality": 125,
+      "num_eval_steps": 9,
+      "num_train_steps": 18,
+      "observation_shape": [
+        9,
+        8
+      ]
+    },
+    "source_ref": "synthetic-ohlcv://bounded-fixture/30-periods",
+    "total_records": 90
+  },
+  "framework": "rllib",
+  "governance_boundary": {
+    "broker_session_enabled": false,
+    "capital_binding": false,
+    "deployment_stage": "none",
+    "direct_governance_write": false,
+    "gate_state": "closed",
+    "order_routing_enabled": false,
+    "paper_canary_live_promotion": false,
+    "raw_secrets_persisted": false
+  },
+  "handoff_artifact_manifest": {
+    "artifacts": {
+      "artifact_bundle": "/tmp/pantheon_rl_smoke/rllib/artifact_bundle.json",
+      "candidate_packet": "/tmp/pantheon_rl_smoke/rllib/candidate_packet.json",
+      "evaluator_packet": "/tmp/pantheon_rl_smoke/rllib/evaluator_packet.json",
+      "manifest": "/tmp/pantheon_rl_smoke/rllib/manifest.json",
+      "registry_entry": "/tmp/pantheon_rl_smoke/rllib/registry_entry.json"
+    },
+    "backend": "stub_rllib",
+    "checksums": {
+      "artifact_bundle": "sha256:6330c01862f4ece75484784d3e7bf7fe751ebd36ac9f1e3ee8ff5126611119d5",
+      "candidate_packet": "sha256:f9a3771e3808c306fa6069fa2ee04e22560e7c177fe92d01d3066d149ef01129",
+      "evaluator_packet": "sha256:2017e008fe2579e2e27e9a7515d8f32f19697f3fa1912e49ac550ed0319c1bd6",
+      "registry_entry": "sha256:8c9106dea911afcc7fbbe1ac01a7f20d2cc3ff28d5c7de60f9ccbfe2079b1e58"
+    },
+    "created_at": "2026-05-02T12:00:30Z",
+    "output_dir": "/tmp/pantheon_rl_smoke/rllib",
+    "run_id": "rllib-stub-b938543c5d82"
+  },
+  "handoff_backend": "stub_rllib",
+  "real_backend_attempt": {
+    "backend": "rllib_ppo",
+    "cause_message": "No module named 'ray'",
+    "cause_type": "ModuleNotFoundError",
+    "error_type": "RLlibDeferredPrepError",
+    "message": "RLlib backend requested but package import failed; install services/research/rllib requirements first",
+    "silent_stub_fallback": false,
+    "status": "dependency_or_config_error",
+    "traceback_tail": [
+      "services.research.rllib.adapter.rllib_adapter.RLlibDeferredPrepError: RLlib backend requested but package import failed; install services/research/rllib requirements first\n"
+    ]
+  },
+  "source_ref": "synthetic-ohlcv://bounded-fixture/30-periods",
+  "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001"
+}

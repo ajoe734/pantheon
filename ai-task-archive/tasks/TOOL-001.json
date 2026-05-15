@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "task_id": "TOOL-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "TOOL-001",
+    "title": "Scaffold shared local orchestrator runtime",
+    "phase": "Tooling",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [
+      "OPS-003"
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/watch_events.py",
+      ".orchestrator/config.json",
+      ".llm-inbox/claude.md",
+      ".github/agents/orchestrator-worker.agent.md",
+      "docs/agent-orchestrator.md"
+    ],
+    "acceptance": [
+      "watcher emits deduplicated wake events from shared state changes",
+      "supervisor dispatches provider workers through CLI or inbox adapters",
+      "approval broker, provider config, and runtime docs are documented"
+    ],
+    "next": "Canonical local runtime now lives under .orchestrator/, .llm-inbox/, and .github/agents/. tools/pantheon-local remains historical reference only.",
+    "last_update": "2026-04-05T05:27:27Z",
+    "summary_zh": "建立共享的本機 orchestrator runtime，讓 watcher、supervisor、approval broker 與 provider inbox 在同一套共享狀態檔上協作。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

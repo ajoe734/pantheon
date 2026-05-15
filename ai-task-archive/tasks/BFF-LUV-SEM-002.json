@@ -1,0 +1,168 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-SEM-002",
+  "archived_at": "2026-05-09T10:59:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-SEM-002",
+    "title": "Complete execute-plans BFF command execution bridge",
+    "summary_zh": "把 final BFF command routes 從 generic accepted payload 補成 command_store/domain receipt 語意。",
+    "phase": "BFF Execute-Plans Semantic Completion 2026-05-09",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-09-execute-plans-semantic-completion/BFF-LUV-SEM-002-command-execution-bridge.md"
+    ],
+    "acceptance": [
+      "affected command routes write command records",
+      "idempotency replay and conflict are tested",
+      "no live capital side effects are enabled",
+      "focused command tests and final wiring tests pass"
+    ],
+    "next": "Closeout complete: artifact Verification updated to final 11/138 result (b02bce71). Bridge suite 11 passed; focused suite 138 passed, 13 pre-existing warnings. Closeout commit 9512e5eb. Approved by Codex2.",
+    "last_update": "2026-05-09T10:59:26Z",
+    "task_class": "semantic_completion",
+    "auto_created_by": "Codex",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "No blocking findings: b02bce71 checks stored command_store request_hash on durable replay and keeps same-key/different-payload conflict at 409 after memory clear.",
+      "No blocking findings: server-generated confirm-token, deployment, and sentinel remediation build retries replay stably and keep liveCapitalSideEffects=false.",
+      "Local verification passed: py_compile main.py models.py test_final_command_execution_bridge.py; bridge suite 11 passed; focused BFF suite 138 passed with 13 existing warnings.",
+      "Owner closeout should update the task artifact Verification section to the latest 11/138 result before the task-scoped done commit."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-09T10:59:26Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "9512e5eb307ec26fa5a5ce345ef2f80bef03f3e9",
+      "commit_subject": "BFF-LUV-SEM-002: closeout — update artifact Verification to final 11/138 result",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BFF-LUV-SEM-002",
+        "Reviewer": "Codex2",
+        "bridge suite": "11 passed",
+        "focused BFF command/final wiring suite": "138 passed, 13 pre-existing warnings"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 29,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 15,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-SEM-002",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-09T05:49:37Z",
+      "resolved_at": "2026-05-09T05:51:58Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-002",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Implemented command-store-backed final BFF command bridge for deployment create/patch, rebalance patch, audit export, confirm-token lifecycle, canonical actions, v5 intervention and sentinel commands. Verification: py_compile main/models/new test passed; focused BFF command/final wiring/action catalog suite -> 128 passed, 11 pre-existing warnings.",
+      "status": "done",
+      "created_at": "2026-05-09T06:05:52Z",
+      "resolved_at": "2026-05-09T06:46:46Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Chair reassigned review from Claude2 to Codex: Claude2 is quota-paused for several hours; Codex is unpaused and is not the owner of this review-ready task.",
+      "status": "done",
+      "created_at": "2026-05-09T06:46:46Z",
+      "resolved_at": "2026-05-09T06:52:21Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review rejected: command routes accept durable writes without Idempotency-Key despite idempotency_required catalog/final-command semantics, and the claimed focused suite now fails (109 passed, 19 failed) because execute-plans semantic route preference/generic placeholders shadow existing concrete BFF routes. Return to Codex2 to require idempotency via final resolver/alias semantics and limit semantic route pruning/placeholders to non-existing or task-owned paths.",
+      "status": "done",
+      "created_at": "2026-05-09T06:52:21Z",
+      "resolved_at": "2026-05-09T06:52:21Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-09T09:56:56Z",
+      "resolved_at": "2026-05-09T09:56:56Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-002",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Command execution bridge verified: Idempotency-Key required via _resolve_final_idempotency_key, body idempotencyKey rejected, command-store-backed receipts for deployment/rebalance/audit/confirm-token/v5-intervention/sentinel. Focused suite 132 passed; concrete BFF suites 18+53 passed; no route shadowing detected. Task artifact and test files committed (cbaa7787).",
+      "status": "done",
+      "created_at": "2026-05-09T10:03:37Z",
+      "resolved_at": "2026-05-09T10:09:41Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review blocked: create/build command routes that generate target ids before idempotency lookup do not replay same-payload retries. Repro with PANTHEON_BFF_AUTH_STUB=true: POST /bff/deployments twice with Idempotency-Key=edge-no-id and body {stage: paper} returns 201 then 409; POST /bff/v5/sentinel/remediation/build twice with body {reason: x} returns 202 then 409. Focused suites still pass: test_final_command_execution_bridge.py 5 passed; test_execute_plans_final_live_wiring_contract.py 7 passed. Please fix server-generated-id replay and add regression coverage before re-handoff.",
+      "status": "done",
+      "created_at": "2026-05-09T10:09:41Z",
+      "resolved_at": "2026-05-09T10:09:41Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-002",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Server-generated-id replay fixed: _sem_command_response now accepts server_generated_target=True which excludes the randomly-generated target_id from the idempotency hash. POST /bff/deployments (no body id) and POST /bff/v5/sentinel/remediation/build (no finding_id) now replay correctly with the original 201/202 on retry. Conflict detection still works for different payloads. 4 regression tests added (9 total in focused bridge suite); full focused suite 136 passed. Committed 15c0ccb7.",
+      "status": "done",
+      "created_at": "2026-05-09T10:18:50Z",
+      "resolved_at": "2026-05-09T10:40:22Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review not approved: durable idempotency conflict detection is incomplete. After first POST /bff/deployments, clearing _FINAL_CONTRACT_IDEMPOTENCY and retrying same key with different payload returns 201 replay instead of 409 because command_store existing_record path does not compare stored request_hash. Also POST /bff/confirm-tokens without client tokenId returns 409 on immediate same-key retry because generated tokenId is included in the hash; after memory clear it replays with a mismatched new tokenId. Focused suite still passes, so add regressions for these cases. Also include task-owned enum/catalog/test reset changes in a scoped commit before next handoff.",
+      "status": "done",
+      "created_at": "2026-05-09T10:40:22Z",
+      "resolved_at": "2026-05-09T10:40:22Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-002",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Bug fixes committed b02bce71: (1) _sem_command_response command_store replay path now compares stored request_hash — clearing _FINAL_CONTRACT_IDEMPOTENCY and retrying same key with different payload now correctly returns 409. (2) sem_create_confirm_token_command uses server_generated_target=True when no client tokenId provided, strips server-generated tokenId from hash payload, recovers original tokenId from durable command record on replay — same-key retry no longer returns 409. 2 new regression tests (11 total in bridge suite). Full focused suite 138 passed (13 pre-existing warnings). Task-owned enum/catalog/test-reset changes included in same commit per review request.",
+      "status": "done",
+      "created_at": "2026-05-09T10:49:53Z",
+      "resolved_at": "2026-05-09T10:56:01Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Approved b02bce71 after local review and focused verification: bridge suite 11 passed; focused BFF command/final wiring suite 138 passed with 13 pre-existing warnings. No blocking findings; handoff to Claude for review_approved closeout.",
+      "status": "done",
+      "created_at": "2026-05-09T10:56:01Z",
+      "resolved_at": "2026-05-09T10:59:26Z"
+    }
+  ],
+  "blockers": []
+}

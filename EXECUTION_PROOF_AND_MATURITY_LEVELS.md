@@ -46,6 +46,9 @@ Use these rules when claiming progress:
 2. Do not claim "runtime complete" from `EP3`.
 3. Claim `EP4` only when Pantheon has a governed paper-runtime proof that includes authority, telemetry, and recovery semantics together.
 4. Claim `EP5` only when canary or live behavior is proven under the same governance model, not merely under a direct OSS smoke path.
+5. Do not skip broker API integration while waiting for live activation. Broker
+   paper-account, sandbox, simulation, validate-only, or test-key order smoke is
+   required evidence before a production live order route can be considered.
 
 ## 5. Current Repo Interpretation
 
@@ -59,9 +62,13 @@ As of the current repo state (updated 2026-04-24):
   at `docs/deployment/evidence/ep4-governed-paper/20260419T003720Z/`, packet at
   `docs/deployment/ep4-evidence-packet.md`
 - the repo does not yet have an `EP5` canary or live execution proof
-- the coordination board currently reports `Runtime verified: 32` out of `46` tracked frontend-delivery
-  features; that coverage number is useful operationally, but it is not a higher execution-proof
-  level by itself
+- the coordination board now has repo-local proof for all `46` tracked frontend-delivery
+  features after consultation + knowledge batch 1 and operator + trainer +
+  residual batch 2 were consolidated in
+  `docs/deployment/runtime-verification-batch-1-consultation-knowledge.md` and
+  `docs/deployment/runtime-verification-batch-2-operator-trainer-residuals.md`;
+  that coverage number is useful operationally, but it is not a higher
+  execution-proof level by itself
 - the new BFF-backed `Settings` surface improves repo truthfulness and removes a demo-backed page,
   but it does not by itself raise the repo above `EP4`
 
@@ -69,131 +76,18 @@ As of the current repo state (updated 2026-04-24):
 
 EP4 is stable as of 2026-04-19. The next proof-raising steps are:
 
-1. `EP5-001` — prepare the canary-ready execution path: real broker/venue config, scaled capital
-   gate, operator approval checklist, and rollback drill harness; this is a downstream prerequisite
+1. `EP5-001` — prepare the canary-ready execution path: broker paper/sandbox/test-key
+   order API smoke, real broker/venue config, scaled capital gate, operator
+   approval checklist, and rollback drill harness; this is a downstream prerequisite
    slice gated on stable EP4. The prepared repo-local entry bundle lives at
    `docs/deployment/ep5-canary-ready/`, with runnable tooling at
    `scripts/run_ep5_canary_readiness.py` and `env/canary-exec.env.example`
 2. `EP5-002` — execute and archive the first canary/live proof packet, including rollback drill and
    operator signoff; this requires a separate human-approved gate and is not part of the current
    EP4 materialization batch
-3. raise runtime-verification coverage beyond the current `32/46` so the operator and delivery
-   surfaces have broader replayable evidence before any EP5 proof claim
-4. address the telemetry event-trace read-model gap (local dev 404 on port 38083) if EP5 requires
-   queryable event-trace projections beyond counter-level ingest proof
-
-## 7. EP5-002 Closeout Checklist
-
-`EP5-002` is not complete until a human-approved canary/live packet exists and all evidence below
-is archived in one replayable bundle.
-
-### Preconditions
-
-- `EP4` packet remains the latest approved governed-paper baseline
-- production or canary credentials are injected through the approved operator path
-- rollback drill tooling is available and tested against the target environment
-- the operator has reviewed the current `current-work.md`, `ai-status.json`, and the active
-  deployment target tuple
-
-### Current Working Default (2026-04-24)
-
-Until a reviewed exception is recorded, the first `EP5-002` proof should be a `canary`, not
-`live`.
-
-Use one runtime tuple for the whole packet:
-
-- code commit
-- env-file revision
-- credentials revision
-- broker / venue target
-- capital and gross scale envelope
-
-Run the governed deployment and the rollback drill against that same tuple. Use the prepared
-readiness bundle in `docs/deployment/ep5-canary-ready/` and archive the final closeout packet under
-`docs/deployment/evidence/ep5-*`.
-
-### Required Operator Run Steps
-
-1. record the target runtime tuple: code commit, env file revision, credentials revision, and
-   broker/venue target
-2. execute one canary or live deployment through the governed deployment path, not a direct OSS
-   bypass
-3. verify the runtime reaches the intended stage and emits telemetry, lineage, and governance events
-4. execute one rollback drill against the same runtime tuple
-5. confirm the rollback restores the expected runtime state and leaves an auditable lineage trail
-6. capture explicit operator signoff, including whether the proof was canary or live
-
-### Required Evidence Bundle
-
-Archive all of the following under a new `docs/deployment/evidence/ep5-*` packet:
-
-- deployment plan / runtime binding identifiers
-- runtime stage transition proof
-- telemetry and lineage excerpt proving the execution path was real
-- rollback drill transcript or command log
-- post-rollback state snapshot
-- operator acceptance note with timestamp and approver identity
-- any exception, partial failure, or follow-up required after the run
-
-### Close Condition
-
-`EP5-002` closes only when the packet above is committed, reviewable, and explicitly linked from
-this file or its successor evidence index. A successful run without archived evidence is still not
-an `EP5` claim.
-
-## 8. Runtime Verification 32 → 46 Checklist
-
-The coordination count is operational proof coverage, not a higher execution-proof level. To raise
-coverage from `32` to full tracked coverage, each remaining feature must have one runtime-visible
-verification artifact attached to its tracked packet family.
-
-### Accepted Runtime Proof Types
-
-- `needs-runtime` request resolved with `runtime_verified_at` or equivalent proof field
-- `frontend-feedback` / `backend-delivery` payload with a concrete runtime verification reference
-- a review packet that explicitly verifies runtime behavior against a Git-visible request pair
-
-### Per-Feature Checklist
-
-For each feature still missing runtime verification:
-
-1. identify the canonical feature id from `ai-status.json` / `current-work.md`
-2. locate the request pair or closeout response in `.coordination/`
-3. run the smallest truthful runtime proof for that feature family
-4. attach the proof reference back into the tracked payload or follow-up review
-5. rerun `python3 scripts/ai_status.py sync`
-6. confirm the feature increments the `Runtime verified` count without regressing stage truth
-
-### Current Working Default (2026-04-24)
-
-Raise runtime coverage in two batches instead of one all-at-once pass.
-
-Batch 1: consultation and knowledge surfaces
-
-- `CW-01-consult-request`
-- `CW-02-debate-transcript`
-- `CW-03-committee-board`
-- `CW-04-redteam-memo`
-- `KW-01-institutional-memory`
-- `KW-02-research-notes`
-- `KW-03-evidence-refs`
-- `KW-04-insight-cards`
-
-Batch 2: operator and trainer residuals
-
-- `PKT-004-deployment-approval-drilldowns`
-- `PKT-004-persona-management`
-- `PKT-005-degradation-banner`
-- `PKT-010-runtime-state-board`
-- `TW-02-parameter-controls`
-- `TW-03-before-after-compare`
-
-Use one tracked packet or review reference per feature. If a runtime proof artifact is intentionally
-shared across multiple features, the review packet must explicitly say so.
-
-### Do Not Do
-
-- do not mark runtime proof complete from unit or contract tests alone
-- do not backfill proof counts from memory if no payload or review packet records the verification
-- do not count the same runtime artifact against unrelated features unless the packet explicitly says
-  the proof is shared
+3. keep the tracked runtime-verification coverage truthful at `46/46`; if a
+   future frontend cycle reopens a delivery surface or adds a new tracked
+   feature, do not count it closed again without a stored proof artifact
+4. keep the telemetry event-trace read-model gap explicitly dispositioned for EP5:
+   the current APP-003 closeout packet at `docs/deployment/app-003-openclaw-closeout-packet.md`
+   marks it as `packetized`, not closed, until a replay-clean trace-query capture is archived

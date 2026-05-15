@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "SD-SRC-EVIDENCE-001",
+  "archived_at": "2026-04-27T14:39:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SD-SRC-EVIDENCE-001",
+    "title": "Upgrade governed source evidence search slice",
+    "summary_zh": "把 SD-03 從 ingest/memory partial surface 推進到 SourceConnector/EvidenceBundle/KnowledgeObject/SearchGateway 第一 slice。",
+    "phase": "SD Residual / Source Evidence",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-27-sd-materializable-execution-task-packet.md"
+    ],
+    "acceptance": [
+      "Follow packet acceptance boundary"
+    ],
+    "next": "Owner finalized approved governed SD-03 source/evidence/search slice at commit dd12ce5; targeted suite passed: 18 passed in 3.82s.",
+    "last_update": "2026-04-27T14:39:08Z",
+    "task_class": "sd_materialization",
+    "source_packet": "docs/reviews/2026-04-27-sd-materializable-execution-task-packet.md",
+    "auto_dispatch_boundary": "respect_dependencies_and_human_gates",
+    "review_notes_zh": [
+      "審查通過：SourceConnector / IngestRun lifecycle、EvidenceBundleBuilder / KnowledgeObject、SearchGateway pre-ranking 過濾、OpenClaw 適配器 persona/workspace 強制檢查皆符合 SD materializable packet 的 Source / Evidence / Search 驗收形狀。",
+      "BFF RW-02 透過 SearchGateway 提供 governed search，data shape 保持不變，meta.governed_evidence 是 replayable 的 evidence_bundle_id / citations / matched_items refs。",
+      "targeted suite 通過：pytest services/source_ingestion/tests services/knowledge/evidence/tests services/search/tests services/control-plane/bff/test_rw02_search_contract.py services/control-plane/bff/test_kw03_evidence_refs_contract.py -q -> 18 passed in 3.03s。",
+      "後續：durable / vector index 與 ingestion scheduler 不在本切片範圍；SD-RECON-001 與 EP5-002-PACKET-PREP-001 才會延伸消費此 evidence 與 lineage 對齊。"
+    ],
+    "review_file": "docs/reviews/2026-04-27-sd-src-evidence-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-27T14:39:08Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "dd12ce5ad41d9ef6fe6a446eb60a056013215ccf",
+      "commit_subject": "SD-SRC-EVIDENCE-001 governed source evidence search",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SD-SRC-EVIDENCE-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 130,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SD-SRC-EVIDENCE-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-27T13:04:19Z",
+      "resolved_at": "2026-04-27T13:06:21Z"
+    },
+    {
+      "task_id": "SD-SRC-EVIDENCE-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Governed SD-03 source/evidence/search slice ready for review; handoff artifact: docs/reviews/2026-04-27-sd-src-evidence-001-codex-handoff.md; verification: 18 targeted tests passed.",
+      "status": "done",
+      "created_at": "2026-04-27T13:18:50Z",
+      "resolved_at": "2026-04-27T14:27:58Z"
+    },
+    {
+      "task_id": "SD-SRC-EVIDENCE-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Approved: governed SD-03 source/evidence/search slice (SourceConnector/IngestRun/EvidenceBundle/KnowledgeObject/SearchGateway, OpenClaw adapter, RW-02 BFF projection) matches the materializable packet's Source/Evidence/Search acceptance shape; targeted suite (18 passed) reruns clean. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-27T14:27:58Z",
+      "resolved_at": "2026-04-27T14:39:08Z"
+    }
+  ],
+  "blockers": []
+}

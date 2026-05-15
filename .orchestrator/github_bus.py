@@ -48,6 +48,13 @@ class GitHubBusOffline(GitHubBusError):
     pass
 
 
+def resolve_gh_binary() -> str | None:
+    vendored = ROOT / ".orchestrator" / "bin" / "gh"
+    if vendored.exists() and os.access(vendored, os.X_OK):
+        return str(vendored)
+    return command_exists("gh")
+
+
 def _iso_now_dt() -> datetime:
     return datetime.now(timezone.utc).replace(microsecond=0)
 
@@ -68,6 +75,11 @@ def default_bus_state() -> dict[str, Any]:
         "processed_review_ids": [],
         "processed_comment_ids": [],
         "processed_webhook_deliveries": [],
+        "poll_cursors": {
+            "pr_reviews": 0,
+            "issue_comments": 0,
+            "coordination_comments": 0,
+        },
         "tasks": {},
         "coordination": {},
     }
@@ -82,6 +94,10 @@ def load_bus_state(config: dict[str, Any]) -> dict[str, Any]:
     merged.setdefault("processed_review_ids", [])
     merged.setdefault("processed_comment_ids", [])
     merged.setdefault("processed_webhook_deliveries", [])
+    merged.setdefault("poll_cursors", {})
+    merged["poll_cursors"].setdefault("pr_reviews", 0)
+    merged["poll_cursors"].setdefault("issue_comments", 0)
+    merged["poll_cursors"].setdefault("coordination_comments", 0)
     merged.setdefault("coordination", {})
     return merged
 
@@ -110,6 +126,25 @@ def save_bus_state(config: dict[str, Any], state: dict[str, Any]) -> None:
     state["processed_comment_ids"] = state.get("processed_comment_ids", [])[-MAX_PROCESSED_IDS:]
     state["processed_webhook_deliveries"] = state.get("processed_webhook_deliveries", [])[-MAX_PROCESSED_IDS:]
     write_json(config_path(config, "github_bus_state"), state)
+
+
+def poll_batch_size(config: dict[str, Any], key: str, default: int) -> int:
+    cfg = ((config.get("github_bus") or {}).get("poll_batch_sizes") or {})
+    try:
+        value = int(cfg.get(key, default))
+    except (TypeError, ValueError):
+        value = default
+    return max(1, value)
+
+
+def _poll_batch(items: list[Any], *, cursor: int, limit: int) -> tuple[list[Any], int]:
+    if not items:
+        return [], 0
+    normalized_cursor = cursor if 0 <= cursor < len(items) else 0
+    end = min(normalized_cursor + max(1, limit), len(items))
+    batch = items[normalized_cursor:end]
+    next_cursor = 0 if end >= len(items) else end
+    return batch, next_cursor
 
 
 def trim_text(value: str | None, limit: int = 400) -> str:
@@ -185,12 +220,25 @@ def branch_has_diff(base: str, branch: str) -> bool:
         return False
 
 
-def run_gh_process(args: list[str], *, timeout_seconds: float) -> subprocess.CompletedProcess[str]:
+def remote_branch_exists(branch: str, remote: str = "origin") -> bool:
+    proc = run_command(["git", "ls-remote", "--heads", remote, branch], cwd=ROOT)
+    if proc.returncode != 0:
+        return False
+    return bool((proc.stdout or "").strip())
+
+
+def run_gh_process(
+    args: list[str],
+    *,
+    timeout_seconds: float,
+    gh_binary: str | None = None,
+) -> subprocess.CompletedProcess[str]:
     # Avoid subprocess.run(..., timeout=...) here: if gh gets wedged in I/O,
     # subprocess.run waits on teardown and can stall the supervisor heartbeat.
+    binary = gh_binary or resolve_gh_binary() or "gh"
     with tempfile.TemporaryFile() as stdout_handle, tempfile.TemporaryFile() as stderr_handle:
         process = subprocess.Popen(
-            ["gh", *args],
+            [binary, *args],
             cwd=str(ROOT),
             stdout=stdout_handle,
             stderr=stderr_handle,
@@ -213,11 +261,12 @@ def run_gh_process(args: list[str], *, timeout_seconds: float) -> subprocess.Com
         stderr_handle.seek(0)
         stdout = stdout_handle.read().decode("utf-8", errors="replace")
         stderr = stderr_handle.read().decode("utf-8", errors="replace")
-        return subprocess.CompletedProcess(["gh", *args], process.returncode or 0, stdout, stderr)
+        return subprocess.CompletedProcess([binary, *args], process.returncode or 0, stdout, stderr)
 
 
 def run_gh(args: list[str], *, allow_offline: bool = True) -> subprocess.CompletedProcess[str]:
-    if not command_exists("gh"):
+    gh_binary = resolve_gh_binary()
+    if not gh_binary:
         raise GitHubBusError("GitHub CLI `gh` is not installed.")
     timeout_seconds = 8.0
     try:
@@ -226,7 +275,7 @@ def run_gh(args: list[str], *, allow_offline: bool = True) -> subprocess.Complet
     except Exception:
         timeout_seconds = 8.0
     try:
-        proc = run_gh_process(args, timeout_seconds=timeout_seconds)
+        proc = run_gh_process(args, timeout_seconds=timeout_seconds, gh_binary=gh_binary)
     except subprocess.TimeoutExpired as exc:
         message = f"GitHub CLI timed out after {int(timeout_seconds)}s while running: gh {' '.join(args)}"
         if allow_offline:
@@ -304,6 +353,15 @@ def build_template_body(config: dict[str, Any], template_key: str, variables: di
 def reviewer_handles(config: dict[str, Any], task: dict[str, Any]) -> list[str]:
     mapping = (config.get("github_bus", {}) or {}).get("reviewers", {}) or {}
     return list(mapping.get(task.get("reviewer"), []) or [])
+
+
+def unpublished_branch_recheck_seconds(config: dict[str, Any]) -> int:
+    cfg = (config.get("github_bus", {}) or {})
+    try:
+        value = int(cfg.get("unpublished_branch_recheck_seconds", 300))
+    except (TypeError, ValueError):
+        value = 300
+    return max(30, value)
 
 
 def create_label_args(labels: list[str]) -> list[str]:
@@ -591,6 +649,52 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
     base = default_branch(config)
     title = f"[ReviewBus] {task['id']} {task['title']}"
     head_sha = branch_head_sha(branch)
+    skip_hash = json.dumps(
+        {
+            "state": "skipped_unpublished_branch",
+            "task_id": task["id"],
+            "branch": branch,
+            "base": base,
+            "head_sha": head_sha,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    previous_unpublished = (
+        isinstance(pr_ref, dict)
+        and pr_ref.get("state") == "skipped_unpublished_branch"
+        and pr_ref.get("branch") == branch
+        and pr_ref.get("head_sha") == head_sha
+        and entry.get("last_review_hash") == skip_hash
+    )
+    if previous_unpublished:
+        last_check = _parse_iso(str(pr_ref.get("last_remote_branch_check_at") or ""))
+        if last_check and (_iso_now_dt() - last_check).total_seconds() < unpublished_branch_recheck_seconds(config):
+            return False
+
+    if not remote_branch_exists(branch):
+        checked_at = utc_now()
+        entry["review_pr"] = {
+            "number": (pr_ref or {}).get("number"),
+            "url": (pr_ref or {}).get("url"),
+            "title": title,
+            "branch": branch,
+            "state": "skipped_unpublished_branch",
+            "head_sha": head_sha,
+            "last_remote_branch_check_at": checked_at,
+        }
+        entry["last_review_hash"] = skip_hash
+        if previous_unpublished:
+            return False
+        write_activity_log(
+            config,
+            {
+                "type": "github_review_pr_skipped",
+                "task_id": task["id"],
+                "message": f"Review task is in review, but branch `{branch}` is not pushed to `origin` yet.",
+            },
+        )
+        return True
     variables = {
         "marker": COMMENT_MARKER,
         "task_id": task["id"],
@@ -662,6 +766,7 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
         "title": title,
         "branch": branch,
         "state": "open",
+        "last_remote_branch_check_at": utc_now(),
     }
     entry["last_review_hash"] = pr_hash
     write_activity_log(
@@ -1052,7 +1157,24 @@ def queue_resume_for_agent(config: dict[str, Any], status: dict[str, Any], agent
 def poll_issue_comments(config: dict[str, Any], bus_state: dict[str, Any], status: dict[str, Any], repo: str) -> bool:
     changed = False
     seen = set(bus_state.get("processed_comment_ids", []))
+    candidates = []
     for task in status.get("tasks", []):
+        entry = (bus_state.get("tasks", {}) or {}).get(task["id"]) or {}
+        issue_ref = entry.get("ops_issue") or {}
+        number = issue_ref.get("number")
+        if not number:
+            continue
+        candidates.append(task)
+
+    cursors = bus_state.setdefault("poll_cursors", {})
+    batch, next_cursor = _poll_batch(
+        candidates,
+        cursor=int(cursors.get("issue_comments", 0) or 0),
+        limit=poll_batch_size(config, "issue_comments", 5),
+    )
+    cursors["issue_comments"] = next_cursor
+
+    for task in batch:
         entry = (bus_state.get("tasks", {}) or {}).get(task["id"]) or {}
         issue_ref = entry.get("ops_issue") or {}
         number = issue_ref.get("number")
@@ -1097,7 +1219,20 @@ def poll_coordination_issue_comments(
     changed = False
     seen = set(bus_state.get("processed_comment_ids", []))
     allowed = allowed_logins(config)
-    for entry in (bus_state.get("coordination") or {}).values():
+    candidates = [
+        entry
+        for entry in (bus_state.get("coordination") or {}).values()
+        if str(entry.get("repo") or "").strip() and ((entry or {}).get("issue") or {}).get("number")
+    ]
+    cursors = bus_state.setdefault("poll_cursors", {})
+    batch, next_cursor = _poll_batch(
+        candidates,
+        cursor=int(cursors.get("coordination_comments", 0) or 0),
+        limit=poll_batch_size(config, "coordination_comments", 3),
+    )
+    cursors["coordination_comments"] = next_cursor
+
+    for entry in batch:
         repo = str(entry.get("repo") or "").strip()
         issue_ref = (entry or {}).get("issue") or {}
         number = issue_ref.get("number")
@@ -1135,7 +1270,24 @@ def poll_coordination_issue_comments(
 def poll_pr_reviews(config: dict[str, Any], bus_state: dict[str, Any], status: dict[str, Any], repo: str) -> bool:
     changed = False
     seen = set(bus_state.get("processed_review_ids", []))
+    candidates = []
     for task in status.get("tasks", []):
+        entry = (bus_state.get("tasks", {}) or {}).get(task["id"]) or {}
+        pr_ref = entry.get("review_pr") or {}
+        number = pr_ref.get("number")
+        if not number:
+            continue
+        candidates.append(task)
+
+    cursors = bus_state.setdefault("poll_cursors", {})
+    batch, next_cursor = _poll_batch(
+        candidates,
+        cursor=int(cursors.get("pr_reviews", 0) or 0),
+        limit=poll_batch_size(config, "pr_reviews", 5),
+    )
+    cursors["pr_reviews"] = next_cursor
+
+    for task in batch:
         entry = (bus_state.get("tasks", {}) or {}).get(task["id"]) or {}
         pr_ref = entry.get("review_pr") or {}
         number = pr_ref.get("number")

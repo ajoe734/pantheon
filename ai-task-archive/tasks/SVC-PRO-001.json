@@ -1,0 +1,182 @@
+{
+  "version": 1,
+  "task_id": "SVC-PRO-001",
+  "archived_at": "2026-04-17T18:45:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-PRO-001",
+    "title": "Create promotion-svc HTTP service from scratch",
+    "summary_zh": "從頭建立 services/promotion/ 最小可部署服務：實作 POST /api/v1/approvals（建立 ApprovalDecision）、GET /api/v1/approvals、POST /api/v1/deployments（建立 DeploymentPlan）、GET /api/v1/deployments、/__health__，補 main.py、Dockerfile，加入 docker-compose.yml。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [],
+    "artifacts": [
+      "[\"services/promotion/main.py\"",
+      "\"services/promotion/Dockerfile\"",
+      "\"services/promotion/requirements.txt\"",
+      "\"docker-compose.yml\"]"
+    ],
+    "acceptance": [
+      "[\"POST /api/v1/approvals 建立 ApprovalDecision 成功\"",
+      "\"POST /api/v1/deployments 建立 DeploymentPlan 成功\"",
+      "\"/__health__ 回傳 200\"",
+      "\"docker compose up 後 healthy\"]"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T15:05:08Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized: all artifacts verified — main.py implements POST/GET /api/v1/approvals, POST /api/v1/approvals/{id}/decide (atomic deepcopy fix), POST/GET /api/v1/deployments, GET /__health__. Dockerfile, requirements.txt, and docker-compose.yml entry confirmed. Committed at a64318a. Task closed.",
+    "last_update": "2026-04-17T18:45:25Z",
+    "review_notes_zh": [
+      "已重跑 services/control-plane/governance 測試共 63 項全數通過。",
+      "已用 FastAPI TestClient 重現本次 regression：approved_with_conditions 缺少 conditions 時回 422，且後續 GET /api/v1/approvals 仍保持 proposed，不再洩漏 under_review 半套狀態。",
+      "健康檢查、approval 建立/決議、deployment 建立/查詢 smoke 均通過。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T18:45:25Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "a64318a281690bc2afa1fe0097cc68a218e90a42",
+      "commit_subject": "SVC-PRO-001: add promotion-svc HTTP service",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Task-ID": "SVC-PRO-001",
+        "LLM-Agent": "Claude",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 474,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-PRO-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T15:38:41Z",
+      "resolved_at": "2026-04-17T15:57:24Z"
+    },
+    {
+      "task_id": "SVC-PRO-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "promotion-svc is ready for review: added POST/GET approvals and deployments, /__health__, Dockerfile/requirements, compose wiring, python smoke validation, and docker compose config validation.",
+      "status": "done",
+      "created_at": "2026-04-17T16:01:51Z",
+      "resolved_at": "2026-04-17T16:09:45Z"
+    },
+    {
+      "task_id": "SVC-PRO-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review requested changes: POST /api/v1/deployments currently returns 201 for a nonexistent approval_decision_id and never loads/stores the referenced ApprovalDecision for contract validation. Reproduced with FastAPI TestClient using approval_decision_id=missing -> 201. docker compose config passes; docker compose build promotion succeeds; docker compose up promotion reached healthy, so the remaining issue is the deployment/approval linkage contract.",
+      "status": "done",
+      "created_at": "2026-04-17T16:09:45Z",
+      "resolved_at": "2026-04-17T16:09:45Z"
+    },
+    {
+      "task_id": "SVC-PRO-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T17:25:57Z",
+      "resolved_at": "2026-04-17T17:27:13Z"
+    },
+    {
+      "task_id": "SVC-PRO-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T17:28:00Z",
+      "resolved_at": "2026-04-17T17:29:23Z"
+    },
+    {
+      "task_id": "SVC-PRO-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All artifacts verified complete: services/promotion/main.py implements POST/GET /api/v1/approvals (ApprovalDecision), POST/GET /api/v1/deployments (DeploymentPlan), and GET /__health__. Dockerfile matches project pattern (python:3.11-slim, port 8089 hardcoded consistent with other services). requirements.txt has fastapi/uvicorn/pydantic — governance modules use stdlib only. docker-compose.yml already has the promotion service with correct port/volume/healthcheck. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-17T17:31:15Z",
+      "resolved_at": "2026-04-17T18:26:01Z"
+    },
+    {
+      "task_id": "SVC-PRO-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review failed: POST /api/v1/deployments does not satisfy acceptance on a fresh service. POST /api/v1/approvals only creates a proposed ApprovalDecision, but deployment creation requires a decided+approved approval; planning-session acceptance explicitly requires both POST routes to succeed.",
+      "status": "done",
+      "created_at": "2026-04-17T18:26:01Z",
+      "resolved_at": "2026-04-17T18:26:01Z"
+    },
+    {
+      "task_id": "SVC-PRO-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review failure fixed: added POST /api/v1/approvals/{decision_id}/decide that transitions proposed→decided with any outcome. Full fresh-service flow now works: POST /approvals → POST /approvals/{id}/decide → POST /deployments all return success. GET endpoints and /__health__ unchanged. Smoke verified.",
+      "status": "done",
+      "created_at": "2026-04-17T18:28:09Z",
+      "resolved_at": "2026-04-17T18:35:49Z"
+    },
+    {
+      "task_id": "SVC-PRO-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review request changes: POST /api/v1/approvals/{decision_id}/decide mutates proposed -> under_review before full validation. Repro on fresh app: create approval, call decide with outcome=approved_with_conditions and conditions=[], API returns 422, but subsequent GET /api/v1/approvals shows decision_state=under_review instead of remaining proposed. Make the transition atomic or roll back on ValueError, then re-handoff to review.",
+      "status": "done",
+      "created_at": "2026-04-17T18:35:49Z",
+      "resolved_at": "2026-04-17T18:35:49Z"
+    },
+    {
+      "task_id": "SVC-PRO-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Atomic fix applied: decide_approval now works on a deepcopy of the ApprovalDecision before any mutation. If decide() raises ValueError, the original in-memory object is untouched and put() is never called, so GET /api/v1/approvals always returns the pre-mutation state. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-17T18:37:35Z",
+      "resolved_at": "2026-04-17T18:43:48Z"
+    },
+    {
+      "task_id": "SVC-PRO-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: atomic decide fix is correct and verified; owner can finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-17T18:43:48Z",
+      "resolved_at": "2026-04-17T18:45:25Z"
+    }
+  ],
+  "blockers": []
+}

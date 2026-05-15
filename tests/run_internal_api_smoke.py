@@ -1,7 +1,14 @@
-"""Smoke test for services.control_plane.internal_api
+"""Smoke test for services.control_plane.internal.internal_api_min.
 Runs the Flask app in test client and exercises endpoints.
 """
-from services.control_plane import internal_api_min as api
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from services.control_plane.internal import internal_api_min as api
 
 def make_headers(token=True, mfa=None):
     headers = {}

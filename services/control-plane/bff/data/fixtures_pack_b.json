@@ -1,0 +1,516 @@
+{
+  "fixture_pack_id": "BFF-CONSOL-009-pack-b",
+  "generated_for_task": "BFF-CONSOL-009",
+  "description": "Canonical BFF fixture pack B for evolution / research / artifacts / v5-interventions / agora / runtimes live list and detail smoke coverage.",
+  "policy": {
+    "scope": "bff_fixture_only",
+    "production_truth": false,
+    "paper_canary_truth_impact": "none",
+    "activation": "Loaded only through ReadSurfaceStore local snapshot fixture fallback."
+  },
+  "families": {
+    "evolution": [
+      "evo-dec-pack-b-001",
+      "evoprog-pack-b-001"
+    ],
+    "research": [
+      "rt-pack-b-001"
+    ],
+    "artifacts": [
+      "artifact-pack-b-001"
+    ],
+    "v5_interventions": [
+      "intv-pack-b-001"
+    ],
+    "agora": [
+      "agora-session-pack-b-001"
+    ],
+    "runtimes": [
+      "runtime-pack-b-paper-001"
+    ]
+  },
+  "datasets": {
+    "evolution_decisions": {
+      "evo-dec-pack-b-001": {
+        "id": "evo-dec-pack-b-001",
+        "decision_id": "evo-dec-pack-b-001",
+        "program_id": "evoprog-pack-b-001",
+        "target_type": "candidate_artifact",
+        "target_id": "artifact-pack-b-001",
+        "target_version": "v1.0.0",
+        "target_stage": "paper",
+        "action_type": "promote_paper",
+        "risk_level": "low",
+        "status": "pending",
+        "decision_state": "pending",
+        "created_at": "2026-05-13T01:00:00Z",
+        "updated_at": "2026-05-13T01:00:00Z",
+        "created_by_role": "evolution_controller",
+        "created_by_id": "evo-controller-fixture",
+        "rationale": "Pack B fixture: promote candidate artifact to paper stage for smoke coverage.",
+        "notes": "Fixture decision only; no live side effect.",
+        "linked_incident_id": null,
+        "linked_postmortem_id": null,
+        "evidence_refs": [
+          {
+            "ref_type": "experiment_result",
+            "ref_id": "exp-pack-b-001",
+            "summary": "Pack B experiment completed with Sharpe > 1.2; eligible for paper promotion."
+          }
+        ],
+        "threshold_snapshots": [
+          {
+            "signal_type": "performance",
+            "metric_name": "sharpe_ratio",
+            "observed_value": "1.25",
+            "threshold_value": "1.0",
+            "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md §4.1"
+          }
+        ],
+        "review_chain": [],
+        "proposed_changes": {
+          "summary": "Promote artifact-pack-b-001 from sealed to paper-stage runtime.",
+          "target_stage": "paper",
+          "downstream_plane": "governance",
+          "change_details": [
+            {
+              "field": "artifact_stage",
+              "current_value": "sealed",
+              "proposed_value": "paper",
+              "note": "Fixture paper promotion only; fail-closed, no live or canary authority."
+            }
+          ]
+        },
+        "risk_assessment": {
+          "risk_summary": "Low-risk paper promotion within fixture universe; no capital at risk.",
+          "severity": "low",
+          "threshold_triggers": []
+        }
+      }
+    },
+    "evolution_programs": {
+      "evoprog-pack-b-001": {
+        "id": "evoprog-pack-b-001",
+        "program_id": "evoprog-pack-b-001",
+        "name": "Pack B Momentum Carry Evolution Program",
+        "status": "active",
+        "params": {
+          "target_artifact_family": "momentum_carry",
+          "max_concurrent_candidates": 2,
+          "promotion_gate": "paper_only"
+        },
+        "created_at": "2026-05-13T00:30:00Z",
+        "updated_at": "2026-05-13T01:00:00Z",
+        "created_by": "BFF-CONSOL-009"
+      }
+    },
+    "research_tickets": {
+      "rt-pack-b-001": {
+        "ticket_id": "rt-pack-b-001",
+        "title": "Validate Pack B momentum decay in low-liquidity regime",
+        "description": "Assess whether momentum factors lose predictive power under low-liquidity conditions and determine safe parameter bounds for the Pack B fixture strategy.",
+        "status": "in_progress",
+        "priority": "high",
+        "owner": "persona-risk-chief",
+        "created_at": "2026-05-13T00:00:00Z",
+        "updated_at": "2026-05-13T01:00:00Z",
+        "closed_at": null,
+        "archived_at": null,
+        "lifecycle_history": [
+          {
+            "from_status": null,
+            "to_status": "open",
+            "transitioned_at": "2026-05-13T00:00:00Z",
+            "transitioned_by": "persona-risk-chief"
+          },
+          {
+            "from_status": "open",
+            "to_status": "in_progress",
+            "transitioned_at": "2026-05-13T01:00:00Z",
+            "transitioned_by": "persona-risk-chief"
+          }
+        ],
+        "linked_experiments": ["exp-pack-b-001"],
+        "linked_artifacts": ["artifact-pack-b-001"]
+      }
+    },
+    "research_analyses": {
+      "analysis-pack-b-001": {
+        "analysis_id": "analysis-pack-b-001",
+        "ticket_id": "rt-pack-b-001",
+        "experiment_id": "exp-pack-b-001",
+        "status": "completed",
+        "run_at": "2026-05-13T00:45:00Z",
+        "completed_at": "2026-05-13T00:50:00Z",
+        "summary": {
+          "headline": "Low-liquidity replay confirms reduced momentum efficacy; tighter entry filters recommended.",
+          "narrative": "Momentum signals weakened 18% during the low-liquidity window. Tighter entry filters recover half of the lost signal quality while keeping drawdown within the 8% gate.",
+          "verdict": "candidate_update",
+          "next_question": "Validate tighter entry filters against a broader instrument universe before promoting to paper defaults."
+        },
+        "metric_groups": [
+          {
+            "group_key": "performance",
+            "label": "Performance",
+            "description": "Return and efficiency metrics for the low-liquidity replay window.",
+            "metrics": [
+              {
+                "metric_key": "annualized_return",
+                "label": "Annualized return",
+                "value": 0.142,
+                "unit": "ratio",
+                "display_value": "14.2%",
+                "direction": "higher_is_better",
+                "baseline_value": 0.161,
+                "delta_value": -0.019,
+                "delta_display": "-1.9 pts"
+              },
+              {
+                "metric_key": "sharpe_ratio",
+                "label": "Sharpe ratio",
+                "value": 1.25,
+                "unit": "score",
+                "display_value": "1.25",
+                "direction": "higher_is_better",
+                "baseline_value": 1.21,
+                "delta_value": 0.04,
+                "delta_display": "+0.04"
+              }
+            ]
+          },
+          {
+            "group_key": "drawdown",
+            "label": "Drawdown",
+            "description": "Depth and recovery behavior during the stressed low-liquidity window.",
+            "metrics": [
+              {
+                "metric_key": "max_drawdown",
+                "label": "Max drawdown",
+                "value": 0.063,
+                "unit": "ratio",
+                "display_value": "6.3%",
+                "direction": "lower_is_better",
+                "baseline_value": 0.047,
+                "delta_value": 0.016,
+                "delta_display": "+1.6 pts"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "research_experiments": {
+      "exp-pack-b-001": {
+        "experiment_id": "exp-pack-b-001",
+        "ticket_id": "rt-pack-b-001",
+        "experiment_name": "Pack B momentum carry — low-liquidity regime validation",
+        "status": "completed",
+        "queued_at": "2026-05-13T00:35:00Z",
+        "started_at": "2026-05-13T00:36:00Z",
+        "completed_at": "2026-05-13T00:44:00Z",
+        "linked_strategy_id": "strategy-pack-b-momentum",
+        "strategy_selector": {
+          "strategy_id": "strategy-pack-b-momentum",
+          "variant_id": "pack-b-v1"
+        },
+        "parameter_set": {
+          "lookback_days": 15,
+          "liquidity_gate": true,
+          "entry_filter_strictness": "tight"
+        },
+        "run_config": {
+          "dataset_ref": "fixture://bff-consol-009/ohlcv-paper-low-liquidity",
+          "time_range": {
+            "start_at": "2026-03-01T00:00:00Z",
+            "end_at": "2026-04-01T00:00:00Z"
+          },
+          "execution_mode": "offline_fixture",
+          "priority": "normal",
+          "requested_by": "BFF-CONSOL-009"
+        },
+        "launch_context": {
+          "analysis_refs": [],
+          "operator_note": "Fixture experiment only; no broker or paper-canary side effect."
+        },
+        "progress": {
+          "percent": 100,
+          "phase": "completed",
+          "message": "Fixture validation completed."
+        },
+        "artifact_ids": ["artifact-pack-b-001"],
+        "failure": {
+          "reason_code": null,
+          "message": null
+        }
+      }
+    },
+    "research_artifacts": {
+      "artifact-pack-b-001": {
+        "artifact_id": "artifact-pack-b-001",
+        "lineage_id": "lineage-pack-b-001",
+        "version": 1,
+        "status": "sealed",
+        "name": "Pack B Momentum Carry Model (Low-Liquidity Validated)",
+        "artifact_type": "strategy_model",
+        "description": "Sealed fixture artifact for Pack B momentum strategy, validated under low-liquidity conditions.",
+        "produced_by_experiment_id": "exp-pack-b-001",
+        "linked_ticket_id": "rt-pack-b-001",
+        "linked_strategy_id": "strategy-pack-b-momentum",
+        "created_at": "2026-05-13T00:45:00Z",
+        "sealed_at": "2026-05-13T00:46:00Z",
+        "metrics": {
+          "sharpe_ratio": 1.25,
+          "sortino_ratio": 1.61,
+          "max_drawdown": 0.063,
+          "annualized_return": 0.142,
+          "win_rate": 0.54,
+          "total_trades": 38
+        },
+        "parameters": {
+          "fast_period": 10,
+          "slow_period": 25,
+          "position_sizing": "risk_parity_fixture",
+          "risk_per_trade": 0.004,
+          "liquidity_gate": true,
+          "entry_filter_strictness": "tight"
+        },
+        "provenance": {
+          "source_refs": ["spec-pack-b-v1"],
+          "experiment_refs": [
+            {
+              "experiment_id": "exp-pack-b-001",
+              "strategy_id": "strategy-pack-b-momentum"
+            }
+          ],
+          "created_by": "BFF-CONSOL-009"
+        }
+      }
+    },
+    "lineage_edges": {
+      "lineage-pack-b-001": {
+        "id": "lineage-pack-b-001",
+        "strategy_id": "strategy-pack-b-momentum",
+        "from_artifact_id": "spec-pack-b-v1",
+        "to_artifact_id": "artifact-pack-b-001",
+        "edge_type": "derived_artifact",
+        "created_at": "2026-05-13T00:46:30Z",
+        "created_by": "BFF-CONSOL-009"
+      }
+    },
+    "v5_interventions": {
+      "intv-pack-b-001": {
+        "id": "intv-pack-b-001",
+        "intervention_id": "intv-pack-b-001",
+        "kind": "hiq_sentinel",
+        "status": "pending",
+        "target_type": "Runtime",
+        "target_id": "runtime-pack-b-paper-001",
+        "triggered_at": "2026-05-13T02:00:00Z",
+        "triggered_by": "sentinel",
+        "description": "HIQ Sentinel detected anomalous loop latency spike on Pack B paper runtime; governed remediation flow initiated.",
+        "remediation_action": null,
+        "remediated_at": null,
+        "two_man_signature_id": null,
+        "correlation_id": "corr-pack-b-sentinel-001",
+        "remediation_skeleton": {
+          "required_approvers": 2,
+          "remediation_actions_available": [
+            "pause_runtime",
+            "rollback_to_previous",
+            "escalate_to_risk_owner"
+          ],
+          "governance_policy_ref": "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md §3.2",
+          "two_man_rule_enforced": true,
+          "audit_trail_required": true,
+          "approval_decision_required": true,
+          "status_note": "Awaiting two-man check before any remediation action is applied."
+        }
+      }
+    },
+    "agora_signals": {
+      "sig-pack-b-001": {
+        "id": "sig-pack-b-001",
+        "signal_id": "sig-pack-b-001",
+        "title": "Pack B low-liquidity momentum decay alert",
+        "description": "Signal flagged by research ticket rt-pack-b-001: momentum factor efficacy dropped 18% during low-liquidity windows.",
+        "type": "research_finding",
+        "source": "research_ticket",
+        "source_ref": "rt-pack-b-001",
+        "reviewStatus": "pending",
+        "priority": "high",
+        "tags": ["momentum", "liquidity", "pack_b"],
+        "createdAt": "2026-05-13T01:30:00Z",
+        "updatedAt": "2026-05-13T01:30:00Z",
+        "createdBy": "BFF-CONSOL-009"
+      }
+    },
+    "agora_sessions": {
+      "agora-session-pack-b-001": {
+        "id": "agora-session-pack-b-001",
+        "sessionId": "agora-session-pack-b-001",
+        "title": "Pack B — Low-liquidity momentum regime review",
+        "mode": "committee_review",
+        "status": "active",
+        "topic": "Evaluate whether the Pack B fixture strategy remains viable under low-liquidity market conditions and whether tighter entry filters are sufficient.",
+        "sse_topic": "agora.session.agora-session-pack-b-001",
+        "participants": [
+          {
+            "actorId": "persona-risk-chief",
+            "role": "chair"
+          },
+          {
+            "actorId": "persona-execution-sponsor",
+            "role": "reviewer"
+          }
+        ],
+        "contextRefs": [
+          {
+            "ref_type": "research_ticket",
+            "ref_id": "rt-pack-b-001"
+          },
+          {
+            "ref_type": "research_analysis",
+            "ref_id": "analysis-pack-b-001"
+          },
+          {
+            "ref_type": "artifact",
+            "ref_id": "artifact-pack-b-001"
+          }
+        ],
+        "messages": [
+          {
+            "id": "msg-pack-b-001",
+            "messageId": "msg-pack-b-001",
+            "sessionId": "agora-session-pack-b-001",
+            "content": "Analysis confirms momentum decay in low-liquidity window. Tighter entry filters recover signal quality; recommend promoting Pack B to paper with the updated parameters.",
+            "role": "assistant",
+            "actorId": "agora-system",
+            "createdAt": "2026-05-13T01:45:00Z"
+          }
+        ],
+        "createdBy": "BFF-CONSOL-009",
+        "createdAt": "2026-05-13T01:30:00Z",
+        "updatedAt": "2026-05-13T01:45:00Z"
+      }
+    },
+    "runtime_bindings": {
+      "runtime-pack-b-paper-001": {
+        "id": "runtime-pack-b-paper-001",
+        "binding_id": "runtime-pack-b-paper-001",
+        "runtime_id": "runtime-pack-b-paper-001",
+        "plan_id": "plan-pack-b-paper-001",
+        "artifact_id": "artifact-pack-b-001",
+        "artifact_version": "v1.0.0",
+        "deployment_stage": "paper",
+        "status": "bound",
+        "capital_pool_id": "pool-pack-b-ops",
+        "paper_canary_mode": "paper_only",
+        "live_write_enabled": false,
+        "fail_closed": true,
+        "note": "Fixture paper-canary runtime; fail-closed. No live capital authority. Broker production live and capital binding remain fail-closed per PAPER_CANARY_LIVE_POLICY.md."
+      }
+    },
+    "deployment_plans": {
+      "plan-pack-b-paper-001": {
+        "id": "plan-pack-b-paper-001",
+        "plan_id": "plan-pack-b-paper-001",
+        "stage": "paper",
+        "current_stage": "none",
+        "target_stage": "paper",
+        "status": "approved",
+        "transition_type": "activate",
+        "artifact_id": "artifact-pack-b-001",
+        "artifact_version": "v1.0.0",
+        "submitted_at": "2026-05-13T00:50:00Z",
+        "approval_decision_id": "approval-pack-b-deploy",
+        "approval_ref": {
+          "approval_decision_id": "approval-pack-b-deploy",
+          "href": "/bff/approvals/approval-pack-b-deploy"
+        },
+        "capital_pool_id": "pool-pack-b-ops",
+        "binding_ids": ["binding-pack-b-persona-pool"],
+        "runtime_binding_id": "runtime-pack-b-paper-001",
+        "stages": [
+          {
+            "stage": "paper",
+            "status": "approved",
+            "approved_by": "fixture-governance-reviewer",
+            "approved_at": "2026-05-13T00:51:00Z"
+          }
+        ]
+      }
+    },
+    "approval_decisions": {
+      "approval-pack-b-deploy": {
+        "id": "approval-pack-b-deploy",
+        "decision_id": "approval-pack-b-deploy",
+        "outcome": "approved",
+        "state": "decided",
+        "reviewer": "fixture-governance-reviewer",
+        "actor_role": "reviewer",
+        "decided_at": "2026-05-13T00:51:00Z",
+        "risk_level": "low",
+        "rationale": "Fixture paper deployment approved for BFF smoke; no live or canary authority granted."
+      }
+    },
+    "capital_pools": {
+      "pool-pack-b-ops": {
+        "id": "pool-pack-b-ops",
+        "pool_id": "pool-pack-b-ops",
+        "name": "Pack B Paper Operations Pool",
+        "status": "ready",
+        "owner_id": "fixture-ops-team",
+        "owner_type": "control-plane",
+        "single_runtime_enforced": true,
+        "risk_policy_ref": "risk-policy-pack-b-paper",
+        "capital_allocation": 1000000,
+        "currency": "USD",
+        "max_drawdown_pct": 8.0
+      }
+    },
+    "bindings": {
+      "binding-pack-b-persona-pool": {
+        "id": "binding-pack-b-persona-pool",
+        "binding_id": "binding-pack-b-persona-pool",
+        "persona_id": "persona-pack-b-execution",
+        "capital_pool_id": "pool-pack-b-ops",
+        "role": "paper_owner",
+        "validity": "active",
+        "status": "active",
+        "allowed_deployment_scope": "paper"
+      }
+    },
+    "governance_audit_events": [
+      {
+        "entry_id": "audit-pack-b-artifact-sealed",
+        "timestamp": "2026-05-13T00:46:00Z",
+        "actor": "fixture-governance-reviewer",
+        "action_type": "artifact_sealed",
+        "target_type": "artifact",
+        "target_id": "artifact-pack-b-001",
+        "summary": "Pack B fixture artifact sealed after completing low-liquidity regime validation experiment.",
+        "evidence_ref": "fixture://bff-consol-009/artifact-pack-b-001"
+      },
+      {
+        "entry_id": "audit-pack-b-paper-approved",
+        "timestamp": "2026-05-13T00:51:00Z",
+        "actor": "fixture-governance-reviewer",
+        "action_type": "deployment_approved",
+        "target_type": "deployment_plan",
+        "target_id": "plan-pack-b-paper-001",
+        "summary": "Pack B fixture paper deployment approved; no live or canary authority.",
+        "evidence_ref": "fixture://bff-consol-009/plan-pack-b-paper-001"
+      },
+      {
+        "entry_id": "audit-pack-b-sentinel-triggered",
+        "timestamp": "2026-05-13T02:00:00Z",
+        "actor": "sentinel",
+        "action_type": "v5_intervention_triggered",
+        "target_type": "Runtime",
+        "target_id": "runtime-pack-b-paper-001",
+        "summary": "HIQ Sentinel triggered v5 intervention intv-pack-b-001 for Pack B paper runtime anomaly.",
+        "evidence_ref": "fixture://bff-consol-009/intv-pack-b-001"
+      }
+    ]
+  }
+}

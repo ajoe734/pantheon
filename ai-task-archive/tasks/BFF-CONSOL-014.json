@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-014",
+  "archived_at": "2026-05-13T04:44:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-014",
+    "title": "Lovable CORS allowlist + JWKS strict test infra",
+    "summary_zh": "pantheon BFF main.py 加 PANTHEON_BFF_CORS_ORIGINS 預設 include Lovable preview/dev/prod hostnames。JWKS strict mode 在 CI 跑 issuer/audience/key-rotation test。CORS dev override 在 production strict 模式下不可啟用。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/tests/test_auth_jwks_strict.py"
+    ],
+    "acceptance": [
+      "CORS origin allowlist 含 Lovable preview+dev+prod hostnames",
+      "strict mode 拒絕未列名 origin",
+      "JWKS issuer 驗證在 CI pass",
+      "JWKS audience 驗證在 CI pass",
+      "key rotation test 模擬 kid 更換",
+      "dev stub 在 strict mode 自動 disable"
+    ],
+    "next": "Closeout complete. Implementation commit 9f741f55; review artifact commit c5dd808c. Verification: python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/tests/test_auth_jwks_strict.py services/control-plane/bff/smoke_test.py services/control-plane/bff/smoke_test_incident.py; git diff --check 9f741f55^ 9f741f55 -- .github/pantheon-stage0-matrix.json services/control-plane/bff/conftest.py services/control-plane/bff/main.py services/control-plane/bff/smoke_test.py services/control-plane/bff/smoke_test_incident.py services/control-plane/bff/test_bff_auth_facade.py services/control-plane/bff/tests/test_auth_jwks_strict.py; python3 -m pytest services/control-plane/bff/tests/test_auth_jwks_strict.py -q => 8 passed; python3 -m pytest services/control-plane/bff/test_bff_auth_facade.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q => 74 passed; python3 services/control-plane/bff/smoke_test.py => 24 OK. Unrelated dirty worktree remains excluded from task scope.",
+    "last_update": "2026-05-13T04:44:08Z",
+    "review_notes_zh": [
+      "審查通過：Lovable CORS allowlist、production strict dev-origin filtering、strict stub disablement、JWKS issuer/audience/kid rotation coverage 均符合 acceptance。",
+      "驗證通過：test_auth_jwks_strict.py 8 passed；auth_facade+jwks strict 74 passed；py_compile passed；scoped git diff --check passed；smoke_test.py 24 OK。",
+      "注意：目前 worktree 仍有 unrelated services/control-plane/bff/main.py command-envelope dirty hunks，未納入本審查 approval。"
+    ],
+    "review_file": ".orchestrator/reviews/BFF-CONSOL-014-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T04:44:08Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "c5dd808c2b62c7c1f305f36f49ab62804415be29",
+      "commit_subject": "BFF-CONSOL-014 add review approval artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-CONSOL-014",
+        "Reviewer": "Codex",
+        "Implementation-Commit": "9f741f55938db4c8eaa377f10c14e3e512a6a3c0",
+        "Verification": "python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/tests/test_auth_jwks_strict.py services/control-plane/bff/smoke_test.py services/control-plane/bff/smoke_test_incident.py; git diff --check 9f741f55^ 9f741f55 -- .github/pantheon-stage0-matrix.json services/control-plane/bff/conftest.py services/control-plane/bff/main.py services/control-plane/bff/smoke_test.py services/control-plane/bff/smoke_test_incident.py services/control-plane/bff/test_bff_auth_facade.py services/control-plane/bff/tests/test_auth_jwks_strict.py; python3 -m pytest services/control-plane/bff/tests/test_auth_jwks_strict.py -q; python3 -m pytest services/control-plane/bff/test_bff_auth_facade.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q; python3 services/control-plane/bff/smoke_test.py"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 30,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-014",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-13T02:09:35Z",
+      "resolved_at": "2026-05-13T02:09:42Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-014",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review. Commit 9f741f55 implements Lovable default CORS origins, production-strict dev-origin filtering, strict-mode stub disablement, and dedicated CI pytest coverage for CORS/JWKS issuer/audience/kid rotation. Verification passed: py_compile for main/new tests/smokes; pytest services/control-plane/bff/tests/test_auth_jwks_strict.py -q => 8 passed; pytest services/control-plane/bff/test_bff_auth_facade.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q => 74 passed; python3 services/control-plane/bff/smoke_test.py => 24 OK; pytest test_bff_session_auth_me_contract.py -q => 13 passed; ci_stage0.py validate OK; diff checks OK. Stage0 bff runner itself is blocked locally by PEP 668 pip install; manual residual target checks show unrelated existing failures in smoke_test_incident idempotency-key admission and test_w4_remaining_catalog, with unrelated unstaged main.py command-envelope hunks left out of this commit.",
+      "status": "done",
+      "created_at": "2026-05-13T04:36:00Z",
+      "resolved_at": "2026-05-13T04:39:41Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-014",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. Owner should perform normal review_approved -> done closeout for BFF-CONSOL-014 with commit 9f741f55 and the recorded verification evidence.",
+      "status": "done",
+      "created_at": "2026-05-13T04:39:41Z",
+      "resolved_at": "2026-05-13T04:44:08Z"
+    }
+  ],
+  "blockers": []
+}

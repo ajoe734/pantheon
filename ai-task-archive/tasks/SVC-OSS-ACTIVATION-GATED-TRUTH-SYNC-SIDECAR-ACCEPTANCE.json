@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-29T22:26:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE",
+    "title": "Prepare SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC acceptance packet and dependency map",
+    "summary_zh": "平行支援 SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Planning Truth / Activation-Gated Code Alignment",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-OPENCLAW-RUNTIME-ADOPTION-SCAFFOLD",
+      "SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT",
+      "SVC-TRL-GATED-PREACTIVATION-PREFLIGHT",
+      "SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT",
+      "SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT",
+      "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+      "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE",
+      "SVC-OSS-DORMANT-COMPOSE-PROFILES",
+      "SVC-OSS-DORMANT-SMOKE-MATRIX"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC/SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout finalized with task-scoped commit 1061ddccdf0ac62f6f4493694ef4de9383bfd6eb; support packet approved by Claude and committed; verification: git diff --check on packet passed, dormant OSS smoke matrix rerun passed 7/7 closed and activated=false.",
+    "last_update": "2026-04-29T22:26:19Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T22:26:19Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "1061ddccdf0ac62f6f4493694ef4de9383bfd6eb",
+      "commit_subject": "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE finalize support packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 62,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 27,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Support acceptance packet ready at support/sidecars/SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC/SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE.md; dependency map covers all nine done prerequisites; verification: git diff --check on packet path, python3 scripts/smoke_dormant_oss_matrix.py --json-out /tmp/SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE.matrix.json => 7/7 closed and activated=false.",
+      "status": "done",
+      "created_at": "2026-04-29T21:05:26Z",
+      "resolved_at": "2026-04-29T22:07:37Z"
+    },
+    {
+      "task_id": "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Chair reassigned review from Claude2 to Claude: The acceptance packet has been ready since 2026-04-29T21:05:26Z and Claude2 cannot review during the pause; Claude is now unpaused and can review the support-only packet.",
+      "status": "done",
+      "created_at": "2026-04-29T22:07:37Z",
+      "resolved_at": "2026-04-29T22:10:21Z"
+    },
+    {
+      "task_id": "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved by Claude (reassigned from Claude2). All nine dependency rows are correctly mapped with commit SHAs and gate assertions. Smoke matrix rerun: 7/7 closed, activated=false. No canonical truth was modified. Parent owner (Codex) should absorb the sync watchlist items into the canonical truth-sync task.",
+      "status": "done",
+      "created_at": "2026-04-29T22:10:21Z",
+      "resolved_at": "2026-04-29T22:26:19Z"
+    }
+  ],
+  "blockers": []
+}

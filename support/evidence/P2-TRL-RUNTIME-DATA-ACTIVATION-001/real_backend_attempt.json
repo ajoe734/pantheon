@@ -1,0 +1,12 @@
+{
+  "backend": "trl_dpo",
+  "cause_message": "No module named 'trl'",
+  "cause_type": "ModuleNotFoundError",
+  "error_type": "TRLWorkflowError",
+  "message": "TRL backend unavailable. Install services/learning/trl/requirements.txt first.",
+  "silent_stub_fallback": false,
+  "status": "dependency_or_config_error",
+  "traceback_tail": [
+    "services.learning.trl.adapter.trl_adapter.TRLWorkflowError: TRL backend unavailable. Install services/learning/trl/requirements.txt first.\n"
+  ]
+}

@@ -1,19 +1,15 @@
 name: Report Generator Tests
 
 on:
-  push:
-    branches: ['*']
-    tags: ['*']
-  pull_request:
-    branches: [master]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
-        
+        uses: actions/checkout@v6
+
       - name: Liberate disk space
         uses: jlumbroso/free-disk-space@main
         with:
@@ -40,9 +36,9 @@ jobs:
         run: |
           # Build
           runInContainer dotnet build /p:Configuration=Release /v:quiet /p:WarningLevel=1 QuantConnect.Lean.sln
-          
+
           # Run Backtest
           runInContainer bash -c "cd ./Launcher/bin/Release && dotnet QuantConnect.Lean.Launcher.dll"
-          
+
           # Run Report
           runInContainer bash -c "cd ./Report/bin/Release && dotnet ./QuantConnect.Report.dll --backtest-data-source-file ../../../Launcher/bin/Release/BasicTemplateFrameworkAlgorithm.json --close-automatically true"

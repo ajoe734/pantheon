@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "WB-003",
+  "archived_at": "2026-04-14T14:16:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "WB-003",
+    "title": "Define the Research Workbench backlog and wave plan",
+    "summary_zh": "整理 Research Workbench 的 screen inventory、現況支撐、缺規格與推薦執行波次。",
+    "phase": "Workbench Backlog",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "LOOP-001"
+    ],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+    ],
+    "acceptance": [
+      "search, analyze, research ticket, experiment launch, and artifact compare are all listed as separate planning modules",
+      "current directionally-correct front-end work is acknowledged without treating it as packet-ready",
+      "backend gaps and packetization prerequisites are called out for each research module"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "phase": "phase3",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-14T09:07:58Z",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Research Workbench backlog finalized: five modules (Research Ticket → Search → Analyze → Experiment Launch → Artifact Compare) documented with backend gaps, packetization prerequisites, and Wave 3 internal dependency order. Codex review approved; no open issues. Closing as done.",
+    "last_update": "2026-04-14T14:16:20Z",
+    "review_notes_zh": [
+      "五個 Research Workbench 模組已分開列出，並且在 canonical module inventory 中各自有明確 scope。",
+      "front-ai-trading-system 的方向性前端工作已被承認，但明確標示為尚未 packet-ready，也沒有 canonical BFF contract 支撐。",
+      "每個 research 模組都補上 backend gap、packetization prerequisite 與 Wave 3 內部依賴順序。"
+    ],
+    "review_file": "docs/reviews/WB-003-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T14:16:20Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "1e81f09f715261346cccbd9b20b5bb0ae2322911",
+      "commit_subject": "WB-003: finalize Research Workbench backlog and wave plan",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "WB-003",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 168,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "WB-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Research Workbench backlog and wave plan is complete. Enhanced the Research Workbench section in pantheon-console-workbench-backlog.md with: canonical module inventory table (Research Ticket, Search, Analyze, Experiment Launch, Artifact Compare), Wave 3 internal ordering and dependency chain table, per-module backend gaps with specific BFF route gaps, packetization prerequisites, and a separation rule for screen-spec vs backend dependency work. All five modules are listed, front-end direction is acknowledged as not packet-ready, and backend gaps are called out for each module. Ready for Codex review against acceptance criteria.",
+      "status": "done",
+      "created_at": "2026-04-14T13:55:55Z",
+      "resolved_at": "2026-04-14T14:09:11Z"
+    },
+    {
+      "task_id": "WB-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Research Workbench backlog and wave plan approved. All five research modules are separated, directional frontend work is correctly marked non-packet-ready, and per-module backend gaps plus packetization prerequisites are explicit. Owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-14T14:09:11Z",
+      "resolved_at": "2026-04-14T14:16:21Z"
+    }
+  ],
+  "blockers": []
+}

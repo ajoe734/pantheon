@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "task_id": "FB-002",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "FB-002",
+    "title": "Capture trader approve, edit, reject, and rationale events",
+    "phase": "Epic D",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "FB-001",
+      "OC-001"
+    ],
+    "artifacts": [
+      "services/control-plane/feedback/"
+    ],
+    "acceptance": [
+      "approve/edit/reject events captured",
+      "rationale attached to feedback events",
+      "feedback links back to registry artifacts"
+    ],
+    "next": "Finalized FB-002 for v1 lock: trader feedback ingestion records approve/edit/reject/rationale as governed learning input with explicit artifact linkage, idempotent JSONL persistence, governance audit mirroring, and store-level RFC3339 query validation that returns HTTP 422 for invalid or inverted windows. Verification: python3 -m unittest discover -s services/control-plane/feedback -p 'test_*.py' (18 tests OK, 8 skipped); python3 -m py_compile services/control-plane/feedback/*.py passed.",
+    "last_update": "2026-04-06T15:43:33Z",
+    "summary_zh": "把交易員的 approve、edit、reject 與 rationale 變成可記錄的明確 feedback 事件，供後續學習使用。",
+    "review_notes_zh": [
+      "審查通過：approve/edit/reject/rationale 事件覆蓋完整，governance 邊界正確。",
+      "minor follow-up 已吸收：actor_role 對齊 OC-001、contract 補上 telemetry draft 說明、annotate 操作補上 schema $comment。"
+    ],
+    "review_file": "services/feedback/schema/review_fb001_fb002_claude.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "FB-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented services/control-plane/feedback/ with append-only trader feedback ingestion, idempotent JSONL store, schema/runtime validation for approve/edit/reject/rationale, and OC-001 role alignment. Verification: python3 -m unittest discover -s services/control-plane/feedback -p 'test_*.py' (11 tests OK, 6 API tests skipped because local env lacks fastapi/pydantic); python3 -m py_compile on feedback modules passed.",
+      "status": "done",
+      "created_at": "2026-04-05T13:47:44Z",
+      "resolved_at": "2026-04-05T13:51:41Z"
+    },
+    {
+      "task_id": "FB-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Hardened FB-002 before review: trader_feedback_event schema now enforces governed target linkage via anyOf, runtime schema validation uses a shared Draft7Validator with a custom RFC3339+timezone date-time checker for environments missing jsonschema date-time support, README reflects schema+runtime linkage enforcement, and store tests cover invalid timestamps plus missing linkage. Verification: python3 -m unittest discover -s services/control-plane/feedback -p 'test_*.py' (13 tests OK, 6 API tests skipped because local env lacks fastapi/pydantic); python3 -m py_compile services/control-plane/feedback/*.py passed.",
+      "status": "done",
+      "created_at": "2026-04-05T13:53:52Z",
+      "resolved_at": "2026-04-05T14:06:14Z"
+    },
+    {
+      "task_id": "FB-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Owner-side hardening applied: GET /trader-feedback now returns 422 for invalid created_after/created_before RFC3339 values and for inverted time windows; query enums are typed; README and API tests updated. Verification: python3 -m unittest discover -s services/control-plane/feedback -p 'test_*.py' (15 tests OK, 8 API tests skipped because local env lacks fastapi/pydantic); python3 -m py_compile services/control-plane/feedback/*.py passed.",
+      "status": "done",
+      "created_at": "2026-04-05T14:07:27Z",
+      "resolved_at": "2026-04-05T14:07:44Z"
+    },
+    {
+      "task_id": "FB-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Hardened FB-002 query validation by moving created_after/created_before parsing into store-level build_query_filters(), so invalid timestamps and inverted windows are enforced in a pure Python path that remains unit-tested without FastAPI extras. FastAPI now maps QueryFilterValidationError back to HTTP 422. Verification: python3 -m unittest discover -s services/control-plane/feedback -p 'test_*.py' (18 tests OK, 8 API tests skipped because local env lacks fastapi); python3 -m py_compile services/control-plane/feedback/*.py passed.",
+      "status": "done",
+      "created_at": "2026-04-05T14:09:49Z",
+      "resolved_at": "2026-04-05T14:53:37Z"
+    },
+    {
+      "task_id": "FB-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "APPROVED for v1 lock. Review at services/feedback/schema/review_fb001_fb002_claude.md. Trader feedback ingestion captures approve/edit/reject/rationale with governed artifact linkage, idempotent JSONL storage, governance audit mirroring, and store-level RFC3339 query validation that returns HTTP 422 for invalid or inverted windows. Verification: python3 -m unittest discover -s services/control-plane/feedback -p 'test_*.py' (18 tests OK, 8 skipped because fastapi extras are absent); python3 -m py_compile services/control-plane/feedback/*.py passed.",
+      "status": "done",
+      "created_at": "2026-04-06T15:36:53Z",
+      "resolved_at": "2026-04-06T15:43:33Z"
+    }
+  ],
+  "blockers": []
+}

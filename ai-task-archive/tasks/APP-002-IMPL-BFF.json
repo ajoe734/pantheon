@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "task_id": "APP-002-IMPL-BFF",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "APP-002-IMPL-BFF",
+    "title": "Implement BFF endpoints for operator commands and command result polling",
+    "summary_zh": null,
+    "phase": "Phase 5: Implementation",
+    "owner": "Claude",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-002/APP-002-OPERATOR-ACTION-CONTRACT.md"
+    ],
+    "acceptance": [],
+    "next": "Superseded after accepted Wave 1 execution materialization. This bootstrap BFF lane is retired; remaining operator BFF work continues in the accepted APP-002-W1 execution slices.",
+    "last_update": "2026-04-11T22:57:38Z",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-002-IMPL-BFF",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-11T04:36:54Z",
+      "resolved_at": "2026-04-11T04:43:24Z"
+    },
+    {
+      "task_id": "APP-002-IMPL-BFF",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Gemini completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-11T04:43:23Z",
+      "resolved_at": "2026-04-11T04:45:28Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "APP-002-IMPL-BFF",
+      "owner": "Claude",
+      "waiting_for": "Codex",
+      "message": "Parked after consensus materialization. This bootstrap lane covered operator command submit/poll only; remaining operator BFF work continues in APP-002-W1-* execution slices.",
+      "status": "resolved",
+      "created_at": "2026-04-11T11:51:31Z",
+      "resolved_at": "2026-04-11T22:57:38Z"
+    }
+  ]
+}

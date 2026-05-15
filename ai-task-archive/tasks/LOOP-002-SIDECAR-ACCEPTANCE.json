@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "task_id": "LOOP-002-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-15T00:10:31Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-002-SIDECAR-ACCEPTANCE",
+    "title": "Prepare LOOP-002 acceptance packet and dependency map",
+    "summary_zh": "平行支援 LOOP-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Closed-Loop Infra",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "LOOP-001"
+    ],
+    "artifacts": [
+      "support/sidecars/LOOP-002/LOOP-002-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: acceptance packet (36 items across AC-1/AC-2/AC-3, 5 downstream acceptance gates, 3 non-blocking residual risks) reviewed and approved by Codex. R1 hygiene note forwarded to LOOP-003 bootstrap preflight. Sidecar support slice closed.",
+    "last_update": "2026-04-15T00:10:31Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "LOOP-002",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "驗收 packet 與 live workflow/spec evidence 對得上；36 個檢核點、5 個 acceptance gate 與 3 個 residual risks 都有對應來源。",
+      "Dependency map 應解讀為 closed-loop downstream gate map，而不是覆寫 ai-status 顯式 depends_on truth；這個 packet 沒有越界修改 canonical truth。",
+      "R1 保留為 LOOP-003 bootstrap 前的 preflight hygiene：F-042 contract-ready fixture 仍需把 source_repo 從 shorthand `pantheon` 對齊成 `ajoe734/pantheon`。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T00:10:31Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "7704831b36a1d2f9f190748903a4f4ca14b93e07",
+      "commit_subject": "LOOP-002-SIDECAR-ACCEPTANCE: finalize acceptance packet to done",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "LOOP-002-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 132,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-002-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-14T15:26:27Z",
+      "resolved_at": "2026-04-14T15:26:27Z"
+    },
+    {
+      "task_id": "LOOP-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-14T15:32:35Z",
+      "resolved_at": "2026-04-14T15:32:35Z"
+    },
+    {
+      "task_id": "LOOP-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet created at support/sidecars/LOOP-002/LOOP-002-SIDECAR-ACCEPTANCE.md. Contains 36 verification items across AC-1/AC-2/AC-3, downstream dependency map with 5 acceptance gates, and 3 non-blocking residual risks inherited from LOOP-002-SIDECAR-REVIEW. Ready for Codex reviewer inspection.",
+      "status": "done",
+      "created_at": "2026-04-14T15:40:47Z",
+      "resolved_at": "2026-04-14T16:12:03Z"
+    },
+    {
+      "task_id": "LOOP-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Acceptance packet verified against live workflows, archived parent evidence, and coordination-loop spec. Sidecar is approved; owner should finalize LOOP-002-SIDECAR-ACCEPTANCE to done after closeout.",
+      "status": "done",
+      "created_at": "2026-04-14T16:12:03Z",
+      "resolved_at": "2026-04-15T00:10:31Z"
+    }
+  ],
+  "blockers": []
+}

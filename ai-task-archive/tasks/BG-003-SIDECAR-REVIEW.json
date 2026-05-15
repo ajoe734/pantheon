@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "BG-003-SIDECAR-REVIEW",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BG-003-SIDECAR-REVIEW",
+    "title": "Prepare BG-003 review packet and evidence summary",
+    "summary_zh": "平行支援 BG-003，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Blueprint Gap P0",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "PLAN-002"
+    ],
+    "artifacts": [
+      "support/sidecars/BG-003/BG-003-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the review-approved sidecar packet. All acceptance criteria met: support artifact created at support/sidecars/BG-003/BG-003-SIDECAR-REVIEW.md, no canonical truth modified, review approved by Codex. Sidecar retained as support-only evidence for completed BG-003.",
+    "last_update": "2026-04-14T00:16:17Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BG-003",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar review packet 已校正為 parent BG-003 完成後的狀態，證據鏈、acceptance 對照與 closeout 語境一致，可作為支援性留存材料。"
+    ],
+    "review_file": "support/sidecars/BG-003/BG-003-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T00:16:17Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "07039ce8f840f2a3b7ed0b11fa044f78ecde49dd",
+      "commit_subject": "BG-003-SIDECAR-REVIEW: Add sidecar review packet for completed BG-003",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Task-ID": "BG-003-SIDECAR-REVIEW",
+        "LLM-Agent": "Qwen",
+        "Reviewer": "Codex",
+        "Co-authored-by": "Qwen-Coder <qwen-coder@alibabacloud.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 85,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BG-003-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review packet complete at support/sidecars/BG-003/BG-003-SIDECAR-REVIEW.md. All 6 BG-003 acceptance criteria verified, evidence summary ready. Codex to intake for parent task finalization.",
+      "status": "done",
+      "created_at": "2026-04-14T00:12:13Z",
+      "resolved_at": "2026-04-14T00:14:34Z"
+    },
+    {
+      "task_id": "BG-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review approved. Packet refreshed for post-closeout context; evidence is coherent and sufficient as a support-only record for completed BG-003.",
+      "status": "done",
+      "created_at": "2026-04-14T00:14:34Z",
+      "resolved_at": "2026-04-14T00:16:18Z"
+    }
+  ],
+  "blockers": []
+}

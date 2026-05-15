@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Idle capacity (Gemini) and healthy execution backlog allow for proactive sidecar support for critical path tasks.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-DOCS-FUTURE-STATE-TRUTH-SYNC",
+    "SVC-BFF-OIDC-JWKS-AUTH-FACADE-SIDECAR-BFF-HANDOFF",
+    "SVC-DATA-OWNERSHIP-MIGRATION-MAP"
+  ]
+}

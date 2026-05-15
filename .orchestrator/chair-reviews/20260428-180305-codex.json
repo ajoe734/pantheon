@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization is 0.0, runnable backlog exists, and no global blocker is active.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-SEARCH-SERVICE"
+  ],
+  "approval_actions": [],
+  "recommended_focus": [
+    "SVC-POLICY-LEARNING-BOUNDARY",
+    "SVC-RECONCILIATION-DRIFT-SERVICE"
+  ]
+}

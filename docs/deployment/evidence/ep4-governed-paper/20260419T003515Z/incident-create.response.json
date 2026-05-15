@@ -1,0 +1,11 @@
+{
+  "status": 422,
+  "payload": {
+    "detail": {
+      "reference_errors": [
+        "binding_id 'rb-e17d2c029903493eb79237cdb6e15b8a' does not resolve through the canonical RuntimeBinding path",
+        "telemetry_event_id 'f58ff826-c694-43b3-a061-5e617628034f' does not resolve through the canonical telemetry lineage path"
+      ]
+    }
+  }
+}

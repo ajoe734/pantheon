@@ -1,0 +1,24 @@
+{
+  "status": 200,
+  "payload": {
+    "decision_id": "apv-ep4-8cc78869",
+    "target_type": "registry_entry",
+    "target_id": "reg-ep4-c1be4993",
+    "target_version": "1.2.0",
+    "decision": null,
+    "decision_state": "under_review",
+    "actor_role": "governance_reviewer",
+    "actor_id": "ep4-governance-reviewer",
+    "rationale": null,
+    "created_at": "2026-04-19T00:36:58Z",
+    "decided_at": null,
+    "conditions": [],
+    "risk_level": "low",
+    "evidence_refs": [],
+    "superseded_by": null,
+    "expires_at": null,
+    "capital_pool_id": "pool-ep4-32a63d68",
+    "persona_id": "persona-paper-ops",
+    "metadata": null
+  }
+}

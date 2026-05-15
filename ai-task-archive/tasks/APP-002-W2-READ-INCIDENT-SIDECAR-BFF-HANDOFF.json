@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "APP-002-W2-READ-INCIDENT-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-002-W2-READ-INCIDENT-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare APP-002-W2-READ-INCIDENT BFF and frontend handoff packet",
+    "summary_zh": "平行支援 APP-002-W2-READ-INCIDENT，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Phase 5: APP-002 Execution Wave 2",
+    "owner": "Codex",
+    "reviewer": "Qwen",
+    "status": "done",
+    "depends_on": [
+      "APP-002-W1-COMMAND-DEPLOYMENT"
+    ],
+    "artifacts": [
+      "support/sidecars/APP-002-W2-READ-INCIDENT/APP-002-W2-READ-INCIDENT-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized sidecar BFF handoff packet; no canonical changes.",
+    "last_update": "2026-04-11T13:23:50Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-002-W2-READ-INCIDENT",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-002-W2-READ-INCIDENT-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Sidecar handoff packet ready: support/sidecars/APP-002-W2-READ-INCIDENT/APP-002-W2-READ-INCIDENT-SIDECAR-BFF-HANDOFF.md. Includes current incident endpoints, gap list (RT-03/TL-02/EV-04), and frontend handoff notes.",
+      "status": "done",
+      "created_at": "2026-04-11T13:00:32Z",
+      "resolved_at": "2026-04-11T13:03:28Z"
+    },
+    {
+      "task_id": "APP-002-W2-READ-INCIDENT-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Sidecar handoff packet reviewed and approved. Gap list (RT-03/TL-02/EV-04) verified against main.py and BFF_API_CONTRACT.md. Frontend handoff notes clear with example payload and UI gating rules. Support artifacts only, canonical truth untouched. Ready for parent owner (Qwen) execution on APP-002-W2-READ-INCIDENT.",
+      "status": "done",
+      "created_at": "2026-04-11T13:03:28Z",
+      "resolved_at": "2026-04-11T13:11:07Z"
+    },
+    {
+      "task_id": "APP-002-W2-READ-INCIDENT-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Refreshed packet header (parent done) and corrected runtime mapping note; gaps list still aligned to main.py/BFF_API_CONTRACT.md. Please re-approve if needed.",
+      "status": "done",
+      "created_at": "2026-04-11T13:19:43Z",
+      "resolved_at": "2026-04-11T13:21:37Z"
+    },
+    {
+      "task_id": "APP-002-W2-READ-INCIDENT-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Sidecar handoff packet reviewed and approved. Gaps list aligned to main.py/BFF_API_CONTRACT.md, frontend handoff clear, support-only artifact confirmed.",
+      "status": "done",
+      "created_at": "2026-04-11T13:21:37Z",
+      "resolved_at": "2026-04-11T13:21:48Z"
+    },
+    {
+      "task_id": "APP-002-W2-READ-INCIDENT-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Packet ready for final approval (syncing review state after Qwen sign-off).",
+      "status": "done",
+      "created_at": "2026-04-11T13:23:43Z",
+      "resolved_at": "2026-04-11T13:23:46Z"
+    },
+    {
+      "task_id": "APP-002-W2-READ-INCIDENT-SIDECAR-BFF-HANDOFF",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review approved; gaps list aligned to main.py/BFF_API_CONTRACT.md and support-only artifact confirmed.",
+      "status": "done",
+      "created_at": "2026-04-11T13:23:46Z",
+      "resolved_at": "2026-04-11T13:23:50Z"
+    }
+  ],
+  "blockers": []
+}

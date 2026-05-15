@@ -1,0 +1,7 @@
+{
+  "query_family": "capital_pool_projection",
+  "params": {
+    "pool_id": "pool-ep5-canary-3"
+  },
+  "replay_mode": "local_lineage_read_service"
+}

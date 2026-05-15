@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization remains low and runnable support work exists; the only blocker is a scoped closeout approval that can be allowed.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-RL-FINRL-RLLIB-RAYTUNE-ACTIVATION-READY"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260430T053234Z-57a662aa",
+      "decision": "allow",
+      "reason": "The command only stages explicit task-owned RL adapter files for a review_approved closeout; it does not commit, push, delete, or touch broad paths.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-RL-FINRL-RLLIB-RAYTUNE-ACTIVATION-READY",
+    "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER",
+    "SVC-OPENCLAW-SESSION-LIFECYCLE",
+    "SVC-OSS-ACTIVATION-READY-BFF-OPS"
+  ]
+}

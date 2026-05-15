@@ -459,6 +459,15 @@ def cmd_kill_switch(args: argparse.Namespace, ctx: CliContext) -> int:
     if not args.mfa_token:
         print("ERROR: kill-switch activate requires --mfa-token", file=sys.stderr)
         return EXIT_AUTH
+    if args.action_override == "replace" and (
+        not args.fallback_artifact_id or not args.fallback_artifact_version
+    ):
+        print(
+            "ERROR: kill-switch replace requires --fallback-artifact-id "
+            "and --fallback-artifact-version",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
     payload = {
         "action": "activate",
         "scope": args.scope,
@@ -466,6 +475,8 @@ def cmd_kill_switch(args: argparse.Namespace, ctx: CliContext) -> int:
         "severity": args.severity,
         "reason": args.rationale,
         "action_override": args.action_override,
+        "fallback_artifact_id": args.fallback_artifact_id,
+        "fallback_artifact_version": args.fallback_artifact_version,
     }
     payload = {k: v for k, v in payload.items() if v}
     if ctx.dry_run or args.dry_run:
@@ -586,6 +597,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_ks_act.add_argument("--severity", choices=["critical", "high", "medium"], default="critical")
     p_ks_act.add_argument("--rationale", default="")
     p_ks_act.add_argument("--action-override", choices=["pause", "risk_off", "liquidate", "replace", "terminate"], default=None)
+    p_ks_act.add_argument("--fallback-artifact-id", default=None)
+    p_ks_act.add_argument("--fallback-artifact-version", default=None)
     p_ks_act.add_argument("--force", action="store_true")
     p_ks_act.add_argument("--mfa-token", default=None)
 

@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-023",
+  "archived_at": "2026-05-15T12:13:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-023",
+    "title": "Lovable prod strict cutover (preview-soak verification gate)",
+    "summary_zh": "等 022 dev BFF preview strict soak 0 regression 後，把 Lovable main 部署切 VITE_BFF_FALLBACK=strict (REAL_WRITES 仍 false 直到 operator onboard)。Prod cutover 以 smoke/regression evidence 完成，不再用固定天數 gate。注意:Pantheon 後端目前只有 dev BFF;真正的 prod BFF tier 是未來工作,本 task 處理的是 Lovable 前端 strict cutover,非後端環境晉升。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex",
+    "reviewer": "Gemini2",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-022"
+    ],
+    "artifacts": [
+      "execute-plans/.lovable/prod-strict.env",
+      "support/evidence/BFF-CONSOL-023-prod-strict-soak.md"
+    ],
+    "acceptance": [
+      "prod 切 strict 模式運行",
+      "REAL_WRITES 仍 false",
+      "prod smoke/regression evidence 完成",
+      "operator 體感 0 regression",
+      "SSE/read smoke 在 prod 都 pass",
+      "evidence 紀錄 cutover 過程與監控指標"
+    ],
+    "next": "Done: runtime strict main cutover verified; BFF/read/SSE/browser/F15/F01 strict evidence complete; build-time Lovable env publish tracked as non-blocking follow-up.",
+    "last_update": "2026-05-15T12:13:13Z",
+    "review_notes_zh": [
+      "BFF-CONSOL-023 approved: hosted main asset supports runtime strict cutover via __PANTHEON_BFF_RUNTIME__/pantheon.integration.fallback; authenticated read smoke passed 32/32 with no writes; hosted browser probe observed /bff/me, /bff/v5/control-room, and SSE with pass=true; F15 strict and focused F01 strict checks passed. Build-time Lovable env publish remains a non-blocking ops follow-up."
+    ],
+    "review_file": "support/evidence/BFF-CONSOL-023-prod-strict-soak.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T12:13:13Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "ffdee5d6382f2d098f4d1c3a8ab4aa08d877cb72",
+      "commit_subject": "BFF-CONSOL-023: record runtime strict cutover",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-CONSOL-023",
+        "Reviewer": "Gemini2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 22,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-023",
+      "from": "Gemini2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Gemini2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T07:27:53Z",
+      "resolved_at": "2026-05-15T07:27:53Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-023",
+      "from": "Codex",
+      "to": "Gemini2",
+      "message": "Ready for review: BFF-CONSOL-023 runtime strict main cutover evidence complete; authenticated read smoke 32/32, hosted browser probe pass with SSE, F15 strict and focused F01 strict checks passed. Evidence updated in support/evidence/BFF-CONSOL-023-prod-strict-soak.md.",
+      "status": "done",
+      "created_at": "2026-05-15T12:12:39Z",
+      "resolved_at": "2026-05-15T12:12:52Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-023",
+      "from": "Gemini2",
+      "to": "Codex",
+      "message": "Approved: runtime strict main cutover evidence complete; build-time env publish is non-blocking follow-up.",
+      "status": "done",
+      "created_at": "2026-05-15T12:12:52Z",
+      "resolved_at": "2026-05-15T12:13:13Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "BFF-CONSOL-023",
+      "owner": "Gemini2",
+      "waiting_for": "Gemini",
+      "message": "Blocked by BFF-CONSOL-022, which is waiting for credentials.",
+      "status": "resolved",
+      "created_at": "2026-05-14T12:45:33Z",
+      "resolved_at": "2026-05-15T07:25:34Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-023",
+      "owner": "Gemini2",
+      "waiting_for": "Gemini",
+      "message": "Task is blocked waiting for Gemini to provide credentials for BFF-CONSOL-022.",
+      "status": "resolved",
+      "created_at": "2026-05-14T13:08:35Z",
+      "resolved_at": "2026-05-15T07:25:34Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-023",
+      "owner": "Codex",
+      "waiting_for": "Gemini2",
+      "message": "Pre-cutover smoke evidence recorded, but hosted main asset /assets/index-vlevju41.js does not contain build-time VITE_BFF_FALLBACK=strict; waiting for Lovable main env publish/rebuild before review.",
+      "status": "resolved",
+      "created_at": "2026-05-15T07:37:11Z",
+      "resolved_at": "2026-05-15T12:12:26Z"
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "task_id": "LP-003",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LP-003",
+    "title": "Integrate experiment registry metadata with MLflow or W&B",
+    "phase": "Epic F",
+    "owner": "Codex",
+    "reviewer": "Copilot",
+    "status": "done",
+    "depends_on": [
+      "REG-001"
+    ],
+    "artifacts": [
+      "services/registry/experiments/"
+    ],
+    "acceptance": [
+      "experiment lineage maps to registry",
+      "aliases or promotion metadata documented",
+      "artifact version handoff defined"
+    ],
+    "next": "Finalized LP-003: services/registry/experiments now ships a governed MLflow-first registry adapter that mirrors registry lineage, aliases, artifact handoff, and REG-003-compatible promoted_metadata for downstream execution and LP-005 tracking. Verification: python3 -m unittest discover -s services/registry/experiments -p 'test_*.py' (4 tests OK); python3 services/registry/experiments/smoke_test.py (memory backend passed).",
+    "last_update": "2026-04-06T16:01:24Z",
+    "summary_zh": "把 registry metadata 接到 MLflow 或 W&B，讓實驗結果、artifact 與 promotion 狀態能追蹤。",
+    "review_notes_zh": [
+      "LP-003 通過審查。實現完整：正確的治理語義、完整的 lifecycle state 對應、充分的 lineage 與 rollback 支援、完整的 artifact handoff、promoted_metadata 適於下游使用。所有測試通過。與 LP-005 完全相容。"
+    ],
+    "review_file": "services/registry/experiments/review_lp003_grok_zh.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "LP-003",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "LP-003 implementation ready for review: added services/registry/experiments/ with an MLflow-first registry adapter, in-memory + real tracking backends, documented lineage/alias/artifact-handoff rules, and aligned the MLflow pin to 3.10.1. Verified with python3 -m unittest discover -s services/registry/experiments -p 'test_*.py', python3 services/registry/experiments/smoke_test.py, and python3 -m py_compile services/registry/experiments/*.py. Review focus: confirm the experiment_refs/promoted_metadata shape is sufficient for LP-005 and future registry materialization.",
+      "status": "done",
+      "created_at": "2026-04-06T09:44:05Z",
+      "resolved_at": "2026-04-06T09:46:11Z"
+    },
+    {
+      "task_id": "LP-003",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "LP-003 通過審查: MLflow registry adapter 實現完整，experiment_refs/promoted_metadata 形狀與 REG-001/REG-003/EX-001 相容，可直接支援 LP-005。",
+      "status": "done",
+      "created_at": "2026-04-06T15:36:53Z",
+      "resolved_at": "2026-04-06T16:01:24Z"
+    }
+  ],
+  "blockers": []
+}

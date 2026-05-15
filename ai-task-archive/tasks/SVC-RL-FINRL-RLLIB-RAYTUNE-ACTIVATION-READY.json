@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "task_id": "SVC-RL-FINRL-RLLIB-RAYTUNE-ACTIVATION-READY",
+  "archived_at": "2026-04-30T05:38:03Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-RL-FINRL-RLLIB-RAYTUNE-ACTIVATION-READY",
+    "title": "Make RL research adapters activation-ready behind gate",
+    "summary_zh": "把 FinRL / RLlib / Ray Tune 從 dormant scaffold 補成 activation-ready offline research lane：真實 training/search worker、reward/env contract、artifact persistence；production/live 仍由 gate 擋住。",
+    "phase": "OSS Activation-Ready Development",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE"
+    ],
+    "artifacts": [
+      "services/research/finrl",
+      "services/research/rllib",
+      "services/learning/rl",
+      "services/research-worker-gateway",
+      "services/evaluation"
+    ],
+    "acceptance": [
+      "FinRL and RLlib enabled paths no longer delegate upstream backend to stub",
+      "Ray Tune enabled path performs bounded real search or explicit install error",
+      "reward spec dataset contract and environment contract are enforced",
+      "offline paper-mode artifact packet is produced without live execution",
+      "closed-gate and enabled-offline tests pass"
+    ],
+    "next": "Activation-ready RL adapters finalized: FinRL/RLlib/Ray Tune backends resolve real upstream imports without stub delegation; reward/env contract enforced; artifact packets remain gate_state=closed, artifact_state=draft. Verification: 16 FinRL + 33 RLlib/Ray Tune + 25 research-worker-gateway tests pass. Task-scoped commit 003adbe.",
+    "last_update": "2026-04-30T05:38:03Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-materialization-20260430",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：FinRL/RLlib/Ray Tune adapter 實作符合 activation-ready behind-gate 範圍，enabled backend 會解析 upstream import path，缺少套件時以明確錯誤 fail。",
+      "FinRLPPOBackend、RLlibPPOBackend、RayTuneImportBackend 已確認不委派 stub；worker artifact packet 仍為 gate_state=closed、artifact_state=draft、deployment_stage=none。",
+      "驗證通過：pytest services/research/finrl/test_adapter.py；pytest services/research/rllib/test_adapter.py services/research/rllib/test_ray_tune_adapter.py；pytest services/research-worker-gateway/tests；FinRL/RLlib/Ray Tune closed-gate 與 enabled smoke；stub workers artifact persistence。",
+      "非阻塞殘餘風險：FinRL 與 RLlib test files 若放在同一個 pytest invocation 收集，仍會因既有 top-level test_adapter/adapter import 命名碰撞失敗；本次依 service-scoped commands 驗證。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T05:38:03Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "003adbedd5acc235c91e707cd244da8e00a4b5b5",
+      "commit_subject": "SVC-RL-FINRL-RLLIB-RAYTUNE-ACTIVATION-READY make RL research adapters activation-ready behind gate",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-RL-FINRL-RLLIB-RAYTUNE-ACTIVATION-READY",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 24,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 12,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-RL-FINRL-RLLIB-RAYTUNE-ACTIVATION-READY",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T04:44:08Z",
+      "resolved_at": "2026-04-30T04:47:26Z"
+    },
+    {
+      "task_id": "SVC-RL-FINRL-RLLIB-RAYTUNE-ACTIVATION-READY",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-30T04:53:27Z",
+      "resolved_at": "2026-04-30T04:56:36Z"
+    },
+    {
+      "task_id": "SVC-RL-FINRL-RLLIB-RAYTUNE-ACTIVATION-READY",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T04:56:36Z",
+      "resolved_at": "2026-04-30T04:58:35Z"
+    },
+    {
+      "task_id": "SVC-RL-FINRL-RLLIB-RAYTUNE-ACTIVATION-READY",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T05:18:00Z",
+      "resolved_at": "2026-04-30T05:19:21Z"
+    },
+    {
+      "task_id": "SVC-RL-FINRL-RLLIB-RAYTUNE-ACTIVATION-READY",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Activation-ready RL adapters complete and verified. All 5 acceptance criteria met: (1) FinRLPPOBackend + RLlibPPOBackend use real upstream import paths and do not delegate to stub; (2) RayTuneImportBackend performs bounded offline search with ray.tune import or raises explicit error; (3) reward_spec/env contract enforced in RLlib adapter; (4) workers produce artifact packets gate_state=closed, artifact_state=draft; (5) 49 unit tests pass (finrl 16, rllib 33) + 25 research-worker-gateway tests pass. Gate remains fail-closed. Please review.",
+      "status": "done",
+      "created_at": "2026-04-30T05:24:27Z",
+      "resolved_at": "2026-04-30T05:30:13Z"
+    },
+    {
+      "task_id": "SVC-RL-FINRL-RLLIB-RAYTUNE-ACTIVATION-READY",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Codex review approved: activation-ready RL adapters meet acceptance behind closed gate; focused tests and smoke checks passed. Owner should finalize with task-scoped closeout.",
+      "status": "done",
+      "created_at": "2026-04-30T05:30:13Z",
+      "resolved_at": "2026-04-30T05:38:03Z"
+    }
+  ],
+  "blockers": []
+}

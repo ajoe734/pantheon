@@ -1,0 +1,222 @@
+{
+  "audit_entry": {
+    "action_type": "replace",
+    "actor_id": "operator-oncall",
+    "audit_id": "audit-5712ba3f43ee",
+    "audited_at": "2026-05-04T02:27:19Z",
+    "capital_pool_id": "pool-emrg-replace",
+    "command_id": "ks-36cebc5f23bb",
+    "emergency_class": "hard",
+    "outcome_note": "hard emergency: operator_emergency_stop -> replace; safe mode normal -> guarded",
+    "reason": "operator_emergency_stop",
+    "safe_mode_after": "guarded",
+    "safe_mode_before": "normal",
+    "trigger_id": "trig-333897e14482"
+  },
+  "binding_action": {
+    "action": "replace",
+    "binding": {
+      "artifact_id": "artifact-operator-fallback",
+      "artifact_version": "1.0.0",
+      "binding_id": "rb-31e9adb4e31a4fa6a88da32ad1ee7473",
+      "capital_pool_id": "pool-emrg-replace",
+      "deployment_mode": "paper",
+      "effective_at": "2026-05-04T02:27:19Z",
+      "persona_capital_binding_id": "pcb-emrg-replace",
+      "plan_id": "plan-emrg-replace",
+      "retired_at": "2026-05-04T02:27:19Z",
+      "runtime_id": "rt-emrg-replace",
+      "status": "retired"
+    },
+    "replacement_binding": {
+      "artifact_id": "artifact-operator-fallback-safe",
+      "artifact_version": "1.1.0",
+      "binding_id": "rb-7b6cb85c9e5c4be09d8a40d353497a2f",
+      "capital_pool_id": "pool-emrg-replace",
+      "deployment_mode": "paper",
+      "effective_at": "2026-05-04T02:27:19Z",
+      "persona_capital_binding_id": "pcb-emrg-replace",
+      "plan_id": "ks-replace-ks-36cebc5f23bb",
+      "rollback_action_type": "replace",
+      "rollback_parent": "rb-31e9adb4e31a4fa6a88da32ad1ee7473",
+      "runtime_id": "rt-43606eb8",
+      "status": "active"
+    }
+  },
+  "command": {
+    "action_type": "replace",
+    "actor_id": "operator-oncall",
+    "bypass_review_queue": true,
+    "capital_pool_id": "pool-emrg-replace",
+    "command_id": "ks-36cebc5f23bb",
+    "dispatch_path": "runtime_manager_fast_path",
+    "emergency_class": "hard",
+    "fallback_artifact_id": "artifact-operator-fallback-safe",
+    "fallback_artifact_version": "1.1.0",
+    "issued_at": "2026-05-04T02:27:19Z",
+    "metadata": {
+      "bff_surface_used": false,
+      "drill": "SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS",
+      "foundation_command_id": "cmd-9598120e2cec4737ae21234efc80d85b",
+      "foundation_correlation_id": "trace-03a0049c5fae4fb196463d97063b905c",
+      "foundation_trace_id": "trace-03a0049c5fae4fb196463d97063b905c",
+      "trigger_reason": "operator_emergency_stop"
+    },
+    "priority": 1,
+    "trigger_id": "trig-333897e14482"
+  },
+  "foundation": {
+    "audit_action": {
+      "action_id": "audit-cee170cce4824a6f98f8d16108a2f2d5",
+      "action_type": "runtime_manager.kill_switch.accepted",
+      "actor_ref": {
+        "actor_id": "operator-oncall",
+        "actor_type": "user",
+        "roles": []
+      },
+      "correlation_id": "trace-03a0049c5fae4fb196463d97063b905c",
+      "environment": {
+        "name": "dev",
+        "timezone": "UTC"
+      },
+      "metadata": {
+        "path": "RuntimeManagerService.execute_kill_switch"
+      },
+      "payload_checksum": "2b4eb38a09b3a1542599c3c4540901eabdfba49268cad958e72f3f019cf8faae",
+      "policy_decision_ref": "poldec-ec9093cb5b094fd78743bcefec4e41b5",
+      "reason": "operator_emergency_stop",
+      "target_ref": "CapitalPool:pool-emrg-replace",
+      "timestamp": "2026-05-04T02:27:19Z",
+      "trace_id": "trace-03a0049c5fae4fb196463d97063b905c"
+    },
+    "command_envelope": {
+      "actor_ref": {
+        "actor_id": "operator-oncall",
+        "actor_type": "user",
+        "roles": []
+      },
+      "authority_scope": {
+        "action": "runtime_manager.kill_switch.dispatch",
+        "attributes": {},
+        "capital_pool_id": "pool-emrg-replace",
+        "environment": {
+          "name": "dev",
+          "timezone": "UTC"
+        },
+        "target_id": "pool-emrg-replace",
+        "target_ref": "CapitalPool:pool-emrg-replace",
+        "target_type": "CapitalPool"
+      },
+      "command_id": "cmd-9598120e2cec4737ae21234efc80d85b",
+      "command_type": "runtime_manager.kill_switch.dispatch",
+      "idempotency_key": "operator-fallback-emrg-replace",
+      "payload": {
+        "action_override": "replace",
+        "binding_id": null,
+        "capital_pool_id": "pool-emrg-replace",
+        "context": {
+          "bff_surface_used": false,
+          "drill": "SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS"
+        },
+        "fallback_artifact_id": "artifact-operator-fallback-safe",
+        "fallback_artifact_version": "1.1.0",
+        "operation": "runtime_manager.kill_switch.dispatch",
+        "reason": "operator_emergency_stop",
+        "severity": null
+      },
+      "requested_at": "2026-05-04T02:27:19Z",
+      "schema_version": "command_envelope.v1",
+      "trace": {
+        "actor_ref": {
+          "actor_id": "operator-oncall",
+          "actor_type": "user",
+          "roles": []
+        },
+        "correlation_id": "trace-03a0049c5fae4fb196463d97063b905c",
+        "created_at": "2026-05-04T02:27:19Z",
+        "environment": {
+          "name": "dev",
+          "timezone": "UTC"
+        },
+        "idempotency_key": "operator-fallback-emrg-replace",
+        "schema_version": "trace_context.v1",
+        "source_system": "runtime-manager",
+        "trace_id": "trace-03a0049c5fae4fb196463d97063b905c"
+      }
+    },
+    "idempotency_record": {
+      "first_seen_at": "2026-05-04T02:27:19Z",
+      "idempotency_key": "operator-fallback-emrg-replace",
+      "last_seen_at": "2026-05-04T02:27:19Z",
+      "operation_type": "runtime_manager.kill_switch.dispatch",
+      "request_hash": "2b4eb38a09b3a1542599c3c4540901eabdfba49268cad958e72f3f019cf8faae",
+      "result_ref": "kill_switch:ks-36cebc5f23bb",
+      "status": "succeeded",
+      "target_ref": "CapitalPool:pool-emrg-replace",
+      "trace_id": "trace-03a0049c5fae4fb196463d97063b905c"
+    },
+    "policy_decision": {
+      "action": "runtime_manager.kill_switch.dispatch",
+      "actor_ref": {
+        "actor_id": "operator-oncall",
+        "actor_type": "user",
+        "roles": []
+      },
+      "decision": "allow",
+      "decision_id": "poldec-ec9093cb5b094fd78743bcefec4e41b5",
+      "environment": {
+        "name": "dev",
+        "timezone": "UTC"
+      },
+      "evaluated_at": "2026-05-04T02:27:19Z",
+      "policy_id": "runtime-manager.kill-switch.fast-path",
+      "policy_version": "2026-04-27",
+      "reasons": [],
+      "target_ref": "CapitalPool:pool-emrg-replace",
+      "trace_id": "trace-03a0049c5fae4fb196463d97063b905c"
+    },
+    "trace_context": {
+      "actor_ref": {
+        "actor_id": "operator-oncall",
+        "actor_type": "user",
+        "roles": []
+      },
+      "correlation_id": "trace-03a0049c5fae4fb196463d97063b905c",
+      "created_at": "2026-05-04T02:27:19Z",
+      "environment": {
+        "name": "dev",
+        "timezone": "UTC"
+      },
+      "idempotency_key": "operator-fallback-emrg-replace",
+      "schema_version": "trace_context.v1",
+      "source_system": "runtime-manager",
+      "trace_id": "trace-03a0049c5fae4fb196463d97063b905c"
+    }
+  },
+  "safe_mode_after": "guarded",
+  "telemetry_ack": {
+    "ack_id": "ks-telemetry-ack:ks-36cebc5f23bb",
+    "ack_received": true,
+    "ack_required": true,
+    "ack_status": "acknowledged",
+    "ack_version": "2026-05-01",
+    "action_type": "replace",
+    "audit_action_ref": "audit-cee170cce4824a6f98f8d16108a2f2d5",
+    "audit_id": "audit-5712ba3f43ee",
+    "binding_id": "rb-31e9adb4e31a4fa6a88da32ad1ee7473",
+    "capital_pool_id": "pool-emrg-replace",
+    "capital_state_recorded": true,
+    "command_id": "ks-36cebc5f23bb",
+    "correlation_id": "trace-03a0049c5fae4fb196463d97063b905c",
+    "event_type": "kill_switch_action",
+    "fail_closed": false,
+    "reason": "runtime binding follow-through recorded before ack",
+    "runtime_binding_id": "rb-7b6cb85c9e5c4be09d8a40d353497a2f",
+    "runtime_id": "rt-43606eb8",
+    "runtime_state_recorded": true,
+    "runtime_status_after": "active",
+    "safe_mode_after": "guarded",
+    "telemetry_event_type": "kill_switch_action",
+    "trace_id": "trace-03a0049c5fae4fb196463d97063b905c"
+  }
+}

@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "APP-003-PKT001-BFF-ALIGN-001",
+  "archived_at": "2026-04-22T14:56:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-PKT001-BFF-ALIGN-001",
+    "title": "Align PKT-001 deployment-review with the published operator list contract",
+    "summary_zh": "補上 PKT-001 已發布但仍缺的 /api/v1/operator/deployment-plans，並把 deployment-review 的 SSE boundary 與 closeout truth 對齊，讓這個 blocker 不再只是 follow-up 備註。",
+    "phase": "Execution / Operator Console Contract Alignment",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-22-pkt001-deployment-review-blocker-execution-packet.md",
+      "docs/bff/PKT-001-deployment-review-console.md",
+      ".coordination/responses/PKT-001-deployment-review-frontend-feedback.yaml",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "GET /api/v1/operator/deployment-plans matches the published PKT-001 list contract",
+      "PKT-001 contract and closeout records agree on the SSE boundary decision",
+      "PKT-001 deployment-review no longer remains only as an unmaterialized follow-up blocker"
+    ],
+    "next": "Owner finalized approved PKT-001 contract alignment. Operator deployment-plans list route and PKT-005 SSE boundary truth are closed on Pantheon; remaining publication replay is tracked as the explicit front-owned residual.",
+    "last_update": "2026-04-22T14:56:02Z",
+    "source_plane": "audit_followup",
+    "source_ref": {
+      "type": "execution_packet",
+      "path": "docs/reviews/2026-04-22-pkt001-deployment-review-blocker-execution-packet.md"
+    },
+    "task_class": "execution_followup",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Operator deployment-plans 列表路由與 PKT-001 合約一致，包含 page_info / meta.surfaces / degradation 與必填欄位投影。",
+      "SSE 邊界在 BFF 文件、frontend-feedback、backend-delivery、DELIVERY_NOTE、API_GAP_REQUESTS、LOVABLE_CHANGE_FEEDBACK、FRONTEND_CHANGE_SPEC 全部統一為 PKT-005 cross-cut。",
+      "剩餘 front-owned publication replay 由 APP-003-PKT001-PUBLICATION-REPLAY-001 追蹤，PKT-001 不再只是浮動 follow-up 備註。",
+      "環境缺 fastapi/pytest，僅做靜態審查；contract test 已 commit。"
+    ],
+    "review_file": "docs/reviews/2026-04-22-app-003-pkt001-bff-align-001-claude2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-22T14:56:02Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "48b4ef20002ca63be546f7ff490483051c7329fe",
+      "commit_subject": "APP-003-PKT001-BFF-ALIGN-001 finalize owner checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-PKT001-BFF-ALIGN-001",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1074,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-PKT001-BFF-ALIGN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Implementation verified: operator deployment-plan list route is live, deployment-review allowedActions/degradation are aligned, and PKT-001 delivery records now treat runtime SSE as the approved PKT-005 cross-cut. Remaining blocker is front-owned publication replay truth only.",
+      "status": "done",
+      "created_at": "2026-04-22T09:24:45Z",
+      "resolved_at": "2026-04-22T14:41:08Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-BFF-ALIGN-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Implementation verified: operator deployment-plan list route is live, deployment-review allowedActions/degradation are aligned, and PKT-001 delivery records now treat runtime SSE as the approved PKT-005 cross-cut. Remaining blocker is front-owned publication replay truth only.",
+      "status": "done",
+      "created_at": "2026-04-22T14:41:08Z",
+      "resolved_at": "2026-04-22T14:46:04Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-BFF-ALIGN-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Approved: operator list route, SSE boundary truth, and replay residual materialization all line up with the published PKT-001 contract.",
+      "status": "done",
+      "created_at": "2026-04-22T14:46:04Z",
+      "resolved_at": "2026-04-22T14:56:03Z"
+    }
+  ],
+  "blockers": []
+}

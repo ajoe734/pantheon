@@ -1,0 +1,180 @@
+{
+  "version": 1,
+  "task_id": "BP5-OSS-003",
+  "archived_at": "2026-04-15T19:21:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-OSS-003",
+    "title": "Convert DSPy, imitation, and MLflow rows into runnable adapters or explicit defer proofs",
+    "summary_zh": "把 DSPy、imitation、MLflow 的 regrade 結果轉成 runnable adapter、smoke test、evidence refresh，或明確 defer proof。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "BP5-OSS-001"
+    ],
+    "artifacts": [
+      "OSS_INTEGRATION_CHECKLIST.md",
+      "integrations/",
+      "services/learning/"
+    ],
+    "acceptance": [
+      "each of DSPy, imitation, and MLflow has either a runnable adapter path or an explicit defer proof tied to evidence",
+      "checklist maturity no longer relies on stale or purely narrative evidence"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Finalized governed DSPy, imitation, and MLflow evidence packs after rerunning smoke and unit verification; accepted Claude review and closed the task.",
+    "last_update": "2026-04-15T19:21:33Z",
+    "review_notes_zh": [
+      "審查通過：DSPy/imitation/MLflow adapter 均為真實可執行程式碼，smoke test 和 unit coverage 現場驗證通過，evidence pack 符合 governed 標準，checklist 和 maturity matrix 已正確更新",
+      "後續: Owner 收尾至 done；OpenClaw gateway adapter、Qlib activation 和 vectorbt/statsmodels/QuantLib task materialization 列為後續工作"
+    ],
+    "review_file": ".coordination/reviews/BP5-OSS-003-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T19:21:33Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "c9284aa9c98218946e0d408fd021bb3f983eca9c",
+      "commit_subject": "BP5-OSS-003: publish governed OSS evidence packs",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BP5-OSS-003",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 51,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-OSS-003",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T18:27:34Z",
+      "resolved_at": "2026-04-15T18:27:50Z"
+    },
+    {
+      "task_id": "BP5-OSS-003",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T18:39:39Z",
+      "resolved_at": "2026-04-15T18:42:06Z"
+    },
+    {
+      "task_id": "BP5-OSS-003",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T18:42:26Z",
+      "resolved_at": "2026-04-15T18:42:42Z"
+    },
+    {
+      "task_id": "BP5-OSS-003",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T18:58:56Z",
+      "resolved_at": "2026-04-15T18:59:19Z"
+    },
+    {
+      "task_id": "BP5-OSS-003",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T19:00:25Z",
+      "resolved_at": "2026-04-15T19:01:15Z"
+    },
+    {
+      "task_id": "BP5-OSS-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T19:01:29Z",
+      "resolved_at": "2026-04-15T19:02:27Z"
+    },
+    {
+      "task_id": "BP5-OSS-003",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T19:02:27Z",
+      "resolved_at": "2026-04-15T19:03:10Z"
+    },
+    {
+      "task_id": "BP5-OSS-003",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T19:08:04Z",
+      "resolved_at": "2026-04-15T19:08:41Z"
+    },
+    {
+      "task_id": "BP5-OSS-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T19:10:20Z",
+      "resolved_at": "2026-04-15T19:11:07Z"
+    },
+    {
+      "task_id": "BP5-OSS-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Added governed evidence packs for DSPy, imitation, and MLflow under integrations/; upgraded checklist and maturity matrix to governed after rerunning smoke and unit coverage. Please review doc alignment and acceptance evidence.",
+      "status": "done",
+      "created_at": "2026-04-15T19:17:22Z",
+      "resolved_at": "2026-04-15T19:19:02Z"
+    },
+    {
+      "task_id": "BP5-OSS-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All three adapters are real runnable code; smoke tests and unit coverage verified live; evidence packs and checklist correctly reflect governed status. Approved — returning to owner for finalization.",
+      "status": "done",
+      "created_at": "2026-04-15T19:19:02Z",
+      "resolved_at": "2026-04-15T19:21:33Z"
+    }
+  ],
+  "blockers": []
+}

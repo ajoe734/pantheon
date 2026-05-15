@@ -2,7 +2,6 @@ feature_id: PKT-002-incident-action-drawer
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
 status: ready
-cycle: 3
 pantheon_pr: null
 base_url: null
 workbench: operator-console
@@ -18,10 +17,6 @@ constraints:
 - do not add raw fetch in components
 - do not import demo providers
 - if any required field is missing, emit a bff-gap handoff instead of mocking
-- publish ui-done and frontend-feedback from one Git-visible front-repo commit
-  that contains the PKT-002 request pair and docs/pantheon-feedback/PKT-002-incident-action-drawer/
-- ensure both request bodies set source_commit to that exact Git-visible
-  publication commit
 acceptance:
 - build the Incident Action Drawer with kill switch status header and emergency action
   buttons
@@ -30,8 +25,6 @@ acceptance:
 - do not invent fields beyond this handoff packet
 - send the published PKT-002 command names and params directly; do not translate to
   the legacy PauseRuntime/ExecuteRollback/ActivateKillSwitch envelope
-- use target.type = Runtime and omit request.action for the published PKT-002
-  drawer commands
 - render all CTAs from backend-shaped allowedActions only; do not derive eligibility
   locally
 - render command receipts inline after each POST /api/v1/operator/commands call
@@ -57,5 +50,5 @@ gap_handoff_path: .coordination/requests/PKT-002-incident-action-drawer-bff-gap.
 gap_handoff_template: .coordination/requests/PKT-002-incident-action-drawer-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/PKT-002-incident-action-drawer-ui-done.yaml
 completion_handoff_template: .coordination/requests/PKT-002-incident-action-drawer-ui-done.example.yaml
-frontend_feedback_handoff_path: .coordination/requests/PKT-002-incident-action-drawer-frontend-feedback.yaml
-review_findings_ref: .coordination/reviews/PKT-002-incident-action-drawer-review.md
+feedback_handoff_path: .coordination/requests/PKT-002-incident-action-drawer-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/PKT-002-incident-action-drawer-frontend-feedback.example.yaml

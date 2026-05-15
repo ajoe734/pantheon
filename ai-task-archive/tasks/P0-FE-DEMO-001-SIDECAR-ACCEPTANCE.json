@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "task_id": "P0-FE-DEMO-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-05-01T07:03:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-FE-DEMO-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare P0-FE-DEMO-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 P0-FE-DEMO-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Pantheon P0 Paper Loop",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/P0-FE-DEMO-001/P0-FE-DEMO-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout finalized: support packet reviewer metadata corrected to Claude, Claude review artifact committed, support-only scope verified, task-scoped commit cd7df61 created; no canonical/runtime implementation files changed by this sidecar.",
+    "last_update": "2026-05-01T07:03:56Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "P0-FE-DEMO-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar 範圍確認僅支援性材料，未改動任何 canonical truth、frontend runtime、registry、governance 或 core contract。",
+      "驗證通過：parent task archive terminal_status=done，closeout commit 5038e37，前端 commits d321a9b/ea284a1 均在 archive 中確認，review file 存在且 Codex 已核准。",
+      "注意：packet 標頭中 reviewer 仍顯示 Codex2（已自動重新指派給 Claude），屬次要文件落差，不影響內容正確性。owner Codex 於 closeout 時可選擇性更新。",
+      "後續：owner Codex 需依 task-closeout-finalization.md 建立 task-scoped commit 並執行 done 收尾。"
+    ],
+    "review_file": "support/reviews/P0-FE-DEMO-001-SIDECAR-ACCEPTANCE-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T07:03:56Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "cd7df61b6672b06234c521e66a7f6fb7852286ce",
+      "commit_subject": "P0-FE-DEMO-001-SIDECAR-ACCEPTANCE closeout packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "P0-FE-DEMO-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 108,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 29,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-FE-DEMO-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet ready for sidecar review. Updated support artifact maps parent P0-FE-DEMO-001 acceptance to archived done evidence, records dependency map, notes parent closeout commit 5038e37 and frontend evidence d321a9b/ea284a1, and confirms this sidecar changed support material only.",
+      "status": "done",
+      "created_at": "2026-05-01T06:40:28Z",
+      "resolved_at": "2026-05-01T06:50:28Z"
+    },
+    {
+      "task_id": "P0-FE-DEMO-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet remains ready for sidecar review after worker restart. Scope verified support-only; artifact is support/sidecars/P0-FE-DEMO-001/P0-FE-DEMO-001-SIDECAR-ACCEPTANCE.md; no canonical truth/runtime/registry/governance/frontend implementation changes are claimed. Please review and approve or return findings.",
+      "status": "done",
+      "created_at": "2026-05-01T06:50:28Z",
+      "resolved_at": "2026-05-01T06:55:22Z"
+    },
+    {
+      "task_id": "P0-FE-DEMO-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-05-01T06:55:22Z",
+      "resolved_at": "2026-05-01T06:57:19Z"
+    },
+    {
+      "task_id": "P0-FE-DEMO-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: sidecar scope verified support-only, all parent evidence confirms done terminal state (5038e37), acceptance criteria mapping is accurate. Returning to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-01T06:57:19Z",
+      "resolved_at": "2026-05-01T07:03:56Z"
+    }
+  ],
+  "blockers": []
+}

@@ -31,11 +31,18 @@ from services.telemetry.lineage_read.service import (
     CorpusLoader,
     GraphEdge,
     ProjectionResult,
+    NODE_SOURCE_RECORD,
+    NODE_STRATEGY_SPEC,
+    NODE_EXPERIMENT_RUN,
+    NODE_CANDIDATE_ARTIFACT,
+    NODE_APPROVAL_DECISION,
     NODE_CAPITAL_POOL,
     NODE_PERSONA_BINDING,
     NODE_DEPLOYMENT_PLAN,
     NODE_RUNTIME_BINDING,
     NODE_TELEMETRY_EVENT,
+    NODE_BROKER_ORDER_EVENT,
+    NODE_EVOLUTION_DECISION,
     EDGE_RUNTIME_PLAN,
     EDGE_RUNTIME_POOL,
     EDGE_RUNTIME_PERSONA,
@@ -65,6 +72,180 @@ _MINIMAL_CORPUS = {
         ],
         "telemetry_events": [
             {"event_id": "evt-1", "event_type": "pnl_snapshot", "binding_id": "rb-1", "plan_id": "plan-1", "capital_pool_id": "pool-1", "persona_capital_binding_id": "pb-1", "artifact_id": "art-1", "artifact_version": "1.0.0", "runtime_id": "rt-1", "event_produced_at": "2026-04-10T00:00:30Z"},
+        ],
+    },
+    "query_families": [],
+    "benchmark_cases": [],
+}
+
+
+_SOURCE_RUNTIME_TRACE_CORPUS = {
+    "metadata": {
+        "task_id": "SD-LIN-TRACE-001-TEST",
+        "projection_updated_at": "2026-04-27T12:00:00Z",
+    },
+    "node_sets": {
+        "source_records": [
+            {
+                "source_id": "src-alpha",
+                "source_type": "research_note",
+                "created_at": "2026-04-27T11:00:00Z",
+            }
+        ],
+        "strategy_specs": [
+            {
+                "strategy_id": "strategy-alpha",
+                "source_id": "src-alpha",
+                "created_at": "2026-04-27T11:01:00Z",
+            }
+        ],
+        "experiment_runs": [
+            {
+                "run_id": "run-alpha",
+                "strategy_id": "strategy-alpha",
+                "created_at": "2026-04-27T11:02:00Z",
+            }
+        ],
+        "candidate_artifacts": [
+            {
+                "artifact_id": "artifact-alpha",
+                "artifact_version": "1.0.0",
+                "artifact_type": "strategy_package",
+                "run_id": "run-alpha",
+                "created_at": "2026-04-27T11:03:00Z",
+            }
+        ],
+        "approval_decisions": [
+            {
+                "decision_id": "approval-alpha",
+                "target_id": "artifact-alpha",
+                "decision_state": "approved",
+                "created_at": "2026-04-27T11:04:00Z",
+            }
+        ],
+        "capital_pools": [
+            {
+                "pool_id": "pool-alpha",
+                "single_runtime_enforced": True,
+                "created_at": "2026-04-27T11:05:00Z",
+            }
+        ],
+        "persona_capital_bindings": [
+            {
+                "binding_id": "pcb-alpha",
+                "capital_pool_id": "pool-alpha",
+                "created_at": "2026-04-27T11:06:00Z",
+            }
+        ],
+        "deployment_plans": [
+            {
+                "plan_id": "plan-alpha",
+                "approval_decision_id": "approval-alpha",
+                "artifact_id": "artifact-alpha",
+                "artifact_version": "1.0.0",
+                "strategy_id": "strategy-alpha",
+                "capital_pool_id": "pool-alpha",
+                "binding_id": "pcb-alpha",
+                "target_stage": "canary",
+                "status": "executed",
+                "created_at": "2026-04-27T11:07:00Z",
+            }
+        ],
+        "runtime_bindings": [
+            {
+                "binding_id": "rb-alpha",
+                "runtime_id": "runtime-alpha",
+                "capital_pool_id": "pool-alpha",
+                "artifact_id": "artifact-alpha",
+                "artifact_version": "1.0.0",
+                "deployment_mode": "canary",
+                "plan_id": "plan-alpha",
+                "persona_capital_binding_id": "pcb-alpha",
+                "status": "active",
+                "effective_at": "2026-04-27T11:08:00Z",
+            }
+        ],
+        "telemetry_events": [
+            {
+                "event_id": "evt-alpha-pnl",
+                "event_type": "pnl_snapshot",
+                "binding_id": "rb-alpha",
+                "runtime_id": "runtime-alpha",
+                "capital_pool_id": "pool-alpha",
+                "artifact_id": "artifact-alpha",
+                "artifact_version": "1.0.0",
+                "deployment_stage": "canary",
+                "plan_id": "plan-alpha",
+                "persona_capital_binding_id": "pcb-alpha",
+                "event_produced_at": "2026-04-27T11:09:00Z",
+                "trace_id": "trace-alpha",
+                "request_id": "req-alpha-1",
+                "strategy_id": "strategy-alpha",
+                "registry_id": "registry-alpha",
+                "metrics": {"pnl": 42.0},
+            },
+            {
+                "event_id": "evt-alpha-fill",
+                "event_type": "fill_observation",
+                "binding_id": "rb-alpha",
+                "runtime_id": "runtime-alpha",
+                "capital_pool_id": "pool-alpha",
+                "artifact_id": "artifact-alpha",
+                "artifact_version": "1.0.0",
+                "deployment_stage": "canary",
+                "plan_id": "plan-alpha",
+                "persona_capital_binding_id": "pcb-alpha",
+                "event_produced_at": "2026-04-27T11:10:00Z",
+                "trace_id": "trace-alpha",
+                "request_id": "req-alpha-2",
+                "strategy_id": "strategy-alpha",
+                "registry_id": "registry-alpha",
+                "broker": "paper_broker",
+                "order_id": "order-alpha-1",
+                "metrics": {"fill_quantity": 3, "fill_price": 101.25},
+            },
+        ],
+        "broker_order_events": [
+            {
+                "order_event_id": "boe-alpha-fill",
+                "order_id": "order-alpha-1",
+                "order_status": "filled",
+                "broker": "paper_broker",
+                "trace_id": "trace-alpha",
+                "runtime_binding_id": "rb-alpha",
+                "deployment_plan_id": "plan-alpha",
+                "telemetry_event_id": "evt-alpha-fill",
+                "created_at": "2026-04-27T11:10:01Z",
+            }
+        ],
+        "incident_cases": [
+            {
+                "incident_id": "inc-alpha",
+                "binding_id": "rb-alpha",
+                "telemetry_event_ids": ["evt-alpha-fill"],
+                "created_at": "2026-04-27T11:11:00Z",
+            }
+        ],
+        "postmortems": [
+            {
+                "postmortem_id": "pm-alpha",
+                "incident_id": "inc-alpha",
+                "created_at": "2026-04-27T11:12:00Z",
+            }
+        ],
+        "evolution_decisions": [
+            {
+                "decision_id": "evo-alpha",
+                "target_type": "candidate_artifact",
+                "target_id": "artifact-alpha",
+                "target_version": "1.0.0",
+                "action_type": "revalidate",
+                "decision_state": "approved",
+                "linked_incident_id": "inc-alpha",
+                "linked_postmortem_id": "pm-alpha",
+                "evidence_refs": [{"ref_type": "telemetry_summary", "ref_id": "trace-alpha"}],
+                "created_at": "2026-04-27T11:13:00Z",
+            }
         ],
     },
     "query_families": [],
@@ -237,6 +418,382 @@ class TestLineageReadService(unittest.TestCase):
         result = self.service.query("forensic_plan_trace", plan_id="plan-1")
         self.assertEqual(result["target_id"], "plan-1")
 
+    def test_query_source_runtime_telemetry_trace(self):
+        svc = LineageReadService()
+        svc.load_corpus(_SOURCE_RUNTIME_TRACE_CORPUS)
+
+        result = svc.query("source_runtime_telemetry_trace", trace_id="trace-alpha")
+
+        self.assertEqual(result["target_type"], "trace")
+        self.assertEqual(result["target_id"], "trace-alpha")
+        self.assertIs(result["derived_only"], True)
+        self.assertEqual(result["missing_edges"], [])
+
+        source_ids = [item["id"] for item in result["operator_trace"]["source_chain"]]
+        self.assertEqual(
+            source_ids,
+            [
+                "src-alpha",
+                "strategy-alpha",
+                "run-alpha",
+                "artifact-alpha",
+                "artifact-alpha@1.0.0",
+            ],
+        )
+
+        deployment_ids = [item["id"] for item in result["operator_trace"]["deployment_chain"]]
+        self.assertIn("approval-alpha", deployment_ids)
+        self.assertIn("plan-alpha", deployment_ids)
+        self.assertIn("pool-alpha", deployment_ids)
+        self.assertIn("pcb-alpha", deployment_ids)
+
+        runtime_ids = [item["id"] for item in result["operator_trace"]["runtime_chain"]]
+        self.assertEqual(runtime_ids, ["rb-alpha", "runtime-alpha"])
+
+        lifecycle_ids = [item["id"] for item in result["operator_trace"]["broker_order_lifecycle"]]
+        self.assertIn("evt-alpha-fill", lifecycle_ids)
+        self.assertIn("boe-alpha-fill", lifecycle_ids)
+
+        evolution_ids = [item["id"] for item in result["operator_trace"]["evolution_refs"]]
+        self.assertEqual(evolution_ids, ["evo-alpha"])
+
+        refs = result["refs"]
+        self.assertEqual(refs["source_record_ids"], ["src-alpha"])
+        self.assertEqual(refs["experiment_run_ids"], ["run-alpha"])
+        self.assertEqual(refs["approval_decision_ids"], ["approval-alpha"])
+        self.assertEqual(refs["runtime_binding_ids"], ["rb-alpha"])
+        self.assertEqual(refs["telemetry_event_ids"], ["evt-alpha-fill", "evt-alpha-pnl"])
+        self.assertEqual(refs["broker_order_event_ids"], ["boe-alpha-fill"])
+        self.assertEqual(refs["broker_order_ids"], ["order-alpha-1"])
+        self.assertEqual(refs["incident_ids"], ["inc-alpha"])
+        self.assertEqual(refs["postmortem_ids"], ["pm-alpha"])
+        self.assertEqual(refs["evolution_decision_ids"], ["evo-alpha"])
+        self.assertEqual(refs["trace_ids"], ["trace-alpha"])
+        self.assertIn("artifact-alpha@1.0.0", refs["artifact_refs"])
+
+    def test_source_runtime_trace_reconciliation_closure(self):
+        corpus = json.loads(json.dumps(_SOURCE_RUNTIME_TRACE_CORPUS))
+        corpus["node_sets"]["telemetry_events"].extend(
+            [
+                {
+                    "event_id": "evt-alpha-order-submitted",
+                    "event_type": "order_submitted",
+                    "binding_id": "rb-alpha",
+                    "runtime_id": "runtime-alpha",
+                    "capital_pool_id": "pool-alpha",
+                    "artifact_id": "artifact-alpha",
+                    "artifact_version": "1.0.0",
+                    "deployment_stage": "canary",
+                    "plan_id": "plan-alpha",
+                    "persona_capital_binding_id": "pcb-alpha",
+                    "event_produced_at": "2026-04-27T11:09:30Z",
+                    "trace_id": "trace-alpha",
+                    "strategy_id": "strategy-alpha",
+                    "order_id": "order-alpha-2",
+                    "order_status": "submitted",
+                    "broker": "paper_broker",
+                },
+                {
+                    "event_id": "evt-alpha-order-accepted",
+                    "event_type": "order_accepted",
+                    "binding_id": "rb-alpha",
+                    "runtime_id": "runtime-alpha",
+                    "capital_pool_id": "pool-alpha",
+                    "artifact_id": "artifact-alpha",
+                    "artifact_version": "1.0.0",
+                    "deployment_stage": "canary",
+                    "plan_id": "plan-alpha",
+                    "persona_capital_binding_id": "pcb-alpha",
+                    "event_produced_at": "2026-04-27T11:09:40Z",
+                    "trace_id": "trace-alpha",
+                    "strategy_id": "strategy-alpha",
+                    "order_id": "order-alpha-2",
+                    "order_status": "accepted",
+                    "broker": "paper_broker",
+                },
+                {
+                    "event_id": "evt-alpha-order-partial",
+                    "event_type": "order_partially_filled",
+                    "binding_id": "rb-alpha",
+                    "runtime_id": "runtime-alpha",
+                    "capital_pool_id": "pool-alpha",
+                    "artifact_id": "artifact-alpha",
+                    "artifact_version": "1.0.0",
+                    "deployment_stage": "canary",
+                    "plan_id": "plan-alpha",
+                    "persona_capital_binding_id": "pcb-alpha",
+                    "event_produced_at": "2026-04-27T11:10:20Z",
+                    "trace_id": "trace-alpha",
+                    "strategy_id": "strategy-alpha",
+                    "order_id": "order-alpha-2",
+                    "order_status": "partially_filled",
+                    "fill_status": "partially_filled",
+                    "broker": "paper_broker",
+                },
+                {
+                    "event_id": "evt-alpha-order-canceled",
+                    "event_type": "order_canceled",
+                    "binding_id": "rb-alpha",
+                    "runtime_id": "runtime-alpha",
+                    "capital_pool_id": "pool-alpha",
+                    "artifact_id": "artifact-alpha",
+                    "artifact_version": "1.0.0",
+                    "deployment_stage": "canary",
+                    "plan_id": "plan-alpha",
+                    "persona_capital_binding_id": "pcb-alpha",
+                    "event_produced_at": "2026-04-27T11:10:40Z",
+                    "trace_id": "trace-alpha",
+                    "strategy_id": "strategy-alpha",
+                    "order_id": "order-alpha-2",
+                    "order_status": "canceled",
+                    "broker": "paper_broker",
+                },
+                {
+                    "event_id": "evt-alpha-position",
+                    "event_type": "position_snapshot",
+                    "binding_id": "rb-alpha",
+                    "runtime_id": "runtime-alpha",
+                    "capital_pool_id": "pool-alpha",
+                    "artifact_id": "artifact-alpha",
+                    "artifact_version": "1.0.0",
+                    "deployment_stage": "canary",
+                    "plan_id": "plan-alpha",
+                    "persona_capital_binding_id": "pcb-alpha",
+                    "event_produced_at": "2026-04-27T11:10:50Z",
+                    "trace_id": "trace-alpha",
+                    "strategy_id": "strategy-alpha",
+                    "position_qty": 0,
+                },
+            ]
+        )
+        corpus["node_sets"]["broker_order_events"].extend(
+            [
+                {
+                    "order_event_id": "boe-alpha-submitted",
+                    "order_id": "order-alpha-2",
+                    "order_status": "submitted",
+                    "broker": "paper_broker",
+                    "trace_id": "trace-alpha",
+                    "runtime_binding_id": "rb-alpha",
+                    "deployment_plan_id": "plan-alpha",
+                    "telemetry_event_id": "evt-alpha-order-submitted",
+                    "created_at": "2026-04-27T11:09:31Z",
+                },
+                {
+                    "order_event_id": "boe-alpha-canceled",
+                    "order_id": "order-alpha-2",
+                    "order_status": "canceled",
+                    "broker": "paper_broker",
+                    "trace_id": "trace-alpha",
+                    "runtime_binding_id": "rb-alpha",
+                    "deployment_plan_id": "plan-alpha",
+                    "telemetry_event_id": "evt-alpha-order-canceled",
+                    "created_at": "2026-04-27T11:10:41Z",
+                },
+            ]
+        )
+        corpus["node_sets"]["position_snapshots"] = [
+            {
+                "position_snapshot_id": "pos-alpha-flat",
+                "runtime_binding_id": "rb-alpha",
+                "deployment_plan_id": "plan-alpha",
+                "telemetry_event_id": "evt-alpha-position",
+                "trace_id": "trace-alpha",
+                "symbol": "SPY",
+                "position_qty": 0,
+                "created_at": "2026-04-27T11:10:51Z",
+            }
+        ]
+        corpus["node_sets"]["reconciliation_runs"] = [
+            {
+                "recon_run_id": "recon-alpha",
+                "recon_type": "order_fill_cancel_position",
+                "scope_type": "runtime",
+                "scope_id": "rb-alpha",
+                "runtime_binding_id": "rb-alpha",
+                "deployment_plan_id": "plan-alpha",
+                "current_ref": "order-alpha-2",
+                "status": "completed",
+                "trace_id": "trace-alpha",
+                "finished_at": "2026-04-27T11:11:00Z",
+            }
+        ]
+        corpus["node_sets"]["reconciliation_records"] = [
+            {
+                "record_id": "recon-rec-order-alpha",
+                "recon_run_id": "recon-alpha",
+                "recon_type": "order_fill_cancel_position",
+                "scope_ref": "order-alpha-2",
+                "expected_ref": "evt-alpha-order-submitted",
+                "actual_ref": "boe-alpha-canceled",
+                "status": "pass",
+                "severity": "none",
+                "evidence_refs": ["evt-alpha-order-canceled", "boe-alpha-canceled"],
+                "generated_at": "2026-04-27T11:11:01Z",
+            },
+            {
+                "record_id": "recon-rec-position-alpha",
+                "recon_run_id": "recon-alpha",
+                "recon_type": "order_fill_cancel_position",
+                "scope_ref": "rb-alpha",
+                "expected_ref": "evt-alpha-position",
+                "actual_ref": "pos-alpha-flat",
+                "status": "pass",
+                "severity": "none",
+                "evidence_refs": ["evt-alpha-position", "pos-alpha-flat"],
+                "generated_at": "2026-04-27T11:11:02Z",
+            },
+        ]
+        corpus["node_sets"]["drift_reports"] = [
+            {
+                "drift_report_id": "drift-alpha",
+                "recon_run_id": "recon-alpha",
+                "drift_type": "paper_live",
+                "scope_ref": "rb-alpha",
+                "severity": "low",
+                "recommended_action": "observe",
+                "status": "closed",
+                "evidence_refs": ["recon-rec-order-alpha", "recon-rec-position-alpha"],
+                "generated_at": "2026-04-27T11:11:03Z",
+            }
+        ]
+        corpus["node_sets"]["alert_candidates"] = [
+            {
+                "alert_candidate_id": "alert-alpha",
+                "source_type": "drift",
+                "source_ref": "drift-alpha",
+                "rule_id": "paper_live_drift_closed_v1",
+                "severity": "low",
+                "scope_ref": "rb-alpha",
+                "status": "suppressed",
+                "evidence_refs": ["drift-alpha"],
+                "created_at": "2026-04-27T11:11:04Z",
+            }
+        ]
+
+        svc = LineageReadService()
+        svc.load_corpus(corpus)
+
+        result = svc.query("source_runtime_telemetry_trace", trace_id="trace-alpha")
+        closure = result["operator_trace"]["reconciliation_closure"]
+
+        self.assertEqual(closure["status"], "closed")
+        self.assertIs(closure["lifecycle_proof_complete"], True)
+        self.assertEqual(closure["proof_gaps"], [])
+        self.assertEqual(closure["order_lifecycle"]["order_ids"], ["order-alpha-1", "order-alpha-2"])
+        self.assertIs(closure["order_lifecycle"]["has_fill_event"], True)
+        self.assertIs(closure["order_lifecycle"]["has_cancel_event"], True)
+        self.assertEqual(closure["position_closure"]["latest_snapshot_id"], "pos-alpha-flat")
+        self.assertEqual(closure["position_closure"]["latest_position_qty"], 0.0)
+        self.assertEqual(closure["reconciliation"]["run_count"], 1)
+        self.assertEqual(closure["reconciliation"]["record_count"], 2)
+        self.assertEqual(closure["paper_live_drift"]["open_report_count"], 0)
+        self.assertEqual(closure["alert_closure"]["open_candidate_count"], 0)
+
+        refs = result["refs"]
+        self.assertEqual(refs["position_snapshot_ids"], ["pos-alpha-flat"])
+        self.assertEqual(refs["reconciliation_run_ids"], ["recon-alpha"])
+        self.assertEqual(
+            refs["reconciliation_record_ids"],
+            ["recon-rec-order-alpha", "recon-rec-position-alpha"],
+        )
+        self.assertEqual(refs["drift_report_ids"], ["drift-alpha"])
+        self.assertEqual(refs["alert_candidate_ids"], ["alert-alpha"])
+        self.assertEqual(result["position_snapshot_count"], 1)
+        self.assertEqual(result["reconciliation_run_count"], 1)
+        self.assertEqual(result["reconciliation_record_count"], 2)
+        self.assertEqual(result["drift_report_count"], 1)
+        self.assertEqual(result["alert_candidate_count"], 1)
+
+    def test_source_runtime_trace_uses_position_snapshot_telemetry_event(self):
+        corpus = json.loads(json.dumps(_SOURCE_RUNTIME_TRACE_CORPUS))
+        corpus["node_sets"]["telemetry_events"].append(
+            {
+                "event_id": "evt-alpha-position-only",
+                "event_type": "position_snapshot",
+                "binding_id": "rb-alpha",
+                "runtime_id": "runtime-alpha",
+                "capital_pool_id": "pool-alpha",
+                "artifact_id": "artifact-alpha",
+                "artifact_version": "1.0.0",
+                "deployment_stage": "canary",
+                "plan_id": "plan-alpha",
+                "persona_capital_binding_id": "pcb-alpha",
+                "event_produced_at": "2026-04-27T11:10:50Z",
+                "trace_id": "trace-alpha",
+                "strategy_id": "strategy-alpha",
+                "symbol": "SPY",
+                "position_qty": 0,
+            }
+        )
+        corpus["node_sets"]["reconciliation_runs"] = [
+            {
+                "recon_run_id": "recon-alpha",
+                "recon_type": "order_fill_position",
+                "scope_type": "runtime",
+                "scope_id": "rb-alpha",
+                "runtime_binding_id": "rb-alpha",
+                "deployment_plan_id": "plan-alpha",
+                "status": "completed",
+                "trace_id": "trace-alpha",
+                "finished_at": "2026-04-27T11:11:00Z",
+            }
+        ]
+        corpus["node_sets"]["reconciliation_records"] = [
+            {
+                "record_id": "recon-rec-position-alpha",
+                "recon_run_id": "recon-alpha",
+                "recon_type": "order_fill_position",
+                "scope_ref": "rb-alpha",
+                "expected_ref": "evt-alpha-position-only",
+                "actual_ref": "evt-alpha-position-only",
+                "status": "pass",
+                "severity": "none",
+                "evidence_refs": ["evt-alpha-position-only"],
+                "generated_at": "2026-04-27T11:11:02Z",
+            },
+        ]
+
+        svc = LineageReadService()
+        svc.load_corpus(corpus)
+
+        result = svc.query("source_runtime_telemetry_trace", trace_id="trace-alpha")
+        closure = result["operator_trace"]["reconciliation_closure"]
+
+        self.assertEqual(result["position_snapshot_count"], 1)
+        self.assertEqual(result["refs"]["position_snapshot_ids"], ["evt-alpha-position-only"])
+        self.assertEqual(
+            result["operator_trace"]["position_snapshots"][0]["source"],
+            "telemetry_event",
+        )
+        self.assertEqual(
+            closure["position_closure"]["latest_snapshot_id"],
+            "evt-alpha-position-only",
+        )
+        self.assertNotIn("missing_position_snapshot", closure["proof_gaps"])
+        self.assertEqual(closure["status"], "closed")
+
+    def test_source_runtime_trace_surfaces_missing_edges(self):
+        corpus = json.loads(json.dumps(_SOURCE_RUNTIME_TRACE_CORPUS))
+        corpus["node_sets"]["source_records"] = []
+        svc = LineageReadService()
+        svc.load_corpus(corpus)
+
+        result = svc.query("source_runtime_telemetry_trace", trace_id="trace-alpha")
+
+        missing = result["missing_edges"]
+        self.assertTrue(
+            any(
+                item["edge_type"] == "strategy_spec.source_record"
+                and item["to_id"] == "src-alpha"
+                for item in missing
+            ),
+            f"Expected missing source edge, got: {missing}",
+        )
+        self.assertTrue(
+            any(marker["code"] == "missing_lineage_edge" for marker in result["conflict_markers"])
+        )
+
     def test_query_unknown_family(self):
         with self.assertRaises(ValueError):
             self.service.query("unknown_family", binding_id="x")
@@ -244,6 +801,10 @@ class TestLineageReadService(unittest.TestCase):
     def test_query_missing_param(self):
         with self.assertRaises(ValueError):
             self.service.query("runtime_binding_projection")
+
+    def test_query_source_runtime_trace_missing_param(self):
+        with self.assertRaises(ValueError):
+            self.service.query("source_runtime_telemetry_trace")
 
     def test_load_real_corpus(self):
         corpus_path = Path(__file__).parent.parent.parent / "registry" / "lineage" / "lin001a_benchmark_corpus.json"

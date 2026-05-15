@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE",
+  "archived_at": "2026-04-29T06:37:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE",
+    "title": "Advance search-svc to autonomous durable index pipeline",
+    "summary_zh": "把 search-svc 從 caller-supplied documents query wrapper 推進成 server-side durable index/search pipeline：由 source/evidence store 建索引，查詢端不需每次帶 documents，並保留 governed citation/filter semantics。",
+    "phase": "Service Hardening / Durable Search Pipeline",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE",
+      "SVC-SEARCH-SERVICE",
+      "SVC-COMPOSE"
+    ],
+    "artifacts": [
+      "services/search/",
+      "services/source_ingestion/",
+      "services/knowledge/",
+      "services/control-plane/bff/",
+      "docker-compose.yml",
+      "scripts/smoke_honest_stack.py"
+    ],
+    "acceptance": [
+      "search service maintains a durable server side index from source or evidence records",
+      "query endpoint works without caller supplied documents",
+      "governed citations filters access scope and snapshot replay remain enforced",
+      "BFF or smoke verifies service backed search against persisted indexed data"
+    ],
+    "next": "Owner finalized approved durable search index pipeline. Review approval recorded; durable evidence-backed search, BFF no-documents query path, compose evidence mount, persisted replay, and mixed-scope ACL/citation isolation are closed.",
+    "last_update": "2026-04-29T06:37:26Z",
+    "task_class": "service_pipeline_hardening",
+    "auto_created_by": "codex-blueprint-diff-materialization",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Reviewer 發現並補上 mixed-scope source evidence 的 ACL/citation isolation：source-ingest 產生 knowledge object 時改用 per-record evidence item access_scope，search result citation 改為 matched evidence item citation，避免同一 bundle 內 private citation/record 混入 operator 查詢。",
+      "驗證通過：pytest services/search/tests -q；pytest services/source_ingestion/test_service.py -q；pytest services/search/tests/test_http_service.py services/search/tests/test_service_activation_contract.py services/control-plane/bff/test_search_service_client.py services/source_ingestion/test_compose_activation.py -q；in-memory compile ok 33 files。compileall 曾因既有 services/control-plane/bff/__pycache__ 權限問題無法寫 pyc，非語法錯。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T06:37:26Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "e39ff5f1559bb73d1b844f3e6900e4d267c6944f",
+      "commit_subject": "SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE finalize durable search pipeline",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 153,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 33,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Search durable index pipeline implemented: search-svc now reloads durable source evidence JSONL, query works without documents, compose shares source-ingest evidence store read-only, BFF stops sending documents, and smoke verifies persisted indexed data plus snapshot replay. Tests: pytest services/search/tests -q; pytest services/search/tests/test_http_service.py services/search/tests/test_service_activation_contract.py services/control-plane/bff/test_search_service_client.py services/source_ingestion/test_compose_activation.py -q; compile check passed via in-memory compile.",
+      "status": "done",
+      "created_at": "2026-04-29T06:25:10Z",
+      "resolved_at": "2026-04-29T06:32:28Z"
+    },
+    {
+      "task_id": "SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved after reviewer ACL/citation isolation fix; owner should finalize to done. Search now reloads durable source evidence, query works without caller documents, BFF stops sending documents, compose shares source-ingest evidence read-only, smoke/test coverage includes persisted index replay plus mixed-scope filtering.",
+      "status": "done",
+      "created_at": "2026-04-29T06:32:28Z",
+      "resolved_at": "2026-04-29T06:37:27Z"
+    }
+  ],
+  "blockers": []
+}

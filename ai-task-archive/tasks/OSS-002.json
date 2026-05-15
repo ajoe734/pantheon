@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "task_id": "OSS-002",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-002",
+    "title": "Regrade DSPy, imitation, and MLflow against canonical model",
+    "summary_zh": "重新評級 DSPy、imitation、MLflow 與 canonical model 的對齊度，補齊證據與缺口。",
+    "phase": "Phase 6: OSS Integration Hardening",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "DOC-005",
+      "OSS-001"
+    ],
+    "artifacts": [
+      "OSS_INTEGRATION_CHECKLIST.md",
+      "services/learning/"
+    ],
+    "acceptance": [
+      "checklist status reflects real maturity",
+      "missing evidence and follow-ups are explicit"
+    ],
+    "next": "DSPy, imitation, and MLflow regraded against canonical model. All three at smoke-tested status. Checklist updated. Regrade report at integrations/oss-002/regrade_report.md.",
+    "last_update": "2026-04-09T16:48:57Z"
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-002",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:44:50Z",
+      "resolved_at": "2026-04-09T16:47:15Z"
+    },
+    {
+      "task_id": "OSS-002",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:47:14Z",
+      "resolved_at": "2026-04-09T16:47:41Z"
+    },
+    {
+      "task_id": "OSS-002",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:47:41Z",
+      "resolved_at": "2026-04-09T16:48:12Z"
+    },
+    {
+      "task_id": "OSS-002",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Handing off to Codex for review",
+      "status": "done",
+      "created_at": "2026-04-09T16:48:43Z",
+      "resolved_at": "2026-04-09T16:48:52Z"
+    },
+    {
+      "task_id": "OSS-002",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Regrade report verified. Checklist updated correctly. All smoke tests pass. Assessment is thorough and actionable.",
+      "status": "done",
+      "created_at": "2026-04-09T16:48:52Z",
+      "resolved_at": "2026-04-09T16:48:57Z"
+    }
+  ],
+  "blockers": []
+}

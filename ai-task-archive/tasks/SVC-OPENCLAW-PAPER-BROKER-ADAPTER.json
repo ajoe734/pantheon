@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "task_id": "SVC-OPENCLAW-PAPER-BROKER-ADAPTER",
+  "archived_at": "2026-04-30T08:18:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OPENCLAW-PAPER-BROKER-ADAPTER",
+    "title": "Add gated OpenClaw paper broker adapter",
+    "summary_zh": "新增 paper-only broker adapter harness：只在 explicit paper gate 下接 runtime/broker sidecar，支援 order simulation 與 audit；live 仍關。",
+    "phase": "OpenClaw Activation-Ready Development",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-OPENCLAW-SESSION-LIFECYCLE",
+      "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE"
+    ],
+    "artifacts": [
+      "services/openclaw-gateway-adapter",
+      "services/runtime-manager",
+      "services/broker",
+      "docker-compose.yml",
+      "PAPER_CANARY_LIVE_POLICY.md"
+    ],
+    "acceptance": [
+      "paper adapter is disabled by default and requires explicit gate",
+      "paper orders route through simulation path not live broker",
+      "capital and strategy binding checks are enforced",
+      "audit trail captures order intent and result",
+      "tests prove live remains rejected"
+    ],
+    "next": "Owner finalized approved task with task-scoped commit 1816e69; verification: python3 -m pytest services/openclaw-gateway-adapter services/broker services/runtime-manager/test_runtime_manager.py -q --tb=short (220 passed), python3 -m py_compile services/openclaw-gateway-adapter/paper_broker_adapter.py services/openclaw-gateway-adapter/main.py services/broker/main.py services/broker/paper_simulation.py services/runtime-manager/main.py services/runtime-manager/service.py (passed).",
+    "last_update": "2026-04-30T08:18:11Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-materialization-20260430",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：5 項 acceptance criteria 全部通過，220 tests pass，所有模組編譯無誤",
+      "後續注意：audit log 路徑目前為 /tmp，canary/live 前需掛 persistent volume"
+    ],
+    "review_file": ".orchestrator/chair-reviews/SVC-OPENCLAW-PAPER-BROKER-ADAPTER-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T08:18:11Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "1816e69f1d0d2a6b650a5435b1a4ff854a1e5754",
+      "commit_subject": "SVC-OPENCLAW-PAPER-BROKER-ADAPTER add gated paper broker adapter",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-OPENCLAW-PAPER-BROKER-ADAPTER",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 62,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 34,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OPENCLAW-PAPER-BROKER-ADAPTER",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T07:21:56Z",
+      "resolved_at": "2026-04-30T07:23:29Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-PAPER-BROKER-ADAPTER",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T07:25:00Z",
+      "resolved_at": "2026-04-30T07:26:21Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-PAPER-BROKER-ADAPTER",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T07:35:39Z",
+      "resolved_at": "2026-04-30T07:38:18Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-PAPER-BROKER-ADAPTER",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T07:38:18Z",
+      "resolved_at": "2026-04-30T07:39:46Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-PAPER-BROKER-ADAPTER",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T07:57:52Z",
+      "resolved_at": "2026-04-30T07:59:25Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-PAPER-BROKER-ADAPTER",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented gated OpenClaw paper broker adapter: default-disabled paper/broker gates, runtime-manager active paper RuntimeBinding validation for capital/strategy binding, paper simulation sidecar/audit, and live fail-closed coverage. Verification: python3 -m pytest services/openclaw-gateway-adapter services/broker services/runtime-manager/test_runtime_manager.py services/runtime-manager/test_internal_api_routes.py; python3 -m py_compile services/openclaw-gateway-adapter/paper_broker_adapter.py services/openclaw-gateway-adapter/main.py services/broker/main.py services/broker/paper_simulation.py services/runtime-manager/main.py services/runtime-manager/service.py; git diff --check -- services/openclaw-gateway-adapter services/broker services/runtime-manager docker-compose.yml.",
+      "status": "done",
+      "created_at": "2026-04-30T08:11:48Z",
+      "resolved_at": "2026-04-30T08:14:42Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-PAPER-BROKER-ADAPTER",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 5 acceptance criteria pass, 220 tests pass, all modules compile. Returned to Codex for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-04-30T08:14:42Z",
+      "resolved_at": "2026-04-30T08:18:11Z"
+    }
+  ],
+  "blockers": []
+}

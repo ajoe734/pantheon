@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "OSS-003-DOC-SYNC-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-22T15:27:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-003-DOC-SYNC-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare OSS-003-DOC-SYNC-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 OSS-003-DOC-SYNC-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / OSS Evidence Sync",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/OSS-003-DOC-SYNC-001/OSS-003-DOC-SYNC-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized approved support-only acceptance packet for OSS-003-DOC-SYNC-001; committed the sidecar artifact and closed the helper slice without changing canonical truth.",
+    "last_update": "2026-04-22T15:27:09Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OSS-003-DOC-SYNC-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar acceptance packet 檢視通過：drift map 對齊 current evidence（OpenClaw=governed、Qlib=smoke-tested with pyqlib==0.9.6、TRL=smoke-tested）；scope boundary 正確避免把 smoke-tested 升級為 production-ready，也避免 downgrade checklist 或 integration evidence。",
+      "Non-blocking caveat 1：packet header 標示 Parent Owner=Claude / Parent Reviewer=Gemini，ai-status 現況已轉為 Codex / Codex2，屬於交接時序造成的字面 drift，不影響 drift map 實質內容。",
+      "Non-blocking caveat 2：packet §3/§5 的 status 欄仍以 '尚未修正' 作為前提敘述，當時成立；commit c45c133 已完成部分 summary docs 修正，後續以 OSS-003-DOC-SYNC-001-SIDECAR-REVIEW 作為 post-edit 檢視依據，與本 packet 定位不衝突。",
+      "Non-blocking caveat 3：packet §8 已明確指出 services/learning/trl/requirements.txt 仍遺留 'pyqlib 0.9.1' 相容性註解屬於 optional hygiene，非本 sidecar 阻斷條件。"
+    ],
+    "review_file": "support/sidecars/OSS-003-DOC-SYNC-001/OSS-003-DOC-SYNC-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-22T15:27:09Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "0d356de6fc78991fcde49fc5bfd4cf90881e713e",
+      "commit_subject": "OSS-003-DOC-SYNC-001-SIDECAR-ACCEPTANCE finalize approved acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "OSS-003-DOC-SYNC-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1153,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-003-DOC-SYNC-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Prepared support-only acceptance packet at support/sidecars/OSS-003-DOC-SYNC-001/OSS-003-DOC-SYNC-001-SIDECAR-ACCEPTANCE.md. Packet maps current OpenClaw/Qlib/TRL document drift, preserves checklist and integration docs as truth anchors, and gives parent closeout guidance without changing canonical truth.",
+      "status": "done",
+      "created_at": "2026-04-22T07:33:29Z",
+      "resolved_at": "2026-04-22T14:42:28Z"
+    },
+    {
+      "task_id": "OSS-003-DOC-SYNC-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ownership updated",
+      "status": "done",
+      "created_at": "2026-04-22T14:42:28Z",
+      "resolved_at": "2026-04-22T15:21:11Z"
+    },
+    {
+      "task_id": "OSS-003-DOC-SYNC-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewed sidecar acceptance packet for OSS-003-DOC-SYNC-001. Drift map, evidence anchors, scope boundary, and reviewer checklist are accurate against current repo truth; sidecar strictly adds support artifact only and does not mutate canonical truth.",
+      "status": "done",
+      "created_at": "2026-04-22T15:21:11Z",
+      "resolved_at": "2026-04-22T15:27:09Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "SVC-CP-RTR-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-17T19:33:46Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-CP-RTR-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare SVC-CP-RTR-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 SVC-CP-RTR-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/SVC-CP-RTR-001/SVC-CP-RTR-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar. Acceptance packet is now the approved support snapshot for SVC-CP-RTR-001 and includes live router compose bring-up plus /health 200 evidence for parent closeout.",
+    "last_update": "2026-04-17T19:33:46Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-CP-RTR-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "驗收封包準確：router compose entry（PORT=8001、depends_on persona/operator-bff/governance with service_healthy、healthcheck /health:8001）與 Dockerfile、main.py 實際內容一致，靜態 config 驗證通過，且附有 live bring-up 與 curl /health 200 的 runtime 證據。範疇限制遵守，無 canonical L1/L2 修改。支援材料充分，可供 parent owner Codex 執行 done 收尾。"
+    ],
+    "review_file": "support/sidecars/SVC-CP-RTR-001/SVC-CP-RTR-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T19:33:46Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "a99108ada9f7e0edd5e31ec80fdb298682a1a90c",
+      "commit_subject": "SVC-CP-RTR-001-SIDECAR-ACCEPTANCE: finalize acceptance packet closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-CP-RTR-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 476,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-CP-RTR-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T16:34:08Z",
+      "resolved_at": "2026-04-17T16:41:11Z"
+    },
+    {
+      "task_id": "SVC-CP-RTR-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Acceptance packet prepared: current router compose wiring matches the approved parent brief, and live docker compose bring-up now proves router/persona/operator-bff/governance all reach healthy with router /health returning 200. See support/sidecars/SVC-CP-RTR-001/SVC-CP-RTR-001-SIDECAR-ACCEPTANCE.md.",
+      "status": "done",
+      "created_at": "2026-04-17T16:48:26Z",
+      "resolved_at": "2026-04-17T16:49:33Z"
+    },
+    {
+      "task_id": "SVC-CP-RTR-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: acceptance packet is an accurate and fresh snapshot of the reviewed router compose wiring; live runtime evidence (docker compose up + curl /health 200) is stronger than config-only proof. Scope constraint respected. Returned to Codex for final done transition on the parent.",
+      "status": "done",
+      "created_at": "2026-04-17T16:49:33Z",
+      "resolved_at": "2026-04-17T19:33:46Z"
+    }
+  ],
+  "blockers": []
+}

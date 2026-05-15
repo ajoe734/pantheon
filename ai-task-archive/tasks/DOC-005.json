@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "task_id": "DOC-005",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DOC-005",
+    "title": "Publish full platform backlog with dependencies and acceptance criteria",
+    "summary_zh": "發佈 DEVELOPMENT_WORKBREAKDOWN.md，涵蓋 7 個 workstream 共 28 個任務，每個任務均有 owner、reviewer、depends_on、canonical refs 及 acceptance。",
+    "phase": "Phase 0: Canonical Cutover",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [
+      "DOC-004"
+    ],
+    "artifacts": [
+      "DEVELOPMENT_WORKBREAKDOWN.md"
+    ],
+    "acceptance": [
+      "every task has owner, reviewer, depends_on, canonical refs, and acceptance criteria",
+      "all 7 workstreams (DOC/REG-GOV-DEP/CAP-RUN-EX/TEL-LIN-INC/EVO/PER-APP/OSS) are present",
+      "second-wave activation set documented"
+    ],
+    "last_update": "2026-04-09T16:00:00Z",
+    "next": "Backlog published and accepted; begin activating downstream tasks by dependency order from DEVELOPMENT_WORKBREAKDOWN.md."
+  },
+  "handoffs": [],
+  "blockers": []
+}

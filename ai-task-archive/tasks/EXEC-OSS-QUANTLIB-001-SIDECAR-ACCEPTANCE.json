@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "EXEC-OSS-QUANTLIB-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-21T03:25:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-OSS-QUANTLIB-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare EXEC-OSS-QUANTLIB-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 EXEC-OSS-QUANTLIB-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / OSS Next Wave",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/EXEC-OSS-QUANTLIB-001/EXEC-OSS-QUANTLIB-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized the reviewer-approved QuantLib acceptance sidecar packet. Support artifact is now committed in 6c66ce5, stays outside canonical truth, and is ready for parent-owner absorption/reconciliation.",
+    "last_update": "2026-04-21T03:25:52Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EXEC-OSS-QUANTLIB-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "packet 已核對：內容正確反映 QuantLib readiness baseline 已被後續 adapter/smoke/governance 實作超前，且 2026-04-21 本地 smoke 與 pytest 證據重新驗證通過。",
+      "已修正 packet 內過期 sidecar reviewer / handoff metadata，現在與 ai-status.json 與 task brief 的 Codex reviewer truth 一致。"
+    ],
+    "review_file": "support/sidecars/EXEC-OSS-QUANTLIB-001/EXEC-OSS-QUANTLIB-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T03:25:52Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "6c66ce504e753a864d3dbb8cc6fb6b350da23af4",
+      "commit_subject": "EXEC-OSS-QUANTLIB-001-SIDECAR-ACCEPTANCE finalize packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EXEC-OSS-QUANTLIB-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 934,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Acceptance packet added at support/sidecars/EXEC-OSS-QUANTLIB-001/EXEC-OSS-QUANTLIB-001-SIDECAR-ACCEPTANCE.md. Packet maps the original QuantLib readiness scope to current repo reality, notes that later adapter/smoke/governance work overtook the parent, and includes fresh local verification from 2026-04-21: smoke test assertions OK plus pytest 17 passed, 1 skipped.",
+      "status": "done",
+      "created_at": "2026-04-21T03:09:34Z",
+      "resolved_at": "2026-04-21T03:20:59Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001-SIDECAR-ACCEPTANCE",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Copilot to Codex after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T03:20:59Z",
+      "resolved_at": "2026-04-21T03:23:49Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Sidecar acceptance packet reviewed and approved. Reviewer/handoff metadata now matches ai-status truth, and local QuantLib smoke plus adapter pytest were revalidated on 2026-04-21. Owner should finalize to done when ready.",
+      "status": "done",
+      "created_at": "2026-04-21T03:23:49Z",
+      "resolved_at": "2026-04-21T03:25:54Z"
+    }
+  ],
+  "blockers": []
+}

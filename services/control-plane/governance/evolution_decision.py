@@ -157,8 +157,12 @@ APPROVAL_OWNER_MATRIX: dict[RiskLevel, set[EvolutionActorRole]] = {
         EvolutionActorRole.AUTOMATED_GATE,
     },
     RiskLevel.MEDIUM: {
+        # Policy (EVOLUTION_REVIEW_AND_THRESHOLDS.md §6.2): Risk Owner is the
+        # required approval owner for medium-risk decisions. Operator may be
+        # added as a *supplementary* approver when explicitly necessary, but
+        # must not be listed here as a standalone approval path — doing so
+        # would allow operator to approve without Risk Owner sign-off.
         EvolutionActorRole.RISK_OWNER,
-        EvolutionActorRole.OPERATOR,
     },
     RiskLevel.HIGH: {
         EvolutionActorRole.GOVERNANCE_COMMITTEE,

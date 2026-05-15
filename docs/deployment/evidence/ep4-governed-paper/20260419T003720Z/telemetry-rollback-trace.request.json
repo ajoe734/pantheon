@@ -1,0 +1,6 @@
+{
+  "method": "GET",
+  "url": "http://127.0.0.1:38083/api/telemetry/lineage/events/f50d9300-73c5-4951-b5e4-9c8dc45ba4ae/trace",
+  "headers": {},
+  "body": null
+}

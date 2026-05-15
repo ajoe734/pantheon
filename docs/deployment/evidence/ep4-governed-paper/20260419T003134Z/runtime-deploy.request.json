@@ -1,0 +1,20 @@
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:28081/api/runtimes/deploy",
+  "headers": {
+    "Authorization": "Bearer runtime-control-internal"
+  },
+  "body": {
+    "plan_id": "plan-ep4-48a69496",
+    "plan_status": "executing",
+    "target_stage": "paper",
+    "artifact_id": "reg-ep4-028dc573",
+    "artifact_version": "1.2.0",
+    "capital_pool_id": "pool-ep4-be239103",
+    "persona_capital_binding_id": "pcb-ep4-5d470b16",
+    "persona_capital_binding_status": "active",
+    "allowed_deployment_scope": "paper",
+    "loader_checks_passed": true,
+    "runtime_id": "paper-runtime-001"
+  }
+}

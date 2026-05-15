@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "task_id": "APP-003-WANDB-DEFERRED-PREP-001",
+  "archived_at": "2026-04-25T06:17:21Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-WANDB-DEFERRED-PREP-001",
+    "title": "Scaffold W&B deferred prep lane",
+    "summary_zh": "在不切換預設 experiment backend 的前提下，先完成 W&B optional backend 的 deferred prep：adapter scaffold、MLflow/W&B abstraction、feature-flagged selector 與 offline dry-run smoke。",
+    "phase": "Phase 5 / Deferred Prep",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/registry/experiments/",
+      "services/research/",
+      "docs/reviews/2026-04-25-deferred-prep-execution-packet.md",
+      "OSS_INTEGRATION_CHECKLIST.md",
+      "RESEARCH_BACKEND_MATURITY_MATRIX.md"
+    ],
+    "acceptance": [
+      "W&B optional backend scaffold lands behind a feature flag",
+      "Offline dry-run or smoke path lands without default backend switch",
+      "Canonical docs and packet preserve criteria-defined deferred truth"
+    ],
+    "next": "Owner finalized approved W&B deferred-prep scaffold after rerunning unit and smoke coverage; mlflow remains default and wandb stays feature-flagged offline-only.",
+    "last_update": "2026-04-25T06:17:21Z",
+    "deferred_scope": "prep_only",
+    "activation_boundary": "does_not_activate_wandb_backend",
+    "canonical_status_expected": "criteria-defined",
+    "materialization_packet": "docs/reviews/2026-04-25-deferred-prep-execution-packet.md",
+    "task_class": "execution",
+    "auto_created_by": "Codex-deferred-prep-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "已驗證 EXPERIMENT_BACKEND 預設仍為 mlflow，wandb 需顯式 deferred-prep flag 才可選用。",
+      "離線 W&B prep 路徑僅切換 backend ref 與相容標籤，promoted_metadata 與 artifact_handoff key shape 維持一致。",
+      "canonical 文件仍將 W&B 維持為 criteria-defined，未新增 SDK、網路或 activation readiness claim。"
+    ],
+    "review_file": "docs/reviews/2026-04-25-app-003-wandb-deferred-prep-001-codex2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-25T06:17:21Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "6097ce8a021902e83d60c3aabf94b32e9cf04a56",
+      "commit_subject": "APP-003-WANDB-DEFERRED-PREP-001 Scaffold W&B deferred prep lane",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-WANDB-DEFERRED-PREP-001",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 49,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001",
+      "from": "Qwen",
+      "to": "Codex2",
+      "message": "Auto-reassigned APP-003-WANDB-DEFERRED-PREP-001 away from sidecar-only lane Qwen; owner Qwen -> Codex2. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-04-25T04:32:20Z",
+      "resolved_at": "2026-04-25T05:40:39Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-25T05:40:39Z",
+      "resolved_at": "2026-04-25T05:41:46Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Deferred-prep W&B scaffold landed: pluggable backend factory, feature-flagged offline W&B path, unit/smoke coverage, canonical docs synced. Review for non-default/deferred truth and metadata-shape parity.",
+      "status": "done",
+      "created_at": "2026-04-25T06:01:22Z",
+      "resolved_at": "2026-04-25T06:11:47Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: deferred-prep W&B scaffold preserves mlflow as default, keeps wandb feature-flagged/offline-only, and maintains registry metadata shape parity without any activation claim.",
+      "status": "done",
+      "created_at": "2026-04-25T06:11:47Z",
+      "resolved_at": "2026-04-25T06:17:21Z"
+    }
+  ],
+  "blockers": []
+}

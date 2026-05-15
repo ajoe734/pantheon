@@ -1,0 +1,21 @@
+{
+  "acceptance_note": "Each governed provider has read_ok evidence or explicit unavailable-credential/read-unavailable evidence; rate-limit/quota and session/provenance fields are present without raw secrets; order-capable provider order paths are disabled.",
+  "capital_side_effects_allowed": false,
+  "generated_at": "2026-05-01T17:21:19Z",
+  "order_side_effects_allowed": false,
+  "providers": {
+    "coingecko": "read_unavailable",
+    "ibkr": "credential_unavailable",
+    "kraken": "read_unavailable",
+    "massive_polygon": "credential_unavailable",
+    "mops": "public_reference_unavailable",
+    "shioaji": "credential_unavailable",
+    "tej": "credential_unavailable",
+    "tpex": "read_unavailable",
+    "twse": "read_unavailable"
+  },
+  "raw_secret_material_present_in_artifacts": false,
+  "read_only": true,
+  "status": "pass",
+  "task_id": "P2-MARKETDATA-CREDENTIAL-SMOKE-001"
+}

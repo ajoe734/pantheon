@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-020",
+  "archived_at": "2026-05-13T11:45:43Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-020",
+    "title": "runAction.ts migration to /bff/v1/commands",
+    "summary_zh": "execute-plans runAction.ts 新 caller 優先發 /bff/v1/commands;舊 caller 維持 /bff/actions/* 但 BFF adapter 轉發;兩條都回同一 CommandResponse shape。confirmToken/approval evidence/typed error 行為對齊 BFF_COMMAND_API_CONTRACT。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-019"
+    ],
+    "artifacts": [
+      "execute-plans/src/lib/bff/runAction.ts",
+      "execute-plans/src/lib/bff/commandClient.ts"
+    ],
+    "acceptance": [
+      "runAction.ts 暴露 commandClient 新 caller",
+      "新 caller 直接打 /bff/v1/commands",
+      "舊 caller 仍 work 透過 BFF adapter",
+      "兩種 response shape 對齊 CommandResponse",
+      "confirmToken 從 high-risk modal 正確傳入",
+      "unit test cover 新舊兩條 path"
+    ],
+    "next": "Finalized after Codex review approval. Root closeout commit 7f8f9cf8 records evidence for sibling execute-plans implementation 30b4ed394bcb036cb9f18b63c99f2910a657916e. Verification rerun from /home/lupin/code/execute-plans: git diff --check for scoped BFF-CONSOL-020 files produced no output; npm test -- src/lib/bff/__tests__/runAction.test.ts src/lib/bff-v1/__tests__/envelope.test.ts passed 34 tests; npm test -- src/lib/bff-v1/__tests__/writes.test.ts passed 14 tests; npm run build passed with existing Browserslist/chunk warnings. Pantheon worktree had unrelated dirty files/ahead commits before closeout, so publication remains scoped to existing sibling origin commit and root push was not broadened.",
+    "last_update": "2026-05-13T11:45:43Z",
+    "review_notes_zh": [
+      "Approved: direct runCommandAction posts /bff/v1/commands, default runAction still uses /bff/actions/* adapter, both normalize to CommandResponse-compatible envelopes, and confirmToken/approval/two-man evidence plus FastAPI detail-wrapped typed errors are preserved.",
+      "Verification rerun by reviewer: npm test -- src/lib/bff/__tests__/runAction.test.ts src/lib/bff-v1/__tests__/envelope.test.ts; npm test -- src/lib/bff-v1/__tests__/writes.test.ts; npm run build; git diff --check on BFF-CONSOL-020 scoped execute-plans files.",
+      "Residual note: build warnings are existing Vite chunk/dynamic import and Browserslist age warnings, not BFF-CONSOL-020 blockers."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T11:45:43Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "7f8f9cf84e45e50f550acd9fda63848422fb01e6",
+      "commit_subject": "BFF-CONSOL-020 closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-CONSOL-020",
+        "Reviewer": "Codex",
+        "Verification": "reran execute-plans git diff --check for scoped BFF-CONSOL-020 files; npm test -- src/lib/bff/__tests__/runAction.test.ts src/lib/bff-v1/__tests__/envelope.test.ts; npm test -- src/lib/bff-v1/__tests__/writes.test.ts; npm run build."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 28,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 8,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-020",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Ready for review: implemented in actual sibling /home/lupin/code/execute-plans at commit 30b4ed3. Added src/lib/bff/commandClient.ts for direct POST /bff/v1/commands, exposed commandClient/runCommandAction from src/lib/bff/runAction.ts, preserved default legacy /bff/actions/* adapter path until BFF-CONSOL-024, propagated confirmToken/approval/two-man evidence in body+headers, and normalized FastAPI detail-wrapped BffError envelopes so 428/409 typed errors survive. Verified: npm test -- src/lib/bff/__tests__/runAction.test.ts src/lib/bff-v1/__tests__/envelope.test.ts; npm test -- src/lib/bff-v1/__tests__/writes.test.ts; npm run build; git diff --cached --check before commit. Unrelated dirty files remain in sibling and pantheon worktrees; task-owned files are clean after commit.",
+      "status": "done",
+      "created_at": "2026-05-13T11:12:08Z",
+      "resolved_at": "2026-05-13T11:33:40Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-020",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Chair reassigned review from Claude2 to Codex: Claude2 lane is paused; BFF-CONSOL-020 has been in review since 11:12Z with no path forward. Codex is the first entry in Claude2's reviewer_fallbacks and is not the task owner, making it a safe reassignment.",
+      "status": "done",
+      "created_at": "2026-05-13T11:33:40Z",
+      "resolved_at": "2026-05-13T11:38:44Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-020",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved by Codex: BFF-CONSOL-020 implementation at execute-plans commit 30b4ed3 satisfies direct /bff/v1/commands caller, legacy /bff/actions compatibility, normalized command response, confirm/approval/two-man evidence propagation, and typed error preservation. Owner Codex2 must finalize with closeout.",
+      "status": "done",
+      "created_at": "2026-05-13T11:38:44Z",
+      "resolved_at": "2026-05-13T11:45:43Z"
+    }
+  ],
+  "blockers": []
+}

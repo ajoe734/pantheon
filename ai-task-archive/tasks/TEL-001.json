@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "task_id": "TEL-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "TEL-001",
+    "title": "Add deployment-stage and runtime-binding references to telemetry truth",
+    "summary_zh": "讓 telemetry schema 攜帶 deployment stage 與 runtime binding ref，和 execution 真相對齊。",
+    "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
+    "owner": "Qwen",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "RUN-001"
+    ],
+    "artifacts": [
+      "LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md",
+      "services/telemetry/"
+    ],
+    "acceptance": [
+      "telemetry schema carries stage and binding refs",
+      "canonical store strategy is documented"
+    ],
+    "next": "TEL-001 finalized: telemetry schema v2 carries deployment-stage and runtime-binding refs (E-1 through E-6). 33/33 unit tests + 14/14 smoke steps pass against canonical schema. binding_id naming converged in L1 doc. Claude approved. Marking done.",
+    "last_update": "2026-04-10T11:59:20Z",
+    "review_file": "services/telemetry/review_tel001_claude_approved_zh.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "TEL-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "TEL-001 complete: telemetry schema (v2) carries all binding/stage evidence fields. capture.py injects binding_context (binding_id, deployment_stage, plan_id, persona_capital_binding_id, artifact_id, artifact_version, runtime_id) into every event. New capture methods for deploy/rollback/kill-switch/heartbeat events. 31/31 unit tests pass, smoke test passes. Schema validated. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-04-10T07:38:21Z",
+      "resolved_at": "2026-04-10T07:50:29Z"
+    },
+    {
+      "task_id": "TEL-001",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review requested changes. See services/telemetry/review_tel001_codex_zh.md. Blockers: (1) deploy/rollback/kill-switch/heartbeat helpers emit empty metrics and fail canonical telemetry_event.schema.json; (2) binding evidence is still optional/fabricated because capture.py backfills missing RuntimeBinding fields with defaults/empty strings instead of rejecting; (3) deployment_stage=frozen maps to execution_mode=frozen, which violates the schema's paper|live alias contract; (4) TEL-001 tests/smoke still validate against ad-hoc minimal schemas, so canonical regressions are not covered.",
+      "status": "done",
+      "created_at": "2026-04-10T07:50:29Z",
+      "resolved_at": "2026-04-10T07:50:29Z"
+    },
+    {
+      "task_id": "TEL-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "All 4 review blockers resolved. (1) deploy/rollback/kill-switch/heartbeat now emit canonical non-empty metrics passing minProperties=1. (2) Partial binding_context triggers strict rejection instead of fabricating defaults. (3) frozen deployment_stage correctly maps to paper execution_mode. (4) Tests and smoke test unified to canonical telemetry_event.schema.json. Also fixed runtime_binding_id → binding_id naming drift in LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md. All 58 unit tests + smoke test pass.",
+      "status": "done",
+      "created_at": "2026-04-10T08:13:49Z",
+      "resolved_at": "2026-04-10T08:57:02Z"
+    },
+    {
+      "task_id": "TEL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex to Claude after repeated Codex terminal: ERROR: Selected model is at capacity. Please try a different model.",
+      "status": "done",
+      "created_at": "2026-04-10T08:57:02Z",
+      "resolved_at": "2026-04-10T09:17:27Z"
+    },
+    {
+      "task_id": "TEL-001",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "All 4 Codex blockers resolved: canonical metrics on lifecycle events, strict evidence rejection, frozen→paper execution_mode mapping, canonical schema unified across tests/smoke. 33/33 unit tests + 14/14 smoke steps pass. binding_id naming converged in L1 doc. Approved — Qwen to finalize as done.",
+      "status": "done",
+      "created_at": "2026-04-10T09:17:27Z",
+      "resolved_at": "2026-04-10T11:59:20Z"
+    }
+  ],
+  "blockers": []
+}

@@ -25,14 +25,26 @@ from .incident import (
     validate_incident_case,
     validate_postmortem,
 )
+from .evidence_collector import (
+    EvidenceBundle,
+    PostmortemEvidenceCollector,
+    RuntimeBindingEvidence,
+    TelemetryEvidence,
+    build_evidence_bundle,
+)
 
 __all__ = [
+    "EvidenceBundle",
     "IncidentCase",
     "IncidentSeverity",
     "IncidentStatus",
     "IncidentStore",
+    "PostmortemEvidenceCollector",
     "Postmortem",
     "PostmortemStatus",
+    "RuntimeBindingEvidence",
+    "TelemetryEvidence",
+    "build_evidence_bundle",
     "validate_incident_case",
     "validate_postmortem",
 ]

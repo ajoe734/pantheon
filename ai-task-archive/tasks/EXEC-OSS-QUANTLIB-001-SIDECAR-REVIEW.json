@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "task_id": "EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-21T20:05:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW",
+    "title": "Prepare EXEC-OSS-QUANTLIB-001 review packet and evidence summary",
+    "summary_zh": "平行支援 EXEC-OSS-QUANTLIB-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Execution / OSS Next Wave",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/EXEC-OSS-QUANTLIB-001/EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the approved QuantLib review sidecar. The evidence packet is archived as support-only material and no canonical truth changes were made.",
+    "last_update": "2026-04-21T20:05:12Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EXEC-OSS-QUANTLIB-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar packet 資訊準確，cross-check 與 repo artifacts 吻合；文件 metadata 偏移已正確標注；未修改 canonical truth；建議對 parent 正式審查時聚焦 QuantLib 服務目錄與 integrations/ 的完整文件。"
+    ],
+    "review_file": "support/sidecars/EXEC-OSS-QUANTLIB-001/EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW-CLAUDE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T20:05:12Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "b402bf461f35d0b1168d676b4df145796129f754",
+      "commit_subject": "EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW finalize review packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 981,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T07:36:00Z",
+      "resolved_at": "2026-04-21T07:37:03Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T07:38:23Z",
+      "resolved_at": "2026-04-21T07:40:22Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T07:41:55Z",
+      "resolved_at": "2026-04-21T07:43:57Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T07:43:57Z",
+      "resolved_at": "2026-04-21T07:45:08Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review packet is ready at support/sidecars/EXEC-OSS-QUANTLIB-001/EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW.md. It summarizes the parent QuantLib reclose handoff, the governed adapter/worker/sample-dataset surface, rerun smoke/pytest/worker evidence from 2026-04-21, and the two main cautions: the older acceptance sidecar is stale and several QuantLib docs still carry pre-reassignment reviewer headers while the live parent reviewer is now Copilot.",
+      "status": "done",
+      "created_at": "2026-04-21T07:48:31Z",
+      "resolved_at": "2026-04-21T16:33:09Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar review packet verified accurate: all evidence claims match repo artifacts (OSS checklist, ACTIVATION_CRITERIA, smoke_test.md); doc-metadata drift correctly noted; no canonical truth modified. Approved and returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-21T16:33:09Z",
+      "resolved_at": "2026-04-21T20:05:12Z"
+    }
+  ],
+  "blockers": []
+}

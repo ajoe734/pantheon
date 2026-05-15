@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-003",
+  "archived_at": "2026-05-13T03:10:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-003",
+    "title": "CI route diff job (fail-but-warn baseline)",
+    "summary_zh": "寫 scripts/bff_route_diff.py 比對 backend manifest vs frontend manifest 起步 fail-but-warn：frontend 有 backend 沒有→fail (除非標 mock_only/deferred);backend 有 frontend 沒有→warn;命名 mismatch→fail。整合進 pytest harness 與 GitHub Actions。輸出 docs/bff/contract_snapshots/route-diff-baseline.json。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-001",
+      "BFF-CONSOL-002"
+    ],
+    "artifacts": [
+      "scripts/bff_route_diff.py",
+      "docs/bff/contract_snapshots/route-diff-baseline.json",
+      ".github/workflows/bff-route-diff.yml"
+    ],
+    "acceptance": [
+      "diff CLI 在 frontend↔backend 不對齊時非 0 退出",
+      "pytest harness 可呼叫 diff 並 assert baseline 一致",
+      "fail-but-warn 模式允許 warn-only 通過",
+      "baseline JSON 落入 contract_snapshots 供後續 026 切 fail-hard 使用",
+      "GitHub Actions 在 PR 上會掛 diff 結果"
+    ],
+    "next": "Closed out BFF-CONSOL-003 after Codex review approval. Task commit 3763492e adds fail-but-warn route diff CI, baseline, pytest harness, and the /bff/approvals manifest family correction. Verification passed: python3 scripts/bff_route_manifest_backend.py --check; python3 scripts/bff_route_diff.py --check-baseline; python3 -m pytest scripts/test_bff_route_diff.py -q.",
+    "last_update": "2026-05-13T03:10:35Z",
+    "review_notes_zh": [
+      "Review approved: route diff CLI covers active frontend missing backend failures, backend-only warnings, family mismatch failures, duplicate key failures, baseline drift check, and future fail-hard mode.",
+      "Verification passed: python3 -m py_compile scripts/bff_route_diff.py scripts/test_bff_route_diff.py scripts/bff_route_manifest_backend.py; python3 scripts/bff_route_manifest_backend.py --check; python3 scripts/bff_route_diff.py --check-baseline; python3 -m pytest scripts/test_bff_route_diff.py -q; python3 -m pytest services/control-plane/bff/test_execute_plans_contract_registry.py -q.",
+      "No blocking findings; owner should perform closeout per task-closeout-finalization.md, including task-scoped commit for BFF-CONSOL-003 artifacts."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T03:10:35Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "3763492ed2e89d57089b76c9f6464156a6c6d306",
+      "commit_subject": "BFF-CONSOL-003 add route diff CI baseline",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-CONSOL-003",
+        "Reviewer": "Codex",
+        "Verification": "python3 scripts/bff_route_manifest_backend.py --check; python3 scripts/bff_route_diff.py --check-baseline; python3 -m pytest scripts/test_bff_route_diff.py -q"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 22,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 17,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented fail-but-warn BFF route diff: scripts/bff_route_diff.py compares frontend/backend manifests, fails frontend-active missing backend and naming mismatches, allows backend-only warnings, supports baseline check and future fail-hard mode. Added docs/bff/contract_snapshots/route-diff-baseline.json (0 failures, 209 backend-only warnings), scripts/test_bff_route_diff.py, and .github/workflows/bff-route-diff.yml. Aligned backend manifest family override for GET /bff/approvals to final-contract so naming gate starts clean. Verification: python3 -m py_compile scripts/bff_route_diff.py scripts/test_bff_route_diff.py scripts/bff_route_manifest_backend.py; python3 scripts/bff_route_manifest_backend.py --check; python3 scripts/bff_route_diff.py --check-baseline; python3 -m pytest scripts/test_bff_route_diff.py -q; python3 -m pytest services/control-plane/bff/test_execute_plans_contract_registry.py -q.",
+      "status": "done",
+      "created_at": "2026-05-13T03:03:10Z",
+      "resolved_at": "2026-05-13T03:06:58Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Codex review approved. Focused verification passed; no blocking findings. Owner Codex2 should close out with task-scoped commit and done transition.",
+      "status": "done",
+      "created_at": "2026-05-13T03:06:58Z",
+      "resolved_at": "2026-05-13T03:10:35Z"
+    }
+  ],
+  "blockers": []
+}

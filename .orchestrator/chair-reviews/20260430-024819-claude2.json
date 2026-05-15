@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Gemini and Claude2 are idle with no global blockers; 2 runnable sidecar tasks exist and main pipeline lanes are active but not saturated.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260430T024738Z-6e0accba",
+      "decision": "allow",
+      "reason": "Read-only compose validation (`docker compose config --quiet`). No writes, no destructive operations. Reviewer Codex2 already confirmed this command passed (exit 0) during review of commit 7c4a924. Standard closeout evidence step for review_approved task.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [
+    {
+      "task_id": "SVC-SOURCE-SEARCH-AUTONOMOUS-CONNECTOR-INDEXER-SIDECAR-REVIEW",
+      "role": "owner",
+      "from": "Codex",
+      "to": "Claude2",
+      "reason": "Codex is actively running SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING and cannot start this sidecar until that task progresses. Claude2 is idle after this chair review cycle and has the same capability lane (execution, control-plane, governance-review) suited for a doc-only review packet task."
+    }
+  ],
+  "recommended_focus": [
+    "SVC-SOURCE-SEARCH-AUTONOMOUS-CONNECTOR-INDEXER",
+    "SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3-SIDECAR-ACCEPTANCE"
+  ]
+}

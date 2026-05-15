@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-019",
+  "archived_at": "2026-05-13T10:57:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-019",
+    "title": "Command envelope adapter backend impl (gated on EP5 closeout)",
+    "summary_zh": "後端 /bff/actions/* 在 BFF 內轉成 /bff/v1/commands admission：actor from auth/Idempotency-Key/trace_id+correlation_id/policy decision/audit action/target typed reference。**不可在 EP5 paper-canary closeout 之前 merge runtime change**;PR 準備好但 hold 在 review 直到 EP5 closeout signal。Reviewer Claude 在 EP5 closeout 後才會 approve。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-004"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/command_executor.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/tests/test_actions_to_commands_adapter.py"
+    ],
+    "acceptance": [
+      "/bff/actions/* 不再直接 mutate state 改走 command admission",
+      "actor 從 auth 取得",
+      "Idempotency-Key 強制需要",
+      "trace_id+correlation_id 透傳",
+      "policy decision 寫入 audit",
+      "target typed reference 對齊 BFF_COMMAND_API_CONTRACT",
+      "EP5 paper-canary closeout 之前禁止 merge runtime change"
+    ],
+    "next": "Finalized BFF-CONSOL-019 after Claude review approval. Task commit 34fa7aec records /bff/actions/* to /bff/v1/commands admission adapter, adapter-only executor, review artifact, and focused tests. Verification: py_compile OK; pytest services/control-plane/bff/tests/test_actions_to_commands_adapter.py -v passed 3 tests. EP5 paper-canary merge gate remains: do not merge runtime change to main until EP5 closeout is confirmed.",
+    "last_update": "2026-05-13T10:57:02Z",
+    "review_notes_zh": [
+      "所有 6 項實作標準 PASS：actor-from-auth、Idempotency-Key 強制、trace/correlation 透傳、policy decision 寫入 audit、typed target reference、adapter-only executor（live_capital_side_effects=False）。驗證：py_compile OK + 3 passed in 2.74s。",
+      "EP5 merge gate 仍在：owner 收尾後不可 merge runtime change 至 main，直到 EP5 paper-canary closeout 確認。"
+    ],
+    "review_file": ".orchestrator/reviews/BFF-CONSOL-019-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T10:57:02Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "34fa7aec2a931333966d98b71a1c2d6bd5d0fe44",
+      "commit_subject": "BFF-CONSOL-019 adapt actions to command admission",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-CONSOL-019",
+        "Reviewer": "Claude",
+        "Verification": "python3 -m py_compile services/control-plane/bff/tests/test_actions_to_commands_adapter.py; python3 -m pytest services/control-plane/bff/tests/test_actions_to_commands_adapter.py -v (3 passed)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 8,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-019",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-13T09:06:04Z",
+      "resolved_at": "2026-05-13T09:06:18Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-019",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-13T09:36:41Z",
+      "resolved_at": "2026-05-13T09:37:14Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-019",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented /bff/actions/* -> /bff/v1/commands admission adapter with auth actor, Idempotency-Key enforcement, trace/correlation propagation, foundation policy/audit records, typed targets, durable action response meta, and adapter-only executor; verified: pytest actions adapter + final command bridge + governance command + action catalog + command executor + final primitives (77 passed). EP5 paper-canary closeout gate still applies before approval/merge.",
+      "status": "done",
+      "created_at": "2026-05-13T10:01:09Z",
+      "resolved_at": "2026-05-13T10:44:01Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-019",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Chair reassigned review from Codex to Claude: Codex reviewer exited twice; Claude is unpaused and should hold approval until the EP5 paper-canary gate clears.",
+      "status": "done",
+      "created_at": "2026-05-13T10:44:01Z",
+      "resolved_at": "2026-05-13T10:54:28Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-019",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Code review approved: all 6 acceptance criteria pass. EP5 merge gate still applies — owner must not merge to main until EP5 paper-canary closeout is confirmed. Review notes at .orchestrator/reviews/BFF-CONSOL-019-review-claude.md.",
+      "status": "done",
+      "created_at": "2026-05-13T10:54:28Z",
+      "resolved_at": "2026-05-13T10:57:02Z"
+    }
+  ],
+  "blockers": []
+}

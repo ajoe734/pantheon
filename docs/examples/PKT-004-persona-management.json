@@ -1,0 +1,87 @@
+{
+  "data": {
+    "persona": {
+      "id": "persona-alpha",
+      "name": "Alpha Persona",
+      "lifecycle_state": "active",
+      "mandate": "systematic_crypto_trading",
+      "strategy_family": "momentum",
+      "created_at": "2026-03-01T00:00:00Z",
+      "last_active_at": "2026-04-11T10:00:00Z"
+    },
+    "bindings": [
+      {
+        "id": "binding-042",
+        "persona_id": "persona-alpha",
+        "capital_pool_id": "pool-main",
+        "capital_pool": {
+          "id": "pool-main",
+          "status": "ready"
+        },
+        "validity": "active",
+        "status": "active",
+        "allowed_deployment_scope": "paper"
+      }
+    ],
+    "sessions": [
+      {
+        "id": "sess-001",
+        "persona_id": "persona-alpha",
+        "status": "active",
+        "started_at": "2026-04-11T08:00:00Z",
+        "last_heartbeat_at": "2026-04-11T11:55:00Z",
+        "tools_enabled": ["signal_read", "artifact_load", "telemetry_query"],
+        "pool_scope": "pool-main",
+        "deployment_stage": "paper",
+        "runtime_binding_id": "runtime-042"
+      },
+      {
+        "id": "sess-002",
+        "persona_id": "persona-alpha",
+        "status": "idle",
+        "started_at": "2026-04-10T14:00:00Z",
+        "last_heartbeat_at": "2026-04-10T18:00:00Z",
+        "tools_enabled": ["signal_read", "artifact_load"],
+        "pool_scope": "pool-main",
+        "deployment_stage": "paper",
+        "runtime_binding_id": "runtime-042"
+      }
+    ],
+    "teaching_sessions": [
+      {
+        "id": "teach-001",
+        "persona_id": "persona-alpha",
+        "status": "completed",
+        "started_at": "2026-04-09T09:00:00Z",
+        "completed_at": "2026-04-09T09:45:00Z",
+        "topic": "drawdown_threshold_tuning",
+        "operator_id": "operator-oncall",
+        "outcomes": [
+          "Adjusted drawdown threshold from 10% to 8% for pool-main",
+          "Added queue-depth alerting for promotion gate"
+        ],
+        "session_artifacts": ["artifact-042"]
+      }
+    ],
+    "allowedActions": {
+      "canActivate": false,
+      "canEdit": true,
+      "canDelete": false,
+      "canRetire": true,
+      "canPause": false,
+      "canTerminateSession": true,
+      "canPauseSession": true,
+      "canViewTeachingHistory": true
+    }
+  },
+  "meta": {
+    "snapshot_at": "2026-04-16T00:00:00Z",
+    "surfaces": {
+      "persona_bindings": { "status": "ok" },
+      "capital_pool_bindings": { "status": "ok" },
+      "persona_sessions": { "status": "ok" },
+      "teaching_sessions": { "status": "ok" },
+      "allowed_actions": { "status": "ok" }
+    }
+  }
+}

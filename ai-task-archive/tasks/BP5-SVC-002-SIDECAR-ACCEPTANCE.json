@@ -1,0 +1,194 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-002-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-15T20:26:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-002-SIDECAR-ACCEPTANCE",
+    "title": "Prepare BP5-SVC-002 acceptance packet and dependency map",
+    "summary_zh": "平行支援 BP5-SVC-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BP5-SVC-001"
+    ],
+    "artifacts": [
+      "support/sidecars/BP5-SVC-002/BP5-SVC-002-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: acceptance packet and reviewer approval archived in bbe3cd0; support-only scope preserved; advisory downstream questions retained for BP5-SVC-016 and BP5-SVC-007 follow-on work.",
+    "last_update": "2026-04-15T20:26:51Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP5-SVC-002",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "AC-1/AC-2 均已達成，sidecar 範圍合規，開放問題已適當記錄為下游輸入"
+    ],
+    "review_file": ".coordination/reviews/BP5-SVC-002-SIDECAR-ACCEPTANCE-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T20:26:51Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "bbe3cd0a8a2da24b3ed77d63dc563249addbe3bc",
+      "commit_subject": "BP5-SVC-002-SIDECAR-ACCEPTANCE: finalize acceptance packet handoff",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BP5-SVC-002-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 62,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T17:25:29Z",
+      "resolved_at": "2026-04-15T17:56:24Z"
+    },
+    {
+      "task_id": "BP5-SVC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T17:56:54Z",
+      "resolved_at": "2026-04-15T17:57:08Z"
+    },
+    {
+      "task_id": "BP5-SVC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T18:40:30Z",
+      "resolved_at": "2026-04-15T18:43:46Z"
+    },
+    {
+      "task_id": "BP5-SVC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T18:44:07Z",
+      "resolved_at": "2026-04-15T18:44:22Z"
+    },
+    {
+      "task_id": "BP5-SVC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T18:59:24Z",
+      "resolved_at": "2026-04-15T19:01:20Z"
+    },
+    {
+      "task_id": "BP5-SVC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T19:02:36Z",
+      "resolved_at": "2026-04-15T19:08:14Z"
+    },
+    {
+      "task_id": "BP5-SVC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T19:08:14Z",
+      "resolved_at": "2026-04-15T19:10:27Z"
+    },
+    {
+      "task_id": "BP5-SVC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T19:10:27Z",
+      "resolved_at": "2026-04-15T19:11:34Z"
+    },
+    {
+      "task_id": "BP5-SVC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T19:19:32Z",
+      "resolved_at": "2026-04-15T19:39:20Z"
+    },
+    {
+      "task_id": "BP5-SVC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T19:39:20Z",
+      "resolved_at": "2026-04-15T19:41:56Z"
+    },
+    {
+      "task_id": "BP5-SVC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T19:41:56Z",
+      "resolved_at": "2026-04-15T19:44:03Z"
+    },
+    {
+      "task_id": "BP5-SVC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T19:47:40Z",
+      "resolved_at": "2026-04-15T19:48:33Z"
+    },
+    {
+      "task_id": "BP5-SVC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T19:49:29Z",
+      "resolved_at": "2026-04-15T20:05:08Z"
+    },
+    {
+      "task_id": "BP5-SVC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet reviewed and approved. AC-1 and AC-2 both MET; scope constraint honored; open questions correctly documented as advisory inputs for BP5-SVC-016. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-15T20:08:23Z",
+      "resolved_at": "2026-04-15T20:26:51Z"
+    }
+  ],
+  "blockers": []
+}

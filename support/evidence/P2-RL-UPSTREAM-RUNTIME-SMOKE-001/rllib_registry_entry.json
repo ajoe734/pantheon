@@ -1,0 +1,69 @@
+{
+  "approved_at": null,
+  "approver": null,
+  "artifact_state": "draft",
+  "artifact_type": "model_artifact",
+  "checksum": "sha256:4487f2df56152d4ceefeee5f0736db00b32f57f01fc7a40b38e2f0b8d0486564",
+  "created_at": "2026-05-02T12:00:30Z",
+  "deployment_summary": {
+    "current_stage": "none"
+  },
+  "evaluation_summary": {
+    "best_trial_reward_proxy": 0.00934347,
+    "eval_reward_mean": -0.00218562,
+    "eval_steps": 9,
+    "joint_action_cardinality": 125,
+    "search_space_dimensions": 4,
+    "train_reward_mean": -0.00097748,
+    "train_steps": 18,
+    "validation_max_drawdown_proxy": 0.05706284,
+    "validation_sharpe_proxy": -0.1586496
+  },
+  "lineage": {
+    "source_dataset_refs": [
+      "synthetic-ohlcv://bounded-fixture/30-periods"
+    ],
+    "source_run_ids": [
+      "rllib-stub-b938543c5d82"
+    ],
+    "source_strategy_spec_id": "strategy-spec:rl-rebalance-v1"
+  },
+  "metadata": {
+    "action_labels": [
+      "sell_large",
+      "sell_small",
+      "hold",
+      "buy_small",
+      "buy_large"
+    ],
+    "algorithm": "ppo",
+    "dataset_checksum": "sha256:a5c3ba3284809208605111239ae5096da752be96fabd030bf4323f46c76a02cd",
+    "decision_focus": "rebalance",
+    "flattened_observation_dim": 72,
+    "framework": "rllib",
+    "framework_package": "ray[rllib]",
+    "framework_version": ">=2.9.0,<3.0.0",
+    "joint_action_cardinality": 125,
+    "model_family": "rl_policy",
+    "num_eval_steps": 9,
+    "num_train_steps": 18,
+    "objective_metric": "validation_sharpe_proxy",
+    "observation_shape": [
+      9,
+      8
+    ],
+    "ray_tune_package": "ray[tune]",
+    "ray_tune_version": ">=2.9.0,<3.0.0",
+    "search_strategy": "pbt",
+    "training_backend": "stub_rllib"
+  },
+  "producer_run_id": "rllib-stub-b938543c5d82",
+  "registry_id": "rllib-policy-rl-exit-timing-rllib-2026.05.01",
+  "rollback_target": null,
+  "storage_ref": {
+    "backend": "object_store",
+    "path": "research/rllib/rl-exit-timing-rllib/2026.05.01/artifact.json"
+  },
+  "strategy_id": "rl-exit-timing-rllib",
+  "version": "2026.05.01"
+}

@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "P0-CI-BOUNDED-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-05-01T05:25:27Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-CI-BOUNDED-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare P0-CI-BOUNDED-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 P0-CI-BOUNDED-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Pantheon P0 Paper Loop",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "P0-CI-BRIDGE-001"
+    ],
+    "artifacts": [
+      "support/sidecars/P0-CI-BOUNDED-001/P0-CI-BOUNDED-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner Claude2 finalized closeout: artifact updated with reviewer approval notes (Codex, 2026-05-01), task-scoped commit 1a999cd created, no canonical truth modified. Support-only sidecar closed.",
+    "last_update": "2026-05-01T05:25:27Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "P0-CI-BOUNDED-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Approved: support-only acceptance packet stays within sidecar scope and does not modify canonical truth.",
+      "Evidence checked: task brief, parent task acceptance in ai-status.json, SD-P0-06 §10-12/§15/§17/TP-CI-005/TP-CI-006, packet artifact, existing script inventory, and focused pytest command: python3 -m pytest scripts/test_smoke_oss_activation_ready_matrix.py scripts/test_run_research_activation_gates.py scripts/test_smoke_openclaw_activation_ready_e2e.py -q (10 passed).",
+      "Residual gaps are intentionally parent-owned: TP-CI-005 bounded source/search smoke implementation, SRC-007 unrestricted crawler guard, and CI wiring for research/OpenClaw fail-closed jobs remain deliverables for P0-CI-BOUNDED-001."
+    ],
+    "review_file": "support/sidecars/P0-CI-BOUNDED-001/P0-CI-BOUNDED-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T05:25:27Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "1a999cd5c4373ee6ef50229478252c8f23aa7e43",
+      "commit_subject": "P0-CI-BOUNDED-001-SIDECAR-ACCEPTANCE: finalize acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "P0-CI-BOUNDED-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Verification": "Acceptance packet reviewed and approved by Codex; existing OSS/OpenClaw fail-closed scripts verified via pytest (10 passed). No runtime or L1 files changed."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 97,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 14,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-CI-BOUNDED-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Acceptance packet ready at support/sidecars/P0-CI-BOUNDED-001/P0-CI-BOUNDED-001-SIDECAR-ACCEPTANCE.md. Maps AC-1/AC-2 to SD-P0-06 §10-12 checks; inventories existing OSS/OpenClaw fail-closed scripts; identifies source/search bounded (TP-CI-005) as implementation gap; documents required deliverables for Codex. No canonical truth modified.",
+      "status": "done",
+      "created_at": "2026-05-01T05:11:21Z",
+      "resolved_at": "2026-05-01T05:19:59Z"
+    },
+    {
+      "task_id": "P0-CI-BOUNDED-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Reviewer approved P0-CI-BOUNDED-001 sidecar acceptance packet. Owner Claude2 should finalize the support-only task with closeout/commit if needed; parent owner Codex can use the packet for P0-CI-BOUNDED-001 implementation.",
+      "status": "done",
+      "created_at": "2026-05-01T05:19:59Z",
+      "resolved_at": "2026-05-01T05:25:28Z"
+    }
+  ],
+  "blockers": []
+}

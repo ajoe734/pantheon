@@ -1,28 +1,47 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
+import re
+import tempfile
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping, Protocol
 
 PRIMARY_BACKEND = "mlflow"
 MLFLOW_VERSION_PIN = "3.10.1"
+WANDB_LOCAL_STORE_VERSION = "offline-local-store-v1"
+WANDB_SDK_MIN_VERSION = "wandb>=0.16.0"
 TRACKING_URI_ENV = "MLFLOW_TRACKING_URI"
+WANDB_LOCAL_STORE_DIR_ENV = "PANTHEON_WANDB_LOCAL_STORE_DIR"
+WANDB_ONLINE_SYNC_FLAG = "PANTHEON_WANDB_ONLINE_SYNC_ENABLED"
+WANDB_API_KEY_ENV = "WANDB_API_KEY"
+WANDB_PROJECT_ENV = "PANTHEON_WANDB_PROJECT"
+WANDB_ENTITY_ENV = "PANTHEON_WANDB_ENTITY"
+WANDB_BASE_URL_ENV = "PANTHEON_WANDB_BASE_URL"
 _LINEAGE_KEYS = (
     "parent_registry_ids",
     "source_run_ids",
     "source_dataset_refs",
     "source_strategy_spec_id",
 )
-_PROMOTION_ALIASES = {
+_ARTIFACT_ALIASES = {
     "draft": (),
     "candidate": ("candidate",),
-    "paper": ("paper",),
-    "live": ("live",),
+    "approved": ("approved",),
     "retired": ("retired",),
+}
+_DEPLOYMENT_STAGES = ("none", "paper", "canary", "frozen", "live")
+_LEGACY_LIFECYCLE_PROJECTION = {
+    "draft": ("draft", "none"),
+    "candidate": ("candidate", "none"),
+    "paper": ("approved", "paper"),
+    "live": ("approved", "live"),
+    "retired": ("retired", "none"),
 }
 
 
@@ -54,11 +73,20 @@ def _flatten_numeric_metrics(payload: Mapping[str, Any], prefix: str = "") -> di
     return metrics
 
 
+def _stable_json_bytes(payload: Any) -> bytes:
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _sha256(payload: Any) -> str:
+    return f"sha256:{hashlib.sha256(_stable_json_bytes(payload)).hexdigest()}"
+
+
 @dataclass(frozen=True)
 class ExperimentRecord:
     experiment_name: str
     run_name: str
     tags: dict[str, str]
+    params: dict[str, Any]
     metrics: dict[str, float]
     artifacts: dict[str, Any]
     aliases: tuple[str, ...] = field(default_factory=tuple)
@@ -72,17 +100,25 @@ class ExperimentRef:
     project: str
     experiment_name: str
     aliases: tuple[str, ...] = field(default_factory=tuple)
+    run_uri: str | None = None
+    artifact_refs: dict[str, Any] = field(default_factory=dict)
+    readback_refs: dict[str, Any] = field(default_factory=dict)
+    sync_status: str | None = None
 
     def to_metadata_ref(self) -> dict[str, Any]:
         payload = {
             "backend": self.backend,
             "run_id": self.run_id,
+            "run_uri": self.run_uri,
             "artifact_uri": self.artifact_uri,
+            "artifact_refs": self.artifact_refs,
             "project": self.project,
             "aliases": list(self.aliases),
             "experiment_name": self.experiment_name,
+            "readback_refs": self.readback_refs,
+            "sync_status": self.sync_status,
         }
-        return {key: value for key, value in payload.items() if value not in (None, [], ())}
+        return {key: value for key, value in payload.items() if value not in (None, [], (), {})}
 
 
 @dataclass(frozen=True)
@@ -93,12 +129,18 @@ class ExperimentSyncResult:
 
 
 class ExperimentBackend(Protocol):
+    backend_name: str
+    tracking_version: str
+
     def record(self, record: ExperimentRecord) -> ExperimentRef:
         ...
 
 
 class InMemoryMlflowBackend:
     """Test backend that mirrors the MLflow record shape without external dependencies."""
+
+    backend_name = PRIMARY_BACKEND
+    tracking_version = MLFLOW_VERSION_PIN
 
     def __init__(self, tracking_uri: str = "memory://mlflow"):
         self.tracking_uri = tracking_uri
@@ -111,12 +153,13 @@ class InMemoryMlflowBackend:
             "experiment_name": record.experiment_name,
             "run_name": record.run_name,
             "tags": copy.deepcopy(record.tags),
+            "params": copy.deepcopy(record.params),
             "metrics": copy.deepcopy(record.metrics),
             "artifacts": copy.deepcopy(record.artifacts),
             "aliases": list(record.aliases),
         }
         return ExperimentRef(
-            backend=PRIMARY_BACKEND,
+            backend=self.backend_name,
             run_id=run_id,
             artifact_uri=artifact_uri,
             project=record.experiment_name,
@@ -127,6 +170,9 @@ class InMemoryMlflowBackend:
 
 class MlflowTrackingBackend:
     """Minimal MLflow tracking backend wrapper for governed registry sync."""
+
+    backend_name = PRIMARY_BACKEND
+    tracking_version = MLFLOW_VERSION_PIN
 
     def __init__(self, tracking_uri: str | None = None):
         self.tracking_uri = tracking_uri or os.environ.get(TRACKING_URI_ENV) or "http://localhost:5000"
@@ -150,6 +196,8 @@ class MlflowTrackingBackend:
             run_name=record.run_name,
             tags=record.tags,
         ) as run:
+            for param_name, value in record.params.items():
+                self.mlflow.log_param(param_name, _json_tag(value))
             for metric_name, value in record.metrics.items():
                 self.mlflow.log_metric(metric_name, value)
             for artifact_path, payload in record.artifacts.items():
@@ -158,7 +206,7 @@ class MlflowTrackingBackend:
             artifact_uri = run.info.artifact_uri
 
         return ExperimentRef(
-            backend=PRIMARY_BACKEND,
+            backend=self.backend_name,
             run_id=run_id,
             artifact_uri=artifact_uri,
             project=record.experiment_name,
@@ -167,21 +215,418 @@ class MlflowTrackingBackend:
         )
 
 
+class LocalWandbRunStore:
+    """Small JSON-backed local run store for offline W&B-compatible records."""
+
+    def __init__(self, root_dir: str | os.PathLike[str] | None = None):
+        self.root_dir = Path(root_dir or os.environ.get(WANDB_LOCAL_STORE_DIR_ENV) or "/tmp/pantheon/wandb-local")
+        self.runs_dir = self.root_dir / "runs"
+        self.artifacts_dir = self.root_dir / "artifacts"
+        self.runs_dir.mkdir(parents=True, exist_ok=True)
+        self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    def write_run(self, record: ExperimentRecord, *, run_id: str, mode: str) -> dict[str, Any]:
+        artifact_refs: dict[str, Any] = {}
+        for artifact_name, payload in record.artifacts.items():
+            checksum = _sha256(payload)
+            safe_name = artifact_name.replace("/", "__")
+            artifact_path = self.artifacts_dir / f"{run_id}__{safe_name}.json"
+            artifact_payload = {
+                "run_id": run_id,
+                "artifact_name": artifact_name,
+                "payload": payload,
+                "checksum": checksum,
+                "created_at": utc_now(),
+            }
+            artifact_path.write_bytes(_stable_json_bytes(artifact_payload))
+            artifact_refs[artifact_name] = {
+                "artifact_ref": f"wandb-local://artifacts/{run_id}/{artifact_name}",
+                "path": str(artifact_path),
+                "checksum": checksum,
+                "size_bytes": artifact_path.stat().st_size,
+            }
+
+        run_uri = f"wandb-local://runs/{run_id}"
+        artifact_uri = f"wandb-local://runs/{run_id}/artifacts"
+        run_payload = {
+            "run_id": run_id,
+            "run_uri": run_uri,
+            "artifact_uri": artifact_uri,
+            "backend": "wandb",
+            "tracking_version": WANDB_LOCAL_STORE_VERSION,
+            "experiment_name": record.experiment_name,
+            "run_name": record.run_name,
+            "mode": mode,
+            "sync_status": "offline_local",
+            "online_sync": {
+                "enabled": False,
+                "gate": WANDB_ONLINE_SYNC_FLAG,
+                "policy": "fail_closed_no_sdk_no_network",
+            },
+            "tags": copy.deepcopy(record.tags),
+            "params": copy.deepcopy(record.params),
+            "metrics": copy.deepcopy(record.metrics),
+            "artifacts": copy.deepcopy(record.artifacts),
+            "artifact_refs": artifact_refs,
+            "aliases": list(record.aliases),
+            "created_at": utc_now(),
+        }
+        run_payload["checksum"] = _sha256(run_payload)
+        run_path = self.runs_dir / f"{run_id}.json"
+        run_payload["path"] = str(run_path)
+        run_path.write_bytes(_stable_json_bytes(run_payload))
+        return run_payload
+
+    def get_run(self, run_id: str) -> dict[str, Any] | None:
+        run_path = self.runs_dir / f"{run_id}.json"
+        if not run_path.exists():
+            return None
+        return json.loads(run_path.read_text(encoding="utf-8"))
+
+    def get_artifact(self, run_id: str, artifact_name: str) -> dict[str, Any] | None:
+        artifact_path = self.artifacts_dir / f"{run_id}__{artifact_name.replace('/', '__')}.json"
+        if not artifact_path.exists():
+            return None
+        return json.loads(artifact_path.read_text(encoding="utf-8"))
+
+    def list_runs(self) -> list[dict[str, Any]]:
+        return [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted(self.runs_dir.glob("*.json"))
+        ]
+
+
+class OfflineWandbLocalBackend:
+    """Offline W&B-compatible backend that never imports the SDK or connects to the network."""
+
+    backend_name = "wandb"
+    tracking_version = WANDB_LOCAL_STORE_VERSION
+
+    def __init__(self, mode: str = "offline", store_dir: str | os.PathLike[str] | None = None):
+        normalized_mode = mode.strip().lower() or "offline"
+        if normalized_mode not in ("offline", "dryrun"):
+            raise ExperimentSyncError(
+                f"Unsupported W&B offline mode: {mode!r}. Supported modes: ('offline', 'dryrun')."
+            )
+        self.mode = normalized_mode
+        self.store = LocalWandbRunStore(store_dir)
+        self.runs: dict[str, dict[str, Any]] = {}
+
+    def record(self, record: ExperimentRecord) -> ExperimentRef:
+        run_id = f"wandb-local-{uuid.uuid4().hex[:12]}"
+        run_payload = self.store.write_run(record, run_id=run_id, mode=self.mode)
+        self.runs[run_id] = copy.deepcopy(run_payload)
+        return ExperimentRef(
+            backend=self.backend_name,
+            run_id=run_id,
+            run_uri=run_payload["run_uri"],
+            artifact_uri=run_payload["artifact_uri"],
+            project=record.experiment_name,
+            experiment_name=record.experiment_name,
+            aliases=record.aliases,
+            artifact_refs=copy.deepcopy(run_payload["artifact_refs"]),
+            sync_status=run_payload["sync_status"],
+        )
+
+    def get_run(self, run_id: str) -> dict[str, Any] | None:
+        return self.store.get_run(run_id)
+
+    def get_artifact(self, run_id: str, artifact_name: str) -> dict[str, Any] | None:
+        return self.store.get_artifact(run_id, artifact_name)
+
+    def sync_online(self, run_id: str) -> dict[str, Any]:
+        if os.getenv(WANDB_ONLINE_SYNC_FLAG, "").strip().lower() not in {"1", "true", "yes", "on"}:
+            raise ExperimentSyncError(
+                f"W&B online sync is disabled. Set {WANDB_ONLINE_SYNC_FLAG}=1 only after the online gate is approved."
+            )
+        raise ExperimentSyncError(
+            "W&B online sync gate is enabled, but offline local runs are not network-synced in place. "
+            "Use WandbOnlineBackend for SDK-backed online sync."
+        )
+
+
+OfflineWandbPrepBackend = OfflineWandbLocalBackend
+
+
+def _truthy_env(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _redact_wandb_secret(message: str) -> str:
+    secret = os.getenv(WANDB_API_KEY_ENV, "")
+    if secret:
+        message = message.replace(secret, "<redacted>")
+    return message
+
+
+def _safe_wandb_artifact_name(record: ExperimentRecord) -> str:
+    source = f"{record.experiment_name}-{record.run_name}"
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", source).strip("-._")
+    return (safe or f"pantheon-registry-{uuid.uuid4().hex[:8]}")[:128]
+
+
+def _wandb_ref_prefix(entity: str | None, project: str) -> str:
+    return f"{entity}/{project}" if entity else project
+
+
+class WandbOnlineBackend:
+    """SDK-backed W&B backend for explicit-gated online upload/readback smoke."""
+
+    backend_name = "wandb"
+
+    def __init__(
+        self,
+        *,
+        project: str | None = None,
+        entity: str | None = None,
+        base_url: str | None = None,
+        readback: bool = True,
+    ):
+        if not _truthy_env(WANDB_ONLINE_SYNC_FLAG):
+            raise ExperimentSyncError(
+                f"W&B online sync requires {WANDB_ONLINE_SYNC_FLAG}=1. "
+                "Offline local W&B remains the default non-network path."
+            )
+        self.project = (project or os.getenv(WANDB_PROJECT_ENV) or os.getenv("WANDB_PROJECT") or "").strip()
+        if not self.project:
+            raise ExperimentSyncError(
+                f"W&B online sync requires a test project via {WANDB_PROJECT_ENV} or WANDB_PROJECT."
+            )
+        self.entity = (entity or os.getenv(WANDB_ENTITY_ENV) or os.getenv("WANDB_ENTITY") or "").strip() or None
+        self.base_url = (base_url or os.getenv(WANDB_BASE_URL_ENV) or os.getenv("WANDB_BASE_URL") or "").strip() or None
+        if not os.getenv(WANDB_API_KEY_ENV):
+            raise ExperimentSyncError(
+                f"W&B online sync requires {WANDB_API_KEY_ENV} in the process environment; "
+                "the value is consumed by the SDK and is not persisted by Pantheon."
+            )
+        try:
+            import wandb  # type: ignore
+        except ImportError as exc:  # pragma: no cover - exercised with optional dependency absent
+            raise ExperimentSyncError(
+                f"wandb SDK is not installed. Install services/registry/experiments/requirements.txt "
+                f"({WANDB_SDK_MIN_VERSION}) before running online sync."
+            ) from exc
+
+        self.wandb = wandb
+        self.tracking_version = f"wandb-sdk-{getattr(wandb, '__version__', 'unknown')}"
+        self.readback = readback
+        self.runs: dict[str, dict[str, Any]] = {}
+
+    def _settings(self) -> Any:
+        settings_type = getattr(self.wandb, "Settings", None)
+        if settings_type is None:
+            return None
+        kwargs: dict[str, Any] = {"silent": True}
+        if self.base_url:
+            kwargs["base_url"] = self.base_url
+        try:
+            return settings_type(**kwargs)
+        except TypeError:
+            return settings_type()
+
+    def _readback(
+        self,
+        *,
+        run_id: str,
+        entity: str | None,
+        project: str,
+        artifact_name: str,
+        artifact_alias: str,
+    ) -> dict[str, Any]:
+        if not self.readback:
+            return {"enabled": False}
+        api_factory = getattr(self.wandb, "Api", None)
+        if api_factory is None:
+            return {"enabled": True, "verified": False, "reason": "wandb_api_unavailable"}
+
+        api = api_factory()
+        prefix = _wandb_ref_prefix(entity, project)
+        run_path = f"{prefix}/{run_id}"
+        artifact_path = f"{prefix}/{artifact_name}:{artifact_alias}"
+        run_obj = api.run(run_path)
+        artifact_obj = api.artifact(artifact_path)
+        return {
+            "enabled": True,
+            "verified": True,
+            "run_path": run_path,
+            "artifact_path": artifact_path,
+            "run_id": str(getattr(run_obj, "id", run_id) or run_id),
+            "artifact_name": str(getattr(artifact_obj, "name", artifact_name) or artifact_name),
+            "artifact_version": str(getattr(artifact_obj, "version", artifact_alias) or artifact_alias),
+        }
+
+    def record(self, record: ExperimentRecord) -> ExperimentRef:
+        run = None
+        artifact_name = _safe_wandb_artifact_name(record)
+        artifact_alias = record.aliases[0] if record.aliases else "latest"
+        try:
+            run = self.wandb.init(
+                project=self.project,
+                entity=self.entity,
+                name=record.run_name,
+                job_type="pantheon_registry_sync",
+                mode="online",
+                config=copy.deepcopy(record.params),
+                tags=sorted({"pantheon", "registry-sync", *record.aliases}),
+                settings=self._settings(),
+            )
+            if hasattr(run, "config") and hasattr(run.config, "update"):
+                run.config.update({"pantheon_tags": copy.deepcopy(record.tags)}, allow_val_change=True)
+            if record.metrics:
+                run.log(copy.deepcopy(record.metrics))
+
+            artifact_type = getattr(self.wandb, "Artifact")
+            artifact = artifact_type(
+                artifact_name,
+                type="pantheon_registry_handoff",
+                metadata={
+                    "pantheon_tags": copy.deepcopy(record.tags),
+                    "aliases": list(record.aliases),
+                    "artifact_names": list(record.artifacts.keys()),
+                },
+            )
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                for artifact_path, payload in record.artifacts.items():
+                    local_name = artifact_path.replace("/", "__")
+                    local_path = root / local_name
+                    local_path.write_bytes(_stable_json_bytes(payload))
+                    artifact.add_file(str(local_path), name=artifact_path)
+                logged_artifact = run.log_artifact(artifact, aliases=[artifact_alias])
+                wait_target = logged_artifact or artifact
+                if hasattr(wait_target, "wait"):
+                    wait_target.wait()
+
+            run_id = str(getattr(run, "id", "") or "")
+            project = str(getattr(run, "project", "") or self.project)
+            entity = str(getattr(run, "entity", "") or self.entity or "") or None
+            run_path_parts = getattr(run, "path", None)
+            if isinstance(run_path_parts, (list, tuple)) and len(run_path_parts) >= 3:
+                entity = str(run_path_parts[0] or entity or "") or entity
+                project = str(run_path_parts[1] or project)
+                run_id = str(run_path_parts[2] or run_id)
+            if not run_id:
+                raise ExperimentSyncError("W&B SDK did not return a run id after online sync.")
+
+            prefix = _wandb_ref_prefix(entity, project)
+            artifact_uri = f"wandb://{prefix}/{artifact_name}:{artifact_alias}"
+            readback_refs = self._readback(
+                run_id=run_id,
+                entity=entity,
+                project=project,
+                artifact_name=artifact_name,
+                artifact_alias=artifact_alias,
+            )
+            artifact_refs = {
+                artifact_path: {
+                    "artifact_ref": f"{artifact_uri}/{artifact_path}",
+                    "wandb_artifact": f"{prefix}/{artifact_name}:{artifact_alias}",
+                    "checksum": _sha256(payload),
+                }
+                for artifact_path, payload in record.artifacts.items()
+            }
+            run_uri = str(getattr(run, "url", "") or f"https://wandb.ai/{prefix}/runs/{run_id}")
+            self.runs[run_id] = {
+                "backend": "wandb",
+                "sync_status": "online_synced",
+                "run_id": run_id,
+                "run_uri": run_uri,
+                "artifact_uri": artifact_uri,
+                "artifact_refs": copy.deepcopy(artifact_refs),
+                "readback_refs": copy.deepcopy(readback_refs),
+                "project": project,
+                "entity": entity,
+                "tags": copy.deepcopy(record.tags),
+                "params": copy.deepcopy(record.params),
+                "metrics": copy.deepcopy(record.metrics),
+                "artifacts": copy.deepcopy(record.artifacts),
+                "aliases": list(record.aliases),
+            }
+            return ExperimentRef(
+                backend=self.backend_name,
+                run_id=run_id,
+                run_uri=run_uri,
+                artifact_uri=artifact_uri,
+                project=project,
+                experiment_name=record.experiment_name,
+                aliases=record.aliases,
+                artifact_refs=artifact_refs,
+                readback_refs=readback_refs,
+                sync_status="online_synced",
+            )
+        except ExperimentSyncError:
+            raise
+        except Exception as exc:
+            raise ExperimentSyncError(
+                "W&B online sync failed before upload/readback completed: "
+                f"{type(exc).__name__}: {_redact_wandb_secret(str(exc))}"
+            ) from exc
+        finally:
+            if run is not None and hasattr(run, "finish"):
+                run.finish()
+
+
+def build_backend(
+    backend_name: str,
+    *,
+    tracking_uri: str | None = None,
+    wandb_mode: str = "offline",
+) -> ExperimentBackend:
+    normalized = backend_name.strip().lower()
+    if normalized == PRIMARY_BACKEND:
+        return MlflowTrackingBackend(tracking_uri=tracking_uri)
+    if normalized == "wandb":
+        if wandb_mode.strip().lower() == "online":
+            return WandbOnlineBackend()
+        return OfflineWandbLocalBackend(mode=wandb_mode)
+    raise ExperimentSyncError(f"Unsupported experiment backend: {backend_name!r}")
+
+
 class RegistryExperimentAdapter:
-    """Maps governed registry entries into MLflow experiment records."""
+    """Maps governed registry entries into experiment backend records."""
 
     def __init__(self, backend: ExperimentBackend | None = None):
         self.backend = backend or InMemoryMlflowBackend()
 
     @classmethod
     def from_tracking_uri(cls, tracking_uri: str | None = None) -> "RegistryExperimentAdapter":
-        return cls(backend=MlflowTrackingBackend(tracking_uri=tracking_uri))
+        return cls(backend=build_backend(PRIMARY_BACKEND, tracking_uri=tracking_uri))
+
+    @classmethod
+    def from_backend_name(
+        cls,
+        backend_name: str,
+        *,
+        tracking_uri: str | None = None,
+        wandb_mode: str = "offline",
+    ) -> "RegistryExperimentAdapter":
+        return cls(
+            backend=build_backend(
+                backend_name,
+                tracking_uri=tracking_uri,
+                wandb_mode=wandb_mode,
+            )
+        )
+
+    @classmethod
+    def from_env(cls, tracking_uri: str | None = None) -> "RegistryExperimentAdapter":
+        from config import selected_backend, selected_wandb_mode
+
+        backend_name = selected_backend()
+        return cls.from_backend_name(
+            backend_name,
+            tracking_uri=tracking_uri,
+            wandb_mode=selected_wandb_mode(),
+        )
 
     def build_record(self, entry: Mapping[str, Any]) -> ExperimentRecord:
         normalized = self._normalize_entry(entry)
-        aliases = _PROMOTION_ALIASES[normalized["lifecycle_state"]]
+        return self._build_record_from_normalized(normalized)
+
+    def _build_record_from_normalized(self, normalized: Mapping[str, Any]) -> ExperimentRecord:
+        aliases = _ARTIFACT_ALIASES[normalized["artifact_state"]]
         experiment_name = f"pantheon/{normalized['artifact_type']}/{normalized['strategy_id']}"
-        run_name = f"{normalized['version']}:{normalized['lifecycle_state']}"
+        run_name = f"{normalized['version']}:{normalized['artifact_state']}:{normalized['deployment_stage']}"
         tags = self._build_tags(normalized, aliases)
         artifacts = {
             "registry_entry.json": normalized,
@@ -193,16 +638,19 @@ class RegistryExperimentAdapter:
             experiment_name=experiment_name,
             run_name=run_name,
             tags=tags,
+            params=self._build_params(normalized),
             metrics=_flatten_numeric_metrics(normalized.get("evaluation_summary", {})),
             artifacts=artifacts,
             aliases=aliases,
         )
 
     def sync_registry_entry(self, entry: Mapping[str, Any]) -> ExperimentSyncResult:
-        record = self.build_record(entry)
+        normalized = self._normalize_entry(entry)
+        self._validate_promoted_metadata_inputs(normalized)
+        record = self._build_record_from_normalized(normalized)
         experiment_ref = self.backend.record(record)
         promoted_metadata = self._build_promoted_metadata(
-            self._normalize_entry(entry),
+            normalized,
             experiment_ref=experiment_ref,
         )
         return ExperimentSyncResult(
@@ -214,9 +662,36 @@ class RegistryExperimentAdapter:
     def _normalize_entry(self, entry: Mapping[str, Any]) -> dict[str, Any]:
         normalized = copy.deepcopy(dict(entry))
         self._validate_required_fields(normalized)
-        lifecycle_state = normalized["lifecycle_state"]
-        if lifecycle_state not in _PROMOTION_ALIASES:
-            raise ExperimentSyncError(f"Unsupported lifecycle_state for LP-003 sync: {lifecycle_state}")
+        if "artifact_state" not in normalized:
+            lifecycle_state = normalized.get("lifecycle_state")
+            if lifecycle_state not in _LEGACY_LIFECYCLE_PROJECTION:
+                raise ExperimentSyncError(
+                    "Registry entry must include canonical artifact_state or a supported legacy lifecycle_state."
+                )
+            artifact_state, deployment_stage = _LEGACY_LIFECYCLE_PROJECTION[lifecycle_state]
+            normalized["artifact_state"] = artifact_state
+            normalized.setdefault("deployment_stage", deployment_stage)
+            normalized["legacy_lifecycle_state"] = lifecycle_state
+        else:
+            normalized["artifact_state"] = str(normalized["artifact_state"]).strip().lower()
+            normalized["deployment_stage"] = str(normalized.get("deployment_stage") or "none").strip().lower()
+            if "lifecycle_state" in normalized:
+                normalized["legacy_lifecycle_state"] = normalized.pop("lifecycle_state")
+
+        artifact_state = normalized["artifact_state"]
+        if artifact_state not in _ARTIFACT_ALIASES:
+            raise ExperimentSyncError(f"Unsupported artifact_state for LP-003 sync: {artifact_state}")
+        deployment_stage = normalized["deployment_stage"]
+        if deployment_stage not in _DEPLOYMENT_STAGES:
+            raise ExperimentSyncError(
+                f"Unsupported deployment_stage for LP-003 sync: {deployment_stage}. "
+                f"Supported stages: {_DEPLOYMENT_STAGES}."
+            )
+        if deployment_stage != "none" and artifact_state != "approved":
+            raise ExperimentSyncError(
+                "deployment_stage may be non-none only when artifact_state=approved. "
+                f"Got artifact_state={artifact_state!r}, deployment_stage={deployment_stage!r}."
+            )
         lineage = normalized.get("lineage")
         if not isinstance(lineage, Mapping):
             raise ExperimentSyncError("Registry entry must include a lineage object.")
@@ -233,7 +708,6 @@ class RegistryExperimentAdapter:
             "artifact_type",
             "strategy_id",
             "version",
-            "lifecycle_state",
             "lineage",
             "storage_ref",
             "checksum",
@@ -250,14 +724,30 @@ class RegistryExperimentAdapter:
             "pantheon.strategy_id": entry["strategy_id"],
             "pantheon.version": entry["version"],
             "pantheon.artifact_type": entry["artifact_type"],
-            "pantheon.lifecycle_state": entry["lifecycle_state"],
+            "pantheon.artifact_state": entry["artifact_state"],
+            "pantheon.deployment_stage": entry["deployment_stage"],
             "pantheon.checksum": entry["checksum"],
             "pantheon.storage_backend": storage_ref["backend"],
             "pantheon.storage_path": storage_ref["path"],
             "pantheon.lineage": lineage,
             "pantheon.aliases": list(aliases),
-            "pantheon.mlflow.version_pin": MLFLOW_VERSION_PIN,
+            "pantheon.experiment_backend": self.backend.backend_name,
+            "pantheon.experiment_backend_version": self.backend.tracking_version,
         }
+        if self.backend.backend_name == PRIMARY_BACKEND:
+            base_tags["pantheon.mlflow.version_pin"] = MLFLOW_VERSION_PIN
+        if self.backend.backend_name == "wandb":
+            is_online = isinstance(self.backend, WandbOnlineBackend)
+            base_tags["pantheon.wandb.offline_local"] = not is_online
+            base_tags["pantheon.wandb.mode"] = getattr(self.backend, "mode", "offline")
+            base_tags["pantheon.wandb.online_sync_gate"] = WANDB_ONLINE_SYNC_FLAG
+            if is_online:
+                base_tags["pantheon.wandb.mode"] = "online"
+                base_tags["pantheon.wandb.project"] = self.backend.project
+                if self.backend.entity:
+                    base_tags["pantheon.wandb.entity"] = self.backend.entity
+        if entry.get("legacy_lifecycle_state"):
+            base_tags["pantheon.compat.lifecycle_state"] = entry["legacy_lifecycle_state"]
 
         optional_fields = {
             "pantheon.producer_run_id": entry.get("producer_run_id"),
@@ -274,15 +764,34 @@ class RegistryExperimentAdapter:
 
         return {key: _json_tag(value) for key, value in base_tags.items()}
 
+    def _build_params(self, entry: Mapping[str, Any]) -> dict[str, Any]:
+        storage_ref = dict(entry["storage_ref"])
+        params: dict[str, Any] = {
+            "registry_id": entry["registry_id"],
+            "strategy_id": entry["strategy_id"],
+            "version": entry["version"],
+            "artifact_type": entry["artifact_type"],
+            "artifact_state": entry["artifact_state"],
+            "deployment_stage": entry["deployment_stage"],
+            "checksum": entry["checksum"],
+            "storage_backend": storage_ref["backend"],
+            "storage_path": storage_ref["path"],
+        }
+        if entry.get("producer_run_id"):
+            params["producer_run_id"] = entry["producer_run_id"]
+        return params
+
     def _build_artifact_handoff(self, entry: Mapping[str, Any], aliases: tuple[str, ...]) -> dict[str, Any]:
         return {
-            "backend": PRIMARY_BACKEND,
-            "tracking_version": MLFLOW_VERSION_PIN,
+            "backend": self.backend.backend_name,
+            "tracking_version": self.backend.tracking_version,
             "registry_id": entry["registry_id"],
             "strategy_id": entry["strategy_id"],
             "artifact_type": entry["artifact_type"],
             "version": entry["version"],
-            "promotion_state": entry["lifecycle_state"],
+            "artifact_state": entry["artifact_state"],
+            "deployment_stage": entry["deployment_stage"],
+            "promotion_state": entry["artifact_state"],
             "checksum": entry["checksum"],
             "storage_ref": copy.deepcopy(entry["storage_ref"]),
             "execution_projection": {
@@ -297,32 +806,27 @@ class RegistryExperimentAdapter:
         entry: Mapping[str, Any],
         experiment_ref: ExperimentRef,
     ) -> dict[str, Any] | None:
-        state = entry["lifecycle_state"]
-        if state == "draft":
+        self._validate_promoted_metadata_inputs(entry)
+        artifact_state = entry["artifact_state"]
+        deployment_stage = entry["deployment_stage"]
+        if artifact_state == "draft":
             return None
-
-        lineage = dict(entry["lineage"])
-        has_source_reference = bool(
-            lineage.get("source_run_ids")
-            or lineage.get("source_strategy_spec_id")
-            or lineage.get("source_dataset_refs")
-        )
-        if not has_source_reference:
-            raise ExperimentSyncError(
-                f"{state} entries need lineage that points to a run, dataset, or strategy spec before MLflow sync."
-            )
 
         metadata = {
             "registry_id": entry["registry_id"],
             "strategy_id": entry["strategy_id"],
             "version": entry["version"],
             "artifact_type": entry["artifact_type"],
-            "promotion_state": state,
+            "artifact_state": artifact_state,
+            "deployment_stage": deployment_stage,
+            "promotion_state": artifact_state,
             "checksum": entry["checksum"],
             "lineage": copy.deepcopy(entry["lineage"]),
             "created_at": utc_now(),
             "experiment_refs": [experiment_ref.to_metadata_ref()],
         }
+        if entry.get("legacy_lifecycle_state"):
+            metadata["compat"] = {"legacy_lifecycle_state": entry["legacy_lifecycle_state"]}
 
         if entry.get("promoted_at"):
             metadata["approved_at"] = entry["promoted_at"]
@@ -332,12 +836,31 @@ class RegistryExperimentAdapter:
         rollback = self._build_rollback(entry)
         if rollback is not None:
             metadata["rollback"] = rollback
-        if state == "live" and rollback is None:
-            raise ExperimentSyncError(
-                "Live entries need metadata.rollback or metadata.rollback_target_registry_id plus rollback_target."
-            )
 
         return metadata
+
+    def _validate_promoted_metadata_inputs(self, entry: Mapping[str, Any]) -> None:
+        artifact_state = entry["artifact_state"]
+        if artifact_state == "draft":
+            return
+
+        lineage = dict(entry["lineage"])
+        has_source_reference = bool(
+            lineage.get("source_run_ids")
+            or lineage.get("source_strategy_spec_id")
+            or lineage.get("source_dataset_refs")
+        )
+        if not has_source_reference:
+            raise ExperimentSyncError(
+                f"{artifact_state} entries need lineage that points to a run, dataset, or strategy spec before experiment sync."
+            )
+
+        rollback = self._build_rollback(entry)
+        if entry["deployment_stage"] == "live" and rollback is None:
+            raise ExperimentSyncError(
+                "Entries with deployment_stage=live need metadata.rollback or "
+                "metadata.rollback_target_registry_id plus rollback_target."
+            )
 
     def _build_rollback(self, entry: Mapping[str, Any]) -> dict[str, Any] | None:
         metadata = entry.get("metadata")

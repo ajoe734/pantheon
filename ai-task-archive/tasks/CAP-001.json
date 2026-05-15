@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "task_id": "CAP-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "CAP-001",
+    "title": "Define capital_pool and PersonaCapitalBinding objects",
+    "summary_zh": "把 capital_pool 與 PersonaCapitalBinding 定義成正式平台物件，鎖定 ownership 和單池 runtime 規則。",
+    "phase": "Phase 2: Capital, Runtime, and Execution Control",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "DEP-001"
+    ],
+    "artifacts": [
+      "BINDING_AND_DEPLOYMENT_SEMANTICS.md",
+      "PERSONA_RUNTIME_MODEL.md"
+    ],
+    "acceptance": [
+      "pool and binding ownership are explicit",
+      "single-pool runtime rule is documented"
+    ],
+    "next": "CAP-001 finalized: capital_pool and PersonaCapitalBinding objects are locked. Ownership is explicit in capital_pool.contract.md and persona_capital_binding.py. Single-pool runtime rule is enforced via CapitalPool.single_runtime_enforced and PersonaCapitalBindingStore._check_single_live_owner(). Governance/execution status mapping is documented in BINDING_AND_DEPLOYMENT_SEMANTICS.md §16 for RUN-001 consumption. 64/64 smoke checks pass, py_compile clean. Ready for RUN-001.",
+    "last_update": "2026-04-10T01:59:44Z",
+    "review_notes_zh": [
+      "審查通過：capital_pool / PersonaCapitalBinding 實作、schema、L1 ownership 與 single-runtime 語意一致， §16 的 governance/execution status mapping 已足夠供 RUN-001 對接。",
+      "reviewer 補正  一個把  誤判為非法的測試期待； smoke checks 與 py_compile 已重新驗證通過。",
+      "本機環境未安裝  module，這個 session 無法直接跑 pytest suite，但可見測試漂移已收斂。"
+    ],
+    "review_file": "services/control-plane/governance/review_cap001_codex_approved_zh.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "CAP-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "CAP-001 complete: capital_pool.py + PersonaCapitalBinding.py implemented with single-runtime enforcement, schema drift resolved, governance/execution status mapping added to BINDING_AND_DEPLOYMENT_SEMANTICS.md §16. Smoke tests 64/64. Review doc: services/control-plane/governance/review_cap001_claude_zh.md",
+      "status": "done",
+      "created_at": "2026-04-10T01:54:41Z",
+      "resolved_at": "2026-04-10T01:58:26Z"
+    },
+    {
+      "task_id": "CAP-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved and returned to Claude for finalization. CAP-001 ownership, single-runtime enforcement, schema alignment, and governance/execution status mapping are locked; reviewer also corrected one unit-test expectation drift.",
+      "status": "done",
+      "created_at": "2026-04-10T01:58:26Z",
+      "resolved_at": "2026-04-10T01:59:44Z"
+    }
+  ],
+  "blockers": []
+}

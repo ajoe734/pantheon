@@ -1,0 +1,37 @@
+{
+  "feature_id": "PKT-006-approval-queue",
+  "status": "blocked",
+  "backend_commit": "b774358263a02116887301a605d5d54b4b1aae77",
+  "bff_contract_version": "pantheon-bff@b774358263a02116887301a605d5d54b4b1aae77",
+  "source_payload": ".coordination/requests/PKT-006-approval-queue-ui-done.yaml",
+  "source_commit": "0942961a7e31bdfa5adddddf2d31d72b41b141a9",
+  "verified_front_workspace_head": "5ddd23283dc87aee07b4b55133757a3161526158",
+  "review_file": ".coordination/reviews/PKT-006-approval-queue-review.md",
+  "feedback_request": ".coordination/requests/PKT-006-approval-queue-frontend-feedback.yaml",
+  "endpoints": [
+    "GET /api/v1/operator/governance/approval-queue",
+    "POST /api/v1/operator/commands"
+  ],
+  "contract_paths": [
+    "docs/bff/PKT-006-approval-queue.md",
+    "docs/examples/PKT-006-approval-queue.json",
+    "docs/screens/PKT-006-approval-queue.md",
+    "docs/pantheon-handoffs/PKT-006-approval-queue/FRONTEND_CHANGE_SPEC.md"
+  ],
+  "pantheon_api_gap": true,
+  "verification_evidence": [
+    "Sibling front production build passed: npm run build",
+    "The mirrored frontend-feedback request exists in Pantheon and the feedback bundle is present locally under docs/pantheon-feedback/PKT-006-approval-queue/",
+    "The advertised source_commit 0942961a7e31bdfa5adddddf2d31d72b41b141a9 contains the PKT-006 request pair, feedback bundle, and governance approval queue UI files",
+    "The PKT-006 request payload bodies at commit 0942961a7e31bdfa5adddddf2d31d72b41b141a9 still say source_commit: pending; current front HEAD rewrites them via the later pointer commit 79dc1b5",
+    "Pantheon TestClient returns 404 for GET /api/v1/operator/governance/approval-queue",
+    "Pantheon TestClient returns 422 for ApproveDecision, RejectDecision, and RequestApprovalRevision on POST /api/v1/operator/commands because the current command and target enums omit the PKT-006 values",
+    "The current UI still treats a pending decision with canApprove=false and canReject=false as a normal read-only state instead of surfacing the contract-gap condition required by docs/screens/PKT-006-approval-queue.md"
+  ],
+  "followup_scope": [
+    "Implement the published GET /api/v1/operator/governance/approval-queue route in Pantheon BFF without inventing new endpoint fields or shadow state",
+    "Add ApproveDecision, RejectDecision, and RequestApprovalRevision command acceptance plus ApprovalDecision target support to the existing POST /api/v1/operator/commands surface and keep the published envelopes stable",
+    "Add regression coverage for the approval queue read path, embedded decision_context drawer data, allowedActions gating, degradation semantics, and all three PKT-006 command envelopes",
+    "After Pantheon BFF delivery lands, republish the canonical frontend-feedback and ui-done pair from a truthful Git-visible front commit whose payload bodies point at a replayable source tuple and that also adds the pending-decision contract-gap handling required by docs/screens/PKT-006-approval-queue.md"
+  ]
+}

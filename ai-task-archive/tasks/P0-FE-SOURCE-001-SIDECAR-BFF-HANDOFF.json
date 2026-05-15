@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "P0-FE-SOURCE-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-01T05:19:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-FE-SOURCE-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare P0-FE-SOURCE-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 P0-FE-SOURCE-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Pantheon P0 Paper Loop",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "P0-FE-DEMO-001"
+    ],
+    "artifacts": [
+      "support/sidecars/P0-FE-SOURCE-001/P0-FE-SOURCE-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed sidecar after reviewer approval. Created task-scoped commit 40f7963 for support/sidecars/P0-FE-SOURCE-001/P0-FE-SOURCE-001-SIDECAR-BFF-HANDOFF.md. Verification: re-read task brief, reviewer approval, and handoff artifact; confirmed support-only scope and no canonical/runtime/frontend implementation changes staged; no runtime tests run because this is a documentation support artifact.",
+    "last_update": "2026-05-01T05:19:12Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "P0-FE-SOURCE-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Approved: support-only handoff packet stays within sidecar scope and does not modify canonical truth/runtime/frontend implementation.|Evidence checked: task brief, artifact, BFF API contract, PKT-010 runtime-state contract, BFF runtime-state/detail code paths, telemetry schema, P0-TEL-PROJ-001 status/acceptance, and frontend exact search for source/bridge fields.|Residual gap is intentionally parent-owned: bridge repo/commit and stable source_mode are documented as BFF/projection/frontend implementation gaps, not sidecar contract changes."
+    ],
+    "review_file": "support/sidecars/P0-FE-SOURCE-001/P0-FE-SOURCE-001-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T05:19:12Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "40f796384b9aafb7b2b85aec04423863caa2a05d",
+      "commit_subject": "P0-FE-SOURCE-001-SIDECAR-BFF-HANDOFF: finalize handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "P0-FE-SOURCE-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Verification": "re-read task brief, reviewer approval in ai-status.json, and support handoff packet; confirmed artifact is support-only and no L1 canonical/runtime/frontend implementation files are staged; ran focused rg checks for scope, verification, source_mode, and bridge identity mentions."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 93,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 12,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-FE-SOURCE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only BFF/frontend handoff packet is ready for review at support/sidecars/P0-FE-SOURCE-001/P0-FE-SOURCE-001-SIDECAR-BFF-HANDOFF.md; no canonical truth or runtime/frontend implementation changed.",
+      "status": "done",
+      "created_at": "2026-05-01T05:03:17Z",
+      "resolved_at": "2026-05-01T05:08:37Z"
+    },
+    {
+      "task_id": "P0-FE-SOURCE-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewer approved support-only BFF/frontend handoff packet. Owner Codex2 should finalize with a task-scoped commit for support/sidecars/P0-FE-SOURCE-001/P0-FE-SOURCE-001-SIDECAR-BFF-HANDOFF.md, then run closeout done.",
+      "status": "done",
+      "created_at": "2026-05-01T05:08:37Z",
+      "resolved_at": "2026-05-01T05:19:12Z"
+    }
+  ],
+  "blockers": []
+}

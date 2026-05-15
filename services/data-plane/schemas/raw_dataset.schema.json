@@ -22,12 +22,12 @@
     "source_class": {
       "type": "string",
       "enum": [
-        "market",
-        "fundamental",
-        "event",
-        "alternative",
-        "execution_internal",
-        "human_feedback"
+        "official_reference",
+        "broker_execution",
+        "research_grade",
+        "derivative_analytics",
+        "crypto_analytics",
+        "internal_can"
       ],
       "description": "Data source classification."
     },

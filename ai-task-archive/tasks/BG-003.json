@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "task_id": "BG-003",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BG-003",
+    "title": "Formalize decision-front objects and adjudication boundaries",
+    "summary_zh": "正式定義 RegimeState、UniverseSelection、SignalInference、AllocationDecision、RiskAdjudication。",
+    "phase": "Blueprint Gap P0",
+    "owner": "Codex",
+    "reviewer": "Qwen",
+    "depends_on": [
+      "PLAN-002"
+    ],
+    "artifacts": [
+      "services/registry-core/decision-domain/regime_state.schema.json",
+      "services/registry-core/decision-domain/universe_selection.schema.json",
+      "services/registry-core/decision-domain/signal_inference.schema.json",
+      "services/registry-core/decision-domain/allocation_decision.schema.json",
+      "services/registry-core/decision-domain/risk_adjudication.schema.json",
+      "services/registry-core/decision-domain/examples/five_stage_chain.json"
+    ],
+    "acceptance": [
+      "5 JSON Schema draft-07 files produced and validated",
+      "All schemas contain required common fields (strategy_id, artifact_id, version, evaluated_at, input_refs, output_refs, decision_reasoning/model_ref)",
+      "Five-stage chain example payload validates end-to-end against all schemas",
+      "Chain links to existing ApprovalDecision back-half governance gate",
+      "Schemas reference BG-000 market scope vocabulary and BG-001 SecurityMaster/ContractMaster IDs",
+      "Research vs decision provenance distinction documented in all schema descriptions"
+    ],
+    "status": "done",
+    "next": "Owner finalize complete. BG-003 closed as done after re-running python3 services/registry-core/decision-domain/validate_schemas.py and python3 scripts/validate_bg003.py; all five schemas, README alignment, five-stage chain validation, and ApprovalDecision linkage remain green.",
+    "last_update": "2026-04-14T00:11:15Z",
+    "terminal_outcome": "completed",
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+      "phase": "phase2",
+      "profile": "blueprint-gap-convergence",
+      "planning_dir": "docs/02-architecture/consensus/phase2",
+      "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-13T07:05:23Z",
+      "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+    },
+    "review_notes_zh": [
+      "審查通過：五個 decision-domain schema 全部通過驗證，chain 端到端驗證正確，與 ApprovalDecision 後段治理門連接正確，BG-000/BG-001 引用完整，研究與決策 provenance 區分已文件化。"
+    ],
+    "review_file": "services/registry-core/decision-domain/review_bg003_qwen.md",
+    "delivery": {
+      "recorded_at": "2026-04-14T00:11:15Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "6ca9c609ceb03fb413a2a96b004c2c3096da6e91",
+      "commit_subject": "BG-003 finalize metadata checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BG-003",
+        "Reviewer": "Qwen"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 85,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BG-003",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-13T02:15:38Z",
+      "resolved_at": "2026-04-13T02:18:18Z"
+    },
+    {
+      "task_id": "BG-003",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "All 5 decision-front schemas + chain example payload produced and validated. Artifacts: 5 .schema.json files + five_stage_chain.json example. All 12 acceptance criteria met. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-04-13T05:55:17Z",
+      "resolved_at": "2026-04-13T07:00:47Z"
+    },
+    {
+      "task_id": "BG-003",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review changes requested: five_stage_chain.json does not validate against the five published schemas, README.md documents old field names, and acceptance evidence does not prove end-to-end validation. See services/registry-core/decision-domain/review_bg003_codex.md and re-handoff after schema/example/README alignment passes.",
+      "status": "done",
+      "created_at": "2026-04-13T07:00:47Z",
+      "resolved_at": "2026-04-13T07:00:47Z"
+    },
+    {
+      "task_id": "BG-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Aligned decision-domain schemas, examples, README, and validation evidence to one canonical contract. validate_schemas.py and validate_bg003.py both pass; ready for review.",
+      "status": "done",
+      "created_at": "2026-04-13T14:32:49Z",
+      "resolved_at": "2026-04-13T14:33:28Z"
+    },
+    {
+      "task_id": "BG-003",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-13T14:33:28Z",
+      "resolved_at": "2026-04-13T15:09:11Z"
+    },
+    {
+      "task_id": "BG-003",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-13T15:09:11Z",
+      "resolved_at": "2026-04-13T23:28:26Z"
+    },
+    {
+      "task_id": "BG-003",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-13T23:28:26Z",
+      "resolved_at": "2026-04-13T23:31:31Z"
+    },
+    {
+      "task_id": "BG-003",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review approved: all 6 acceptance criteria pass. Five schemas validated, chain end-to-end correct, ApprovalDecision linkage confirmed, BG-000/BG-001 references complete, research vs decision provenance distinction documented.",
+      "status": "done",
+      "created_at": "2026-04-13T23:31:31Z",
+      "resolved_at": "2026-04-14T00:11:15Z"
+    }
+  ],
+  "blockers": []
+}

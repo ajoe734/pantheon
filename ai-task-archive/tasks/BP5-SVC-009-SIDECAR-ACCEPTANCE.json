@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-009-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-15T21:43:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-009-SIDECAR-ACCEPTANCE",
+    "title": "Prepare BP5-SVC-009 acceptance packet and dependency map",
+    "summary_zh": "平行支援 BP5-SVC-009，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BP5-SVC-007"
+    ],
+    "artifacts": [
+      "support/sidecars/BP5-SVC-009/BP5-SVC-009-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Formal closeout complete: acceptance packet and approved review evidence are recorded; three REVIEW callouts remain parent-task follow-up for BP5-SVC-009.",
+    "last_update": "2026-04-15T21:43:12Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP5-SVC-009",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：三項 REVIEW 缺口均已核實與現行 repo 狀態一致，packet 範圍合規，不觸及任何 L1 canonical truth。建議 Codex 正式收尾後由 parent owner 決定是否吸收進主線。",
+      "後續追蹤：RuntimeBindingStore lookup、預設 Postgres writer、retry/replay idempotency 三項仍屬 BP5-SVC-009 parent task 開放驗收問題，不在此 sidecar 範圍內。"
+    ],
+    "review_file": ".coordination/reviews/BP5-SVC-009-SIDECAR-ACCEPTANCE-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T21:43:12Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "58f5daf055fb38042a605b66af54d05b88188512",
+      "commit_subject": "BP5-SVC-009-SIDECAR-ACCEPTANCE: delivery checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BP5-SVC-009-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 75,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-009-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Acceptance packet ready at support/sidecars/BP5-SVC-009/BP5-SVC-009-SIDECAR-ACCEPTANCE.md. Re-ran python3 services/telemetry/smoke_test_ingest.py: ALL SMOKE TESTS PASSED; python3 -m unittest services.telemetry.test_ingest_shock_absorption: 39 tests OK; python3 -m unittest test_capture.TestBindingStageEvidence from services/telemetry/: 13 tests OK. Please review the packet's three acceptance callouts: missing RuntimeBindingStore resolution and temporal checks, default no-op writer instead of a Postgres sink, and missing explicit idempotent dedupe for retry/replay behavior.",
+      "status": "done",
+      "created_at": "2026-04-15T21:08:28Z",
+      "resolved_at": "2026-04-15T21:08:54Z"
+    },
+    {
+      "task_id": "BP5-SVC-009-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-15T21:08:54Z",
+      "resolved_at": "2026-04-15T21:12:23Z"
+    },
+    {
+      "task_id": "BP5-SVC-009-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet approved: scope compliant, all three gap framings verified against repo state. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-15T21:12:23Z",
+      "resolved_at": "2026-04-15T21:43:12Z"
+    }
+  ],
+  "blockers": []
+}

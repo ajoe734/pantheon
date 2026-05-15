@@ -1,0 +1,11 @@
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:18082/api/governance/approvals/apv-ep4-7f7ec0b6/decide",
+  "headers": {},
+  "body": {
+    "actor_role": "governance_reviewer",
+    "actor_id": "ep4-governance-reviewer",
+    "outcome": "approved",
+    "rationale": "EP4 governed paper acceptance run"
+  }
+}

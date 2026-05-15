@@ -1,0 +1,64 @@
+{
+  "plan_id": "plan-dp-001",
+  "artifact_id": "artifact-abc123",
+  "stage": "paper",
+  "submitted_at": "2026-04-16T08:00:00Z",
+  "submitted_by": "orchestrator",
+  "previous_plan_id": "plan-dp-000",
+  "first_deployment": false,
+  "changes": [
+    {
+      "field_path": "parameters.max_drawdown",
+      "previous_value": "0.08",
+      "current_value": "0.10",
+      "change_reason": "Risk policy updated to allow 10% max drawdown for this persona class after governance review.",
+      "change_category": "parameters",
+      "risk_tier": "medium"
+    },
+    {
+      "field_path": "parameters.position_size_limit",
+      "previous_value": "0.05",
+      "current_value": "0.04",
+      "change_reason": "Position size limit reduced to align with updated capital pool allocation.",
+      "change_category": "capital_allocation",
+      "risk_tier": "low"
+    },
+    {
+      "field_path": "bindings[0].capital_pool_id",
+      "previous_value": "pool-001",
+      "current_value": "pool-002",
+      "change_reason": "Binding reassigned to new capital pool after pool-001 was retired.",
+      "change_category": "bindings",
+      "risk_tier": "high"
+    },
+    {
+      "field_path": "risk_controls.stop_loss_threshold",
+      "previous_value": "0.03",
+      "current_value": "0.025",
+      "change_reason": "Stop-loss threshold tightened following post-incident review recommendations.",
+      "change_category": "risk_controls",
+      "risk_tier": "medium"
+    }
+  ],
+  "change_summary": {
+    "total_changes": 4,
+    "by_category": {
+      "parameters": { "count": 1, "highest_risk_tier": "medium" },
+      "capital_allocation": { "count": 1, "highest_risk_tier": "low" },
+      "bindings": { "count": 1, "highest_risk_tier": "high" },
+      "risk_controls": { "count": 1, "highest_risk_tier": "medium" },
+      "stage_transition": { "count": 0, "highest_risk_tier": null }
+    }
+  },
+  "allowedActions": {
+    "canProceedToApproval": true,
+    "canEscalateDiff": true
+  },
+  "meta": {
+    "snapshot_at": "2026-04-16T10:00:00Z",
+    "surfaces": {
+      "deployment_diff": { "status": "ok" },
+      "allowedActions": { "status": "ok" }
+    }
+  }
+}

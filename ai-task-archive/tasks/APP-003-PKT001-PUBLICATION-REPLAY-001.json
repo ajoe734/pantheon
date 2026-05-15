@@ -1,0 +1,172 @@
+{
+  "version": 1,
+  "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001",
+  "archived_at": "2026-04-23T07:09:21Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-PKT001-PUBLICATION-REPLAY-001",
+    "title": "Track and close PKT-001 publication replay follow-up",
+    "summary_zh": "把 PKT-001 剩餘的 front-owned publication replay follow-up 補成 supervisor 可追蹤 execution work，要求 request pair 與 feedback bundle 以同一個 truthful Git-visible commit 重發，避免它繼續只留在 feature stage 的 followup 註記。",
+    "phase": "Execution / Frontend Publication Replay",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "APP-003-PKT001-BFF-ALIGN-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-22-pantheon-residual-followup-execution-packet.md",
+      ".coordination/responses/PKT-001-deployment-review-frontend-feedback.yaml",
+      "docs/pantheon-handoffs/PKT-001-deployment-review/FRONTEND_CHANGE_SPEC.md"
+    ],
+    "acceptance": [
+      "PKT-001 publication replay follow-up is represented by a named execution task",
+      "current-work no longer leaves PKT-001 only as an unmaterialized followup note",
+      "closure criteria point at one truthful Git-visible commit containing the request pair and updated feedback bundle"
+    ],
+    "next": "Finalized on 2026-04-23: origin/pkt-004-detail-fix commit 2c8ec3f74beddfba1ef73bb4df355b54f9b5cd2f publishes the PKT-001 request pair plus full feedback bundle, both published request files keep source_commit pinned to reviewed UI snapshot dbc4a16dc0e9f0b8d33e1576908341ea056c660d, and the only remaining follow-up stays the separate front-owned meta.surfaces fail-closed validation refresh recorded in .coordination/responses/PKT-001-deployment-review-frontend-feedback.yaml.",
+    "last_update": "2026-04-23T07:09:21Z",
+    "review_notes_zh": [
+      "已獨立驗證 origin/pkt-004-detail-fix HEAD 解析為 2c8ec3f74beddfba1ef73bb4df355b54f9b5cd2f；該 commit 樹同時包含 PKT-001 request pair 與完整 feedback bundle（API_GAP_REQUESTS.json、LOVABLE_CHANGE_FEEDBACK.md、QA_STATUS.md、UI_DECISIONS.md）",
+      "兩個已發布 request 檔案的 source_commit 都指向 reviewed UI snapshot dbc4a16dc0e9f0b8d33e1576908341ea056c660d，replay bundle 為單一 truthful Git-visible commit",
+      "Pantheon 回饋 YAML 正確維持 PKT-001 BFF gap 已關閉、PKT-005 SSE 為已核准的 cross-cut、meta.surfaces 驗證 follow-up 明確標記為 front-owned 且獨立於本 residual",
+      "三項 parent acceptance 均達成；broader meta.surfaces 追蹤保留於該 response，不併入本次 residual 範圍"
+    ],
+    "review_file": "support/sidecars/APP-003-PKT001-PUBLICATION-REPLAY-001/APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-23T07:09:21Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 1172,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-22T16:10:52Z",
+      "resolved_at": "2026-04-22T16:10:53Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-22T16:20:38Z",
+      "resolved_at": "2026-04-22T16:20:38Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Front replay is now Git-visible: transport commit de8a284eb7318c07465c6abbdf5741949cf5a0d9 contains the PKT-001 request pair plus feedback bundle, and current front HEAD eee2bc2765073f333895611edad80a5d053c864d repoints both request files to that transport SHA. Review the commit pair alongside support/sidecars/APP-003-PKT001-PUBLICATION-REPLAY-001/APP-003-PKT001-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE.md and confirm the PKT-005 SSE cross-cut remains explicit without reopening a PKT-001 BFF gap.",
+      "status": "done",
+      "created_at": "2026-04-22T16:30:19Z",
+      "resolved_at": "2026-04-23T01:55:16Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Requeued to Gemini review because Claude, Claude2, and Codex2 reviewer lanes are currently failing authentication or quota checks.",
+      "status": "done",
+      "created_at": "2026-04-23T01:55:16Z",
+      "resolved_at": "2026-04-23T04:41:16Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001",
+      "from": "Gemini",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Gemini to Codex3 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T04:41:16Z",
+      "resolved_at": "2026-04-23T05:56:32Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "PKT-001 publication replay is now GitHub-visible on origin/pkt-004-detail-fix at 2c8ec3f74beddfba1ef73bb4df355b54f9b5cd2f. The remote tree contains the request pair plus docs/pantheon-feedback/PKT-001-deployment-review/*, both published request files now point back to reviewed UI commit dbc4a16dc0e9f0b8d33e1576908341ea056c660d, and the Pantheon frontend-feedback response has been refreshed to keep only the broader front meta.surfaces validation follow-up open. Parent residual is ready for review.",
+      "status": "done",
+      "created_at": "2026-04-23T06:19:47Z",
+      "resolved_at": "2026-04-23T06:45:15Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex3 to Gemini after repeated Codex3 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T06:45:15Z",
+      "resolved_at": "2026-04-23T06:45:44Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001",
+      "from": "Gemini",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Gemini to Codex3 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T06:45:44Z",
+      "resolved_at": "2026-04-23T06:51:27Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Revalidated on 2026-04-23: origin/pkt-004-detail-fix still resolves to 2c8ec3f74beddfba1ef73bb4df355b54f9b5cd2f, that remote tree publishes the PKT-001 request pair plus docs/pantheon-feedback/PKT-001-deployment-review/*, both published request files still pin source_commit to reviewed UI snapshot dbc4a16dc0e9f0b8d33e1576908341ea056c660d, and the refreshed Pantheon response keeps only the broader front-owned meta.surfaces validation follow-up open. Narrow publication-replay residual is ready for review_approved.",
+      "status": "done",
+      "created_at": "2026-04-23T06:51:27Z",
+      "resolved_at": "2026-04-23T06:52:20Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001",
+      "from": "Codex3",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Codex3 to Codex2 after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T06:52:20Z",
+      "resolved_at": "2026-04-23T06:54:24Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated on 2026-04-23: origin/pkt-004-detail-fix still resolves to 2c8ec3f74beddfba1ef73bb4df355b54f9b5cd2f, that remote tree still publishes the PKT-001 request pair plus docs/pantheon-feedback/PKT-001-deployment-review/*, both published request files still pin source_commit to reviewed UI snapshot dbc4a16dc0e9f0b8d33e1576908341ea056c660d, and the refreshed Pantheon response keeps only the broader front-owned meta.surfaces validation follow-up open. Narrow publication-replay residual is ready for review_approved; reviewer support packets are aligned to Codex2 under support/sidecars/APP-003-PKT001-PUBLICATION-REPLAY-001/.",
+      "status": "done",
+      "created_at": "2026-04-23T06:54:24Z",
+      "resolved_at": "2026-04-23T06:55:13Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T06:55:13Z",
+      "resolved_at": "2026-04-23T06:57:23Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: publication-replay residual satisfies all three acceptance targets. Verified origin/pkt-004-detail-fix at 2c8ec3f74beddfba1ef73bb4df355b54f9b5cd2f contains the PKT-001 request pair plus full docs/pantheon-feedback bundle, both request bodies pin source_commit to reviewed UI commit dbc4a16dc0e9f0b8d33e1576908341ea056c660d, and the refreshed Pantheon response keeps PKT-001 BFF closed while scoping the remaining caveat to the separate front-owned meta.surfaces validation follow-up. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-23T06:57:23Z",
+      "resolved_at": "2026-04-23T07:09:22Z"
+    }
+  ],
+  "blockers": []
+}

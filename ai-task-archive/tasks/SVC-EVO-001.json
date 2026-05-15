@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "task_id": "SVC-EVO-001",
+  "archived_at": "2026-04-17T18:24:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-EVO-001",
+    "title": "Add Dockerfile and compose entry for evolution service",
+    "summary_zh": "為 services/evolution/ 建立 Dockerfile 和 docker-compose.yml entry：補齊 build context、PORT env、depends_on（runtime-manager/governance）、healthcheck，讓 evolution 服務可被 compose 啟動。evolution/main.py 已存在，只缺容器化包裝。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [],
+    "artifacts": [
+      "[\"services/evolution/Dockerfile\"",
+      "\"docker-compose.yml\"]"
+    ],
+    "acceptance": [
+      "[\"docker compose up evolution 後 /__health__ 回傳 200\"",
+      "\"evolution service 出現在 docker-compose.yml\"]"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T15:05:08Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized: Dockerfile (python:3.11-slim, port 8093) and compose entry (PORT, INCIDENT_DATA_DIR, incident-data volume, depends_on runtime-manager/governance, healthcheck) verified. Review approved by Codex. Task closed.",
+    "last_update": "2026-04-17T18:24:10Z",
+    "review_notes_zh": [
+      "docker compose config 解析正常，evolution service 含 build context、depends_on、healthcheck、incident-data volume 與 /data/incidents 路徑一致",
+      "重驗證通過：docker compose build evolution 成功，docker compose up -d evolution 後 /health 回傳 {\"status\":\"ok\",\"service\":\"evolution\"}，且 services/evolution/test_evolution_service.py 39 tests 全數通過"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T18:24:10Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "89b7f15c4bfbcf1a423296c73d0196bc153ab37a",
+      "commit_subject": "SVC-EVO-001: add evolution service Dockerfile and compose entry",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-EVO-001",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 473,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-EVO-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T15:36:12Z",
+      "resolved_at": "2026-04-17T15:37:15Z"
+    },
+    {
+      "task_id": "SVC-EVO-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Dockerfile and docker-compose entry created for evolution service on port 8093. depends_on runtime-manager and governance (both service_healthy). Volume evolution-data added. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-17T17:14:10Z",
+      "resolved_at": "2026-04-17T18:15:08Z"
+    },
+    {
+      "task_id": "SVC-EVO-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: evolution compose wiring must align with the shared incident/postmortem store. services/evolution/main.py reads IncidentStore for linked_postmortem validation and reverse-link writes, but docker-compose.yml sets INCIDENT_DATA_DIR=/data/incident without mounting incident-data. In compose this points evolution at an empty private path, so EVO-003 incident/postmortem linkage breaks. Mount incident-data and align the path with the shared /data/incidents store before re-handoff.",
+      "status": "done",
+      "created_at": "2026-04-17T18:15:08Z",
+      "resolved_at": "2026-04-17T18:15:08Z"
+    },
+    {
+      "task_id": "SVC-EVO-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "INCIDENT_DATA_DIR corrected to /data/incidents and incident-data volume mounted. Evolution now shares the same incident store path as incident/postmortem services. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-17T18:16:19Z",
+      "resolved_at": "2026-04-17T18:22:25Z"
+    },
+    {
+      "task_id": "SVC-EVO-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Re-review passed: evolution compose wiring now matches the shared /data/incidents store, and fresh validation succeeded with docker compose build/up plus /health 200.",
+      "status": "done",
+      "created_at": "2026-04-17T18:22:25Z",
+      "resolved_at": "2026-04-17T18:24:10Z"
+    }
+  ],
+  "blockers": []
+}

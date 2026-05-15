@@ -1,0 +1,55 @@
+{
+  "entries": [
+    {
+      "entry_id": "mem-7f2a1b9c-4d5e-4f6a-8b0c-9d1e2f3a4b5c",
+      "knowledge_type": "incident_lesson",
+      "headline": "Risk exposure exceeded thresholds during BTC-regime shift due to stale parameter sync",
+      "scope": "system_wide",
+      "scope_filter": null,
+      "written_at": "2026-04-07T14:30:00Z",
+      "write_authority": "incident-svc",
+      "tags": ["risk", "latency", "regime-shift", "btc"],
+      "reuse_count": 28,
+      "is_superseded": false,
+      "route_href": "/knowledge/memory/mem-7f2a1b9c-4d5e-4f6a-8b0c-9d1e2f3a4b5c"
+    },
+    {
+      "entry_id": "mem-2c3d4e5f-6a7b-8c9d-0e1f-2a3b4c5d6e7f",
+      "knowledge_type": "regime_pattern",
+      "headline": "Momentum strategy underperforms in low-volatility sideways regimes",
+      "scope": "strategy_family",
+      "scope_filter": "momentum",
+      "written_at": "2026-04-10T09:15:00Z",
+      "write_authority": "evolution-svc",
+      "tags": ["regime", "momentum", "volatility"],
+      "reuse_count": 14,
+      "is_superseded": false,
+      "route_href": "/knowledge/memory/mem-2c3d4e5f-6a7b-8c9d-0e1f-2a3b4c5d6e7f"
+    },
+    {
+      "entry_id": "mem-8e9f0a1b-2c3d-4e5f-6a7b-8c9d0e1f2a3b",
+      "knowledge_type": "policy_precedent",
+      "headline": "Simultaneous drawdown across correlated instruments triggers portfolio-level halt",
+      "scope": "system_wide",
+      "scope_filter": null,
+      "written_at": "2026-03-28T16:00:00Z",
+      "write_authority": "incident-svc",
+      "tags": ["policy", "drawdown", "halt", "correlation"],
+      "reuse_count": 41,
+      "is_superseded": true,
+      "route_href": "/knowledge/memory/mem-8e9f0a1b-2c3d-4e5f-6a7b-8c9d0e1f2a3b"
+    }
+  ],
+  "pagination": {
+    "total_count": 120,
+    "page": 1,
+    "page_size": 20,
+    "total_pages": 6
+  },
+  "meta": {
+    "snapshot_at": "2026-04-19T10:00:00Z",
+    "surfaces": {
+      "memory_list": "ok"
+    }
+  }
+}

@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW",
+  "archived_at": "2026-05-01T17:14:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW",
+    "title": "Prepare P2-RL-UPSTREAM-RUNTIME-SMOKE-001 review packet and evidence summary",
+    "summary_zh": "平行支援 P2-RL-UPSTREAM-RUNTIME-SMOKE-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "P2 Wave 8 External Activation",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "P2-OSS-ACTIVATE-001"
+    ],
+    "artifacts": [
+      "support/sidecars/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Review-approved sidecar packet committed in a309438; verification: manifest checksum OK, FinRL 16 tests OK, RLlib 33 tests OK. Scope remained support-only; no L1/runtime/registry/governance files changed.",
+    "last_update": "2026-05-01T17:14:29Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：evidence bundle 準確，sidecar scope 邊界正確，三框架 governance boundary flags 驗證通過，四項 attention items 均已正確歸類為 parent review 範疇，不構成 sidecar 缺陷",
+      "後續追蹤：OSS_INTEGRATION_CHECKLIST.md lifecycle wording 需在 parent closeout 前由 Codex2 與 Claude 對齊；PYTHONHASHSEED nondeterminism 為 parent-scope reproducibility note"
+    ],
+    "review_file": "support/reviews/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T17:14:29Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "a3094388b9307110fc0ed5af16ed977fddd8617b",
+      "commit_subject": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW closeout packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW",
+        "Reviewer": "Claude",
+        "Verification": "manifest checksum verification OK; FinRL unittest discovery ran 16 tests OK; RLlib unittest discovery ran 33 tests OK."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 178,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Sidecar review packet ready at support/sidecars/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW.md. Verification passed (finrl 16 passed, rllib 33 passed, three real-backend smokes produced explicit dependency/config evidence); packet flags reviewer attention items on premature checklist closed wording, per-run evaluator checksum omission, and nondeterministic Python hash fixture seeds.",
+      "status": "done",
+      "created_at": "2026-05-01T17:03:55Z",
+      "resolved_at": "2026-05-01T17:04:25Z"
+    },
+    {
+      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Sidecar review packet ready: support/sidecars/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW.md summarizes parent evidence, checksum/test verification, and reviewer attention items; support-only, no canonical/runtime changes.",
+      "status": "done",
+      "created_at": "2026-05-01T17:04:25Z",
+      "resolved_at": "2026-05-01T17:08:23Z"
+    },
+    {
+      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar review packet approved: evidence bundle accurately summarized, all three acceptance criteria met, no canonical files modified. Four attention items correctly flagged as parent-review concerns. Returning to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-01T17:08:23Z",
+      "resolved_at": "2026-05-01T17:14:29Z"
+    }
+  ],
+  "blockers": []
+}

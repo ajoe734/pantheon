@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "SVC-SOURCE-INGEST-EXTERNAL-FETCH-BASELINE",
+  "archived_at": "2026-04-29T16:07:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-SOURCE-INGEST-EXTERNAL-FETCH-BASELINE",
+    "title": "Add bounded external fetch mode for source-ingest",
+    "summary_zh": "把 source-ingest 的 configured connector 從 static_records 擴到一個可審核的外部 fetch baseline；禁止任意 crawler/live web scraping，先做 allowlisted HTTP/file feed、timeout、size limit、license/access scope、DLQ/audit/watermark tests。",
+    "phase": "Service Hardening / External Source Baseline",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/source_ingestion/configured.py",
+      "services/source_ingestion/main.py",
+      "services/source_ingestion/test_service.py",
+      "scripts/smoke_honest_stack.py",
+      "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/phase2-phase6-gap-inventory.md"
+    ],
+    "acceptance": [
+      "static_records remains supported",
+      "new external feed mode enforces allowlist timeout size and record cap",
+      "fetched records preserve license and access scope into evidence refs",
+      "failures route to DLQ and replay without advancing watermark",
+      "focused source ingestion tests and compose config pass"
+    ],
+    "next": "Closeout complete in task-scoped commit db82751. Verified: source-ingest tests 17 passed, compose activation 1 passed, py_compile passed, git diff --check passed, docker compose config --quiet passed. Bounded external_feed supports allowlisted HTTP/file JSON with timeout, byte cap, record cap, license/access-scope evidence metadata, DLQ failure/replay, and no watermark advance on failed fetch.",
+    "last_update": "2026-04-29T16:07:06Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "review_notes_zh": [
+      "審查通過：17/17 source-ingestion tests、compose activation test、py_compile、diff check、docker compose config 全部通過",
+      "bounded external_feed 保留 static_records，具備 allowlisted HTTP/file JSON、timeout、byte/record cap、license/access scope metadata、DLQ/audit failure path與失敗不推進 watermark"
+    ],
+    "review_file": ".orchestrator/chair-reviews/SVC-SOURCE-INGEST-EXTERNAL-FETCH-BASELINE-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T16:07:06Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "db82751aa56d37b9985d9ff01589eb8b120e1808",
+      "commit_subject": "SVC-SOURCE-INGEST-EXTERNAL-FETCH-BASELINE bounded external feeds",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-SOURCE-INGEST-EXTERNAL-FETCH-BASELINE",
+        "Reviewer": "Codex",
+        "Verification": "python3 -m pytest services/source_ingestion/test_service.py services/source_ingestion/tests/test_ingest_run.py; python3 -m pytest services/source_ingestion/test_compose_activation.py; python3 -m py_compile services/source_ingestion/configured.py services/source_ingestion/main.py services/source_ingestion/test_service.py scripts/smoke_honest_stack.py; git diff --check -- services/source_ingestion/configured.py services/source_ingestion/main.py services/source_ingestion/test_service.py scripts/smoke_honest_stack.py docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/phase2-phase6-gap-inventory.md; docker compose config --quiet"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 24,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-SOURCE-INGEST-EXTERNAL-FETCH-BASELINE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: source-ingest configured fetch now supports static_records plus bounded external_feed JSON over allowlisted http/https/file URLs with timeout, byte cap, record cap, default access scope, license metadata, DLQ/audit failure path, and no watermark advancement on failed fetch. Smoke now serves an allowlisted HTTP feed for the normal source-ingest path while retaining configured DLQ replay coverage. Verification: python3 -m pytest services/source_ingestion/test_service.py services/source_ingestion/tests/test_ingest_run.py; python3 -m py_compile services/source_ingestion/configured.py services/source_ingestion/main.py services/source_ingestion/test_service.py scripts/smoke_honest_stack.py; git diff --check -- services/source_ingestion/configured.py services/source_ingestion/main.py services/source_ingestion/test_service.py scripts/smoke_honest_stack.py docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/phase2-phase6-gap-inventory.md; docker compose config --quiet.",
+      "status": "done",
+      "created_at": "2026-04-29T15:14:10Z",
+      "resolved_at": "2026-04-29T15:28:24Z"
+    },
+    {
+      "task_id": "SVC-SOURCE-INGEST-EXTERNAL-FETCH-BASELINE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: bounded external_feed baseline meets acceptance; source-ingest tests, compose activation, py_compile, diff check, and docker compose config pass. Returning to Codex2 for owner closeout.",
+      "status": "done",
+      "created_at": "2026-04-29T15:28:24Z",
+      "resolved_at": "2026-04-29T16:07:06Z"
+    }
+  ],
+  "blockers": []
+}

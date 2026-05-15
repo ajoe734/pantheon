@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "task_id": "RS-000",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RS-000",
+    "title": "Draft Grok research and coding intake spec",
+    "phase": "Epic E",
+    "owner": "Copilot",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [
+      "OC-001",
+      "ARC-002"
+    ],
+    "artifacts": [
+      "services/research/grok_research_intake_spec.md",
+      "services/research/grok_source_catalog.md"
+    ],
+    "acceptance": [
+      "structured-source-only policy documented",
+      "browser-first intake workflow documented",
+      "handoff contract to RS-001 and RS-002 documented"
+    ],
+    "next": "Verified all acceptance criteria met: (1) structured-source-only policy documented in source catalog, (2) VS Code-first intake workflow documented, (3) handoff contract to RS-001/RS-002 with JSON schemas documented. Ready for Gemini review.",
+    "last_update": "2026-04-05T23:11:00Z",
+    "summary_zh": "定義 Grok 在 Pantheon 裡可做的研究與 coding intake 邊界，說清楚可用來源、可做任務，以及如何把結果交給下游。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

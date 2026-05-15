@@ -1,0 +1,7 @@
+{
+  "status": 200,
+  "payload": {
+    "capital_pool_id": "pool-ep4-92a5eb2c",
+    "safe_mode_state": "paused"
+  }
+}

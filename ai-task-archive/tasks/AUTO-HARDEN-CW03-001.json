@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "task_id": "AUTO-HARDEN-CW03-001",
+  "archived_at": "2026-04-20T06:18:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AUTO-HARDEN-CW03-001",
+    "title": "Harden CW-03 committee board truth source",
+    "summary_zh": "把 CW-03 committee board detail 與 sponsor decision 路徑做成更完整的 service-owned truth，補齊 readiness closure。",
+    "phase": "Execution / Auto Worker - Truth Hardening",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/read_store.py",
+      "docs/bff/CW-03-committee-board.md"
+    ],
+    "acceptance": [
+      "CW-03 truth source 更清楚",
+      "Committee projection 對齊 live route",
+      "測試涵蓋 sponsor decision path"
+    ],
+    "next": "Owner finalized approved CW-03 truth hardening. Service-backed sponsor decision persistence, committee projection contract, authority gating, and targeted CW-03/workbench test coverage are complete.",
+    "last_update": "2026-04-20T06:18:45Z",
+    "task_class": "auto_worker_implementation",
+    "auto_created_by": "auto-worker-implementation-materialization-20260420",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "CW-03 truth hardening 通過審查：service-backed 持久化正確、committee projection 涵蓋所有契約欄位、authority gating 完整對齊（sponsor assignment + operator/approver/admin role + consensus_state==sponsor_required + 未重複決策）、6 個 CW-03 contract tests 及 consultation workbench test 全數通過。"
+    ],
+    "review_file": "docs/reviews/2026-04-20-auto-harden-cw03-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T06:18:45Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "e96dfe2b4298382869f73dedcddfc0a8b61fafef",
+      "commit_subject": "AUTO-HARDEN-CW03-001 finalize committee board truth hardening",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "AUTO-HARDEN-CW03-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 822,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AUTO-HARDEN-CW03-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T03:19:00Z",
+      "resolved_at": "2026-04-20T03:28:14Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-CW03-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-20T03:28:14Z",
+      "resolved_at": "2026-04-20T04:33:17Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-CW03-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T05:41:44Z",
+      "resolved_at": "2026-04-20T05:42:58Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-CW03-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "CW-03 truth hardening landed: sponsor decision now persists through service-backed consultation session stores, authority gating requires explicit sponsor assignment plus operator/approver/admin role, consultation overview readiness reflects CW-01 live and CW-03 gated only on CW-02 transcript truth, and targeted CW-03/workbench tests pass.",
+      "status": "done",
+      "created_at": "2026-04-20T06:01:54Z",
+      "resolved_at": "2026-04-20T06:11:16Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-CW03-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all 3 acceptance criteria met — service-backed sponsor decision persistence, full contract-aligned committee projection, and 6 targeted tests passing. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-20T06:11:16Z",
+      "resolved_at": "2026-04-20T06:18:45Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,7 +1,7 @@
 feature_id: KW-03-evidence-refs
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: follow-up-required
+status: ready
 pantheon_pr: null
 base_url: null
 workbench: knowledge-workbench
@@ -17,11 +17,6 @@ constraints:
 - do not add raw fetch in components
 - do not import demo providers
 - if any required field is missing, emit a bff-gap handoff instead of mocking
-- when meta.surfaces.evidence_refs_list is degraded and evidence_refs[] is
-  empty, do not render the normal empty-result alert; keep the empty state
-  explicitly non-authoritative
-- the current transport and source_commit replay truth is verified; the next
-  cycle is a narrow UI fix plus refreshed request-pair publication
 acceptance:
 - build the Evidence Refs list and detail surfaces in front-ai-trading-system
 - use only the existing BFF client
@@ -52,4 +47,3 @@ completion_handoff_path: .coordination/requests/KW-03-evidence-refs-ui-done.yaml
 completion_handoff_template: .coordination/requests/KW-03-evidence-refs-ui-done.example.yaml
 feedback_handoff_path: .coordination/requests/KW-03-evidence-refs-frontend-feedback.yaml
 feedback_handoff_template: .coordination/requests/KW-03-evidence-refs-frontend-feedback.example.yaml
-review_findings_ref: .coordination/reviews/KW-03-evidence-refs-review.md

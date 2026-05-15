@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "F-042-UI-INTEGRATION",
+  "archived_at": "2026-04-15T04:18:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "F-042-UI-INTEGRATION",
+    "title": "Review and integrate F-042 Promotion Review UI from Lovable handoff",
+    "summary_zh": "審查 Lovable 完成的 F-042 Promotion Review UI，對比 Pantheon BFF contract 與 example payload 確認對齊，完成後寫回 frontend-feedback 協調 artifact。",
+    "phase": "Lovable Integration",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".coordination/requests/F-042-frontend-feedback.yaml"
+    ],
+    "acceptance": [
+      "UI renders deployment review data from BFF correctly",
+      "No raw fetch calls in components",
+      "BFF contract endpoints used as specified",
+      "frontend-feedback artifact written back"
+    ],
+    "next": "Owner finalized approved F-042 UI integration; frontend-feedback artifact is recorded and no BFF gap remains.",
+    "last_update": "2026-04-15T04:18:09Z",
+    "coordination": {
+      "feature_id": "F-042",
+      "type": "ui_integration_review",
+      "ui_done_commit": "03833940782906b7f28cdb3867352793a1ad7d6c",
+      "screen": "promotion-review"
+    },
+    "lane": "integration",
+    "task_class": "coordination",
+    "review_notes_zh": [
+      "BFF contract 對齊驗證通過，allowedActions.canPromoteToPaper 等所有必填欄位均已存在於範例 payload 中，無 BFF gap。feedback artifact 已寫入 .coordination/requests/F-042-frontend-feedback.yaml。",
+      "前端回饋套件 (docs/pantheon-feedback/F-042/*) 須由 front repo 端補齊，非阻塞項目。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T04:18:09Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "691f4d55d8e5c8d19cbfa1bf2e00b4fb468a6ab3",
+      "commit_subject": "F-042-UI-INTEGRATION: finalize approved UI integration close-out",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "F-042-UI-INTEGRATION",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 143,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "F-042-UI-INTEGRATION",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Reviewed ajoe734/front-ai-trading-system at c34048e2e096d3fe9bde1c216c0613535d71f07d, verified Promotion Review against docs/bff/F-042-promotion-review.md and docs/examples/F-042-review-page.json, and wrote docs/pantheon-feedback/F-042/* plus .coordination/requests/F-042-frontend-feedback.yaml in the front repo. No open BFF gap remains; ready for Claude review.",
+      "status": "done",
+      "created_at": "2026-04-15T03:50:39Z",
+      "resolved_at": "2026-04-15T03:54:00Z"
+    },
+    {
+      "task_id": "F-042-UI-INTEGRATION",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "BFF contract alignment verified; all required fields present; no open gap. Feedback artifact written. Returning to Codex for final close-out.",
+      "status": "done",
+      "created_at": "2026-04-15T03:54:00Z",
+      "resolved_at": "2026-04-15T04:18:09Z"
+    }
+  ],
+  "blockers": []
+}

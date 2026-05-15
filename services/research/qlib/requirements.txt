@@ -1,3 +1,4 @@
-pyqlib==0.9.1
+pyqlib==0.9.6
+lightgbm>=3.3.0
 pydantic>=2.6.3
 redis>=5.0.0

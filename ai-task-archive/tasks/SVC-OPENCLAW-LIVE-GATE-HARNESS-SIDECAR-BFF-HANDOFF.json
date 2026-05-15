@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "task_id": "SVC-OPENCLAW-LIVE-GATE-HARNESS-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-30T09:35:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OPENCLAW-LIVE-GATE-HARNESS-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-OPENCLAW-LIVE-GATE-HARNESS BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-OPENCLAW-LIVE-GATE-HARNESS，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "OpenClaw Activation-Ready Development",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-OPENCLAW-PAPER-BROKER-ADAPTER"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-OPENCLAW-LIVE-GATE-HARNESS/SVC-OPENCLAW-LIVE-GATE-HARNESS-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: error catalogue expanded to 21 entries with Gate column per Codex review; 6 missing codes added; Codex review file committed; 41 adapter tests verified passing. Commit 59c5801. No canonical truth modified.",
+    "last_update": "2026-04-30T09:35:11Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-OPENCLAW-LIVE-GATE-HARNESS",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "複審通過：Section 4 已補齊 6 個 missing LiveGateError codes，表格含 21 個固定 adapter/route-level error codes 並按 gate sequence 排列；focused live gate adapter tests 41 passed。"
+    ],
+    "review_file": ".orchestrator/reviews/SVC-OPENCLAW-LIVE-GATE-HARNESS-SIDECAR-BFF-HANDOFF-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T09:35:11Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "59c58019de1a68a67a1fc35a077f71e50fc54561",
+      "commit_subject": "SVC-OPENCLAW-LIVE-GATE-HARNESS-SIDECAR-BFF-HANDOFF closeout finalization",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "review": "added Gate column and 6 missing codes (CAPITAL_BINDING_MISMATCH,",
+        "Verification": "Codex confirmed 41 focused live gate adapter tests passed",
+        "and BFF route accuracy verified against main.py": "8349/8376.",
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-OPENCLAW-LIVE-GATE-HARNESS-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 68,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 46,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OPENCLAW-LIVE-GATE-HARNESS-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "BFF handoff packet ready at support/sidecars/SVC-OPENCLAW-LIVE-GATE-HARNESS/SVC-OPENCLAW-LIVE-GATE-HARNESS-SIDECAR-BFF-HANDOFF.md (commit a51f81e). Documents 4 BFF query gaps, error code catalogue (16 codes), 4 operator journeys A-D, and frontend contract notes including direct-to-adapter routing for validate/dry-handoff. No canonical truth modified.",
+      "status": "done",
+      "created_at": "2026-04-30T09:04:09Z",
+      "resolved_at": "2026-04-30T09:23:05Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-LIVE-GATE-HARNESS-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Claude2 to Codex after repeated Claude2 terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1777552200,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_dis",
+      "status": "done",
+      "created_at": "2026-04-30T09:23:05Z",
+      "resolved_at": "2026-04-30T09:26:32Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-LIVE-GATE-HARNESS-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested: error catalogue in handoff packet is incomplete for current live_gate_adapter.py (missing CAPITAL_BINDING_MISMATCH, runtime binding/schema, and safe-mode check/schema codes). Review note: .orchestrator/reviews/SVC-OPENCLAW-LIVE-GATE-HARNESS-SIDECAR-BFF-HANDOFF-review-codex.md",
+      "status": "done",
+      "created_at": "2026-04-30T09:26:32Z",
+      "resolved_at": "2026-04-30T09:26:32Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-LIVE-GATE-HARNESS-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Error catalogue updated per review: all 6 missing LiveGateError codes added (CAPITAL_BINDING_MISMATCH, RUNTIME_BINDING_CHECK_FAILED, RUNTIME_BINDING_SCHEMA_ERROR, SAFE_MODE_CHECK_FAILED, SAFE_MODE_CHECK_ERROR, SAFE_MODE_SCHEMA_ERROR). Table now has 21 entries ordered by gate check sequence with Gate column. Revision note references commit 27c4fe8 and Codex review. Please re-review support/sidecars/SVC-OPENCLAW-LIVE-GATE-HARNESS/SVC-OPENCLAW-LIVE-GATE-HARNESS-SIDECAR-BFF-HANDOFF.md Section 4.",
+      "status": "done",
+      "created_at": "2026-04-30T09:29:27Z",
+      "resolved_at": "2026-04-30T09:33:57Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-LIVE-GATE-HARNESS-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved after Section 4 re-check; owner should finalize sidecar packet with task-scoped closeout.",
+      "status": "done",
+      "created_at": "2026-04-30T09:33:57Z",
+      "resolved_at": "2026-04-30T09:35:11Z"
+    }
+  ],
+  "blockers": []
+}

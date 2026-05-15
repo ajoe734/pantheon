@@ -1,0 +1,37 @@
+{
+  "status": "ok",
+  "generated_at": "2026-04-25T16:03:38Z",
+  "host": "10.140.0.5",
+  "port": 7496,
+  "client_id": 73,
+  "account_ref": "U19859952",
+  "connected_at": "2026-04-25T16:03:37Z",
+  "next_valid_order_id": 1,
+  "managed_accounts": [
+    "U19859952"
+  ],
+  "account_ref_present": true,
+  "current_time_epoch": 1777133016,
+  "account_summary": {
+    "U19859952": {
+      "AccountType": "INDIVIDUAL",
+      "AvailableFunds": "8458.62 USD",
+      "BuyingPower": "33834.47 USD",
+      "NetLiquidation": "57384.36 USD",
+      "TotalCashValue": "-10435.32 USD"
+    }
+  },
+  "errors": [
+    {
+      "req_id": -1,
+      "error_code": 321,
+      "error": "Error validating request.-'b7' : cause - The API interface is currently in Read-Only mode.",
+      "advanced_reject_json": null
+    }
+  ],
+  "notes": [
+    "This probe is read-only and does not place, cancel, or modify orders.",
+    "Successful nextValidId + managedAccounts proves the socket session is broker-authenticated.",
+    "Market data, HMDS, and sec-def farm OK messages were observed during the probe and omitted here for brevity."
+  ]
+}

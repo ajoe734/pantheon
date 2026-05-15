@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-05-01T16:37:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare P2-TRL-RUNTIME-DATA-ACTIVATION-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 P2-TRL-RUNTIME-DATA-ACTIVATION-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "P2 Wave 8 External Activation",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "P2-OSS-ACTIVATE-001"
+    ],
+    "artifacts": [
+      "support/sidecars/P2-TRL-RUNTIME-DATA-ACTIVATION-001/P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout: packet status updated to review approved closed; §7 Disposition expanded with Codex2 approval timestamp, review notes summary, and remaining-risk statement; task-scoped commit 857f110 created; sidecar acceptance artifact remains as support material for parent task P2-TRL-RUNTIME-DATA-ACTIVATION-001 (still todo under Codex2).",
+    "last_update": "2026-05-01T16:37:32Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "P2-TRL-RUNTIME-DATA-ACTIVATION-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "通過：acceptance packet 僅新增/使用 sidecar support artifact，未要求修改 canonical truth 或 runtime implementation。",
+      "通過：parent acceptance criteria、open runtime-data gates、preflight steps、reviewer gate、evidence references 皆已明確列出，可供 P2-TRL-RUNTIME-DATA-ACTIVATION-001 owner/reviewer 使用。",
+      "剩餘風險：此 packet 不證明 parent runtime data gates 已滿足；parent task 仍需另行產生 FB-002 evidence、real TRL DPO/install-config evidence、artifact/evaluator/registry handoff。"
+    ],
+    "review_file": "support/sidecars/P2-TRL-RUNTIME-DATA-ACTIVATION-001/P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T16:37:32Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "857f110d4894d9dc8663a28461d35006aa191c4e",
+      "commit_subject": "P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE: closeout finalization",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verification": "packet status field updated; §7 reflects review_approved closeout",
+        "LLM-Agent": "Claude",
+        "Task-ID": "P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 178,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Acceptance packet prepared at support/sidecars/P2-TRL-RUNTIME-DATA-ACTIVATION-001/P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE.md. Contains: full acceptance checklist for parent task, dependency map (satisfied vs open runtime gates), pre-flight checklist for parent owner Codex2, reviewer gate summary, and evidence file references. Ready for review.",
+      "status": "done",
+      "created_at": "2026-05-01T16:10:15Z",
+      "resolved_at": "2026-05-01T16:13:56Z"
+    },
+    {
+      "task_id": "P2-TRL-RUNTIME-DATA-ACTIVATION-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Codex2 review approved. Sidecar packet is support-only, complete for acceptance/dependency mapping, and ready for owner closeout; parent runtime gates remain to be proven by P2-TRL-RUNTIME-DATA-ACTIVATION-001.",
+      "status": "done",
+      "created_at": "2026-05-01T16:13:56Z",
+      "resolved_at": "2026-05-01T16:37:32Z"
+    }
+  ],
+  "blockers": []
+}

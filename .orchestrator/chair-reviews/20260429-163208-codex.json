@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization is low and runnable backlog exists, while blockers are limited to specific parents.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-BFF-OIDC-JWKS-AUTH-FACADE",
+    "SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT",
+    "SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "SVC-BFF-OIDC-JWKS-AUTH-FACADE",
+      "role": "reviewer",
+      "from": "Codex2",
+      "to": "Claude",
+      "reason": "Codex2 review workers failed twice before terminal status; Claude is available and the task needs review, not more support work."
+    }
+  ],
+  "recommended_focus": [
+    "SVC-BFF-OIDC-JWKS-AUTH-FACADE",
+    "SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT",
+    "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+    "SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT"
+  ]
+}

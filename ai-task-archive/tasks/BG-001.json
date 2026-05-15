@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "task_id": "BG-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BG-001",
+    "title": "Formalize security master, contract master, market calendar, and dataset lineage objects",
+    "summary_zh": "正式定義 SecurityMaster、ContractMaster、MarketCalendarSession 與各級 dataset 物件。",
+    "phase": "Blueprint Gap P0",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "PLAN-002"
+    ],
+    "artifacts": [],
+    "acceptance": [],
+    "status": "done",
+    "next": "Finalized after review approval. Revalidated 37 unit tests and the data-plane smoke test on 2026-04-13; all seven schemas, four models, and availability-discipline artifacts are accepted.",
+    "last_update": "2026-04-13T07:37:24Z",
+    "review_notes_zh": [
+      "reviewer cleanup: MarketCalendarSession holiday-session schema now matches the model and README rule for empty open/close times",
+      "reviewer cleanup: model validation now enforces schema enums, DatasetVersion lineage refs, and timestamp defaults so model/schema drift is caught automatically",
+      "verification rerun: python3 -m unittest discover -s services/data-plane/tests -p 'test_*.py' -v; python3 services/data-plane/smoke_test.py; python3 -m py_compile services/data-plane/models/*.py services/data-plane/tests/*.py services/data-plane/smoke_test.py all passed"
+    ],
+    "review_file": "services/data-plane/review_bg001_codex_approved_zh.md",
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+      "phase": "phase2",
+      "profile": "blueprint-gap-convergence",
+      "planning_dir": "docs/02-architecture/consensus/phase2",
+      "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-13T07:05:23Z",
+      "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+    },
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-13T07:37:24Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "46fdd385753255aa9373fbddb043a14f9772819f",
+      "commit_subject": "BG-001 Finalize security master, contract master, market calendar, and dataset lineage objects",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "ajoe734@local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BG-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 78,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BG-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "All 7 Data Plane schemas, models, tests, and AVAILABILITY_TIME_DISCIPLINE.md spec complete. 29/29 tests pass. MarketCalendarSession holiday validation bug fixed. Ready for review. Artifacts: services/data-plane/schemas/*.schema.json (7 files), services/data-plane/models/*.py (4 files), services/data-plane/tests/test_data_plane_schemas.py, docs/01-design-decisions/AVAILABILITY_TIME_DISCIPLINE.md.",
+      "status": "done",
+      "created_at": "2026-04-13T02:34:46Z",
+      "resolved_at": "2026-04-13T02:35:04Z"
+    },
+    {
+      "task_id": "BG-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "BG-001 implementation complete: 7 Data Plane objects (SecurityMaster, ContractMaster, MarketCalendarSession, RawDataset, NormalizedDataset, FeatureDataset, DatasetVersion) with Python models + JSON schemas. 29 unit tests + 38 smoke checks all pass. Artifacts: services/data-plane/. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-13T02:35:04Z",
+      "resolved_at": "2026-04-13T03:18:56Z"
+    },
+    {
+      "task_id": "BG-001",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Reviewer cleanup complete. Data-plane models, generated schemas, README guidance, and automated verification are now aligned; ready for owner final done closure.",
+      "status": "done",
+      "created_at": "2026-04-13T03:18:56Z",
+      "resolved_at": "2026-04-13T04:21:37Z"
+    },
+    {
+      "task_id": "BG-001",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Codex review approved. Owner finalizing as done.",
+      "status": "done",
+      "created_at": "2026-04-13T04:24:23Z",
+      "resolved_at": "2026-04-13T05:51:33Z"
+    },
+    {
+      "task_id": "BG-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All code, schemas, and tests committed (d4fe7a2); Codex review already completed — re-submitting to formalize status progression",
+      "status": "done",
+      "created_at": "2026-04-13T05:59:59Z",
+      "resolved_at": "2026-04-13T06:56:51Z"
+    },
+    {
+      "task_id": "BG-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. Reviewer cleanup and verification are already captured in d4fe7a2; owner should finalize BG-001 from review_approved to done.",
+      "status": "done",
+      "created_at": "2026-04-13T06:56:51Z",
+      "resolved_at": "2026-04-13T06:57:10Z"
+    },
+    {
+      "task_id": "BG-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Restoring review_approved: supervisor incorrectly downgraded status from review_approved to in_progress during owned_finalize_dispatch (supervisor bug fixed in this commit). Review by Codex was fully valid and captured in d4fe7a2.",
+      "status": "done",
+      "created_at": "2026-04-13T07:00:50Z",
+      "resolved_at": "2026-04-13T07:12:07Z"
+    },
+    {
+      "task_id": "BG-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Restoring review_approved: supervisor incorrectly downgraded from review_approved to in_progress during owned_finalize_dispatch. Codex review was fully valid and captured in commit d4fe7a2 — all 7 schemas, 4 models, 29 unit tests, and 38 smoke checks verified.",
+      "status": "done",
+      "created_at": "2026-04-13T07:13:17Z",
+      "resolved_at": "2026-04-13T07:20:42Z"
+    },
+    {
+      "task_id": "BG-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Restoring review_approved: supervisor incorrectly downgraded from review_approved to in_progress during owned_finalize_dispatch. Codex review captured in d4fe7a2 — all 7 schemas, 4 models, 37 unit tests verified and passing.",
+      "status": "done",
+      "created_at": "2026-04-13T07:21:55Z",
+      "resolved_at": "2026-04-13T07:37:24Z"
+    }
+  ],
+  "blockers": []
+}

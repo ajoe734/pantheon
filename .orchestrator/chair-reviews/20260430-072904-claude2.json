@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization ratio 0.5 with Claude2 idle on blocked deps; backlog has parallelizable Source/Search work; no global blocker; reassign stuck sidecar reviewer to clear Codex2 bottleneck.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-OPENCLAW-BFF-OPS-SURFACE"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
+      "role": "reviewer",
+      "from": "Codex2",
+      "to": "Claude",
+      "reason": "Codex2 has failed twice as reviewer with 'Worker exited before terminal status'; Claude has governance-review capability and is the supervisor-designated fallback target; reassigning breaks the bad-loop and clears the third pending handoff before another cycle failure."
+    }
+  ],
+  "recommended_focus": [
+    "SVC-OSS-ACTIVATION-READY-SMOKE-MATRIX",
+    "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE-SIDECAR-BFF-HANDOFF",
+    "SVC-OPENCLAW-PAPER-BROKER-ADAPTER"
+  ]
+}

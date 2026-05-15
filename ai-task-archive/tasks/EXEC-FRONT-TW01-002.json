@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "task_id": "EXEC-FRONT-TW01-002",
+  "archived_at": "2026-04-21T16:45:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-FRONT-TW01-002",
+    "title": "Republish the TW-01 teaching dialog UI cycle from one truthful Git-visible commit",
+    "summary_zh": "把已審過的 TW-01 teaching dialog UI 從 current workspace 正式重發到 Git-visible publication，並保證 ui-done / frontend-feedback / feedback bundle 來自同一個可重播 commit。",
+    "phase": "Execution / Frontend Follow-up",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".coordination/responses/TW-01-teaching-dialog-frontend-feedback.yaml",
+      ".coordination/reviews/TW-01-teaching-dialog-review.md",
+      "docs/pantheon-handoffs/TW-01-teaching-dialog/FRONTEND_CHANGE_SPEC.md"
+    ],
+    "acceptance": [
+      "a Git-visible front commit contains the reviewed TW-01 UI files plus the canonical ui-done and frontend-feedback requests||docs/pantheon-feedback/TW-01-teaching-dialog bundle is published from the same source_commit||the follow-up no longer depends on unpublished local-only front evidence"
+    ],
+    "next": "Owner finalized approved TW-01 republish task. Git-visible publication is confirmed via origin/pkt-004-detail-fix carrying transport commit 4d19e0f31104e87294e267e1e6e1bc36065bf961, and reviewer runtime recheck verified the live TW-01 route family on 127.0.0.1:18001 with correct degraded/unavailable truth and workbench_detail hrefs. All acceptance criteria are met; deployed browser QA remains non-blocking follow-up only.",
+    "last_update": "2026-04-21T16:45:24Z",
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：transport commit 4d19e0f 已在 origin/pkt-004-detail-fix (93a4b58) 上可重播，包含 ui-done / frontend-feedback 請求對、feedback bundle 及審核過的 TW-01 UI 檔案。runtime 已於 2026-04-21T16:24Z 重新啟動並驗證，TW-01 四條路由均在 127.0.0.1:18001 正常回應。三項驗收標準均滿足；已部署環境的瀏覽器 QA 為非阻塞後續事項。"
+    ],
+    "review_file": ".coordination/reviews/TW-01-teaching-dialog-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T16:45:24Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 988,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-FRONT-TW01-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "TW-01 front publication is replayable from GitHub now: origin/tw01-teaching-dialog-publish at f1fd92f republishes the handoff metadata, and both TW-01 request payloads now point source_commit at the Git-visible implementation commit 93a4b58891031442133a6966d0354ae216a80b72 (also on origin/pkt-004-detail-fix). Please review for closure.",
+      "status": "done",
+      "created_at": "2026-04-21T16:01:49Z",
+      "resolved_at": "2026-04-21T16:43:06Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-TW01-002",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: Git-visible publication confirmed on origin/pkt-004-detail-fix; runtime refresh verified live on 127.0.0.1:18001 with correct TW-01 shapes. All acceptance criteria met. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-21T16:43:06Z",
+      "resolved_at": "2026-04-21T16:45:24Z"
+    }
+  ],
+  "blockers": []
+}

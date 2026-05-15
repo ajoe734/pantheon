@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "LOOP-001",
+  "archived_at": "2026-04-14T06:36:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-001",
+    "title": "Expand the .coordination protocol for the Pantheon-Lovable closed loop",
+    "summary_zh": "擴充 .coordination protocol，正式定義 lovable-ui-task、frontend-feedback、backend-delivery 與回放語意。",
+    "phase": "Closed-Loop Infra",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/coordination-loop-spec.md"
+    ],
+    "acceptance": [
+      "lovable-ui-task keeps backward compatibility while adding workbench, screen_id, ui_spec_path, frontend_change_spec_path, required_feedback, and delivery_dependencies",
+      "frontend-feedback and backend-delivery payloads are defined as canonical .coordination types",
+      "mirror paths, feedback bundle paths, and failure or replay semantics are locked in the spec"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "phase": "phase3",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-14T06:27:42Z",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Finalized after review approval. Coordination protocol, payload schemas, and replay or mirror semantics are committed and archived for downstream LOOP-002/003 and packetization work.",
+    "last_update": "2026-04-14T06:36:52Z",
+    "review_notes_zh": [
+      "審查通過，payload 結構清晰、replay 語意正確、鏡像合約單向有效。",
+      "後續追蹤：changed_files 格式未定義、needs-runtime/needs-engine 未列入 spec payload 表（非阻塞）。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T06:36:52Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "a2d446342b109baffbbd6eeab3ff52734df7f57b",
+      "commit_subject": "LOOP-001: finalize Pantheon-Lovable coordination loop spec",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Task-ID": "LOOP-001",
+        "Reviewer": "Claude",
+        "LLM-Agent": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 121,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Expanded the closed-loop coordination spec across coordination-loop-spec.md, .coordination/README.md, and delivery-coordination-bus.md. Added canonical frontend-feedback/backend-delivery payloads, lovable-ui-task extension fields, and explicit mirror/replay/failure rules. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-14T06:31:36Z",
+      "resolved_at": "2026-04-14T06:32:41Z"
+    },
+    {
+      "task_id": "LOOP-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: coordination-loop-spec covers frontend-feedback/backend-delivery/lovable-ui-task schemas, replay contract, mirror rules, and failure ownership. Non-blocking follow-ups noted for changed_files format and payload-type table alignment.",
+      "status": "done",
+      "created_at": "2026-04-14T06:32:41Z",
+      "resolved_at": "2026-04-14T06:36:52Z"
+    }
+  ],
+  "blockers": []
+}

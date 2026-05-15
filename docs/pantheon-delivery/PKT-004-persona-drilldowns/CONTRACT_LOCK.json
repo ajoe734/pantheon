@@ -1,0 +1,36 @@
+{
+  "feature_id": "PKT-004-persona-drilldowns",
+  "status": "delivered",
+  "locked_at": "2026-04-24",
+  "backend_commit": "b1ee405d8c4e8096f73f1313092722a33ca3abff",
+  "bff_contract_version": "pantheon-working-tree@b1ee405d8c4e8096f73f1313092722a33ca3abff",
+  "source_payload": ".coordination/requests/PKT-004-persona-drilldowns-frontend-feedback.yaml",
+  "source_commit": "6c27d009836601657709f33064e8e4cc9c27f9ab",
+  "request_pair_commit": "de1f86a30b11b9c02f1baa15f50132204f960d22",
+  "source_branch": "main",
+  "endpoints": [
+    "GET /api/v1/personas",
+    "GET /api/v1/personas/{persona_id}",
+    "GET /api/v1/personas/{persona_id}/sessions",
+    "GET /api/v1/sessions/{session_id}",
+    "GET /api/v1/personas/{persona_id}/teaching",
+    "GET /api/v1/personas/{persona_id}/capabilities"
+  ],
+  "contract_paths": [
+    "docs/bff/PKT-004-persona-drilldowns.md",
+    "docs/examples/PKT-004-persona-drilldowns.json",
+    "docs/screens/PKT-004-persona-drilldowns.md",
+    "docs/pantheon-handoffs/PKT-004-persona-drilldowns/FRONTEND_CHANGE_SPEC.md"
+  ],
+  "pantheon_api_gap": false,
+  "review_outcome": "accepted for closeout",
+  "coordination_artifacts": [
+    ".coordination/requests/PKT-004-persona-drilldowns-ui-done.yaml",
+    ".coordination/requests/PKT-004-persona-drilldowns-frontend-feedback.yaml",
+    "docs/pantheon-feedback/PKT-004-persona-drilldowns/"
+  ],
+  "residual_risks": [
+    "live browser QA against a running Pantheon BFF was not rerun in this closeout",
+    "runtime authorization verification across viewer/operator/approver/admin/reviewer roles remains deferred to live-environment QA"
+  ]
+}

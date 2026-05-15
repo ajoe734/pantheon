@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "task_id": "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE",
+  "archived_at": "2026-04-30T01:52:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE",
+    "title": "Close allowed OSS research pre-activation integration wiring",
+    "summary_zh": "補齊 OSS/research/learning 允許開發的 pre-activation 串接：建立 read-only capability aggregation、cross-service dormant activity view、fail-closed rejection verification；不得開啟 Qlib/TRL/RL/W&B/OpenClaw live/paper/canary/registry/governance activation。",
+    "phase": "Research / OSS Pre-Activation Integration",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC",
+      "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE",
+      "SVC-OSS-DORMANT-COMPOSE-PROFILES",
+      "SVC-OSS-DORMANT-SMOKE-MATRIX",
+      "SVC-OPENCLAW-RUNTIME-ADOPTION-SCAFFOLD",
+      "SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT",
+      "SVC-TRL-GATED-PREACTIVATION-PREFLIGHT",
+      "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT"
+    ],
+    "artifacts": [
+      "services/control-plane/bff",
+      "services/research",
+      "services/policy-learning",
+      "services/research-worker-gateway",
+      "services/openclaw-gateway-adapter",
+      "scripts/smoke_dormant_oss_matrix.py",
+      "docker-compose.yml",
+      "RESEARCH_BACKEND_MATURITY_MATRIX.md",
+      "OSS_INTEGRATION_CHECKLIST.md"
+    ],
+    "acceptance": [
+      "BFF or service-backed read-only aggregation exposes all dormant capability states",
+      "operator can see research orchestrator policy-learning worker-gateway and OpenClaw gate status in one bounded surface",
+      "stub and handoff-only jobs remain dispatchable",
+      "production paper canary live registry and governance writes are rejected in tests",
+      "dormant OSS smoke matrix remains closed and activated=false",
+      "docs distinguish pre-activation wiring from production activation"
+    ],
+    "next": "Closeout finalized: implementation commit f2fb0d2 and review closeout commit 990fec7 are task-scoped; Claude review approved all six acceptance criteria. Verification rerun: BFF contract 2 passed, cross-service OSS tests 37 passed, docker compose config passed, dormant OSS matrix 7/7 acceptable with gate_state=closed and activated=false.",
+    "last_update": "2026-04-30T01:52:52Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "review_notes_zh": [
+      "審查通過：所有六項驗收標準確認滿足",
+      "BFF fail-closed read-only aggregate 實作完整；7 個 dormant backend 均確認 activated=false；smoke matrix 7/7 gate_state=closed；write_paths 全部 disabled 並有測試驗證；docs 明確區分 pre-activation wiring 與 production activation",
+      "無阻礙性問題"
+    ],
+    "review_file": ".orchestrator/reviews/SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T01:52:52Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "990fec7297c875d74b145e717f18ad06c8b7dd15",
+      "commit_subject": "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE add review closeout artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE",
+        "Reviewer": "Claude",
+        "Verification": "python3 -m pytest services/control-plane/bff/test_research_oss_preactivation_contract.py -q => 2 passed; python3 -m pytest services/research/tests/test_research_orchestrator_http_service.py services/policy-learning/tests/test_policy_learning_http_service.py services/research-worker-gateway/tests/test_research_worker_gateway_http_service.py services/research-worker-gateway/tests/test_research_worker_gateway_rejection_policy.py services/openclaw-gateway-adapter/test_main.py -q => 37 passed; docker compose config --quiet => passed; python3 scripts/smoke_dormant_oss_matrix.py => 7/7 acceptable, gate_state=closed 7/7, activated=false 7/7."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 23,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 4,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Implemented read-only BFF OSS preactivation aggregate at GET /api/v1/operator/research/oss-preactivation with bounded activity_limit, dormant backend inventory for openclaw qlib trl finrl rllib ray_tune wandb, safe stub/handoff/manual dispatch metadata, cross-service activity rows, fail-closed rejection verification, and degraded behavior when service URLs are missing. Wired operator-bff compose envs to policy-learning, research-orchestrator, research-worker-gateway, and OpenClaw adapter without enabling activation. Updated BFF/API inventory, OSS checklist, and research maturity docs to distinguish pre-activation metadata from production activation. Verification: python3 -m pytest services/control-plane/bff/test_research_oss_preactivation_contract.py -q => 2 passed; python3 -m pytest services/research/tests/test_research_orchestrator_http_service.py services/policy-learning/tests/test_policy_learning_http_service.py services/research-worker-gateway/tests/test_research_worker_gateway_http_service.py services/research-worker-gateway/tests/test_research_worker_gateway_rejection_policy.py services/openclaw-gateway-adapter/test_main.py -q => 37 passed; docker compose config --quiet => passed; python3 scripts/smoke_dormant_oss_matrix.py => 7/7 acceptable, gate_state=closed 7/7, activated=false 7/7.",
+      "status": "done",
+      "created_at": "2026-04-30T00:47:11Z",
+      "resolved_at": "2026-04-30T01:01:35Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Chair reassigned review from Codex2 to Claude: Codex2 failed the same review dispatch twice without terminal status; Claude is an independent reviewer and its pause is time-limited/expired, so reassignment breaks the loop.",
+      "status": "done",
+      "created_at": "2026-04-30T01:01:35Z",
+      "resolved_at": "2026-04-30T01:49:29Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all six acceptance criteria met. BFF pre-activation aggregate is fail-closed, read-only, and fully tested. Return to Codex for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-04-30T01:49:29Z",
+      "resolved_at": "2026-04-30T01:52:52Z"
+    }
+  ],
+  "blockers": []
+}

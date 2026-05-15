@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization is 0.17 with Copilot idle and no global blocker; claude provider pause expires at 03:46 but Codex2 and Copilot are available for parallel sidecar slots.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260430T033230Z-f2b0e2b4",
+      "decision": "allow",
+      "reason": "Read-only compose config validation against an example env file (no real secrets). `docker compose ... config --quiet` does not start services; `tail -5` caps output for evidence capture. Command is scoped to the current closeout task (SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING) and poses no destructive risk.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING",
+    "SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF"
+  ]
+}

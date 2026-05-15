@@ -1,0 +1,162 @@
+{
+  "_comment": "Ratified example payloads for KW-05 Strategy Spec after the 2026-04-22 follow-up architecture response.",
+  "strategy_spec_list_response": {
+    "items": [
+      {
+        "object_ref": {
+          "type": "StrategySpec",
+          "id": "specver-b7c2f3a1-0002-0002-0002-000000000002"
+        },
+        "strategy_id": "strat-a3f1e2d0-0001-0001-0001-000000000001",
+        "current_spec_version_id": "specver-b7c2f3a1-0002-0002-0002-000000000002",
+        "current_spec_version": "v3",
+        "title": "Momentum Breakout v3 — US Equities",
+        "lifecycle_state": "approved",
+        "source_kind": "paper",
+        "hypothesis_excerpt": "Stocks exhibiting short-term breakout momentum outperform the equal-weight market index on a 5-day horizon when volume exceeds the 90th percentile.",
+        "version_count": 3,
+        "last_modified_at": "2026-04-18T14:22:00Z",
+        "route_href": "/knowledge/strategy-specs/strat-a3f1e2d0-0001-0001-0001-000000000001"
+      }
+    ],
+    "page_info": {
+      "next_page_token": null,
+      "page_size": 20,
+      "has_more": false
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T21:00:00Z",
+      "staleness": {
+        "status": "fresh",
+        "as_of": "2026-04-19T21:00:00Z"
+      },
+      "surfaces": {
+        "strategy_spec_list": "ok"
+      }
+    }
+  },
+  "strategy_spec_detail_response": {
+    "object_ref": {
+      "type": "StrategySpec",
+      "id": "specver-b7c2f3a1-0002-0002-0002-000000000002"
+    },
+    "strategy_id": "strat-a3f1e2d0-0001-0001-0001-000000000001",
+    "spec_version_id": "specver-b7c2f3a1-0002-0002-0002-000000000002",
+    "spec_version": "v3",
+    "parent_spec_version_id": "specver-a5b6c7d8-0001-0001-0001-000000000001",
+    "derived_from_source_refs": [
+      "paper-jegadeesh-titman-1993",
+      "note-momentum-research-2026-q1"
+    ],
+    "lifecycle_state": "approved",
+    "title": "Momentum Breakout v3 — US Equities",
+    "hypothesis": "Stocks exhibiting short-term breakout momentum outperform the equal-weight market index on a 5-day horizon when volume exceeds the 90th percentile.",
+    "objective": "Capture systematic short-term return premium while preserving drawdown and governance limits.",
+    "market_scope": {
+      "symbols": [
+        "SPY_CONSTITUENTS_500"
+      ],
+      "frequency": "daily",
+      "asset_classes": [
+        "equity"
+      ],
+      "venues": [
+        "NYSE",
+        "NASDAQ"
+      ]
+    },
+    "execution_profile": {
+      "signal_schema_version": "2.1",
+      "quantity_type": "PERCENT_PORTFOLIO",
+      "rebalance_cadence": "daily",
+      "execution_mode_hint": "paper"
+    },
+    "evaluation_plan": {
+      "metrics": [
+        "sharpe_ratio",
+        "max_drawdown"
+      ],
+      "candidate_gate": "sharpe >= 0.8 over 90d backtest",
+      "paper_gate": "sharpe >= 1.0 over 30d paper run",
+      "live_gate": "sharpe >= 1.2 over 60d paper run"
+    },
+    "governance": {
+      "approval_required": true,
+      "policy_id": "gov-policy-live-equity-001",
+      "risk_profile": "medium"
+    },
+    "citation_bundle": {
+      "evidence_refs": [
+        {
+          "ref_id": "evref-2b3c4d5e-0002-0002-0002-000000000002",
+          "source_document_title": "Q1 2026 Momentum Backtest Results",
+          "link_type": "supporting_evidence",
+          "credibility_tier": "primary",
+          "association": "evaluation",
+          "resolved_link": {
+            "availability": "available",
+            "route_href": "/knowledge/evidence/evref-2b3c4d5e-0002-0002-0002-000000000002",
+            "display_label": "View backtest evidence",
+            "open_in_new_tab": false
+          }
+        }
+      ],
+      "memory_anchors": [
+        {
+          "entry_id": "entry-4d5e6f7a-0004-0004-0004-000000000004",
+          "knowledge_type": "strategy_insight",
+          "content_headline": "US large-cap momentum premium remains robust across venue variation",
+          "route_href": "/knowledge/memory/entry-4d5e6f7a-0004-0004-0004-000000000004"
+        }
+      ],
+      "insight_citations": []
+    },
+    "allowedActions": {
+      "canSubmitForApproval": false,
+      "canRetire": true,
+      "canCompare": true
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T21:00:00Z",
+      "staleness": {
+        "status": "fresh",
+        "as_of": "2026-04-19T21:00:00Z"
+      },
+      "surfaces": {
+        "strategy_spec_detail": "ok",
+        "citation_bundle": "ok",
+        "version_ancestry": "ok"
+      }
+    }
+  },
+  "compare_response": {
+    "strategy_id": "strat-a3f1e2d0-0001-0001-0001-000000000001",
+    "left_spec_version_id": "specver-a5b6c7d8-0001-0001-0001-000000000001",
+    "right_spec_version_id": "specver-b7c2f3a1-0002-0002-0002-000000000002",
+    "changed_sections": [
+      {
+        "section": "evaluation_plan",
+        "summary": "Paper and live promotion gates were tightened."
+      }
+    ],
+    "breaking_changes": [
+      {
+        "section": "execution_profile",
+        "summary": "Execution mode hint changed from research to paper."
+      }
+    ],
+    "evidence_refs": [
+      "evref-2b3c4d5e-0002-0002-0002-000000000002"
+    ],
+    "meta": {
+      "snapshot_at": "2026-04-19T21:05:00Z",
+      "staleness": {
+        "status": "fresh",
+        "as_of": "2026-04-19T21:05:00Z"
+      },
+      "surfaces": {
+        "strategy_spec_compare": "ok"
+      }
+    }
+  }
+}

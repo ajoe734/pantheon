@@ -2,9 +2,10 @@
 
 **Purpose**: Define and govern the integration path for sequential RL (FinRL/RLlib + Ray Tune) in Pantheon.
 
-**Status**: LP-005 done  
-**Owner**: Copilot  
+**Status**: LP-005 done
+**Owner**: Copilot
 **Reviewer**: Codex
+**Last Updated**: 2026-04-29
 
 ---
 
@@ -16,6 +17,7 @@ This directory contains the specification for when, how, and under what constrai
 
 1. **PATH_DEFINITION.md**: Entry criteria, search/tuning workflow, registry constraints, and success criteria.
 2. **ENV_CONTRACT.md**: RLlib environment interface, data formats, training configurations, and reproducibility guarantees.
+3. **RL_PATH_APPROVAL_GATE.md**: Formal approval checkpoint that must pass before any active FinRL/RLlib production train/eval, registry-writing, paper, or live path can begin.
 
 ---
 
@@ -34,12 +36,27 @@ Use Qlib instead if:
 - You're learning trader preferences (use TRL + imitation instead).
 - You don't have enough historical data.
 
-### Workflow Overview
+### Current Decision
+
+- RL remains `closed` for the current wave
+- Re-entry requires the approval packet in `RL_PATH_APPROVAL_GATE.md`
+- The first future implementation lane is `FinRL`, not `RLlib`
+- `RLlib + Ray Tune` only opens after a governed single-agent FinRL smoke path proves the
+  canonical `rl_policy` artifact path
+- A repo-local RLlib/Ray Tune dormant scaffold exists under `services/research/rllib`; it stays
+  offline-only, requires explicit prep gates, emits `artifact_state=draft` with
+  `deployment_summary.current_stage=none`, and does not write registry or governance state
+
+### Workflow Overview After Re-entry
 
 ```
 Candidate Selection (apply entry criteria)
     ↓
-RLlib Training (PPO + Ray Tune hyperparameter search)
+FinRL single-agent adapter + smoke path
+    ↓
+Registry-ready `rl_policy` artifact proof
+    ↓
+RLlib Training (PPO + Ray Tune hyperparameter search, follow-on lane)
     ↓
 Out-of-Sample Validation
     ↓
@@ -56,12 +73,16 @@ Live Monitoring & Rollback
 
 | Constraint | Rule |
 |-----------|------|
-| **Framework** | RLlib (default PPO) or FinRL (simplified single-agent) |
-| **Search** | Ray Tune with Population-Based Training (PBT) |
+| **First executable lane** | FinRL single-agent policy-output mapping |
+| **Follow-on lane** | RLlib + Ray Tune after FinRL smoke proof |
+| **Dormant prep** | Allowed only when explicit-gated, offline, draft/none, and non-writing |
 | **Validation Horizon** | Train: 2023–2025-06, Validate: 2025-07–12, Test: 2026-01–03 |
 | **Stress Tests** | Must pass market regime shift, slippage sensitivity, vol regime shift (20% degradation max) |
 | **Lifecycle** | draft → candidate → paper → live (governance vocabulary per registry contract) |
 | **Rollback** | Automatic if single-day loss > 2% or rolling Sharpe drops > 20% |
+
+No active RL training, production dispatch, registry/governance write, paper/canary/live runtime
+path, or capital-bound execution opens until `RL_PATH_APPROVAL_GATE.md` is satisfied.
 
 ---
 
@@ -72,6 +93,7 @@ services/learning/rl/
 ├── README.md                 (this file)
 ├── PATH_DEFINITION.md        (entry criteria + workflow)
 ├── ENV_CONTRACT.md           (RLlib interface spec)
+├── RL_PATH_APPROVAL_GATE.md  (formal approval checkpoint before RL activation)
 └── DECISION_TREES_AND_EDGE_CASES.md  (edge case handling)
 ```
 
@@ -96,9 +118,9 @@ services/learning/rl/
 
 ---
 
-## Entry Checklist for RL Candidates
+## Entry Checklist For Re-entry
 
-Before training a new RL policy, verify:
+Before reopening the RL path, verify:
 
 - [ ] **Entry Criteria Satisfied**
   - [ ] Supervised alpha exhausted: validation Sharpe ≥ baseline + 0.2
@@ -118,23 +140,31 @@ Before training a new RL policy, verify:
   - [ ] Train/val/test splits defined (66% / 17% / 17% temporal)
   - [ ] Data checksummed for reproducibility
 
-- [ ] **Configuration Ready**
+- [ ] **First-Lane Scope Ready**
+  - [ ] FinRL single-agent use case selected
+  - [ ] Canonical `rl_policy` artifact envelope identified
+  - [ ] Downstream registry consumer path identified
+
+- [ ] **Follow-on Configuration Ready**
   - [ ] Ray Tune search space defined (3–8 hyperparameters)
   - [ ] Allocation plan: 16–64 trials, 4–24 hour timeline
   - [ ] Monitoring setup: daily metrics tracking, monthly review cadence
 
 ---
 
-## Training Workflow
+## Training Workflow After Re-entry
 
 The RL training flow requires implementation of support infrastructure. The conceptual workflow is:
 
 1. **Data Preparation**: Fetch OHLCV + portfolio state, validate splits (66% train / 17% val / 17% test).
-2. **Environment Setup**: Create RLlib environment per ENV_CONTRACT.md, implement state space + reward function.
-3. **Ray Tune Search**: Configure PBT or Bayesian search over hyperparameters (3–8 params, 16–64 trials).
-4. **Evaluation**: Post-search, evaluate top trials on held-out test period, verify entry criteria gates.
-5. **Artifact Packaging**: Bundle trained policy + config + entry criteria report for registry submission.
-6. **Registry Submission**: Submit to registry as `draft` lifecycle state (REG-001).
+2. **First Lane**: Build the FinRL single-agent adapter and prove one smoke path that emits a
+   canonical `rl_policy` artifact envelope.
+3. **Registry Submission**: Submit that first artifact to registry as `draft` lifecycle state
+   (REG-001 compatible).
+4. **Follow-on Environment Setup**: Only after the first artifact path is proven, instantiate the
+   broader RLlib environment per ENV_CONTRACT.md.
+5. **Ray Tune Search**: Configure PBT or Bayesian search over hyperparameters (3–8 params, 16–64 trials).
+6. **Evaluation**: Post-search, evaluate top trials on held-out test period, verify entry criteria gates.
 7. **Registry Promotion**: Registry validates artifact structure, promotes through `candidate` → `paper` → `live`.
 8. **LEAN Integration**: Once at `paper` or `live`, registry materializes artifact to Object Store; LEAN loader consumes via EX-001 contract.
 
@@ -155,18 +185,11 @@ The RL training flow requires implementation of support infrastructure. The conc
 
 ## Next Steps
 
-1. **Codex Review**: Submit PATH_DEFINITION.md and ENV_CONTRACT.md to Codex for review against TARGET_ARCHITECTURE and registry constraints.
-
-2. **Smoke Test** (Grok + Codex): Train a single small RL candidate (1 ticker, 1 year data) to validate:
-   - Data loading and normalization
-   - RLlib environment step/reset mechanics
-   - Ray Tune search execution
-   - Artifact packaging and registry submission
-   - LEAN policy executor loading
-
-3. **RS-003 + REG-001 Readiness**: Ensure replication gate and registry gate can accept RL policy artifacts per the constraints in PATH_DEFINITION.md.
-
-4. **Integration** (Claude + Codex): LEAN execution engine must implement RLPolicyExecutor to load and inference RL policies at runtime.
+1. **Keep RL activation closed for this wave**: Keep any dormant scaffold explicit-gated,
+   offline-only, draft/none, and non-writing until the gate is reopened.
+2. **Prepare the future reopen packet**: Accumulate the Qlib plateau evidence, sequential-decision justification, dataset package, and reward/environment sketch named in `RL_PATH_APPROVAL_GATE.md`.
+3. **Materialize FinRL first after approval**: The first future implementation task should be limited to a governed single-agent FinRL adapter plus one smoke path that emits a canonical `rl_policy` artifact envelope.
+4. **Open RLlib + Ray Tune only after FinRL proof**: Treat the broader train/eval and search path as a separate follow-on lane, not part of the first reopen slice.
 
 ---
 
@@ -181,8 +204,8 @@ The RL training flow requires implementation of support infrastructure. The conc
 
 ---
 
-**Document Status**: LP-005 accepted and aligned to the canonical registry / execution path  
-**Reviewer**: Codex  
+**Document Status**: LP-005 accepted and aligned to the canonical registry / execution path
+**Reviewer**: Codex
 **Approval Criteria**:
 - [x] Lifecycle vocabulary aligned with registry contract (draft/candidate/paper/live)
 - [x] RL artifact model aligned with REG-001/REG-003/EX-001 governance metadata

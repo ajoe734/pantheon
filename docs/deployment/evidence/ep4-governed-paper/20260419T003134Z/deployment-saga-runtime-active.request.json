@@ -1,0 +1,10 @@
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:8006/api/deployment/sagas/deployment-saga-plan-ep4-48a69496/runtime-active",
+  "headers": {},
+  "body": {
+    "binding_id": "rb-50b0aabdfcce45a18ffc98f3a494d6ee",
+    "runtime_id": "paper-runtime-001",
+    "note": "paper execution runtime package is healthy"
+  }
+}

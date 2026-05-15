@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "EP5-002-PACKET-PREP-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-27T16:30:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EP5-002-PACKET-PREP-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare EP5-002-PACKET-PREP-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 EP5-002-PACKET-PREP-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EP5 Proof Prep",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SD-FND-002",
+      "SD-LIN-TRACE-001"
+    ],
+    "artifacts": [
+      "support/sidecars/EP5-002-PACKET-PREP-001/EP5-002-PACKET-PREP-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar acceptance packet and closed it. Support-only EP5-002 packet-prep acceptance/dependency map is committed and reviewer-approved; parent task remains responsible for actual packet artifacts.",
+    "last_update": "2026-04-27T16:30:37Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EP5-002-PACKET-PREP-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar acceptance/dependency packet 已驗證為 support-only 範圍：唯一新增檔案為 support/sidecars/EP5-002-PACKET-PREP-001/EP5-002-PACKET-PREP-001-SIDECAR-ACCEPTANCE.md，未動 canonical truth。",
+      "SD-FND-002 與 SD-LIN-TRACE-001 兩個 dependency 都已 archived done，packet 對它們的引用正確。",
+      "明確禁止 packet-prep 階段呼叫 run_ibkr_live_order_cancel.py 或下任何 live order，並把 EP5-002-RUNTIME-LIVE-PROOF-001、SD-RECON-001 等下游守在 parent 之外。",
+      "Sidecar 標頭仍寫 reviewer 為 Codex（auto-reassign 前的快照）為小瑕疵，不影響內容；交還 owner Codex2 進行 finalization。"
+    ],
+    "review_file": "docs/reviews/2026-04-27-ep5-002-packet-prep-001-sidecar-acceptance-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-27T16:30:37Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "3feb42e9075933dd149c671b271f4cfddd3c4d9a",
+      "commit_subject": "EP5-002-PACKET-PREP-001-SIDECAR-ACCEPTANCE finalize packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EP5-002-PACKET-PREP-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 146,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EP5-002-PACKET-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet ready for review: support/sidecars/EP5-002-PACKET-PREP-001/EP5-002-PACKET-PREP-001-SIDECAR-ACCEPTANCE.md. It maps completed SD-FND-002 and SD-LIN-TRACE-001 dependencies, parent packet-prep acceptance checks, replayable dry-run/validation commands, and support-only/no-live-broker guardrails.",
+      "status": "done",
+      "created_at": "2026-04-27T16:25:08Z",
+      "resolved_at": "2026-04-27T16:25:24Z"
+    },
+    {
+      "task_id": "EP5-002-PACKET-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex to Claude after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Apr 28th, 2026 6:21 PM.",
+      "status": "done",
+      "created_at": "2026-04-27T16:25:24Z",
+      "resolved_at": "2026-04-27T16:28:01Z"
+    },
+    {
+      "task_id": "EP5-002-PACKET-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Sidecar acceptance packet approved: support-only artifact verified, dependencies confirmed done, live-broker boundary preserved; returning to owner for finalization.",
+      "status": "done",
+      "created_at": "2026-04-27T16:28:01Z",
+      "resolved_at": "2026-04-27T16:30:37Z"
+    }
+  ],
+  "blockers": []
+}

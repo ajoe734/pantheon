@@ -1,0 +1,21 @@
+{
+  "task_id": "DEPLOY-006",
+  "run_suffix": "20508572",
+  "run_at": "2026-04-23T00:27:42Z",
+  "runtime_manager_url": "http://127.0.0.1:18081",
+  "governance_url": "http://127.0.0.1:18082",
+  "telemetry_url": "http://127.0.0.1:18083",
+  "incidents_url": "http://127.0.0.1:18090",
+  "registry_url": "http://127.0.0.1:18087",
+  "bff_url": "http://127.0.0.1:18001",
+  "registry_id": "reg-strat-single-vm-1.0.0-9a7562aa",
+  "approval_id": "approval-single-vm-20508572",
+  "plan_id": "plan-single-vm-20508572",
+  "capital_pool_id": "pool-single-vm-20508572",
+  "binding_id": "rb-1e9925a0c6f04f6db9f1aae72461be26",
+  "runtime_id": "runtime-single-vm-20508572",
+  "incident_id": "inc-single-vm-20508572",
+  "telemetry_total_ingested_before": 0,
+  "telemetry_total_ingested_after": 1,
+  "result": "passed"
+}

@@ -1,0 +1,403 @@
+{
+  "fixture_pack_id": "bff-consol-010-pack-c",
+  "generated_for_task": "BFF-CONSOL-010",
+  "description": "Canonical fixture pack C for alerts, incidents, approvals, audit, jobs, channels, skills, tools, and MCP read surfaces. Fixtures are paper-only and do not grant live trading authority.",
+  "policy": {
+    "paper_canary_truth_impact": "none",
+    "live_write_enabled": false,
+    "capital_binding_authority": "none",
+    "notes": [
+      "Alert rows are read-model fixtures derived from linked incident state.",
+      "Approval rows link to a paper deployment plan only.",
+      "Audit rows include an immutable append-only record sample."
+    ]
+  },
+  "families": {
+    "alerts": [
+      "alert-pack-c-incident-001"
+    ],
+    "incidents": [
+      "inc-pack-c-001"
+    ],
+    "approvals": [
+      "approval-pack-c-deploy"
+    ],
+    "audit": [
+      "audit-pack-c-immutable-001"
+    ],
+    "jobs": [
+      "job-pack-c-tool-import-001"
+    ],
+    "channels": [
+      "approval",
+      "journal",
+      "tool",
+      "mcp"
+    ],
+    "skills": [
+      "skill-pack-c-incident-summarizer"
+    ],
+    "tools": [
+      "tool-pack-c-risk-snapshot"
+    ],
+    "mcp": [
+      "mcp-server-pack-c-research",
+      "mcp-tool-pack-c-risk-snapshot"
+    ]
+  },
+  "datasets": {
+    "alerts": {
+      "alert-pack-c-incident-001": {
+        "id": "alert-pack-c-incident-001",
+        "alert_id": "alert-pack-c-incident-001",
+        "severity": "high",
+        "category": "incident",
+        "raised_at": "2026-05-13T03:40:00Z",
+        "summary": "Pack C active incident requires operator triage.",
+        "linked_incident_id": "inc-pack-c-001",
+        "target_ref": {
+          "surface_id": "PKT-002",
+          "label": "Open incident response",
+          "href": "/incidents/inc-pack-c-001",
+          "target_id": "inc-pack-c-001"
+        }
+      }
+    },
+    "incidents": {
+      "inc-pack-c-001": {
+        "id": "inc-pack-c-001",
+        "incident_id": "inc-pack-c-001",
+        "title": "Pack C paper runtime latency breach",
+        "severity": "high",
+        "status": "open",
+        "created_at": "2026-05-13T03:39:00Z",
+        "opened_at": "2026-05-13T03:39:00Z",
+        "binding_id": "runtime-pack-c-paper-001",
+        "deployment_stage": "paper",
+        "deployment_plan_id": "plan-pack-c-paper-001",
+        "capital_pool_id": "pool-pack-a-ops",
+        "runtime_id": "runtime-pack-c-paper-001",
+        "trace_id": "trace-pack-c-incident-001",
+        "telemetry_event_ids": [
+          "telemetry-pack-c-latency-001"
+        ],
+        "evidence_summary": "Paper runtime command latency exceeded the operator-console warning threshold; no live orders were enabled.",
+        "lineage_ref": "artifact-pack-b-001@v1.0.0"
+      }
+    },
+    "approval_decisions": {
+      "approval-pack-c-deploy": {
+        "id": "approval-pack-c-deploy",
+        "decision_id": "approval-pack-c-deploy",
+        "decision_type": "DeploymentPlan",
+        "target_type": "DeploymentPlan",
+        "target_id": "plan-pack-c-paper-001",
+        "target_version": "v1.0.0",
+        "risk_level": "medium",
+        "created_at": "2026-05-13T03:30:00Z",
+        "submitted_at": "2026-05-13T03:30:00Z",
+        "created_by": "fixture-governance-reviewer",
+        "actor_id": "fixture-governance-reviewer",
+        "decision_state": "in_review",
+        "state": "in_review",
+        "outcome": null,
+        "rationale": "Pack C paper deployment approval fixture linked to incident-response smoke; no canary or live authority.",
+        "evidence_refs": [
+          {
+            "ref_id": "fixture-pack-c-incident",
+            "type": "IncidentReport",
+            "url": null
+          }
+        ]
+      }
+    },
+    "approval_queue_items": {
+      "approval-pack-c-deploy": {
+        "decision_id": "approval-pack-c-deploy",
+        "decision_type": "DeploymentPlan",
+        "risk_level": "medium",
+        "submitted_at": "2026-05-13T03:30:00Z",
+        "submitted_by": "fixture-governance-reviewer",
+        "decision_state": "in_review",
+        "allowedActions": {
+          "canApprove": true,
+          "canReject": true,
+          "canRequestRevision": true
+        },
+        "decision_context": {
+          "risk_summary": "Pack C paper deployment approval is linked to plan-pack-c-paper-001 and remains fail-closed.",
+          "evidence_refs": [
+            {
+              "ref_id": "fixture-pack-c-incident",
+              "type": "IncidentReport",
+              "url": null
+            }
+          ],
+          "governance_chain": {
+            "target_type": "DeploymentPlan",
+            "target_id": "plan-pack-c-paper-001",
+            "linked_incident_id": "inc-pack-c-001"
+          },
+          "required_approvals": 1
+        }
+      }
+    },
+    "deployment_plans": {
+      "plan-pack-c-paper-001": {
+        "id": "plan-pack-c-paper-001",
+        "plan_id": "plan-pack-c-paper-001",
+        "stage": "paper",
+        "current_stage": "none",
+        "target_stage": "paper",
+        "status": "pending_approval",
+        "transition_type": "activate",
+        "artifact_id": "artifact-pack-b-001",
+        "artifact_version": "v1.0.0",
+        "submitted_at": "2026-05-13T03:29:00Z",
+        "approval_decision_id": "approval-pack-c-deploy",
+        "approval_ref": {
+          "approval_decision_id": "approval-pack-c-deploy",
+          "href": "/bff/approvals/approval-pack-c-deploy"
+        },
+        "capital_pool_id": "pool-pack-a-ops",
+        "binding_ids": [
+          "binding-pack-a-persona-pool"
+        ],
+        "runtime_binding_id": "runtime-pack-c-paper-001",
+        "stages": [
+          {
+            "stage": "paper",
+            "status": "pending_approval",
+            "approved_by": null,
+            "approved_at": null
+          }
+        ]
+      }
+    },
+    "runtime_bindings": {
+      "runtime-pack-c-paper-001": {
+        "id": "runtime-pack-c-paper-001",
+        "binding_id": "runtime-pack-c-paper-001",
+        "runtime_id": "runtime-pack-c-paper-001",
+        "plan_id": "plan-pack-c-paper-001",
+        "artifact_id": "artifact-pack-b-001",
+        "artifact_version": "v1.0.0",
+        "deployment_stage": "paper",
+        "status": "degraded",
+        "capital_pool_id": "pool-pack-a-ops",
+        "paper_canary_mode": "paper_only",
+        "live_write_enabled": false,
+        "fail_closed": true,
+        "updated_at": "2026-05-13T03:41:00Z"
+      }
+    },
+    "telemetry_summaries": {
+      "runtime-pack-c-paper-001": {
+        "runtime_id": "runtime-pack-c-paper-001",
+        "window": "5m",
+        "pnl": 0.0,
+        "drawdown": 0.021,
+        "sharpe_ratio": 0.1,
+        "total_trades": 0,
+        "fill_rate": 1.0,
+        "avg_slippage_bps": 1.2,
+        "collected_at": "2026-05-13T03:41:00Z"
+      }
+    },
+    "governance_audit_events": [
+      {
+        "entry_id": "audit-pack-c-immutable-001",
+        "timestamp": "2026-05-13T03:42:00Z",
+        "actor": "fixture-audit-writer",
+        "action_type": "append_immutable_record",
+        "target_type": "Incident",
+        "target_id": "inc-pack-c-001",
+        "outcome": "success",
+        "summary": "Immutable audit sample recorded for Pack C incident-response fixture.",
+        "immutable_record": true,
+        "append_only": true,
+        "content_hash": "sha256:fixture-pack-c-immutable-001",
+        "evidence_ref": "fixture://bff-consol-010/inc-pack-c-001"
+      },
+      {
+        "entry_id": "audit-pack-c-approval-linked",
+        "timestamp": "2026-05-13T03:43:00Z",
+        "actor": "fixture-governance-reviewer",
+        "action_type": "approval_review_opened",
+        "target_type": "ApprovalDecision",
+        "target_id": "approval-pack-c-deploy",
+        "outcome": "success",
+        "summary": "Deployment approval fixture opened for plan-pack-c-paper-001.",
+        "evidence_ref": "fixture://bff-consol-010/approval-pack-c-deploy"
+      }
+    ],
+    "jobs": {
+      "job-pack-c-tool-import-001": {
+        "id": "job-pack-c-tool-import-001",
+        "job_id": "job-pack-c-tool-import-001",
+        "job_type": "mcp_tool_import",
+        "name": "Pack C MCP tool import dry run",
+        "status": "running",
+        "created_at": "2026-05-13T03:44:00Z",
+        "submitted_at": "2026-05-13T03:44:00Z",
+        "updated_at": "2026-05-13T03:45:00Z",
+        "progress": {
+          "percent": 50,
+          "stage": "schema_validation"
+        },
+        "target_ref": {
+          "type": "mcp_server",
+          "id": "mcp-server-pack-c-research"
+        },
+        "logs": [
+          {
+            "level": "info",
+            "message": "Pack C MCP tool import fixture started.",
+            "ts": "2026-05-13T03:44:01Z"
+          },
+          {
+            "level": "info",
+            "message": "Schema validation reached 50 percent.",
+            "ts": "2026-05-13T03:45:00Z"
+          }
+        ]
+      }
+    },
+    "channels": {
+      "approval": {
+        "id": "approval",
+        "channel_id": "approval",
+        "name": "approval",
+        "status": "active",
+        "sse_topic": "bff.approval",
+        "resync_routes": [
+          "/bff/approvals",
+          "/bff/v5/interventions"
+        ]
+      },
+      "journal": {
+        "id": "journal",
+        "channel_id": "journal",
+        "name": "journal",
+        "status": "active",
+        "sse_topic": "bff.journal",
+        "resync_routes": []
+      },
+      "tool": {
+        "id": "tool",
+        "channel_id": "tool",
+        "name": "tool",
+        "status": "active",
+        "sse_topic": "bff.tool",
+        "resync_routes": []
+      },
+      "mcp": {
+        "id": "mcp",
+        "channel_id": "mcp",
+        "name": "mcp",
+        "status": "active",
+        "sse_topic": "bff.mcp",
+        "resync_routes": []
+      }
+    },
+    "skills": {
+      "skill-pack-c-incident-summarizer": {
+        "id": "skill-pack-c-incident-summarizer",
+        "skill_id": "skill-pack-c-incident-summarizer",
+        "name": "Pack C Incident Summarizer",
+        "status": "active",
+        "description": "Summarizes paper incident evidence for operator review.",
+        "sandbox_enabled": true,
+        "input_schema": {
+          "type": "object",
+          "required": [
+            "incident_id"
+          ]
+        },
+        "output_schema": {
+          "type": "object",
+          "required": [
+            "summary"
+          ]
+        },
+        "created_at": "2026-05-13T03:35:00Z",
+        "updated_at": "2026-05-13T03:35:00Z",
+        "created_by": "BFF-CONSOL-010"
+      }
+    },
+    "tools": {
+      "tool-pack-c-risk-snapshot": {
+        "id": "tool-pack-c-risk-snapshot",
+        "tool_id": "tool-pack-c-risk-snapshot",
+        "name": "Pack C Risk Snapshot",
+        "status": "active",
+        "tool_class": "risk_readonly",
+        "description": "Read-only risk snapshot tool used by Pack C console smoke.",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "runtime_id": {
+              "type": "string"
+            }
+          }
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "risk_summary": {
+              "type": "string"
+            }
+          }
+        },
+        "mcp_sourced": false,
+        "created_at": "2026-05-13T03:36:00Z",
+        "updated_at": "2026-05-13T03:36:00Z",
+        "created_by": "BFF-CONSOL-010"
+      }
+    },
+    "mcp_servers": {
+      "mcp-server-pack-c-research": {
+        "id": "mcp-server-pack-c-research",
+        "server_id": "mcp-server-pack-c-research",
+        "name": "Pack C Research MCP",
+        "status": "registered",
+        "endpoint": "https://mcp.example.invalid/pack-c/research",
+        "server_version": "1.0.0",
+        "governance": {
+          "paper_only": true,
+          "live_execution_allowed": false
+        },
+        "created_at": "2026-05-13T03:37:00Z",
+        "updated_at": "2026-05-13T03:37:00Z",
+        "created_by": "BFF-CONSOL-010"
+      }
+    },
+    "mcp_tools": {
+      "mcp-server-pack-c-research:mcp-tool-pack-c-risk-snapshot": {
+        "id": "mcp-tool-pack-c-risk-snapshot",
+        "tool_id": "mcp-tool-pack-c-risk-snapshot",
+        "server_id": "mcp-server-pack-c-research",
+        "name": "Pack C MCP Risk Snapshot",
+        "status": "imported",
+        "tool_class": "research",
+        "schema_url": "https://schemas.example.invalid/pack-c/risk-snapshot.json",
+        "action_count": 1,
+        "standalone_create_enabled": false,
+        "descriptor": {
+          "toolId": "mcp-tool-pack-c-risk-snapshot",
+          "name": "Pack C MCP Risk Snapshot",
+          "toolClass": "research",
+          "actions": [
+            {
+              "actionId": "invoke.pack_c_risk_snapshot",
+              "actionType": "invoke",
+              "riskLevel": "low"
+            }
+          ]
+        },
+        "imported_by": "BFF-CONSOL-010",
+        "imported_at": "2026-05-13T03:38:00Z"
+      }
+    }
+  }
+}

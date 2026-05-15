@@ -1,0 +1,171 @@
+{
+  "version": 1,
+  "task_id": "CW-03-COMMITTEE-001",
+  "archived_at": "2026-04-19T20:04:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "CW-03-COMMITTEE-001",
+    "title": "Publish Committee Board projection and sponsor decision authority",
+    "summary_zh": "為 CW-03 補齊 committee board list/detail、committee_ref projection、sponsor decision command 與 synthesis summary shape。",
+    "phase": "Execution / Wave 4 - Workbench Completion Chain",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "CW-02-TRANSCRIPT-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+      "docs/pantheon-handoffs/CW-008-consultation-workbench/PACKET_FAMILY.md",
+      "docs/lovable/PANTHEON_FRONTEND_SA.md"
+    ],
+    "acceptance": [
+      "committee board routes are published",
+      "sponsor decision authority is explicit",
+      "synthesis summary is backend composed"
+    ],
+    "next": "Owner finalized review_approved task. All three acceptance criteria met: committee board list/detail routes published (docs/bff/CW-03-committee-board.md), sponsor decision authority explicit via canRecordSponsorDecision, synthesis summary is backend-composed. Delivery artifacts confirmed at commit d53fcc8. Review file: docs/reviews/2026-04-19-cw-03-committee-board-review.md.",
+    "last_update": "2026-04-19T20:04:18Z",
+    "source_plane": "architecture_gap_matrix",
+    "source_ref": {
+      "type": "architecture_gap_matrix",
+      "recorded_at": "2026-04-19T00:00:00Z",
+      "summary": "Materialized from the 2026-04-19 architecture-team input gap matrix for blocked module contracts",
+      "canonical_refs": [
+        "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md",
+        "DEVELOPMENT_WORKBREAKDOWN.md"
+      ]
+    },
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-19-wave3-wave4-architecture-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "文件 contract 與 readiness 敘述已對齊；committee list/detail、sponsor decision authority、backend-composed synthesis summary 皆已發布。剩餘工作為 BFF implementation，超出本 task 範圍。"
+    ],
+    "review_file": "docs/reviews/2026-04-19-cw-03-committee-board-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T20:04:18Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "33047c33ec8f1d505866c723fdc6ea6b6437d5b6",
+      "commit_subject": "CW-03-COMMITTEE-001 finalize: close review and confirm all acceptance criteria met",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "criteria confirmed": "committee board list/detail routes published, sponsor decision",
+        "LLM-Agent": "Claude",
+        "Task-ID": "CW-03-COMMITTEE-001",
+        "Reviewer": "Codex2",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 752,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "CW-03-COMMITTEE-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T18:00:46Z",
+      "resolved_at": "2026-04-19T18:15:01Z"
+    },
+    {
+      "task_id": "CW-03-COMMITTEE-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T18:15:01Z",
+      "resolved_at": "2026-04-19T18:20:16Z"
+    },
+    {
+      "task_id": "CW-03-COMMITTEE-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "CW-03 implemented: published /api/v1/committees list/detail, backend-composed committee projection, and RecordSponsorDecision authority + tests/docs. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-19T18:29:32Z",
+      "resolved_at": "2026-04-19T18:34:14Z"
+    },
+    {
+      "task_id": "CW-03-COMMITTEE-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review found a blocker: RecordSponsorDecision currently writes only to the BFF local consultation snapshot; wire it to the canonical consultation authority before re-handoff.",
+      "status": "done",
+      "created_at": "2026-04-19T18:34:14Z",
+      "resolved_at": "2026-04-19T18:34:14Z"
+    },
+    {
+      "task_id": "CW-03-COMMITTEE-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T18:50:42Z",
+      "resolved_at": "2026-04-19T19:01:04Z"
+    },
+    {
+      "task_id": "CW-03-COMMITTEE-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T19:01:04Z",
+      "resolved_at": "2026-04-19T19:50:02Z"
+    },
+    {
+      "task_id": "CW-03-COMMITTEE-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-19T19:50:22Z",
+      "resolved_at": "2026-04-19T19:50:57Z"
+    },
+    {
+      "task_id": "CW-03-COMMITTEE-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T19:53:45Z",
+      "resolved_at": "2026-04-19T19:57:59Z"
+    },
+    {
+      "task_id": "CW-03-COMMITTEE-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "CW-03 committee board contract published. Deliverables: (1) docs/bff/CW-03-committee-board.md — list/detail routes, participant_roster[], synthesis_summary shape, RecordSponsorDecision command wired to canonical POST /api/v1/operator/commands authority; (2) docs/examples/CW-03-committee-board.json — list and detail payloads including sponsor_required scenario; (3) PACKET_FAMILY.md — CW-03 readiness flipped to contract-published; pending-bff, backend gap matrix rows marked resolved. All three acceptance criteria met: committee board routes published, sponsor decision authority is explicit (canRecordSponsorDecision gating), synthesis summary is backend-composed. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-19T19:59:50Z",
+      "resolved_at": "2026-04-19T20:02:06Z"
+    },
+    {
+      "task_id": "CW-03-COMMITTEE-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "CW-03 committee board contract review approved. Published docs now align on pending-bff readiness, sponsor decision authority is explicit via canRecordSponsorDecision, and the example payload covers the sponsor_required scenario. Waiting for owner to finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-19T20:02:06Z",
+      "resolved_at": "2026-04-19T20:04:18Z"
+    }
+  ],
+  "blockers": []
+}

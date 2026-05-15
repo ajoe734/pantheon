@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "task_id": "P0-FE-SOURCE-001",
+  "archived_at": "2026-05-01T09:30:58Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-FE-SOURCE-001",
+    "title": "Add source mode and runtime identity to critical frontend surfaces",
+    "summary_zh": "在 runtime/deployment/governance/evolution 等關鍵 UI 加 source_mode 與 bridge/binding/runtime identity。",
+    "phase": "Pantheon P0 Paper Loop",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "depends_on": [
+      "P0-FE-DEMO-001",
+      "P0-TEL-PROJ-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_p0_sd/SD-P0-05_Frontend_Production_Adoption_Demo_Cleanup.md"
+    ],
+    "acceptance": [
+      "critical pages show authoritative_bff, derived_projection, stale_cache, preview_mock_only, demo_only, or unavailable",
+      "runtime detail shows bridge repo/commit, runtime_binding_id, deployment_plan_id, artifact_id, and capital_pool_id"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-05-01T03:58:17Z",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Closeout complete: frontend repo commit a1dbf3d implements source mode strips and runtime identity grid; Pantheon review artifact committed in bd7a951; verified npm run build, npm run check:prod-demo-routes, and targeted npx eslint.",
+    "last_update": "2026-05-01T09:30:58Z",
+    "review_notes_zh": [
+      "審查通過：SourceModeBadge/SourceModeStrip 覆蓋 runtime/deployment/governance/evolution/persona/knowledge 所有關鍵表面；RuntimeIdentityGrid 包含 runtime_binding_id、deployment_plan_id、artifact_id、capital_pool_id、bridge_repo、bridge_commit 所有必要欄位；npm run build、check:prod-demo-routes、eslint 全數通過。"
+    ],
+    "review_file": "support/reviews/P0-FE-SOURCE-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T09:30:58Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "bd7a95100bff7d6db2595d1d2a479b155636698a",
+      "commit_subject": "P0-FE-SOURCE-001 add frontend source review artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "P0-FE-SOURCE-001",
+        "Reviewer": "Claude",
+        "Verification": "frontend npm run build; npm run check:prod-demo-routes; targeted npx eslint source_mode/runtime identity files"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 120,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-FE-SOURCE-001",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Auto-reassigned P0-FE-SOURCE-001 away from sidecar-only lane Copilot; owner Copilot -> Codex. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-05-01T03:59:19Z",
+      "resolved_at": "2026-05-01T08:42:49Z"
+    },
+    {
+      "task_id": "P0-FE-SOURCE-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review. Frontend repo /home/lupin/code/front-ai-trading-system commit a1dbf3d adds SourceModeBadge/sourceMode helpers, source_mode strips on runtime/deployment/governance/evolution/persona/knowledge critical surfaces, and runtime identity grids showing bridge repo/commit, runtime_binding_id, deployment_plan_id, artifact_id, capital_pool_id. Verification: npm run build; npm run check:prod-demo-routes; npx eslint targeted changed files.",
+      "status": "done",
+      "created_at": "2026-05-01T09:18:03Z",
+      "resolved_at": "2026-05-01T09:26:03Z"
+    },
+    {
+      "task_id": "P0-FE-SOURCE-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all acceptance criteria met. SourceModeBadge/SourceModeStrip on 13 critical surfaces; RuntimeIdentityGrid with all 5 required identity fields. Build, CI guard, and lint pass. Returning to Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-05-01T09:26:03Z",
+      "resolved_at": "2026-05-01T09:30:59Z"
+    }
+  ],
+  "blockers": []
+}

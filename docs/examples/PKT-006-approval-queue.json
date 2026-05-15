@@ -1,0 +1,82 @@
+{
+  "items": [
+    {
+      "decision_id": "appr-001",
+      "decision_type": "DeploymentPlan",
+      "risk_level": "medium",
+      "submitted_at": "2026-04-16T08:15:00Z",
+      "submitted_by": "governance-review-queue",
+      "decision_state": "pending",
+      "allowedActions": {
+        "canApprove": true,
+        "canReject": true,
+        "canRequestRevision": true
+      },
+      "decision_context": {
+        "risk_summary": "Medium risk — parameter drift within acceptable bounds; no open severity-1 or severity-2 incidents. Review queue forwarded after passing risk threshold check.",
+        "evidence_refs": [
+          { "ref_id": "ev-101", "type": "BacktestResult", "url": null },
+          { "ref_id": "ev-102", "type": "IncidentReport", "url": null }
+        ],
+        "governance_chain": {
+          "linked_review_item_id": "gov-review-001"
+        },
+        "required_approvals": 1
+      }
+    },
+    {
+      "decision_id": "appr-002",
+      "decision_type": "PersonaBinding",
+      "risk_level": "low",
+      "submitted_at": "2026-04-16T09:00:00Z",
+      "submitted_by": "governance-review-queue",
+      "decision_state": "pending",
+      "allowedActions": {
+        "canApprove": true,
+        "canReject": true,
+        "canRequestRevision": false
+      },
+      "decision_context": {
+        "risk_summary": "Low risk — new persona binding within established capital pool; no open incidents.",
+        "evidence_refs": [],
+        "governance_chain": {
+          "linked_review_item_id": "gov-review-003"
+        },
+        "required_approvals": 1
+      }
+    },
+    {
+      "decision_id": "appr-003",
+      "decision_type": "EvolutionProposal",
+      "risk_level": "high",
+      "submitted_at": "2026-04-16T07:30:00Z",
+      "submitted_by": "governance-review-queue",
+      "decision_state": "in_review",
+      "allowedActions": {
+        "canApprove": false,
+        "canReject": false,
+        "canRequestRevision": false
+      },
+      "decision_context": {
+        "risk_summary": "High risk — evolution proposal involves parameter changes beyond threshold bounds; additional review in progress.",
+        "evidence_refs": [
+          { "ref_id": "ev-103", "type": "EvolutionDecision", "url": null }
+        ],
+        "governance_chain": {
+          "linked_review_item_id": "gov-review-002"
+        },
+        "required_approvals": 2
+      }
+    }
+  ],
+  "page_info": {
+    "next_page_token": null
+  },
+  "meta": {
+    "snapshot_at": "2026-04-16T10:00:00Z",
+    "surfaces": {
+      "approval_queue": { "status": "ok" },
+      "allowedActions": { "status": "ok" }
+    }
+  }
+}

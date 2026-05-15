@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "P0-CI-BRIDGE-001",
+  "archived_at": "2026-05-01T04:58:03Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-CI-BRIDGE-001",
+    "title": "Add submodule authority and no-wrong-repo CI",
+    "summary_zh": "新增 CI 檢查 pantheon/lean submodule、bridge remote、PantheonAlgoBase、compose path，並阻擋 P0 錯打 lean-platform。",
+    "phase": "Pantheon P0 Paper Loop",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "depends_on": [
+      "P0-EXEC-ADR-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_p0_sd/SD-P0-06_Submodule_Compose_Health_CI_Verification.md"
+    ],
+    "acceptance": [
+      "CI reports bridge path, remote, commit, and PantheonAlgoBase presence",
+      "P0 lean-platform target fails without migration_only and ADR override"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-05-01T03:58:17Z",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Done: reviewed approval recorded; implementation commit 3e6a884 plus closeout commit eb5588d deliver bridge authority report and no-wrong-repo guard CI. Verification passed: git show --check 3e6a884; python3 scripts/check_execution_bridge.py; python3 scripts/check_task_targets.py; python3 -m unittest scripts/test_check_execution_bridge.py scripts/test_check_task_targets.py; python3 -m py_compile scripts/check_execution_bridge.py scripts/check_task_targets.py scripts/test_check_execution_bridge.py scripts/test_check_task_targets.py; python3 scripts/ci_stage0.py validate.",
+    "last_update": "2026-05-01T04:58:03Z",
+    "review_notes_zh": [
+      "審查通過：commit 3e6a884 滿足 P0-CI-BRIDGE-001 兩項 acceptance。已檢查 scripts/check_execution_bridge.py、scripts/check_task_targets.py、.github/workflows/p0-bridge-guards.yml、SD-P0-06 與 sidecar acceptance packet；workflow action tags v6 可解析；未發現阻斷問題。驗證：git show --check 3e6a884；python3 scripts/check_execution_bridge.py；python3 scripts/check_task_targets.py；python3 -m unittest scripts/test_check_execution_bridge.py scripts/test_check_task_targets.py；python3 -m py_compile scripts/check_execution_bridge.py scripts/check_task_targets.py scripts/test_check_execution_bridge.py scripts/test_check_task_targets.py；python3 scripts/ci_stage0.py validate。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T04:58:03Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "eb5588daedbc1cc154b36a33de436e05d5ebdd51",
+      "commit_subject": "P0-CI-BRIDGE-001 closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Closeout commit for approved bridge authority and no-wrong-repo CI guard deliverable. Implementation commit": "3e6a884229b2ef997063ecfbccdd9e19e5cbe80a.",
+        "Verification": "git show --check 3e6a884; python3 scripts/check_execution_bridge.py; python3 scripts/check_task_targets.py; python3 -m unittest scripts/test_check_execution_bridge.py scripts/test_check_task_targets.py; python3 -m py_compile scripts/check_execution_bridge.py scripts/check_task_targets.py scripts/test_check_execution_bridge.py scripts/test_check_task_targets.py; python3 scripts/ci_stage0.py validate.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "P0-CI-BRIDGE-001",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 91,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 8,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-CI-BRIDGE-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: commit 3e6a884 adds bridge authority and no-wrong-repo guard CI. It includes scripts/check_execution_bridge.py, scripts/check_task_targets.py, focused unit tests, .github/workflows/p0-bridge-guards.yml, and SD-P0-06 implementation evidence. Verification passed: python3 scripts/check_execution_bridge.py; python3 scripts/check_task_targets.py; python3 -m unittest scripts/test_check_execution_bridge.py scripts/test_check_task_targets.py; python3 -m py_compile scripts/check_execution_bridge.py scripts/check_task_targets.py scripts/test_check_execution_bridge.py scripts/test_check_task_targets.py; python3 scripts/ci_stage0.py validate.",
+      "status": "done",
+      "created_at": "2026-05-01T04:50:27Z",
+      "resolved_at": "2026-05-01T04:57:07Z"
+    },
+    {
+      "task_id": "P0-CI-BRIDGE-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: bridge authority and no-wrong-repo guard CI satisfy acceptance; returning to Codex for owner closeout.",
+      "status": "done",
+      "created_at": "2026-05-01T04:57:07Z",
+      "resolved_at": "2026-05-01T04:58:03Z"
+    }
+  ],
+  "blockers": []
+}

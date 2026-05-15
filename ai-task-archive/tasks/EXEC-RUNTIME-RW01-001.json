@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "EXEC-RUNTIME-RW01-001",
+  "archived_at": "2026-04-21T16:52:17Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-RUNTIME-RW01-001",
+    "title": "Refresh the active RW-01 runtime so research ticket routes are live over HTTP",
+    "summary_zh": "刷新 active operator-bff runtime，讓 RW-01 research ticket route family 對外 live HTTP 與 published contract 一致，解除前端 lane 的 runtime blocker。",
+    "phase": "Execution / Runtime Refresh and Verification",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".coordination/requests/RW-01-research-ticket-needs-runtime.yaml",
+      ".coordination/responses/RW-01-research-ticket-frontend-feedback.yaml",
+      ".coordination/reviews/RW-01-research-ticket-review.md"
+    ],
+    "acceptance": [
+      "active operator-bff runtime exposes the RW-01 POST/GET/GET/PATCH route family over live HTTP||live OpenAPI and probe results match the published RW-01 field shapes and degraded semantics||EXEC-FRONT-RW01-001 may be unblocked after verification"
+    ],
+    "next": "Owner finalized approved RW-01 runtime refresh and closed the task. Live 18001 OpenAPI plus degraded/unavailable HTTP probes match the published RW-01 semantics, so the frontend runtime blocker is cleared.",
+    "last_update": "2026-04-21T16:52:17Z",
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-21-dispatchable-execution-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "RW-01 runtime refresh reviewer gate 通過：18001 live OpenAPI 與 degraded probes 已符合 contract，18012 unavailable HTTP probe 也已驗證，needs-runtime artifact 已標記 completed。"
+    ],
+    "review_file": ".coordination/reviews/RW-01-research-ticket-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T16:52:17Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "728a3cb4e670fc060c517f9a9feb6f3d19a79d1c",
+      "commit_subject": "EXEC-RUNTIME-RW01-001 finalize approved runtime refresh",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owner finalization checkpoint": "live 18001 OpenAPI plus degraded and unavailable HTTP probes now match the published RW-01 research ticket semantics, and the frontend runtime blocker is cleared.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EXEC-RUNTIME-RW01-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 992,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-RUNTIME-RW01-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T16:25:48Z",
+      "resolved_at": "2026-04-21T16:46:13Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW01-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "RW-01 runtime refresh is complete. Verified http://127.0.0.1:18001/openapi.json now advertises /api/v1/research/tickets with [get, post] and /api/v1/research/tickets/{ticket_id} with [get, patch]; authenticated live HTTP probes on 2026-04-21 return degraded list/detail envelopes with ids [rt-20260419-007, rt-20260415-001, tkt-7a8b9c0d-1234-5678-abcd-ef0123456789], total 3, stable workbench_detail links, and allowedActions {canEdit:true, canClose:true, canArchive:false}. Re-ran python3 -m pytest services/control-plane/bff/test_rw01_research_ticket_contract.py -q -> 6 passed. needs-runtime and frontend-feedback artifacts already reflect the refreshed runtime truth and RW-01 should now be unblocked for closeout.",
+      "status": "done",
+      "created_at": "2026-04-21T16:47:46Z",
+      "resolved_at": "2026-04-21T16:49:04Z"
+    },
+    {
+      "task_id": "EXEC-RUNTIME-RW01-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "RW-01 runtime refresh approved. Live OpenAPI, degraded list/detail probes on 18001, and unavailable HTTP probes on 18012 all match the published RW-01 semantics. Owner can finalize this runtime task to done.",
+      "status": "done",
+      "created_at": "2026-04-21T16:49:04Z",
+      "resolved_at": "2026-04-21T16:52:17Z"
+    }
+  ],
+  "blockers": []
+}

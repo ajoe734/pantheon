@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+copilot_bin="$(ls -d "$HOME"/.local/share/pantheon-orchestrator-tools/copilot-linux-x64-*/package/copilot 2>/dev/null | sort -V | tail -n1)"
+if [[ -z "${copilot_bin}" ]]; then
+  echo "Copilot CLI binary not found under ~/.local/share/pantheon-orchestrator-tools." >&2
+  exit 1
+fi
+
+exec "${copilot_bin}" "$@"

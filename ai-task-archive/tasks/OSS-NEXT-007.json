@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "task_id": "OSS-NEXT-007",
+  "archived_at": "2026-04-17T03:06:23Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-NEXT-007",
+    "title": "Materialize the QuantLib backend into a named execution-ready task family",
+    "summary_zh": "把 QuantLib 從 not-started 轉成具體任務：完成 derivatives research scope、source selection、adapter 設計與 smoke-test 計畫。",
+    "phase": "Phase 6: OSS Ecosystem Closure",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "depends_on": [],
+    "artifacts": [
+      "RESEARCH_BACKEND_MATURITY_MATRIX.md",
+      "OSS_INTEGRATION_CHECKLIST.md",
+      "docs/reviews/2026-04-16-oss-ecosystem-gap-analysis.md"
+    ],
+    "acceptance": [
+      "QuantLib has a scoped Pantheon use-case and proposed governed adapter boundary",
+      "the backend is represented as a real next-wave execution family instead of an implicit future placeholder"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T02:20:54Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "--note",
+    "last_update": "2026-04-17T03:06:23Z",
+    "review_notes_zh": [
+      "前次阻塞點已解除：QuantLib-Python 版本釘選已改為可解析的 1.18，且相關 QuantLib 文件與 checklist 引用已同步。|重審通過；此 task 已滿足 materialization baseline 的 acceptance，後續 adapter/smoke/governance evidence 仍屬下一個 implementation slice。"
+    ],
+    "review_file": ".orchestrator/reviews/OSS-NEXT-007-codex2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T03:06:23Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "6de18a1caa93eccca71897c1a9a9b2045aeaea95",
+      "commit_subject": "OSS-NEXT-007: materialize QuantLib backend activation baseline",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "OSS-NEXT-007",
+        "Reviewer": "Codex2",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 310,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-NEXT-007",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T02:25:01Z",
+      "resolved_at": "2026-04-17T02:26:21Z"
+    },
+    {
+      "task_id": "OSS-NEXT-007",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T02:28:16Z",
+      "resolved_at": "2026-04-17T02:45:59Z"
+    },
+    {
+      "task_id": "OSS-NEXT-007",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "QuantLib task materialization complete. Artifacts: ACTIVATION_CRITERIA.md (use-case binding, activation gates, smoke-test plan), requirements.txt (QuantLib-Python==1.33), integrations/quantlib/integration.md. Matrix and checklist updated. Please review and approve.",
+      "status": "done",
+      "created_at": "2026-04-17T02:49:19Z",
+      "resolved_at": "2026-04-17T02:51:24Z"
+    },
+    {
+      "task_id": "OSS-NEXT-007",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review changes requested: QuantLib-Python==1.33 is not resolvable in reviewer validation (QuantLib-Python (1.18)\nAvailable versions: 1.18, 1.17 shows 1.18/1.17 only). Update the pin and sync QuantLib docs/checklist references, then resubmit. Review: .orchestrator/reviews/OSS-NEXT-007-codex2-review.md",
+      "status": "done",
+      "created_at": "2026-04-17T02:51:24Z",
+      "resolved_at": "2026-04-17T02:51:24Z"
+    },
+    {
+      "task_id": "OSS-NEXT-007",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Version pin corrected: QuantLib-Python==1.18 (was 1.33). All 5 affected references synced. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-17T02:53:48Z",
+      "resolved_at": "2026-04-17T02:56:57Z"
+    },
+    {
+      "task_id": "OSS-NEXT-007",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Re-review passed: QuantLib-Python==1.18 is resolvable, QuantLib baseline references are synced, and OSS-NEXT-007 now meets the materialization acceptance. Returned to Claude for finalization to done.",
+      "status": "done",
+      "created_at": "2026-04-17T02:56:57Z",
+      "resolved_at": "2026-04-17T03:06:23Z"
+    }
+  ],
+  "blockers": []
+}

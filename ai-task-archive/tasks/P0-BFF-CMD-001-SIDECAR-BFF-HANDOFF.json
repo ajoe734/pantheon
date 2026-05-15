@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-01T04:50:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare P0-BFF-CMD-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 P0-BFF-CMD-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Pantheon P0 Paper Loop",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "P0-STATE-001"
+    ],
+    "artifacts": [
+      "support/sidecars/P0-BFF-CMD-001/P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only BFF/frontend handoff packet after Codex review approval. Artifact committed in task-scoped commit 44a92d9. Verification: reviewed task brief, reviewer approval, handoff packet, task state; ran git diff --cached --check before commit; no runtime tests run because this is documentation-only sidecar closeout.",
+    "last_update": "2026-05-01T04:50:35Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "P0-BFF-CMD-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Approved: support-only handoff aligns with parent acceptance; no canonical/runtime edits detected.",
+      "Verified against BFF contract gap docs and existing command facade routes/models/foundation context."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T04:50:35Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "44a92d97bafc1fb8e06c670a7a9fb3d0758e6bf4",
+      "commit_subject": "P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF finalize handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Verification": "git diff --cached --check; reviewed support handoff packet and task state for review_approved closeout."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 88,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 7,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Sidecar BFF handoff packet ready for review: support/sidecars/P0-BFF-CMD-001/P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF.md. It summarizes existing BFF command facade material, read/command contract gaps, operator journey handoff, and frontend acceptance notes without modifying canonical truth or runtime code.",
+      "status": "done",
+      "created_at": "2026-05-01T04:34:25Z",
+      "resolved_at": "2026-05-01T04:39:15Z"
+    },
+    {
+      "task_id": "P0-BFF-CMD-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: sidecar handoff packet remains support-only, aligns with P0-BFF-CMD-001 read/command split acceptance, and can be finalized by owner Codex2. Verification: inspected handoff artifact, parent task acceptance, BFF read contract/gap docs, and existing command facade routes/models/foundation context; no runtime tests run because this is documentation-only review.",
+      "status": "done",
+      "created_at": "2026-05-01T04:39:15Z",
+      "resolved_at": "2026-05-01T04:50:35Z"
+    }
+  ],
+  "blockers": []
+}

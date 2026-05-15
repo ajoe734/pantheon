@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "task_id": "DOC-003",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DOC-003",
+    "title": "Rewrite architecture overview around artifact_state/deployment_stage split",
+    "summary_zh": "重寫 TARGET_ARCHITECTURE.md，將 artifact_state (draft/candidate/approved/retired) 與 deployment_stage (paper/canary/live/frozen) 明確分離，OpenClaw 定位為上游 OSS substrate。",
+    "phase": "Phase 0: Canonical Cutover",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "DOC-001"
+    ],
+    "artifacts": [
+      "TARGET_ARCHITECTURE.md"
+    ],
+    "acceptance": [
+      "architecture overview no longer treats paper/live as artifact state",
+      "artifact_state vs deployment_stage ownership split is explicit",
+      "OpenClaw is described as upstream substrate, not the system name"
+    ],
+    "last_update": "2026-04-09T16:00:00Z"
+  },
+  "handoffs": [],
+  "blockers": []
+}

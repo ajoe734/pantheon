@@ -1,0 +1,32 @@
+{
+  "audit": {
+    "action": "pause_runtime:pause",
+    "actor_id": "internal-api-operator",
+    "audit_id": "audit-cmd-runtime-pause-rb-6303412ad7d94da989b2dc8bc6274d7f-1777861639",
+    "audited_at": "2026-05-04T02:27:19.766342Z",
+    "command_id": "cmd-runtime-pause-rb-6303412ad7d94da989b2dc8bc6274d7f-1777861639",
+    "degraded": false,
+    "status_after": "paused",
+    "status_before": "active",
+    "target_id": "rb-6303412ad7d94da989b2dc8bc6274d7f"
+  },
+  "command_id": "cmd-runtime-pause-rb-6303412ad7d94da989b2dc8bc6274d7f-1777861639",
+  "error": null,
+  "result": {
+    "audit_id": "audit-cmd-runtime-pause-rb-6303412ad7d94da989b2dc8bc6274d7f-1777861639",
+    "duration_seconds": 900,
+    "pause_action": "pause",
+    "pause_expires_at": "2026-05-04T02:42:19.766342Z",
+    "reason": "bff-down direct internal api drill",
+    "runtime_binding_id": "rb-6303412ad7d94da989b2dc8bc6274d7f",
+    "status_after": "paused",
+    "status_before": "active"
+  },
+  "status": "executed",
+  "submitted_at": "2026-05-04T02:27:19.766342Z",
+  "target": {
+    "id": "rb-6303412ad7d94da989b2dc8bc6274d7f",
+    "type": "RuntimeBinding"
+  },
+  "type": "PauseRuntime"
+}

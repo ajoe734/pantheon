@@ -191,6 +191,9 @@
               "universe_selection",
               "signal_inference",
               "allocation_decision",
+              "security_master",
+              "contract_master",
+              "dataset_version",
               "risk_budget_policy",
               "capital_pool_state",
               "current_portfolio_snapshot",
@@ -239,6 +242,42 @@
         }
       },
       "description": "Downstream decision objects that reference this risk adjudication. The link to ApprovalDecision closes the front-half to back-half chain."
+    },
+    "market_scope": {
+      "type": "object",
+      "description": "Inherited BG-000 market_scope envelope for the portfolio under review, plus BG-001 master and dataset IDs required to replay the adjudicated position set.",
+      "properties": {
+        "asset_classes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "markets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "security_master_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "contract_master_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dataset_version_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
     },
     "model_ref": {
       "type": "object",

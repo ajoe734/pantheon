@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "APP-002-W3-POSTINCIDENT-EVOLUTION",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-002-W3-POSTINCIDENT-EVOLUTION",
+    "title": "Implement post-incident and evolution review surfaces",
+    "summary_zh": "實作 post-incident 與 evolution review 相關 surfaces，讓 incident 後分析與治理決策可由 Pantheon 直接提供。",
+    "phase": "Phase 5: APP-002 Execution Wave 3",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "APP-002-W2-CONTROL-INCIDENT"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/BFF_API_CONTRACT.md"
+    ],
+    "acceptance": [
+      "postincident_view_live",
+      "evolution_review_surfaces_live",
+      "lineage_and_telemetry_evidence_shaped"
+    ],
+    "next": "All acceptance criteria met: post-incident view, evolution surfaces, lineage & telemetry evidence shaped. 4 new endpoints added. Tests pass. Reviewed and approved.",
+    "last_update": "2026-04-11T14:02:26Z",
+    "auto_created_by": "phase1-2026-04-11-backend-completion"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-002-W3-POSTINCIDENT-EVOLUTION",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Wave 3 implementation complete. EV-01/EV-02/EV-03/EV-04/LN-01/TL-03/IN-04 + post-incident composed view all implemented and verified. Committed as 22dd32f.",
+      "status": "done",
+      "created_at": "2026-04-11T13:52:13Z",
+      "resolved_at": "2026-04-11T13:56:55Z"
+    },
+    {
+      "task_id": "APP-002-W3-POSTINCIDENT-EVOLUTION",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Changes requested: post-incident review should use TL-03 performance by artifact_id (not telemetry_summary + affected_persona_id) and should return real lineage edges or mark LN-01 degraded. See services/control-plane/bff/review_app002_w3_postincident_codex.md.",
+      "status": "done",
+      "created_at": "2026-04-11T13:56:55Z",
+      "resolved_at": "2026-04-11T13:56:55Z"
+    },
+    {
+      "task_id": "APP-002-W3-POSTINCIDENT-EVOLUTION",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Ready for review. All acceptance criteria met — post-incident view, evolution surfaces, lineage & telemetry evidence shaped. Tests pass. Added LN-02/03, TL-01/02 endpoints.",
+      "status": "done",
+      "created_at": "2026-04-11T13:59:32Z",
+      "resolved_at": "2026-04-11T14:00:04Z"
+    },
+    {
+      "task_id": "APP-002-W3-POSTINCIDENT-EVOLUTION",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review approved. All acceptance criteria verified: (1) post-incident review composed view properly composes IN-04, EV-01/EV-02, LN-01, TL-03 with surface status metadata; (2) evolution surfaces EV-01 through EV-04 all live with filter support; (3) lineage LN-01/02/03 and telemetry TL-01/02/03 endpoints complete. New endpoints match BFF_API_CONTRACT.md shapes. Unit tests 38/38 pass.",
+      "status": "done",
+      "created_at": "2026-04-11T14:00:04Z",
+      "resolved_at": "2026-04-11T14:00:04Z"
+    },
+    {
+      "task_id": "APP-002-W3-POSTINCIDENT-EVOLUTION",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Codex review blockers fixed: TL-03 now uses artifact_id for telemetry performance (not affected_persona_id), LN-01 now fetches actual lineage edges from read_store (not hardcoded []). Both fixes verified. Committed as 5514302.",
+      "status": "done",
+      "created_at": "2026-04-11T14:01:08Z",
+      "resolved_at": "2026-04-11T14:02:26Z"
+    },
+    {
+      "task_id": "APP-002-W3-POSTINCIDENT-EVOLUTION",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review approved. All acceptance criteria verified: post-incident view live, evolution surfaces EV-01–EV-04 live, lineage LN-01/02/03 + telemetry TL-01/02/03 endpoints complete. 38/38 unit tests pass.",
+      "status": "done",
+      "created_at": "2026-04-11T14:02:26Z",
+      "resolved_at": "2026-04-11T14:02:26Z"
+    }
+  ],
+  "blockers": []
+}

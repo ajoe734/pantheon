@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "task_id": "P3-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P3-001",
+    "title": "Wire LEAN runtime signal consumer",
+    "phase": "Phase 3",
+    "owner": "Copilot",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "P1-001",
+      "P2-002"
+    ],
+    "artifacts": [
+      "services/execution/lean-runtime/"
+    ],
+    "acceptance": [
+      "runtime can consume signal payload",
+      "broker config edge documented"
+    ],
+    "next": "Implemented three critical executor fixes: (1) EXIT+SHORT uses math.ceil() to preserve fractional shares in crypto—fixes truncation issue where -10.5 was being rounded to 10 instead of 11; (2) EXIT+LONG now checks position direction before liquidating—prevents closing opposite leg; (3) SELL+LONG now uses SetHoldings(0) for PERCENT_PORTFOLIO—matches docstring and provides consistency. All acceptance criteria met: runtime consumes signal payloads correctly, broker config edges documented in code comments. All 8 unit tests pass.",
+    "last_update": "2026-04-06T11:46:45Z",
+    "summary_zh": "把 signal intake 真正接進 LEAN runtime，讓已經標準化的訊號可以被解析、檢查後送到執行流程。"
+  },
+  "handoffs": [
+    {
+      "task_id": "P3-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Signal consumer artifacts complete: signal_consumer.py, executor.py, symbol_parser.py. Dead-code bug fixed (minor version warning). Review focus: (1) symbol_parser _resolve_symbol uses duck-typed algo.Symbol() — real LEAN integration needs Symbol.Create(ticker, SecurityType, Market); (2) SELL+LONG dispatch always uses Liquidate regardless of quantity_type (docstring says SetHoldings for PERCENT_PORTFOLIO — functionally equivalent but inconsistent); (3) EXIT+SHORT uses holdings quantity for close — verify broker round-trip.",
+      "status": "done",
+      "created_at": "2026-04-02T03:36:14Z",
+      "resolved_at": "2026-04-06T06:03:44Z"
+    },
+    {
+      "task_id": "P3-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewer shifted from Gemini to Codex after repeated Gemini auto-worker failures. Signal consumer artifacts complete: signal_consumer.py, executor.py, symbol_parser.py. Dead-code bug fixed (minor version warning). Review focus: (1) symbol_parser _resolve_symbol uses duck-typed algo.Symbol() — real LEAN integration needs Symbol.Create(ticker, SecurityType, Market); (2) SELL+LONG dispatch always uses Liquidate regardless of quantity_type (docstring says SetHoldings for PERCENT_PORTFOLIO — functionally equivalent but inconsistent); (3) EXIT+SHORT uses holdings quantity for close — verify broker round-trip.",
+      "status": "done",
+      "created_at": "2026-04-06T06:03:44Z",
+      "resolved_at": "2026-04-06T06:06:13Z"
+    }
+  ],
+  "blockers": []
+}

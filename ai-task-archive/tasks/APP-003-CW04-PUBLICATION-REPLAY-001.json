@@ -1,0 +1,667 @@
+{
+  "version": 1,
+  "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+  "archived_at": "2026-04-23T15:54:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+    "title": "Track and close CW-04 replay-clean front publication follow-up",
+    "summary_zh": "把 CW-04 剩餘的 replay-clean front publication follow-up 補成 supervisor 可追蹤 execution work，要求已審閱的 UI、request pair 與 feedback bundle 由同一個 truthful Git-visible commit 發布，避免 CW-04 繼續停在 frontend follow-up 階段。",
+    "phase": "Execution / Frontend Publication Replay",
+    "owner": "Codex",
+    "reviewer": "Codex3",
+    "status": "done",
+    "depends_on": [
+      "APP-003-CW04-FRONTEND-HANDOFF-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-23-post-closeout-residual-execution-packet.md",
+      ".coordination/responses/CW-04-redteam-memo-frontend-feedback.yaml",
+      "docs/pantheon-handoffs/CW-04-redteam-memo/FRONTEND_CHANGE_SPEC.md"
+    ],
+    "acceptance": [
+      "CW-04 front publication replay follow-up is represented by a named execution task",
+      "current-work no longer leaves CW-04 only as an unmaterialized followup note",
+      "closure criteria point at one truthful Git-visible commit containing the reviewed UI files plus the request pair and feedback bundle"
+    ],
+    "next": "Owner finalized the review-approved CW-04 replay-close residual after Codex3 revalidation: Pantheon's frontend-feedback response remains close/can_close true, origin/pkt-004-detail-fix remains at 675f1cc59be537455e776113be9ad8a45fa44208 with both request files pinned to reviewed UI transport c94f63082eae1667ed919353d62c85180d7bafba, and python3 -m pytest services/control-plane/bff/test_cw04_redteam_memo_contract.py -q remains 7 passed.",
+    "last_update": "2026-04-23T15:54:52Z",
+    "review_notes_zh": [
+      "Codex3 重新驗證 replay-clean close condition：front publish head 仍為 675f1cc59be537455e776113be9ad8a45fa44208，兩個 request 檔仍 truthfully pin 到 reviewed source_commit c94f63082eae1667ed919353d62c85180d7bafba。;Pantheon 的 CW-04 contract slice 仍維持 7 passed，且本次 approval 僅核准殘留 replay-close tracking scope，未重開 BFF 或 runtime 實作範圍。"
+    ],
+    "review_file": ".coordination/reviews/CW-04-redteam-memo-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-23T15:54:52Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "fda97e39e21ea6c131515325dc8c87d8f36be838",
+      "commit_subject": "APP-003-CW04-PUBLICATION-REPLAY-001 finalize replay-close checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Review-approved closure confirms the CW-04 replay-clean publication residual is closed": "Pantheon's frontend-feedback response stays close/can_close true, origin/pkt-004-detail-fix remains at 675f1cc59be537455e776113be9ad8a45fa44208, both front request files still pin the reviewed UI transport commit c94f63082eae1667ed919353d62c85180d7bafba, and python3 -m pytest services/control-plane/bff/test_cw04_redteam_memo_contract.py -q remains 7 passed.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-CW04-PUBLICATION-REPLAY-001",
+        "Reviewer": "Codex3"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1181,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-23T13:24:02Z",
+      "resolved_at": "2026-04-23T13:24:44Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-23T13:31:16Z",
+      "resolved_at": "2026-04-23T13:32:20Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Revalidated on 2026-04-23: the sibling front repo still advertises source_commit eee2bc2765073f333895611edad80a5d053c864d, that commit is the PKT-001 repoint and does not contain the reviewed CW-04 memo pages, request pair, or feedback bundle, both published CW-04 request files still explicitly say no new git commit was created, and Pantheon contract truth remains settled with 7 passing CW-04 contract tests. Parent residual is ready for narrow review as a tracking and close-condition slice; reviewer packets are in support/sidecars/APP-003-CW04-PUBLICATION-REPLAY-001/.",
+      "status": "done",
+      "created_at": "2026-04-23T13:37:20Z",
+      "resolved_at": "2026-04-23T13:39:21Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Codex2",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Codex2 to Codex3 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T13:39:21Z",
+      "resolved_at": "2026-04-23T13:46:00Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex3 to Gemini after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T13:46:00Z",
+      "resolved_at": "2026-04-23T13:46:48Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T13:46:48Z",
+      "resolved_at": "2026-04-23T13:47:02Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T13:47:02Z",
+      "resolved_at": "2026-04-23T13:47:30Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T13:47:30Z",
+      "resolved_at": "2026-04-23T13:47:58Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T13:47:58Z",
+      "resolved_at": "2026-04-23T13:48:31Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T13:48:31Z",
+      "resolved_at": "2026-04-23T13:49:14Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T13:49:14Z",
+      "resolved_at": "2026-04-23T13:49:44Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T13:49:44Z",
+      "resolved_at": "2026-04-23T13:50:11Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T13:50:11Z",
+      "resolved_at": "2026-04-23T13:50:48Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T13:50:48Z",
+      "resolved_at": "2026-04-23T13:51:17Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T13:51:17Z",
+      "resolved_at": "2026-04-23T13:51:46Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T13:51:46Z",
+      "resolved_at": "2026-04-23T13:52:16Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T13:52:16Z",
+      "resolved_at": "2026-04-23T13:52:43Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T13:52:43Z",
+      "resolved_at": "2026-04-23T13:53:11Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T13:53:11Z",
+      "resolved_at": "2026-04-23T13:53:38Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T13:53:38Z",
+      "resolved_at": "2026-04-23T13:55:30Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude2 to Codex2 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T13:55:30Z",
+      "resolved_at": "2026-04-23T14:14:32Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T14:14:32Z",
+      "resolved_at": "2026-04-23T14:14:45Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:14:45Z",
+      "resolved_at": "2026-04-23T14:15:13Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:15:13Z",
+      "resolved_at": "2026-04-23T14:15:40Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:15:40Z",
+      "resolved_at": "2026-04-23T14:16:10Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:16:10Z",
+      "resolved_at": "2026-04-23T14:16:37Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:16:37Z",
+      "resolved_at": "2026-04-23T14:17:06Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:17:06Z",
+      "resolved_at": "2026-04-23T14:17:32Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:17:32Z",
+      "resolved_at": "2026-04-23T14:18:02Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:18:02Z",
+      "resolved_at": "2026-04-23T14:18:35Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:18:35Z",
+      "resolved_at": "2026-04-23T14:19:37Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:19:37Z",
+      "resolved_at": "2026-04-23T14:20:33Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Claude2 to Codex3 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:20:33Z",
+      "resolved_at": "2026-04-23T14:27:27Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Refreshed the CW-04 Pantheon response and reviewer packet after the 2026-04-23 replay-clean republish. Verified origin/pkt-004-detail-fix resolves to 675f1cc59be537455e776113be9ad8a45fa44208, both published CW-04 request files now pin source_commit to reviewed UI snapshot c94f63082eae1667ed919353d62c85180d7bafba, targeted CW-04 paths are clean in the sibling front repo, and python3 -m pytest services/control-plane/bff/test_cw04_redteam_memo_contract.py -q returned 7 passed. Reviewer packet: support/sidecars/APP-003-CW04-PUBLICATION-REPLAY-001/APP-003-CW04-PUBLICATION-REPLAY-001-SIDECAR-REVIEW.md; Pantheon response now records disposition close / can_close true / next_action none.",
+      "status": "done",
+      "created_at": "2026-04-23T14:36:21Z",
+      "resolved_at": "2026-04-23T14:55:01Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Codex3",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex3 to Gemini after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T14:55:01Z",
+      "resolved_at": "2026-04-23T14:56:13Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T14:56:13Z",
+      "resolved_at": "2026-04-23T14:56:46Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:56:46Z",
+      "resolved_at": "2026-04-23T14:57:30Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:57:30Z",
+      "resolved_at": "2026-04-23T14:58:05Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:58:05Z",
+      "resolved_at": "2026-04-23T14:58:33Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:58:33Z",
+      "resolved_at": "2026-04-23T14:59:00Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:59:00Z",
+      "resolved_at": "2026-04-23T14:59:28Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:59:28Z",
+      "resolved_at": "2026-04-23T14:59:59Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T14:59:59Z",
+      "resolved_at": "2026-04-23T15:00:27Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:00:27Z",
+      "resolved_at": "2026-04-23T15:00:57Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:00:57Z",
+      "resolved_at": "2026-04-23T15:01:31Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:01:31Z",
+      "resolved_at": "2026-04-23T15:02:00Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:02:00Z",
+      "resolved_at": "2026-04-23T15:02:29Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:02:29Z",
+      "resolved_at": "2026-04-23T15:02:55Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:02:55Z",
+      "resolved_at": "2026-04-23T15:03:29Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:03:29Z",
+      "resolved_at": "2026-04-23T15:03:57Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:03:57Z",
+      "resolved_at": "2026-04-23T15:04:25Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:04:25Z",
+      "resolved_at": "2026-04-23T15:04:53Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:04:53Z",
+      "resolved_at": "2026-04-23T15:05:21Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:05:21Z",
+      "resolved_at": "2026-04-23T15:05:52Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:05:52Z",
+      "resolved_at": "2026-04-23T15:06:18Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:06:18Z",
+      "resolved_at": "2026-04-23T15:06:48Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:06:48Z",
+      "resolved_at": "2026-04-23T15:07:32Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:07:32Z",
+      "resolved_at": "2026-04-23T15:26:42Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Replay-close evidence is refreshed and closure-ready. Pantheon response now records disposition close / can_close true / next_action none in .coordination/responses/CW-04-redteam-memo-frontend-feedback.yaml, front publish head remains 675f1cc59be537455e776113be9ad8a45fa44208 with both request files pinned to reviewed UI transport c94f63082eae1667ed919353d62c85180d7bafba, and python3 -m pytest services/control-plane/bff/test_cw04_redteam_memo_contract.py -q remains 7 passed. Please review the narrow replay-close boundary using support/sidecars/APP-003-CW04-PUBLICATION-REPLAY-001/APP-003-CW04-PUBLICATION-REPLAY-001-SIDECAR-REVIEW.md; if satisfied, approve so owner can finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-23T15:26:42Z",
+      "resolved_at": "2026-04-23T15:27:36Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T15:27:36Z",
+      "resolved_at": "2026-04-23T15:27:52Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:27:52Z",
+      "resolved_at": "2026-04-23T15:28:22Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:28:22Z",
+      "resolved_at": "2026-04-23T15:28:49Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:28:49Z",
+      "resolved_at": "2026-04-23T15:29:17Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:29:17Z",
+      "resolved_at": "2026-04-23T15:29:43Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:29:43Z",
+      "resolved_at": "2026-04-23T15:30:13Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Claude",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Claude to Codex3 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T15:30:13Z",
+      "resolved_at": "2026-04-23T15:52:38Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001",
+      "from": "Codex3",
+      "to": "Codex",
+      "message": "Codex3 revalidated the narrow replay-close boundary on 2026-04-23: origin/pkt-004-detail-fix still resolves to 675f1cc59be537455e776113be9ad8a45fa44208, both front request files still pin source_commit c94f63082eae1667ed919353d62c85180d7bafba, the reviewed CW-04 UI bundle remains present at that source commit, and python3 -m pytest services/control-plane/bff/test_cw04_redteam_memo_contract.py -q remains 7 passed. Parent residual is approved for owner finalization to done.",
+      "status": "done",
+      "created_at": "2026-04-23T15:52:38Z",
+      "resolved_at": "2026-04-23T15:54:53Z"
+    }
+  ],
+  "blockers": []
+}

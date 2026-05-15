@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "SVC-GOVERNANCE-API-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-28T13:46:38Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-GOVERNANCE-API-SIDECAR-ACCEPTANCE",
+    "title": "Prepare SVC-GOVERNANCE-API acceptance packet and dependency map",
+    "summary_zh": "平行支援 SVC-GOVERNANCE-API，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 4: Service Layer Completion",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-BASELINE"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-GOVERNANCE-API/SVC-GOVERNANCE-API-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar acceptance packet. Support-only packet and reviewer evidence are committed; parent owner retains authority over whether to absorb this into SVC-GOVERNANCE-API closeout.",
+    "last_update": "2026-04-28T13:46:38Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-GOVERNANCE-API",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar acceptance packet 通過審查：（1）僅新增 support/sidecars/SVC-GOVERNANCE-API/SVC-GOVERNANCE-API-SIDECAR-ACCEPTANCE.md，未修改任何 canonical / L1 / runtime / registry / compose 真相；（2）packet 對 family contract 四個服務（governance 8082、deployment 8095、capital 8092、evolution 8093）與 runtime-manager 8081 delegated boundary、compose env vars、ports、healthchecks、legacy PANTHEON_GOVERNANCE_API_URL 相容別名皆已逐一核對 services/control-plane/governance/service_family_contract.md 與 docker-compose.yml；（3）依賴圖中 SVC-BASELINE 為 done，下游 SVC-SURFACES／SVC-COMPOSE／SVC-SERVICE-DISPOSITION 邊界正確；（4）重跑 pytest services/governance/test_governance_api.py services/capital/test_service.py services/deployment/test_service.py services/evolution/test_evolution_service.py services/runtime-manager/test_internal_api_routes.py 得 105 passed in 5.92s，符合 packet 宣稱。Reviewer 檔：docs/reviews/2026-04-28-svc-governance-api-sidecar-acceptance-claude-review.md。",
+      "後續：parent SVC-GOVERNANCE-API 正式 review／closure 仍由 parent owner 決定是否吸收此 packet；本 sidecar approve 不代表 parent task 已 done。"
+    ],
+    "review_file": "docs/reviews/2026-04-28-svc-governance-api-sidecar-acceptance-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T13:46:38Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "bbaf6ab7ce1877c4f26f185c88551198188cbb37",
+      "commit_subject": "SVC-GOVERNANCE-API-SIDECAR-ACCEPTANCE add governance API sidecar acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-GOVERNANCE-API-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 36,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 11,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-GOVERNANCE-API-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Acceptance packet created at support/sidecars/SVC-GOVERNANCE-API/SVC-GOVERNANCE-API-SIDECAR-ACCEPTANCE.md; focused tests passed: 105 passed in 6.02s. Please review support-only packet for parent SVC-GOVERNANCE-API.",
+      "status": "done",
+      "created_at": "2026-04-28T13:35:39Z",
+      "resolved_at": "2026-04-28T13:42:44Z"
+    },
+    {
+      "task_id": "SVC-GOVERNANCE-API-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar packet reviewed and approved: support-only constraint respected, family-contract / compose / port / health / dependency claims verified, 105/105 focused tests reproduced. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-28T13:42:44Z",
+      "resolved_at": "2026-04-28T13:46:39Z"
+    }
+  ],
+  "blockers": []
+}

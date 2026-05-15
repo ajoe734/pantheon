@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Reject staged runtime artifacts that should never enter git history.
+# Centralized here so every clone gets the same protection once
+# `git config core.hooksPath .githooks` is set.
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+mapfile -t staged_paths < <(git diff --cached --name-only --diff-filter=ACMR)
+if [ "${#staged_paths[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+exec python3 "$ROOT_DIR/scripts/check_staged_generated_files.py" "${staged_paths[@]}"

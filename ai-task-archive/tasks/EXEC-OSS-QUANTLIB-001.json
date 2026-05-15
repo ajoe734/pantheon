@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "task_id": "EXEC-OSS-QUANTLIB-001",
+  "archived_at": "2026-04-21T20:04:38Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-OSS-QUANTLIB-001",
+    "title": "Advance QuantLib next-wave execution readiness",
+    "summary_zh": "把 QuantLib 下一波執行面收斂成可執行工作，補齊 source selection、adapter boundary 與 smoke-test next step。",
+    "phase": "Execution / OSS Next Wave",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/research/quantlib/ACTIVATION_CRITERIA.md",
+      "RESEARCH_BACKEND_MATURITY_MATRIX.md",
+      "docs/reviews/2026-04-20-development-progress-and-next-work-inventory.md"
+    ],
+    "acceptance": [
+      "QuantLib next-wave gap 與第一個可執行 slice 明確",
+      "adapter / smoke-test / governed I/O 邊界清楚",
+      "留下可 review 的 execution-ready plan 或 patch set"
+    ],
+    "next": "Owner finalized approved QuantLib governed baseline. Adapter, smoke path (17 passed, 1 skipped), worker entrypoint, sample dataset, and evidence pack are complete; CI matrix wiring remains a separate follow-on.",
+    "last_update": "2026-04-21T20:04:38Z",
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-20-execution-continuation-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過",
+      "三項驗收標準均已達成：next-wave gap 明確、adapter/smoke-test/governed I/O 邊界清楚、execution-ready 實作已落地",
+      "CI matrix wiring（quantlib-smoke job）是唯一剩餘項目，已在 ACTIVATION_CRITERIA.md 中標注為 follow-on，不影響 governed 基線狀態"
+    ],
+    "review_file": "support/sidecars/EXEC-OSS-QUANTLIB-001/EXEC-OSS-QUANTLIB-001-CLAUDE-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T20:04:38Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "5aa54af39d5a2f2fb2048f80eff09bc2be9a1bac",
+      "commit_subject": "EXEC-OSS-QUANTLIB-001 finalize QuantLib governed baseline",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "EXEC-OSS-QUANTLIB-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 980,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned EXEC-OSS-QUANTLIB-001 away from sidecar-only lane Qwen; owner Qwen -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-04-20T11:51:41Z",
+      "resolved_at": "2026-04-20T13:10:03Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T13:10:03Z",
+      "resolved_at": "2026-04-21T01:24:16Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:29:16Z",
+      "resolved_at": "2026-04-21T01:38:34Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Copilot completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T06:15:19Z",
+      "resolved_at": "2026-04-21T06:33:23Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T06:33:23Z",
+      "resolved_at": "2026-04-21T06:34:09Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "QuantLib baseline reclosed: added worker.py + governed sample dataset; rebaselined activation/maturity/inventory/checklist truth to governed; verified smoke_test.py, pytest (17 passed, 1 skipped), and worker sample fallback on 2026-04-21.",
+      "status": "done",
+      "created_at": "2026-04-21T06:47:16Z",
+      "resolved_at": "2026-04-21T06:50:28Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T06:50:28Z",
+      "resolved_at": "2026-04-21T18:15:54Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T18:15:54Z",
+      "resolved_at": "2026-04-21T18:18:44Z"
+    },
+    {
+      "task_id": "EXEC-OSS-QUANTLIB-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved — all three acceptance criteria met; governed baseline complete with adapter, smoke (17 passed, 1 skipped), worker, sample dataset, and evidence pack; CI matrix wiring acknowledged as follow-on only. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-21T18:18:44Z",
+      "resolved_at": "2026-04-21T20:04:38Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "task_id": "APP-002",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-002",
+    "title": "Define operator-facing deployment, incident, and evolution surfaces",
+    "summary_zh": "定義 operator 介面，讓 deployment、incident、evolution 操作都對應到正式 canonical object。",
+    "phase": "Phase 5: Persona and Application Surfaces",
+    "owner": "Copilot",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "APP-001",
+      "EVO-004"
+    ],
+    "artifacts": [
+      "BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md",
+      "PAPER_CANARY_LIVE_POLICY.md"
+    ],
+    "acceptance": [
+      "operator actions map to approval, deployment plan, runtime binding, and evolution decision objects",
+      "fallback path is defined when BFF is degraded"
+    ],
+    "next": "Finalize: Absorbed support artifacts; APP-002 complete pending EVO-004 for execution boundary; implementation subtasks created for tracking.",
+    "last_update": "2026-04-11T04:37:48Z"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-002",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Handoff: Support artifacts created at support/sidecars/APP-002; Operator Action Contract, Secondary Control Path, and Frontend State Matrix ready for review and parent absorption.",
+      "status": "done",
+      "created_at": "2026-04-11T04:35:41Z",
+      "resolved_at": "2026-04-11T04:37:48Z"
+    },
+    {
+      "task_id": "APP-002",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Review: Support artifacts complete and map to canonical objects; minor comments in REVIEW_NOTES_ZH",
+      "status": "done",
+      "created_at": "2026-04-11T04:37:48Z",
+      "resolved_at": "2026-04-11T04:37:48Z"
+    }
+  ],
+  "blockers": []
+}

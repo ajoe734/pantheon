@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-015-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-15T19:52:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-015-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BP5-SVC-015 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BP5-SVC-015，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BP5-SVC-003",
+      "BP5-SVC-004"
+    ],
+    "artifacts": [
+      "support/sidecars/BP5-SVC-015/BP5-SVC-015-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner closeout: sidecar packet accepted as-is. Both Codex review findings addressed (rev2): explicit-failure claim scoped to four wired commands only; Section 4.4 frontend guidance correctly separates BFF-local 4xx validation failures from transport/downstream 5xx availability signals. Artifact at support/sidecars/BP5-SVC-015/BP5-SVC-015-SIDECAR-BFF-HANDOFF.md is complete and ready for parent-owner (Codex) absorption into BP5-SVC-015.",
+    "last_update": "2026-04-15T19:52:44Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP5-SVC-015",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已重新核對 sidecar packet 與實際 BFF 程式碼，Section 2.4 現在只把 explicit-failure claim 限定在 4 個已接線 internal-API commands。",
+      "Section 4.3/4.4 已正確區分 BFF 本地 403/422 驗證失敗與 transport/downstream 5xx 可用性訊號；無新增 blocking finding。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T19:52:44Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "84ddd9abee8d743270cb00ab22c040a6c8addbca",
+      "commit_subject": "BP5-SVC-015-SIDECAR-BFF-HANDOFF: finalize BFF handoff sidecar packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP5-SVC-015-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 57,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-015-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "BFF handoff packet complete. Key findings: (1) CanonicalSnapshotAdapter fallback to seed is silent — _surface_status() reads a static env var, not adapter availability; (2) _load_or_seed persists seed to disk making it indistinguishable from real data; (3) snapshot param is accepted but unused. Suggested impl steps in packet Section 5.",
+      "status": "done",
+      "created_at": "2026-04-15T19:44:17Z",
+      "resolved_at": "2026-04-15T19:47:11Z"
+    },
+    {
+      "task_id": "BP5-SVC-015-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review requested changes: narrow command-path claims and fix frontend guidance that incorrectly treats any 4xx/5xx as backend unavailability. See support/sidecars/BP5-SVC-015/BP5-SVC-015-SIDECAR-BFF-HANDOFF-REVIEW.md.",
+      "status": "done",
+      "created_at": "2026-04-15T19:47:11Z",
+      "resolved_at": "2026-04-15T19:47:11Z"
+    },
+    {
+      "task_id": "BP5-SVC-015-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Addressed both review findings: (1) Section 2.4 narrowed to exclude ApproveEvolutionDecision and ExecuteEvolutionAction stubs — explicit-failure claim now only covers the four wired commands. (2) Section 4.4 command-submission guidance rewritten to distinguish BFF-local 4xx validation failures (role/MFA/params) from transport/downstream 5xx availability signals. Table in 4.3 also updated to match.",
+      "status": "done",
+      "created_at": "2026-04-15T19:48:28Z",
+      "resolved_at": "2026-04-15T19:51:42Z"
+    },
+    {
+      "task_id": "BP5-SVC-015-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Re-review passed: sidecar packet now scopes the explicit-failure reference to the four wired commands and frontend guidance now correctly separates BFF-local 4xx validation failures from transport/downstream availability failures. Returned to Claude for owner closeout.",
+      "status": "done",
+      "created_at": "2026-04-15T19:51:42Z",
+      "resolved_at": "2026-04-15T19:52:44Z"
+    }
+  ],
+  "blockers": []
+}

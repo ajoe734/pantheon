@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-008",
+  "archived_at": "2026-05-13T03:43:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-008",
+    "title": "Canonical fixture pack A (strategies personas capital-pools rebalances deployments)",
+    "summary_zh": "在 pantheon control-plane truth source 建立 canonical fixture pack A (strategies/personas/capital-pools/rebalances/deployments) 各 ≥1 筆 non-empty entry。Strategy 含 specs/experiments/artifacts/lineage/audit linkage。確保 /bff/strategies /bff/personas /bff/capital-pools /bff/rebalances /bff/deployments live list 都回 data_count≥1。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-001"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/data/fixtures_pack_a.json",
+      "services/control-plane/bff/read_store.py"
+    ],
+    "acceptance": [
+      "5 個 family 各 ≥1 non-empty fixture",
+      "strategy 連結 specs/experiments/artifacts/lineage/audit",
+      "persona 含 route-policy 與 evaluation skeleton",
+      "deployment 含 stages 與 approval pointer",
+      "authenticated live smoke 跑 data_count 都 ≥1",
+      "fixture 不可影響 EP5 paper-canary truth"
+    ],
+    "next": "Closed BFF-CONSOL-008 after Codex approval. Task commit 7cd0c48c records Pack A fixtures, read-store fallback/list support, deployment list data_count alias, focused tests, and support artifacts. Verification: jq fixture coverage passed; py_compile read_store.py main.py test_bff_consol_008_fixture_pack_a.py passed; git diff --cached --check passed; pytest BFF fixture/strategy/persona/capital/governance suite passed (48 passed, 10 warnings); pytest test_read_store_bootstrap_snapshot.py passed (2 passed).",
+    "last_update": "2026-05-13T03:43:54Z",
+    "review_notes_zh": [
+      "無阻塞問題；Pack A fixture 覆蓋五個 family 與 strategy/persona/deployment linkage。",
+      "Reviewer verification passed: jq fixture coverage, py_compile, focused 48-test BFF suite, bootstrap snapshot, git diff --check。"
+    ],
+    "review_file": "support/sidecars/BFF-CONSOL-008/review-bff-consol-008-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T03:43:54Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "7cd0c48cebc1aff209b19389f4b3037445225894",
+      "commit_subject": "BFF-CONSOL-008 canonical fixture pack A",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-CONSOL-008",
+        "Reviewer": "Codex",
+        "Verification": "jq fixture coverage passed; py_compile read_store.py main.py test_bff_consol_008_fixture_pack_a.py passed; git diff --cached --check passed; pytest BFF fixture/strategy/persona/capital/governance suite passed (48 passed, 10 warnings); pytest test_read_store_bootstrap_snapshot.py passed (2 passed)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 25,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 20,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-008",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-13T03:11:37Z",
+      "resolved_at": "2026-05-13T03:12:12Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-008",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Pack A fixture implementation is ready for review. Added services/control-plane/bff/data/fixtures_pack_a.json, wired read_store local fixture fallback/backfill, preserved strategy experiment/artifact linkage, exposed seeded rebalances, added deployment data alias for probe data_count, and documented support/sidecars/BFF-CONSOL-008/implementation-bff-consol-008-codex2.md. Verification: jq fixture counts passed; py_compile passed; pytest pack A + strategy/persona + capital/rebalance + governance/deployment group -> 48 passed; bootstrap snapshot -> 2 passed; git diff --check passed.",
+      "status": "done",
+      "created_at": "2026-05-13T03:28:34Z",
+      "resolved_at": "2026-05-13T03:35:33Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-008",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved by Codex. No blocking findings; verification recorded in support/sidecars/BFF-CONSOL-008/review-bff-consol-008-codex.md. Owner Codex2 should finalize with task-scoped commit and done closeout.",
+      "status": "done",
+      "created_at": "2026-05-13T03:35:33Z",
+      "resolved_at": "2026-05-13T03:43:54Z"
+    }
+  ],
+  "blockers": []
+}

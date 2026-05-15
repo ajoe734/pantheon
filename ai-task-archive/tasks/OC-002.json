@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "task_id": "OC-002",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OC-002",
+    "title": "Implement Pantheon cron workflows through upstream OpenClaw integration",
+    "phase": "Epic B",
+    "owner": "Codex",
+    "reviewer": "Copilot",
+    "status": "done",
+    "depends_on": [
+      "OC-001"
+    ],
+    "artifacts": [
+      "services/control-plane/cron/"
+    ],
+    "acceptance": [
+      "ingest workflow defined",
+      "review and retrain workflow defined",
+      "deploy workflow references promotion gate"
+    ],
+    "next": "Cron workflows dispatched: All 4 workflows (ingest/review/retrain/deploy) verified and ready. Python syntax validated (py_compile), 8/8 unit tests passing, smoke tests 4/4 PASS. Integration with OC-001, OC-003, REG-002 confirmed. Ready for downstream use by RS-001, RS-002.",
+    "last_update": "2026-04-06T10:43:38Z",
+    "summary_zh": "把 ingest、review、retrain、deploy 做成 Pantheon 的受治理 cron workflow，底層再接 upstream OpenClaw。",
+    "review_notes_zh": "OC-002 實作完整且所有測試通過。四個工作流程已通過整合驗證：ingest 製造受治理的 research_package、review 產生 approval_request（政策實施）、retrain 排放 registry_submission、deploy 正確路由通過 REG-002 推昇門。所有依賴滿足。授權派送。",
+    "review_file": "services/control-plane/cron/review_oc002_grok.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "OC-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented services/control-plane/cron/ with governed ingest/review/retrain/deploy workflow definitions, local OpenClaw dispatch envelopes, WorkflowHandoff validation, and a deploy path that routes through REG-002 PromotionGate. Verified with python3 -m unittest discover -s services/control-plane/cron -p 'test_*.py', python3 services/control-plane/cron/smoke_test.py, and python3 -m py_compile services/control-plane/cron/*.py. Remaining follow-up: replace the smoke-test runtime pin with the first real upstream release tag/commit when the transport wiring is finalized.",
+      "status": "done",
+      "created_at": "2026-04-06T09:08:19Z",
+      "resolved_at": "2026-04-06T10:38:34Z"
+    }
+  ],
+  "blockers": []
+}

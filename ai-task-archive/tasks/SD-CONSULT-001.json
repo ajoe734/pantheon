@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "task_id": "SD-CONSULT-001",
+  "archived_at": "2026-04-27T14:43:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SD-CONSULT-001",
+    "title": "Extract consultation red-team lifecycle domain service",
+    "summary_zh": "把 consultation/red-team lifecycle 從 BFF-visible surface 推進到 first-class governed domain service。",
+    "phase": "SD Residual / Consultation",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-27-sd-materializable-execution-task-packet.md",
+      "services/consultation/main.py",
+      "services/consultation/models.py",
+      "services/consultation/store.py",
+      "services/consultation/smoke_test.py"
+    ],
+    "acceptance": [
+      "consultation request, committee debate (transcript), and red-team memo have service-owned lifecycle records",
+      "memo publication is immutable or append-only",
+      "governance gate handoff carries evidence refs and audit trace"
+    ],
+    "next": "Owner finalized approved consultation lifecycle service after Claude2 review; smoke, run_smoke, and run_smoke_logic passed from repo root. Delivery commit 838c4d1 records the governed service and evidence.",
+    "last_update": "2026-04-27T14:43:59Z",
+    "task_class": "sd_materialization",
+    "source_packet": "docs/reviews/2026-04-27-sd-materializable-execution-task-packet.md",
+    "auto_dispatch_boundary": "qwen_is_sidecar_only_so_mainline_owner_is_dispatchable",
+    "review_notes_zh": [
+      "所有 Codex 先前 review 提出的四個 blocker 皆已解決：smoke entrypoint 可從 repo root 跑通、ConsultGateHandoff 模型與 /api/consult/handoffs 端點完整覆蓋 evidence_refs 與 audit_refs、published memo 在 store 邊界以 ValueError 強制 immutability 並另寫 append-only publications jsonl、八個生命週期事件皆有 audit_emit 並由 smoke test 驗證",
+      "驗證指令: PYTHONPATH=$HOME/.local/lib/python3.12/site-packages python3 -m unittest services.consultation.smoke_test，以及 run_smoke.py 與 run_smoke_logic.py 皆 OK",
+      "Acceptance 對映: request/transcript/memo lifecycle records、memo 不可變、gate handoff 帶 evidence+audit refs，全數對應到 docs/reviews/2026-04-27-sd-materializable-execution-task-packet.md 的驗收條件",
+      "Follow-up（不擋 approve）: participant_assigned 與 gate_handoff_created 的 actor 目前是系統合成 actor，未來可改記錄真實發起人；ConsultationStore 採全表載入，等 SD-FND-003 的儲存原語落地後可再評估"
+    ],
+    "review_file": "docs/reviews/2026-04-27-sd-consult-001-claude2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-27T14:43:59Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "838c4d10bdbfde43feba553beadaa6e4aa32ef49",
+      "commit_subject": "SD-CONSULT-001 consultation lifecycle service",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SD-CONSULT-001",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 127,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SD-CONSULT-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Changes requested by Codex: smoke tests fail, gate handoff is missing, published memo immutability is unenforced, and lifecycle audit coverage is incomplete. Review file: docs/reviews/2026-04-27-sd-consult-001-codex-review.md",
+      "status": "done",
+      "created_at": "2026-04-27T12:42:00Z",
+      "resolved_at": "2026-04-27T12:42:00Z"
+    },
+    {
+      "task_id": "SD-CONSULT-001",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Gemini is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-27T13:03:20Z",
+      "resolved_at": "2026-04-27T13:03:21Z"
+    },
+    {
+      "task_id": "SD-CONSULT-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-27T13:19:04Z",
+      "resolved_at": "2026-04-27T13:19:04Z"
+    },
+    {
+      "task_id": "SD-CONSULT-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Consultation domain service implemented and verified. Handoff: docs/reviews/2026-04-27-sd-consult-001-codex-handoff.md. Tests: python3 -m unittest services.consultation.smoke_test; python3 -m services.consultation.smoke_test; python3 services/consultation/run_smoke.py; python3 services/consultation/run_smoke_logic.py; py_compile.",
+      "status": "done",
+      "created_at": "2026-04-27T13:27:26Z",
+      "resolved_at": "2026-04-27T14:33:24Z"
+    },
+    {
+      "task_id": "SD-CONSULT-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Approved by Claude2: prior Codex blockers resolved (smoke runnable from repo root, ConsultGateHandoff model+endpoint, published memo immutability, full lifecycle audit). Smoke + run_smoke + run_smoke_logic all pass. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-27T14:33:24Z",
+      "resolved_at": "2026-04-27T14:44:00Z"
+    }
+  ],
+  "blockers": []
+}

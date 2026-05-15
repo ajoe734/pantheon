@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "task_id": "ARC-007",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ARC-007",
+    "title": "Extract Pantheon services into standalone repo with LEAN as submodule",
+    "phase": "Architecture",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "AI_COLLABORATION_GUIDE.md",
+      "docker-compose.yml",
+      "Algorithm.Python/pantheon_algo/",
+      "docs/repo-split-runbook.md"
+    ],
+    "acceptance": [
+      "Pantheon repo boundary documented",
+      "LEAN fork submodule target defined",
+      "Manual cutover runbook documented",
+      "Canonical task state includes the repo split work"
+    ],
+    "next": "Repo split cleanup and validation completed: removed duplicate root pantheon_algo, added repo-split runbook, switched docker-compose LEAN paths to ./lean, and verified submodule/layout/compose checks in pantheon.",
+    "last_update": "2026-04-05T13:33:14Z",
+    "summary_zh": "把 Pantheon 服務從混合式 LEAN workspace 分離成獨立 repo，並以 `lean/` submodule 方式接回 LEAN fork，避免邊界與同步策略繼續漂移。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

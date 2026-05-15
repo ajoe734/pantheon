@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "P1-SOURCE-001",
+  "archived_at": "2026-05-01T14:03:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P1-SOURCE-001",
+    "title": "News/social/alpha DB connector expansion",
+    "summary_zh": "擴充 news/social/alpha DB connector；所有資料需落到 SourceRecord/EvidenceBundle，保留 ACL、license、available_time、entitlement 與 PIT 語意。",
+    "phase": "P1 Wave 6",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "P1-SEARCH-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_sa/SA-16_data_search_external_source_gap_analysis.md",
+      "docs/04/pantheon_sa/SA-20_v2_risk_register_corrected.md"
+    ],
+    "acceptance": [
+      "news/social/alpha connector emits SourceRecord/EvidenceBundle",
+      "license/entitlement/available_time and PIT semantics enforced",
+      "no connector can feed Lean or broker directly"
+    ],
+    "next": "Finalized after Claude review approval. Task commit 2dbfbe5 contains governed news/social/alpha_db connector expansion, EvidenceBundle available_time/entitlement preservation, reviewer note, and acceptance note. Verification rerun: python3 -m pytest services/source_ingestion -q (52 passed); python3 -m pytest services/knowledge/evidence services/search/tests/test_governed_search.py services/search/test_index_pipeline.py services/search/tests/test_retrieval_rank_filter_cutoff_contract.py -q (61 passed); git diff --check -- scoped P1-SOURCE-001 files (passed).",
+    "last_update": "2026-05-01T14:03:05Z",
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "wave": "6",
+      "source_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "review_notes_zh": [
+      "審查通過",
+      "所有三項 acceptance criteria 通過：news/social/alpha_db 連接器正確發出 SourceRecord/EvidenceBundle；PIT、entitlement、license、ACL 欄位在 connector 與 record 兩層均強制執行；Lean/broker/runtime 直接路由被 allowed_use 與 route-key 兩道檢查拒絕。"
+    ],
+    "review_file": ".orchestrator/chair-reviews/P1-SOURCE-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T14:03:05Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "2dbfbe56ece2de8e5d50742d9b9766be379e85eb",
+      "commit_subject": "P1-SOURCE-001 govern external source connectors",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "P1-SOURCE-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 141,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P1-SOURCE-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented governed news/social/alpha DB connector expansion: SourceRecord/EvidenceBundle available_time, entitlement, ACL/license and PIT preservation; direct Lean/broker/runtime targets rejected. Verification: python3 -m pytest services/source_ingestion -q (52 passed); focused evidence/search suite (61 passed); scoped diff/whitespace checks passed.",
+      "status": "done",
+      "created_at": "2026-05-01T13:49:04Z",
+      "resolved_at": "2026-05-01T13:57:09Z"
+    },
+    {
+      "task_id": "P1-SOURCE-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved and returned to Codex (owner) for finalization. All acceptance criteria pass: governed source-record emission, PIT/entitlement/ACL enforcement, and direct Lean/broker route rejection verified. 52 source-ingest tests + 61 evidence/search tests pass.",
+      "status": "done",
+      "created_at": "2026-05-01T13:57:09Z",
+      "resolved_at": "2026-05-01T14:03:05Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "task_id": "OPS-002",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-002",
+    "title": "Build JSON status pipeline",
+    "phase": "Foundation",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [
+      "OPS-001"
+    ],
+    "artifacts": [
+      "ai-status.json",
+      "ai-activity-log.jsonl",
+      "scripts/ai-status.sh"
+    ],
+    "acceptance": [
+      "state updates through script",
+      "history append-only",
+      "current-work regenerated from JSON state"
+    ],
+    "next": "Use script-driven updates only",
+    "last_update": "2026-04-01T04:24:00Z",
+    "summary_zh": "建立 JSON 狀態與歷史紀錄機制，讓任務狀態、交接、阻塞都能被機器與人同步讀取。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

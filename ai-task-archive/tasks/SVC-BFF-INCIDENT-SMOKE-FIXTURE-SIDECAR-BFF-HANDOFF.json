@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-30T14:00:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-BFF-INCIDENT-SMOKE-FIXTURE BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-BFF-INCIDENT-SMOKE-FIXTURE，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "BFF Service-backed Read Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/SVC-BFF-INCIDENT-SMOKE-FIXTURE/SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed support-only BFF/frontend handoff sidecar after Claude approval; artifact documents query gaps, operator journey, and parent smoke evidence without canonical/runtime changes.",
+    "last_update": "2026-04-30T14:00:44Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-BFF-INCIDENT-SMOKE-FIXTURE",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Claude review approved sidecar packet 0f4e012 and closeout 9c79ad1. Support-only artifact; no canonical/runtime implementation changed; smoke evidence and query-gap notes are suitable for parent handoff."
+    ],
+    "review_file": ".orchestrator/reviews/SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T14:00:44Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "9c79ad11ef9cf1e3cd725685e3e482519a24d503",
+      "commit_subject": "SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF finalize review",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 9,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 68,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Gemini2",
+      "message": "Helper-claimed by Gemini2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:08:53Z",
+      "resolved_at": "2026-04-30T13:37:58Z"
+    },
+    {
+      "task_id": "SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF",
+      "from": "Gemini2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Gemini2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-30T13:37:58Z",
+      "resolved_at": "2026-04-30T13:51:33Z"
+    },
+    {
+      "task_id": "SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Gemini2",
+      "message": "Sidecar BFF/frontend handoff packet committed in 0f4e012; smoke verified with PANTHEON_BFF_AUTH_STUB=true python3 services/control-plane/bff/smoke_test_incident.py (21 passed, 0 failed). Please review support artifact scope and parent query-gap notes.",
+      "status": "done",
+      "created_at": "2026-04-30T13:56:30Z",
+      "resolved_at": "2026-04-30T14:00:30Z"
+    },
+    {
+      "task_id": "SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Claude review approved sidecar packet 0f4e012 and closeout 9c79ad1; owner may finalize with review artifact .orchestrator/reviews/SVC-BFF-INCIDENT-SMOKE-FIXTURE-SIDECAR-BFF-HANDOFF-review-claude.md.",
+      "status": "done",
+      "created_at": "2026-04-30T14:00:30Z",
+      "resolved_at": "2026-04-30T14:00:45Z"
+    }
+  ],
+  "blockers": []
+}

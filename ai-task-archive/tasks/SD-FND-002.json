@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "task_id": "SD-FND-002",
+  "archived_at": "2026-04-27T16:03:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SD-FND-002",
+    "title": "Adopt foundation envelope in BFF and runtime-manager pilot",
+    "summary_zh": "把 shared foundation envelope 接到一條 BFF command path 與一條 runtime-manager action path。",
+    "phase": "SD Residual / Foundations",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SD-FND-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-27-sd-materializable-execution-task-packet.md",
+      "docs/reviews/2026-04-27-sd-fnd-002-codex-handoff.md"
+    ],
+    "acceptance": [
+      "Follow packet acceptance boundary"
+    ],
+    "next": "Owner finalized approved SD-FND-002. Shared foundation envelope pilot is committed at 94264bc with BFF and runtime-manager adoption evidence; tests passed 59/59.",
+    "last_update": "2026-04-27T16:03:25Z",
+    "task_class": "sd_materialization",
+    "source_packet": "docs/reviews/2026-04-27-sd-materializable-execution-task-packet.md",
+    "auto_dispatch_boundary": "respect_dependencies_and_human_gates",
+    "review_notes_zh": [
+      "Foundation envelope 已正確接到 BFF /api/v1/operator/commands 與 runtime-manager kill-switch 兩條 pilot path：TraceContext 從 X-Trace-Id/X-Correlation-Id/X-Idempotency-Key headers 傳遞、CommandEnvelope/IdempotencyRecord/PolicyDecision/AuditAction 都有產生並落地、duplicate submission 透過 receipt_id replay 不會產生第二筆 command/audit、不同 payload 但同 idempotency key 時回 IDEMPOTENCY_CONFLICT；policy denial 與 validation error 已用共享 ErrorEnvelope 包裝且帶 trace。Reviewer 重跑 pytest services/control-plane/bff/test_governance_command_submission.py services/runtime-manager/test_runtime_manager.py services/foundation/tests -q => 59 passed in 2.96s，與 owner handoff 宣稱的 59 passed in 3.08s 一致。",
+      "本次 diff 同時帶入三組 SD-FND-002 packet 範圍以外但相鄰的 hardening：(1) BFF CORS middleware (受 PANTHEON_BFF_CORS_ORIGINS gating)；(2) _ensure_live_broker_scope_allowed live broker guard (受 PANTHEON_LIVE_BROKER_ENABLED gating)；(3) runtime-manager kill_switch.json 的 atomic tmp+rename 寫入與 corrupt-file quarantine。三者各自有測試覆蓋且不破壞既有測試，故不阻擋本次 review，但建議後續以獨立任務追蹤，避免 foundation 採納 與 broker-scope policy/kill-switch persistence reform 混在同一條改動線上。",
+      "Kill-switch 持久化順序由「binding action 之前」改為「binding action 之後」，仍滿足 §11.2 durable-write-precede-ack（return 前已 persist），但 crash 半路時會少落一筆 idempotency ledger，建議後續補 crash-recovery 測試。",
+      "Acceptance 五項皆滿足，approved。"
+    ],
+    "review_file": "docs/reviews/2026-04-27-sd-fnd-002-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-27T16:03:25Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "94264bc36a4c61f912e098f3911a3591cb4ac6b9",
+      "commit_subject": "SD-FND-002 adopt foundation envelope pilots",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SD-FND-002",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 141,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SD-FND-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-27T14:49:32Z",
+      "resolved_at": "2026-04-27T15:08:55Z"
+    },
+    {
+      "task_id": "SD-FND-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-27T15:08:55Z",
+      "resolved_at": "2026-04-27T15:09:40Z"
+    },
+    {
+      "task_id": "SD-FND-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "SD-FND-002 ready for review. BFF operator command submission and runtime-manager kill-switch dispatch now adopt shared foundation envelopes with trace propagation, idempotency replay/conflict handling, audit emission, policy-denial and validation error envelopes. Handoff: docs/reviews/2026-04-27-sd-fnd-002-codex-handoff.md. Verification: pytest services/control-plane/bff/test_governance_command_submission.py -q; pytest services/runtime-manager/test_runtime_manager.py -q; pytest services/foundation/tests -q.",
+      "status": "done",
+      "created_at": "2026-04-27T15:28:31Z",
+      "resolved_at": "2026-04-27T15:33:02Z"
+    },
+    {
+      "task_id": "SD-FND-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-27T15:33:02Z",
+      "resolved_at": "2026-04-27T15:37:10Z"
+    },
+    {
+      "task_id": "SD-FND-002",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1777315800,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_dis",
+      "status": "done",
+      "created_at": "2026-04-27T15:37:10Z",
+      "resolved_at": "2026-04-27T15:39:02Z"
+    },
+    {
+      "task_id": "SD-FND-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: - 2026-04-27T15:37:23Z · Orchestrator · task_reassigned · Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":",
+      "status": "done",
+      "created_at": "2026-04-27T15:39:02Z",
+      "resolved_at": "2026-04-27T16:00:17Z"
+    },
+    {
+      "task_id": "SD-FND-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Foundation envelope adoption verified on both pilot paths (BFF /api/v1/operator/commands and runtime-manager kill_switch); 59/59 tests rerun green; bundled out-of-packet hardening tracked in review notes.",
+      "status": "done",
+      "created_at": "2026-04-27T16:00:17Z",
+      "resolved_at": "2026-04-27T16:00:49Z"
+    },
+    {
+      "task_id": "SD-FND-002",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Apr 28th, 2026 6:21 PM.",
+      "status": "done",
+      "created_at": "2026-04-27T16:00:50Z",
+      "resolved_at": "2026-04-27T16:03:25Z"
+    }
+  ],
+  "blockers": []
+}

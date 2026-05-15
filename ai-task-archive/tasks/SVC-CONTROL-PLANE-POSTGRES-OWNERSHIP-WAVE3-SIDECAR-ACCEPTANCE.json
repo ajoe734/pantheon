@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "task_id": "SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-30T03:09:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3-SIDECAR-ACCEPTANCE",
+    "title": "Prepare SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3 acceptance packet and dependency map",
+    "summary_zh": "平行支援 SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Production Readiness / Data Ownership",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-POSTGRES-PRODUCTION-OWNERSHIP-WAVE2"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3/SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Acceptance packet finalized and committed (eedc3f5). Reviewer Codex approved: 13-table/7-service inventory verified, 189 tests passed, no canonical truth modified. Isolated task-scoped commit created.",
+    "last_update": "2026-04-30T03:09:00Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar acceptance packet 維持 support-only 範圍，未修改 canonical truth 或 runtime；已核對 DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md 4.2 的 13-table/7-service inventory、governance 與 memory env-gated Postgres builder、prod-control env Postgres vars、parent task archive 433b39e/189-test verification，並修正 BFF downstream status 為 done。"
+    ],
+    "review_file": "support/sidecars/SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3/SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T03:09:00Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "eedc3f5663f473e4a1730fa7aa820e9d2c8cd223",
+      "commit_subject": "SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3-SIDECAR-ACCEPTANCE finalize acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Verification": "189 passed (focused test suite); compose config exit 0; reviewer confirmed inventory matches DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md section 4.2."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 42,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 13,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T02:27:54Z",
+      "resolved_at": "2026-04-30T02:29:14Z"
+    },
+    {
+      "task_id": "SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T02:40:04Z",
+      "resolved_at": "2026-04-30T02:48:09Z"
+    },
+    {
+      "task_id": "SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T02:48:08Z",
+      "resolved_at": "2026-04-30T02:49:29Z"
+    },
+    {
+      "task_id": "SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T02:54:09Z",
+      "resolved_at": "2026-04-30T02:55:54Z"
+    },
+    {
+      "task_id": "SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet ready for review. Artifact: support/sidecars/SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3/SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3-SIDECAR-ACCEPTANCE.md — covers 13-table inventory across 7 services, all 6 acceptance criteria with evidence, dependency map, verification commands (189 passed), and quality notes. No canonical truth was modified.",
+      "status": "done",
+      "created_at": "2026-04-30T02:58:55Z",
+      "resolved_at": "2026-04-30T03:07:18Z"
+    },
+    {
+      "task_id": "SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. Support packet verified and updated with reviewer disposition; Claude should finalize this sidecar with a task-scoped commit and scripts/ai-status.sh done.",
+      "status": "done",
+      "created_at": "2026-04-30T03:07:18Z",
+      "resolved_at": "2026-04-30T03:09:00Z"
+    }
+  ],
+  "blockers": []
+}

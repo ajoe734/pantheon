@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "task_id": "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC",
+  "archived_at": "2026-04-29T22:17:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC",
+    "title": "Sync activation-gated OSS truth after dormant scaffold work",
+    "summary_zh": "在 dormant/pre-activation scaffold 完成後，同步 Deferred OSS map、maturity matrix、checklist、current-work，使 code truth 區分已開發 scaffold 與仍未啟用 production activation。",
+    "phase": "Planning Truth / Activation-Gated Code Alignment",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-OPENCLAW-RUNTIME-ADOPTION-SCAFFOLD",
+      "SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT",
+      "SVC-TRL-GATED-PREACTIVATION-PREFLIGHT",
+      "SVC-FINRL-DORMANT-SCAFFOLD-CLOSEOUT",
+      "SVC-RLLIB-RAYTUNE-DORMANT-SCAFFOLD-CLOSEOUT",
+      "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+      "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE",
+      "SVC-OSS-DORMANT-COMPOSE-PROFILES",
+      "SVC-OSS-DORMANT-SMOKE-MATRIX"
+    ],
+    "artifacts": [
+      "services/learning/DEFERRED_OSS_ACTIVATION_MAP.md",
+      "RESEARCH_BACKEND_MATURITY_MATRIX.md",
+      "OSS_INTEGRATION_CHECKLIST.md",
+      "current-work.md",
+      "services/registry/experiments/WANDB_ACTIVATION.md",
+      "OPENCLAW_RUNTIME_CONTRACT.md"
+    ],
+    "acceptance": [
+      "docs do not claim missing adapters when dormant code exists",
+      "docs do not claim production activation for gated rows",
+      "current-work records not enabled but development allowed truth",
+      "all future activation gates remain explicit and dated"
+    ],
+    "next": "Done: activation-gated OSS truth sync finalized in commit 036daa7. Closeout verification rerun: git diff --check on task docs/evidence; python3 scripts/smoke_dormant_oss_matrix.py --json-out /tmp/SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC.closeout.matrix.json => 7/7 acceptable, gate_state=closed 7/7, activated=false 7/7; stale wording rg scan returned no matches. Docs now distinguish landed dormant scaffolds from future production activation gates without opening broker/live/capital/registry/governance paths.",
+    "last_update": "2026-04-29T22:17:54Z",
+    "review_notes_zh": [
+      "審查通過：7/7 dormant OSS rows gate_state=closed activated=false，docs正確區分scaffold存在與production activation，無任何gated路徑被開啟",
+      "獨立重跑smoke matrix確認通過",
+      "返還Codex2進行closeout"
+    ],
+    "review_file": ".orchestrator/chair-reviews/20260429-review-claude-SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T22:17:54Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "036daa751fe3af428835728eaf427548266c92b4",
+      "commit_subject": "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC finalize gated truth",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC",
+        "Reviewer": "Claude",
+        "Verification": "git diff --check on task docs/evidence; python3 scripts/smoke_dormant_oss_matrix.py --json-out /tmp/SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC.closeout.matrix.json (7/7 closed, activated=false); stale wording rg scan returned no matches."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 62,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 26,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Chair reassigned owner from Claude2 to Claude: Claude2 is rate-limit paused until 2026-04-30T13:30:00Z; Claude is unpaused, idle, and has the same execution/governance-review lane, while Codex can remain reviewer.. Task returned to todo for a fresh run.",
+      "status": "done",
+      "created_at": "2026-04-29T22:07:25Z",
+      "resolved_at": "2026-04-29T22:09:02Z"
+    },
+    {
+      "task_id": "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-29T22:09:02Z",
+      "resolved_at": "2026-04-29T22:10:26Z"
+    },
+    {
+      "task_id": "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for Claude review: synced activation-gated OSS truth after dormant scaffold closeouts. Task-scoped docs updated: OPENCLAW_RUNTIME_CONTRACT.md, RESEARCH_BACKEND_MATURITY_MATRIX.md, OSS_INTEGRATION_CHECKLIST.md, services/learning/DEFERRED_OSS_ACTIVATION_MAP.md, and support/sidecars/SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC/SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC-EVIDENCE.md. Truth preserved: dormant/pre-activation scaffolds may exist, but OpenClaw broker/live/capital paths, Qlib/TRL production activation, RL train/eval, registry/governance writes, and SDK-backed/networked W&B remain gated. Verification: git diff --check on task docs passed; python3 scripts/smoke_dormant_oss_matrix.py --json-out /tmp/SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC.matrix.json passed with 7/7 gate_state=closed and activated=false; stale wording rg scan returned no matches. Worktree has unrelated pre-existing orchestrator/archive dirty files; review task-scoped files only.",
+      "status": "done",
+      "created_at": "2026-04-29T22:13:40Z",
+      "resolved_at": "2026-04-29T22:16:22Z"
+    },
+    {
+      "task_id": "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Claude review approved: independent smoke matrix rerun 7/7 gate_state=closed activated=false; all docs correctly distinguish dormant scaffold from production activation; no gated paths opened; return to Codex2 for closeout",
+      "status": "done",
+      "created_at": "2026-04-29T22:16:22Z",
+      "resolved_at": "2026-04-29T22:17:54Z"
+    }
+  ],
+  "blockers": []
+}

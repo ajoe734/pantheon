@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-23T16:22:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-CW04-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare APP-003-CW04-PUBLICATION-REPLAY-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 APP-003-CW04-PUBLICATION-REPLAY-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / Frontend Publication Replay",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "APP-003-CW04-FRONTEND-HANDOFF-001"
+    ],
+    "artifacts": [
+      "support/sidecars/APP-003-CW04-PUBLICATION-REPLAY-001/APP-003-CW04-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the support-only acceptance packet after reviewer approval. Packet now matches the live replay-close evidence: Pantheon response remains replay-clean-and-contract-aligned with can_close true, origin/pkt-004-detail-fix resolves to 675f1cc59be537455e776113be9ad8a45fa44208, both front request files pin source_commit c94f63082eae1667ed919353d62c85180d7bafba, and the Pantheon CW-04 contract pytest stays 7 passed. Parent owner may absorb this support packet separately.",
+    "last_update": "2026-04-23T16:22:48Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-CW04-PUBLICATION-REPLAY-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar acceptance packet 與 docs/reviews、frontend-feedback response、以及 sibling front repo 重新驗證結果一致；目前剩餘 blocker 仍僅是 replay-clean Git-visible publication transport。",
+      "Packet 維持 support-only 範圍，未重開 CW-04 的 Pantheon BFF、schema、或 runtime 實作工作。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-23T16:22:48Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "74ebc397cea0a1ef348614fe3fdc248400058112",
+      "commit_subject": "APP-003-CW04-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE finalize checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-CW04-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1184,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support acceptance packet is ready at support/sidecars/APP-003-CW04-PUBLICATION-REPLAY-001/APP-003-CW04-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE.md. It confirms APP-003-CW04-FRONTEND-HANDOFF-001 already closed the handoff publication boundary, Pantheon-side CW-04 contract truth remains complete, and the only unresolved dependency is the sibling front repo's replay-clean Git-visible transport for the reviewed memo pages, request pair, and feedback bundle.",
+      "status": "done",
+      "created_at": "2026-04-23T13:36:24Z",
+      "resolved_at": "2026-04-23T13:38:43Z"
+    },
+    {
+      "task_id": "APP-003-CW04-PUBLICATION-REPLAY-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet verified. Scope remains support-only, and current evidence still narrows the unresolved CW-04 blocker to the sibling front repo's replay-clean Git-visible publication transport.",
+      "status": "done",
+      "created_at": "2026-04-23T13:38:43Z",
+      "resolved_at": "2026-04-23T16:22:49Z"
+    }
+  ],
+  "blockers": []
+}

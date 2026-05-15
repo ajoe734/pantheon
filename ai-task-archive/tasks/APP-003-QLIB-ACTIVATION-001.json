@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "APP-003-QLIB-ACTIVATION-001",
+  "archived_at": "2026-04-24T19:34:17Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-QLIB-ACTIVATION-001",
+    "title": "Clear Qlib production activation gate",
+    "summary_zh": "清 Qlib production activation gate：資料門檻、RS-003 replication gate、第一個 governed LightGBM alpha packet。",
+    "phase": "Phase 5",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/research/qlib/",
+      "integrations/qlib/",
+      "OSS_INTEGRATION_CHECKLIST.md"
+    ],
+    "acceptance": [
+      "Qlib activation criteria are satisfied or truthfully blocked with evidence",
+      "First governed LightGBM alpha activation packet is prepared",
+      "Canonical OSS docs and evidence agree on Qlib activation status"
+    ],
+    "next": "Owner finalized approved Qlib activation gate. Repo-local adapter and activation packet are committed; smoke was revalidated on 2026-04-24 (14 unit tests + smoke assertions OK); Qlib truth remains smoke-tested and production-blocked on RS-003 candidate, governed dataset proof, and target StrategySpec binding.",
+    "last_update": "2026-04-24T19:34:17Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Qlib activation packet 維持 smoke-tested / data-gated truth；review 階段已補上 real Qlib backend 的 dataset-contract 實作與回歸測試，並把 smoke evidence 重驗證日期與可變 checksum 描述寫實。"
+    ],
+    "review_file": "docs/reviews/2026-04-24-app-003-qlib-activation-001-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T19:34:17Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "9ee259fe28a39c9ce3c354fdd0ed4ea264233c62",
+      "commit_subject": "APP-003-QLIB-ACTIVATION-001 clear Qlib production activation gate",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-QLIB-ACTIVATION-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1178,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-QLIB-ACTIVATION-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T17:06:12Z",
+      "resolved_at": "2026-04-24T17:13:55Z"
+    },
+    {
+      "task_id": "APP-003-QLIB-ACTIVATION-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T17:13:54Z",
+      "resolved_at": "2026-04-24T18:52:14Z"
+    },
+    {
+      "task_id": "APP-003-QLIB-ACTIVATION-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review. Added integrations/qlib/activation_packet.md to formalize the first governed LightGBM activation bundle and current blockers, synced OSS canonical docs (OSS_INTEGRATION_CHECKLIST.md, DEFERRED_OSS_ACTIVATION_MAP.md, RESEARCH_BACKEND_MATURITY_MATRIX.md, integrations/qlib/integration.md) to the same smoke-tested-but-data-gated truth, and revalidated on 2026-04-24 that python3 services/research/qlib/smoke_test.py passes and python3 -m unittest discover -s services/research/qlib -p 'test_*.py' passes (13 tests).",
+      "status": "done",
+      "created_at": "2026-04-24T18:55:19Z",
+      "resolved_at": "2026-04-24T19:18:28Z"
+    },
+    {
+      "task_id": "APP-003-QLIB-ACTIVATION-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: Qlib remains smoke-tested and data-gated; the real Qlib backend now follows the official dataset contract, smoke evidence was refreshed on 2026-04-24, and the activation packet truthfully preserves the RS-003 / dataset / StrategySpec blockers. Review doc at docs/reviews/2026-04-24-app-003-qlib-activation-001-codex-review.md. Returned to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-24T19:18:28Z",
+      "resolved_at": "2026-04-24T19:34:18Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "task_id": "SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER",
+  "archived_at": "2026-04-30T05:18:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER",
+    "title": "Implement W&B offline and gated sync adapter",
+    "summary_zh": "新增真正 W&B adapter：預設 offline/local run store，不匯入 SDK 或連線；online sync 必須明確 gate，run/artifact ref 能被 registry/evaluator 查到。",
+    "phase": "OSS Activation-Ready Development",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+      "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE"
+    ],
+    "artifacts": [
+      "services/registry/experiments",
+      "services/research-worker-gateway",
+      "services/evaluation",
+      "services/control-plane/bff",
+      "services/learning/DEFERRED_OSS_ACTIVATION_MAP.md"
+    ],
+    "acceptance": [
+      "default backend remains non-networked and fail-closed",
+      "WandB SDK import happens only in explicit gated adapter path",
+      "offline local run store records metrics params artifact refs and checksums",
+      "online sync requires separate WANDB online gate and safe error policy",
+      "BFF and registry can read run refs without activating online sync"
+    ],
+    "next": "Closeout finalized: committed offline W&B local run store and gated online-sync adapter in 96c62f7; reviewer Claude approved all acceptance criteria; focused verification rerun 14+28+7+2 tests plus wandb smoke passed.",
+    "last_update": "2026-04-30T05:18:04Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-materialization-20260430",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：五項 acceptance criteria 全部達標，14+28+7+2 測試通過，offline smoke 通過，無 SDK import，online sync 雙層 fail-closed",
+      "後續追蹤：Codex2 作為 owner 執行 closeout finalization，task-scoped commit，再以 ai-status.sh done 收尾"
+    ],
+    "review_file": ".orchestrator/chair-reviews/SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T05:18:04Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "96c62f7570f2dc6248518afa618fc199f3f11e60",
+      "commit_subject": "SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER finalize offline gated sync",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER",
+        "Reviewer": "Claude",
+        "Verification": "python3 -m pytest services/registry/experiments/test_adapter.py -q (14 passed); python3 -m pytest services/evaluation/tests/test_evaluator.py -q (28 passed); python3 -m pytest services/research-worker-gateway/tests/test_research_worker_gateway_rejection_policy.py -q (7 passed); python3 -m pytest services/control-plane/bff/test_research_oss_preactivation_contract.py -q (2 passed); python3 services/registry/experiments/smoke_test.py --backend wandb (passed)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 40,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 8,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T04:28:15Z",
+      "resolved_at": "2026-04-30T04:29:49Z"
+    },
+    {
+      "task_id": "SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T04:29:48Z",
+      "resolved_at": "2026-04-30T04:31:19Z"
+    },
+    {
+      "task_id": "SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implemented offline W&B local run store and gated sync semantics: no SDK import/network path, explicit offline-store flag, local run/artifact refs surfaced in promoted metadata and evaluator audit fields. Verification: python3 -m pytest services/registry/experiments/test_adapter.py services/evaluation/tests/test_evaluator.py; python3 services/registry/experiments/smoke_test.py --backend wandb; python3 -m pytest services/research-worker-gateway/tests/test_research_worker_gateway_rejection_policy.py services/control-plane/bff/test_research_oss_preactivation_contract.py.",
+      "status": "done",
+      "created_at": "2026-04-30T04:36:30Z",
+      "resolved_at": "2026-04-30T04:57:58Z"
+    },
+    {
+      "task_id": "SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all 5 acceptance criteria met, 51 tests passed, no SDK import in offline path, online sync doubly fail-closed. Returned to Codex2 for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-04-30T04:57:58Z",
+      "resolved_at": "2026-04-30T05:18:04Z"
+    }
+  ],
+  "blockers": []
+}

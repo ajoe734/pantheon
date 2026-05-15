@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "task_id": "SVC-RESEARCH-REPLICATION-SMOKE-FIX",
+  "archived_at": "2026-04-30T13:51:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-RESEARCH-REPLICATION-SMOKE-FIX",
+    "title": "Research replication smoke entrypoint fix",
+    "summary_zh": "Research replication unit tests pass but direct smoke fails because entrypoint imports mix bare module and package-relative imports. Make smoke runnable from repo root and keep package tests green.",
+    "phase": "Research Pre-activation Hardening",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/research/replication/smoke_test.py",
+      "services/research/replication/gate.py",
+      "services/research/replication/__init__.py",
+      "docs"
+    ],
+    "acceptance": [
+      "python3 services/research/replication/smoke_test.py passes from repo root",
+      "module invocation is supported or documented",
+      "PYTHONPATH=services/research python3 -m pytest -q services/research/replication/test_gate.py remains green"
+    ],
+    "next": "Closed after Codex approval. Commit c7257f6 fixes direct repo-root and module smoke entrypoints; direct smoke and module smoke both pass 5/5, and focused replication gate pytest passes 24 tests. Review artifact recorded at .orchestrator/reviews/SVC-RESEARCH-REPLICATION-SMOKE-FIX-review-codex.md.",
+    "last_update": "2026-04-30T13:51:16Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-fulltest-materialization-20260430",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Codex review approved commit c7257f6. Direct script smoke and module invocation both pass 5/5; focused replication gate pytest passes 24 tests. Existing datetime.utcnow deprecation warnings are outside this import-entrypoint task scope."
+    ],
+    "review_file": ".orchestrator/reviews/SVC-RESEARCH-REPLICATION-SMOKE-FIX-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T13:51:16Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "c7257f6f0c1cf937b4b253c0dfcecabb99dcd73c",
+      "commit_subject": "SVC-RESEARCH-REPLICATION-SMOKE-FIX fix smoke entrypoint imports",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-RESEARCH-REPLICATION-SMOKE-FIX",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 9,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 61,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-RESEARCH-REPLICATION-SMOKE-FIX",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:21:15Z",
+      "resolved_at": "2026-04-30T13:21:32Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-REPLICATION-SMOKE-FIX",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:21:32Z",
+      "resolved_at": "2026-04-30T13:28:44Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-REPLICATION-SMOKE-FIX",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:28:33Z",
+      "resolved_at": "2026-04-30T13:39:46Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-REPLICATION-SMOKE-FIX",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Smoke entrypoint fixed in commit c7257f6: package imports plus repo-root sys.path setup. Direct script, module invocation, and focused pytest passed. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-04-30T13:49:20Z",
+      "resolved_at": "2026-04-30T13:49:24Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-REPLICATION-SMOKE-FIX",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Smoke entrypoint fixed: bare imports replaced with package-relative imports and sys.path insertion added. All 3 acceptance criteria pass (direct script 5/5, module invocation 5/5, pytest 24/24). Commit c7257f6. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-04-30T13:49:24Z",
+      "resolved_at": "2026-04-30T13:50:01Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-REPLICATION-SMOKE-FIX",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Codex review approved commit c7257f6; direct smoke, module smoke, and focused pytest all pass. Owner may finalize with review artifact .orchestrator/reviews/SVC-RESEARCH-REPLICATION-SMOKE-FIX-review-codex.md.",
+      "status": "done",
+      "created_at": "2026-04-30T13:50:01Z",
+      "resolved_at": "2026-04-30T13:51:16Z"
+    }
+  ],
+  "blockers": []
+}

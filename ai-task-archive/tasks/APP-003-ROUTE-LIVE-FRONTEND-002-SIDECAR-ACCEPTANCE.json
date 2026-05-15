@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-22T15:55:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-ACCEPTANCE",
+    "title": "Prepare APP-003-ROUTE-LIVE-FRONTEND-002 acceptance packet and dependency map",
+    "summary_zh": "平行支援 APP-003-ROUTE-LIVE-FRONTEND-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / Frontend Activation Follow-through",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Checkpoint: acceptance packet finalized as support-only delivery. Committed reviewer-alignment fixes for the sidecar acceptance packet and parent support note in 2b8ddf1; no canonical/runtime changes.",
+    "last_update": "2026-04-22T15:55:55Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-ROUTE-LIVE-FRONTEND-002",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Acceptance packet 內容真實且僅新增支援檔；八個 module-local FRONTEND_CHANGE_SPEC.md 全部實際存在，sibling lane 邊界正確，sidecar 目錄為全新未追蹤（無 canonical 編輯）",
+      "Cosmetic-only observation: packet 標頭與 parent SUPPORT.md 仍寫 reviewer=Codex2，但 ai-status.json 實際顯示 Claude2（parent）/ Claude（本 sidecar）。此為先前遺留的命名 drift，非本 slice 新增問題，owner 可在 finalization 時順手校正或留待後續 doc-sync 處理",
+      "Approved as support-only; Codex 可直接 finalize 為 done。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-22T15:55:55Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "2b8ddf1c7844e3e84d84c46d8793efa6af1a56c6",
+      "commit_subject": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-ACCEPTANCE align reviewer metadata in support packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1158,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T12:51:51Z",
+      "resolved_at": "2026-04-22T12:52:22Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet is ready at support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-ACCEPTANCE.md. It packages the eight-module activation matrix, the TW-02 dependency chain, the sibling-lane boundary against APP-003-ROUTE-LIVE-FRONTEND-001, and fresh verification from pytest -q services/control-plane/bff/test_tw02_parameter_controls_contract.py (5 passed) plus python3 -m json.tool docs/examples/TW-02-parameter-controls.json (OK). Support-only scope preserved; no canonical/runtime edits.",
+      "status": "done",
+      "created_at": "2026-04-22T12:56:26Z",
+      "resolved_at": "2026-04-22T14:42:28Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Acceptance packet is ready at support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-ACCEPTANCE.md. It packages the eight-module activation matrix, the TW-02 dependency chain, the sibling-lane boundary against APP-003-ROUTE-LIVE-FRONTEND-001, and fresh verification from pytest -q services/control-plane/bff/test_tw02_parameter_controls_contract.py (5 passed) plus python3 -m json.tool docs/examples/TW-02-parameter-controls.json (OK). Support-only scope preserved; no canonical/runtime edits.",
+      "status": "done",
+      "created_at": "2026-04-22T14:42:28Z",
+      "resolved_at": "2026-04-22T15:52:50Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewer approved: support-only acceptance packet verified truthful against repo state; all eight module packets exist, scope boundary vs -001 intact, no canonical edits. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-22T15:52:50Z",
+      "resolved_at": "2026-04-22T15:55:55Z"
+    }
+  ],
+  "blockers": []
+}

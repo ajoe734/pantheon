@@ -1,0 +1,34 @@
+{
+  "feature_id": "PKT-010-runtime-state-board",
+  "status": "blocked",
+  "backend_commit": "3ef4bbe7d9f76dd8fad33867ef50f756e2a2e035",
+  "bff_contract_version": "pantheon-bff@3ef4bbe7d9f76dd8fad33867ef50f756e2a2e035",
+  "source_payload": ".coordination/requests/PKT-010-runtime-state-board-ui-done.yaml",
+  "source_commit": "be42f22c2388076af4bb7b1f1d4209aaf90af6a8",
+  "frontend_feedback_source_commit": "be42f22c2388076af4bb7b1f1d4209aaf90af6a8",
+  "verified_front_workspace_head": "2779d237736b6a1d02ef0e4a4c4f54a7983bb70c",
+  "review_file": ".coordination/reviews/PKT-010-runtime-state-board-review.md",
+  "feedback_request": ".coordination/requests/PKT-010-runtime-state-board-frontend-feedback.yaml",
+  "endpoints": [
+    "GET /api/v1/operator/runtime-state"
+  ],
+  "contract_paths": [
+    "docs/bff/PKT-010-runtime-state-board.md",
+    "docs/examples/PKT-010-runtime-state-board.json",
+    "docs/screens/PKT-010-runtime-state-board.md",
+    "docs/pantheon-handoffs/PKT-010-runtime-state-board/FRONTEND_CHANGE_SPEC.md"
+  ],
+  "pantheon_api_gap": true,
+  "verification_evidence": [
+    "Sibling front production build passed: npm run build",
+    "Targeted Pantheon PKT-010 contract tests passed: python3 -m pytest services/control-plane/bff/test_pkt010_runtime_state_board_contract.py -q",
+    "Direct local TestClient read of GET /api/v1/operator/runtime-state returned 200 OK with runtime_state=degraded and rollback_history=degraded in the current workspace",
+    "Front HEAD 2779d237736b6a1d02ef0e4a4c4f54a7983bb70c publishes request bodies that advertise source_commit=be42f22c2388076af4bb7b1f1d4209aaf90af6a8, but those exact request YAML bodies were introduced later than be42f22...",
+    "Pantheon still emits rollback_summary.href as /api/v1/runtimes/{runtime_id}/rollbacks while the PKT-010 contract has not yet locked truthful deployed owner-screen semantics for that path"
+  ],
+  "followup_scope": [
+    "Republish the canonical frontend-feedback and ui-done pair from one truthful immutable front commit that contains the PKT-010 request pair, feedback bundle, reviewed UI files, and any accepted rollback-route alias",
+    "Set both request payloads' source_commit to that same exact publication commit SHA",
+    "Publish or lock truthful rollback_summary.href semantics for the deployed operator environment, or revise the PKT-010 contract and example payload to describe the current API-looking href truthfully"
+  ]
+}

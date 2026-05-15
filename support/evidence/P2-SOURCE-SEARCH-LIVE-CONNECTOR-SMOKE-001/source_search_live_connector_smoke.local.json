@@ -1,0 +1,164 @@
+{
+  "checks": [
+    {
+      "name": "source-ingest.readyz",
+      "payload": {
+        "dependencies": {
+          "source_search_posture": {
+            "backends": {
+              "SOURCE_INGEST_EVIDENCE_BACKEND": "jsonl"
+            },
+            "enforced": false,
+            "errors": [],
+            "mode": "dev",
+            "object_store_configured": false,
+            "service": "source-ingest",
+            "status": "ok"
+          }
+        },
+        "details": {
+          "audit_path": "/tmp/pantheon-ss-smoke/source/source_ingest_audit.jsonl",
+          "connector_store_path": "/tmp/pantheon-ss-smoke/source/connector_config.jsonl",
+          "dlq_path": "/tmp/pantheon-ss-smoke/source/source_ingest_dlq.jsonl",
+          "frontier_backoff_seconds": 60,
+          "frontier_max_attempts": 2,
+          "scheduler_max_concurrency": 2,
+          "source_evidence_path": "/tmp/pantheon-ss-smoke/source_evidence.jsonl",
+          "source_search_posture": {
+            "backends": {
+              "SOURCE_INGEST_EVIDENCE_BACKEND": "jsonl"
+            },
+            "enforced": false,
+            "errors": [],
+            "mode": "dev",
+            "object_store_configured": false,
+            "service": "source-ingest",
+            "status": "ok"
+          },
+          "store_path": "/tmp/pantheon-ss-smoke/source/ingest_schedule.jsonl"
+        },
+        "live": true,
+        "metrics": {
+          "connector_count": 0,
+          "dlq_count": 0,
+          "evidence_item_count": 0,
+          "frontier_count": 0,
+          "posture_alert_count": 0,
+          "run_count": 0,
+          "service_up": 1,
+          "source_record_count": 0
+        },
+        "ready": true,
+        "service": "pantheon-source-ingest",
+        "status": "ok",
+        "timestamp": "2026-05-01T17:28:27Z"
+      },
+      "status": "passed"
+    },
+    {
+      "name": "search.readyz",
+      "payload": {
+        "dependencies": {
+          "source_search_posture": {
+            "backends": {
+              "SEARCH_EVIDENCE_BACKEND": "jsonl",
+              "SEARCH_INDEX_STORE_BACKEND": "jsonl"
+            },
+            "enforced": false,
+            "errors": [],
+            "mode": "dev",
+            "object_store_configured": false,
+            "service": "search",
+            "status": "ok"
+          }
+        },
+        "details": {
+          "evidence_store_path": "/tmp/pantheon-ss-smoke/source_evidence.jsonl",
+          "freshness_sla_seconds": 3600,
+          "index_store_path": "/tmp/pantheon-ss-smoke/search/search-index.jsonl",
+          "pipeline_retention_runs": 500,
+          "pipeline_store_path": "/tmp/pantheon-ss-smoke/search/search-pipeline.jsonl",
+          "source_search_posture": {
+            "backends": {
+              "SEARCH_EVIDENCE_BACKEND": "jsonl",
+              "SEARCH_INDEX_STORE_BACKEND": "jsonl"
+            },
+            "enforced": false,
+            "errors": [],
+            "mode": "dev",
+            "object_store_configured": false,
+            "service": "search",
+            "status": "ok"
+          }
+        },
+        "live": true,
+        "metrics": {
+          "indexed_object_count": 0,
+          "pipeline_run_count": 0,
+          "posture_alert_count": 0,
+          "service_up": 1,
+          "snapshot_count": 0
+        },
+        "ready": true,
+        "service": "pantheon-search",
+        "status": "ok",
+        "timestamp": "2026-05-01T17:28:27Z"
+      },
+      "status": "passed"
+    },
+    {
+      "connector_id": "conn-source-search-live-1777656507",
+      "name": "source.configure_connector",
+      "status": "passed"
+    },
+    {
+      "evidence_bundle_id": "evbundle-ingest-1c76816b00bc-78721c467129",
+      "ingest_run_id": "ingest-1c76816b00bc",
+      "name": "source.ingest",
+      "source_id": "src-ss-file-001",
+      "status": "passed"
+    },
+    {
+      "name": "source.source_record_readback",
+      "source_id": "src-ss-file-001",
+      "status": "passed"
+    },
+    {
+      "name": "source.evidence_bundle_readback",
+      "status": "passed"
+    },
+    {
+      "name": "search.index_refresh",
+      "status": "passed"
+    },
+    {
+      "citation_count": 1,
+      "evidence_bundle_id": "evbundle-ingest-1c76816b00bc-78721c467129",
+      "name": "search.gateway_query",
+      "result_id": "ko-evi-ff3938a8458b8183-64165ec4401d",
+      "status": "passed"
+    },
+    {
+      "name": "bff.ops_readback",
+      "reason": "BFF_URL not configured",
+      "status": "skipped"
+    },
+    {
+      "name": "openclaw_adapter.search_readback",
+      "reason": "OPENCLAW_ADAPTER_URL not configured",
+      "status": "skipped"
+    }
+  ],
+  "completed_at": "2026-05-01T17:28:27Z",
+  "feed": {
+    "allowed_url_prefix_count": 1,
+    "secret_ref_id": null,
+    "url_host": "",
+    "url_scheme": "file"
+  },
+  "mode": "credentialed_or_live_test",
+  "schema_version": "source_search_live_connector_smoke.v1",
+  "started_at": "2026-05-01T17:28:27Z",
+  "status": "passed",
+  "task_id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001"
+}

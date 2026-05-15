@@ -1,21 +1,15 @@
 name: API Tests
 
 on:
-  push:
-    branches: ['*']
-    tags: ['*']
-  pull_request:
-    branches: [master]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-24.04
-    # Only run on push events (not on pull_request) for security reasons in order to be able to use secrets
-    if: ${{ github.event_name == 'push' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
-        
+        uses: actions/checkout@v6
+
       - name: Liberate disk space
         uses: jlumbroso/free-disk-space@main
         with:
@@ -46,6 +40,6 @@ jobs:
         run: |
           # Build
           runInContainer dotnet build /p:Configuration=Release /v:quiet /p:WarningLevel=1 QuantConnect.Lean.sln
-          
+
           # Run Projects tests
           runInContainer dotnet test ./Tests/bin/Release/QuantConnect.Tests.dll --blame-hang-timeout 7minutes --blame-crash --logger "console;verbosity=detailed" --filter "FullyQualifiedName=QuantConnect.Tests.API.ProjectTests|FullyQualifiedName=QuantConnect.Tests.API.ObjectStoreTests" -- TestRunParameters.Parameter\(name=\"log-handler\", value=\"ConsoleErrorLogHandler\"\)

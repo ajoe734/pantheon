@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "PLAN-002",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PLAN-002",
+    "title": "Generalize discussion planning for reusable sessions",
+    "summary_zh": "把 discussion planning runtime 改成可重複使用的 session-driven 模式。",
+    "phase": "Planning Bootstrap",
+    "owner": "Qwen",
+    "reviewer": "Claude",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "status": "done",
+    "next": "PLAN-002 completed. Discussion planning runtime generalized to reusable session-driven profiles. Session profile system (generic/backend-completion/blueprint-gap-convergence), session pointer system, human gate enforcement, and 8 downstream BG tasks materialized. All 10 acceptance criteria verified via sidecar packet. Sidecar review: Qwen APPROVED, Claude CONFIRMED, Codex ENDORSED. Commit 65054fd.",
+    "last_update": "2026-04-13T02:14:34Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-13T02:14:34Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "65054fd9902381f93cfd0badc977673d582ad3f0",
+      "commit_subject": "PLAN-002: Generalize discussion planning for reusable sessions",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "ajoe734@local"
+      },
+      "commit_metadata": {
+        "- Sidecar review packet": "Qwen APPROVED, Claude CONFIRMED, Codex ENDORSED",
+        "LLM-Agent": "Qwen",
+        "Task-ID": "PLAN-002",
+        "Reviewer": "Claude",
+        "Co-authored-by": "Qwen-Coder <qwen-coder@alibabacloud.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 35,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    },
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+      "phase": "phase2",
+      "profile": "blueprint-gap-convergence",
+      "planning_dir": "docs/02-architecture/consensus/phase2",
+      "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-13T07:05:23Z",
+      "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PLAN-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented reusable planning session profiles in planning_state, preserved legacy phase1/blueprint-gap behavior, and prevented generic phase2 sessions from inheriting blueprint defaults. Verified with test_planning_state, test_ai_status, test_supervisor, and test_orchestrator_bundle.",
+      "status": "done",
+      "created_at": "2026-04-12T15:09:20Z",
+      "resolved_at": "2026-04-13T00:28:33Z"
+    },
+    {
+      "task_id": "PLAN-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "PLAN-002 APPROVED. Reviewed planning_state.py: (1) session profile isolation confirmed — generic phase2 sessions correctly use SESSION_PROFILE_GENERIC and do not inherit blueprint-gap brief files, expected outputs, or proposed tasks; (2) legacy phase1 behavior preserved via LEGACY_SESSION_PATHS + legacy_phase_for_session() routing phase1-bootstrap and phase1-2026-04-11-backend-completion to their original phase1 directory; (3) session pointer system working — planning-session-pointer.json correctly tracks active session; (4) all 9 test_planning_state tests pass, plus 35/35 across test_ai_status/test_supervisor/test_orchestrator_bundle. Downstream BG-000 through BG-007 are unblocked.",
+      "status": "done",
+      "created_at": "2026-04-13T00:28:33Z",
+      "resolved_at": "2026-04-13T00:28:52Z"
+    },
+    {
+      "task_id": "PLAN-002",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "PLAN-002 ready for final review closure. All 10 acceptance criteria verified by sidecar packet. Sidecar review APPROVED by Qwen, CONFIRMED by Claude, ENDORSED by Codex. Planning session accepted with human gate approved. 8 BG tasks materialized. Ready for reviewer sign-off and done closure.",
+      "status": "done",
+      "created_at": "2026-04-13T02:13:41Z",
+      "resolved_at": "2026-04-13T02:13:49Z"
+    },
+    {
+      "task_id": "PLAN-002",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "PLAN-002 review_approved. All acceptance criteria verified via sidecar packet. Qwen review APPROVED, Claude co-verification CONFIRMED, Codex endorsement APPROVED. Planning session accepted, human gate approved, 8 BG tasks materialized. Ready for done closure.",
+      "status": "done",
+      "created_at": "2026-04-13T02:13:49Z",
+      "resolved_at": "2026-04-13T02:14:34Z"
+    }
+  ],
+  "blockers": []
+}

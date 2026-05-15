@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "task_id": "SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT",
+  "archived_at": "2026-04-29T16:39:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT",
+    "title": "Add fail-closed Qlib pre-activation preflight scaffold",
+    "summary_zh": "為 Qlib supervised-alpha activation gate 增加 repo-local preflight scaffold；只產生 fail-closed readiness report，不執行 production LightGBM activation、不寫 registry/governance。",
+    "phase": "Activation-Gated Research Scaffold",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/research/qlib",
+      "integrations/qlib",
+      "services/research/strategy_spec",
+      "services/learning/DEFERRED_OSS_ACTIVATION_MAP.md"
+    ],
+    "acceptance": [
+      "preflight rejects missing RS-003 candidate refs",
+      "preflight rejects insufficient governed dataset and missing StrategySpec binding",
+      "report is offline and non-writing",
+      "existing Qlib unit and smoke coverage remains passing"
+    ],
+    "next": "Finalized fail-closed Qlib pre-activation preflight after Claude approval; committed 6b44ab39229afa009d55c7e0645253324d353ac3; verified 19 Qlib unit tests and smoke_test.py OK.",
+    "last_update": "2026-04-29T16:39:04Z",
+    "review_notes_zh": [
+      "審查通過 — 三個 gate 函數正確實作 fail-closed；離線且無 registry 寫入；19 tests + smoke 均 OK；文件更新對齊 activation packet 和 deferred map"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T16:39:04Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "6b44ab39229afa009d55c7e0645253324d353ac3",
+      "commit_subject": "SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT add fail-closed Qlib preflight",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 33,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implemented fail-closed offline Qlib preflight scaffold with RS-003 candidate, governed dataset, and StrategySpec binding gates; added unit coverage and docs notes. Verified: python3 -m unittest discover -s services/research/qlib -p 'test_*.py' (19 tests OK); python3 services/research/qlib/smoke_test.py (OK).",
+      "status": "done",
+      "created_at": "2026-04-29T16:15:34Z",
+      "resolved_at": "2026-04-29T16:31:41Z"
+    },
+    {
+      "task_id": "SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: fail-closed preflight gates verified (RS-003 candidate, governed dataset >=50 instruments >=2 years, StrategySpec binding); offline non-writing CLI confirmed; 19 tests OK + smoke_test.py OK; DEFERRED_OSS_ACTIVATION_MAP.md and activation_packet.md correctly updated. Returned to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-29T16:31:41Z",
+      "resolved_at": "2026-04-29T16:39:04Z"
+    }
+  ],
+  "blockers": []
+}

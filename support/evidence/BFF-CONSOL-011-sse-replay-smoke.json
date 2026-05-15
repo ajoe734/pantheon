@@ -1,0 +1,365 @@
+{
+  "assertions": {
+    "bearer_last_event_id_replay_returns_event_after_cursor": true,
+    "bearer_probe_opened_polyfill_authorization_shape": true,
+    "cookie_last_event_id_replay_returns_event_after_cursor": true,
+    "cookie_session_probe_opened_native_eventsource_shape": true,
+    "first_event_has_id_type_timestamp": true,
+    "missing_last_event_id_returns_409": true,
+    "missing_replay_409_has_resync_routes_header": true,
+    "mock_generator_closed_in_live_mode": true,
+    "publish_seed_events": true
+  },
+  "auth_source": {
+    "audience": "bff-operators",
+    "issuer": "pantheon-dev",
+    "kind": "minted_hs256_jwt",
+    "roles": [
+      "operator",
+      "admin",
+      "reviewer",
+      "approver"
+    ],
+    "secret_sha256_12": "9dd75abde3a9",
+    "subject": "op-bff-consol-011",
+    "ttl_seconds": 3600
+  },
+  "channel": "approval",
+  "client_modes": {
+    "bearer_polyfill": {
+      "authorization_header": true,
+      "browser_client": "EventSource polyfill/fetch stream",
+      "with_credentials": false
+    },
+    "cookie_session": {
+      "authorization_header": false,
+      "browser_client": "native EventSource(..., { withCredentials: true })",
+      "cookie_name": "pantheon_session",
+      "with_credentials": true
+    }
+  },
+  "commands": [
+    "PANTHEON_BFF_SMOKE_JWT_SECRET=<redacted> PANTHEON_BFF_JWT_SECRET=<redacted> scripts/probe_bff_sse_stream.py --base-url <bff-url>"
+  ],
+  "generated_at": "2026-05-13T04:54:25Z",
+  "last_event_id_replay": {
+    "bearer_polyfill": {
+      "browser_client": "EventSource polyfill/fetch stream",
+      "duration_ms": 4,
+      "expected_replayed_event_id": "evt-1778648065-7f61f1cc",
+      "first_event": {
+        "data": {
+          "data_keys": [
+            "approval_id",
+            "metadata",
+            "requester_id",
+            "target_id",
+            "target_type"
+          ],
+          "id": "evt-1778648065-7f61f1cc",
+          "timestamp": "2026-05-13T04:54:25Z",
+          "type": "approval.decided"
+        },
+        "event": "approval.decided",
+        "id": "evt-1778648065-7f61f1cc",
+        "raw_block": "id: evt-1778648065-7f61f1cc\nevent: approval.decided\ndata: {\"id\": \"evt-1778648065-7f61f1cc\", \"type\": \"approval.decided\", \"timestamp\": \"2026-05-13T04:54:25Z\", \"data\": {\"approval_id\": \"appr-bff-consol-011-20260513045425-second\", \"target_type\": \"ApprovalDecision\", \"target_id\": \"decision-20260513045425-second\", \"requester_id\": \"codex2-sse-probe\", \"metadata\": {\"task_id\": \"BFF-CONSOL-011\", \"label\": \"second\", \"run_id\": \"20260513045425\"}}}",
+        "shape_checks": {
+          "data_id_present": true,
+          "data_json_parse_ok": true,
+          "data_timestamp_present": true,
+          "data_type_present": true,
+          "event_line_matches_data_type": true,
+          "id_line_matches_data_id": true,
+          "sse_event_type_line_present": true,
+          "sse_id_line_present": true
+        }
+      },
+      "mode": "bearer_polyfill",
+      "ok": true,
+      "replayed_expected_event": true,
+      "request_headers": {
+        "Accept": "text/event-stream",
+        "Authorization": "present",
+        "Cookie": "absent",
+        "Last-Event-ID": "evt-1778648065-ada578ac"
+      },
+      "response_headers": {
+        "Cache-Control": "no-cache",
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "X-BFF-Session-Kind": "bearer",
+        "X-SSE-Buffer-Size": "500",
+        "X-SSE-Channel": "approval",
+        "X-SSE-Replay-Store": "in-memory",
+        "X-SSE-Replay-Supported": "true",
+        "X-SSE-Replay-Window-Events": "500",
+        "X-SSE-Resync-Routes": "/bff/approvals,/bff/v5/interventions"
+      },
+      "status": 200,
+      "transport": "Authorization header",
+      "url_path": "/bff/events/stream?channel=approval",
+      "with_credentials": false
+    },
+    "cookie_session": {
+      "browser_client": "native EventSource(..., { withCredentials: true })",
+      "duration_ms": 4,
+      "expected_replayed_event_id": "evt-1778648065-7f61f1cc",
+      "first_event": {
+        "data": {
+          "data_keys": [
+            "approval_id",
+            "metadata",
+            "requester_id",
+            "target_id",
+            "target_type"
+          ],
+          "id": "evt-1778648065-7f61f1cc",
+          "timestamp": "2026-05-13T04:54:25Z",
+          "type": "approval.decided"
+        },
+        "event": "approval.decided",
+        "id": "evt-1778648065-7f61f1cc",
+        "raw_block": "id: evt-1778648065-7f61f1cc\nevent: approval.decided\ndata: {\"id\": \"evt-1778648065-7f61f1cc\", \"type\": \"approval.decided\", \"timestamp\": \"2026-05-13T04:54:25Z\", \"data\": {\"approval_id\": \"appr-bff-consol-011-20260513045425-second\", \"target_type\": \"ApprovalDecision\", \"target_id\": \"decision-20260513045425-second\", \"requester_id\": \"codex2-sse-probe\", \"metadata\": {\"task_id\": \"BFF-CONSOL-011\", \"label\": \"second\", \"run_id\": \"20260513045425\"}}}",
+        "shape_checks": {
+          "data_id_present": true,
+          "data_json_parse_ok": true,
+          "data_timestamp_present": true,
+          "data_type_present": true,
+          "event_line_matches_data_type": true,
+          "id_line_matches_data_id": true,
+          "sse_event_type_line_present": true,
+          "sse_id_line_present": true
+        }
+      },
+      "mode": "cookie_session",
+      "ok": true,
+      "replayed_expected_event": true,
+      "request_headers": {
+        "Accept": "text/event-stream",
+        "Authorization": "absent",
+        "Cookie": "present",
+        "Last-Event-ID": "evt-1778648065-ada578ac"
+      },
+      "response_headers": {
+        "Cache-Control": "no-cache",
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "X-BFF-Session-Kind": "cookie",
+        "X-SSE-Buffer-Size": "500",
+        "X-SSE-Channel": "approval",
+        "X-SSE-Replay-Store": "in-memory",
+        "X-SSE-Replay-Supported": "true",
+        "X-SSE-Replay-Window-Events": "500",
+        "X-SSE-Resync-Routes": "/bff/approvals,/bff/v5/interventions"
+      },
+      "status": 200,
+      "transport": "Cookie header only",
+      "url_path": "/bff/events/stream?channel=approval",
+      "with_credentials": true
+    },
+    "cursor_event_id": "evt-1778648065-ada578ac"
+  },
+  "mock_generator_live_mode": {
+    "assertion": "Probe seeded the BFF in-memory SSE replay buffer through the authenticated internal publish route and consumed /bff/events/stream; no client-side mock event generator or seed fallback was used.",
+    "enabled": false,
+    "live_mode_closed": true,
+    "passed": true
+  },
+  "open_transcripts": {
+    "bearer_polyfill": {
+      "browser_client": "EventSource polyfill/fetch stream",
+      "duration_ms": 8,
+      "first_event": {
+        "data": {
+          "data_keys": [
+            "approval_id",
+            "metadata",
+            "requester_id",
+            "target_id",
+            "target_type"
+          ],
+          "id": "evt-1778648065-ada578ac",
+          "timestamp": "2026-05-13T04:54:25Z",
+          "type": "approval.created"
+        },
+        "event": "approval.created",
+        "id": "evt-1778648065-ada578ac",
+        "raw_block": "id: evt-1778648065-ada578ac\nevent: approval.created\ndata: {\"id\": \"evt-1778648065-ada578ac\", \"type\": \"approval.created\", \"timestamp\": \"2026-05-13T04:54:25Z\", \"data\": {\"approval_id\": \"appr-bff-consol-011-20260513045425-first\", \"target_type\": \"ApprovalDecision\", \"target_id\": \"decision-20260513045425-first\", \"requester_id\": \"codex2-sse-probe\", \"metadata\": {\"task_id\": \"BFF-CONSOL-011\", \"label\": \"first\", \"run_id\": \"20260513045425\"}}}",
+        "shape_checks": {
+          "data_id_present": true,
+          "data_json_parse_ok": true,
+          "data_timestamp_present": true,
+          "data_type_present": true,
+          "event_line_matches_data_type": true,
+          "id_line_matches_data_id": true,
+          "sse_event_type_line_present": true,
+          "sse_id_line_present": true
+        }
+      },
+      "mode": "bearer_polyfill",
+      "ok": true,
+      "request_headers": {
+        "Accept": "text/event-stream",
+        "Authorization": "present",
+        "Cookie": "absent",
+        "Last-Event-ID": null
+      },
+      "response_headers": {
+        "Cache-Control": "no-cache",
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "X-BFF-Session-Kind": "bearer",
+        "X-SSE-Buffer-Size": "500",
+        "X-SSE-Channel": "approval",
+        "X-SSE-Replay-Store": "in-memory",
+        "X-SSE-Replay-Supported": "true",
+        "X-SSE-Replay-Window-Events": "500",
+        "X-SSE-Resync-Routes": "/bff/approvals,/bff/v5/interventions"
+      },
+      "status": 200,
+      "transport": "Authorization header",
+      "url_path": "/bff/events/stream?channel=approval",
+      "with_credentials": false
+    },
+    "cookie_session": {
+      "browser_client": "native EventSource(..., { withCredentials: true })",
+      "duration_ms": 13,
+      "first_event": {
+        "data": {
+          "data_keys": [
+            "approval_id",
+            "metadata",
+            "requester_id",
+            "target_id",
+            "target_type"
+          ],
+          "id": "evt-1778648065-ada578ac",
+          "timestamp": "2026-05-13T04:54:25Z",
+          "type": "approval.created"
+        },
+        "event": "approval.created",
+        "id": "evt-1778648065-ada578ac",
+        "raw_block": "id: evt-1778648065-ada578ac\nevent: approval.created\ndata: {\"id\": \"evt-1778648065-ada578ac\", \"type\": \"approval.created\", \"timestamp\": \"2026-05-13T04:54:25Z\", \"data\": {\"approval_id\": \"appr-bff-consol-011-20260513045425-first\", \"target_type\": \"ApprovalDecision\", \"target_id\": \"decision-20260513045425-first\", \"requester_id\": \"codex2-sse-probe\", \"metadata\": {\"task_id\": \"BFF-CONSOL-011\", \"label\": \"first\", \"run_id\": \"20260513045425\"}}}",
+        "shape_checks": {
+          "data_id_present": true,
+          "data_json_parse_ok": true,
+          "data_timestamp_present": true,
+          "data_type_present": true,
+          "event_line_matches_data_type": true,
+          "id_line_matches_data_id": true,
+          "sse_event_type_line_present": true,
+          "sse_id_line_present": true
+        }
+      },
+      "mode": "cookie_session",
+      "ok": true,
+      "request_headers": {
+        "Accept": "text/event-stream",
+        "Authorization": "absent",
+        "Cookie": "present",
+        "Last-Event-ID": null
+      },
+      "response_headers": {
+        "Cache-Control": "no-cache",
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "X-BFF-Session-Kind": "cookie",
+        "X-SSE-Buffer-Size": "500",
+        "X-SSE-Channel": "approval",
+        "X-SSE-Replay-Store": "in-memory",
+        "X-SSE-Replay-Supported": "true",
+        "X-SSE-Replay-Window-Events": "500",
+        "X-SSE-Resync-Routes": "/bff/approvals,/bff/v5/interventions"
+      },
+      "status": 200,
+      "transport": "Cookie header only",
+      "url_path": "/bff/events/stream?channel=approval",
+      "with_credentials": true
+    }
+  },
+  "publish": [
+    {
+      "channel": "approval",
+      "error": null,
+      "event_id": "evt-1778648065-ada578ac",
+      "event_type": "approval.created",
+      "label": "first",
+      "ok": true,
+      "path": "/api/v1/internal/sse/publish?channel=approval&event_type=approval.created",
+      "payload_summary": {
+        "approval_id": "appr-bff-consol-011-20260513045425-first",
+        "metadata": {
+          "label": "first",
+          "run_id": "20260513045425",
+          "task_id": "BFF-CONSOL-011"
+        },
+        "target_id": "decision-20260513045425-first"
+      },
+      "status": 200
+    },
+    {
+      "channel": "approval",
+      "error": null,
+      "event_id": "evt-1778648065-7f61f1cc",
+      "event_type": "approval.decided",
+      "label": "second",
+      "ok": true,
+      "path": "/api/v1/internal/sse/publish?channel=approval&event_type=approval.decided",
+      "payload_summary": {
+        "approval_id": "appr-bff-consol-011-20260513045425-second",
+        "metadata": {
+          "label": "second",
+          "run_id": "20260513045425",
+          "task_id": "BFF-CONSOL-011"
+        },
+        "target_id": "decision-20260513045425-second"
+      },
+      "status": 200
+    }
+  ],
+  "replay_unavailable": {
+    "body_prefix": null,
+    "details": {
+      "channel": "approval",
+      "lastEventId": "evt-bff-consol-011-missing-20260513045425",
+      "reason": "SSE_REPLAY_HISTORY_MISSING",
+      "replayStore": "in-memory",
+      "replaySupported": true,
+      "replayWindowEvents": 500,
+      "resyncRoutes": [
+        "/bff/approvals",
+        "/bff/v5/interventions"
+      ]
+    },
+    "duration_ms": 5,
+    "error_code": "SSE_REPLAY_UNAVAILABLE",
+    "mode": "bearer_polyfill",
+    "ok": true,
+    "request_headers": {
+      "Accept": "text/event-stream",
+      "Authorization": "present",
+      "Cookie": "absent",
+      "Last-Event-ID": "evt-bff-consol-011-missing-20260513045425"
+    },
+    "response_headers": {
+      "Content-Type": "application/json",
+      "X-SSE-Buffer-Size": "500",
+      "X-SSE-Channel": "approval",
+      "X-SSE-Replay-Store": "in-memory",
+      "X-SSE-Replay-Supported": "true",
+      "X-SSE-Replay-Window-Events": "500",
+      "X-SSE-Resync-Routes": "/bff/approvals,/bff/v5/interventions"
+    },
+    "status": 409
+  },
+  "summary": {
+    "acceptance": {
+      "bearer_probe_opened": true,
+      "cookie_session_probe_opened": true,
+      "first_event_contains_id_type_timestamp": true,
+      "last_event_id_replay": true,
+      "mock_generator_live_mode_closed": true,
+      "replay_unavailable_409_with_resync_routes": true
+    },
+    "failed_assertions": [],
+    "passed": true
+  },
+  "target_url": "http://127.0.0.1:53160",
+  "task_id": "BFF-CONSOL-011"
+}

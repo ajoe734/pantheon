@@ -13,17 +13,45 @@
     "provider_capabilities": ".orchestrator/provider_capabilities.json",
     "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json"
   },
+  "coordination": {
+    "enabled": true
+  },
+  "permission_broker": {
+    "allowed_workspace_roots": [
+      ".",
+      "../execute-plans"
+    ]
+  },
   "watcher": {
-    "poll_interval_seconds": 2.0,
+    "poll_interval_seconds": 300,
     "replay_on_start": false,
     "max_seen_events": 2000
   },
   "supervisor": {
-    "poll_interval_seconds": 2.0,
-    "heartbeat_warn_after_seconds": 10.0,
+    "poll_interval_seconds": 300,
+    "heartbeat_warn_after_seconds": 360.0,
     "stall_after_seconds": 300,
     "max_worker_history": 200,
-    "auto_refresh_provider_capabilities": false
+    "auto_refresh_provider_capabilities": true
+  },
+  "chair_review": {
+    "enabled": true,
+    "cooldown_seconds": 1800,
+    "candidates": [
+      "Codex",
+      "Codex2",
+      "Claude",
+      "Claude2"
+    ],
+    "task_id": "OPS-CHAIR-REVIEW",
+    "output_dir": ".orchestrator/chair-reviews",
+    "recent_summary_lines": 6
+  },
+  "provider_guardrails": {
+    "pause_on_capacity_failure": true,
+    "pause_on_auth_failure": true,
+    "capacity_pause_seconds": 900,
+    "auth_pause_seconds": 900
   },
   "worker_retry": {
     "enabled": true,
@@ -55,7 +83,7 @@
       "exhausted your capacity",
       "no capacity available for model"
     ],
-    "fallback_mode": "file_inbox"
+    "fallback_mode": null
   },
   "worker_reassignment": {
     "enabled": true,
@@ -64,50 +92,79 @@
     "eligible_statuses": [
       "todo",
       "in_progress",
-      "review"
+      "review",
+      "review_approved"
     ],
     "owner_fallbacks": {
       "Claude": [
         "Codex",
-        "Copilot",
-        "Gemini"
+        "Codex2"
+      ],
+      "Claude2": [
+        "Codex",
+        "Codex2",
+        "Claude"
       ],
       "Gemini": [
         "Codex",
-        "Claude",
-        "Copilot"
+        "Codex2",
+        "Claude"
+      ],
+      "Gemini2": [
+        "Codex",
+        "Codex2",
+        "Claude"
       ],
       "Codex": [
+        "Codex2",
         "Claude",
-        "Copilot",
-        "Gemini"
+        "Claude2"
+      ],
+      "Codex2": [
+        "Codex",
+        "Claude",
+        "Claude2"
       ],
       "Copilot": [
         "Codex",
-        "Claude",
-        "Gemini"
+        "Codex2",
+        "Claude"
       ]
     },
     "reviewer_fallbacks": {
       "Claude": [
         "Codex",
-        "Copilot",
-        "Gemini"
+        "Codex2"
+      ],
+      "Claude2": [
+        "Codex",
+        "Codex2",
+        "Claude"
       ],
       "Gemini": [
         "Codex",
-        "Claude",
-        "Copilot"
+        "Codex2",
+        "Claude"
+      ],
+      "Gemini2": [
+        "Codex",
+        "Codex2",
+        "Claude"
       ],
       "Codex": [
+        "Codex2",
         "Claude",
-        "Copilot",
-        "Gemini"
+        "Claude2"
+      ],
+      "Codex2": [
+        "Codex",
+        "Claude",
+        "Claude2"
       ],
       "Copilot": [
         "Codex",
-        "Claude",
-        "Gemini"
+        "Codex2",
+        "Claude"
       ]
     }
   },
@@ -222,6 +279,13 @@
       "wake_template": ".orchestrator/templates/wakeup.txt",
       "file_inbox_path": ".llm-inbox/claude.md"
     },
+    "claude2": {
+      "display_name": "Claude2",
+      "provider": "claude2",
+      "adapter": "claude_cli",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/claude2.md"
+    },
     "gemini": {
       "display_name": "Gemini",
       "provider": "gemini",
@@ -229,12 +293,110 @@
       "wake_template": ".orchestrator/templates/wakeup.txt",
       "file_inbox_path": ".llm-inbox/gemini.md"
     },
+    "gemini2": {
+      "display_name": "Gemini2",
+      "provider": "gemini2",
+      "adapter": "gemini",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/gemini2.md"
+    },
     "codex": {
       "display_name": "Codex",
       "provider": "codex",
       "adapter": "codex",
+      "worker_slots": [
+        "codex1_1",
+        "codex1_2",
+        "codex1_3",
+        "codex1_4"
+      ],
       "wake_template": ".orchestrator/templates/wakeup.txt",
       "file_inbox_path": ".llm-inbox/codex.md"
+    },
+    "codex2": {
+      "display_name": "Codex2",
+      "provider": "codex2",
+      "adapter": "codex",
+      "worker_slots": [
+        "codex2_1",
+        "codex2_2",
+        "codex2_3",
+        "codex2_4"
+      ],
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/codex2.md"
+    },
+    "codex1_1": {
+      "display_name": "Codex",
+      "provider": "codex1-1",
+      "adapter": "codex",
+      "dispatch_slot_for": "codex",
+      "slot_id": "codex1-1",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/codex.md"
+    },
+    "codex1_2": {
+      "display_name": "Codex",
+      "provider": "codex1-2",
+      "adapter": "codex",
+      "dispatch_slot_for": "codex",
+      "slot_id": "codex1-2",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/codex.md"
+    },
+    "codex1_3": {
+      "display_name": "Codex",
+      "provider": "codex1-3",
+      "adapter": "codex",
+      "dispatch_slot_for": "codex",
+      "slot_id": "codex1-3",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/codex.md"
+    },
+    "codex1_4": {
+      "display_name": "Codex",
+      "provider": "codex1-4",
+      "adapter": "codex",
+      "dispatch_slot_for": "codex",
+      "slot_id": "codex1-4",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/codex.md"
+    },
+    "codex2_1": {
+      "display_name": "Codex2",
+      "provider": "codex2-1",
+      "adapter": "codex",
+      "dispatch_slot_for": "codex2",
+      "slot_id": "codex2-1",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/codex2.md"
+    },
+    "codex2_2": {
+      "display_name": "Codex2",
+      "provider": "codex2-2",
+      "adapter": "codex",
+      "dispatch_slot_for": "codex2",
+      "slot_id": "codex2-2",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/codex2.md"
+    },
+    "codex2_3": {
+      "display_name": "Codex2",
+      "provider": "codex2-3",
+      "adapter": "codex",
+      "dispatch_slot_for": "codex2",
+      "slot_id": "codex2-3",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/codex2.md"
+    },
+    "codex2_4": {
+      "display_name": "Codex2",
+      "provider": "codex2-4",
+      "adapter": "codex",
+      "dispatch_slot_for": "codex2",
+      "slot_id": "codex2-4",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/codex2.md"
     },
     "copilot": {
       "display_name": "Copilot",
@@ -254,12 +416,13 @@
   "providers": {
     "claude": {
       "delivery_mode": "claude_cli",
+      "allow_inbox_fallback": false,
       "file_inbox": {
         "path": ".llm-inbox/claude.md",
         "open_in_vscode": false
       },
       "runtime": {
-        "cli": "claude",
+        "cli": ".orchestrator/bin/claude",
         "output_format": "stream-json",
         "include_hook_events": true,
         "permission_mode": "acceptEdits",
@@ -268,7 +431,10 @@
         "enable_auto_mode_if_supported": true,
         "auto_permission_mode": "auto",
         "mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
-        "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt"
+        "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
+        "env": {
+          "CLAUDE_CONFIG_DIR": "/home/lupin/.claude-autoworker"
+        }
       },
       "broker": {
         "approval_wait_seconds": 3600,
@@ -282,16 +448,57 @@
         "copilot_allow_dangerous_skip": false,
         "rule_default_mode": "acceptEdits",
         "disable_bypass_permissions": true
+      },
+      "retry": {
+        "fallback_mode": null
+      }
+    },
+    "claude2": {
+      "delivery_mode": "claude_cli",
+      "allow_inbox_fallback": false,
+      "file_inbox": {
+        "path": ".llm-inbox/claude2.md",
+        "open_in_vscode": false
+      },
+      "runtime": {
+        "cli": ".orchestrator/bin/claude",
+        "output_format": "stream-json",
+        "include_hook_events": true,
+        "permission_mode": "acceptEdits",
+        "resume_permission_mode_after_approval": "acceptEdits",
+        "resume_use_allowed_tools_from_approval": true,
+        "enable_auto_mode_if_supported": true,
+        "auto_permission_mode": "auto",
+        "mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
+        "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
+        "home": "/home/lupin/.claude2"
+      },
+      "broker": {
+        "approval_wait_seconds": 3600,
+        "http_host": "127.0.0.1",
+        "http_port": 8765,
+        "persist_allow_by_default": false
+      },
+      "approval": {
+        "workspace_permission_mode": "acceptEdits",
+        "allow_dangerous_skip": false,
+        "copilot_allow_dangerous_skip": false,
+        "rule_default_mode": "acceptEdits",
+        "disable_bypass_permissions": true
+      },
+      "retry": {
+        "fallback_mode": null
       }
     },
     "gemini": {
       "delivery_mode": "gemini",
+      "allow_inbox_fallback": false,
       "file_inbox": {
         "path": ".llm-inbox/gemini.md",
         "open_in_vscode": false
       },
       "gemini": {
-        "cli": "gemini",
+        "cli": ".orchestrator/bin/gemini",
         "include_directories": true
       },
       "approval": {
@@ -303,17 +510,217 @@
         "disable_always_allow": false
       },
       "retry": {
-        "max_attempts": 5
+        "max_attempts": 5,
+        "fallback_mode": null
+      }
+    },
+    "gemini2": {
+      "delivery_mode": "gemini",
+      "allow_inbox_fallback": false,
+      "file_inbox": {
+        "path": ".llm-inbox/gemini2.md",
+        "open_in_vscode": false
+      },
+      "gemini": {
+        "cli": ".orchestrator/bin/gemini2",
+        "config_home": "/home/lupin/.gemini2",
+        "home": "/home/lupin/.gemini2",
+        "include_directories": true,
+        "model": "gemini-2.5-flash-lite",
+        "output_format": "json",
+        "env": {
+          "GEMINI_CLI_TRUST_WORKSPACE": "true",
+          "GOOGLE_GENAI_USE_GCA": "true",
+          "GOOGLE_CLOUD_PROJECT": "pantheon-493602",
+          "GOOGLE_CLOUD_PROJECT_ID": "pantheon-493602",
+          "GOOGLE_CLOUD_LOCATION": "us-central1"
+        }
+      },
+      "approval": {
+        "default_approval_mode": "yolo",
+        "workspace_agent_yolo_mode": false,
+        "enable_permanent_tool_approval": true,
+        "auto_add_to_policy_by_default": true,
+        "disable_yolo_mode": false,
+        "disable_always_allow": false
+      },
+      "retry": {
+        "max_attempts": 5,
+        "fallback_mode": null
       }
     },
     "codex": {
       "delivery_mode": "codex",
+      "quota_group": "codex1",
       "file_inbox": {
         "path": ".llm-inbox/codex.md",
         "open_in_vscode": false
       },
       "codex": {
-        "cli": "codex",
+        "cli": ".orchestrator/bin/codex",
+        "codex_home": "~/.codex",
+        "api_key_env": "OPENAI_API_KEY",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      },
+      "approval": {
+        "orchestrator_only": true,
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      }
+    },
+    "codex2": {
+      "delivery_mode": "codex",
+      "quota_group": "codex2",
+      "file_inbox": {
+        "path": ".llm-inbox/codex2.md",
+        "open_in_vscode": false
+      },
+      "codex": {
+        "cli": ".orchestrator/bin/codex",
+        "codex_home": "~/.codex2",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      },
+      "approval": {
+        "orchestrator_only": true,
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      }
+    },
+    "codex1-1": {
+      "delivery_mode": "codex",
+      "quota_group": "codex1",
+      "codex": {
+        "cli": ".orchestrator/bin/codex",
+        "codex_home": "~/.codex",
+        "api_key_env": "OPENAI_API_KEY",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      },
+      "approval": {
+        "orchestrator_only": true,
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      }
+    },
+    "codex1-2": {
+      "delivery_mode": "codex",
+      "quota_group": "codex1",
+      "codex": {
+        "cli": ".orchestrator/bin/codex",
+        "codex_home": "~/.codex",
+        "api_key_env": "OPENAI_API_KEY",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      },
+      "approval": {
+        "orchestrator_only": true,
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      }
+    },
+    "codex1-3": {
+      "delivery_mode": "codex",
+      "quota_group": "codex1",
+      "codex": {
+        "cli": ".orchestrator/bin/codex",
+        "codex_home": "~/.codex",
+        "api_key_env": "OPENAI_API_KEY",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      },
+      "approval": {
+        "orchestrator_only": true,
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      }
+    },
+    "codex1-4": {
+      "delivery_mode": "codex",
+      "quota_group": "codex1",
+      "codex": {
+        "cli": ".orchestrator/bin/codex",
+        "codex_home": "~/.codex",
+        "api_key_env": "OPENAI_API_KEY",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      },
+      "approval": {
+        "orchestrator_only": true,
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      }
+    },
+    "codex2-1": {
+      "delivery_mode": "codex",
+      "quota_group": "codex2",
+      "codex": {
+        "cli": ".orchestrator/bin/codex",
+        "codex_home": "~/.codex2",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      },
+      "approval": {
+        "orchestrator_only": true,
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      }
+    },
+    "codex2-2": {
+      "delivery_mode": "codex",
+      "quota_group": "codex2",
+      "codex": {
+        "cli": ".orchestrator/bin/codex",
+        "codex_home": "~/.codex2",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      },
+      "approval": {
+        "orchestrator_only": true,
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      }
+    },
+    "codex2-3": {
+      "delivery_mode": "codex",
+      "quota_group": "codex2",
+      "codex": {
+        "cli": ".orchestrator/bin/codex",
+        "codex_home": "~/.codex2",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      },
+      "approval": {
+        "orchestrator_only": true,
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      }
+    },
+    "codex2-4": {
+      "delivery_mode": "codex",
+      "quota_group": "codex2",
+      "codex": {
+        "cli": ".orchestrator/bin/codex",
+        "codex_home": "~/.codex2",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
@@ -327,6 +734,7 @@
     },
     "copilot": {
       "delivery_mode": "copilot_local",
+      "allow_inbox_fallback": false,
       "file_inbox": {
         "path": ".llm-inbox/copilot.md",
         "open_in_vscode": false,
@@ -336,7 +744,7 @@
         }
       },
       "local": {
-        "cli": "copilot",
+        "cli": ".orchestrator/bin/copilot",
         "autopilot": true,
         "max_autopilot_continues": 12,
         "allow_all_tools": true,
@@ -347,7 +755,7 @@
         "extra_args": []
       },
       "cloud": {
-        "cli": "gh",
+        "cli": ".orchestrator/bin/gh",
         "enabled": true,
         "min_version": "2.80.0",
         "follow": false,
@@ -361,6 +769,9 @@
         "supported": [
           "claude"
         ]
+      },
+      "retry": {
+        "fallback_mode": null
       }
     }
   },
@@ -376,6 +787,8 @@
       "in_progress",
       "todo"
     ],
+    "sidecar_only_agents": [],
+    "disabled_agents": [],
     "dependency_done_statuses": [
       "done"
     ],
@@ -394,11 +807,23 @@
     "helper_claim": {
       "enabled": true,
       "task_statuses": [
-        "todo"
+        "todo",
+        "in_progress"
       ],
-      "require_owner_higher_priority_load": true
+      "require_owner_higher_priority_load": true,
+      "claim_idle_work": true,
+      "claim_sidecars_when_idle": true
+    },
+    "target_workload": {
+      "Claude": 10,
+      "Claude2": 10,
+      "Gemini": 5,
+      "Gemini2": 5,
+      "Codex": 35,
+      "Codex2": 35,
+      "Copilot": 5
     },
     "max_tasks_per_agent": 1,
-    "max_dispatches_per_tick": 4
+    "max_dispatches_per_tick": 8
   }
 }

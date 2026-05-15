@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "task_id": "BUS-VAL-004",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BUS-VAL-004",
+    "title": "Skip stale queued wake events after task status changes",
+    "summary_zh": "修補 orchestrator queue 中已過期的 wake event，避免 task 狀態已變更後仍被舊 dispatch 喚醒。",
+    "phase": "Tooling",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py"
+    ],
+    "acceptance": [
+      "stale dispatcher events are skipped at delivery time",
+      "done or approved tasks are not launched from old queue entries",
+      "regression tests cover stale in_progress and stale review dispatches"
+    ],
+    "next": "Finalized BUS-VAL-004: supervisor process_queue now revalidates queued review/owner dispatch wake events against current task status and dispatch signature before launching a worker, so stale wake-ups are skipped after task status changes while current events still start normally. Verification: python3 -m unittest discover -s .orchestrator -p 'test_*.py' (36 tests OK).",
+    "last_update": "2026-04-06T16:02:31Z"
+  },
+  "handoffs": [
+    {
+      "task_id": "BUS-VAL-004",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Added a stale dispatch guard in process_queue so queued dispatcher wake events are revalidated against current ai-status before worker launch; stale events are marked completed with wake_skipped instead of re-awakening changed or done tasks. Added regression tests for stale skip and current dispatch pass-through. Verified with python3 -m unittest discover -s .orchestrator -p 'test_*.py' and python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py.",
+      "status": "done",
+      "created_at": "2026-04-05T23:15:45Z",
+      "resolved_at": "2026-04-06T04:10:22Z"
+    },
+    {
+      "task_id": "BUS-VAL-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewer shifted from Gemini to Claude so tooling validation no longer depends on the unstable Gemini review lane. Review approved: The stale dispatch guard in process_queue correctly re-validates events against current status, and regression tests successfully verify the skipping of stale events and execution of current events.",
+      "status": "done",
+      "created_at": "2026-04-06T15:36:53Z",
+      "resolved_at": "2026-04-06T16:02:31Z"
+    }
+  ],
+  "blockers": []
+}

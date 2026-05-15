@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "task_id": "EXEC-BFF-KW03-001",
+  "archived_at": "2026-04-21T19:39:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-BFF-KW03-001",
+    "title": "Implement KW-03 evidence refs BFF routes from the ratified contract",
+    "summary_zh": "實作 KW-03 evidence refs list / detail BFF routes，保留 resolved_link、credibility、linked_decisions 與 availability semantics。",
+    "phase": "Execution / BFF Implementation",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "EXEC-BFF-KW02-001"
+    ],
+    "artifacts": [
+      "docs/bff/KW-03-evidence-refs.md",
+      "docs/examples/KW-03-evidence-refs.json",
+      "MODULE_READINESS_RATIFICATION_2026-04-20.md"
+    ],
+    "acceptance": [
+      "實作 KW-03 list / detail routes 與 BFF-owned resolved_link / linked_decisions panel",
+      "不得讓前端再自行構 URL；payload 必須保留 availability / credibility semantics",
+      "完成後補 contract verification 與 next-action truth"
+    ],
+    "next": "KW-03 evidence refs BFF delivery finalized: review-approved list/detail routes remain live with BFF-owned resolved_link, credibility, availability, and linked_decisions semantics; 10 targeted tests passed in review evidence; residual narrative/frontend drift remains non-blocking and tracked separately.",
+    "last_update": "2026-04-21T19:39:24Z",
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-20-gap-audit-execution-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過",
+      "KW-03 list/detail routes 已 live，resolved_link / credibility / linked_decisions semantics 皆由 BFF 管理，10 個 targeted tests 通過",
+      "殘餘項目（DRIFT-KW03-001、DRIFT-KW03-002、GAP-KW03-003）不阻擋收尾，由 owner 決定是否並入 readiness/overview sync 或另立前端啟動 task"
+    ],
+    "review_file": "support/reviews/EXEC-BFF-KW03-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T19:39:24Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "3d677dc99c136908267839ad38b6de7905ec75de",
+      "commit_subject": "EXEC-BFF-KW03-001 finalize owner closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "EXEC-BFF-KW03-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1000,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-BFF-KW03-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T01:43:36Z",
+      "resolved_at": "2026-04-21T01:43:52Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW03-001",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Copilot completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T04:55:40Z",
+      "resolved_at": "2026-04-21T04:56:33Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW03-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "KW-03 evidence list/detail routes are implemented with BFF-owned resolved_link, availability, credibility, and linked_decisions semantics. Targeted pytest passed for KW-03 contract, KW-02 regression, and PKT-016 knowledge workbench overview.",
+      "status": "done",
+      "created_at": "2026-04-21T05:06:56Z",
+      "resolved_at": "2026-04-21T16:35:51Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW03-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T16:35:51Z",
+      "resolved_at": "2026-04-21T16:38:09Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW03-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved — KW-03 BFF routes contract-compliant; all acceptance criteria met; returning to owner for finalization",
+      "status": "done",
+      "created_at": "2026-04-21T16:38:09Z",
+      "resolved_at": "2026-04-21T19:39:24Z"
+    }
+  ],
+  "blockers": []
+}

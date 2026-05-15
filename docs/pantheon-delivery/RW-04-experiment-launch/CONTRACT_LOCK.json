@@ -1,0 +1,41 @@
+{
+  "feature_id": "RW-04-experiment-launch",
+  "status": "loop-complete",
+  "backend_commit": "b0975f50fb1b657c2ae95ae1a132e02b7474439b",
+  "working_tree_only": true,
+  "verified_runtime_ref": "pantheon-working-tree@b0975f50fb1b657c2ae95ae1a132e02b7474439b",
+  "live_http_runtime_ref": "http://127.0.0.1:18001",
+  "bff_contract_version": "pantheon-bff@b0975f50fb1b657c2ae95ae1a132e02b7474439b+working-tree",
+  "source_payload": ".coordination/requests/RW-04-experiment-launch-ui-done.yaml",
+  "source_commit": "f672af2c0019618ce05cf07c7ed50c65897e9fbb",
+  "request_pair_commit": "f00791b217e5550d80c1add72a8560b42bc3a056",
+  "source_commit_note": "Reviewed UI transport commit f672af2c0019618ce05cf07c7ed50c65897e9fbb resolves to a tree that contains the canonical request pair, docs/pantheon-feedback/RW-04-experiment-launch/*, the App/AppSidebar/WorkbenchBreadcrumb/bffClient wiring, and the six experiment files. Publish commit f00791b217e5550d80c1add72a8560b42bc3a056 on origin/pkt-004-detail-fix republishes the canonical request pair with truthful source_commit metadata pinned back to that reviewed UI transport commit.",
+  "verified_front_workspace_head": "f00791b217e5550d80c1add72a8560b42bc3a056",
+  "verified_remote_publish_commit": "f00791b217e5550d80c1add72a8560b42bc3a056",
+  "review_file": ".coordination/reviews/RW-04-experiment-launch-review.md",
+  "feedback_request": ".coordination/requests/RW-04-experiment-launch-frontend-feedback.yaml",
+  "endpoints": [
+    "POST /api/v1/experiments/launch",
+    "GET /api/v1/experiments",
+    "GET /api/v1/experiments/{experiment_id}",
+    "POST /api/v1/experiments/{experiment_id}/cancel"
+  ],
+  "contract_paths": [
+    "docs/bff/RW-04-experiment-launch.md",
+    "docs/examples/RW-04-experiment-launch.json",
+    "docs/pantheon-handoffs/RW-04-experiment-launch/FRONTEND_CHANGE_SPEC.md"
+  ],
+  "pantheon_api_gap": false,
+  "verification_evidence": [
+    "Targeted Pantheon RW-04 contract tests passed in the current workspace: python3 -m pytest -q services/control-plane/bff/test_rw04_experiment_launch_contract.py",
+    "Live OpenAPI on http://127.0.0.1:18001 still advertises POST /api/v1/experiments/launch, GET /api/v1/experiments, GET /api/v1/experiments/{experiment_id}, and POST /api/v1/experiments/{experiment_id}/cancel",
+    "git ls-remote --heads origin pkt-004-detail-fix now returns f00791b217e5550d80c1add72a8560b42bc3a056 and git branch -r --contains that commit returns origin/pkt-004-detail-fix",
+    "git ls-tree on reviewed UI transport commit f672af2c0019618ce05cf07c7ed50c65897e9fbb returns the canonical request pair, the RW-04 feedback bundle, the App/AppSidebar/WorkbenchBreadcrumb/bffClient wiring, and the six experiment files",
+    "The approved review packet records sibling front targeted eslint, npx tsc --noEmit, and npm run build passing on 2026-04-21 for the reviewed RW-04 slice"
+  ],
+  "followup_scope": [
+    "No additional Pantheon API or contract work is required for the current RW-04 Experiment Launch packet",
+    "Deferred browser QA against /research/experiments, /research/experiments/launch, and /research/experiments/:experiment_id may proceed without changing the published contract",
+    "If a future live payload diverges from the accepted contract, publish a fresh bff-gap instead of inventing shadow state or alternate endpoints"
+  ]
+}

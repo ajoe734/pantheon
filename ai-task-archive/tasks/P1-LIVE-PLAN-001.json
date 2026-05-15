@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "P1-LIVE-PLAN-001",
+  "archived_at": "2026-05-01T09:14:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P1-LIVE-PLAN-001",
+    "title": "Canary/live activation criteria and runbook",
+    "summary_zh": "定義 canary/live activation criteria 與 runbook；P1 只取得 activation readiness，不開 production live。",
+    "phase": "P1 Wave 5",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "P0-LOOP-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_sa/SA-20_v2_risk_register_corrected.md",
+      "docs/04/SUPERVISOR_PLANNING_P0_NEXT_DEV_WORK.md"
+    ],
+    "acceptance": [
+      "canary/live prerequisites documented",
+      "rollback and kill switch criteria named",
+      "human approval and risk pass gates required before live activation"
+    ],
+    "next": "Closeout complete: runbook committed 211b49a, Codex review committed 88a35ac, finalization record committed 5f19c31. All three acceptance criteria verified — canary/live prerequisites documented, rollback and kill-switch criteria named, human approval and risk pass gates required before live activation. P1 scope is activation readiness only; production live remains fail-closed.",
+    "last_update": "2026-05-01T09:14:00Z",
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "wave": "5",
+      "source_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "review_notes_zh": [
+      "審查通過。已檢查 canary/live activation runbook 對齊 PAPER_CANARY_LIVE_POLICY.md、KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md、ROLLBACK_AND_POSITION_SEMANTICS.md、BINDING_AND_DEPLOYMENT_SEMANTICS.md，並確認三項 acceptance 已覆蓋：canary/live prerequisites、rollback 與 kill switch criteria、live activation 前的人工作業與 risk pass gates。P1 範圍維持 activation readiness；production live 仍 fail-closed。驗證：文件審查與 ai-status task 查詢。"
+    ],
+    "review_file": "support/reviews/P1-LIVE-PLAN-001-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T09:14:00Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "5f19c3165ed89305ef71901dafd51c15279cc3b4",
+      "commit_subject": "P1-LIVE-PLAN-001 closeout finalization record",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "P1-LIVE-PLAN-001",
+        "Reviewer": "Codex",
+        "Verification": "confirmed deliverable commits 211b49a (runbook) and 88a35ac"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 118,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 4,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P1-LIVE-PLAN-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Runbook ready for review. docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md covers all three acceptance criteria: canary/live prerequisites documented, rollback and kill switch criteria named, human approval gates enumerated. Derived from PAPER_CANARY_LIVE_POLICY.md, KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md, and ROLLBACK_AND_POSITION_SEMANTICS.md. P1 scope is activation readiness only; production live remains fail-closed.",
+      "status": "done",
+      "created_at": "2026-05-01T08:56:54Z",
+      "resolved_at": "2026-05-01T09:08:24Z"
+    },
+    {
+      "task_id": "P1-LIVE-PLAN-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved by Codex. Owner Claude should finalize per task-closeout-finalization: confirm artifacts, create task-scoped commit if needed, then mark done.",
+      "status": "done",
+      "created_at": "2026-05-01T09:08:24Z",
+      "resolved_at": "2026-05-01T09:14:00Z"
+    }
+  ],
+  "blockers": []
+}

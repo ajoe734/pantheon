@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "task_id": "LP-004",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LP-004",
+    "title": "Define approved TRL preference-learning workflows",
+    "phase": "Epic F",
+    "owner": "Copilot",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "FB-002",
+      "LP-001"
+    ],
+    "artifacts": [
+      "services/learning/trl/"
+    ],
+    "acceptance": [
+      "preference-learning scope documented",
+      "approval requirements documented",
+      "registry handoff for learned outputs defined"
+    ],
+    "next": "Finalized LP-004: All three alignment corrections verified. (1) FB-002 event shape using canonical event_type/target/edits fields. (2) Registry handoff using artifact_type=model_artifact with metadata.model_family=preference_model. (3) Evaluator consumption restricted to lifecycle_state=paper. All documents approved and ready for v1 contract lock.",
+    "last_update": "2026-04-06T16:13:58Z",
+    "summary_zh": "定義受批准的 TRL preference-learning workflow，限制它只能吃治理過的 feedback 資料。",
+    "review_notes_zh": [
+      "審查通過：TRL workflow 現在對齊 FB-002 canonical event shape，pair construction 改為從 target linkage 解析 artifact 並套用 edits。",
+      "registry handoff 已改用 REG-001 既有 model_artifact 類型，並以 metadata.model_family=preference_model 區分 family，不再發明新 enum。",
+      "evaluator consumption 收斂為 paper-only；candidate model 只能離線驗證，避免未審核 preference model 影響 promotion decision。"
+    ],
+    "review_file": "services/learning/trl/review_lp004_codex_zh.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "LP-004",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Review approved after aligning LP-004 docs to FB-002, REG-001, and paper-only evaluator consumption.",
+      "status": "done",
+      "created_at": "2026-04-06T15:36:53Z",
+      "resolved_at": "2026-04-06T16:13:58Z"
+    }
+  ],
+  "blockers": []
+}

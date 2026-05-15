@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "BP6-LUV-012",
+  "archived_at": "2026-04-17T03:00:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP6-LUV-012",
+    "title": "Execute PKT-002-incident-action-drawer and PKT-002-incident-home through Lovable and integrate",
+    "summary_zh": "觸發 PKT-002-incident-action-drawer + PKT-002-incident-home 至 Lovable 執行，完成整合 loop",
+    "phase": "Phase 6: Full Blueprint Completion",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "depends_on": [],
+    "artifacts": [
+      ".coordination/responses/PKT-002-incident-action-drawer-lovable-ui-task.yaml",
+      ".coordination/responses/PKT-002-incident-home-lovable-ui-task.yaml"
+    ],
+    "acceptance": [
+      "PKT-002-incident-action-drawer 和 PKT-002-incident-home 均達到 loop-complete"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T02:20:54Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Finalize BP6-LUV-012: PKT-002 incident-home and incident-action-drawer are loop-complete, review-approved, and formally closed.",
+    "last_update": "2026-04-17T03:00:19Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T03:00:19Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "8f7f2f3d1e73c35e804e581519e933aa1a07a4e5",
+      "commit_subject": "BP6-LUV-012: finalize PKT-002 lovable loop closure",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BP6-LUV-012",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 312,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP6-LUV-012",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T02:29:24Z",
+      "resolved_at": "2026-04-17T02:31:53Z"
+    },
+    {
+      "task_id": "BP6-LUV-012",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Incident Home loop completed and artifacts synced. Verified front repo IncidentHome against PKT-002 contract: shared BFF client only, merged degradation banner, kill-switch degraded/unavailable states, no open API gap. Updated .coordination/requests/PKT-002-incident-home-ui-done.yaml, added PKT-002-incident-home-frontend-feedback.yaml, refreshed feedback/QA docs, and revalidated with eslint plus npm run build in /home/lupin/code/front-ai-trading-system. Incident Action Drawer artifacts were already implementation-complete.",
+      "status": "done",
+      "created_at": "2026-04-17T02:41:26Z",
+      "resolved_at": "2026-04-17T02:57:46Z"
+    },
+    {
+      "task_id": "BP6-LUV-012",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. PKT-002-incident-home loop-complete verified: BFF client only, degradation banner merged, kill-switch states correct, no raw fetch, all feedback docs present. PKT-002-incident-action-drawer already implementation-complete. Owner to finalize and close.",
+      "status": "done",
+      "created_at": "2026-04-17T02:57:46Z",
+      "resolved_at": "2026-04-17T03:00:19Z"
+    }
+  ],
+  "blockers": []
+}

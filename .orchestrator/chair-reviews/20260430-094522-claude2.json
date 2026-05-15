@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization at 0.1667 with 4 idle agents; one active sidecar is under rework and non-saturating; Gemini quota blocks only Gemini dispatch, not other agents; no global approval hold or canonical-truth blocker.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-OPENCLAW-ACTIVATION-READY-E2E-SIDECAR-BFF-HANDOFF"
+  ]
+}

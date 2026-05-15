@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "SVC-POLICY-LEARNING-BOUNDARY",
+  "archived_at": "2026-04-28T18:59:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-POLICY-LEARNING-BOUNDARY",
+    "title": "Materialize policy-learning service boundary without production activation",
+    "summary_zh": "建立 policy-learning-svc 的 service boundary 與非 production stub HTTP surface，用來承接未來 policy learning job lifecycle；不得啟用 Qlib/TRL/RL production activation。",
+    "phase": "Future-State Service Materialization",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-COMPOSE"
+    ],
+    "artifacts": [
+      "services/policy-learning/",
+      "services/learning/",
+      "docker-compose.yml"
+    ],
+    "acceptance": [
+      "policy-learning service exposes health capability list job proposal status and rejection APIs",
+      "Dockerfile env storage and compose wiring are added",
+      "Qlib TRL RL and W&B production activation remain out of scope and disabled by default",
+      "tests prove disabled production adapters are rejected and stub lifecycle is replayable"
+    ],
+    "next": "Owner finalized approved task and closed it. Policy-learning service boundary is committed without production activation; focused tests, py_compile, and docker compose config passed.",
+    "last_update": "2026-04-28T18:59:22Z",
+    "task_class": "future_state_service_wrapper",
+    "auto_created_by": "codex-blueprint-diff-materialization",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "policy-learning service boundary 通過 review：FastAPI surface 覆蓋 health/capabilities/jobs/proposal/status/reject，JSON store 可 replay；compose 以 8100、named volume、/health healthcheck 與 POLICY_LEARNING_ENABLE_PRODUCTION_ADAPTERS=false 接線；Qlib/TRL/RL/W&B production adapter request 預設 rejected，未啟用 production learning runtime；驗證 pytest/py_compile/docker compose config 全數通過。"
+    ],
+    "review_file": "docs/reviews/2026-04-28-svc-policy-learning-boundary-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T18:59:22Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "bb450117b8a63f9fbb4d1fde3961615f9a749ad0",
+      "commit_subject": "SVC-POLICY-LEARNING-BOUNDARY materialize service boundary",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-POLICY-LEARNING-BOUNDARY",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 87,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 26,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-POLICY-LEARNING-BOUNDARY",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Policy-learning service boundary materialized with FastAPI stub lifecycle, disabled production adapter rejection, compose wiring, and tests. Verification: pytest -q services/policy-learning/tests services/training-session/tests; python3 -m py_compile services/policy-learning/main.py services/policy-learning/store.py scripts/smoke_honest_stack.py; docker compose config --quiet.",
+      "status": "done",
+      "created_at": "2026-04-28T18:48:10Z",
+      "resolved_at": "2026-04-28T18:51:31Z"
+    },
+    {
+      "task_id": "SVC-POLICY-LEARNING-BOUNDARY",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: policy-learning boundary is materialized without production activation; returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-28T18:51:31Z",
+      "resolved_at": "2026-04-28T18:59:22Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "task_id": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-27T14:32:53Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-REVIEW",
+    "title": "Prepare APP-003-RLLIB-DEFERRED-PREP-001 review packet and evidence summary",
+    "summary_zh": "平行支援 APP-003-RLLIB-DEFERRED-PREP-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 5 / Deferred Prep",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "APP-003-FINRL-DEFERRED-PREP-001"
+    ],
+    "artifacts": [
+      "support/sidecars/APP-003-RLLIB-DEFERRED-PREP-001/APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized Claude-approved support review packet as done; archival sidecar only, no canonical/runtime changes.",
+    "last_update": "2026-04-27T14:32:53Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-RLLIB-DEFERRED-PREP-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已重跑 pytest (13 passed)、smoke、worker 驗證，皆與 packet 紀錄一致；archived parent 為 done/completed，RLlib 仍維持 version-pinned 且 RL gate 保持 closed；packet 純為 support artifact，無 canonical truth 變更。"
+    ],
+    "review_file": "docs/reviews/2026-04-27-app-003-rllib-deferred-prep-001-sidecar-review-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-27T14:32:53Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 142,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-25T05:41:20Z",
+      "resolved_at": "2026-04-25T05:47:00Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review packet added at support/sidecars/APP-003-RLLIB-DEFERRED-PREP-001/APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-REVIEW.md. Current evidence has been revalidated: pytest services/research/rllib/test_adapter.py still passes (13), smoke remains draft-only and gate-closed, and the enabled worker still emits the stub_rllib draft summary without reopening the RL gate.",
+      "status": "done",
+      "created_at": "2026-04-25T05:47:39Z",
+      "resolved_at": "2026-04-25T05:53:37Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review packet revalidated 2026-04-25 UTC: pytest services/research/rllib/test_adapter.py -q => 13 passed; smoke and enabled worker remain draft-only and gate-closed. Use support/sidecars/APP-003-RLLIB-DEFERRED-PREP-001/APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-REVIEW.md as the compact reviewer surface for the parent task.",
+      "status": "done",
+      "created_at": "2026-04-25T05:53:37Z",
+      "resolved_at": "2026-04-27T14:13:14Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Sidecar review packet refreshed on 2026-04-27 UTC after parent closure: parent APP-003-RLLIB-DEFERRED-PREP-001 is archived done/completed, pytest services/research/rllib/test_adapter.py -q => 13 passed, smoke and enabled worker still emit draft-only gate-closed stub_rllib evidence. Please review support/sidecars/APP-003-RLLIB-DEFERRED-PREP-001/APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-REVIEW.md for sidecar closeout approval.",
+      "status": "done",
+      "created_at": "2026-04-27T14:13:14Z",
+      "resolved_at": "2026-04-27T14:14:34Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-27T14:14:34Z",
+      "resolved_at": "2026-04-27T14:18:03Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar review packet approved: parent archived done, gate-closed evidence reproducible, canonical wording (RLlib version-pinned, RL gate closed) preserved.",
+      "status": "done",
+      "created_at": "2026-04-27T14:18:03Z",
+      "resolved_at": "2026-04-27T14:32:53Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "task_id": "AUTO-IMPL-TW04-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-20T05:48:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AUTO-IMPL-TW04-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare AUTO-IMPL-TW04-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AUTO-IMPL-TW04-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Execution / Auto Worker - BFF Implementation",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/AUTO-IMPL-TW04-001/AUTO-IMPL-TW04-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar BFF handoff packet and closed it. Support artifact remains non-canonical and is ready for parent AUTO-IMPL-TW04-001 owner review and optional absorption into the mainline implementation.",
+    "last_update": "2026-04-20T05:48:29Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AUTO-IMPL-TW04-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar BFF handoff packet 通過審查：（1）僅建立 support/sidecars/ artifact，未修改任何 canonical truth；（2）清楚區分 TW-01/TW-03 既有 baseline 與 TW-04 仍缺少的 replay route family；（3）8 個 gap 項目（TW04-GAP-01 到 TW04-GAP-08）涵蓋 route、payload、authority、truth-source 全部面向；（4）operator journey 對比正確，pending-BFF placeholder 規則與 activation 條件明確；（5）frontend handoff rules 清晰且 commit/discard CTA 守衛語義正確。建議保留 parent 任務開放，直到 4 條 replay route、replay-grade payload 與 commit/discard authority 均 live 且有測試覆蓋。"
+    ],
+    "review_file": "support/sidecars/AUTO-IMPL-TW04-001/AUTO-IMPL-TW04-001-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T05:48:29Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 815,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AUTO-IMPL-TW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Prepared support/sidecars/AUTO-IMPL-TW04-001/AUTO-IMPL-TW04-001-SIDECAR-BFF-HANDOFF.md. Packet maps the current TW-01/TW-03 trainer baseline, the still-open TW-04 replay route/payload/truth-source gaps, and the frontend pending-BFF guardrails for /trainer/replay and commit/discard activation.",
+      "status": "done",
+      "created_at": "2026-04-20T05:36:57Z",
+      "resolved_at": "2026-04-20T05:44:38Z"
+    },
+    {
+      "task_id": "AUTO-IMPL-TW04-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved — sidecar accurately captures TW-04 gap and frontend activation boundary; returning to Codex for finalization",
+      "status": "done",
+      "created_at": "2026-04-20T05:44:38Z",
+      "resolved_at": "2026-04-20T05:48:29Z"
+    }
+  ],
+  "blockers": []
+}

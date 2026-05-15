@@ -1,10 +1,10 @@
 # Runtime-Manager Contract
 
-**Task:** RUN-001  
-**Owner:** Claude  
-**Reviewer:** Codex  
-**Status:** Review-ready — RuntimeBinding object, schema, and authority boundary locked for reviewer validation  
-**Tier:** L1 Execution Plane Contract  
+**Task:** RUN-001
+**Owner:** Claude
+**Reviewer:** Codex
+**Status:** Review-ready — RuntimeBinding object, schema, and authority boundary locked for reviewer validation
+**Tier:** L1 Execution Plane Contract
 **Conflict rule:** This document defines the authoritative write boundary for the Execution Plane. It supplements `BINDING_AND_DEPLOYMENT_SEMANTICS.md` with operational detail for the Runtime Manager service.
 
 ---
@@ -47,21 +47,33 @@ No other service — not Governance Plane, not Capital Pool Plane, not BFF — m
 
 Before the Runtime Manager may create a `RuntimeBinding`, all of the following must be satisfied:
 
-1. **DeploymentPlan exists and is approved or executing**  
+1. **DeploymentPlan exists and is approved or executing**
    The plan's `plan_id` must resolve to a `DeploymentPlan` with `status ∈ {approved, executing}`.  A missing or rejected plan is a hard blocker.
 
-2. **PersonaCapitalBinding exists and is active**  
+2. **PersonaCapitalBinding exists and is active**
    The `persona_capital_binding_id` carried by the `DeploymentPlan` must resolve to a `PersonaCapitalBinding` with `status = active`.  The binding's `allowed_deployment_scope` must be `>=` the plan's `target_stage`.
 
-3. **Single-runtime rule satisfied**  
+3. **Single-runtime rule satisfied**
    If the backing `CapitalPool` has `single_runtime_enforced = True` (the default), the pool must have no existing `active` `RuntimeBinding`.  The Runtime Manager must retire the previous binding before activating the new one.
 
-4. **Artifact loader checks passed**  
-   The execution loader must have validated the artifact's execution projection before the binding is created.  
+4. **Artifact loader checks passed**
+   The execution loader must have validated the artifact's execution projection before the binding is created.
    Compatibility note: EX-001 still enforces legacy `promotion_state` only for `paper` / `live`, while `canary` / `frozen` continue to rely on canonical `artifact_state` + `deployment_stage` metadata until the loader migration is complete.
 
-5. **Stage consistency**  
+5. **Stage consistency**
    `RuntimeBinding.deployment_mode` must equal `DeploymentPlan.target_stage`.
+
+6. **Canary/live activation gate present**
+   `target_stage ∈ {canary, live}` requires explicit promotion-gate evidence at
+   deploy time.  The Runtime Manager rejects forward activation unless the
+   request carries a promotion gate with at least:
+   `promotion_gate_decision_id`, `human_gate_packet_ref`,
+   `broker_sandbox_smoke_ref`, `risk_owner_approval_ref`, and
+   `operator_approval_ref`.  `live` additionally requires
+   `canary_observation_ref`.  Canary activation also requires
+   `0 < capital_scale_pct <= 5` and `0 < gross_scale_pct <= 25` in the gate.
+   Rollback replacement creation may bypass this promotion gate internally,
+   because rollback is a safety action rather than a forward activation.
 
 ---
 
@@ -75,7 +87,7 @@ Every `RuntimeBinding` must carry these three cross-object references (RUN-001 a
 | Governance binding | `persona_capital_binding_id` | `PersonaCapitalBinding.binding_id` |
 | Execution stage | `deployment_mode` | The actual stage: `paper` / `canary` / `live` / `frozen` |
 
-These three references make the provenance chain auditable:  
+These three references make the provenance chain auditable:
 `PersonaCapitalBinding → DeploymentPlan → RuntimeBinding`
 
 ---
@@ -84,9 +96,9 @@ These three references make the provenance chain auditable:
 
 ```
 pending_pause ──► paused ──► active ─► retired  (terminal)
-     ▲               │                             
+     ▲               │
      │               └──────────────────► failed   (terminal)
-     │                                             
+     │
 active ──────────────────────────────► failed      (terminal)
 ```
 

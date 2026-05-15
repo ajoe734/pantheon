@@ -72,7 +72,10 @@ _REQUIRED_TOP_LEVEL_KEYS = {
 def _deep_merge(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
     merged = copy.deepcopy(base)
     for key, value in patch.items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+        if (
+            isinstance(value, dict)
+            and isinstance(merged.get(key), dict)
+        ):
             merged[key] = _deep_merge(merged[key], value)
         else:
             merged[key] = copy.deepcopy(value)

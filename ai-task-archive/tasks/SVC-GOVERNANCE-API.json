@@ -1,0 +1,153 @@
+{
+  "version": 1,
+  "task_id": "SVC-GOVERNANCE-API",
+  "archived_at": "2026-04-28T16:00:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-GOVERNANCE-API",
+    "title": "Expose governance, deployment, binding, and evolution APIs as a service family",
+    "summary_zh": "把 approval、deployment、binding、evolution 等 domain objects 暴露成正式 service-backed API，讓 BFF 不再依賴 snapshots。",
+    "phase": "Phase 4: Service Layer Completion",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "SVC-BASELINE"
+    ],
+    "artifacts": [
+      "BINDING_AND_DEPLOYMENT_SEMANTICS.md",
+      "services/control-plane/governance/",
+      "services/governance/",
+      "services/evolution/",
+      "services/deployment/",
+      "services/capital/",
+      "services/runtime-manager/"
+    ],
+    "acceptance": [
+      "approval/deployment/capital/persona-binding/runtime-binding/evolution objects are available through stable service APIs or explicitly delegated service APIs",
+      "service boundary between runtime-control, governance-api, and evolution service is explicit",
+      "BFF-facing read/write contracts are concrete enough for SVC-SURFACES to remove normal snapshot/default fallback"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase4-2026-04-15-service-layer-completion",
+      "phase": "phase4",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion",
+      "session_file": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-28T09:09:29Z",
+      "session_id": "phase4-2026-04-15-service-layer-completion",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized approved governance API family after focused validation and delivery commit 3b86cbf.",
+    "last_update": "2026-04-28T16:00:02Z",
+    "review_notes_zh": [
+      "審查通過：rework 補齊三項 reopen gap — docker-compose.yml 已加入 deployment service（8095/health、shared governance-data volume、DEPLOYMENT_DATA_DIR/PANTHEON_GOVERNANCE_DATA_DIR、governance health-gated dependency）",
+      "operator-bff 已新增 PANTHEON_GOVERNANCE_APPROVAL_API_URL/PANTHEON_DEPLOYMENT_API_URL/PANTHEON_CAPITAL_API_URL 並 health-gate deployment + capital",
+      "重跑 focused suite 6 檔 108 passed、docker compose config --quiet exit 0；family contract、BINDING §14、per-service contracts 等先前通過項目維持不變",
+      "production-hardening (JWT/RBAC/MFA、approval-id authority) 仍由 SVC-RUNTIME-HARDENING 承接，本次不在範圍"
+    ],
+    "review_file": "docs/reviews/2026-04-28-svc-governance-api-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T16:00:02Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "3b86cbf1d98723921b888e2cc63615e16425ca2f",
+      "commit_subject": "SVC-GOVERNANCE-API expose governance service family",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-GOVERNANCE-API",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 58,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 17,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-GOVERNANCE-API",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-28T13:50:12Z",
+      "resolved_at": "2026-04-28T13:56:07Z"
+    },
+    {
+      "task_id": "SVC-GOVERNANCE-API",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Handoff to Claude for review: governance-api family contract is aligned with BINDING §14.1-§14.4; root compose now includes deployment service on 8095 with /health and shared governance snapshot volume; operator-bff now has explicit governance/deployment/capital/evolution/runtime service URLs and depends_on health gates; added service_family_contract static tests. Verification: docker compose config --quiet; python3 -m pytest services/governance/test_governance_api.py services/deployment/test_service.py services/capital/test_service.py services/evolution/test_evolution_service.py services/control-plane/governance/test_service_family_contract.py -q => 103 passed.",
+      "status": "done",
+      "created_at": "2026-04-28T14:01:19Z",
+      "resolved_at": "2026-04-28T14:30:37Z"
+    },
+    {
+      "task_id": "SVC-GOVERNANCE-API",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1777389600,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_dis",
+      "status": "done",
+      "created_at": "2026-04-28T14:30:37Z",
+      "resolved_at": "2026-04-28T14:36:33Z"
+    },
+    {
+      "task_id": "SVC-GOVERNANCE-API",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: - 2026-04-28T14:30:44Z · Orchestrator · task_reassigned · Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":",
+      "status": "done",
+      "created_at": "2026-04-28T14:36:33Z",
+      "resolved_at": "2026-04-28T15:08:36Z"
+    },
+    {
+      "task_id": "SVC-GOVERNANCE-API",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reopened: docker-compose.yml lacks deployment service block and operator-bff lacks PANTHEON_GOVERNANCE_APPROVAL_API_URL/PANTHEON_DEPLOYMENT_API_URL/PANTHEON_CAPITAL_API_URL plus deployment/capital depends_on; static service-family contract test fails. See docs/reviews/2026-04-28-svc-governance-api-claude-review.md for required changes.",
+      "status": "done",
+      "created_at": "2026-04-28T15:08:36Z",
+      "resolved_at": "2026-04-28T15:08:36Z"
+    },
+    {
+      "task_id": "SVC-GOVERNANCE-API",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Rework complete after Claude reopen: docker-compose.yml now has deployment service on 8095 with /health, shared governance-data volume, DEPLOYMENT_DATA_DIR/PANTHEON_GOVERNANCE_DATA_DIR, and governance health dependency; operator-bff now has explicit PANTHEON_GOVERNANCE_APPROVAL_API_URL/PANTHEON_DEPLOYMENT_API_URL/PANTHEON_CAPITAL_API_URL plus deployment/capital health-gated depends_on. Verification: docker compose config --quiet exit 0; python3 -m pytest services/control-plane/governance/test_service_family_contract.py services/governance/test_governance_api.py services/capital/test_service.py services/deployment/test_service.py services/evolution/test_evolution_service.py services/runtime-manager/test_internal_api_routes.py -q => 108 passed.",
+      "status": "done",
+      "created_at": "2026-04-28T15:37:43Z",
+      "resolved_at": "2026-04-28T15:53:24Z"
+    },
+    {
+      "task_id": "SVC-GOVERNANCE-API",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: rework satisfies the three reopen items (deployment service in compose, operator-bff family URLs, deployment+capital health-gated depends_on). 108 focused tests pass and docker compose config --quiet exits 0. Returned to owner Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-28T15:53:24Z",
+      "resolved_at": "2026-04-28T16:00:02Z"
+    }
+  ],
+  "blockers": []
+}

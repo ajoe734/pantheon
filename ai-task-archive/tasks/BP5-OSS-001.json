@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "task_id": "BP5-OSS-001",
+  "archived_at": "2026-04-15T17:51:50Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-OSS-001",
+    "title": "Pin the OpenClaw source and governed adapter boundary",
+    "summary_zh": "把 OpenClaw 的 upstream source、version pin、adapter boundary、smoke-test plan 從 adapter-started 收斂成可執行 integration baseline。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [],
+    "artifacts": [
+      "OSS_INTEGRATION_CHECKLIST.md",
+      "OPENCLAW_RUNTIME_CONTRACT.md",
+      "integrations/openclaw/"
+    ],
+    "acceptance": [
+      "OpenClaw source and version pin are explicit and tied to one governed adapter boundary",
+      "the integration baseline includes a smoke-test plan that the repo can actually execute"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "BP5-OSS-001 finalized: upstream pin locked (v2026.4.7 / 5050017543011b61df67744ebc6368d889c25a95 / ghcr.io/openclaw/openclaw:2026.4.7 @ sha256:be45b5187cbec1ff0f4e2503393d66acfc121c2d97eadf03bb1ac75826bad77c), governed adapter boundary documented, owner smoke rerun passed 6/6, and BP5-OSS-002 deferreds are captured in the acceptance packet.",
+    "last_update": "2026-04-15T17:51:50Z",
+    "review_notes_zh": [
+      "審查通過：upstream pin 已鎖定（tag v2026.4.7 / commit 5050017 / image + digest 一致），adapter boundary 文件清晰，facade 與 upstream 表面正確分離，governance overlay 與 OC-001/002/003 對齊，smoke test 6/6 通過。",
+      "後續追蹤（BP5-OSS-002）：normalize_handoff.py 的 strategy_id 應加 nonce 以避免 registry 碰撞。"
+    ],
+    "review_file": "integrations/openclaw/review_bp5_oss_001_claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T17:51:50Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "eb84cda3ada34f1ac1be93184d80e445b79bef3b",
+      "commit_subject": "BP5-OSS-001: pin OpenClaw source and governed boundary",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BP5-OSS-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 51,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-OSS-001",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Gemini completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T15:51:17Z",
+      "resolved_at": "2026-04-15T16:06:58Z"
+    },
+    {
+      "task_id": "BP5-OSS-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T16:06:58Z",
+      "resolved_at": "2026-04-15T16:22:24Z"
+    },
+    {
+      "task_id": "BP5-OSS-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-15T16:34:14Z",
+      "resolved_at": "2026-04-15T16:35:36Z"
+    },
+    {
+      "task_id": "BP5-OSS-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T16:49:07Z",
+      "resolved_at": "2026-04-15T16:52:56Z"
+    },
+    {
+      "task_id": "BP5-OSS-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Locked BP5-OSS-001 to verified upstream artifacts (Git tag v2026.4.7 -> commit 5050017543011b61df67744ebc6368d889c25a95, GHCR image ghcr.io/openclaw/openclaw:2026.4.7), corrected the docs to separate upstream runtime surfaces from the future Pantheon adapter facade, added integrations/openclaw/adapter/README.md plus a governed handoff fixture, updated the OpenClaw checklist row to governed, and landed scripts/openclaw-smoke-test.sh. Local smoke result: 6 passed, 0 failed.",
+      "status": "done",
+      "created_at": "2026-04-15T17:04:17Z",
+      "resolved_at": "2026-04-15T17:06:15Z"
+    },
+    {
+      "task_id": "BP5-OSS-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: pin locked, adapter boundary governed, smoke 6/6. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-15T17:06:15Z",
+      "resolved_at": "2026-04-15T17:51:50Z"
+    }
+  ],
+  "blockers": []
+}

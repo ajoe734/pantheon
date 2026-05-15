@@ -1,0 +1,15 @@
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:28081/api/kill-switch/dispatch",
+  "headers": {
+    "Authorization": "Bearer runtime-control-internal"
+  },
+  "body": {
+    "reason": "operator_emergency_stop",
+    "capital_pool_id": "pool-ep4-92a5eb2c",
+    "binding_id": "rb-8c00a26d1fee4fabb2afdd33c7e71ea7",
+    "actor_id": "ep4-operator-oncall",
+    "severity": "critical",
+    "action_override": "pause"
+  }
+}

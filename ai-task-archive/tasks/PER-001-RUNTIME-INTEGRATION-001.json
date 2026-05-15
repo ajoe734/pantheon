@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "task_id": "PER-001-RUNTIME-INTEGRATION-001",
+  "archived_at": "2026-04-22T15:15:03Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PER-001-RUNTIME-INTEGRATION-001",
+    "title": "Replace persona router and web placeholder runtime behavior",
+    "summary_zh": "把 persona service router web channel 的 repo-local placeholder runtime 行為換成 OpenClaw-backed 正常路徑或 truthful degraded surrogate，關掉明顯的 stub 假完成。",
+    "phase": "Execution / Persona Runtime Integration",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md",
+      "services/control-plane/persona/main.py",
+      "services/control-plane/router/main.py",
+      "services/channels/web/main.py",
+      "integrations/openclaw/adapter/gateway_runtime.py"
+    ],
+    "acceptance": [
+      "Persona service stops returning the static not ready stub in the normal path",
+      "Router no longer relies on local placeholder classification as authoritative behavior",
+      "Web stream path is backed by truthful runtime events or an explicit degraded contract"
+    ],
+    "next": "Captured the approved runtime integration on commits 4fe02c0 and 156f94d after re-running persona/router/web tests (7+7+3). Persona invoke now uses the OpenClaw-backed path with truthful degraded surrogate, router treats persona /classify as authoritative with degraded fallback only, and web /stream emits explicit status-only SSE events instead of the old placeholder.",
+    "last_update": "2026-04-22T15:15:03Z",
+    "source_plane": "audit_followup",
+    "source_ref": {
+      "type": "execution_packet",
+      "path": "docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md"
+    },
+    "task_class": "execution_followup",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Persona /invoke 改走 OpenClaw gateway 實際 agent_turn，失敗時只回 [persona runtime degraded] 明示 surrogate 並把 session 標 degraded",
+      "Router /route 先呼叫 persona /classify，local classifier 只在 except 分支以 router.degraded_fallback / degraded_surrogate 出現，/health 公告 classification_owner=persona、fallback_classifier_mode=degraded_only",
+      "Web /stream 發出 session + router_health + notice(streaming=disabled) 三個 truthful SSE event，/chat 傳遞 router metadata 並在 router 失敗時明示 routing_mode=degraded_surrogate",
+      "Adapter agent_turn 遇非 JSON stdout 回 {text: stdout} 不偽造結構化成功，transport 錯誤以 OpenClawGatewayTransportError + Pantheon 錯誤碼往上拋",
+      "獨立重跑 persona 7 passed (3 subtests) / router 7 passed / web 3 passed，四檔 ast.parse 全過",
+      "Non-blocking: persona /classify 仍是 local surrogate、web SSE 僅 status_only、router except 較寬、sessions_overview 尚未接線、四個 artifact 檔在 codex/2026-04-21-exec-sync 工作樹未 commit 也未 push，owner 於 finalize 時處理 commit/push"
+    ],
+    "review_file": "docs/reviews/2026-04-22-per-001-runtime-integration-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-22T15:15:03Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "156f94d4d3f9c386fd656777072d23c2eea1ef77",
+      "commit_subject": "PER-001-RUNTIME-INTEGRATION-001 finalize approved runtime integration",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "PER-001-RUNTIME-INTEGRATION-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1069,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T07:36:44Z",
+      "resolved_at": "2026-04-22T07:42:21Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T07:42:20Z",
+      "resolved_at": "2026-04-22T07:44:25Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Replaced persona/router/web placeholder runtime behavior with OpenClaw-backed invoke plus truthful degraded surrogates. Verified targeted tests: persona 7 passed, router 7 passed, web 3 passed, plus py_compile. Live probe confirmed the pinned gateway is real and agent loop currently degrades truthfully when gateway auth is missing.",
+      "status": "done",
+      "created_at": "2026-04-22T08:45:46Z",
+      "resolved_at": "2026-04-22T14:42:28Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Replaced persona/router/web placeholder runtime behavior with OpenClaw-backed invoke plus truthful degraded surrogates. Verified targeted tests: persona 7 passed, router 7 passed, web 3 passed, plus py_compile. Live probe confirmed the pinned gateway is real and agent loop currently degrades truthfully when gateway auth is missing.",
+      "status": "done",
+      "created_at": "2026-04-22T14:42:28Z",
+      "resolved_at": "2026-04-22T15:08:34Z"
+    },
+    {
+      "task_id": "PER-001-RUNTIME-INTEGRATION-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewed via local git diff against cf67644 (branch not pushed). All 3 acceptance targets pass: persona invoke now OpenClaw-backed with truthful [persona runtime degraded] surrogate; router treats persona /classify as authoritative and router-local classifier only as degraded fallback; web /stream emits session + router_health + notice(streaming=disabled) instead of the old placeholder. Reran persona 7 / router 7 / web 3 pytest, all green. Non-blocking caveats (persona classifier still local surrogate, SSE intentionally status_only, uncommitted working tree) captured in review doc and sidecar. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-22T15:08:34Z",
+      "resolved_at": "2026-04-22T15:15:03Z"
+    }
+  ],
+  "blockers": []
+}

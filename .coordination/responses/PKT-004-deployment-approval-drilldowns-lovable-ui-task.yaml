@@ -1,7 +1,7 @@
 feature_id: PKT-004-deployment-approval-drilldowns
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: loop-complete
+status: ready
 pantheon_pr: null
 base_url: null
 workbench: persona-workbench-shared-with-governance-workbench
@@ -44,3 +44,5 @@ gap_handoff_path: .coordination/requests/PKT-004-deployment-approval-drilldowns-
 gap_handoff_template: .coordination/requests/PKT-004-deployment-approval-drilldowns-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/PKT-004-deployment-approval-drilldowns-ui-done.yaml
 completion_handoff_template: .coordination/requests/PKT-004-deployment-approval-drilldowns-ui-done.example.yaml
+feedback_handoff_path: .coordination/requests/PKT-004-deployment-approval-drilldowns-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/PKT-004-deployment-approval-drilldowns-frontend-feedback.example.yaml

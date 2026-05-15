@@ -1,0 +1,41 @@
+{
+  "status": "still_open_or_pending",
+  "generated_at": "2026-04-26T13:39:36Z",
+  "order_id": "1",
+  "iterations": 3,
+  "summaries": [
+    {
+      "generated_at": "2026-04-26T13:38:53Z",
+      "probe_file": "docs/deployment/evidence/ibkr-live-order-cancel/PENDING-operator-capture/pending-cancel-monitor-20260426T1338Z/open-orders-01.json",
+      "open_order_count": 1,
+      "statuses": [
+        "PendingCancel"
+      ],
+      "terminal": false,
+      "absent": false
+    },
+    {
+      "generated_at": "2026-04-26T13:39:14Z",
+      "probe_file": "docs/deployment/evidence/ibkr-live-order-cancel/PENDING-operator-capture/pending-cancel-monitor-20260426T1338Z/open-orders-02.json",
+      "open_order_count": 1,
+      "statuses": [
+        "PendingCancel"
+      ],
+      "terminal": false,
+      "absent": false
+    },
+    {
+      "generated_at": "2026-04-26T13:39:36Z",
+      "probe_file": "docs/deployment/evidence/ibkr-live-order-cancel/PENDING-operator-capture/pending-cancel-monitor-20260426T1338Z/open-orders-03.json",
+      "open_order_count": 1,
+      "statuses": [
+        "PendingCancel"
+      ],
+      "terminal": false,
+      "absent": false
+    }
+  ],
+  "notes": [
+    "Read-only monitor; no order placement, modification, or cancellation was performed."
+  ]
+}

@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2",
+  "archived_at": "2026-05-04T05:16:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2",
+    "title": "Upgrade source/search to crawler-indexer platform baseline",
+    "summary_zh": "把 source/search 從 bounded connector/indexer 推到下一層 platform：crawler/indexer policy registry、connector lifecycle、scheduled refresh、license/rate/PIT/audit guard，以及 durable-only search cutoff。",
+    "phase": "Blueprint production hardening follow-up 2026-05-04",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-BLUEPRINT-SOURCE-SEARCH-INDEXER"
+    ],
+    "artifacts": [
+      "services/source_ingestion",
+      "services/search",
+      "services/control-plane/bff",
+      "docker-compose.yml",
+      "docs/03/SD-03_source_knowledge_evidence.md",
+      "tests"
+    ],
+    "acceptance": [
+      "connector registry supports bounded crawler adapters with allowlists and rate limits",
+      "index refresh is scheduled and materialized without query-time request documents",
+      "search durable-only mode has staging/prod cutoff tests",
+      "BFF exposes crawler/indexer health and freshness without direct documents compatibility as normal path"
+    ],
+    "next": "Closeout complete: approved crawler/indexer wave2 delivered in commit 32433b86. Verification: focused source/search/BFF pytest 69 passed; git diff --check passed; py_compile passed for source_ingestion, search scheduler, and BFF touched modules.",
+    "last_update": "2026-05-04T05:16:48Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-gap-materialization-20260504",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：policy_registry 硬編碼 bounded=True、allowlist_enforced、rate_limit/license guards；scheduler_worker 實作 scheduled refresh + materialize，request_documents_compat=False；durable-only cutoff 有四個 test 加 prod env 斷言；BFF /operator/source/ops 和 /operator/search/ops 透過 service client 暴露 freshness/health，無 direct document reads",
+      "後續追蹤：owner 完成 closeout commit 後 push 到 upstream"
+    ],
+    "review_file": "docs/deployment/source-search-crawler-indexer-wave2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-04T05:16:48Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "32433b86f09b6e18b2eb74438be81bd062034770",
+      "commit_subject": "SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2 crawler indexer baseline",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 22,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 11,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented crawler/indexer wave2 baseline: source policy registry and per-connector crawler policies, connector lifecycle audit/disabled run gate, scheduled search refresh/materialize worker in compose, BFF policy/freshness surfaces, and SD-03 update. Verification: /tmp/pantheon-svc-source-search-venv/bin/python -m pytest focused 71 passed; broader source/search regression 86 passed; git diff --check and py_compile passed. Ready for Claude review.",
+      "status": "done",
+      "created_at": "2026-05-04T05:07:18Z",
+      "resolved_at": "2026-05-04T05:11:29Z"
+    },
+    {
+      "task_id": "SVC-SOURCE-SEARCH-CRAWLER-INDEXER-WAVE2",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all four acceptance criteria met. Bounded crawler policy registry with allowlists/rate limits, scheduled refresh/materialize worker, durable-only staging+prod cutoff tests, BFF freshness surfaces via service clients. Returned to Codex for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-04T05:11:29Z",
+      "resolved_at": "2026-05-04T05:16:48Z"
+    }
+  ],
+  "blockers": []
+}

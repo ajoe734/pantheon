@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "WB-005",
+  "archived_at": "2026-04-14T14:29:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "WB-005",
+    "title": "Define the Trainer Workbench backlog and wave plan",
+    "summary_zh": "整理 Trainer Workbench 的 screen inventory、現況支撐、缺規格與推薦執行波次。",
+    "phase": "Workbench Backlog",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "LOOP-001"
+    ],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+    ],
+    "acceptance": [
+      "teaching dialog, parameter controls, before-after compare, and replay modules are all listed",
+      "demo-grade current state is explicitly distinguished from packet-ready scope",
+      "backend and contract requirements are documented before Lovable is invited to change Trainer flows"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "phase": "phase3",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-14T09:07:58Z",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Trainer Workbench backlog finalized after approved review; Wave 3 module ordering, demo-vs-packet boundary, and trainer BFF contract gaps are locked in the backlog artifact.",
+    "last_update": "2026-04-14T14:29:34Z",
+    "review_notes_zh": [
+      "審查通過：四個模組（Teaching dialog、Parameter controls、Before/after compare、Teaching replay）均已列出，demo-grade 現況與 packet-ready 範圍明確區分，各模組 backend 缺口與合約需求逐一記錄",
+      "Wave 3 定位合理，read-only teaching history 作為 Persona drilldown 已明確標記為 pre-Wave 3 evidence only",
+      "無需修改，直接交還 Codex 進行 finalization"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T14:29:34Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "bcb1fd99225dac035f62eb63c7e6b3223d244aa2",
+      "commit_subject": "WB-005: finalize Trainer Workbench backlog and wave plan",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "WB-005",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 166,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "WB-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Trainer Workbench backlog tightened: partial read-only teaching-history support is now explicit, module-level backend gaps are enumerated, and Wave 3 remains justified as the first honest Trainer packetization wave.",
+      "status": "done",
+      "created_at": "2026-04-14T14:26:08Z",
+      "resolved_at": "2026-04-14T14:27:16Z"
+    },
+    {
+      "task_id": "WB-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Trainer Workbench backlog review approved: all four modules present, demo vs packet-ready scope clearly separated, and module-level backend gaps enumerated with specific BFF route requirements. Wave 3 placement is well-justified. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-14T14:27:16Z",
+      "resolved_at": "2026-04-14T14:29:34Z"
+    }
+  ],
+  "blockers": []
+}

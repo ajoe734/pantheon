@@ -327,8 +327,11 @@ The following surfaces reference objects whose definitions live in task-level do
 | RS-01 | Research Package List | `ResearchPackage[]` | `GET /api/research-packages` | Discovered and ingested research materials |
 | RS-02 | Package Detail | `ResearchPackage` | `GET /api/research-packages/{package_id}` | Research detail with normalization status and replication gate result |
 | RS-03 | Replication Gate Results | `ReplicationGateResult[]` | `GET /api/replication-gates` | First-pass replication results before registry admission |
+| RS-04 | OSS Activation-Ready Operations View | research orchestrator, policy-learning, research-worker gateway, OpenClaw adapter read models | `GET /api/v1/operator/research/oss-activation-ready` (`/oss-preactivation` alias) | Read-only capability, gate state, run history, artifact refs, logs, and error summary for activation-gated OSS backends; no production activation or write authority |
 
 **Objects referenced**: `ResearchPackage`, `StrategySpec` (via OC-003), `ReplicationGateResult`
+
+**Objects additionally referenced by RS-04**: dormant/activation-ready capability metadata plus run/job records, artifact refs, event logs, stdout/stderr excerpts, and error summaries from service-owned read APIs. RS-04 may show offline activation-ready gates, but it is still read-only and must not be used as evidence of Qlib/TRL/RL/W&B/OpenClaw production activation.
 
 **Degraded path**: Research data is informational. If research plane is down, show "research data unavailable" — this does not affect operational safety.
 

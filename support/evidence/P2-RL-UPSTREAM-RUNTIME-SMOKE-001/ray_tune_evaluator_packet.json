@@ -1,0 +1,65 @@
+{
+  "artifact_checksum": "sha256:9d17d3d811c0e1cc468a5c83962456ec741c2e1aa897ef714462d899a05d9ffb",
+  "artifact_type": "optimizer_result",
+  "auditable_fields": [
+    "backend_used",
+    "run_id",
+    "artifact_checksum",
+    "governance"
+  ],
+  "backend_used": "stub_ray_tune",
+  "created_at": "2026-05-02T12:00:31Z",
+  "evaluator": "EV-001",
+  "framework": "ray_tune",
+  "governance": {
+    "capital_binding": false,
+    "deployment_stage": "none",
+    "direct_governance_write": false,
+    "gate_state": "closed",
+    "order_routing_enabled": false,
+    "paper_canary_live_promotion": false
+  },
+  "packet_id": "EV-001-raytune-rl-exit-timing-ray-tune-2026.05.01",
+  "run_id": "raytune-stub-91243138ecdb",
+  "scoring": {
+    "advisory_note": "Stub-baseline Ray Tune search evidence. Real ray[tune] backend requires install. Gate remains closed; offline review only.",
+    "best_trial_id": "trial-003",
+    "components": [
+      {
+        "name": "best_validation_sharpe_proxy",
+        "value": 1.03700316,
+        "weight": 0.4
+      },
+      {
+        "name": "best_win_rate_proxy",
+        "value": 0.70041098,
+        "weight": 0.3
+      },
+      {
+        "name": "best_validation_max_drawdown_proxy",
+        "note": "lower is better",
+        "value": 0.12499179,
+        "weight": 0.3
+      }
+    ],
+    "num_trials": 8,
+    "search_summary": {
+      "best_trial_id": "trial-003",
+      "best_trial_score": 1.03700316,
+      "median_trial_score": 0.97579425,
+      "num_trials": 8,
+      "objective_metric": "validation_sharpe_proxy",
+      "recommended_candidate_registry_ids": [
+        "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-003",
+        "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-004",
+        "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-006"
+      ],
+      "search_space_dimensions": 6,
+      "search_strategy": "pbt",
+      "top_k": 3
+    }
+  },
+  "strategy_id": "rl-exit-timing-ray-tune",
+  "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
+  "version": "2026.05.01"
+}

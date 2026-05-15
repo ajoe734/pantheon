@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization persists and current blockers are parent-scoped, not global.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-COMPOSE",
+    "SVC-RUNTIME-HARDENING"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260428T165154Z-72463ea4",
+      "decision": "deny",
+      "reason": "sudo apt-get install mutates host packages and is unnecessary because python3 -m pytest and python3 -m pip are already available; use python3 -m pytest instead.",
+      "remember": false
+    }
+  ],
+  "recommended_focus": [
+    "SVC-SOURCE-INGEST-SERVICE",
+    "SVC-POLICY-LEARNING-BOUNDARY"
+  ]
+}

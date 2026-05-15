@@ -1,0 +1,67 @@
+{
+  "capital_side_effects_allowed": false,
+  "credential": {
+    "credential_env": null,
+    "credential_fingerprint": null,
+    "credential_not_required": true,
+    "credential_present": false,
+    "raw_secret_material_present_in_artifact": false,
+    "secret_ref": null,
+    "secret_ref_env": null,
+    "secret_ref_name": null,
+    "secret_ref_present": false
+  },
+  "generated_at": "2026-05-01T17:21:19Z",
+  "market": "TW",
+  "order_capable_provider": false,
+  "order_path": "not_applicable",
+  "order_side_effects_allowed": false,
+  "provider": "MOPS",
+  "provider_key": "mops",
+  "rate_limit": {
+    "header_allowlist": [
+      "ratelimit-limit",
+      "ratelimit-remaining",
+      "ratelimit-reset",
+      "retry-after",
+      "x-api-limit",
+      "x-api-remaining",
+      "x-api-used",
+      "x-cg-pro-api-credits-left",
+      "x-cg-pro-api-credits-used",
+      "x-cg-pro-api-limit",
+      "x-cg-pro-api-reset",
+      "x-kf-api-key-expire",
+      "x-ratelimit-limit",
+      "x-ratelimit-remaining",
+      "x-ratelimit-reset"
+    ],
+    "headers": {},
+    "quota": {
+      "non_secret": true,
+      "status": "unavailable"
+    },
+    "reason": "provider smoke URL is not configured",
+    "status": "unavailable"
+  },
+  "read_intent": null,
+  "read_only": true,
+  "readback": null,
+  "reason": "provider smoke URL is not configured",
+  "request": {
+    "headers_present": [],
+    "method": "GET",
+    "url": null
+  },
+  "session_provenance": {
+    "details": {},
+    "generated_at": "2026-05-01T17:21:19Z",
+    "raw_secret_material_present_in_artifact": false,
+    "reason": "provider smoke URL is not configured",
+    "session_type": "not_started",
+    "status": "unavailable"
+  },
+  "source_class": "official_reference",
+  "status": "public_reference_unavailable",
+  "task_id": "P2-MARKETDATA-CREDENTIAL-SMOKE-001"
+}

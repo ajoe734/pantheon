@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "task_id": "CW-02-TRANSCRIPT-001",
+  "archived_at": "2026-04-19T17:57:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "CW-02-TRANSCRIPT-001",
+    "title": "Publish Debate Transcript event model and transcript route",
+    "summary_zh": "為 CW-02 補齊 transcript route、TranscriptEvent schema、actor labeling 與 inline evidence contract，讓 consultation 有 truthful ordered transcript。",
+    "phase": "Execution / Wave 3 - Module Contract Expansion",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "CW-01-FOUNDATION-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+      "docs/pantheon-handoffs/CW-008-consultation-workbench/PACKET_FAMILY.md",
+      "docs/lovable/PANTHEON_FRONTEND_SA.md"
+    ],
+    "acceptance": [
+      "transcript route and event schema are published",
+      "actor labels and inline evidence are BFF resolved",
+      "transcript replay has an honest ordered event source"
+    ],
+    "next": "Owner finalized: transcript route and TranscriptEvent schema published at b2bd97f. actor_id anchored to SessionPersona.id, actor_role uses canonical consultation roles, sequence_number ordering guaranteed. All three acceptance criteria met. PACKET_FAMILY.md updated. CW-03-COMMITTEE-001 and CW-04-REDTEAM-MEMO-001 are now unblocked.",
+    "last_update": "2026-04-19T17:57:51Z",
+    "source_plane": "architecture_gap_matrix",
+    "source_ref": {
+      "type": "architecture_gap_matrix",
+      "recorded_at": "2026-04-19T00:00:00Z",
+      "summary": "Materialized from the 2026-04-19 architecture-team input gap matrix for blocked module contracts",
+      "canonical_refs": [
+        "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md",
+        "DEVELOPMENT_WORKBREAKDOWN.md"
+      ]
+    },
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-19-wave3-wave4-architecture-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審核通過；已修正 transcript contract 內部語義不一致：actor_id 明確錨定 SessionPersona.id、actor_role 回到 canonical consultation role、PACKET_FAMILY 的排序要求改為 sequence_number。JSON example 已驗證格式。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T17:57:51Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "98db8b06bd65a2504efe0ca44d86c1d0eefede0d",
+      "commit_subject": "CW-02-TRANSCRIPT-001: finalize transcript contract (review_approved -> done)",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "CW-02-TRANSCRIPT-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 723,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "CW-02-TRANSCRIPT-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T17:37:24Z",
+      "resolved_at": "2026-04-19T17:37:46Z"
+    },
+    {
+      "task_id": "CW-02-TRANSCRIPT-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T17:39:34Z",
+      "resolved_at": "2026-04-19T17:45:47Z"
+    },
+    {
+      "task_id": "CW-02-TRANSCRIPT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "CW-02 Debate Transcript contract published at commit b2bd97f. Artifacts: docs/bff/CW-02-debate-transcript.md (route shape, TranscriptEvent schema, actor labeling contract, Evidence Link Object, degradation rules), docs/examples/CW-02-debate-transcript.json (full + partial surface payloads), PACKET_FAMILY.md updated (CW-02 status=contract-published/pending-bff, gap matrix rows updated). All three acceptance criteria met: (1) transcript route and event schema published; (2) actor labels and inline evidence are BFF-resolved with explicit non-goal clauses; (3) transcript replay has an honest append-only ordered event source via sequence_number guarantee.",
+      "status": "done",
+      "created_at": "2026-04-19T17:52:14Z",
+      "resolved_at": "2026-04-19T17:56:09Z"
+    },
+    {
+      "task_id": "CW-02-TRANSCRIPT-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Reviewed and approved after reconciling actor identity semantics, canonical consultation-role alignment, and sequence_number ordering. Owner can finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-19T17:56:09Z",
+      "resolved_at": "2026-04-19T17:57:51Z"
+    }
+  ],
+  "blockers": []
+}

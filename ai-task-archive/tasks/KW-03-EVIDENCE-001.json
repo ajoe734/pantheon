@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "task_id": "KW-03-EVIDENCE-001",
+  "archived_at": "2026-04-19T20:21:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "KW-03-EVIDENCE-001",
+    "title": "Publish Evidence Ref read model and link-resolution contract",
+    "summary_zh": "為 KW-03 補齊 evidence list/detail、linked decision panel 與 BFF-side link resolution，讓 evidence surface 不再靠 raw id 猜 URL。",
+    "phase": "Execution / Wave 3 - Module Contract Expansion",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "KW-01-FOUNDATION-001",
+      "KW-02-NOTES-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+      "docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md",
+      "docs/lovable/PANTHEON_FRONTEND_SA.md"
+    ],
+    "acceptance": [
+      "evidence list and detail routes are published",
+      "link resolution is BFF owned",
+      "evidence drilldowns no longer guess targets from raw refs"
+    ],
+    "next": "Owner finalized approved task and closed it. All acceptance criteria confirmed: evidence list/detail routes published in docs/bff/KW-03-evidence-refs.md, link resolution is BFF-owned, evidence drilldowns no longer guess targets from raw refs. PACKET_FAMILY readiness gate flipped to true, PANTHEON_FRONTEND_SA globally consistent. KW-03 contract closed.",
+    "last_update": "2026-04-19T20:21:08Z",
+    "source_plane": "architecture_gap_matrix",
+    "source_ref": {
+      "type": "architecture_gap_matrix",
+      "recorded_at": "2026-04-19T00:00:00Z",
+      "summary": "Materialized from the 2026-04-19 architecture-team input gap matrix for blocked module contracts",
+      "canonical_refs": [
+        "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md",
+        "DEVELOPMENT_WORKBREAKDOWN.md"
+      ]
+    },
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-19-wave3-wave4-architecture-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "KW-03 contract artifacts and frontend-facing evidence-route descriptions now align: PACKET_FAMILY marks KW-03 ready, docs/bff/KW-03-evidence-refs.md and docs/examples/KW-03-evidence-refs.json publish the list/detail and resolved-link contract, and all KW-03 references in docs/lovable/PANTHEON_FRONTEND_SA.md now describe /knowledge/evidence as contract-ready or contract-published rather than blocked shell-only.|Unrelated residual note: docs/lovable/PANTHEON_FRONTEND_SA.md still has a pre-existing KW-02 route-map inconsistency (/knowledge/notes remains listed as blocked shell only even though section 12.2 marks KW-02 contract-ready). This does not block KW-03 approval but should be cleaned up in a separate pass."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T20:21:08Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "aacdeded48754e6dd9df9362aa23f0a46d62cd39",
+      "commit_subject": "KW-03-EVIDENCE-001 finalize: close review and confirm all acceptance criteria met",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Evidence Ref read model and link-resolution contract fully published. Artifacts": "docs/bff/KW-03-evidence-refs.md (list/detail routes, BFF-owned link resolution, linked_decisions panel), docs/examples/KW-03-evidence-refs.json (four example payloads), PACKET_FAMILY.md (KW-03 readiness gate true), PANTHEON_FRONTEND_SA.md (evidence routes contract-published). All acceptance criteria confirmed: evidence routes published, link resolution BFF-owned, drilldowns no longer guess targets from raw refs.",
+        "LLM-Agent": "Claude",
+        "Task-ID": "KW-03-EVIDENCE-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 755,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "KW-03-EVIDENCE-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T19:45:58Z",
+      "resolved_at": "2026-04-19T19:46:13Z"
+    },
+    {
+      "task_id": "KW-03-EVIDENCE-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "KW-03 Evidence Ref contract published. Deliverables: (1) docs/bff/KW-03-evidence-refs.md — full list/detail route contract, link-type taxonomy, credibility metadata, BFF-owned resolved_link, linked_decisions panel, source_note_context/source_memory_context, non-goals, degradation rules; (2) docs/examples/KW-03-evidence-refs.json — four example payloads covering list, detail from postmortem, detail from research note, and degraded list; (3) PACKET_FAMILY.md updated — KW-03 Lovable readiness gate flipped to true, module inventory updated, backend gap matrix rows marked resolved. All three acceptance criteria met: evidence list and detail routes published, link resolution is BFF-owned, evidence drilldowns no longer guess targets from raw refs.",
+      "status": "done",
+      "created_at": "2026-04-19T19:49:37Z",
+      "resolved_at": "2026-04-19T20:07:49Z"
+    },
+    {
+      "task_id": "KW-03-EVIDENCE-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review finding: docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md still marks the three KW-01 prerequisite rows as missing in the Backend Gap Matrix (GET /api/v1/knowledge/memory, GET /api/v1/knowledge/memory/{entry_id}, and Memory entry lifecycle and identity contract). That contradicts the header/module readiness claims and Promotion Criteria item 5, so KW-03 cannot claim its upstream prerequisites are already Lovable-ready until the matrix is reconciled. Please resolve the PACKET_FAMILY contradiction and re-handoff for review.",
+      "status": "done",
+      "created_at": "2026-04-19T20:07:49Z",
+      "resolved_at": "2026-04-19T20:07:49Z"
+    },
+    {
+      "task_id": "KW-03-EVIDENCE-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "PACKET_FAMILY.md contradiction resolved: the three KW-01 Backend Gap Matrix rows (GET /api/v1/knowledge/memory, GET /api/v1/knowledge/memory/{entry_id}, Memory entry lifecycle and identity contract) were incorrectly marked as 'missing' while the KW-01 module section and Lovable readiness gate already showed them as 'implemented'/'true'. All three rows now correctly read 'resolved — docs/bff/KW-01-institutional-memory.md', consistent with the module inventory, module backend-gaps table, packetization prerequisite, and Promotion Criteria item 5. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-19T20:10:09Z",
+      "resolved_at": "2026-04-19T20:12:14Z"
+    },
+    {
+      "task_id": "KW-03-EVIDENCE-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review finding: docs/lovable/PANTHEON_FRONTEND_SA.md still marks KW-03 as blocked shell-only in the Knowledge workbench summary, route map, and page readiness table (/knowledge/evidence and /knowledge/evidence/:ref_id). That contradicts docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md and the published KW-03 contract/examples, so Lovable-facing readiness is not yet globally consistent. Please update the frontend SA to mark KW-03 as contract-ready/ready wherever evidence routes are listed, then re-handoff for review.",
+      "status": "done",
+      "created_at": "2026-04-19T20:12:14Z",
+      "resolved_at": "2026-04-19T20:12:14Z"
+    },
+    {
+      "task_id": "KW-03-EVIDENCE-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "PANTHEON_FRONTEND_SA.md now globally consistent with KW-03 contract: workbench summary updated to KW-01-03 contract-ready, route map rows changed from blocked-shell to contract-published, knowledge page list rows changed from blocked to contract-ready, and section 12.3.4 rewritten with full contract-state description. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-19T20:14:54Z",
+      "resolved_at": "2026-04-19T20:19:37Z"
+    },
+    {
+      "task_id": "KW-03-EVIDENCE-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Approved: KW-03 evidence contract, examples, PACKET_FAMILY readiness, and frontend-SA evidence-route descriptions are aligned. Return to Claude for finalization to done.",
+      "status": "done",
+      "created_at": "2026-04-19T20:19:37Z",
+      "resolved_at": "2026-04-19T20:21:09Z"
+    }
+  ],
+  "blockers": []
+}

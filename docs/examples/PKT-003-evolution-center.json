@@ -1,0 +1,60 @@
+{
+  "evolution_decisions": {
+    "items": [
+      {
+        "id": "evo-dec-001",
+        "action_type": "retrain",
+        "risk_level": "medium",
+        "status": "approved",
+        "incident_ref": "inc-20260410-001",
+        "artifact_id": "artifact-042"
+      }
+    ],
+    "page_info": {
+      "next_page_token": null
+    },
+    "meta": {
+      "snapshot_at": "2026-04-14T12:00:00Z"
+    }
+  },
+  "evolution_decision_detail": {
+    "id": "evo-dec-001",
+    "action_type": "retrain",
+    "risk_level": "medium",
+    "status": "approved",
+    "incident_ref": "inc-20260410-001",
+    "artifact_id": "artifact-042",
+    "created_at": "2026-04-10T08:30:00Z",
+    "updated_at": "2026-04-11T09:00:00Z",
+    "notes": "Approved for retrain after promotion gate timeout root cause confirmed.",
+    "meta": {
+      "snapshot_at": "2026-04-14T12:00:00Z"
+    }
+  },
+  "freeze_orders": {
+    "items": [
+      {
+        "freeze_order_id": "freeze-001",
+        "status": "lifted",
+        "scope": "global",
+        "issued_at": "2026-04-10T07:00:00Z"
+      }
+    ],
+    "meta": {
+      "snapshot_at": "2026-04-14T12:00:00Z"
+    }
+  },
+  "rollbacks": {
+    "items": [
+      {
+        "rollback_id": "rb-20260410-001",
+        "action_type": "rollback_deployment",
+        "runtime_id": "runtime-042",
+        "executed_at": "2026-04-10T07:15:00Z"
+      }
+    ],
+    "meta": {
+      "snapshot_at": "2026-04-14T12:00:00Z"
+    }
+  }
+}

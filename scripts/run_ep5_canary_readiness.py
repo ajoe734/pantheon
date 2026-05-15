@@ -29,8 +29,18 @@ ROOT = Path(__file__).resolve().parents[1]
 GOVERNANCE_DIR = ROOT / "services" / "control-plane" / "governance"
 if str(GOVERNANCE_DIR) not in sys.path:
     sys.path.insert(0, str(GOVERNANCE_DIR))
+EXECUTION_DIR = ROOT / "services" / "execution"
+if str(EXECUTION_DIR) not in sys.path:
+    sys.path.insert(0, str(EXECUTION_DIR))
+RESEARCH_ADAPTERS_DIR = ROOT / "services" / "research" / "adapters"
+if str(RESEARCH_ADAPTERS_DIR) not in sys.path:
+    sys.path.insert(0, str(RESEARCH_ADAPTERS_DIR))
 
 from deployment_plan import DeploymentScale, RollbackRef, StagePlanner  # noqa: E402
+from ibkr_adapter import IBKRAdapter, IBKRConfig, IBKROrderIntent  # noqa: E402
+from kraken_adapter import KrakenAdapter, KrakenConfig, KrakenOrderIntent  # noqa: E402
+from shioaji_adapter import ShioajiAdapter, ShioajiConfig, ShioajiOrderIntent  # noqa: E402
+from taiwan_market_client import TaiwanMarketClient  # noqa: E402
 
 
 class ReadinessError(RuntimeError):
@@ -51,6 +61,15 @@ class ChecklistItem:
         }
 
 
+@dataclass(frozen=True)
+class GovernedProviderSpec:
+    key: str
+    env_key: str
+    expected_value: str
+    secret_name_keys: tuple[str, ...]
+    role: str
+
+
 def iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -58,6 +77,42 @@ def iso_now() -> str:
 def dump_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def load_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+GOVERNED_PROVIDER_SPECS = (
+    GovernedProviderSpec(
+        key="ibkr",
+        env_key="EXECUTION_BROKER_PROVIDER",
+        expected_value="IBKR",
+        secret_name_keys=("BROKER_API_KEY_SECRET_NAME", "BROKER_API_SECRET_SECRET_NAME"),
+        role="US broker execution",
+    ),
+    GovernedProviderSpec(
+        key="shioaji",
+        env_key="TW_EXECUTION_PROVIDER",
+        expected_value="Shioaji",
+        secret_name_keys=("SHIOAJI_API_KEY_SECRET_NAME", "SHIOAJI_SECRET_KEY_SECRET_NAME"),
+        role="Taiwan broker execution",
+    ),
+    GovernedProviderSpec(
+        key="kraken",
+        env_key="CRYPTO_EXECUTION_PROVIDER",
+        expected_value="Kraken",
+        secret_name_keys=("KRAKEN_API_KEY_SECRET_NAME", "KRAKEN_API_SECRET_SECRET_NAME"),
+        role="Crypto venue execution",
+    ),
+    GovernedProviderSpec(
+        key="tej",
+        env_key="TW_RESEARCH_PROVIDER",
+        expected_value="TEJ",
+        secret_name_keys=("TEJ_API_KEY_SECRET_NAME",),
+        role="Taiwan research-grade vendor",
+    ),
+)
 
 
 def sanitize_headers(headers: dict[str, str] | None) -> dict[str, str]:
@@ -125,6 +180,61 @@ def parse_float(env_map: dict[str, str], key: str, *, default: float | None = No
         return float(raw)
     except ValueError as exc:
         raise ReadinessError(f"{key} must be numeric, got {raw!r}") from exc
+
+
+def normalize_token(value: str | None) -> str:
+    return str(value or "").strip().lower().replace(" ", "").replace("_", "").replace("-", "").replace("/", "")
+
+
+def evaluate_provider_matrix(env_map: dict[str, str]) -> list[ChecklistItem]:
+    items: list[ChecklistItem] = []
+    missing_refs: list[str] = []
+    mismatched_refs: list[str] = []
+    missing_secret_names: list[str] = []
+
+    for spec in GOVERNED_PROVIDER_SPECS:
+        configured = optional(env_map, spec.env_key)
+        if not configured:
+            missing_refs.append(spec.env_key)
+        elif normalize_token(configured) != normalize_token(spec.expected_value):
+            mismatched_refs.append(f"{spec.env_key}={configured}")
+        for secret_key in spec.secret_name_keys:
+            if not optional(env_map, secret_key):
+                missing_secret_names.append(secret_key)
+
+        items.append(
+            ChecklistItem(
+                f"{spec.key}_provider_declared",
+                normalize_token(configured) == normalize_token(spec.expected_value),
+                f"{spec.role}: {spec.env_key}={configured or '<missing>'}",
+            )
+        )
+
+    matrix_passed = not missing_refs and not mismatched_refs
+    matrix_detail_parts = []
+    if missing_refs:
+        matrix_detail_parts.append("missing refs: " + ", ".join(missing_refs))
+    if mismatched_refs:
+        matrix_detail_parts.append("mismatched refs: " + ", ".join(mismatched_refs))
+    if not matrix_detail_parts:
+        matrix_detail_parts.append("governed provider refs declared for IBKR, Shioaji, Kraken, and TEJ")
+    items.append(
+        ChecklistItem(
+            "governed_provider_matrix_declared",
+            matrix_passed,
+            "; ".join(matrix_detail_parts),
+        )
+    )
+    items.append(
+        ChecklistItem(
+            "governed_provider_secret_refs_present",
+            not missing_secret_names,
+            "missing: " + ", ".join(missing_secret_names)
+            if missing_secret_names
+            else "tracked secret-name refs exist for IBKR, Shioaji, Kraken, and TEJ",
+        )
+    )
+    return items
 
 
 def request_json(
@@ -224,6 +334,7 @@ def evaluate_checklist(
             f"PANTHEON_SECRETS_OPTIONAL={secrets_optional or '<missing>'}",
         )
     )
+    items.extend(evaluate_provider_matrix(env_map))
 
     boundary_refs = [
         "CANARY_BROKER_ACCOUNT_REF",
@@ -231,6 +342,10 @@ def evaluate_checklist(
         "CANARY_POOL_ID",
         "CANARY_APPROVAL_DECISION_ID",
         "CANARY_PERSONA_CAPITAL_BINDING_ID",
+        "CANARY_HUMAN_GATE_PACKET_REF",
+        "CANARY_BROKER_SANDBOX_SMOKE_REF",
+        "CANARY_RISK_OWNER_APPROVAL_REF",
+        "CANARY_OPERATOR_APPROVAL_REF",
         "CANARY_REGISTRY_ID",
         "CANARY_REGISTRY_VERSION",
         "CANARY_FALLBACK_ARTIFACT_ID",
@@ -358,6 +473,183 @@ def command_run_operator_checklist(args: argparse.Namespace) -> int:
     return 0 if passed else 1
 
 
+def build_datasource_smoke_payloads(env_map: dict[str, str]) -> dict[str, Any]:
+    ibkr_provider = optional(env_map, "EXECUTION_BROKER_PROVIDER")
+    shioaji_provider = optional(env_map, "TW_EXECUTION_PROVIDER")
+    kraken_provider = optional(env_map, "CRYPTO_EXECUTION_PROVIDER")
+    tej_provider = optional(env_map, "TW_RESEARCH_PROVIDER")
+
+    ibkr_adapter = IBKRAdapter(
+        IBKRConfig(
+            host="127.0.0.1",
+            port=7497,
+            client_id=7,
+            account_id=optional(env_map, "CANARY_BROKER_ACCOUNT_REF") or None,
+        )
+    )
+    ibkr_symbol = optional(env_map, "IBKR_SMOKE_SYMBOL", "AAPL.US")
+    ibkr_order = ibkr_adapter.build_order(IBKROrderIntent(symbol=ibkr_symbol, side="buy", quantity=1))
+    ibkr_market_data = ibkr_adapter.build_market_data_request(ibkr_symbol, snapshot=True)
+    ibkr_quote = ibkr_adapter.normalize_quote(
+        {
+            "ts": optional(env_map, "IBKR_SMOKE_TS", "2026-04-24T17:00:00Z"),
+            "last": optional(env_map, "IBKR_SMOKE_LAST", "183.42"),
+            "close": optional(env_map, "IBKR_SMOKE_CLOSE", "183.10"),
+            "bid": optional(env_map, "IBKR_SMOKE_BID", "183.40"),
+            "ask": optional(env_map, "IBKR_SMOKE_ASK", "183.45"),
+            "volume": optional(env_map, "IBKR_SMOKE_VOLUME", "10234"),
+        },
+        ibkr_symbol,
+    ).to_dict()
+
+    shioaji_adapter = ShioajiAdapter(
+        ShioajiConfig(
+            api_key=optional(env_map, "SHIOAJI_API_KEY", "placeholder"),
+            secret_key=optional(env_map, "SHIOAJI_SECRET_KEY", "placeholder"),
+            account_name=optional(env_map, "SHIOAJI_ACCOUNT_NAME") or None,
+            simulation=bool_from_env(optional(env_map, "SHIOAJI_SIMULATION", "true")),
+        )
+    )
+    shioaji_symbol = optional(env_map, "SHIOAJI_SMOKE_SYMBOL", "2330.TWSE")
+    shioaji_order = shioaji_adapter.build_order(
+        ShioajiOrderIntent(symbol=shioaji_symbol, side="buy", quantity=1, price=950.0)
+    )
+    shioaji_quote_subscription = shioaji_adapter.build_quote_subscription(shioaji_symbol)
+    shioaji_quote = shioaji_adapter.normalize_quote(
+        {
+            "ts": optional(env_map, "SHIOAJI_SMOKE_TS", "2026-04-24T01:30:00Z"),
+            "close": optional(env_map, "SHIOAJI_SMOKE_CLOSE", "950"),
+            "bid_price": optional(env_map, "SHIOAJI_SMOKE_BID", "949.5"),
+            "ask_price": optional(env_map, "SHIOAJI_SMOKE_ASK", "950.5"),
+            "bid_volume": optional(env_map, "SHIOAJI_SMOKE_BID_VOLUME", "25"),
+            "ask_volume": optional(env_map, "SHIOAJI_SMOKE_ASK_VOLUME", "30"),
+            "reference": optional(env_map, "SHIOAJI_SMOKE_REFERENCE", "945"),
+            "volume": optional(env_map, "SHIOAJI_SMOKE_DAY_VOLUME", "1200"),
+        },
+        shioaji_symbol,
+    ).to_dict()
+
+    kraken_adapter = KrakenAdapter(
+        KrakenConfig(
+            api_key=optional(env_map, "KRAKEN_API_KEY", "placeholder"),
+            api_secret=optional(env_map, "KRAKEN_API_SECRET", "placeholder"),
+            account_type=optional(env_map, "KRAKEN_ACCOUNT_TYPE", "cash"),
+            validate_only=bool_from_env(optional(env_map, "KRAKEN_VALIDATE_ONLY", "true")),
+        )
+    )
+    kraken_symbol = optional(env_map, "KRAKEN_SMOKE_SYMBOL", "BTC/USD.KRAKEN")
+    kraken_order = kraken_adapter.build_order(
+        KrakenOrderIntent(symbol=kraken_symbol, side="buy", quantity=0.01)
+    )
+    kraken_market_data = kraken_adapter.build_market_data_request(kraken_symbol, interval=1)
+    kraken_quote = kraken_adapter.normalize_quote(
+        {
+            "ts": optional(env_map, "KRAKEN_SMOKE_TS", "2026-04-24T17:00:00Z"),
+            "close": optional(env_map, "KRAKEN_SMOKE_CLOSE", "64320.4"),
+            "bid": optional(env_map, "KRAKEN_SMOKE_BID", "64320.1"),
+            "ask": optional(env_map, "KRAKEN_SMOKE_ASK", "64321.0"),
+            "volume": optional(env_map, "KRAKEN_SMOKE_VOLUME", "128.55"),
+        },
+        kraken_symbol,
+    ).to_dict()
+
+    taiwan_client = TaiwanMarketClient(rate_limit_delay=0.0)
+    tej_dataset_code = optional(env_map, "TEJ_DATASET_CODE", "TWN/APRCD1")
+    tej_symbol = optional(env_map, "TEJ_SMOKE_SYMBOL", "2330")
+    tej_as_of = optional(env_map, "TEJ_SMOKE_AS_OF_DATE", "2026-04-24")
+    tej_record = taiwan_client.normalize_tej_dataset(
+        {
+            "coid": tej_symbol,
+            "mdate": tej_as_of,
+            "close": float(optional(env_map, "TEJ_SMOKE_CLOSE", "950.0")),
+            "pe_ratio": float(optional(env_map, "TEJ_SMOKE_PE_RATIO", "18.2")),
+            "foreign_holding_pct": float(optional(env_map, "TEJ_SMOKE_FOREIGN_HOLDING_PCT", "72.4")),
+        },
+        dataset_code=tej_dataset_code,
+        api_endpoint="tej://dataset-smoke",
+    ).to_dict()
+
+    return {
+        "generated_at": iso_now(),
+        "providers": {
+            "ibkr": {
+                "configured_provider": ibkr_provider,
+                "expected_provider": "IBKR",
+                "provider_ok": normalize_token(ibkr_provider) == normalize_token("IBKR"),
+                "secret_name_refs": {
+                    "api_key": optional(env_map, "BROKER_API_KEY_SECRET_NAME"),
+                    "api_secret": optional(env_map, "BROKER_API_SECRET_SECRET_NAME"),
+                },
+                "order_payload": ibkr_order,
+                "market_data_request": ibkr_market_data,
+                "normalized_quote": ibkr_quote,
+            },
+            "shioaji": {
+                "configured_provider": shioaji_provider,
+                "expected_provider": "Shioaji",
+                "provider_ok": normalize_token(shioaji_provider) == normalize_token("Shioaji"),
+                "secret_name_refs": {
+                    "api_key": optional(env_map, "SHIOAJI_API_KEY_SECRET_NAME"),
+                    "secret_key": optional(env_map, "SHIOAJI_SECRET_KEY_SECRET_NAME"),
+                },
+                "order_payload": shioaji_order,
+                "quote_subscription": shioaji_quote_subscription,
+                "normalized_quote": shioaji_quote,
+            },
+            "kraken": {
+                "configured_provider": kraken_provider,
+                "expected_provider": "Kraken",
+                "provider_ok": normalize_token(kraken_provider) == normalize_token("Kraken"),
+                "secret_name_refs": {
+                    "api_key": optional(env_map, "KRAKEN_API_KEY_SECRET_NAME"),
+                    "api_secret": optional(env_map, "KRAKEN_API_SECRET_SECRET_NAME"),
+                },
+                "order_payload": kraken_order,
+                "market_data_request": kraken_market_data,
+                "normalized_quote": kraken_quote,
+            },
+            "tej": {
+                "configured_provider": tej_provider,
+                "expected_provider": "TEJ",
+                "provider_ok": normalize_token(tej_provider) == normalize_token("TEJ"),
+                "secret_name_refs": {
+                    "api_key": optional(env_map, "TEJ_API_KEY_SECRET_NAME"),
+                },
+                "dataset_code": tej_dataset_code,
+                "normalized_dataset": tej_record,
+            },
+        },
+    }
+
+
+def command_run_datasource_smoke(args: argparse.Namespace) -> int:
+    env_map = load_env_map(args.env_file)
+    output_dir = make_output_dir(args.output_dir, "pantheon-ep5-datasource-smoke-")
+    checklist_items = evaluate_provider_matrix(env_map)
+    smoke_payloads = build_datasource_smoke_payloads(env_map)
+    smoke_payloads["provider_checklist"] = [item.to_dict() for item in checklist_items]
+    smoke_payloads["task_id"] = "APP-003-DATASOURCE-OPS-001"
+    smoke_payloads["mode"] = "datasource_smoke"
+    smoke_payloads["env_file"] = args.env_file
+    passed = all(item.passed for item in checklist_items) and all(
+        bool(payload.get("provider_ok")) for payload in smoke_payloads["providers"].values()
+    )
+    dump_json(output_dir / "datasource-smoke.json", smoke_payloads)
+    dump_json(
+        output_dir / "summary.json",
+        {
+            "task_id": "APP-003-DATASOURCE-OPS-001",
+            "generated_at": iso_now(),
+            "mode": "datasource_smoke",
+            "status": "pass" if passed else "fail",
+            "providers": sorted(smoke_payloads["providers"].keys()),
+            "output_artifact": "datasource-smoke.json",
+        },
+    )
+    print(json.dumps({"status": "pass" if passed else "fail", "output_dir": str(output_dir)}, ensure_ascii=False))
+    return 0 if passed else 1
+
+
 def build_registry_entry(env_map: dict[str, str]) -> dict[str, Any]:
     return {
         "registry_id": require(env_map, "CANARY_REGISTRY_ID"),
@@ -417,6 +709,17 @@ def build_canary_plan(env_map: dict[str, str]) -> tuple[dict[str, Any], dict[str
             "source_task_id": "EP5-001",
             "proof_boundary": "prerequisite_only",
             "entry_bundle": "docs/deployment/ep5-canary-ready",
+            "promotion_gate": {
+                "promotion_gate_decision_id": require(env_map, "CANARY_APPROVAL_DECISION_ID"),
+                "human_gate_packet_ref": require(env_map, "CANARY_HUMAN_GATE_PACKET_REF"),
+                "broker_sandbox_smoke_ref": require(env_map, "CANARY_BROKER_SANDBOX_SMOKE_REF"),
+                "risk_owner_approval_ref": require(env_map, "CANARY_RISK_OWNER_APPROVAL_REF"),
+                "operator_approval_ref": require(env_map, "CANARY_OPERATOR_APPROVAL_REF"),
+                "capital_scale_pct": scale.capital_scale_pct,
+                "gross_scale_pct": scale.gross_scale_pct,
+                "persona_capital_binding_id": require(env_map, "CANARY_PERSONA_CAPITAL_BINDING_ID"),
+                "allowed_deployment_scope": optional(env_map, "CANARY_ALLOWED_DEPLOYMENT_SCOPE", "canary"),
+            },
         },
     )
     projection = planner.build_execution_projection(plan, registry_entry)
@@ -448,6 +751,175 @@ def command_emit_canary_plan(args: argparse.Namespace) -> int:
     )
     print(json.dumps({"status": "prepared", "output_dir": str(output_dir)}, ensure_ascii=False))
     return 0
+
+
+def build_human_gate_packet(
+    *,
+    checklist_path: Path,
+    datasource_summary_path: Path,
+    plan_path: Path,
+    drill_summary_path: Path,
+    broker_smoke_summary_path: Path | None,
+    dual_vm_evidence_dir: Path | None,
+    event_trace_status: str,
+    event_trace_note: str,
+) -> dict[str, Any]:
+    checklist = load_json(checklist_path)
+    datasource_summary = load_json(datasource_summary_path)
+    plan = load_json(plan_path)
+    drill_summary = load_json(drill_summary_path)
+    broker_smoke_summary = load_json(broker_smoke_summary_path) if broker_smoke_summary_path else None
+
+    checklist_ok = checklist.get("status") == "pass"
+    datasource_ok = datasource_summary.get("status") == "pass"
+    plan_ok = (
+        plan.get("target_stage") == "canary"
+        and float((plan.get("scale") or {}).get("capital_scale_pct") or 0.0) <= 5.0
+        and float((plan.get("scale") or {}).get("gross_scale_pct") or 0.0) <= 25.0
+        and str((plan.get("rollback") or {}).get("action_type") or "") == "pause_then_replace"
+    )
+    drill_ok = drill_summary.get("status") == "executed"
+    broker_smoke_ok = True
+    broker_smoke_detail = "No broker smoke summary was provided; retaining backward-compatible packet emission."
+    if broker_smoke_summary is not None:
+        no_real_capital = broker_smoke_summary.get("no_real_capital") or {}
+        production_live = broker_smoke_summary.get("production_live") or {}
+        live_gate = broker_smoke_summary.get("live_gate") or {}
+        live_disabled = (
+            live_gate.get("status") == "rejected"
+            and (live_gate.get("response") or {}).get("error_code") == "SHIOAJI_LIVE_DISABLED"
+        )
+        if not live_gate:
+            live_disabled = not bool(production_live.get("enabled"))
+        broker_smoke_ok = (
+            broker_smoke_summary.get("status") in {"pass", "passed"}
+            and normalize_token(broker_smoke_summary.get("provider")) == normalize_token("Shioaji")
+            and (broker_smoke_summary.get("reconciliation") or {}).get("status") == "passed"
+            and no_real_capital.get("real_capital_used") is False
+            and no_real_capital.get("production_live_order_submitted") is False
+            and live_disabled
+        )
+        broker_smoke_detail = (
+            "Shioaji broker sandbox smoke summary consumed with passed reconciliation and fail-closed live boundary."
+            if broker_smoke_ok
+            else "Shioaji broker sandbox smoke summary is missing pass status, reconciliation, no-real-capital, or live-disabled evidence."
+        )
+    packet_ready = checklist_ok and datasource_ok and plan_ok and drill_ok and broker_smoke_ok
+    acceptance_checks = [
+        {
+            "name": "repo_authoritative_operator_packet",
+            "status": "pass" if checklist_ok and datasource_ok and plan_ok and drill_ok else "fail",
+            "detail": "Checklist, datasource smoke, canary plan, and rollback drill evidence are all present and internally consistent.",
+        },
+        {
+            "name": "event_trace_gap_dispositioned",
+            "status": "pass" if event_trace_status in {"closed", "packetized"} else "fail",
+            "detail": event_trace_note,
+        },
+        {
+            "name": "human_gate_bundle_complete",
+            "status": "pass" if packet_ready else "fail",
+            "detail": "Human gate input bundle is replay-clean at the artifact level; EP5 proof remains deferred.",
+        },
+    ]
+    if broker_smoke_summary_path is not None:
+        acceptance_checks.append(
+            {
+                "name": "broker_sandbox_smoke_consumed",
+                "status": "pass" if broker_smoke_ok else "fail",
+                "detail": broker_smoke_detail,
+            }
+        )
+
+    return {
+        "task_id": "APP-003-OPENCLAW-CLOSEOUT-001",
+        "generated_at": iso_now(),
+        "mode": "human_gate_packet",
+        "status": "ready_for_review" if packet_ready else "incomplete",
+        "proof_boundary": "EP5-001 prerequisite_only; not EP5-002 proof",
+        "openclaw_runtime_boundary": {
+            "contract": "OPENCLAW_RUNTIME_CONTRACT.md",
+            "summary": "OpenClaw remains the governed control-plane/runtime substrate, not the execution kernel.",
+            "execution_kernel_owner": "Pantheon runtime-manager and execution plane",
+        },
+        "bundle": {
+            "operator_checklist": {
+                "path": str(checklist_path),
+                "status": checklist.get("status"),
+                "check_health": checklist.get("check_health"),
+            },
+            "datasource_smoke": {
+                "path": str(datasource_summary_path),
+                "status": datasource_summary.get("status"),
+                "providers": datasource_summary.get("providers"),
+            },
+            "canary_plan": {
+                "path": str(plan_path),
+                "target_stage": plan.get("target_stage"),
+                "capital_scale_pct": (plan.get("scale") or {}).get("capital_scale_pct"),
+                "gross_scale_pct": (plan.get("scale") or {}).get("gross_scale_pct"),
+                "rollback_action_type": (plan.get("rollback") or {}).get("action_type"),
+            },
+            "rollback_drill": {
+                "path": str(drill_summary_path),
+                "status": drill_summary.get("status"),
+                "replacement_binding_id": drill_summary.get("replacement_binding_id"),
+                "kill_switch_safe_mode": drill_summary.get("kill_switch_safe_mode"),
+            },
+            "broker_sandbox_smoke": {
+                "path": str(broker_smoke_summary_path) if broker_smoke_summary_path else None,
+                "status": broker_smoke_summary.get("status") if broker_smoke_summary else "not_provided",
+                "provider": broker_smoke_summary.get("provider") if broker_smoke_summary else None,
+                "order_ids": broker_smoke_summary.get("order_ids") if broker_smoke_summary else None,
+                "reconciliation_status": (broker_smoke_summary.get("reconciliation") or {}).get("status")
+                if broker_smoke_summary
+                else None,
+                "proof_boundary": broker_smoke_summary.get("proof_boundary") if broker_smoke_summary else None,
+                "live_gate_status": (broker_smoke_summary.get("live_gate") or {}).get("status")
+                if broker_smoke_summary
+                else None,
+                "run_mode": broker_smoke_summary.get("run_mode") if broker_smoke_summary else None,
+            },
+            "dual_vm_evidence_dir": str(dual_vm_evidence_dir) if dual_vm_evidence_dir else None,
+        },
+        "event_trace_read_model": {
+            "status": event_trace_status,
+            "note": event_trace_note,
+            "acceptance_rule": "Must be either closed with replayable trace evidence or explicitly packetized before human gate.",
+        },
+        "acceptance_checks": acceptance_checks,
+    }
+
+
+def command_emit_human_gate_packet(args: argparse.Namespace) -> int:
+    output_dir = make_output_dir(args.output_dir, "pantheon-ep5-human-gate-")
+    dual_vm_evidence_dir = Path(args.dual_vm_evidence_dir) if args.dual_vm_evidence_dir else None
+    packet = build_human_gate_packet(
+        checklist_path=Path(args.checklist_json),
+        datasource_summary_path=Path(args.datasource_summary_json),
+        plan_path=Path(args.plan_json),
+        drill_summary_path=Path(args.drill_summary_json),
+        broker_smoke_summary_path=Path(args.broker_smoke_summary_json)
+        if getattr(args, "broker_smoke_summary_json", None)
+        else None,
+        dual_vm_evidence_dir=dual_vm_evidence_dir,
+        event_trace_status=args.event_trace_status,
+        event_trace_note=args.event_trace_note,
+    )
+    dump_json(output_dir / "human-gate-packet.json", packet)
+    dump_json(
+        output_dir / "summary.json",
+        {
+            "task_id": "APP-003-OPENCLAW-CLOSEOUT-001",
+            "generated_at": packet["generated_at"],
+            "mode": "human_gate_packet",
+            "status": packet["status"],
+            "event_trace_status": packet["event_trace_read_model"]["status"],
+            "proof_boundary": packet["proof_boundary"],
+        },
+    )
+    print(json.dumps({"status": packet["status"], "output_dir": str(output_dir)}, ensure_ascii=False))
+    return 0 if packet["status"] == "ready_for_review" else 1
 
 
 def build_auth_headers(token: str) -> dict[str, str]:
@@ -664,6 +1136,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_plan.add_argument("--env-file", default=None)
     p_plan.add_argument("--output-dir", default=None)
     p_plan.set_defaults(func=command_emit_canary_plan)
+
+    p_smoke = subparsers.add_parser("run-datasource-smoke")
+    p_smoke.add_argument("--env-file", default=None)
+    p_smoke.add_argument("--output-dir", default=None)
+    p_smoke.set_defaults(func=command_run_datasource_smoke)
+
+    p_packet = subparsers.add_parser("emit-human-gate-packet")
+    p_packet.add_argument("--checklist-json", required=True)
+    p_packet.add_argument("--datasource-summary-json", required=True)
+    p_packet.add_argument("--plan-json", required=True)
+    p_packet.add_argument("--drill-summary-json", required=True)
+    p_packet.add_argument("--broker-smoke-summary-json", default=None)
+    p_packet.add_argument("--dual-vm-evidence-dir", default=None)
+    p_packet.add_argument("--event-trace-status", choices=("closed", "packetized"), required=True)
+    p_packet.add_argument("--event-trace-note", required=True)
+    p_packet.add_argument("--output-dir", default=None)
+    p_packet.set_defaults(func=command_emit_human_gate_packet)
 
     p_drill = subparsers.add_parser("run-rollback-drill")
     p_drill.add_argument("--env-file", default=None)

@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "task_id": "APP-002-IMPL-BFF-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "APP-002-IMPL-BFF-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare APP-002-IMPL-BFF BFF and frontend handoff packet",
+    "summary_zh": "平行支援 APP-002-IMPL-BFF，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Phase 5: Implementation",
+    "owner": "Copilot",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-002-IMPL-BFF/APP-002-IMPL-BFF-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Superseded by APP-002-W1-FRONT-HANDOFF from the accepted consensus packet. Retire this legacy helper lane and keep the new handoff path as the only active route.",
+    "last_update": "2026-04-11T22:57:38Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-002-IMPL-BFF",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "superseded",
+    "superseded_by": "APP-002-W1-FRONT-HANDOFF"
+  },
+  "handoffs": [],
+  "blockers": [
+    {
+      "task_id": "APP-002-IMPL-BFF-SIDECAR-BFF-HANDOFF",
+      "owner": "Copilot",
+      "waiting_for": "Codex",
+      "message": "Superseded by APP-002-W1-FRONT-HANDOFF from the accepted consensus packet; do not dispatch this legacy helper lane.",
+      "status": "resolved",
+      "created_at": "2026-04-11T11:51:32Z",
+      "resolved_at": "2026-04-11T22:57:38Z"
+    }
+  ]
+}

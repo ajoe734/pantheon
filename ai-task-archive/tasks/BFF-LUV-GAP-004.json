@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-GAP-004",
+  "archived_at": "2026-05-10T11:09:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-GAP-004",
+    "title": "Implement evolution experiment jobs and events BFF compatibility",
+    "summary_zh": "補上 evolution、experiments、jobs、events route families。",
+    "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
+    "owner": "Codex",
+    "reviewer": "Gemini2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/BFF-LUV-GAP-004-evolution-experiment-jobs-events.md"
+    ],
+    "acceptance": [
+      "evolution routes covered",
+      "experiment routes covered",
+      "job and event routes covered"
+    ],
+    "next": "Task finalized and committed.",
+    "last_update": "2026-05-08T18:08:00Z"
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-GAP-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T16:04:49Z",
+      "resolved_at": "2026-05-08T16:22:04Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T16:22:04Z",
+      "resolved_at": "2026-05-08T16:23:14Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T16:33:54Z",
+      "resolved_at": "2026-05-08T16:39:06Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T16:39:06Z",
+      "resolved_at": "2026-05-08T16:42:56Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T16:42:55Z",
+      "resolved_at": "2026-05-08T16:43:53Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Implemented evolution programs, experiments, jobs, and events BFF compatibility. Verification: GAP-004 contract 29 passed; execute-plans registry + SSE 17 passed; GAP-005 regression 4 passed; py_compile main/test passed.",
+      "status": "done",
+      "created_at": "2026-05-08T17:48:29Z",
+      "resolved_at": "2026-05-08T18:08:00Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "task_id": "BG-003-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "BG-003-SIDECAR-ACCEPTANCE",
+    "title": "Prepare BG-003 acceptance packet and dependency map",
+    "summary_zh": "平行支援 BG-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Blueprint Gap P0",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "PLAN-002"
+    ],
+    "artifacts": [
+      "support/sidecars/BG-003/BG-003-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support-only acceptance packet is already reviewer-approved and is being absorbed into the parent closure path so Qwen capacity can return to primary work.",
+    "last_update": "2026-04-13T12:36:17Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BG-003",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "superseded",
+    "superseded_by": "BG-003"
+  },
+  "handoffs": [
+    {
+      "task_id": "BG-003-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Acceptance packet drafted with 12-item checklist, dependency map, risk assessment, and artifacts inventory. Parent BG-003 has no artifacts yet (in_progress, artifacts: []). Packet is preparatory — ready for reviewer approval and use once parent produces schemas.",
+      "status": "done",
+      "created_at": "2026-04-13T02:41:27Z",
+      "resolved_at": "2026-04-13T03:39:53Z"
+    },
+    {
+      "task_id": "BG-003-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Reviewer check complete. Packet is support-only, dependency map is consistent with current shared truth, and the checklist is suitable as a preparatory acceptance instrument for the parent task. Approving so the parent owner can close it when available.",
+      "status": "done",
+      "created_at": "2026-04-13T03:39:53Z",
+      "resolved_at": "2026-04-13T12:36:17Z"
+    }
+  ],
+  "blockers": []
+}

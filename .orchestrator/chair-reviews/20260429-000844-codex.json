@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Utilization is low and there is no global blocker, but duplicate sidecars must avoid current review and finalization debt.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-RESEARCH-ORCHESTRATOR-SERVICE",
+    "SVC-RESEARCH-WORKER-GATEWAY",
+    "SVC-HEALTH-OBSERVABILITY-UNIFICATION"
+  ],
+  "approval_actions": [],
+  "recommended_focus": [
+    "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+    "SVC-RESEARCH-WORKER-GATEWAY",
+    "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+    "SVC-HEALTH-OBSERVABILITY-UNIFICATION"
+  ]
+}

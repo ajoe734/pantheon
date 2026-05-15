@@ -1,0 +1,19 @@
+{
+  "activation_floor_check": {
+    "estimated_steps": 27,
+    "min_steps_required": 20,
+    "passes": true
+  },
+  "data_frequency": "daily",
+  "decision_focus": "exit_timing",
+  "instruments": [
+    "EQ_AAA",
+    "EQ_BBB",
+    "EQ_CCC"
+  ],
+  "num_instruments": 3,
+  "ohlcv_fields_present": true,
+  "periods_per_instrument": 30,
+  "source_ref": "synthetic-ohlcv://bounded-fixture/30-periods",
+  "total_records": 90
+}

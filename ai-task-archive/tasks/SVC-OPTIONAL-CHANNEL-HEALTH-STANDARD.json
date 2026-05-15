@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "SVC-OPTIONAL-CHANNEL-HEALTH-STANDARD",
+  "archived_at": "2026-04-29T12:12:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OPTIONAL-CHANNEL-HEALTH-STANDARD",
+    "title": "Standardize health endpoints for optional channel services",
+    "summary_zh": "把 optional channel services 的 health surface 補齊到 repo 標準；至少 services/channels/web 要有 /healthz /livez /readyz，保留 /health alias，且不把 channel 納入 default compose。",
+    "phase": "Production Readiness / Optional Channel Observability",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-HEALTH-OBSERVABILITY-UNIFICATION"
+    ],
+    "artifacts": [
+      "services/channels/web/main.py",
+      "services/channels/test_web_health.py",
+      "services/foundation/health.py",
+      "docker-compose.yml"
+    ],
+    "acceptance": [
+      "Web channel exposes /healthz /livez /readyz with canonical health payload and keeps /health compatibility",
+      "Readiness reports router dependency as ok degraded or unavailable without crashing",
+      "Tests cover all standard health endpoints and legacy /health",
+      "No default compose inclusion or BFF HA topology work is introduced",
+      "Optional bot channel limitations are documented or explicitly scoped out if they have no HTTP process"
+    ],
+    "next": "Checkpoint: finalized optional web channel health standard after Claude approval; commit 546e58a2828c3ae42f2ba4e7a74985dbf65509b4 records /healthz /livez /readyz /health alias, readiness degradation tests, optional-channel scope docs, and review evidence. Verification: python3 -m pytest services/channels/web/test_main.py services/channels/test_web_health.py -q (9 passed); python3 -m pytest services/foundation/tests/test_health.py -q (5 passed).",
+    "last_update": "2026-04-29T12:12:08Z",
+    "review_notes_zh": [
+      "審閱通過：web channel 已實作 /healthz /livez /readyz /health alias 與 /metrics；router 依賴以 ok/degraded/unavailable 三態回報，含 404 fallback 至 /health legacy probe；tests 涵蓋全部 endpoints 及三種 readiness degradation 路徑；docker-compose.yml 無 web-channel 預設條目，test 強制驗證；services/channels/README.md 明確說明 Telegram/Discord 不開 HTTP process，bot channel scope 通過 test 約束。14 個 tests 全數通過。"
+    ],
+    "review_file": "docs/reviews/2026-04-29-svc-optional-channel-health-standard-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T12:12:08Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "546e58a2828c3ae42f2ba4e7a74985dbf65509b4",
+      "commit_subject": "SVC-OPTIONAL-CHANNEL-HEALTH-STANDARD standardize web channel health",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-OPTIONAL-CHANNEL-HEALTH-STANDARD",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 102,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OPTIONAL-CHANNEL-HEALTH-STANDARD",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented web channel canonical health endpoints (/healthz /livez /readyz /metrics plus /health alias), router readiness ok/degraded/unavailable handling, tests, and optional bot channel scope README. Verification: python3 -m pytest services/channels/web/test_main.py services/channels/test_web_health.py -q; python3 -m pytest services/foundation/tests/test_health.py -q.",
+      "status": "done",
+      "created_at": "2026-04-29T11:43:37Z",
+      "resolved_at": "2026-04-29T12:05:03Z"
+    },
+    {
+      "task_id": "SVC-OPTIONAL-CHANNEL-HEALTH-STANDARD",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved. All acceptance criteria met; 14 tests pass. Returning to owner (Codex) for finalization.",
+      "status": "done",
+      "created_at": "2026-04-29T12:05:03Z",
+      "resolved_at": "2026-04-29T12:12:08Z"
+    }
+  ],
+  "blockers": []
+}

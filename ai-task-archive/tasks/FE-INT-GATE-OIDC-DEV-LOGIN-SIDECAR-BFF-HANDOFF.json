@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "FE-INT-GATE-OIDC-DEV-LOGIN-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-15T07:52:46Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "FE-INT-GATE-OIDC-DEV-LOGIN-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare FE-INT-GATE-OIDC-DEV-LOGIN BFF and frontend handoff packet",
+    "summary_zh": "平行支援 FE-INT-GATE-OIDC-DEV-LOGIN，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Pantheon FE Integration Gate 2026-05-13",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-022"
+    ],
+    "artifacts": [
+      "support/sidecars/FE-INT-GATE-OIDC-DEV-LOGIN/FE-INT-GATE-OIDC-DEV-LOGIN-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner closeout complete. Artifact: support/sidecars/FE-INT-GATE-OIDC-DEV-LOGIN/FE-INT-GATE-OIDC-DEV-LOGIN-SIDECAR-BFF-HANDOFF.md. Commits: e9e4be1d (initial packet) + 1bb6c8ad (reviewer route-count amendment) + f56f3f4b (closeout acceptance record). Verified: 28 authenticated read routes + 3 precondition write checks; no canonical truth modified. Sidecar delivered and accepted.",
+    "last_update": "2026-05-15T07:52:46Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "FE-INT-GATE-OIDC-DEV-LOGIN",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Reviewed support-only handoff packet; amended route count to match current probe (28 authenticated read checks + 3 precondition writes), verified dev-login/env/frontend/CI descriptions against current files, and confirmed no canonical truth/runtime changes were needed for this sidecar review."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T07:52:46Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "f56f3f4b43633a1f60e8baa753a9fe70f18003eb",
+      "commit_subject": "FE-INT-GATE-OIDC-DEV-LOGIN-SIDECAR-BFF-HANDOFF: owner closeout — add review acceptance record",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "FE-INT-GATE-OIDC-DEV-LOGIN-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Verification": "confirmed 28 authenticated read routes + 3 precondition write"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 46,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "FE-INT-GATE-OIDC-DEV-LOGIN-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "BFF & frontend handoff packet complete at support/sidecars/FE-INT-GATE-OIDC-DEV-LOGIN/FE-INT-GATE-OIDC-DEV-LOGIN-SIDECAR-BFF-HANDOFF.md. Covers: BFF query gap (27 routes), deploy-time checklist (BFF env, GitHub secrets, Lovable rebuild), operator journey (browser + CI login, staging isolation), frontend wiring summary. Task-scoped commit e9e4be1d on feat/bff-consol-022-staging-strict-cutover. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-05-15T07:43:37Z",
+      "resolved_at": "2026-05-15T07:49:15Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-OIDC-DEV-LOGIN-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Codex review approved. Support packet now matches the current authenticated smoke route set (28 read + 3 precondition write checks), remains support-only, and is ready for Claude owner closeout.",
+      "status": "done",
+      "created_at": "2026-05-15T07:49:15Z",
+      "resolved_at": "2026-05-15T07:52:46Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "APP-003-PKT001-SURFACE-VALIDATION-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-23T16:19:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-PKT001-SURFACE-VALIDATION-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare APP-003-PKT001-SURFACE-VALIDATION-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 APP-003-PKT001-SURFACE-VALIDATION-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Execution / Frontend Contract Validation",
+    "owner": "Codex2",
+    "reviewer": "Codex3",
+    "status": "done",
+    "depends_on": [
+      "APP-003-PKT001-PUBLICATION-REPLAY-001"
+    ],
+    "artifacts": [
+      "support/sidecars/APP-003-PKT001-SURFACE-VALIDATION-001/APP-003-PKT001-SURFACE-VALIDATION-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar handoff packet and closed it. Support-only packet remains accurate: PKT-001 has no new Pantheon BFF query gap, and the next step stays with front fail-closed meta.surfaces validation plus feedback republish.",
+    "last_update": "2026-04-23T16:19:44Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-PKT001-SURFACE-VALIDATION-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support packet內容與最新 frontend-feedback、contract-ready、residual packet 一致；PKT-001 無新增 Pantheon BFF query gap，剩餘 blocker 確為前端 required meta.surfaces key fail-closed 驗證與 feedback republish。",
+      "本次 sidecar 維持 support-only 邊界，未重新打開 canonical contract 或 runtime 實作範圍。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-23T16:19:44Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 1182,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-PKT001-SURFACE-VALIDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Copilot",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-23T13:19:53Z",
+      "resolved_at": "2026-04-23T13:19:53Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-SURFACE-VALIDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Support-only BFF handoff packet is ready in support/sidecars/APP-003-PKT001-SURFACE-VALIDATION-001/APP-003-PKT001-SURFACE-VALIDATION-001-SIDECAR-BFF-HANDOFF.md. It confirms no new PKT-001 BFF query gap, documents the required fail-closed meta.surfaces key sets, and hands the next step back to front refresh plus feedback republish.",
+      "status": "done",
+      "created_at": "2026-04-23T13:22:17Z",
+      "resolved_at": "2026-04-23T13:34:59Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-SURFACE-VALIDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Copilot",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Copilot to Codex3 after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T13:34:59Z",
+      "resolved_at": "2026-04-23T13:37:51Z"
+    },
+    {
+      "task_id": "APP-003-PKT001-SURFACE-VALIDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex3",
+      "to": "Codex2",
+      "message": "Support packet is accurate and remains support-only. No new PKT-001 BFF gap is open; owner can finalize after this approval.",
+      "status": "done",
+      "created_at": "2026-04-23T13:37:51Z",
+      "resolved_at": "2026-04-23T16:19:44Z"
+    }
+  ],
+  "blockers": []
+}

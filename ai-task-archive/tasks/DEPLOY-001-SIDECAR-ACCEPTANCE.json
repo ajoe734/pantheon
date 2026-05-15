@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "DEPLOY-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-17T15:40:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DEPLOY-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare DEPLOY-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 DEPLOY-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/DEPLOY-001/DEPLOY-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the reviewer-approved acceptance packet; support artifact remains current and archived for parent DEPLOY-001 absorption.",
+    "last_update": "2026-04-17T15:40:57Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "DEPLOY-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "packet 已按 live durable state 與目前 repo snapshot 刷新；compose 內 postgres/minio/nats、.env.example、scripts/bootstrap.sh 均已存在。",
+      "sidecar scope 仍受限於 support artifact；parent DEPLOY-001 關單仍需 owner 補 live health evidence。"
+    ],
+    "review_file": "support/sidecars/DEPLOY-001/DEPLOY-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T15:40:57Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "45aacdf2c2602e9487bf7868727d0654e3046925",
+      "commit_subject": "DEPLOY-001-SIDECAR-ACCEPTANCE: finalize acceptance packet sidecar",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "DEPLOY-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 454,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DEPLOY-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Acceptance packet created at support/sidecars/DEPLOY-001/DEPLOY-001-SIDECAR-ACCEPTANCE.md. Packet captures DEPLOY-001 scope boundary, current compose gaps (postgres/minio/nats absent), downstream dependency map for DEPLOY-002/004/005, and a minimal verification checklist for parent execution. Ready for reviewer/owner absorption.",
+      "status": "done",
+      "created_at": "2026-04-17T14:52:56Z",
+      "resolved_at": "2026-04-17T14:58:17Z"
+    },
+    {
+      "task_id": "DEPLOY-001-SIDECAR-ACCEPTANCE",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-17T14:58:17Z",
+      "resolved_at": "2026-04-17T15:39:16Z"
+    },
+    {
+      "task_id": "DEPLOY-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewer validated support packet against current repo state; artifact refreshed and approved. Owner should finalize sidecar as done after absorbing the packet.",
+      "status": "done",
+      "created_at": "2026-04-17T15:39:16Z",
+      "resolved_at": "2026-04-17T15:40:57Z"
+    }
+  ],
+  "blockers": []
+}

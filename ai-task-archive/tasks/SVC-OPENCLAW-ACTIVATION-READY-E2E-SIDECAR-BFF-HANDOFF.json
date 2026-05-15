@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "task_id": "SVC-OPENCLAW-ACTIVATION-READY-E2E-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-30T09:55:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OPENCLAW-ACTIVATION-READY-E2E-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-OPENCLAW-ACTIVATION-READY-E2E BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-OPENCLAW-ACTIVATION-READY-E2E，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "OpenClaw Activation-Ready Development",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-OPENCLAW-PAPER-BROKER-ADAPTER",
+      "SVC-OPENCLAW-BFF-OPS-SURFACE"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-OPENCLAW-ACTIVATION-READY-E2E/SVC-OPENCLAW-ACTIVATION-READY-E2E-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: artifact status updated to accepted, review file committed (1748bf6). All 4 Codex reopen findings resolved in 1447ada. BFF pytest 4 passed, adapter pytest 103 passed. No canonical files modified. push_status: ahead.",
+    "last_update": "2026-04-30T09:55:01Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-OPENCLAW-ACTIVATION-READY-E2E",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Codex re-review approved sidecar BFF handoff packet. Prior 4 reopen findings resolved: viewer denied, gate_state shape corrected, session projection corrected, legacy sessions facade/effective-tools read dispositioned. Verification: BFF pytest 4 passed; adapter pytest 103 passed; reviewed commit 1447ada touches only support sidecar artifact."
+    ],
+    "review_file": ".orchestrator/reviews/SVC-OPENCLAW-ACTIVATION-READY-E2E-SIDECAR-BFF-HANDOFF-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T09:55:01Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "1748bf683d2acb0af1a25d90bf95763c2363df45",
+      "commit_subject": "SVC-OPENCLAW-ACTIVATION-READY-E2E-SIDECAR-BFF-HANDOFF closeout finalization",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verification": "BFF pytest 4 passed; adapter pytest 103 passed.",
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-OPENCLAW-ACTIVATION-READY-E2E-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 75,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 48,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OPENCLAW-ACTIVATION-READY-E2E-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T09:25:26Z",
+      "resolved_at": "2026-04-30T09:28:15Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-ACTIVATION-READY-E2E-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T09:28:15Z",
+      "resolved_at": "2026-04-30T09:29:40Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-ACTIVATION-READY-E2E-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T09:32:43Z",
+      "resolved_at": "2026-04-30T09:35:28Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-ACTIVATION-READY-E2E-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "BFF and frontend handoff packet ready for review. Artifact at support/sidecars/SVC-OPENCLAW-ACTIVATION-READY-E2E/SVC-OPENCLAW-ACTIVATION-READY-E2E-SIDECAR-BFF-HANDOFF.md. Covers: (1) BFF surface inventory — 4 read + 2 command endpoints; (2) query gap analysis — 5 intentionally absent adapter routes and 7 potential-gap routes, none blocking parent E2E acceptance; (3) operator journey state machine with HTTP status codes; (4) request/response shapes derived from test fixtures and route handlers; (5) auth/role reference table; (6) required env vars for activation-ready profile; (7) frontend integration checklist; (8) parent acceptance criterion alignment.",
+      "status": "done",
+      "created_at": "2026-04-30T09:39:22Z",
+      "resolved_at": "2026-04-30T09:42:36Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-ACTIVATION-READY-E2E-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review reopened: handoff packet has implemented-contract mismatches; see .orchestrator/reviews/SVC-OPENCLAW-ACTIVATION-READY-E2E-SIDECAR-BFF-HANDOFF-review-codex.md.",
+      "status": "done",
+      "created_at": "2026-04-30T09:42:36Z",
+      "resolved_at": "2026-04-30T09:42:36Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-ACTIVATION-READY-E2E-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Addressed all 4 reopen findings: viewer→403 on all routes; gate_state shape corrected to {state,enabled,activation_gate,allowed_scope,bff_activation_command}; session row corrected to context_keys/audit_count/latest_audit_event; legacy sessions facade and effective-tools read added to Section 2.1. Commit 1447ada. No canonical files modified.",
+      "status": "done",
+      "created_at": "2026-04-30T09:48:25Z",
+      "resolved_at": "2026-04-30T09:52:10Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-ACTIVATION-READY-E2E-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Codex approved revised BFF handoff packet; prior reopen findings resolved and focused tests pass. Owner Claude should run closeout finalization to done.",
+      "status": "done",
+      "created_at": "2026-04-30T09:52:10Z",
+      "resolved_at": "2026-04-30T09:55:01Z"
+    }
+  ],
+  "blockers": []
+}

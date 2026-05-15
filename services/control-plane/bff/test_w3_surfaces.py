@@ -15,7 +15,7 @@ from read_store import ReadSurfaceStore
 def test_w3_surfaces():
     with tempfile.TemporaryDirectory() as td:
         store_path = os.path.join(td, "read_surfaces.json")
-        store = ReadSurfaceStore(store_path)
+        store = ReadSurfaceStore(store_path, allow_local_snapshot_fallback=True)
 
         # ------------------------------------------------------------------ #
         # Post-incident review composed view data
@@ -141,6 +141,8 @@ def test_w3_surfaces():
         assert decision is not None
         assert decision["action_type"] == "retrain"
         assert decision["risk_level"] == "medium"
+        assert decision["updated_at"] == "2026-04-11T09:00:00Z"
+        assert decision["notes"] == "Approved for retrain after promotion gate timeout root cause confirmed."
         print("✅ EV-02: get_evolution_decision_by_id returns correct detail")
 
         assert store.get_evolution_decision_by_id("evo-nonexistent") is None

@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "task_id": "LUV-REACTIVATE-KW01-001",
+  "archived_at": "2026-04-20T01:04:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LUV-REACTIVATE-KW01-001",
+    "title": "Re-activate KW-01 institutional memory handoff for the front-end lane",
+    "summary_zh": "核對 KW-01 institutional memory 的 handoff bundle、mirror 與 current-work 狀態，讓 front-end lane 可重新接手。",
+    "phase": "Execution / Lovable Reactivation",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".coordination/responses/KW-01-institutional-memory-contract-ready.yaml",
+      ".coordination/responses/KW-01-institutional-memory-lovable-ui-task.yaml",
+      ".coordination/responses/KW-01-institutional-memory-lovable-prompt.md"
+    ],
+    "acceptance": [
+      "verify contract-ready bundle still matches current architecture truth",
+      "refresh the exact next-step note for Lovable or record a precise blocker",
+      "leave a reviewable reactivation handoff tied to KW-01-institutional-memory"
+    ],
+    "next": "Owner finalized approved KW-01 reactivation handoff and closed it. Bundle remains aligned with live BFF memory list/detail routes, lovable-ui-task is ready, and the front-end lane may resume implementation against the published contract.",
+    "last_update": "2026-04-20T01:04:56Z",
+    "task_class": "frontlane_reactivation",
+    "auto_created_by": "lovable-reactivation-materialization-20260420",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "已核對三份 KW-01 reactivation handoff artifact 與 review packet；bundle 完整、文件齊備，GET /api/v1/knowledge/memory 及 /api/v1/knowledge/memory/{entry_id} 均已在 BFF main.py 中確認實作（行 5286/5333），test_kw01_institutional_memory_contract.py 存在。contract-ready.yaml 標記 bff_route_list_live: true 及 bff_route_detail_live: true，lovable-ui-task.yaml 狀態為 ready，lovable-prompt 正確指向 live BFF 並包含 bff-gap fallback。三項 acceptance criteria 全部 PASS，Lovable 前端 lane 可恢復執行。"
+    ],
+    "review_file": ".coordination/reviews/KW-01-institutional-memory-reactivation.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T01:04:56Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 779,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LUV-REACTIVATE-KW01-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "KW-01 reactivation bundle refreshed for live BFF routes. Review .coordination/reviews/KW-01-institutional-memory-reactivation.md; verified GET /api/v1/knowledge/memory and /api/v1/knowledge/memory/{entry_id} live; pytest passed for test_kw01_institutional_memory_contract.py and test_pkt016_knowledge_workbench_contract.py.",
+      "status": "done",
+      "created_at": "2026-04-20T00:37:51Z",
+      "resolved_at": "2026-04-20T00:38:56Z"
+    },
+    {
+      "task_id": "LUV-REACTIVATE-KW01-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all three KW-01 artifacts intact, BFF routes live (main.py:5286/5333), test file present. Lovable lane may resume. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-20T00:38:56Z",
+      "resolved_at": "2026-04-20T01:04:56Z"
+    }
+  ],
+  "blockers": []
+}

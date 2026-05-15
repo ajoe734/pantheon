@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "BG-005-SIDECAR-REVIEW",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BG-005-SIDECAR-REVIEW",
+    "title": "Prepare BG-005 review packet and evidence summary",
+    "summary_zh": "平行支援 BG-005，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Blueprint Gap P0",
+    "owner": "Qwen",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BG-000",
+      "BG-001",
+      "BG-003"
+    ],
+    "artifacts": [
+      "support/sidecars/BG-005/BG-005-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: sidecar review packet complete. All 13 acceptance criteria verified with evidence. Two non-blocking follow-ups noted (five_stage_chain_tw_derivs.json + 6 verification scripts) for implementation wave. Support artifact stable at support/sidecars/BG-005/BG-005-SIDECAR-REVIEW.md.",
+    "last_update": "2026-04-14T00:43:39Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BG-005",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過｜Evidence covers all 13 acceptance criteria; two follow-up items (five_stage_chain_tw_derivs.json + six verification scripts) correctly categorized as non-blocking implementation-wave items"
+    ],
+    "review_file": "support/sidecars/BG-005/BG-005-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T00:43:39Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "90fd3efc572f23015b755eb950676a35eb10ee3b",
+      "commit_subject": "BG-005-SIDECAR-REVIEW: finalize sidecar review packet — all 13 AC verified, 2 non-blocking follow-ups noted",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Task-ID": "BG-005-SIDECAR-REVIEW",
+        "LLM-Agent": "Qwen",
+        "Reviewer": "Claude",
+        "Co-authored-by": "Qwen-Coder <qwen-coder@alibabacloud.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 81,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BG-005-SIDECAR-REVIEW",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "BG-005 sidecar review packet created at support/sidecars/BG-005/BG-005-SIDECAR-REVIEW.md; all 13 acceptance criteria verified; two follow-up items noted for implementation wave",
+      "status": "done",
+      "created_at": "2026-04-14T00:40:57Z",
+      "resolved_at": "2026-04-14T00:41:58Z"
+    },
+    {
+      "task_id": "BG-005-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Sidecar review packet approved: all 13 acceptance criteria verified with evidence; two non-blocking follow-up items noted for implementation wave",
+      "status": "done",
+      "created_at": "2026-04-14T00:41:58Z",
+      "resolved_at": "2026-04-14T00:43:39Z"
+    }
+  ],
+  "blockers": []
+}

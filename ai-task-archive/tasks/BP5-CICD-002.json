@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "task_id": "BP5-CICD-002",
+  "archived_at": "2026-04-16T18:13:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-CICD-002",
+    "title": "Implement Cloud Build to Artifact Registry publish flow",
+    "summary_zh": "把 Cloud Build -> Artifact Registry 的 image truth pipeline、provenance、publish policy 與 environment-safe identity flow 落成。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "depends_on": [
+      "BP5-CICD-001",
+      "BP5-SVC-016"
+    ],
+    "artifacts": [
+      "cloudbuild.yaml",
+      "Pantheon_GCP_GitHub_Docker_正式部署與環境設計_v2.md"
+    ],
+    "acceptance": [
+      "GitHub CI, Cloud Build, and Artifact Registry form one repo-to-build-to-image path",
+      "the publish flow works without long-lived GCP keys embedded in GitHub"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner final checks complete. cloudbuild.yaml service registry aligned with Stage 0 matrix IDs (bff, governance-api, telemetry-ingest); 9 research/execution-lab images added; runtime-manager path correct; Section 19.5 inventory table matches implementation; gcp-deploy.yml stale comment updated. Re-review by Codex2 confirmed no blocking findings. Both acceptance criteria satisfied: single repo-to-build-to-image path wired via OIDC/WIF with no long-lived GCP keys in GitHub.",
+    "last_update": "2026-04-16T18:13:26Z",
+    "review_notes_zh": [
+      "已重新審核，前次阻塞的 Stage 0 build_id 與 Cloud Build _SERVICES 對齊問題已修正；研究與 execution-lab 映像補齊，文件庫存表也與實作一致。無阻塞問題，可進入 owner closeout。"
+    ],
+    "review_file": ".orchestrator/reviews/BP5-CICD-002-codex2-rereview.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T18:13:26Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "5602309eeff419afd722b657990f776a9ad98ac1",
+      "commit_subject": "BP5-CICD-002: fix stale example comment in gcp-deploy.yml",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP5-CICD-002",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 248,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-CICD-002",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Implementation complete. Deliverables: (1) cloudbuild.yaml — Cloud Build config with per-service conditional build loop, SHA+env-tag push to Artifact Registry, best-effort build manifest to GCS. (2) .github/workflows/gcp-deploy.yml — replaced long-lived GCP_SA_KEY with OIDC/WIF using google-github-actions/auth workload_identity_provider + service_account; submits to Cloud Build via gcloud builds submit with changed-path-detected _SERVICES substitution. (3) Pantheon_GCP_GitHub_Docker_正式部署與環境設計_v2.md Section 19 — WIF setup commands, image naming/tag strategy, changed-path gating, provenance, acceptance mapping. Both acceptance criteria satisfied: single repo-to-build-to-image path wired, no long-lived key in GitHub.",
+      "status": "done",
+      "created_at": "2026-04-16T18:01:07Z",
+      "resolved_at": "2026-04-16T18:03:05Z"
+    },
+    {
+      "task_id": "BP5-CICD-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review found blocking ID-mapping issues between Stage 0 build_ids and cloudbuild.yaml. See .orchestrator/reviews/BP5-CICD-002-codex2-review.md and realign the Cloud Build service inventory before re-review.",
+      "status": "done",
+      "created_at": "2026-04-16T18:03:05Z",
+      "resolved_at": "2026-04-16T18:03:05Z"
+    },
+    {
+      "task_id": "BP5-CICD-002",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "All blocking ID-mapping issues resolved. Changes: (1) cloudbuild.yaml service registry now uses Stage 0 matrix IDs verbatim — bff (was operator-bff), governance-api (was governance), telemetry-ingest (was telemetry); (2) added 9 missing research/execution-lab images; (3) runtime-manager path corrected; (4) Section 19.5 updated with service inventory table and manual-only distinction. Please re-review.",
+      "status": "done",
+      "created_at": "2026-04-16T18:06:53Z",
+      "resolved_at": "2026-04-16T18:10:14Z"
+    },
+    {
+      "task_id": "BP5-CICD-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Re-review passed. Stage 0 build IDs, Cloud Build service registry, and Section 19 inventory are aligned; owner can finalize closeout.",
+      "status": "done",
+      "created_at": "2026-04-16T18:10:14Z",
+      "resolved_at": "2026-04-16T18:13:26Z"
+    }
+  ],
+  "blockers": []
+}

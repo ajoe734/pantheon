@@ -1,0 +1,51 @@
+{
+  "status": 200,
+  "payload": {
+    "matrix": [
+      {
+        "risk_level": "low",
+        "authorized_roles": [
+          "governance_reviewer",
+          "automated_gate"
+        ],
+        "revoke_roles": [
+          "risk_owner",
+          "governance_committee"
+        ]
+      },
+      {
+        "risk_level": "medium",
+        "authorized_roles": [
+          "governance_reviewer",
+          "risk_owner"
+        ],
+        "revoke_roles": [
+          "risk_owner",
+          "governance_committee"
+        ]
+      },
+      {
+        "risk_level": "high",
+        "authorized_roles": [
+          "risk_owner",
+          "governance_committee"
+        ],
+        "revoke_roles": [
+          "risk_owner",
+          "governance_committee"
+        ]
+      },
+      {
+        "risk_level": "critical",
+        "authorized_roles": [
+          "governance_committee"
+        ],
+        "revoke_roles": [
+          "risk_owner",
+          "governance_committee"
+        ]
+      }
+    ],
+    "description": "Risk-level → authorized_roles: only these roles may record an ApprovalDecision at the given risk level.  revoke_roles may revoke any decided decision."
+  }
+}

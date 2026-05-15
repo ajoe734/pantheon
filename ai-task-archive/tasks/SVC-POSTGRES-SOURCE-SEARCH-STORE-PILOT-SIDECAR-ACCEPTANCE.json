@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-29T18:44:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT-SIDECAR-ACCEPTANCE",
+    "title": "Prepare SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT acceptance packet and dependency map",
+    "summary_zh": "平行支援 SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Production Readiness / Data Ownership",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+      "SVC-SOURCE-INGEST-EXTERNAL-FETCH-BASELINE",
+      "SVC-SEARCH-DURABLE-COMPAT-QUARANTINE"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT/SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized approved support acceptance packet and Claude review record. Commit: 6be63f0. Verification: git diff --cached --check -- support/sidecars/SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT before commit.",
+    "last_update": "2026-04-29T18:44:26Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：支援 artifact 確認正確，store 邊界驗證無誤，search 讀寫邊界在程式碼層面強制執行。",
+      "Section 2 parent task state 為歷史快照，不影響 packet 可用性。"
+    ],
+    "review_file": "support/sidecars/SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT/review-claude-20260429.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T18:44:26Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "6be63f0e7bd0f7c30f86df979db52d91715b808b",
+      "commit_subject": "SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT-SIDECAR-ACCEPTANCE finalize support packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude",
+        "Verification": "git diff --cached --check -- support/sidecars/SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 57,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 17,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: created support acceptance packet with dependency map, current source-ingest/search store boundary, Postgres pilot acceptance checklist, owner guardrails, reviewer checklist, and focused verification commands. Verification: git diff --check on the sidecar artifact. Scope limited to support artifact; no runtime/canonical changes.",
+      "status": "done",
+      "created_at": "2026-04-29T18:10:35Z",
+      "resolved_at": "2026-04-29T18:40:13Z"
+    },
+    {
+      "task_id": "SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: packet is accurate, scope-clean, and useful as acceptance support. Write boundary enforced at class level. Returned to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-29T18:40:13Z",
+      "resolved_at": "2026-04-29T18:44:26Z"
+    }
+  ],
+  "blockers": []
+}

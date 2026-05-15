@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "SVC-SOURCE-SEARCH-OPS-BFF-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-30T07:43:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-SOURCE-SEARCH-OPS-BFF-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-SOURCE-SEARCH-OPS-BFF BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-SOURCE-SEARCH-OPS-BFF，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Source / Search Platform",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-SOURCE-SEARCH-OPS-BFF/SVC-SOURCE-SEARCH-OPS-BFF-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: task-scoped commit f00ba6d. Sidecar packet verified against current service route surfaces (source_ingestion/main.py: 25 routes, search/main.py: 11 routes). BFF gap matrix (G1-G16) confirmed: no existing /api/v1/operator/source or /api/v1/operator/search routes in BFF. Review file added. No canonical truth modified. Packet ready for parent owner (SVC-SOURCE-SEARCH-OPS-BFF) to absorb.",
+    "last_update": "2026-04-30T07:43:47Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-SOURCE-SEARCH-OPS-BFF",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar packet 已校正 source ingest route inventory，補齊 source-record/evidence detail/knowledge-object routes；search route inventory 與 BFF source/search ops gap 查核通過；支援 artifact 未修改 canonical truth 或 runtime 實作。",
+      "後續：owner Claude 依 closeout spec 建立 task-scoped commit，然後執行 done 收尾。"
+    ],
+    "review_file": ".orchestrator/reviews/SVC-SOURCE-SEARCH-OPS-BFF-SIDECAR-BFF-HANDOFF-review-codex2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T07:43:47Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "f00ba6def1bbc5c4680712dee0d4f9e9dfa2bb84",
+      "commit_subject": "SVC-SOURCE-SEARCH-OPS-BFF-SIDECAR-BFF-HANDOFF closeout: BFF/frontend handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "covers": "source ingest route inventory (25 routes), search route inventory",
+        "No canonical truth modified. Review approved by Codex2": "route inventory",
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-SOURCE-SEARCH-OPS-BFF-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex2",
+        "Verification": "reviewer ran rg against source_ingestion/main.py and"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 51,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 30,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-SOURCE-SEARCH-OPS-BFF-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "BFF/frontend handoff packet ready for review. Covers: source ingest service route inventory (§3.1 — 20 routes), search service route inventory (§3.2 — 11 routes), current BFF surface gap (§3.3 — no /api/v1/operator/source or /api/v1/operator/search routes exist), candidate composed read routes GET /api/v1/operator/source/ops and GET /api/v1/operator/search/ops with response envelopes (§4), 6 candidate command endpoints with auth/idempotency requirements (§4.3), operator journey for connector health, DLQ replay, and index reindex flows (§5), 16-gap BFF gap matrix (§6), frontend screen regions with allowedActions gating (§7), and parent+sidecar reviewer checklists (§8). No canonical truth modified. Verification: verified service routes against services/source_ingestion/main.py and services/search/main.py directly; verified BFF has no existing source/search ops surface by grepping main.py and BFF_API_CONTRACT.md.",
+      "status": "done",
+      "created_at": "2026-04-30T07:23:53Z",
+      "resolved_at": "2026-04-30T07:37:21Z"
+    },
+    {
+      "task_id": "SVC-SOURCE-SEARCH-OPS-BFF-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review approved: packet inventory corrected and verified against source_ingestion/search routes; BFF source/search operator ops routes remain absent as documented; no canonical truth or runtime implementation changed. Owner to finalize with task-scoped commit and done closeout.",
+      "status": "done",
+      "created_at": "2026-04-30T07:37:21Z",
+      "resolved_at": "2026-04-30T07:43:47Z"
+    }
+  ],
+  "blockers": []
+}

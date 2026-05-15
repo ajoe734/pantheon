@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "OSS-004B-SIDECAR-REVIEW",
+  "archived_at": "2026-04-19T00:16:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-004B-SIDECAR-REVIEW",
+    "title": "Prepare OSS-004B review packet and evidence summary",
+    "summary_zh": "平行支援 OSS-004B，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 7: EP4 Proof Raising",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "OSS-004A"
+    ],
+    "artifacts": [
+      "support/sidecars/OSS-004B/OSS-004B-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner final check complete: review packet matches archived OSS-004B snapshot, evidence map is accurate, no scope overclaim into OSS-004C, and Codex reviewer spot-checks all passed. Sidecar support artifact finalized.",
+    "last_update": "2026-04-19T00:16:28Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OSS-004B",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Review packet now matches the archived OSS-004B snapshot instead of implying Codex was the parent reviewer; it correctly cites ai-task-archive/tasks/OSS-004B.json for archived owner/reviewer/status truth and distinguishes sidecar-review lifecycle from parent ownership.",
+      "Reviewer spot-checks matched the packet evidence: runtime_bootstrap dispatches the paper role to paper_runtime.main(), telemetry uses canonical binding_id naming, smoke/docs keep OSS-004C as the integrated-proof boundary, and the cited 12-test verification story remains consistent with the acceptance packet."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T00:16:28Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "b1a7e2331b057bd615e37ff796d779ab0ae62405",
+      "commit_subject": "OSS-004B-SIDECAR-REVIEW: finalize review packet sidecar",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "OSS-004B-SIDECAR-REVIEW",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 665,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-004B-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review packet complete at support/sidecars/OSS-004B/OSS-004B-SIDECAR-REVIEW.md. Packet includes: evidence map across all 5 OSS-004B proof surfaces, 8-item reviewer checklist (R-1 through R-8), known risk areas (bootstrap/EP4 conflation, stub_mode retention, secret boundary drift, telemetry naming drift, scope bleed into OSS-004C), and reviewer disposition guide. Hold packet until OSS-004B enters review state, then use sections 5 and 6 as the primary review guide.",
+      "status": "done",
+      "created_at": "2026-04-19T00:09:57Z",
+      "resolved_at": "2026-04-19T00:14:56Z"
+    },
+    {
+      "task_id": "OSS-004B-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support packet reviewed and approved after correcting archived-state and reviewer-role drift; evidence map now matches the archived OSS-004B record and the current repo snapshot without overclaiming OSS-004C.",
+      "status": "done",
+      "created_at": "2026-04-19T00:14:56Z",
+      "resolved_at": "2026-04-19T00:16:28Z"
+    }
+  ],
+  "blockers": []
+}

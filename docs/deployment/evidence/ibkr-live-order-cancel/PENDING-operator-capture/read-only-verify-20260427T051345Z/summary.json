@@ -1,0 +1,35 @@
+{
+  "task_id": "EP5-002",
+  "generated_at": "2026-04-27T05:16:14Z",
+  "status": "ib_read_only_verified",
+  "proof_boundary": "read-only IBKR session, open-order, and execution readback",
+  "target": {
+    "account": "U19859952",
+    "symbol": "AAPL",
+    "order_id": 1,
+    "perm_id": 204599504
+  },
+  "session": {
+    "status": "ok",
+    "source": "session-health-retry.json",
+    "account_ref_present": true,
+    "next_valid_order_id": 1
+  },
+  "open_orders": {
+    "status": "ok",
+    "source": "open-orders-retry.json",
+    "open_order_count": 0
+  },
+  "executions": {
+    "status": "ok",
+    "source": "executions.json",
+    "fill_status": "no_matching_executions",
+    "matching_execution_count": 0,
+    "matching_shares": 0.0
+  },
+  "notes": [
+    "All probes in this folder are read-only and did not place, modify, or cancel orders.",
+    "This proves the IBKR session is reachable, the target order is absent from open orders, and no matching execution was returned for the target order/permId since 20260426-00:00:00.",
+    "This does not by itself close the Pantheon runtime-manager or telemetry live refs gap."
+  ]
+}

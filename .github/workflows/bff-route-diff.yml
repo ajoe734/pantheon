@@ -1,0 +1,38 @@
+name: BFF Route Diff
+
+on:
+  pull_request:
+    branches:
+      - backend-dev-publish-20260429
+      - master
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  route-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install BFF test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r services/control-plane/bff/requirements.txt
+
+      - name: Verify backend route manifest snapshot
+        run: python3 scripts/bff_route_manifest_backend.py --check
+
+      - name: Run fail-hard route diff baseline gate
+        run: python3 scripts/bff_route_diff.py --check-baseline
+
+      - name: Run route diff pytest harness
+        run: python3 -m pytest scripts/test_bff_route_diff.py -q

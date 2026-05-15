@@ -1,0 +1,30 @@
+{
+  "feature_id": "PKT-014-paper-live-drift",
+  "reviewed_source_commit": "HEAD",
+  "status": "open_requests",
+  "requests": [
+    {
+      "kind": "contract_truth_boundary",
+      "blocking": false,
+      "screen_id": "screen-operator-paper-live-drift",
+      "summary": "PKT-014 currently emits API-resource href values where the packet describes existing owner-screen navigation through plan_ref and recommended_actions.",
+      "details": {
+        "live_payload_refs": [
+          "/api/v1/operator/deployment-review/plan-F-042",
+          "/api/v1/operator/incident-response/inc-20260410-001",
+          "/api/v1/operator/post-incident-review/inc-20260410-001",
+          "/api/v1/approval-decisions/approval-042",
+          "/api/v1/evolution-decisions/evo-dec-001"
+        ],
+        "reviewed_front_routes": [
+          "/operator/deployment-review",
+          "/operator/deployment-plans/:planId",
+          "/operator/incidents",
+          "/operator/post-incident-review"
+        ],
+        "reason_not_safe_to_guess": "The PKT-014 screen contract requires payload-owned refs. The frontend must not rewrite API-resource hrefs into guessed browser destinations."
+      },
+      "requested_follow_up": "Publish browser-ready owner-screen refs for PKT-014, or revise the PKT-014 contract, screen spec, and example payload so they explicitly describe API-resource links rather than owner-screen navigation."
+    }
+  ]
+}

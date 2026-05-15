@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "task_id": "SVC-OPENCLAW-ACTIVATION-READY-E2E",
+  "archived_at": "2026-04-30T10:06:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OPENCLAW-ACTIVATION-READY-E2E",
+    "title": "Add OpenClaw activation-ready E2E profile",
+    "summary_zh": "建立 OpenClaw fake-upstream + compose/smoke profile：證明 facade、session、tool bridge、paper gate、live deny 全部可驗證。",
+    "phase": "OpenClaw Activation-Ready Development",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-OPENCLAW-PAPER-BROKER-ADAPTER",
+      "SVC-OPENCLAW-LIVE-GATE-HARNESS",
+      "SVC-OPENCLAW-BFF-OPS-SURFACE"
+    ],
+    "artifacts": [
+      "services/openclaw-gateway-adapter",
+      "services/control-plane/bff",
+      "scripts",
+      "docker-compose.yml",
+      "docs/deployment"
+    ],
+    "acceptance": [
+      "fake upstream E2E covers capabilities sessions tools and paper adapter",
+      "default compose remains degraded safe when upstream absent",
+      "live path is explicitly denied in E2E",
+      "activation-ready profile documents required gates and env vars",
+      "focused tests and compose config pass"
+    ],
+    "next": "Closed out review-approved OpenClaw activation-ready E2E profile with task-scoped commit 95accdb. Verification: docker compose --profile openclaw-activation-ready-e2e config --quiet; docker compose --profile openclaw-activation-ready-e2e run --rm --no-deps openclaw-activation-ready-e2e (13/13 passed); python3 scripts/smoke_openclaw_activation_ready_e2e.py (13/13 passed); python3 -m pytest scripts/test_smoke_openclaw_activation_ready_e2e.py services/openclaw-gateway-adapter/test_compose_activation.py -q (5 passed); python3 -m pytest services/openclaw-gateway-adapter -q (194 passed).",
+    "last_update": "2026-04-30T10:06:29Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-materialization-20260430",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：compose E2E container 已改用 openclaw-gateway-adapter Dockerfile 並以 pull_policy=build 避免 stale smoke image；docker compose run、compose config、本機 smoke、focused pytest、adapter regression 均通過。",
+      "Owner closeout：請依 task-closeout-finalization 建立 task-scoped commit 後再 done。"
+    ],
+    "review_file": ".orchestrator/reviews/SVC-OPENCLAW-ACTIVATION-READY-E2E-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T10:06:29Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "95accdbb4e274fc65583a20e4875b97f6fcb94f0",
+      "commit_subject": "SVC-OPENCLAW-ACTIVATION-READY-E2E add activation-ready smoke",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-OPENCLAW-ACTIVATION-READY-E2E",
+        "Reviewer": "Codex",
+        "Verification": "docker compose --profile openclaw-activation-ready-e2e config --quiet; docker compose --profile openclaw-activation-ready-e2e run --rm --no-deps openclaw-activation-ready-e2e (13/13 passed); python3 scripts/smoke_openclaw_activation_ready_e2e.py (13/13 passed); python3 -m pytest scripts/test_smoke_openclaw_activation_ready_e2e.py services/openclaw-gateway-adapter/test_compose_activation.py -q (5 passed); python3 -m pytest services/openclaw-gateway-adapter -q (194 passed); git diff --check task docs/tests."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 72,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 49,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OPENCLAW-ACTIVATION-READY-E2E",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: added OpenClaw activation-ready E2E smoke/profile/docs. Verification: python3 scripts/smoke_openclaw_activation_ready_e2e.py (13/13), python3 -m pytest scripts/test_smoke_openclaw_activation_ready_e2e.py services/openclaw-gateway-adapter/test_compose_activation.py (5 passed), docker compose --profile openclaw-activation-ready-e2e config --quiet.",
+      "status": "done",
+      "created_at": "2026-04-30T09:54:20Z",
+      "resolved_at": "2026-04-30T09:58:04Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-ACTIVATION-READY-E2E",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review reopened: compose E2E profile builds from Dockerfile.smoke without adapter dependencies, so docker compose --profile openclaw-activation-ready-e2e run --rm --no-deps openclaw-activation-ready-e2e fails with ModuleNotFoundError: fastapi. See .orchestrator/reviews/SVC-OPENCLAW-ACTIVATION-READY-E2E-review-codex.md.",
+      "status": "done",
+      "created_at": "2026-04-30T09:58:04Z",
+      "resolved_at": "2026-04-30T09:58:04Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-ACTIVATION-READY-E2E",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for re-review: compose E2E profile now builds the OpenClaw adapter image with FastAPI/httpx dependencies and pull_policy=build to avoid stale Dockerfile.smoke images. Verification: docker compose --profile openclaw-activation-ready-e2e run --rm --no-deps openclaw-activation-ready-e2e (13/13 passed); docker compose --profile openclaw-activation-ready-e2e config --quiet; python3 scripts/smoke_openclaw_activation_ready_e2e.py (13/13 passed); python3 -m pytest scripts/test_smoke_openclaw_activation_ready_e2e.py services/openclaw-gateway-adapter/test_compose_activation.py -q (5 passed); git diff --check -- docker-compose.yml scripts/test_smoke_openclaw_activation_ready_e2e.py docs/deployment/openclaw-activation-ready-e2e.md.",
+      "status": "done",
+      "created_at": "2026-04-30T10:02:04Z",
+      "resolved_at": "2026-04-30T10:04:34Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-ACTIVATION-READY-E2E",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: compose activation-ready E2E profile is container-runnable and gates remain fail-closed; returned to Codex2 for owner closeout.",
+      "status": "done",
+      "created_at": "2026-04-30T10:04:34Z",
+      "resolved_at": "2026-04-30T10:06:29Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "task_id": "APP-003-TRUTH-SYNC-004",
+  "archived_at": "2026-04-24T06:18:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-TRUTH-SYNC-004",
+    "title": "Rebaseline canonical truth against reopened front-default-branch gaps",
+    "summary_zh": "把 reopened cross-repo truth 回寫到 backlog、Lovable SA、blueprint working source 與 execution board，並把 current default branch 仍為 blocked shell 的現況從『已關 loop』拉回 truthful active residual。",
+    "phase": "Execution / Archive Truth Rebaseline",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-24-cross-repo-reopen-execution-packet.md",
+      "WORKBENCH_DELIVERY_BACKLOG.md",
+      "docs/pantheon-handoffs/LOVABLE_MASTER_SA.md",
+      "docs/reviews/2026-04-20-system-design-open-questions-for-architecture-team.md",
+      "current-work.md"
+    ],
+    "acceptance": [
+      "Canonical docs no longer claim EW-04, EW-05, CW-01, CW-03, and CW-04 are closed when front default branch still mounts blocked shells",
+      "Blueprint working source reflects the reopened execution lane",
+      "Execution board carries named tasks for the reopened front realignment and closeout work"
+    ],
+    "next": "Checkpoint: review-approved reopened front-default-branch truth rebaseline is formally closed. WORKBENCH backlog, Lovable SA, 2026-04-20 blueprint working source, and the execution board remain aligned on active residual work; derived current-work.md Lovable Coordination loop_complete rows stay tracked as a separate non-blocking coordination-record truth-sync slice.",
+    "last_update": "2026-04-24T06:18:55Z",
+    "task_class": "execution_candidate",
+    "auto_generated": true,
+    "auto_created_by": "2026-04-24-cross-repo-reopen-execution-packet",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Re-approve after assign/handoff reset: 重新核對三項 acceptance 仍達成。WORKBENCH_DELIVERY_BACKLOG.md 第 60-61、101-103 行明確把 EW-04／EW-05／CW-01／CW-03／CW-04 標為 route-live in Pantheon 但 front default branch 仍掛 blocked shell；LOVABLE_MASTER_SA.md 138／141／338-344／419-428 對齊為 reopened cross-repo realignment 而非 pending-BFF；2026-04-20 blueprint working-source review 280-286 行退下既 archived 的 task id 並名出 front-default-branch realignment 作為當前剩餘工作；execution board 透過 APP-003-TRUTH-SYNC-004 本身以及四個已 archived 的 realignment／closeout task 提供 named visibility。",
+      "Non-blocking 邊界不變：derived current-work.md Lovable Coordination rows 仍顯示 CW-01／CW-03／CW-04／EW-05 為 loop_complete，來自 .coordination/requests/*-ui-done.yaml 模組層 coordination-record，屬另一條 truth-sync slice 範疇，不阻擋本次 rebaseline 收尾。"
+    ],
+    "review_file": "docs/reviews/2026-04-24-cross-repo-reopen-execution-packet.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T06:18:55Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "cd4437a8860ed549b053357fa299c2e93defcb8f",
+      "commit_subject": "APP-003-TRUTH-SYNC-004: finalize reopened truth rebaseline",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Checkpoint": "formal owner closeout after review re-approval. Canonical truth is aligned across WORKBENCH backlog, Lovable SA, 2026-04-20 blueprint working source, and execution board.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-TRUTH-SYNC-004",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1229,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-TRUTH-SYNC-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Verified the reopened truth against WORKBENCH_DELIVERY_BACKLOG.md, LOVABLE_MASTER_SA.md, the 2026-04-20 blueprint working-source review doc, ai-status.json, and current-work.md Task Board. Parent acceptance is met: EW-04/EW-05/CW-01/CW-03/CW-04 are no longer framed as closed on active surfaces, the reopened execution lane is named in the blueprint working source, and the execution board carries the reopened realignment/closeout tasks. The only remaining mismatch is the derived current-work Lovable Coordination rows still showing loop_complete for some features because the underlying .coordination request records were not rewritten; that is documented as a non-blocking out-of-scope boundary for this rebaseline.",
+      "status": "done",
+      "created_at": "2026-04-24T05:58:42Z",
+      "resolved_at": "2026-04-24T06:01:57Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: reopened front-default-branch truth has been rebaselined into WORKBENCH backlog, Lovable SA, 2026-04-20 blueprint working source, and the execution board; four reopened realignment/closeout slices are archived done. Derived current-work.md Lovable Coordination loop_complete rows for CW-01/CW-03/CW-04/EW-05 correctly flagged as a non-blocking out-of-scope coordination-record issue. Owner may finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-24T06:01:57Z",
+      "resolved_at": "2026-04-24T06:02:57Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: reopened front-default-branch truth has been rebaselined into WORKBENCH backlog, Lovable SA, 2026-04-20 blueprint working source, and the execution board; four reopened realignment/closeout slices are archived done. Derived current-work.md Lovable Coordination loop_complete rows for CW-01/CW-03/CW-04/EW-05 correctly flagged as a non-blocking out-of-scope coordination-record issue. Owner may finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-24T06:03:28Z",
+      "resolved_at": "2026-04-24T06:11:37Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved (re-approval): reopened front-default-branch truth rebaseline verified across WORKBENCH backlog, Lovable SA, 2026-04-20 blueprint working source, and execution board; four archived realignment/closeout slices satisfy board visibility. Derived current-work.md Lovable Coordination loop_complete rows are confirmed as a non-blocking out-of-scope coordination-record issue. Owner may finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-24T06:11:37Z",
+      "resolved_at": "2026-04-24T06:18:55Z"
+    }
+  ],
+  "blockers": []
+}

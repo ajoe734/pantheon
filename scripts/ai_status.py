@@ -21,6 +21,7 @@ if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
 from task_archive import (
+    ARCHIVE_TASKS_DIR,
     DEFAULT_RECENT_LIMIT as DEFAULT_ARCHIVE_RECENT_LIMIT,
     TaskResolver,
     archive_task_path,
@@ -33,7 +34,12 @@ from task_archive import (
     task_satisfies_dependency,
     terminal_outcome_for,
 )
-from multi_repo_registry import repository_local_path
+from multi_repo_registry import (
+    repository_local_path,
+    repository_slug,
+    task_artifact_repository_ids,
+    task_primary_repository_id,
+)
 from runtime_state import load_runtime_state
 
 STATUS_FILE = ROOT / "ai-status.json"
@@ -53,57 +59,56 @@ KNOWN_AGENTS = {
     "Claude": {
         "capability_lane": ["execution", "control-plane", "governance-review"],
         "default_branch": "feat/claude-execution-control",
-        "target_workload": 15,
+        "target_workload": 5,
     },
     "Claude2": {
         "capability_lane": ["execution", "control-plane", "governance-review"],
         "default_branch": "feat/claude2-execution-control",
-        "target_workload": 15,
+        "target_workload": 5,
     },
     "Gemini": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/gemini-research-runtime",
-        "target_workload": 30,
+        "target_workload": 5,
+    },
+    "Gemini2": {
+        "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+        "default_branch": "feat/gemini2-research-runtime",
+        "target_workload": 5,
     },
     "Codex": {
         "capability_lane": ["integration", "status-system", "schema", "acceptance"],
         "default_branch": "feat/codex-collab-system",
-        "target_workload": 30,
+        "target_workload": 35,
     },
     "Codex2": {
         "capability_lane": ["integration", "status-system", "schema", "acceptance"],
         "default_branch": "feat/codex-collab-system",
-        "target_workload": 30,
-    },
-    "Qwen": {
-        "capability_lane": ["integration", "schema", "acceptance", "code-agent"],
-        "default_branch": "feat/qwen-code-agent",
-        "target_workload": 15,
+        "target_workload": 35,
     },
     "Copilot": {
         "capability_lane": ["research-ingest", "external-search", "spec-review", "critique"],
         "default_branch": "feat/copilot-research-critique",
-        "target_workload": 25,
+        "target_workload": 5,
     },
 }
 
 AGENT_ALIASES = {
     "claude2": "Claude2",
     "claude 2": "Claude2",
+    "gemini2": "Gemini2",
+    "gemini 2": "Gemini2",
     "codex2": "Codex2",
     "codex (2)": "Codex2",
     "codex3": "Codex",
     "codex (3)": "Codex",
-    "qwen": "Qwen",
-    "qwen coder": "Qwen",
-    "qwen2.5-coder": "Qwen",
-    "qwen3": "Qwen",
-    "千問": "Qwen",
     "grok": "Copilot",
     "copilot": "Copilot",
     "copilot host": "Copilot",
     "copilot_host": "Copilot",
 }
+
+RETIRED_AGENT_REPLACEMENTS = {}
 
 STATUS_LABELS = {
     "todo": "todo",
@@ -117,6 +122,30 @@ STATUS_LABELS = {
 DEPENDENCY_DONE_STATUSES = {"done"}
 ACTIVE_TASK_STATUSES = {"todo", "in_progress", "review", "review_approved", "blocked"}
 EXTERNAL_TASK_PREFIXES = {"OC", "RS", "LP", "OSS", "SPIKE"}
+EXTERNAL_TASK_ID_TOKENS = {
+    "DATASOURCE",
+    "OPENCLAW",
+    "OSS",
+    "SEARCH",
+    "SOURCE",
+}
+EXTERNAL_TASK_TEXT_KEYWORDS = {
+    "external",
+    "external source",
+    "external search",
+    "openclaw",
+    "oss",
+    "searchgateway",
+    "source/search",
+    "source-ingest",
+    "source_ingestion",
+}
+EXTERNAL_TASK_ARTIFACT_PREFIXES = (
+    "integrations/",
+    "services/openclaw",
+    "services/search",
+    "services/source_ingestion",
+)
 TASK_TERMINAL_SUPERSEDED = "superseded"
 DEFAULT_DELIVERY_GATES = {
     "require_commit_hash": True,
@@ -150,22 +179,6 @@ DISPLAY_TIMEZONE = ZoneInfo("Asia/Taipei")
 DISPLAY_TIMEZONE_LABEL = "台灣時間 (UTC+8)"
 ISO_TIMESTAMP_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\b")
 FEATURE_MODULE_RE = re.compile(r"^([A-Z]+-\d{2,3})(?:-|$)")
-COORDINATION_RESPONSE_TYPES = (
-    "frontend-feedback",
-    "backend-delivery",
-    "contract-ready",
-    "lovable-ui-task",
-    "lovable-prompt",
-)
-COORDINATION_REQUEST_TYPES = (
-    "frontend-feedback",
-    "needs-runtime",
-    "bff-gap",
-    "ui-done",
-)
-COORDINATION_FEATURE_ALIASES = {
-    "EW-04-inspiration-graph": "PKT-003-inspiration-graph",
-}
 
 
 def default_canonical_document_layers() -> dict[str, list[str]]:
@@ -229,6 +242,7 @@ def flatten_canonical_document_layers(layers: dict[str, list[str]]) -> list[str]
 def sync_canonical_document_metadata(state: dict[str, Any]) -> None:
     default_layers = default_canonical_document_layers()
     layers = state.get("canonical_document_layers")
+    merge_default_layers = str(state.get("project") or "").strip() in {"", "pantheon"}
     if not isinstance(layers, dict) or not layers:
         layers = default_layers
     else:
@@ -238,7 +252,7 @@ def sync_canonical_document_metadata(state: dict[str, Any]) -> None:
                 normalized_layers[str(key)] = [str(item) for item in value]
         if not normalized_layers:
             normalized_layers = default_layers
-        else:
+        elif merge_default_layers:
             for key, default_documents in default_layers.items():
                 existing_documents = normalized_layers.get(key, [])
                 merged_documents = list(existing_documents)
@@ -411,6 +425,12 @@ def canonical_agent_name(name: str | None) -> str:
     return trimmed
 
 
+def active_agent_name(name: str | None) -> str:
+    canonical = canonical_agent_name(name)
+    replacement = RETIRED_AGENT_REPLACEMENTS.get(canonical.lower())
+    return replacement or canonical
+
+
 def current_actor(default: str = "Codex") -> str:
     return canonical_agent_name(os.environ.get("AI_NAME", default))
 
@@ -540,6 +560,39 @@ def load_logs() -> list[dict[str, Any]]:
     return logs
 
 
+def load_log_tail_lines(max_lines: int = 5000) -> list[str]:
+    if not LOG_FILE.exists():
+        return []
+    try:
+        with LOG_FILE.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            file_size = handle.tell()
+            block_size = 1 << 16
+            buffer = bytearray()
+            line_count = 0
+            position = file_size
+            while position > 0 and line_count <= max_lines:
+                read_size = min(block_size, position)
+                position -= read_size
+                handle.seek(position)
+                chunk = handle.read(read_size)
+                buffer[0:0] = chunk
+                line_count = buffer.count(b"\n")
+            tail = bytes(buffer)
+        if line_count > max_lines:
+            split_at = -1
+            extra = line_count - max_lines
+            for _ in range(extra):
+                split_at = tail.find(b"\n", split_at + 1)
+                if split_at == -1:
+                    break
+            if split_at != -1:
+                tail = tail[split_at + 1 :]
+        return tail.decode("utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+
+
 def load_planning_state() -> dict[str, Any] | None:
     if not PLANNING_STATE_FILE.exists():
         return None
@@ -567,6 +620,80 @@ def load_config() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def bool_config_setting(settings: dict[str, Any], key: str, default: bool = False) -> bool:
+    value = settings.get(key, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return bool(value)
+
+
+def int_config_setting(settings: dict[str, Any], key: str, default: int) -> int:
+    try:
+        return int(settings.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def build_dispatch_policy_summary(config: dict[str, Any]) -> dict[str, Any]:
+    ready_dispatcher = config.get("ready_dispatcher") if isinstance(config.get("ready_dispatcher"), dict) else {}
+    helper_claim = ready_dispatcher.get("helper_claim") if isinstance(ready_dispatcher.get("helper_claim"), dict) else {}
+    worker_self_claim = ready_dispatcher.get("worker_self_claim") if isinstance(ready_dispatcher.get("worker_self_claim"), dict) else {}
+    claim_idle_work = bool_config_setting(helper_claim, "claim_idle_work", False)
+    helper_claim_enabled = bool_config_setting(helper_claim, "enabled", True)
+    worker_self_claim_enabled = bool_config_setting(worker_self_claim, "enabled", False)
+    return {
+        "mode": "worker_self_claim" if worker_self_claim_enabled else ("idle_worker_claim" if helper_claim_enabled and claim_idle_work else "supervisor_owned_dispatch"),
+        "worker_self_claim_enabled": worker_self_claim_enabled,
+        "worker_self_claim_command": worker_self_claim.get("claim_command") or "",
+        "helper_claim_enabled": helper_claim_enabled,
+        "claim_idle_work": claim_idle_work,
+        "claim_sidecars_when_idle": bool_config_setting(helper_claim, "claim_sidecars_when_idle", False),
+        "require_owner_higher_priority_load": bool_config_setting(helper_claim, "require_owner_higher_priority_load", True),
+        "owned_work_first": True,
+        "max_dispatches_per_tick": int_config_setting(ready_dispatcher, "max_dispatches_per_tick", 4),
+        "max_tasks_per_agent": int_config_setting(ready_dispatcher, "max_tasks_per_agent", 1),
+        "sidecar_only_agents": ready_dispatcher.get("sidecar_only_agents") or [],
+        "disabled_agents": ready_dispatcher.get("disabled_agents") or [],
+    }
+
+
+def recent_helper_claims(limit: int = 8, max_scan_lines: int = 5000) -> list[dict[str, Any]]:
+    claims: list[dict[str, Any]] = []
+    for line_no, line in enumerate(reversed(load_log_tail_lines(max_lines=max_scan_lines)), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            entry = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            print(
+                f"Warning: skipping malformed ai-activity-log.jsonl tail line -{line_no}: {exc}",
+                file=sys.stderr,
+            )
+            continue
+        if str(entry.get("type") or "") != "task_helper_claimed":
+            continue
+        claims.append(
+            {
+                "task_id": entry.get("task_id"),
+                "from_owner": entry.get("from_owner") or entry.get("from"),
+                "to_owner": entry.get("to_owner") or entry.get("to"),
+                "new_reviewer": entry.get("new_reviewer") or entry.get("reviewer"),
+                "message": entry.get("message"),
+                "ts": entry.get("ts") or entry.get("updated_at"),
+            }
+        )
+        if len(claims) >= limit:
+            break
+    return claims
+
+
 def save_state(state: dict[str, Any]) -> None:
     serialized = json.dumps(state, indent=2, ensure_ascii=False) + "\n"
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=STATUS_FILE.parent, delete=False) as handle:
@@ -575,6 +702,57 @@ def save_state(state: dict[str, Any]) -> None:
         os.fsync(handle.fileno())
         temp_path = Path(handle.name)
     os.replace(temp_path, STATUS_FILE)
+
+
+def ensure_sprint_started_at(state: dict[str, Any]) -> None:
+    current_sprint = str(state.get("sprint") or "").strip()
+    if not current_sprint:
+        return
+    on_disk: dict[str, Any] = {}
+    if STATUS_FILE.exists():
+        try:
+            on_disk = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            on_disk = {}
+    on_disk_sprint = str(on_disk.get("sprint") or "").strip()
+    on_disk_started_at = on_disk.get("sprint_started_at")
+    if on_disk_sprint == current_sprint and on_disk_started_at:
+        state["sprint_started_at"] = on_disk_started_at
+        return
+    state["sprint_started_at"] = iso_now()
+
+
+def count_terminal_since(threshold_iso: str | None) -> tuple[int, int]:
+    if not threshold_iso:
+        return (0, 0)
+    try:
+        threshold = datetime.fromisoformat(str(threshold_iso).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return (0, 0)
+    completed_count = 0
+    superseded_count = 0
+    if not ARCHIVE_TASKS_DIR.exists():
+        return (0, 0)
+    for path in ARCHIVE_TASKS_DIR.glob("*.json"):
+        try:
+            snapshot = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        archived_at_raw = str(snapshot.get("archived_at") or "").strip()
+        if not archived_at_raw:
+            continue
+        try:
+            archived_at = datetime.fromisoformat(archived_at_raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if archived_at < threshold:
+            continue
+        outcome = str(snapshot.get("terminal_outcome") or "").strip().lower()
+        if outcome == "superseded":
+            superseded_count += 1
+        else:
+            completed_count += 1
+    return (completed_count, superseded_count)
 
 
 def task_resolver(state: dict[str, Any]) -> TaskResolver:
@@ -741,10 +919,16 @@ def commit_convention_settings() -> dict[str, Any]:
     return settings
 
 
-def run_git_command(args: list[str], *, required: bool = True, failure_message: str | None = None) -> str:
+def run_git_command(
+    args: list[str],
+    *,
+    cwd: Path | None = None,
+    required: bool = True,
+    failure_message: str | None = None,
+) -> str:
     result = subprocess.run(
         ["git", *args],
-        cwd=ROOT,
+        cwd=cwd or ROOT,
         capture_output=True,
         text=True,
         check=False,
@@ -784,12 +968,29 @@ def parse_commit_metadata_lines(body: str) -> dict[str, str]:
 def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str, Any]:
     settings = delivery_gate_settings()
     commit_rules = commit_convention_settings()
+    config = load_config()
+    repository_id = task_primary_repository_id(config, task)
+    if repository_id is None:
+        repo_ids = [repo_id for repo_id in task_artifact_repository_ids(config, task) if repo_id != "pantheon"]
+        raise SystemExit(
+            "Cannot finalize task: task artifacts span multiple non-Pantheon repositories; "
+            f"split closeout or set a single artifact prefix. Repositories: {', '.join(repo_ids)}."
+        )
+    repository_root = repository_local_path(config, repository_id)
+    if repository_root is None:
+        raise SystemExit(f"Cannot finalize task: repository `{repository_id}` has no local_path configured.")
+    repository_root = repository_root.resolve(strict=False)
+    repository_slug_value = repository_slug(config, repository_id)
     branch = run_git_command(
         ["rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=repository_root,
         failure_message="Cannot finalize task: git branch information is unavailable.",
     )
     delivery: dict[str, Any] = {
         "recorded_at": iso_now(),
+        "repository_id": repository_id,
+        "repository_path": str(repository_root),
+        "repository_slug": repository_slug_value,
         "branch": branch,
         "git_clean_required": settings["require_git_clean"],
     }
@@ -797,6 +998,7 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
     if settings["require_commit_hash"]:
         commit_hash = run_git_command(
             ["rev-parse", "HEAD"],
+            cwd=repository_root,
             failure_message="Cannot finalize task: a HEAD commit hash is required before moving to done.",
         )
         if not commit_hash:
@@ -804,18 +1006,22 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
         delivery["commit"] = commit_hash
         subject = run_git_command(
             ["show", "-s", "--format=%s", "HEAD"],
+            cwd=repository_root,
             failure_message="Cannot finalize task: latest commit subject is unavailable.",
         )
         body = run_git_command(
             ["show", "-s", "--format=%b", "HEAD"],
+            cwd=repository_root,
             failure_message="Cannot finalize task: latest commit body is unavailable.",
         )
         author_name = run_git_command(
             ["show", "-s", "--format=%an", "HEAD"],
+            cwd=repository_root,
             failure_message="Cannot finalize task: latest commit author name is unavailable.",
         )
         author_email = run_git_command(
             ["show", "-s", "--format=%ae", "HEAD"],
+            cwd=repository_root,
             failure_message="Cannot finalize task: latest commit author email is unavailable.",
         )
         delivery["commit_subject"] = subject
@@ -863,6 +1069,7 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
 
     porcelain = run_git_command(
         ["status", "--porcelain"],
+        cwd=repository_root,
         failure_message="Cannot finalize task: git status is unavailable.",
     )
     dirty_entries = [line for line in porcelain.splitlines() if line.strip()]
@@ -876,6 +1083,7 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
 
     remotes_output = run_git_command(
         ["remote"],
+        cwd=repository_root,
         required=False,
     )
     remote_names = [line.strip() for line in remotes_output.splitlines() if line.strip()]
@@ -886,12 +1094,14 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
     if settings["record_remote_status"] and remote_names:
         upstream = run_git_command(
             ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+            cwd=repository_root,
             required=False,
         )
         delivery["upstream"] = upstream or None
         if upstream:
             counts = run_git_command(
                 ["rev-list", "--left-right", "--count", f"{upstream}...HEAD"],
+                cwd=repository_root,
                 failure_message="Cannot finalize task: unable to compute branch push status against upstream.",
             )
             try:
@@ -1000,21 +1210,21 @@ def validate_state(state: dict[str, Any]) -> None:
 
 def normalize_state_agents(state: dict[str, Any]) -> None:
     for task in state.get("tasks", []):
-        task["owner"] = canonical_agent_name(task.get("owner"))
-        task["reviewer"] = canonical_agent_name(task.get("reviewer"))
+        task["owner"] = active_agent_name(task.get("owner"))
+        task["reviewer"] = active_agent_name(task.get("reviewer"))
         if task.get("waiting_for"):
-            task["waiting_for"] = canonical_agent_name(task.get("waiting_for"))
+            task["waiting_for"] = active_agent_name(task.get("waiting_for"))
 
     for blocker in state.get("blockers", []):
-        blocker["owner"] = canonical_agent_name(blocker.get("owner"))
-        blocker["waiting_for"] = canonical_agent_name(blocker.get("waiting_for"))
+        blocker["owner"] = active_agent_name(blocker.get("owner"))
+        blocker["waiting_for"] = active_agent_name(blocker.get("waiting_for"))
 
     for handoff in state.get("handoffs", []):
-        handoff["from"] = canonical_agent_name(handoff.get("from"))
-        handoff["to"] = canonical_agent_name(handoff.get("to"))
+        handoff["from"] = active_agent_name(handoff.get("from"))
+        handoff["to"] = active_agent_name(handoff.get("to"))
 
     for agent in state.get("agents", []):
-        agent["name"] = canonical_agent_name(agent.get("name"))
+        agent["name"] = active_agent_name(agent.get("name"))
 
 
 def recompute_agents(state: dict[str, Any]) -> None:
@@ -1126,8 +1336,21 @@ def task_delivery_layer(task: dict[str, Any]) -> str:
         return "primary"
     if explicit in {"external", "upstream"}:
         return "external"
-    prefix = task["id"].split("-", 1)[0]
+    task_id = str(task.get("id") or "")
+    prefix = task_id.split("-", 1)[0]
     if prefix in EXTERNAL_TASK_PREFIXES:
+        return "external"
+    id_tokens = {token.strip().upper() for token in re.split(r"[-_/]+", task_id) if token.strip()}
+    if id_tokens & EXTERNAL_TASK_ID_TOKENS:
+        return "external"
+    artifacts = [str(item) for item in task.get("artifacts", []) if str(item).strip()]
+    if any(artifact.startswith(EXTERNAL_TASK_ARTIFACT_PREFIXES) for artifact in artifacts):
+        return "external"
+    text = " ".join(
+        str(task.get(field) or "")
+        for field in ("id", "title", "summary_zh", "phase")
+    ).lower()
+    if any(keyword in text for keyword in EXTERNAL_TASK_TEXT_KEYWORDS):
         return "external"
     return "primary"
 
@@ -1182,7 +1405,10 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
     tier_labels = canonical_tier_labels(state)
     planning_state = load_planning_state()
     orchestrator_state = load_json_file(ORCHESTRATOR_STATE_FILE, {})
-    coordination_summary = state.get("coordination_summary") if isinstance(state.get("coordination_summary"), dict) else build_coordination_summary(orchestrator_state)
+    coordination_summary = build_coordination_summary(orchestrator_state)
+    archive_index = load_archive_index()
+    archive_counts = archive_index.get("counts", {}) if isinstance(archive_index.get("counts"), dict) else {}
+    recent_terminal_tasks = recent_terminal_summaries(limit=task_archive_recent_limit())
     active_tasks = [task for task in state["tasks"] if task.get("status") != "done"]
     primary_tasks = [task for task in active_tasks if task_delivery_layer(task) == "primary"]
     external_tasks = [task for task in active_tasks if task_delivery_layer(task) == "external"]
@@ -1265,6 +1491,34 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
         ]
     )
     append_layer_table(lines, external_tasks)
+
+    lines.extend(
+        [
+            "",
+            "## Recently Executed Tasks",
+            "",
+            f"- Archive updated: {format_display_timestamp(archive_index.get('updated_at'))}",
+            f"- Terminal tasks archived: `{int(archive_counts.get('total') or 0)}` total, `{int(archive_counts.get('completed') or 0)}` completed, `{int(archive_counts.get('superseded') or 0)}` superseded",
+            "",
+            "| ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |",
+            "|---|---|---|---|---|---|---|",
+        ]
+    )
+    if recent_terminal_tasks:
+        for task in recent_terminal_tasks:
+            lines.append(
+                "| `{id}` | {phase} | {title} | {owner} | {outcome} | {archived_at} | `{snapshot}` |".format(
+                    id=cell(task.get("task_id")),
+                    phase=cell(task.get("phase")),
+                    title=cell(task.get("title") or "-"),
+                    owner=cell(task.get("owner")),
+                    outcome=cell(task.get("terminal_outcome")),
+                    archived_at=cell(format_display_timestamp(task.get("archived_at"))),
+                    snapshot=cell(task.get("snapshot_path") or "-"),
+                )
+            )
+    else:
+        lines.append("| _(none)_ | - | - | - | - | - | - |")
 
     lines.extend(["", "## Task Board", "", "| ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |", "|---|---|---|---|---|---|---|---|---|---|"])
 
@@ -1380,8 +1634,9 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
     if current_logs:
         for entry in current_logs:
             task_id = f" `{entry['task_id']}`" if entry.get("task_id") else ""
+            timestamp = entry.get("ts") or entry.get("timestamp")
             lines.append(
-                f"- {format_display_timestamp(entry['ts'])} {entry['agent']}:{task_id} {localize_embedded_timestamps(entry['message'])}"
+                f"- {format_display_timestamp(timestamp)} {entry['agent']}:{task_id} {localize_embedded_timestamps(entry['message'])}"
             )
     else:
         lines.append("- No checkpoints yet.")
@@ -1436,7 +1691,12 @@ def modules_outside_coordination_feature_rows(
 
 
 def normalize_worker_actor(worker: dict[str, Any]) -> str:
-    for candidate in (worker.get("agent_id"), worker.get("target_agent"), worker.get("provider")):
+    for candidate in (worker.get("logical_agent_id"), worker.get("agent_id"), worker.get("target_agent"), worker.get("provider")):
+        normalized = str(candidate or "").strip().lower().replace("-", "_")
+        if re.match(r"^codex1_[1-4]$", normalized):
+            return "Codex"
+        if re.match(r"^codex2_[1-4]$", normalized):
+            return "Codex2"
         canonical = canonical_agent_name(candidate)
         if canonical:
             return canonical
@@ -1456,11 +1716,15 @@ def runtime_dispatch_mode(payload: dict[str, Any] | None) -> str:
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else request_snapshot.get("metadata", {})
     if isinstance(metadata.get("planning"), dict) and metadata.get("planning"):
         return str(metadata["planning"].get("mode") or "discussion_planning")
+    if isinstance(metadata.get("chair"), dict) and metadata.get("chair"):
+        return "chair_review"
     if isinstance(metadata.get("coordination"), dict) and metadata.get("coordination"):
         return "coordination"
     reason = str(payload.get("reason") or request_snapshot.get("reason") or "").strip()
     if reason.startswith("discussion_planning_"):
         return "discussion_planning"
+    if reason.startswith("chair_review:"):
+        return "chair_review"
     if reason.startswith("coordination:"):
         return "coordination"
     return "execution"
@@ -1527,6 +1791,10 @@ def normalize_runtime_workers(state: dict[str, Any], orchestrator_state: dict[st
                 "queue_event_id": worker.get("queue_event_id"),
                 "actor": normalize_worker_actor(worker),
                 "provider": worker.get("provider"),
+                "logical_agent_id": worker.get("logical_agent_id"),
+                "dispatch_slot": worker.get("dispatch_slot"),
+                "dispatch_slot_id": worker.get("dispatch_slot_id"),
+                "quota_group": worker.get("quota_group"),
                 "status": worker_status,
                 "bucket": bucket,
                 "task_status": task_status,
@@ -1672,6 +1940,8 @@ def detect_truth_mismatches(
         if task_id:
             live_workers_by_task.setdefault(task_id, []).append(worker)
         else:
+            if str(worker.get("dispatch_mode") or "").strip() == "chair_review":
+                continue
             push(
                 {
                     "id": f"worker-without-task:{worker.get('run_id')}",
@@ -1687,7 +1957,7 @@ def detect_truth_mismatches(
 
         task = task_map.get(task_id)
         if task is None:
-            if str(worker.get("dispatch_mode") or "").strip() in {"discussion_planning", "coordination"}:
+            if str(worker.get("dispatch_mode") or "").strip() in {"discussion_planning", "coordination", "chair_review"}:
                 continue
             if resolver.source(task_id) == "archive":
                 continue
@@ -1994,92 +2264,6 @@ def load_local_coordination_payload(path_value: str) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def parse_coordination_feature_file(name: str, payload_types: tuple[str, ...]) -> tuple[str, str] | None:
-    if not name or name.startswith("."):
-        return None
-    if ".example." in name:
-        return None
-    stem = Path(name).stem
-    for payload_type in sorted(payload_types, key=len, reverse=True):
-        suffix = f"-{payload_type}"
-        if stem.endswith(suffix):
-            feature_id = stem[: -len(suffix)]
-            if feature_id:
-                return feature_id, payload_type
-    return None
-
-
-def scan_tracked_coordination_features() -> dict[str, Any]:
-    coordination_root = ROOT / ".coordination"
-    responses_dir = coordination_root / "responses"
-    requests_dir = coordination_root / "requests"
-
-    features: dict[str, dict[str, Any]] = {}
-    latest_timestamps: list[str] = []
-
-    def ensure_feature(feature_id: str) -> dict[str, Any]:
-        return features.setdefault(
-            feature_id,
-            {
-                "feature_id": feature_id,
-                "responses_by_type": {},
-                "requests_by_type": {},
-            },
-        )
-
-    def record_entry(bucket: str, path: Path, payload_types: tuple[str, ...]) -> None:
-        parsed = parse_coordination_feature_file(path.name, payload_types)
-        if parsed is None:
-            return
-        feature_id, payload_type = parsed
-        feature_id = COORDINATION_FEATURE_ALIASES.get(feature_id, feature_id)
-        feature = ensure_feature(feature_id)
-        rel_path = str(path.relative_to(ROOT))
-        payload = load_local_coordination_payload(rel_path)
-        entry: dict[str, Any] = {"path": rel_path}
-        if isinstance(payload, dict):
-            entry["payload"] = payload
-            feature["screen"] = feature.get("screen") or payload.get("screen")
-            feature["summary"] = feature.get("summary") or payload.get("summary") or payload.get("description")
-            feature["source_repo"] = feature.get("source_repo") or payload.get("source_repo")
-            feature["target_repo_id"] = feature.get("target_repo_id") or payload.get("target_repo") or payload.get("target_repo_id")
-            feature["workbench"] = feature.get("workbench") or payload.get("workbench")
-            feature["screen_id"] = feature.get("screen_id") or payload.get("screen_id")
-            feature["current_payload_type"] = feature.get("current_payload_type") or normalize_coordination_token(payload.get("type"))
-            feature["last_updated_at"] = feature.get("last_updated_at") or payload.get("reviewed_at") or payload.get("published_at") or payload.get("submitted_at") or payload.get("created_at")
-            for timestamp_key in (
-                "reviewed_at",
-                "published_at",
-                "submitted_at",
-                "created_at",
-                "resolved_at",
-                "runtime_verified_at",
-            ):
-                timestamp = payload.get(timestamp_key)
-                if isinstance(timestamp, str) and timestamp.strip():
-                    latest_timestamps.append(timestamp.strip())
-        if bucket == "responses":
-            feature["responses_by_type"][payload_type] = entry
-            if payload_type == "lovable-prompt":
-                feature["lovable_prompt_path"] = rel_path
-            if payload_type == "lovable-ui-task":
-                feature["lovable_task_path"] = rel_path
-        else:
-            feature["requests_by_type"][payload_type] = entry
-
-    if responses_dir.exists():
-        for path in sorted(candidate for candidate in responses_dir.iterdir() if candidate.is_file()):
-            record_entry("responses", path, COORDINATION_RESPONSE_TYPES)
-    if requests_dir.exists():
-        for path in sorted(candidate for candidate in requests_dir.iterdir() if candidate.is_file()):
-            record_entry("requests", path, COORDINATION_REQUEST_TYPES)
-
-    return {
-        "last_scan_at": max(latest_timestamps) if latest_timestamps else None,
-        "features": features,
-    }
-
-
 def coordination_repo_root(repo_id: str) -> Path | None:
     config = load_config()
     root = repository_local_path(config, repo_id)
@@ -2128,51 +2312,32 @@ def coordination_state_flags(feature: dict[str, Any]) -> dict[str, bool]:
     backend_delivery = coordination_payload_entry(feature, "responses", "backend-delivery")
     ui_done = coordination_payload_entry(feature, "requests", "ui-done")
     frontend_feedback = coordination_payload_entry(feature, "requests", "frontend-feedback")
+    frontend_feedback_response = coordination_payload_entry(feature, "responses", "frontend-feedback")
     bff_gap = coordination_payload_entry(feature, "requests", "bff-gap")
     needs_runtime = coordination_payload_entry(feature, "requests", "needs-runtime")
-    frontend_feedback_response = coordination_payload_entry(feature, "responses", "frontend-feedback")
 
     front_root = coordination_repo_root("front_ai_trading_system")
     pantheon_root = coordination_repo_root("pantheon")
     mirrored_contract_path = f".coordination/responses/{feature_id}-contract-ready.yaml" if feature_id else None
     mirrored_delivery_path = f".coordination/responses/{feature_id}-backend-delivery.yaml" if feature_id else None
-    mirrored_feedback_signals = any(
-        bool(coordination_payload_field(entry, field))
-        for entry in (ui_done, frontend_feedback, frontend_feedback_response)
-        for field in (
-            "source_commit",
-            "request_pair_commit",
-            "verified_remote_publish_commit",
-            "ui_done_source_commit",
-            "frontend_feedback_source_commit",
-        )
-    )
 
     mirrored_to_front = bool(feature.get("mirrored_to_target_repo")) or coordination_repo_payload_exists(front_root, mirrored_contract_path)
     if not mirrored_to_front:
         mirrored_to_front = coordination_repo_payload_exists(front_root, mirrored_delivery_path)
-    if not mirrored_to_front:
-        mirrored_to_front = mirrored_feedback_signals
 
-    dispatch_recorded = (
-        bool(feature.get("last_dispatched_at"))
-        or coordination_audit_matches(pantheon_root, feature_id, "dispatch-emitted")
-        or bool(coordination_payload_entry(feature, "responses", "contract-ready"))
-        or bool(coordination_payload_entry(feature, "responses", "lovable-ui-task"))
+    dispatch_recorded = bool(feature.get("last_dispatched_at")) or coordination_audit_matches(
+        pantheon_root, feature_id, "dispatch-emitted"
     )
-    receiver_visible = bool(ui_done or frontend_feedback or bff_gap or needs_runtime)
-    if not receiver_visible:
-        receiver_visible = mirrored_to_front and (
-            bool(feature.get("last_dispatched_at"))
-            or coordination_audit_matches(front_root, feature_id, "received")
-            or bool(frontend_feedback_response)
-        )
+    receiver_visible = mirrored_to_front and (
+        bool(feature.get("last_dispatched_at"))
+        or coordination_audit_matches(front_root, feature_id, "received")
+    )
 
-    lovable_consumed = any(bool(entry) for entry in (ui_done, frontend_feedback, bff_gap, needs_runtime))
-    ui_activated = any(bool(entry) for entry in (ui_done, frontend_feedback))
+    lovable_consumed = any(bool(entry) for entry in (ui_done, frontend_feedback, frontend_feedback_response, bff_gap, needs_runtime))
+    ui_activated = any(bool(entry) for entry in (ui_done, frontend_feedback, frontend_feedback_response))
     runtime_verified = any(
         coordination_payload_has_runtime_verification(entry)
-        for entry in (needs_runtime, bff_gap, ui_done, frontend_feedback, backend_delivery, frontend_feedback_response)
+        for entry in (needs_runtime, bff_gap, ui_done, frontend_feedback, frontend_feedback_response, backend_delivery)
     )
 
     return {
@@ -2378,11 +2543,6 @@ def build_coordination_summary(orchestrator_state: dict[str, Any] | None) -> dic
     orchestrator = orchestrator_state or {}
     coordination = orchestrator.get("coordination") if isinstance(orchestrator.get("coordination"), dict) else {}
     raw_features = coordination.get("features") if isinstance(coordination.get("features"), dict) else {}
-    last_scan_at = coordination.get("last_scan_at")
-    if not raw_features:
-        scanned = scan_tracked_coordination_features()
-        raw_features = scanned.get("features") if isinstance(scanned.get("features"), dict) else {}
-        last_scan_at = scanned.get("last_scan_at")
 
     features: list[dict[str, Any]] = []
     counts = {
@@ -2411,7 +2571,9 @@ def build_coordination_summary(orchestrator_state: dict[str, Any] | None) -> dic
         contract_ready = coordination_payload_entry(feature, "responses", "contract-ready")
         lovable_task = coordination_payload_entry(feature, "responses", "lovable-ui-task")
         ui_done = coordination_payload_entry(feature, "requests", "ui-done")
-        frontend_feedback = coordination_payload_entry(feature, "requests", "frontend-feedback")
+        frontend_feedback_request = coordination_payload_entry(feature, "requests", "frontend-feedback")
+        frontend_feedback_response = coordination_payload_entry(feature, "responses", "frontend-feedback")
+        frontend_feedback = frontend_feedback_request or frontend_feedback_response
         bff_gap = coordination_payload_entry(feature, "requests", "bff-gap")
         review = coordination_review_snapshot(feature_id)
         stage, next_action = coordination_stage(feature)
@@ -2468,7 +2630,7 @@ def build_coordination_summary(orchestrator_state: dict[str, Any] | None) -> dic
             counts[flag_name] += int(bool(enabled))
 
     return {
-        "last_scan_at": last_scan_at,
+        "last_scan_at": coordination.get("last_scan_at"),
         "counts": counts,
         "features": features,
     }
@@ -2483,6 +2645,8 @@ def build_dashboard_bundle(
     planning = planning_state or {}
     orchestrator = orchestrator_state or {}
     approvals = approval_state or {}
+    config = load_config()
+    dispatch_policy = build_dispatch_policy_summary(config)
     resolver = task_resolver(state)
     task_map = resolver.active_task_map()
     archive_index = load_archive_index()
@@ -2625,11 +2789,13 @@ def build_dashboard_bundle(
         "planning": {"running": 0, "pending": 0, "queued": 0},
         "execution": {"running": 0, "pending": 0, "queued": 0},
         "coordination": {"running": 0, "pending": 0, "queued": 0},
+        "chair_review": {"running": 0, "pending": 0, "queued": 0},
     }
     dispatch_mode_map = {
         "discussion_planning": "planning",
         "execution": "execution",
         "coordination": "coordination",
+        "chair_review": "chair_review",
     }
     for worker in live_workers:
         mode_name = dispatch_mode_map.get(str(worker.get("dispatch_mode") or "").strip())
@@ -2649,7 +2815,7 @@ def build_dashboard_bundle(
     raw_mode_occupancy = supervisor_state.get("mode_occupancy") if isinstance(supervisor_state.get("mode_occupancy"), dict) else {}
     if raw_mode_occupancy:
         normalized_occupancy = {}
-        for key in ("planning", "execution", "coordination"):
+        for key in ("planning", "execution", "coordination", "chair_review"):
             bucket = raw_mode_occupancy.get(key) if isinstance(raw_mode_occupancy.get(key), dict) else {}
             normalized_occupancy[key] = {
                 "running": int(bucket.get("running") or 0),
@@ -2657,6 +2823,19 @@ def build_dashboard_bundle(
                 "queued": int(bucket.get("queued") or 0),
             }
         mode_occupancy = normalized_occupancy
+
+    chair_rotation = orchestrator.get("chair_rotation") if isinstance(orchestrator.get("chair_rotation"), dict) else {}
+    chair_summary = {
+        "current_index": int(chair_rotation.get("current_index") or 0),
+        "last_chair_agent": chair_rotation.get("last_chair_agent"),
+        "last_chair_run_at": chair_rotation.get("last_chair_run_at"),
+        "last_chair_reason": chair_rotation.get("last_chair_reason"),
+        "last_review_path": chair_rotation.get("last_review_path"),
+        "last_review_summary": chair_rotation.get("last_review_summary") or [],
+        "pending_review_path": chair_rotation.get("pending_review_path"),
+        "pending_review_agent": chair_rotation.get("pending_review_agent"),
+        "sidecar_approved_until": chair_rotation.get("sidecar_approved_until"),
+    }
 
     lanes: dict[str, dict[str, int]] = {}
     for worker in workers:
@@ -2668,6 +2847,20 @@ def build_dashboard_bundle(
         lane[bucket] = lane.get(bucket, 0) + 1
         if worker.get("status") == "failed":
             lane["failed"] += 1
+
+    dispatch_targets = {name: meta["target_workload"] for name, meta in KNOWN_AGENTS.items()}
+
+    sprint_started_at_value = str(state.get("sprint_started_at") or "").strip() or None
+    completed_in_sprint, superseded_in_sprint = count_terminal_since(sprint_started_at_value)
+
+    bff_consol_archived_ids: list[str] = []
+    if ARCHIVE_TASKS_DIR.exists():
+        for path in ARCHIVE_TASKS_DIR.glob("BFF-CONSOL-*.json"):
+            stem = path.stem
+            if stem.endswith("-SIDECAR-BFF-HANDOFF") or stem.endswith("-SIDECAR-ACCEPTANCE") or stem.endswith("-SIDECAR-REVIEW"):
+                continue
+            bff_consol_archived_ids.append(stem)
+    bff_consol_archived_ids.sort()
 
     return {
         "generated_at": iso_now(),
@@ -2685,6 +2878,7 @@ def build_dashboard_bundle(
             "mode_switch_requested": supervisor_state.get("mode_switch_requested"),
             "mode_occupancy": mode_occupancy,
             "lanes": lanes,
+            "dispatch_targets": dispatch_targets,
         },
         "execution_summary": {
             "ready_now": ready_now,
@@ -2722,12 +2916,19 @@ def build_dashboard_bundle(
                 "total": int(archive_counts.get("total") or 0),
                 "completed": done,
                 "superseded": superseded,
+                "completed_in_sprint": completed_in_sprint,
+                "superseded_in_sprint": superseded_in_sprint,
             },
+            "sprint_started_at": sprint_started_at_value,
             "recent_terminal_ids": archive_index.get("recent_terminal_ids") or [],
             "recent_terminal_tasks": recent_terminal_tasks,
+            "bff_consol_archived_ids": bff_consol_archived_ids,
         },
         "coordination_summary": coordination_summary,
         "bridge_summary": bridge_summary,
+        "chair_summary": chair_summary,
+        "dispatch_policy": dispatch_policy,
+        "recent_helper_claims": recent_helper_claims(),
         "worker_task_links": worker_task_links,
         "truth_mismatches": mismatches,
     }
@@ -2736,17 +2937,55 @@ def build_dashboard_bundle(
 def write_dashboard_bundle(state: dict[str, Any]) -> None:
     config = load_config()
     planning_state = load_planning_state()
-    orchestrator_state = load_runtime_state(config)
+    try:
+        orchestrator_state = load_runtime_state(config)
+    except KeyError:
+        orchestrator_state = {}
     approval_state = load_json_file(APPROVAL_QUEUE_FILE, {"pending": [], "history": []})
     bundle = build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
     DASHBOARD_BUNDLE_FILE.write_text(json.dumps(bundle, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+DASHBOARD_LOG_TAIL_LINES = 5000
+
+
+def _mirror_log_tail(source: Path, target: Path, max_lines: int) -> None:
+    if not source.exists():
+        return
+    try:
+        with source.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            file_size = handle.tell()
+            block_size = 1 << 16
+            buffer = bytearray()
+            line_count = 0
+            position = file_size
+            while position > 0 and line_count <= max_lines:
+                read_size = min(block_size, position)
+                position -= read_size
+                handle.seek(position)
+                chunk = handle.read(read_size)
+                buffer[0:0] = chunk
+                line_count = buffer.count(b"\n")
+            tail = bytes(buffer)
+        if line_count > max_lines:
+            split_at = -1
+            extra = line_count - max_lines
+            for _ in range(extra):
+                split_at = tail.find(b"\n", split_at + 1)
+                if split_at == -1:
+                    break
+            if split_at != -1:
+                tail = tail[split_at + 1 :]
+        target.write_bytes(tail)
+    except OSError:
+        return
 
 
 def sync_docs_site() -> None:
     DOCS_SITE_DIR.mkdir(parents=True, exist_ok=True)
     mirror_files = [
         STATUS_FILE,
-        LOG_FILE,
         CURRENT_WORK_FILE,
         DASHBOARD_BUNDLE_FILE,
         ROOT / ".orchestrator" / "state.json",
@@ -2761,6 +3000,7 @@ def sync_docs_site() -> None:
         if path.exists():
             target_name = rename_map.get(path.name, path.name)
             shutil.copy2(path, DOCS_SITE_DIR / target_name)
+    _mirror_log_tail(LOG_FILE, DOCS_SITE_DIR / LOG_FILE.name, DASHBOARD_LOG_TAIL_LINES)
 
 
 def sync_all(state: dict[str, Any]) -> None:
@@ -2770,7 +3010,7 @@ def sync_all(state: dict[str, Any]) -> None:
     normalize_handoffs(state)
     recompute_agents(state)
     recompute_workload(state)
-    state["coordination_summary"] = build_coordination_summary(load_runtime_state(load_config()))
+    ensure_sprint_started_at(state)
     state["updated_at"] = iso_now()
     save_state(state)
     logs = load_logs()

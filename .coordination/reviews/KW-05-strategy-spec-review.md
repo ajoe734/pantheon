@@ -43,7 +43,7 @@ Codex
   `git merge-base --is-ancestor` returned `0`.
 - `python3 -m pytest -q services/control-plane/bff/test_kw05_strategy_spec_contract.py`
   passed in the current Pantheon workspace (`3 passed`).
-- `npx tsc --noEmit` passed in `/home/edna/code/front-ai-trading-system`.
+- `npx tsc --noEmit` passed in `/home/lupin/code/front-ai-trading-system`.
 - The current front snapshot keeps KW-05 on the published shared BFF client in
   `src/lib/bffClient.ts`, and the list/detail/history screens still implement
   contract-gap handling for their required read fields.

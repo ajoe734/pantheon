@@ -1,0 +1,194 @@
+{
+  "version": 1,
+  "task_id": "EVO-003",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EVO-003",
+    "title": "Adopt EvolutionDecision as a first-class governed object",
+    "summary_zh": "把 EvolutionDecision 提升成正式治理物件，寫清 decision lifecycle、actor role 與 evidence link。",
+    "phase": "Phase 4: Evolution Governance",
+    "owner": "Codex",
+    "reviewer": "Qwen",
+    "status": "done",
+    "depends_on": [
+      "LIN-001"
+    ],
+    "artifacts": [
+      "EVOLUTION_REVIEW_AND_THRESHOLDS.md",
+      "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md"
+    ],
+    "acceptance": [
+      "decision lifecycle, actor roles, evidence links, and cooldown fields are formalized"
+    ],
+    "next": "Review approved by Qwen. EvolutionDecision contract finalized with lifecycle, role matrices, approval linkage, cooldown/observation enforcement, single-active rule, and incident postmortem reverse-link sync. Verification rerun: 17/17 unit tests PASS; 16/16 smoke checks PASS. Ready for EVO-004 and OSS-003 downstream work.",
+    "last_update": "2026-04-10T14:00:54Z",
+    "review_file": "services/control-plane/governance/review_evo003_qwen.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "EVO-003",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:13:29Z",
+      "resolved_at": "2026-04-10T13:13:51Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:13:52Z",
+      "resolved_at": "2026-04-10T13:14:00Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:14:14Z",
+      "resolved_at": "2026-04-10T13:14:19Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:14:38Z",
+      "resolved_at": "2026-04-10T13:14:44Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:14:57Z",
+      "resolved_at": "2026-04-10T13:15:06Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:15:22Z",
+      "resolved_at": "2026-04-10T13:15:45Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:15:45Z",
+      "resolved_at": "2026-04-10T13:15:52Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:16:08Z",
+      "resolved_at": "2026-04-10T13:16:29Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:16:30Z",
+      "resolved_at": "2026-04-10T13:16:35Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:16:54Z",
+      "resolved_at": "2026-04-10T13:17:00Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:17:13Z",
+      "resolved_at": "2026-04-10T13:17:54Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:17:55Z",
+      "resolved_at": "2026-04-10T13:18:04Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:18:22Z",
+      "resolved_at": "2026-04-10T13:18:27Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:18:43Z",
+      "resolved_at": "2026-04-10T13:18:49Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:19:10Z",
+      "resolved_at": "2026-04-10T13:19:28Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:19:29Z",
+      "resolved_at": "2026-04-10T13:19:35Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "EVO-003 implemented as a first-class EvolutionDecision contract with lifecycle, role matrix, approval linkage, cooldown/observation enforcement, single-active-rule store checks, and incident postmortem reverse-link sync. Review packet: services/control-plane/governance/review_evo003_codex_zh.md. Verification: python3 -m unittest services/control-plane/governance/test_evolution_decision.py (17 passed); python3 services/control-plane/governance/smoke_test_evolution_decision.py (16 passed). Full governance unittest discover only hit two pre-existing pytest import errors in test_capital_pool.py and test_persona_capital_binding.py.",
+      "status": "done",
+      "created_at": "2026-04-10T13:53:39Z",
+      "resolved_at": "2026-04-10T13:59:07Z"
+    },
+    {
+      "task_id": "EVO-003",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "APPROVED: EvolutionDecision contract delivers full lifecycle enforcement, role matrices, single-active-rule, cooldown/observation windows, approval linkage, and incident postmortem reverse-link sync. 17/17 unit tests PASS, 16/16 smoke tests PASS. Review: services/control-plane/governance/review_evo003_qwen.md",
+      "status": "done",
+      "created_at": "2026-04-10T13:59:07Z",
+      "resolved_at": "2026-04-10T14:00:54Z"
+    }
+  ],
+  "blockers": []
+}

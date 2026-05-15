@@ -1,0 +1,40 @@
+{
+  "qlib": {
+    "rs003_candidate_passed": false,
+    "dataset_instruments": 0,
+    "dataset_years": 0.0,
+    "strategy_spec_binding": false,
+    "activation_run_archived": false,
+    "evidence_refs": []
+  },
+  "trl": {
+    "feedback_events": 0,
+    "preference_pairs": 0,
+    "strategy_families": 0,
+    "action_types": [],
+    "imitation_approved_artifact": false,
+    "baseline_model_metrics_pass": false,
+    "downstream_consumer_ready": false,
+    "activation_run_archived": false,
+    "evidence_refs": []
+  },
+  "rl": {
+    "qlib_artifact_approved": false,
+    "qlib_approved_at": null,
+    "qlib_stable_days": 0,
+    "sequential_decision_justification": false,
+    "intraday_dataset_ready": false,
+    "rl_gate_approved": false,
+    "finrl_first_lane_archived": false,
+    "evidence_refs": []
+  },
+  "wandb": {
+    "operator_preference_on_file": false,
+    "adapter_generalization_review_done": false,
+    "canonical_state_migration_done": false,
+    "wandb_sdk_pin_verified": false,
+    "network_readiness_verified": false,
+    "activation_run_archived": false,
+    "evidence_refs": []
+  }
+}

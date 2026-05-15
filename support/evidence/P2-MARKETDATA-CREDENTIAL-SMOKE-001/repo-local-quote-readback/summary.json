@@ -1,0 +1,14 @@
+{
+  "acceptance_note": "Each governed provider has read_ok evidence or explicit unavailable-credential/read-unavailable evidence; rate-limit/quota and session/provenance fields are present without raw secrets; order-capable provider order paths are disabled.",
+  "capital_side_effects_allowed": false,
+  "generated_at": "2026-05-01T17:21:19Z",
+  "order_side_effects_allowed": false,
+  "providers": {
+    "ibkr": "read_ok",
+    "shioaji": "read_ok"
+  },
+  "raw_secret_material_present_in_artifacts": false,
+  "read_only": true,
+  "status": "pass",
+  "task_id": "P2-MARKETDATA-CREDENTIAL-SMOKE-001"
+}

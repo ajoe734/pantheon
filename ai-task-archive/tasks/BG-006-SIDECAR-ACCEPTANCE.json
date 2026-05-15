@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "BG-006-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BG-006-SIDECAR-ACCEPTANCE",
+    "title": "Prepare BG-006 acceptance packet and dependency map",
+    "summary_zh": "平行支援 BG-006，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Blueprint Gap P1",
+    "owner": "Codex",
+    "reviewer": "Qwen",
+    "status": "done",
+    "depends_on": [
+      "PLAN-002"
+    ],
+    "artifacts": [
+      "support/sidecars/BG-006/BG-006-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized the reviewer-approved BG-006 acceptance packet in commit 8bcd8f4; sidecar remains support-only and leaves parent BG-006 repairs to the parent owner.",
+    "last_update": "2026-04-14T00:21:12Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BG-006",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar acceptance packet 結構完整，claims 經 repo-truth 來源驗證正確。CLI/internal fallback 確實已實作但 root matrix 標為 not implemented 是正確的 blocking issue；BFF-outage routing 確實誤指 S-EMRG；runtime-manager outage 描述確實過度樂觀。此 support artifact 適合作為 parent repair 的 close checklist。"
+    ],
+    "review_file": "support/sidecars/BG-006/BG-006-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T00:21:12Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "8bcd8f4ec0e5423ed37fa76d1cdf9d317c2b0e32",
+      "commit_subject": "BG-006-SIDECAR-ACCEPTANCE finalize refresh",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BG-006-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Qwen"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 83,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BG-006-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only acceptance packet is ready at support/sidecars/BG-006/BG-006-SIDECAR-ACCEPTANCE.md. It captures the current reopened BG-006 state, dependency map, parent close checklist, and the concrete blockers preventing parent acceptance (CLI/internal fallback truth, BFF-outage routing, runtime-manager degradation wording, and parent metadata hygiene).",
+      "status": "done",
+      "created_at": "2026-04-13T15:04:38Z",
+      "resolved_at": "2026-04-13T23:30:43Z"
+    },
+    {
+      "task_id": "BG-006-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Claude to Qwen after repeated Claude capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-13T23:30:43Z",
+      "resolved_at": "2026-04-14T00:09:47Z"
+    },
+    {
+      "task_id": "BG-006-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet reviewed and approved — dependency map and close checklist verified against repo-truth sources",
+      "status": "done",
+      "created_at": "2026-04-14T00:09:47Z",
+      "resolved_at": "2026-04-14T00:21:12Z"
+    }
+  ],
+  "blockers": []
+}

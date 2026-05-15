@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "P0-FE-DEMO-001-SIDECAR-REVIEW",
+  "archived_at": "2026-05-01T04:44:03Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-FE-DEMO-001-SIDECAR-REVIEW",
+    "title": "Prepare P0-FE-DEMO-001 review packet and evidence summary",
+    "summary_zh": "平行支援 P0-FE-DEMO-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Pantheon P0 Paper Loop",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/P0-FE-DEMO-001/P0-FE-DEMO-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar closeout complete. Artifact support/sidecars/P0-FE-DEMO-001/P0-FE-DEMO-001-SIDECAR-REVIEW.md finalized with Codex2 approval addendum (§8). Commit 7c8575e on branch backend-dev-publish-20260429. No canonical truth or runtime files modified. Parent P0-FE-DEMO-001 remains review_approved awaiting Codex2 closeout.",
+    "last_update": "2026-05-01T04:44:03Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "P0-FE-DEMO-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar review approved: packet accurately summarizes P0-FE-DEMO-001 two-round frontend demo cleanup evidence, with addendum noting parent task is now review_approved after Codex approved ea284a1."
+    ],
+    "review_file": "support/sidecars/P0-FE-DEMO-001/P0-FE-DEMO-001-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T04:44:03Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "7c8575e142b7f90f33d9c1e0f7296cb6c61cbdc3",
+      "commit_subject": "P0-FE-DEMO-001-SIDECAR-REVIEW finalize: add Codex2 review addendum and close sidecar",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verification": "artifact is support-only; no canonical truth or runtime",
+        "LLM-Agent": "Claude",
+        "Task-ID": "P0-FE-DEMO-001-SIDECAR-REVIEW",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 87,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 4,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-FE-DEMO-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review packet ready for sidecar review. Packet covers: two-round implementation history (d321a9b → ea284a1), Round 1 blocking finding on auth lifecycle regression, Round 2 fix summary (preserve existing token on refresh without replacement), structured reviewer checklist for Codex's Round 2 review, evidence table, and pre-existing issue scope. No canonical truth modified.",
+      "status": "done",
+      "created_at": "2026-05-01T04:34:41Z",
+      "resolved_at": "2026-05-01T04:39:01Z"
+    },
+    {
+      "task_id": "P0-FE-DEMO-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Sidecar review approved. Packet is support-only, accurately captures the Round 1 blocker and Round 2 auth lifecycle fix, and now includes an addendum noting parent P0-FE-DEMO-001 is already review_approved; owner Claude should finalize this sidecar task.",
+      "status": "done",
+      "created_at": "2026-05-01T04:39:01Z",
+      "resolved_at": "2026-05-01T04:44:03Z"
+    }
+  ],
+  "blockers": []
+}

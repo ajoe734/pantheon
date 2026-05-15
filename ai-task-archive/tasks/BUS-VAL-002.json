@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "task_id": "BUS-VAL-002",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BUS-VAL-002",
+    "title": "Validate GitHub issue approval bus round-trip after task-id normalization fix",
+    "summary_zh": "第二輪 GitHub approval bus 驗證任務，專門確認 issue comment 指令在修正大小寫容錯後，能由 orchestrator 自動回寫 ai-status。",
+    "phase": "Tooling",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Validated post-normalization issue approval bus round-trip: GitHub issue #3 accepted /approve with task-id normalization, ai-status reopened locally, and the pantheon ops issue was closed by the bus.",
+    "last_update": "2026-04-05T13:37:58Z"
+  },
+  "handoffs": [],
+  "blockers": [
+    {
+      "task_id": "BUS-VAL-002",
+      "owner": "Codex",
+      "waiting_for": "Gemini",
+      "message": "Awaiting GitHub approval-bus round-trip after task-id normalization fix.",
+      "status": "resolved",
+      "created_at": "2026-04-05T11:43:16Z",
+      "resolved_at": "2026-04-05T11:45:15Z"
+    }
+  ]
+}

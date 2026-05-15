@@ -1,0 +1,345 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-013",
+  "archived_at": "2026-04-16T02:55:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-013",
+    "title": "Realize operational evolution orchestration and kill-switch fast path",
+    "summary_zh": "把 freeze、rollback、retrain、redeploy orchestration 邊界與 emergency kill-switch fast path 落成真實 runtime-manager action path。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "BP5-SVC-008",
+      "BP5-SVC-011",
+      "BP5-SVC-012"
+    ],
+    "artifacts": [
+      "services/runtime-manager/",
+      "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md",
+      "EVOLUTION_REVIEW_AND_THRESHOLDS.md"
+    ],
+    "acceptance": [
+      "freeze, rollback, retrain, redeploy, kill-switch, and safe-mode actions all use explicit runtime-manager orchestration boundaries",
+      "emergency fast path keeps auditability while meeting kill-switch latency expectations"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized: idempotent kill-switch/evolution-freeze cross-path verified, 138/138 smoke checks pass. All artifacts in services/runtime-manager/ accepted. Task closed.",
+    "last_update": "2026-04-16T02:55:07Z",
+    "review_notes_zh": [
+      "已驗證 kill-switch pause 後接 evolution_freeze 的交叉路徑，不再觸發 paused->paused 例外。",
+      "新增 pending_pause 與 already-paused smoke coverage，python3 services/runtime-manager/smoke_test.py 通過 138/138。"
+    ],
+    "review_file": ".coordination/reviews/BP5-SVC-013-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T02:55:07Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "c1fde31fc7f628655ed1384deb78b27c905b0b9c",
+      "commit_subject": "BP5-SVC-013: owner closeout checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP5-SVC-013",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 105,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T00:44:15Z",
+      "resolved_at": "2026-04-16T00:44:42Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-16T00:47:20Z",
+      "resolved_at": "2026-04-16T00:47:57Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T00:48:42Z",
+      "resolved_at": "2026-04-16T00:49:16Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:02:13Z",
+      "resolved_at": "2026-04-16T01:03:08Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:04:17Z",
+      "resolved_at": "2026-04-16T01:04:44Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:13:02Z",
+      "resolved_at": "2026-04-16T01:13:47Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:17:14Z",
+      "resolved_at": "2026-04-16T01:18:08Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:20:46Z",
+      "resolved_at": "2026-04-16T01:21:50Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:22:38Z",
+      "resolved_at": "2026-04-16T01:23:20Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:25:15Z",
+      "resolved_at": "2026-04-16T01:26:02Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:31:03Z",
+      "resolved_at": "2026-04-16T01:31:37Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:36:22Z",
+      "resolved_at": "2026-04-16T01:37:05Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:43:48Z",
+      "resolved_at": "2026-04-16T01:44:44Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:49:10Z",
+      "resolved_at": "2026-04-16T01:49:46Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:50:27Z",
+      "resolved_at": "2026-04-16T01:51:32Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:53:08Z",
+      "resolved_at": "2026-04-16T01:53:27Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:58:27Z",
+      "resolved_at": "2026-04-16T01:59:22Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:02:51Z",
+      "resolved_at": "2026-04-16T02:03:47Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:03:47Z",
+      "resolved_at": "2026-04-16T02:04:41Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:06:19Z",
+      "resolved_at": "2026-04-16T02:07:15Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:11:02Z",
+      "resolved_at": "2026-04-16T02:11:58Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "BP5-SVC-013 implementation complete. All 7 kill-switch and evolution HTTP routes added to main.py, matching client methods added to runtime_manager_client.py, and smoke tests covering both service and HTTP layers pass 115/115. Please review for policy alignment with KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md and EVOLUTION_REVIEW_AND_THRESHOLDS.md.",
+      "status": "done",
+      "created_at": "2026-04-16T02:21:33Z",
+      "resolved_at": "2026-04-16T02:26:13Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review found blocking policy mismatches; see .coordination/reviews/BP5-SVC-013-review.md. Required: make kill-switch execute runtime-manager action/state writes, route freeze follow-through through DeploymentPlan/Rollback boundaries, and have retrain/redeploy consume authoritative downstream work items instead of synthetic receipts.",
+      "status": "done",
+      "created_at": "2026-04-16T02:26:13Z",
+      "resolved_at": "2026-04-16T02:26:13Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All three review blockers resolved — ready for re-review. Summary of fixes: (1) execute_kill_switch: added _execute_kill_switch_binding_action() helper that executes PAUSE/RISK_OFF→pending_pause→paused and LIQUIDATE/REPLACE/TERMINATE→retire against RuntimeBinding after dispatch; (2) evolution_freeze: added required deployment_plan_id param, renamed freeze_action→plan_runtime_action, removed liquidate_then_freeze (raises error directing caller to kill-switch/rollback path); (3) evolution_retrain: requires research_job_id from research plane and uses it as routing_ref; evolution_redeploy: accepts deployment_plan sub-dict only, validates required plan fields, no raw artifact/binding passthrough. smoke_test.py updated throughout. 115/115 pass.",
+      "status": "done",
+      "created_at": "2026-04-16T02:34:34Z",
+      "resolved_at": "2026-04-16T02:38:09Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review requested changes: kill-switch REPLACE fast path still only retires the current binding and never deploys the fallback replacement runtime. See .coordination/reviews/BP5-SVC-013-review.md.",
+      "status": "done",
+      "created_at": "2026-04-16T02:38:09Z",
+      "resolved_at": "2026-04-16T02:38:09Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "REPLACE fast path now complete: hot-swap semantics implemented in _execute_kill_switch_binding_action() — fallback binding created first (_allow_cutover_bypass=True), old binding retired after. 16 new smoke tests cover service-layer and HTTP REPLACE paths; all 131 checks pass. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-16T02:42:35Z",
+      "resolved_at": "2026-04-16T02:47:11Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review failed: evolution_freeze must tolerate bindings already paused by kill-switch/rollback and add cross-path smoke coverage for kill-switch pause -> freeze follow-through.",
+      "status": "done",
+      "created_at": "2026-04-16T02:47:11Z",
+      "resolved_at": "2026-04-16T02:47:11Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review-requested fixes applied: (1) evolution_freeze now tolerates bindings already paused or pending_pause by kill-switch/rollback — idempotent drain path replaces the unconditional transition_status call that raised RuntimeBindingError on paused→paused. (2) Added two cross-path smoke scenarios: kill-switch PAUSE → evolution_freeze on already-paused binding (7 new checks), and pending_pause partial-drain → evolution_freeze completion (2 new checks). All 138 smoke checks pass. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-16T02:50:23Z",
+      "resolved_at": "2026-04-16T02:53:33Z"
+    },
+    {
+      "task_id": "BP5-SVC-013",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: kill-switch/evolution freeze cross-path is now idempotent; owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-16T02:53:33Z",
+      "resolved_at": "2026-04-16T02:55:07Z"
+    }
+  ],
+  "blockers": []
+}

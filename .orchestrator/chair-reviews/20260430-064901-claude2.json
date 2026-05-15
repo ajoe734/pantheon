@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Copilot is idle, Codex2 quota resumes imminently, execution backlog has parallelizable work, and no global blockers are present; pending approval on Claude worker is safe to allow.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260430T064821Z-957de42a",
+      "decision": "allow",
+      "reason": "Sub-agent call is a read-only exploration of existing service directories to understand gate structure before building the OSS smoke test matrix. Scoped to the current task, no writes, no external calls, low risk.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE",
+    "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER",
+    "SVC-OSS-ACTIVATION-READY-SMOKE-MATRIX"
+  ]
+}

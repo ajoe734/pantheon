@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "task_id": "RS-003",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RS-003",
+    "title": "Run first-pass replication gate before registry admission",
+    "phase": "Epic E",
+    "owner": "Copilot",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "RS-002",
+      "REG-001"
+    ],
+    "artifacts": [
+      "services/research/replication/"
+    ],
+    "acceptance": [
+      "replication gate criteria documented",
+      "candidate admission rules defined",
+      "failed replication cannot reach registry"
+    ],
+    "next": "Grok",
+    "last_update": "2026-04-06T06:11:56Z",
+    "summary_zh": "在 registry admission 前先跑 first-pass replication gate，避免網路上找到的東西直接進正式候選。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

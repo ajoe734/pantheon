@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "LOOP-002-SIDECAR-REVIEW",
+  "archived_at": "2026-04-14T10:25:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-002-SIDECAR-REVIEW",
+    "title": "Prepare LOOP-002 review packet and evidence summary",
+    "summary_zh": "平行支援 LOOP-002，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Closed-Loop Infra",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LOOP-001"
+    ],
+    "artifacts": [
+      "support/sidecars/LOOP-002/LOOP-002-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the reviewer-approved sidecar packet and closed the support slice without reopening the archived LOOP-002 delivery.",
+    "last_update": "2026-04-14T10:25:15Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "LOOP-002",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過。三項驗收標準均有工作流程程式碼支撐，證據一致。殘餘風險（contract-ready.source_repo 簡稱對齊）已標記，非阻塞。",
+      "後續追蹤：首次 live contract-ready dispatch 前，將 F-042-contract-ready.yaml 的 source_repo: pantheon 對齊為 ajoe734/pantheon。"
+    ],
+    "review_file": "support/sidecars/LOOP-002/LOOP-002-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T10:25:15Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "2dd74b2014fb9ec6a77f890126ba1d250e0b9fd5",
+      "commit_subject": "LOOP-002-SIDECAR-REVIEW: finalize sidecar review packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "LOOP-002-SIDECAR-REVIEW",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 132,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-002-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Backfilled support/sidecars/LOOP-002/LOOP-002-SIDECAR-REVIEW.md with the archived parent acceptance map, workflow/template evidence summary, and a residual note on contract-ready source_repo slug alignment. Parent LOOP-002 is already done; please review this as a support-only packet.",
+      "status": "done",
+      "created_at": "2026-04-14T10:14:34Z",
+      "resolved_at": "2026-04-14T10:21:40Z"
+    },
+    {
+      "task_id": "LOOP-002-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: evidence packet accurately reflects the archived LOOP-002 delivery. All three acceptance criteria are met. The contract-ready source_repo slug mismatch is correctly flagged as non-blocking hygiene. Returning to Codex for owner closeout.",
+      "status": "done",
+      "created_at": "2026-04-14T10:21:40Z",
+      "resolved_at": "2026-04-14T10:25:15Z"
+    }
+  ],
+  "blockers": []
+}

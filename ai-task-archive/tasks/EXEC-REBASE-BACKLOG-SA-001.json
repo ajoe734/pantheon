@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "EXEC-REBASE-BACKLOG-SA-001",
+  "archived_at": "2026-04-21T01:40:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-REBASE-BACKLOG-SA-001",
+    "title": "Rebaseline backlog and frontend SA truth for already-live route families",
+    "summary_zh": "把 backlog / frontend SA / packet family 裡仍停留在 pending-BFF implementation 的敘述，更新成已 route-live 的真實狀態。",
+    "phase": "Execution / Handoff Activation and Rebaseline",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "WORKBENCH_DELIVERY_BACKLOG.md",
+      "docs/lovable/PANTHEON_FRONTEND_SA.md",
+      "docs/reviews/2026-04-20-development-progress-and-next-work-inventory.md"
+    ],
+    "acceptance": [
+      "route-live modules 的 backlog / SA 敘述完成 rebaseline",
+      "不再把已完成 backend implementation 誤寫成 pending BFF",
+      "前端 lane 的 next-action truth 對齊 live backend 狀態"
+    ],
+    "next": "Owner finalized approved rebaseline task after review confirmed backlog, frontend SA, and progress inventory align on live route truth for the already-live route families.",
+    "last_update": "2026-04-21T01:40:29Z",
+    "task_class": "auto_worker_implementation",
+    "auto_created_by": "2026-04-20-execution-continuation-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "三份 artifact 已對齊 task brief：WORKBENCH_DELIVERY_BACKLOG 對 EW-04 / TW-03 / TW-04 完成 route-live rebaseline，PANTHEON_FRONTEND_SA 對 RW-04 / TW-04 改為正式 route-live 頁面並保留 TW-03 handoff pending truth，progress inventory 也把 RW-04 / TW-04 視為 frontend-ready，同時保留 TW-03 為剩餘 handoff activation gap。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T01:40:29Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "3daf3fb60460baa4c03542762257996a1e568067",
+      "commit_subject": "EXEC-REBASE-BACKLOG-SA-001: record finalize metadata",
+      "commit_author": {
+        "name": "Codex2",
+        "email": "codex2@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EXEC-REBASE-BACKLOG-SA-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 935,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-REBASE-BACKLOG-SA-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T13:27:02Z",
+      "resolved_at": "2026-04-20T13:40:24Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-BACKLOG-SA-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Rebaselined backlog/SA/inventory truth for already-live route families. WORKBENCH_DELIVERY_BACKLOG now marks EW-04 as route-live with active handoff, TW-03 as route-live with handoff activation pending, and TW-04 as route-live with handoff ready. PANTHEON_FRONTEND_SA now moves RW-04 and TW-04 into formal route-live pages, keeps TW-03 as live-but-not-yet-handoff-ready, and updates route-live expansion / blocked-module guidance. The 2026-04-20 progress inventory now reflects RW-04 and TW-04 as frontend-ready while leaving TW-03 as the remaining trainer handoff activation gap.",
+      "status": "done",
+      "created_at": "2026-04-20T13:44:53Z",
+      "resolved_at": "2026-04-21T01:38:17Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-BACKLOG-SA-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: backlog, frontend SA, and progress inventory now align on live route truth; owner should finalize this task to done after any last record sync.",
+      "status": "done",
+      "created_at": "2026-04-21T01:38:17Z",
+      "resolved_at": "2026-04-21T01:40:29Z"
+    }
+  ],
+  "blockers": []
+}

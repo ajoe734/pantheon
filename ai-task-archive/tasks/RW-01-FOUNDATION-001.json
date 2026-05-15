@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "RW-01-FOUNDATION-001",
+  "archived_at": "2026-04-19T17:50:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RW-01-FOUNDATION-001",
+    "title": "Publish Research Ticket identity and lifecycle foundation",
+    "summary_zh": "為 Research Workbench 建立第一個真實 module：ticket identity、list/detail/create/patch contract、lifecycle semantics 與 overview-to-detail handoff。",
+    "phase": "Execution / Wave 2 - Blocked Module Activation",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "STATE-REBASE-001",
+      "DEPTH-REBASE-001"
+    ],
+    "artifacts": [
+      "WORKBENCH_DELIVERY_BACKLOG.md",
+      "docs/lovable/PANTHEON_FRONTEND_SA.md",
+      "ROADMAP.md"
+    ],
+    "acceptance": [
+      "research ticket identity and lifecycle contract are published",
+      "overview can hand off to a truthful list and detail flow",
+      "future RW-02 to RW-05 have a stable upstream anchor"
+    ],
+    "next": "Research ticket identity, lifecycle contract, and frontend handoff bundle are published; backlog now marks RW-01 contract-published pending BFF route implementation.",
+    "last_update": "2026-04-19T17:50:42Z",
+    "source_plane": "gap_reconciliation",
+    "source_ref": {
+      "type": "gap_reconciliation",
+      "recorded_at": "2026-04-19T00:00:00Z",
+      "summary": "Materialized from the 2026-04-19 complete-system gap audit and Lovable master SA reconciliation",
+      "canonical_refs": [
+        "current-work.md",
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "DEVELOPMENT_WORKBREAKDOWN.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md"
+      ]
+    },
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-19-system-completion-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "全三條 acceptance criteria 通過：(1) BFF contract 已在 docs/bff/RW-01-research-ticket.md 發布，四條路由形狀正確；(2) PACKET_FAMILY.md 更新為 contract-published，提供 overview-to-list-detail 的真實 handoff 錨點；(3) ticket_id 作為 RW-02～RW-05 的穩定 upstream anchor 已明確文件化。allowedActions 不變式、降級語義、write authority boundary 均符合要求。Minor observation（non-blocking）：open→closed 直接 hop 暗示在 contract 中，但未明文說明；example payload 與之一致，不影響通過。"
+    ],
+    "review_file": ".coordination/reviews/RW-01-FOUNDATION-001-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T17:50:42Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "c2339c4fb4fca4264e6e8373e771c6dd3e069fc2",
+      "commit_subject": "RW-01-FOUNDATION-001: publish research ticket contract and handoff bundle",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "RW-01-FOUNDATION-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 719,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "RW-01-FOUNDATION-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T17:25:42Z",
+      "resolved_at": "2026-04-19T17:30:28Z"
+    },
+    {
+      "task_id": "RW-01-FOUNDATION-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "RW-01 routes are live in the BFF: create/list/detail/patch contract, lifecycle validation, allowedActions derivation, and contract tests are in place. Please review the route shape and transition semantics.",
+      "status": "done",
+      "created_at": "2026-04-19T17:45:17Z",
+      "resolved_at": "2026-04-19T17:47:43Z"
+    },
+    {
+      "task_id": "RW-01-FOUNDATION-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved — contract coherent, field shapes correct, downstream anchor established. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-19T17:47:43Z",
+      "resolved_at": "2026-04-19T17:50:42Z"
+    }
+  ],
+  "blockers": []
+}

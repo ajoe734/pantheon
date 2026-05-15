@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING",
+  "archived_at": "2026-04-30T03:37:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING",
+    "title": "Harden BFF OIDC provider configuration for staging",
+    "summary_zh": "把 BFF/runtime OIDC/JWKS 從 env-level 基礎支援推進到 staging IdP posture：OIDC discovery、claim-to-role mapping、JWKS rotation/error policy、staging smoke 與文件。",
+    "phase": "Auth / IdP Integration",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "SVC-STAGING-DUAL-VM-COMPOSE-CONTRACT",
+      "SVC-BFF-SERVICE-BACKED-READ-STORE-CUTOFF"
+    ],
+    "artifacts": [
+      "services/control-plane/bff",
+      "services/runtime_auth_inbound.py",
+      "env/prod-control.env.example",
+      "docker-compose.control.yml",
+      "docs/deployment"
+    ],
+    "acceptance": [
+      "OIDC discovery or documented issuer jwks config is supported",
+      "claim to role and mfa mapping is explicit and tested",
+      "JWKS rotation cache miss and sanitized error behavior are tested",
+      "staging env example documents IdP variables without secrets",
+      "HS256 dev fallback remains explicit",
+      "focused auth tests and compose config pass"
+    ],
+    "next": "Owner closeout: implementation commit 3645b5d + deployment note commit c411eaf (docs/deployment/bff-oidc-staging-auth.md). Re-ran reviewer's verification: pytest services/control-plane/bff/test_bff_auth_facade.py -q -> 64 passed; docker compose --env-file env/prod-control.env.example -f docker-compose.control.yml config --quiet -> passed. OIDC discovery/direct JWKS, strict role-claim mapping, MFA claim mapping, JWKS kid refresh, sanitized provider errors, HS256 dev fallback, and CORS command headers all live in the worktree.",
+    "last_update": "2026-04-30T03:37:07Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T03:37:07Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "c411eafb55c37464d6e676e21f1dadbea4e203c7",
+      "commit_subject": "SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING add staging IdP deployment note",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 38,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 20,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Implementation complete: OIDC discovery + direct JWKS config supported; claim-to-role and MFA mapping wired and tested (8 new explicit tests, 64 total); JWKS rotation/error sanitization tested; staging env example documents all IdP vars without secrets; HS256 dev fallback tested; CORS extended for command headers. Commit: 3645b5d. Requesting Codex2 review.",
+      "status": "done",
+      "created_at": "2026-04-30T03:28:29Z",
+      "resolved_at": "2026-04-30T03:30:05Z"
+    },
+    {
+      "task_id": "SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review approved. Verified commit 3645b5d and task-scoped deployment note: OIDC discovery/direct JWKS, strict role mapping, MFA claim mapping, JWKS kid refresh, sanitized provider errors, HS256 fallback, and BFF CORS header changes match acceptance. Commands: python3 -m pytest services/control-plane/bff/test_bff_auth_facade.py -q (64 passed); docker compose --env-file env/prod-control.env.example -f docker-compose.control.yml config --quiet (passed). Owner closeout should include the task-scoped docs/deployment note if it remains intended as a delivered artifact.",
+      "status": "done",
+      "created_at": "2026-04-30T03:30:05Z",
+      "resolved_at": "2026-04-30T03:37:07Z"
+    }
+  ],
+  "blockers": []
+}

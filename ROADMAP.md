@@ -16,6 +16,12 @@ Build Pantheon in layers that preserve governance at every handoff:
 4. align telemetry, lineage, and evolution around the same truth model
 5. add persona/application surfaces and OSS hardening on top of stable governance
 
+Foundation completion is not the same as product completion.
+
+- finishing canonical architecture and baseline service slices does not by itself close operator or workbench delivery
+- productization remains open until the relevant workbench module leaves `WORKBENCH_DELIVERY_BACKLOG.md`
+- execution is not fully proven until evidence is promoted through `EXECUTION_PROOF_AND_MATURITY_LEVELS.md`
+
 ## 2. Activation Order
 
 Workstreams should activate in this order:
@@ -115,12 +121,14 @@ Outcome:
 - persona registry/session/runtime model is reflected in platform contracts
 - BFF/read aggregation and consultation surfaces have a governed path
 - operator-facing surfaces stop inventing parallel state
+- workbench and operator modules are closed through truthful packet loops rather than "spec exists" milestones
 
 Primary tasks:
 
 - `PER-001`
 - `APP-001`
 - `APP-002`
+- remaining product modules from `WORKBENCH_DELIVERY_BACKLOG.md`
 
 ### Phase 6: OSS Integration Hardening
 
@@ -129,12 +137,14 @@ Outcome:
 - upstream OpenClaw integration is pinned and evidenced
 - key learning integrations are regraded against the new canonical model
 - deferred OSS paths have clear entry criteria rather than ambiguous placeholders
+- execution evidence is raised toward governed paper-runtime proof instead of stopping at local or harness smoke
 
 Primary tasks:
 
 - `OSS-001`
 - `OSS-002`
 - `OSS-003`
+- proof-raising follow-ons from `EXECUTION_PROOF_AND_MATURITY_LEVELS.md`
 
 ## 4. Critical Path
 
@@ -176,3 +186,6 @@ Use `DEVELOPMENT_WORKBREAKDOWN.md` for:
 - acceptance criteria
 
 Use `OSS_INTEGRATION_CHECKLIST.md` as the evidence bar for any task that names an upstream framework.
+Use `WORKBENCH_DELIVERY_BACKLOG.md` for remaining module-level productization scope.
+Use `DELIVERY_CLOSURE_AND_LOOP_STATES.md` when deciding whether a loop is honestly closed.
+Use `EXECUTION_PROOF_AND_MATURITY_LEVELS.md` when claiming runtime maturity.

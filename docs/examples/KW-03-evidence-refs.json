@@ -1,0 +1,229 @@
+{
+  "_comment": "Example payloads for KW-03 Evidence Refs. These are canonical BFF response shapes for the list and detail routes. Use these to build the Lovable screen spec and frontend handoff. Do NOT derive field meanings from field names alone — see docs/bff/KW-03-evidence-refs.md for the full contract.",
+
+  "list_response": {
+    "evidence_refs": [
+      {
+        "ref_id": "evref-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "source_document": {
+          "title": "Post-Incident Review: Flash Spike 2026-03-14",
+          "source_type": "postmortem",
+          "source_ref": "s3://pantheon-docs/postmortems/2026-03-14-flash-spike.pdf",
+          "captured_at": "2026-03-15T08:30:00Z"
+        },
+        "link_type": "supporting_evidence",
+        "credibility": {
+          "tier": "primary",
+          "verified": true
+        },
+        "linked_object_summary": {
+          "entity_type": "memory_entry",
+          "entity_ref": "mem-11111111-2222-3333-4444-555555555555",
+          "display_label": "Flash spike regime triggers early position unwinding"
+        },
+        "resolved_link": {
+          "availability": "available",
+          "route_href": "/knowledge/memory/mem-11111111-2222-3333-4444-555555555555",
+          "display_label": "View institutional memory entry",
+          "open_in_new_tab": false
+        },
+        "route_href": "/knowledge/evidence/evref-a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+      },
+      {
+        "ref_id": "evref-b2c3d4e5-f6a7-8901-bcde-f12345678901",
+        "source_document": {
+          "title": "Volatility Regime Analysis Q1 2026",
+          "source_type": "external_paper",
+          "source_ref": "external://arxiv.org/abs/2026.12345",
+          "captured_at": "2026-04-01T14:00:00Z"
+        },
+        "link_type": "citation",
+        "credibility": {
+          "tier": "secondary",
+          "verified": false
+        },
+        "linked_object_summary": {
+          "entity_type": "strategy_spec",
+          "entity_ref": "strat-99999999-aaaa-bbbb-cccc-dddddddddddd",
+          "display_label": "Momentum v2.1 Strategy Spec"
+        },
+        "resolved_link": {
+          "availability": "external",
+          "route_href": "https://arxiv.org/abs/2026.12345",
+          "display_label": "Open external paper",
+          "open_in_new_tab": true
+        },
+        "route_href": "/knowledge/evidence/evref-b2c3d4e5-f6a7-8901-bcde-f12345678901"
+      },
+      {
+        "ref_id": "evref-c3d4e5f6-a7b8-9012-cdef-123456789012",
+        "source_document": {
+          "title": "Research Note: Counter-trend divergence in Asia session",
+          "source_type": "research_note",
+          "source_ref": "note://pantheon-internal/note-77777777-8888-9999-aaaa-bbbbbbbbbbbb",
+          "captured_at": "2026-04-10T09:15:00Z"
+        },
+        "link_type": "counter_evidence",
+        "credibility": {
+          "tier": "tertiary",
+          "verified": false
+        },
+        "linked_object_summary": {
+          "entity_type": "strategy_spec",
+          "entity_ref": "strat-99999999-aaaa-bbbb-cccc-dddddddddddd",
+          "display_label": "Momentum v2.1 Strategy Spec"
+        },
+        "resolved_link": {
+          "availability": "available",
+          "route_href": "/knowledge/notes/note-77777777-8888-9999-aaaa-bbbbbbbbbbbb",
+          "display_label": "View research note",
+          "open_in_new_tab": false
+        },
+        "route_href": "/knowledge/evidence/evref-c3d4e5f6-a7b8-9012-cdef-123456789012"
+      }
+    ],
+    "pagination": {
+      "page_size": 20,
+      "next_page_token": "eyJhZnRlciI6ImV2cmVmLWMzZDRlNWY2In0",
+      "has_more": true
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T20:00:00Z",
+      "surfaces": {
+        "evidence_refs_list": "ok"
+      }
+    }
+  },
+
+  "detail_response": {
+    "ref_id": "evref-a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "source_document": {
+      "title": "Post-Incident Review: Flash Spike 2026-03-14",
+      "source_type": "postmortem",
+      "excerpt": "During the flash spike event on 2026-03-14, the momentum persona exhibited early position unwinding behavior at -2.1σ drawdown, consistent with the regime detection threshold. The behavior was validated across three separate execution windows.",
+      "source_ref": "s3://pantheon-docs/postmortems/2026-03-14-flash-spike.pdf",
+      "storage_preview": {
+        "available": true,
+        "preview_type": "pdf",
+        "preview_token": "prev-tok-xyz789-ttl300"
+      },
+      "captured_at": "2026-03-15T08:30:00Z",
+      "captured_by": "Operator: Alice Chen"
+    },
+    "link_type": "supporting_evidence",
+    "credibility": {
+      "tier": "primary",
+      "verified": true,
+      "last_verified_at": "2026-04-01T12:00:00Z",
+      "verification_method": "operator_review"
+    },
+    "resolved_link": {
+      "availability": "available",
+      "route_href": "/knowledge/memory/mem-11111111-2222-3333-4444-555555555555",
+      "display_label": "View institutional memory entry",
+      "open_in_new_tab": false
+    },
+    "linked_decisions": [
+      {
+        "entity_type": "memory_entry",
+        "entity_ref": "mem-11111111-2222-3333-4444-555555555555",
+        "display_label": "Flash spike regime triggers early position unwinding",
+        "route_href": "/knowledge/memory/mem-11111111-2222-3333-4444-555555555555",
+        "link_type": "supporting_evidence",
+        "relationship_note": "This evidence directly supports the institutional memory entry describing the flash spike regime pattern."
+      },
+      {
+        "entity_type": "insight_card",
+        "entity_ref": "ins-22222222-3333-4444-5555-666666666666",
+        "display_label": "Momentum personas self-protect under flash spike conditions",
+        "route_href": "/knowledge/insights/ins-22222222-3333-4444-5555-666666666666",
+        "link_type": "corroboration",
+        "relationship_note": null
+      }
+    ],
+    "source_note_context": null,
+    "source_memory_context": null,
+    "created_at": "2026-03-15T08:30:00Z",
+    "meta": {
+      "snapshot_at": "2026-04-19T20:00:00Z",
+      "surfaces": {
+        "evidence_ref_detail": "ok",
+        "resolved_link": "ok",
+        "linked_decisions": "ok"
+      }
+    }
+  },
+
+  "detail_response_from_note": {
+    "_comment": "Example where the evidence ref originates from a research note — source_note_context is populated.",
+    "ref_id": "evref-c3d4e5f6-a7b8-9012-cdef-123456789012",
+    "source_document": {
+      "title": "Research Note: Counter-trend divergence in Asia session",
+      "source_type": "research_note",
+      "excerpt": "Observed counter-trend divergence in Asia session data between 02:00 and 04:00 UTC. The divergence pattern does not align with the current momentum model assumptions.",
+      "source_ref": "note://pantheon-internal/note-77777777-8888-9999-aaaa-bbbbbbbbbbbb",
+      "storage_preview": {
+        "available": false,
+        "preview_type": "unavailable",
+        "preview_token": null
+      },
+      "captured_at": "2026-04-10T09:15:00Z",
+      "captured_by": "Persona: Momentum-α"
+    },
+    "link_type": "counter_evidence",
+    "credibility": {
+      "tier": "tertiary",
+      "verified": false,
+      "last_verified_at": null,
+      "verification_method": null
+    },
+    "resolved_link": {
+      "availability": "available",
+      "route_href": "/knowledge/notes/note-77777777-8888-9999-aaaa-bbbbbbbbbbbb",
+      "display_label": "View research note",
+      "open_in_new_tab": false
+    },
+    "linked_decisions": [
+      {
+        "entity_type": "strategy_spec",
+        "entity_ref": "strat-99999999-aaaa-bbbb-cccc-dddddddddddd",
+        "display_label": "Momentum v2.1 Strategy Spec",
+        "route_href": "/knowledge/specs/strat-99999999-aaaa-bbbb-cccc-dddddddddddd",
+        "link_type": "counter_evidence",
+        "relationship_note": "The divergence observed in this note challenges the Asia-session assumptions baked into v2.1."
+      }
+    ],
+    "source_note_context": {
+      "note_id": "note-77777777-8888-9999-aaaa-bbbbbbbbbbbb",
+      "title": "Counter-trend divergence in Asia session",
+      "excerpt": "Observed counter-trend divergence in Asia session data between 02:00 and 04:00 UTC.",
+      "route_href": "/knowledge/notes/note-77777777-8888-9999-aaaa-bbbbbbbbbbbb"
+    },
+    "source_memory_context": null,
+    "created_at": "2026-04-10T09:15:00Z",
+    "meta": {
+      "snapshot_at": "2026-04-19T20:00:00Z",
+      "surfaces": {
+        "evidence_ref_detail": "ok",
+        "resolved_link": "ok",
+        "linked_decisions": "ok"
+      }
+    }
+  },
+
+  "degraded_list_response": {
+    "_comment": "Example degraded list response — the frontend must show the PKT-005 non-dismissable banner and not treat the empty array as authoritative.",
+    "evidence_refs": [],
+    "pagination": {
+      "page_size": 20,
+      "next_page_token": null,
+      "has_more": false
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T19:00:00Z",
+      "surfaces": {
+        "evidence_refs_list": "degraded"
+      }
+    }
+  }
+}

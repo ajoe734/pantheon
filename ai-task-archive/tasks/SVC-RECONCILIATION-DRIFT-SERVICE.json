@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "task_id": "SVC-RECONCILIATION-DRIFT-SERVICE",
+  "archived_at": "2026-04-28T19:35:27Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-RECONCILIATION-DRIFT-SERVICE",
+    "title": "Materialize reconciliation-drift-svc wrapper",
+    "summary_zh": "實作 reconciliation-drift-svc HTTP wrapper，從 telemetry/lineage/runtime evidence 生成 drift/reconciliation read model 與 alert handoff，不影響 emergency control chain。",
+    "phase": "Future-State Service Materialization",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-EVIDENCE",
+      "SVC-COMPOSE"
+    ],
+    "artifacts": [
+      "services/reconciliation-drift/",
+      "services/telemetry/",
+      "services/lineage-read/",
+      "docker-compose.yml"
+    ],
+    "acceptance": [
+      "reconciliation-drift service exposes drift summary reconciliation status alert handoff and health APIs",
+      "Dockerfile env storage and compose wiring are added",
+      "service consumes telemetry lineage inputs without owning canonical telemetry truth",
+      "tests cover drift calculation degraded inputs alert handoff and compose config"
+    ],
+    "next": "Owner accepted Codex review approval and finalized reconciliation-drift-svc wrapper as done; review evidence is recorded in docs/reviews/2026-04-28-svc-reconciliation-drift-service-codex-review.md.",
+    "last_update": "2026-04-28T19:35:27Z",
+    "task_class": "future_state_service_wrapper",
+    "auto_created_by": "codex-blueprint-diff-materialization",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "review 通過：未發現阻擋 acceptance 的問題；reconciliation-drift-svc routes、derived-only truth boundary、alert handoff、compose wiring 與 smoke evidence 已核對；focused pytest 3 passed，docker compose config --quiet passed。"
+    ],
+    "review_file": "docs/reviews/2026-04-28-svc-reconciliation-drift-service-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T19:35:27Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 97,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 27,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-RECONCILIATION-DRIFT-SERVICE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "reconciliation-drift-svc is implemented and ready for review. Evidence: services/reconciliation-drift exposes /health, evaluation, summary, reconciliation-status, alerts, and alert handoff APIs; Dockerfile and compose wiring add RECONCILIATION_DRIFT_DATA_DIR with telemetry/lineage/runtime URLs; smoke_honest_stack posts a derived evaluation and verifies emergency_control_chain_affected=false. Verification: pytest -q services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py passed (3); docker compose config --quiet passed.",
+      "status": "done",
+      "created_at": "2026-04-28T19:25:08Z",
+      "resolved_at": "2026-04-28T19:31:09Z"
+    },
+    {
+      "task_id": "SVC-RECONCILIATION-DRIFT-SERVICE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. Codex2 should finalize this task to done after accepting the approved state.",
+      "status": "done",
+      "created_at": "2026-04-28T19:31:09Z",
+      "resolved_at": "2026-04-28T19:35:27Z"
+    }
+  ],
+  "blockers": []
+}

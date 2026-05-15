@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "task_id": "KW-02-NOTES-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-19T19:17:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "KW-02-NOTES-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare KW-02-NOTES-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 KW-02-NOTES-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / Wave 3 - Module Contract Expansion",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "KW-01-FOUNDATION-001"
+    ],
+    "artifacts": [
+      "support/sidecars/KW-02-NOTES-001/KW-02-NOTES-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized sidecar acceptance packet after Claude review approval. Support artifact remains scoped to support/sidecars/KW-02-NOTES-001/KW-02-NOTES-001-SIDECAR-ACCEPTANCE.md, no canonical/runtime truth was changed, and the packet is handed back to the parent owner for optional absorption into the mainline review flow.",
+    "last_update": "2026-04-19T19:17:37Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "KW-02-NOTES-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar acceptance packet 審查通過：（1）僅建立 support/sidecars/ artifact，未修改 canonical truth；（2）dependency map 與 ai-status.json 一致（KW-01 done → KW-02 review → KW-03/04/05 todo）；（3）acceptance checklist 11 個項目精準涵蓋 parent 路由、ownership、attachment taxonomy 與 degradation 要求；parent 已由 in_progress 進入 review（交 Codex2），packet 內容仍有效可重用。"
+    ],
+    "review_file": "support/sidecars/KW-02-NOTES-001/KW-02-NOTES-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T19:17:37Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "c101741df7886f3a7405f26330943c6500c61a21",
+      "commit_subject": "KW-02-NOTES-001-SIDECAR-ACCEPTANCE finalize delivery metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "KW-02-NOTES-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 741,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "KW-02-NOTES-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Acceptance packet created at support/sidecars/KW-02-NOTES-001/KW-02-NOTES-001-SIDECAR-ACCEPTANCE.md. It captures the parent acceptance checklist, KW-01 -> KW-02 -> KW-03/04/05 dependency map, and reviewer handoff notes; sidecar stayed support-only and the parent remains in_progress pending real contract publication.",
+      "status": "done",
+      "created_at": "2026-04-19T19:14:34Z",
+      "resolved_at": "2026-04-19T19:15:33Z"
+    },
+    {
+      "task_id": "KW-02-NOTES-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet reviewed and approved. All three sidecar criteria met: support-only artifact, no canonical truth edits, handoff packet accurate. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-19T19:15:33Z",
+      "resolved_at": "2026-04-19T19:17:39Z"
+    }
+  ],
+  "blockers": []
+}

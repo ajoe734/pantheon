@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 from adapters.file_inbox import FileInboxAdapter
@@ -14,9 +16,29 @@ from common import (
     spawn_background_process,
 )
 
+COPILOT_CONFIG_DIR = Path.home() / ".copilot"
+COPILOT_CONFIG_PATH = COPILOT_CONFIG_DIR / "config.json"
 
-def _gh_auth_token() -> str | None:
-    gh = command_exists("gh")
+
+def _configured_copilot_cli(config: dict | None = None) -> str | None:
+    provider = ((config or {}).get("providers", {}).get("copilot", {}) or {})
+    runtime = provider.get("local", {})
+    return command_exists(runtime.get("cli") or "copilot")
+
+
+def _configured_gh_cli(config: dict | None = None) -> str | None:
+    provider = ((config or {}).get("providers", {}).get("copilot", {}) or {})
+    runtime = provider.get("cloud", {})
+    return command_exists(runtime.get("cli") or "gh")
+
+
+def _allow_inbox_fallback(config: dict | None = None) -> bool:
+    provider = ((config or {}).get("providers", {}).get("copilot", {}) or {})
+    return bool(provider.get("allow_inbox_fallback", True))
+
+
+def _gh_auth_token(config: dict | None = None) -> str | None:
+    gh = _configured_gh_cli(config)
     if not gh:
         return None
     result = run_command([gh, "auth", "token"])
@@ -24,19 +46,32 @@ def _gh_auth_token() -> str | None:
     return token or None
 
 
-def _copilot_auth_ready() -> bool:
+def _copilot_config_auth_ready() -> bool:
+    if not COPILOT_CONFIG_PATH.exists():
+        return False
+    for candidate in ("oauth.json", "auth.json", "credentials.json", "hosts.json"):
+        if (COPILOT_CONFIG_DIR / candidate).exists():
+            return True
+    try:
+        payload = json.loads(COPILOT_CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return any(key != "firstLaunchAt" and value not in (None, "", {}, []) for key, value in payload.items())
+
+
+def _copilot_auth_ready(config: dict | None = None) -> bool:
     for env_name in ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"):
         if os.environ.get(env_name):
             return True
-    return bool(_gh_auth_token())
+    return bool(_gh_auth_token(config)) or _copilot_config_auth_ready()
 
 
 class CopilotLocalAdapter(BaseAdapter):
     name = "copilot_local"
 
     def capability(self, agent_id: str) -> DeliveryCapability:
-        cli = command_exists("copilot")
-        if cli and _copilot_auth_ready():
+        cli = _configured_copilot_cli(self.config)
+        if cli and _copilot_auth_ready(self.config):
             return DeliveryCapability(
                 adapter=self.name,
                 supported=True,
@@ -49,6 +84,18 @@ class CopilotLocalAdapter(BaseAdapter):
                 notes="Uses Copilot CLI autopilot in the current WSL workspace.",
             )
         missing_reason = "Copilot CLI is not installed" if not cli else "Copilot CLI is installed but not authenticated"
+        if not _allow_inbox_fallback(self.config):
+            return DeliveryCapability(
+                adapter=self.name,
+                supported=bool(cli),
+                requires_manual_confirmation=False,
+                can_auto_deliver=False,
+                can_auto_approve_edits=False,
+                delivery_mode="copilot_local",
+                verified="partial" if cli else "unavailable",
+                host="Copilot CLI",
+                notes=f"{missing_reason}; inbox fallback is disabled for this provider.",
+            )
         return DeliveryCapability(
             adapter=self.name,
             supported=True,
@@ -62,9 +109,25 @@ class CopilotLocalAdapter(BaseAdapter):
         )
 
     def deliver(self, request: DeliveryRequest) -> DeliveryResult:
-        cli = command_exists("copilot")
-        auth_ready = _copilot_auth_ready()
+        cli = _configured_copilot_cli(self.config)
+        auth_ready = _copilot_auth_ready(self.config)
         if not cli or not auth_ready:
+            if not _allow_inbox_fallback(self.config):
+                reason = (
+                    "Copilot CLI is unavailable; inbox fallback is disabled for this provider."
+                    if not cli
+                    else "Copilot CLI is not authenticated; inbox fallback is disabled for this provider."
+                )
+                return DeliveryResult(
+                    ok=False,
+                    adapter=self.name,
+                    mode="copilot_local",
+                    target=request.agent_id,
+                    auto_delivered=False,
+                    manual_confirmation_required=False,
+                    error=reason,
+                    notes=reason,
+                )
             fallback = FileInboxAdapter(config=self.config, provider_capabilities=self.provider_capabilities)
             result = fallback.deliver(request)
             result.adapter = self.name
@@ -104,7 +167,7 @@ class CopilotLocalAdapter(BaseAdapter):
         log_path = runtime_log_path("copilot", request.agent_id)
         env = os.environ.copy()
         if not any(env.get(name) for name in ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")):
-            gh_token = _gh_auth_token()
+            gh_token = _gh_auth_token(self.config)
             if gh_token:
                 env["GH_TOKEN"] = gh_token
         env.update(

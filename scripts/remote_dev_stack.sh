@@ -2,7 +2,7 @@
 set -euo pipefail
 
 HOST="${PANTHEON_REMOTE_HOST:-pantheon-gcp}"
-REMOTE_PATH="${PANTHEON_REMOTE_PATH:-/home/edna/code/pantheon}"
+REMOTE_PATH="${PANTHEON_REMOTE_PATH:-/home/lupin/code/pantheon}"
 COMPOSE_FILE="${PANTHEON_REMOTE_COMPOSE_FILE:-docker-compose.remote-dev.yml}"
 ACTION="${1:-status}"
 COMPOSE_CMD="COMPOSE_BAKE=false docker compose -f '${COMPOSE_FILE}'"

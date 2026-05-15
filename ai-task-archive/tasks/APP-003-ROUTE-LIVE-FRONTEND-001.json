@@ -1,0 +1,945 @@
+{
+  "version": 1,
+  "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+  "archived_at": "2026-04-23T02:34:27Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+    "title": "Publish route-live frontend activation packets for CW-02, KW-04, and KW-05",
+    "summary_zh": "把已 route-live 但仍缺 frontend activation / handoff packet 的 CW-02、KW-04、KW-05 補成 supervisor 可見的 execution work，避免它們卡在隱性 residue。",
+    "phase": "Execution / Route-live Frontend Activation",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-22-route-live-frontend-and-residual-truth-execution-packet.md",
+      "docs/pantheon-handoffs/CW-008-consultation-workbench/PACKET_FAMILY.md",
+      "docs/pantheon-handoffs/KW-006-knowledge-workbench/PACKET_FAMILY.md",
+      "docs/pantheon-handoffs/LOVABLE_MASTER_SA.md",
+      "docs/bff/CW-02-debate-transcript.md",
+      "docs/bff/KW-04-insight-cards.md",
+      "docs/bff/KW-05-strategy-spec.md"
+    ],
+    "acceptance": [
+      "CW-02 frontend activation or handoff packet is published against the live transcript route",
+      "KW-04 frontend handoff bundle is published against the live insight routes",
+      "KW-05 frontend activation or handoff packet is published against the live strategy-spec routes",
+      "Supervisor-visible planning surfaces represent those route-live modules truthfully"
+    ],
+    "next": "Published the route-live frontend activation packets for CW-02, KW-04, and KW-05; synced Consultation and Knowledge workbench/Lovable overview truth to the live-route boundary; committed the delivery as ba2bf95; and revalidated the targeted BFF contract suite (25 passed) plus the CW-02, KW-04, and KW-05 example payload JSON files.",
+    "last_update": "2026-04-23T02:34:27Z",
+    "source_plane": "audit_followup",
+    "source_ref": {
+      "type": "execution_packet",
+      "path": "docs/reviews/2026-04-22-route-live-frontend-and-residual-truth-execution-packet.md"
+    },
+    "task_class": "execution_followup",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審核通過：CW-02、KW-04、KW-05 的 route-live frontend packet 與 workbench overview truth 一致，重跑目標 BFF/overview contract 測試 25 passed。另已修正 sidecar reviewer metadata，避免 support artifact 與 durable state 不一致。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-23T02:34:27Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "ba2bf956679d326ca9d3bfdb17caa33a78214de3",
+      "commit_subject": "APP-003-ROUTE-LIVE-FRONTEND-001 publish route-live frontend activation packets",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-ROUTE-LIVE-FRONTEND-001",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1163,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Published module-local frontend change specs for CW-02, KW-04, and KW-05; synced the live consultation/knowledge overview payload builders, example payloads, packet-family docs, coordination overview caveats, and direct BFF contract status text so these modules no longer read as implicit route-live residue. Verification: pytest -q services/control-plane/bff/test_pkt015_consultation_workbench_contract.py services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py services/control-plane/bff/test_cw02_debate_transcript_contract.py services/control-plane/bff/test_kw04_insight_cards_contract.py services/control-plane/bff/test_kw05_strategy_spec_contract.py -> 25 passed.",
+      "status": "done",
+      "created_at": "2026-04-22T10:00:15Z",
+      "resolved_at": "2026-04-22T10:16:22Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T10:16:22Z",
+      "resolved_at": "2026-04-22T14:42:03Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T14:42:03Z",
+      "resolved_at": "2026-04-22T23:44:54Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:44:54Z",
+      "resolved_at": "2026-04-22T23:46:03Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:46:03Z",
+      "resolved_at": "2026-04-22T23:47:24Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:47:24Z",
+      "resolved_at": "2026-04-22T23:48:40Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:48:40Z",
+      "resolved_at": "2026-04-22T23:49:59Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:49:59Z",
+      "resolved_at": "2026-04-22T23:51:16Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:51:16Z",
+      "resolved_at": "2026-04-22T23:52:52Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:52:52Z",
+      "resolved_at": "2026-04-22T23:53:48Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:53:48Z",
+      "resolved_at": "2026-04-22T23:55:19Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:55:19Z",
+      "resolved_at": "2026-04-22T23:56:58Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:56:58Z",
+      "resolved_at": "2026-04-22T23:58:58Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:58:58Z",
+      "resolved_at": "2026-04-22T23:59:54Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T23:59:54Z",
+      "resolved_at": "2026-04-23T00:01:27Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:01:27Z",
+      "resolved_at": "2026-04-23T00:02:28Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:02:28Z",
+      "resolved_at": "2026-04-23T00:03:49Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:03:49Z",
+      "resolved_at": "2026-04-23T00:05:01Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:05:01Z",
+      "resolved_at": "2026-04-23T00:06:35Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:06:35Z",
+      "resolved_at": "2026-04-23T00:07:34Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:07:34Z",
+      "resolved_at": "2026-04-23T00:09:19Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:09:19Z",
+      "resolved_at": "2026-04-23T00:11:30Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:11:30Z",
+      "resolved_at": "2026-04-23T00:12:57Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:12:57Z",
+      "resolved_at": "2026-04-23T00:13:54Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:13:54Z",
+      "resolved_at": "2026-04-23T00:15:18Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:15:18Z",
+      "resolved_at": "2026-04-23T00:16:15Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:16:15Z",
+      "resolved_at": "2026-04-23T00:17:47Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:17:47Z",
+      "resolved_at": "2026-04-23T00:18:47Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:18:47Z",
+      "resolved_at": "2026-04-23T00:20:34Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:20:34Z",
+      "resolved_at": "2026-04-23T00:22:11Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:22:11Z",
+      "resolved_at": "2026-04-23T00:23:57Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:23:57Z",
+      "resolved_at": "2026-04-23T00:25:15Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:25:15Z",
+      "resolved_at": "2026-04-23T00:26:45Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:26:45Z",
+      "resolved_at": "2026-04-23T00:27:47Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:27:47Z",
+      "resolved_at": "2026-04-23T00:29:33Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:29:33Z",
+      "resolved_at": "2026-04-23T00:30:39Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:30:39Z",
+      "resolved_at": "2026-04-23T00:32:32Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:32:32Z",
+      "resolved_at": "2026-04-23T00:34:21Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:34:21Z",
+      "resolved_at": "2026-04-23T00:35:46Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:35:46Z",
+      "resolved_at": "2026-04-23T00:36:43Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:36:43Z",
+      "resolved_at": "2026-04-23T00:37:46Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:37:46Z",
+      "resolved_at": "2026-04-23T00:39:08Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:39:08Z",
+      "resolved_at": "2026-04-23T00:40:45Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:40:45Z",
+      "resolved_at": "2026-04-23T00:41:44Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:41:44Z",
+      "resolved_at": "2026-04-23T00:43:20Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:43:20Z",
+      "resolved_at": "2026-04-23T00:44:34Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:44:34Z",
+      "resolved_at": "2026-04-23T00:46:46Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:46:46Z",
+      "resolved_at": "2026-04-23T00:47:52Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:47:52Z",
+      "resolved_at": "2026-04-23T00:49:16Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:49:16Z",
+      "resolved_at": "2026-04-23T00:50:29Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:50:29Z",
+      "resolved_at": "2026-04-23T00:52:07Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:52:07Z",
+      "resolved_at": "2026-04-23T00:53:06Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:53:06Z",
+      "resolved_at": "2026-04-23T00:54:29Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:54:29Z",
+      "resolved_at": "2026-04-23T00:55:39Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:55:39Z",
+      "resolved_at": "2026-04-23T00:58:08Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:58:08Z",
+      "resolved_at": "2026-04-23T00:59:00Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T00:59:00Z",
+      "resolved_at": "2026-04-23T01:00:29Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:00:29Z",
+      "resolved_at": "2026-04-23T01:01:31Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:01:31Z",
+      "resolved_at": "2026-04-23T01:03:08Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:03:08Z",
+      "resolved_at": "2026-04-23T01:04:06Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:04:06Z",
+      "resolved_at": "2026-04-23T01:05:47Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:05:47Z",
+      "resolved_at": "2026-04-23T01:06:46Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:06:46Z",
+      "resolved_at": "2026-04-23T01:08:54Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:08:54Z",
+      "resolved_at": "2026-04-23T01:10:26Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:10:26Z",
+      "resolved_at": "2026-04-23T01:11:43Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:11:43Z",
+      "resolved_at": "2026-04-23T01:13:11Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:13:11Z",
+      "resolved_at": "2026-04-23T01:14:24Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:14:24Z",
+      "resolved_at": "2026-04-23T01:15:39Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:15:39Z",
+      "resolved_at": "2026-04-23T01:18:52Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:18:52Z",
+      "resolved_at": "2026-04-23T01:20:25Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:20:25Z",
+      "resolved_at": "2026-04-23T01:22:48Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:22:48Z",
+      "resolved_at": "2026-04-23T01:23:49Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:23:49Z",
+      "resolved_at": "2026-04-23T01:25:26Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:25:26Z",
+      "resolved_at": "2026-04-23T01:26:24Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:26:24Z",
+      "resolved_at": "2026-04-23T01:27:38Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:27:38Z",
+      "resolved_at": "2026-04-23T01:28:53Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:28:53Z",
+      "resolved_at": "2026-04-23T01:30:35Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:30:35Z",
+      "resolved_at": "2026-04-23T01:31:49Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:31:49Z",
+      "resolved_at": "2026-04-23T01:33:44Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:33:44Z",
+      "resolved_at": "2026-04-23T01:35:21Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:35:21Z",
+      "resolved_at": "2026-04-23T01:36:25Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:36:25Z",
+      "resolved_at": "2026-04-23T01:37:56Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:37:56Z",
+      "resolved_at": "2026-04-23T01:39:10Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:39:10Z",
+      "resolved_at": "2026-04-23T01:40:40Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:40:40Z",
+      "resolved_at": "2026-04-23T01:42:10Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:42:10Z",
+      "resolved_at": "2026-04-23T01:43:14Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:43:14Z",
+      "resolved_at": "2026-04-23T01:45:34Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:45:34Z",
+      "resolved_at": "2026-04-23T01:47:20Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:47:20Z",
+      "resolved_at": "2026-04-23T01:48:49Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:48:49Z",
+      "resolved_at": "2026-04-23T01:50:03Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:50:03Z",
+      "resolved_at": "2026-04-23T01:51:45Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Requeued to Gemini review because Claude, Claude2, and Codex2 reviewer lanes are currently failing authentication or quota checks.",
+      "status": "done",
+      "created_at": "2026-04-23T01:51:45Z",
+      "resolved_at": "2026-04-23T02:01:29Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Requeued to Codex3 review so Gemini can stay focused on the critical RW-01 closure lane.",
+      "status": "done",
+      "created_at": "2026-04-23T02:01:29Z",
+      "resolved_at": "2026-04-23T02:10:30Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Refreshed support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-001/APP-003-ROUTE-LIVE-FRONTEND-001-SIDECAR-BFF-HANDOFF.md against 2026-04-23 repo truth: aligned reviewer metadata with the current task board, reran pytest -q services/control-plane/bff/test_pkt015_consultation_workbench_contract.py services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py services/control-plane/bff/test_cw02_debate_transcript_contract.py services/control-plane/bff/test_kw04_insight_cards_contract.py services/control-plane/bff/test_kw05_strategy_spec_contract.py (25 passed in 16.00s), and reconfirmed the published CW-02, KW-04, and KW-05 frontend packets plus workbench overview truth. Please review that this remains support-only and keeps remaining work bounded to frontend activation rather than reopening backend gaps.",
+      "status": "done",
+      "created_at": "2026-04-23T02:10:30Z",
+      "resolved_at": "2026-04-23T02:19:47Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Refreshed support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-001/APP-003-ROUTE-LIVE-FRONTEND-001-SIDECAR-BFF-HANDOFF.md to remove the stale CW-04 missing-handoff framing. Current repo truth keeps CW-02, KW-04, KW-05, and CW-04 on the live-route side; any remaining CW-04 follow-up is the separate front-publication replay lane, not a Pantheon BFF gap. Re-ran pytest -q services/control-plane/bff/test_pkt015_consultation_workbench_contract.py services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py services/control-plane/bff/test_cw02_debate_transcript_contract.py services/control-plane/bff/test_kw04_insight_cards_contract.py services/control-plane/bff/test_kw05_strategy_spec_contract.py (25 passed in 7.77s) and revalidated docs/examples/CW-02-debate-transcript.json, docs/examples/KW-04-insight-cards.json, and docs/examples/KW-05-strategy-spec.json with python3 -m json.tool. Please review that this remains support-only and keeps the parent task bounded to frontend activation rather than reopening backend gaps.",
+      "status": "done",
+      "created_at": "2026-04-23T02:19:47Z",
+      "resolved_at": "2026-04-23T02:21:04Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Codex3",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Codex3 to Codex2 after repeated Codex3 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T02:21:04Z",
+      "resolved_at": "2026-04-23T02:23:30Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review accepted on 2026-04-23: CW-02, KW-04, and KW-05 remain closed Pantheon-side route gaps with published frontend activation packets and truthful workbench-overview framing. Re-ran the targeted contract suite (25 passed) and corrected the support sidecar reviewer metadata to Codex2 so the review record matches durable state. Owner may finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-23T02:23:30Z",
+      "resolved_at": "2026-04-23T02:34:28Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,180 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-008",
+  "archived_at": "2026-04-15T21:53:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-008",
+    "title": "Realize rollback and replace execution actions through runtime-manager",
+    "summary_zh": "把 replace、pause_then_replace、liquidate_then_replace 從 contract 對齊推進到 runtime-manager 的真實 action path 與 cutover semantics。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "BP5-SVC-007"
+    ],
+    "artifacts": [
+      "services/runtime-manager/",
+      "ROLLBACK_AND_POSITION_SEMANTICS.md",
+      "PAPER_CANARY_LIVE_POLICY.md"
+    ],
+    "acceptance": [
+      "runtime-manager exposes the canonical rollback and replace actions without semantic drift",
+      "position handling, cutover timing, and rollback linkage are verified in smoke coverage"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized approved task: all 74 smoke checks pass (rollback, replace, pause_then_replace, liquidate_then_replace, position_lineage, cutover semantics, HTTP layer). No semantic drift from ROLLBACK_AND_POSITION_SEMANTICS.md or PAPER_CANARY_LIVE_POLICY.md policy.",
+    "last_update": "2026-04-15T21:53:24Z",
+    "review_notes_zh": [
+      "REPLACE path now uses per-call _allow_cutover_bypass=True only on the rollback deploy() call; service-wide _single_runtime_enforced is never mutated at runtime.",
+      "Re-review passed with python3 services/runtime-manager/smoke_test.py: 74/74 checks passed, including rollback semantics and HTTP coverage."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T21:53:24Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "22aa15a0664948a7ff475fa67708f1cc01179c35",
+      "commit_subject": "BP5-SVC-008: finalize rollback and replace actions in runtime-manager",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP5-SVC-008",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 74,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-008",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T20:40:58Z",
+      "resolved_at": "2026-04-15T20:41:13Z"
+    },
+    {
+      "task_id": "BP5-SVC-008",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T21:09:10Z",
+      "resolved_at": "2026-04-15T21:09:36Z"
+    },
+    {
+      "task_id": "BP5-SVC-008",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T21:11:04Z",
+      "resolved_at": "2026-04-15T21:11:27Z"
+    },
+    {
+      "task_id": "BP5-SVC-008",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T21:11:59Z",
+      "resolved_at": "2026-04-15T21:12:20Z"
+    },
+    {
+      "task_id": "BP5-SVC-008",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T21:12:42Z",
+      "resolved_at": "2026-04-15T21:13:10Z"
+    },
+    {
+      "task_id": "BP5-SVC-008",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Rollback surface complete: service.py implements all three strategies (replace/pause_then_replace/liquidate_then_replace) per ROLLBACK_AND_POSITION_SEMANTICS.md §3 and §8. HTTP routes POST /api/rollback and GET /api/rollback/history are live. Smoke 72/72 PASS. Follow-ons from SIDECAR-ACCEPTANCE review (replace create-then-retire ordering + liquidate ownership-transfer sentinel) are logged but non-blocking. Please review and approve.",
+      "status": "done",
+      "created_at": "2026-04-15T21:14:10Z",
+      "resolved_at": "2026-04-15T21:16:50Z"
+    },
+    {
+      "task_id": "BP5-SVC-008",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: service.py still has blocking semantic drift against ROLLBACK_AND_POSITION_SEMANTICS.md. First, replace retires the old binding before creating the replacement (service.py:367-372), but L1 requires the replacement binding to exist before the old binding becomes retired (ROLLBACK §3.1 lines 53-55, §9 line 203). Second, liquidate_then_replace always transfers position_lineage.current_managed_by_binding_id to the new binding even when replacement_start_paused=True and zero-position is not yet confirmed (service.py:425-445), which violates §7 lines 162-164. Please fix both semantics and tighten smoke coverage so these regressions fail explicitly.",
+      "status": "done",
+      "created_at": "2026-04-15T21:16:50Z",
+      "resolved_at": "2026-04-15T21:16:50Z"
+    },
+    {
+      "task_id": "BP5-SVC-008",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Both blocking semantic drifts addressed: (1) replace is now create-before-retire — bypasses single_runtime_enforced=True during the cutover window so new binding is created while old is still active, then old is retired (service.py:367-380); (2) liquidate_then_replace(replacement_start_paused=True) now holds current_managed_by_binding_id at the old binding ID until zero-position confirmed (service.py:452-462). Two new regression checks added to smoke_test.py. 74/74 PASS. Please re-review.",
+      "status": "done",
+      "created_at": "2026-04-15T21:20:47Z",
+      "resolved_at": "2026-04-15T21:24:50Z"
+    },
+    {
+      "task_id": "BP5-SVC-008",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Blocking review finding: services/runtime-manager/service.py:374-379 temporarily flips the service-wide _single_runtime_enforced flag to False around replace rollback creation. In concurrent service operation this disables the single-runtime guard for unrelated deploy() calls too. Repro confirmed locally by widening the rollback window: a rogue deploy succeeded during replace and left two active bindings in the same pool. Please replace the global mutable bypass with a per-call / per-create scoped override so only the intended replacement binding may bypass the guard during cutover.",
+      "status": "done",
+      "created_at": "2026-04-15T21:24:50Z",
+      "resolved_at": "2026-04-15T21:24:50Z"
+    },
+    {
+      "task_id": "BP5-SVC-008",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review finding resolved. The global flag mutation (lines 374-379) is replaced with a per-call _allow_cutover_bypass=True argument to deploy() in the REPLACE path only. The service-wide _single_runtime_enforced flag is never mutated at runtime. concurrent deploy() calls are unaffected. 74/74 smoke tests pass. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-15T21:30:48Z",
+      "resolved_at": "2026-04-15T21:35:57Z"
+    },
+    {
+      "task_id": "BP5-SVC-008",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Re-review passed: per-call cutover bypass fixes the single-runtime race without mutating service-wide state; runtime-manager smoke tests passed 74/74.",
+      "status": "done",
+      "created_at": "2026-04-15T21:35:57Z",
+      "resolved_at": "2026-04-15T21:53:24Z"
+    }
+  ],
+  "blockers": []
+}

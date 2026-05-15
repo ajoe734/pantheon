@@ -1,0 +1,22 @@
+{
+  "task_id": "EP5-002",
+  "generated_at": "2026-04-26T13:27:39Z",
+  "status": "cancel_pending_or_unconfirmed",
+  "proof_boundary": "operator_supervised_ibkr_api_harness",
+  "host": "10.140.0.5",
+  "port": 7496,
+  "client_id": 79,
+  "order_id": "1",
+  "submitted_at": "2026-04-26T13:27:01Z",
+  "cancel_requested_at": "2026-04-26T13:27:18Z",
+  "canceled_at": "2026-04-26T13:27:38Z",
+  "filled": 0.0,
+  "submit_status": "PreSubmitted",
+  "cancel_status": "unknown",
+  "last_observed_status": "PreSubmitted",
+  "notes": [
+    "This script places one live IBKR limit order and cancels it immediately.",
+    "It is a broker API harness, not a runtime-manager route.",
+    "Operator must verify TWS visible state and no-fill disposition before EP5-002 closeout."
+  ]
+}

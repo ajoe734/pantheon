@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "task_id": "LIN-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LIN-001",
+    "title": "Normalize lineage edges and define read-model aggregation contract",
+    "summary_zh": "正規化跨 plane lineage edge，並定義 read-model aggregation contract，避免 lineage 查詢各做各的。",
+    "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "TEL-001"
+    ],
+    "artifacts": [
+      "LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md",
+      "services/telemetry/feedback_adapter.py"
+    ],
+    "acceptance": [
+      "normalized edges are enumerated",
+      "read model is marked derived-only"
+    ],
+    "next": "Finalized after Claude approval: 19 normalized lineage edges are locked in L1 + read_model_contract.md, derived_only is enforced in feedback_adapter.py and contract docs, 28/28 unit tests and 4/4 benchmark families passed within SLA. Follow-up remains with LIN-002 for upstream_chain[]/downstream_chain[] assembly and any optional bare artifact_id query path.",
+    "last_update": "2026-04-10T13:02:42Z",
+    "review_notes_zh": [
+      "審查通過：19 條語意 edge 已在 L1 文件 §8 與 read_model_contract.md §4 完整列舉，含 owner 指定。derived_only=True 在 build_lineage_record() / build_lineage_summary() 明確標示，contract 文件亦禁止 read model 成為 write authority。feedback_adapter.py 的 _lineage_conflict_markers() 正確輸出 4 種 alias drift 衝突而不靜默覆蓋。28/28 unit tests PASS，4 個 benchmark query family 全在 SLA budget 內。非阻塞提示：build_lineage_summary() 目前不輸出 upstream_chain[]/downstream_chain[]（全鏈組裝由 LIN-002 負責）；artifact target_type 目前比對 artifact_ref 而非 bare artifact_id，LIN-002 可視需要補充。"
+    ],
+    "review_file": "services/registry/lineage/review_lin001_claude_approved_zh.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "LIN-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "LIN-001 implementation ready for review. L1 policy now enumerates the full semantic edge inventory and locks derived-only lineage_projection/lineage_summary_json normalization rules in LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md. Added services/registry/lineage/read_model_contract.md to formalize raw-to-semantic field mapping and downstream read-model expectations. services/telemetry/feedback_adapter.py now exposes derived telemetry lineage records/summaries with runtime_binding_id/deployment_plan_id normalization and conflict markers instead of hiding alias drift. Validation: python3 -m py_compile services/telemetry/feedback_adapter.py services/telemetry/test_feedback_adapter.py; cd services/telemetry && python3 -m unittest test_feedback_adapter; python3 services/registry/lineage/benchmark_harness.py --corpus services/registry/lineage/lin001a_benchmark_corpus.json --iterations 5 --warmup 1 --enforce-budgets.",
+      "status": "done",
+      "created_at": "2026-04-10T12:08:39Z",
+      "resolved_at": "2026-04-10T13:01:23Z"
+    },
+    {
+      "task_id": "LIN-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "LIN-001 approved. 19 normalized edges enumerated in L1 doc and read_model_contract.md. derived_only contract enforced in code and docs. 28/28 unit tests + 4/4 benchmark families within SLA budgets. Conflict markers surface alias drift correctly. Non-blocking: LIN-002 must assemble upstream_chain[]/downstream_chain[] from normalized edges; artifact target_type matches composite artifact_ref.",
+      "status": "done",
+      "created_at": "2026-04-10T13:01:23Z",
+      "resolved_at": "2026-04-10T13:02:42Z"
+    }
+  ],
+  "blockers": []
+}

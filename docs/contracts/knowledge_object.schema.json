@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantheon SD-03 KnowledgeObject",
+  "type": "object",
+  "required": [
+    "knowledge_object_id",
+    "source_id",
+    "evidence_item_id",
+    "evidence_bundle_id",
+    "title",
+    "text",
+    "source_type",
+    "license_scope",
+    "access_scope",
+    "created_at"
+  ],
+  "properties": {
+    "knowledge_object_id": {"type": "string", "minLength": 1},
+    "source_id": {"type": "string", "minLength": 1},
+    "evidence_item_id": {"type": "string", "minLength": 1},
+    "evidence_bundle_id": {"type": "string", "minLength": 1},
+    "title": {"type": "string", "minLength": 1},
+    "text": {"type": "string", "minLength": 1},
+    "source_type": {"type": "string", "minLength": 1},
+    "license_scope": {"type": "string", "minLength": 1},
+    "access_scope": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "environment_scope": {"type": "array", "items": {"type": "string"}},
+    "persona_scope": {"type": "array", "items": {"type": "string"}},
+    "workspace_scope": {"type": "array", "items": {"type": "string"}},
+    "keywords": {"type": "array", "items": {"type": "string"}},
+    "metadata": {"type": "object"},
+    "created_at": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

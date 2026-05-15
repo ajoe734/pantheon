@@ -1,7 +1,7 @@
 {
-  "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
-  "phase": "phase2",
-  "planning_dir": "docs/02-architecture/consensus/phase2",
-  "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
-  "updated_at": "2026-04-13T02:00:58Z"
+  "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+  "phase": "phase6",
+  "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+  "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+  "updated_at": "2026-05-15T00:35:50Z"
 }

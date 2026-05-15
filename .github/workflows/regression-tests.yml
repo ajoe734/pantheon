@@ -1,19 +1,20 @@
 name: Regression Tests
 
 on:
-  push:
-    branches: ['*']
-    tags: ['*']
   pull_request:
-    branches: [master]
+    branches:
+      - backend-dev-publish-20260429
+      - master
+      - main
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
-        
+        uses: actions/checkout@v6
+
       - name: Liberate disk space
         uses: jlumbroso/free-disk-space@main
         with:

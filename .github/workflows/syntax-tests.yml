@@ -1,18 +1,19 @@
 name: Syntax Tests
 
 on:
-  push:
-    branches: ['*']
-    tags: ['*']
   pull_request:
-    branches: [master]
+    branches:
+      - backend-dev-publish-20260429
+      - master
+      - main
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v6
 
       - name: Liberate disk space
         uses: jlumbroso/free-disk-space@main
@@ -40,3 +41,25 @@ jobs:
         run: |
           runInContainer bash -c "pip install --no-cache-dir quantconnect-stubs types-requests==2.32.* types-pytz==2025.2.0.* mypy==1.15.0"
           runInContainer python run_syntax_check.py
+
+  vectorbt-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+
+      - name: Run vectorbt governed smoke path
+        run: python services/research/vectorbt/smoke_test.py
+
+      - name: Run vectorbt adapter tests
+        run: python -m pytest services/research/vectorbt/test_adapter.py -q

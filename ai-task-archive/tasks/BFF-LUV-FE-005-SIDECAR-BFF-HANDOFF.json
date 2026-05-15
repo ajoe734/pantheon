@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-FE-005-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-09T18:22:27Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-FE-005-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BFF-LUV-FE-005 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BFF-LUV-FE-005，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "BFF Execute-Plans Frontend Live Completion 2026-05-09",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-LUV-FE-001",
+      "BFF-LUV-FE-002",
+      "BFF-LUV-FE-003"
+    ],
+    "artifacts": [
+      "support/sidecars/BFF-LUV-FE-005/BFF-LUV-FE-005-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: Rev2 handoff packet approved by Codex (ef8d5c6d); review artifact committed (67ff4475); support-only sidecar closed — no canonical/runtime changes. Parent BFF-LUV-FE-005 owner (Codex) can absorb the packet advisory as needed.",
+    "last_update": "2026-05-09T18:22:27Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BFF-LUV-FE-005",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Rev2 approved: SSE smoke now correctly separates browser/Lovable cookie-session EventSource from optional non-browser Bearer probe. Support-only packet remains advisory for parent FE-005 and does not approve parent cutover execution."
+    ],
+    "review_file": ".orchestrator/reviews/BFF-LUV-FE-005-SIDECAR-BFF-HANDOFF-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-09T18:22:27Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "67ff447560a9d3b249f42f260fab3f2ad8981d57",
+      "commit_subject": "BFF-LUV-FE-005-SIDECAR-BFF-HANDOFF: add approved review artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BFF-LUV-FE-005-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Verification": "Source inspection only; no runtime/canonical changes in this sidecar."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 10,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 19,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-FE-005-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Support-only BFF handoff packet created at support/sidecars/BFF-LUV-FE-005/BFF-LUV-FE-005-SIDECAR-BFF-HANDOFF.md (commit d06fc7a1); documents dependency status matrix, Lovable env configuration, three-phase cutover smoke plan, and parent absorption checklist. Ready for Codex reviewer check and parent-owner absorption decision.",
+      "status": "done",
+      "created_at": "2026-05-09T18:04:20Z",
+      "resolved_at": "2026-05-09T18:13:31Z"
+    },
+    {
+      "task_id": "BFF-LUV-FE-005-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested: sidecar packet's SSE smoke step says browser EventSource should open /bff/events/stream with a Bearer header, but execute-plans current live SSE connector uses native EventSource with withCredentials only and cannot inject Authorization. See .orchestrator/reviews/BFF-LUV-FE-005-SIDECAR-BFF-HANDOFF-review-codex.md; update packet to distinguish cookie/session EventSource smoke from any non-browser Bearer SSE probe.",
+      "status": "done",
+      "created_at": "2026-05-09T18:13:31Z",
+      "resolved_at": "2026-05-09T18:13:31Z"
+    },
+    {
+      "task_id": "BFF-LUV-FE-005-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Rev2: fixed SSE smoke step per Codex review — Phase 1 Step 6 now distinguishes Track A (browser/Lovable cookie-session EventSource with withCredentials:true, no Bearer header injection) from Track B (non-browser curl/Node.js Bearer probe, labeled separately). BFF Query Gap Matrix SSE row, evidence publication section, Frontend Handoff Notes, and Reviewer Handoff checklist all updated to match. Support-only artifact only; no canonical/runtime changes. Commit: ef8d5c6d.",
+      "status": "done",
+      "created_at": "2026-05-09T18:17:18Z",
+      "resolved_at": "2026-05-09T18:20:27Z"
+    },
+    {
+      "task_id": "BFF-LUV-FE-005-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Approved Rev2 sidecar handoff packet; prior SSE auth finding resolved, support-only scope preserved. Returned to Claude for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-09T18:20:27Z",
+      "resolved_at": "2026-05-09T18:22:27Z"
+    }
+  ],
+  "blockers": []
+}

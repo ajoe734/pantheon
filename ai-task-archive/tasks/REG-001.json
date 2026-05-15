@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "task_id": "REG-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "REG-001",
+    "title": "Define strategy and model registry contract",
+    "phase": "Epic C",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [
+      "P4-001"
+    ],
+    "artifacts": [
+      "services/registry/contract.md"
+    ],
+    "acceptance": [
+      "registry object model defined",
+      "version and lineage fields defined",
+      "artifact lifecycle states documented"
+    ],
+    "next": "Started aligning REG-001 with EX-001 Object Store metadata so registry projection and loader rejection rules share one governed contract.",
+    "last_update": "2026-04-02T00:55:01Z",
+    "review_notes_zh": [
+      "已開始吸收 EX-001 的 Object Store metadata 要求，接下來要鎖定 execution projection 與 loader rejection semantics。"
+    ],
+    "summary_zh": "定義策略與模型 registry 契約，包含版本、生命週期、lineage、checksum 與 rollback 所需欄位。"
+  },
+  "handoffs": [
+    {
+      "task_id": "REG-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Starting review of registry contract skeleton. Focusing on ObjectStore projection and lineage fields.",
+      "status": "done",
+      "created_at": "2026-04-01T15:22:39Z",
+      "resolved_at": "2026-04-01T18:15:00Z"
+    }
+  ],
+  "blockers": []
+}

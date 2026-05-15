@@ -10,6 +10,11 @@ from models import OpenClawRuntimePin, WorkflowDefinition, utc_now
 Transport = Callable[[dict[str, Any]], dict[str, Any]]
 
 
+def _clean(value: str | None) -> str | None:
+    cleaned = str(value or "").strip()
+    return cleaned or None
+
+
 class OpenClawCronClient:
     """Prepare versioned cron workflow dispatch envelopes for the upstream runtime."""
 
@@ -24,8 +29,23 @@ class OpenClawCronClient:
             commit_sha=os.environ.get("OPENCLAW_COMMIT_SHA", ""),
             image_ref=os.environ.get("OPENCLAW_IMAGE_REF", ""),
         )
-        self.base_url = base_url or os.environ.get("OPENCLAW_BASE_URL", "http://localhost:3000")
+        self.base_url = (
+            base_url
+            or os.environ.get("OPENCLAW_BASE_URL")
+            or os.environ.get("OPENCLAW_GATEWAY_URL", "ws://127.0.0.1:18789")
+        )
         self.transport = transport
+        self._adapter_boundary = {
+            "integration_boundary": "pantheon-openclaw-gateway-adapter",
+            "workspace_ref": _clean(os.environ.get("PANTHEON_WORKSPACE_REF")),
+            "auth_profile_ref": _clean(os.environ.get("PANTHEON_AUTH_PROFILE_REF")),
+            "persona_id": _clean(os.environ.get("PANTHEON_PERSONA_ID")),
+            "session_id": _clean(os.environ.get("PANTHEON_SESSION_ID")),
+            "trace_id": _clean(os.environ.get("PANTHEON_TRACE_ID")),
+            "request_id": _clean(os.environ.get("PANTHEON_REQUEST_ID")),
+            "credential_sharing": "disallowed",
+            "filesystem_scope": "persona_workspace_only",
+        }
 
     def prepare_dispatch(self, workflow: WorkflowDefinition, payload: dict[str, Any]) -> dict[str, Any]:
         missing = [key for key in workflow.required_payload_keys if key not in payload]
@@ -38,6 +58,11 @@ class OpenClawCronClient:
             "runtime": {
                 **self.runtime_pin.to_dict(),
                 "base_url": self.base_url,
+            },
+            "pantheon_adapter": {
+                key: value
+                for key, value in self._adapter_boundary.items()
+                if value is not None
             },
             "workflow": {
                 "workflow_id": workflow.workflow_id,

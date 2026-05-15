@@ -1,66 +1,84 @@
 {
-  "regime_id": "regime-2026q1-us-equities-001",
-  "strategy_id": "strat-momentum-us-001",
-  "artifact_id": "artifact-momentum-v2.1.0",
+  "regime_id": "regime-20260413-001",
+  "strategy_id": "strat-equities-momentum-us-001",
+  "artifact_id": "regime-model-hmm-v2.3.1",
   "version": "1.0.0",
   "regime_class": "trending_up",
   "confidence": 0.78,
   "regime_scores": {
-    "risk_on": 0.72,
-    "risk_off": 0.05,
+    "risk_on": 0.68,
+    "risk_off": 0.07,
     "trending_up": 0.78,
-    "trending_down": 0.08,
-    "mean_reverting": 0.15,
-    "high_volatility": 0.12,
-    "low_volatility": 0.35,
-    "regime_transition": 0.10,
-    "mixed": 0.05
+    "trending_down": 0.06,
+    "mean_reverting": 0.11,
+    "high_volatility": 0.18,
+    "low_volatility": 0.39,
+    "regime_transition": 0.09,
+    "mixed": 0.04
   },
-  "evaluated_at": "2026-04-13T06:00:00Z",
-  "window_start": "2026-01-01T00:00:00Z",
-  "window_end": "2026-04-13T00:00:00Z",
+  "evaluated_at": "2026-04-13T09:30:00Z",
+  "window_start": "2026-03-14T09:30:00Z",
+  "window_end": "2026-04-13T09:30:00Z",
   "input_refs": [
     {
       "ref_type": "dataset_version",
-      "ref_id": "ds-us-equities-daily-20260413",
+      "ref_id": "dataset-us-equities-daily-20260413",
       "storage_ref": {
         "backend": "object_store",
-        "path": "datasets/us_equities_daily/2026-04-13/"
+        "path": "datasets/us-equities/daily/2026-04-13/"
       }
     },
     {
       "ref_type": "feature_dataset",
-      "ref_id": "feat-macro-regime-20260413"
+      "ref_id": "feature-regime-us-equities-20260413",
+      "storage_ref": {
+        "backend": "object_store",
+        "path": "features/regime/us-equities/2026-04-13.parquet"
+      }
+    },
+    {
+      "ref_type": "security_master",
+      "ref_id": "secmaster-us-large-cap-20260413"
+    },
+    {
+      "ref_type": "market_calendar_session",
+      "ref_id": "calendar-us-2026-04-13-regular"
     }
   ],
   "output_refs": [
     {
       "ref_type": "universe_selection",
-      "ref_id": "universe-2026q1-us-equities-001"
+      "ref_id": "universe-20260413-001"
     }
   ],
   "model_ref": {
-    "model_family": "markov_switching",
-    "model_version": "ms-regime-v3.2.1",
-    "training_dataset_ref": "ds-regime-training-2020-2025"
+    "model_family": "hmm",
+    "model_version": "2.3.1",
+    "training_dataset_ref": "dataset-regime-train-2020-2025"
   },
-  "decision_reasoning": "Markov-switching model infers trending_up regime with 78% confidence. VIX term structure in backwardation (10th percentile), breadth indicator at 68%, and SPY 200-day SMA slope positive. Secondary probability on low_volatility (35%) supports the trend continuation thesis. No regime_transition signal — transition probability below 15% threshold.",
+  "decision_reasoning": "Four-state HMM classifies the current window as trending_up with 78% confidence. Breadth remains positive, realized volatility is contained, and large-cap momentum breadth supports a long-biased regime for US equities.",
   "feature_snapshot": {
     "volatility_regime": "normal",
-    "trend_strength": 0.65,
+    "trend_strength": 0.64,
     "momentum_signal": "positive",
     "macro_environment": "expansion"
   },
   "market_scope": {
-    "asset_classes": ["equities"],
-    "markets": ["US"],
-    "security_master_refs": ["secmaster-us-large-cap", "secmaster-us-mid-cap"]
+    "asset_classes": [
+      "equity"
+    ],
+    "markets": [
+      "US"
+    ],
+    "security_master_refs": [
+      "secmaster-us-large-cap-20260413"
+    ]
   },
   "state": "validated",
-  "persona_id": "persona-momentum-trader-01",
-  "capital_pool_id": "pool-us-equity-alpha",
+  "persona_id": "persona-senior-quant-001",
+  "capital_pool_id": "pool-us-equity-growth",
   "metadata": {
-    "evaluator": "regime-evaluator-service",
-    "run_id": "regime-run-20260413-060000"
+    "data_as_of": "2026-04-12T21:00:00Z",
+    "evaluation_duration_ms": 3420
   }
 }

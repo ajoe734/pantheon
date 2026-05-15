@@ -1,10 +1,10 @@
 # Pantheon Memory Layer Design Note
 
-**Task:** BG-004  
-**Phase:** Blueprint Gap P2  
-**Owner:** Claude  
-**Reviewer:** Codex  
-**Status:** review_ready  
+**Task:** BG-004
+**Phase:** Blueprint Gap P2
+**Owner:** Claude
+**Reviewer:** Codex
+**Status:** review_ready
 **Date:** 2026-04-13
 
 ---
@@ -165,6 +165,11 @@ GET /memory/retrieve
 
 Response: ranked list of `PersonaMemory` and/or `InstitutionalMemoryEntry` objects, with `relevance_score` and `source_event_id` for traceability.
 
+Production hardening note (2026-04-30):
+- `GET /api/memory/retrieve` is implemented for institutional memory entries and remains the retrieval-facade entry point for future persona-memory merge-in.
+- The facade performs a governance AuthZ check before store access. If `PANTHEON_GOVERNANCE_AUTHZ_URL`, `PANTHEON_GOVERNANCE_API_URL`, or `PANTHEON_GOVERNANCE_SERVICE_URL` is not configured, retrieval fails closed with `governance_authz_unconfigured`.
+- Authorized institutional hits increment `reuse_count` through the store, preserving the ranking feedback loop.
+
 ### 5.2 Retrieval Trigger Contexts
 
 | Context | Who calls retrieval | Typical query |
@@ -290,6 +295,11 @@ Storage:
 - Vector index: **pgvector** (embedding_ref, semantic retrieval)
 - No separate in-memory buffer for memory entries (unlike telemetry); all writes are durable by design.
 
+Retention:
+- Institutional memory entries receive `expires_at` from `PANTHEON_MEMORY_RETENTION_DAYS` on create when the writer did not provide an explicit expiration. The default is 365 days.
+- `PANTHEON_MEMORY_RETENTION_DAYS=indefinite` disables automatic expiry for entries without `expires_at`.
+- Expired entries are archived with `archived_at` and `archived_reason` and remain durable for lineage and replay, but active list/retrieval excludes them.
+
 ---
 
 ## 8. Acceptance Evidence Checklist
@@ -306,9 +316,11 @@ Storage:
 ## 9. Open Items (Not Blocking P2 Acceptance)
 
 1. **Embedding model choice** — pgvector works with any embedding model; model selection is deferred to the research-svc team.
-2. **Retention / TTL policy** — institutional entries are currently indefinite; a TTL or archival policy should be defined before production sign-off.
-3. **Cross-plane replay** — memory retrieval should be included in the golden replay scenario (BG-005) to validate end-to-end read paths.
-4. **Auth/RBAC integration** — retrieval facade currently checks `persona_id` and `session_id`; integration with the governance AuthZ layer is deferred.
+
+Resolved by production-hardening slice:
+- **Retention / TTL policy** — implemented as create-time `expires_at` assignment plus archive-on-read/archive command behavior in `InstitutionalMemoryStore`.
+- **Cross-plane replay** — covered by focused replay tests that write memory, restart the store, retrieve through the facade, and verify active archival exclusion/reuse persistence.
+- **Auth/RBAC integration** — retrieval facade now checks governance AuthZ and fails closed when governance authorization is unavailable.
 
 ---
 

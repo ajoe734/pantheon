@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-015-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-13T12:02:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-015-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BFF-CONSOL-015 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BFF-CONSOL-015，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-005",
+      "BFF-CONSOL-007"
+    ],
+    "artifacts": [
+      "support/sidecars/BFF-CONSOL-015/BFF-CONSOL-015-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalize approved support-only handoff. Artifact commit 248122b8 is durable; closeout commit aa281e1d is task-scoped and contains LLM-Agent/Task-ID/Reviewer metadata. No canonical/runtime/registry/governance files changed. Verification: git diff --exit-code -- support/sidecars/BFF-CONSOL-015/BFF-CONSOL-015-SIDECAR-BFF-HANDOFF.md; git diff --check -- support/sidecars/BFF-CONSOL-015/BFF-CONSOL-015-SIDECAR-BFF-HANDOFF.md; jq -c .category_counts docs/bff/seed-taxonomy.json and ../execute-plans/src/lib/bff-v1/seed-taxonomy.json both confirmed 62 live_required / 15 deferred / 4 mock_only_dev / 2 deprecated.",
+    "last_update": "2026-05-13T12:02:35Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BFF-CONSOL-015",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "批准：handoff packet 正確區分 BFF-CONSOL-015/BFF-CONSOL-007 原始 83-helper 快照 (52/25/4/2) 與 post-025/028 現態 (62/15/4/2)。",
+      "deferred helper 語言已正確更新為「explicit empty/unavailable in strict live」，不再標示為未分配的 follow-up。",
+      "BFF-CONSOL-025 標記為 done；BFF-CONSOL-028 in review — 語言準確反映當前交付狀態。",
+      "Badge contract 四類別行為表、operator journey 四情境、gap matrix 與 liveEmpty/delaySeed gate 邏輯一致。",
+      "驗證軌跡含 jq 計數、git show 原始快照 (42ac7b0e)、whitespace 及 ASCII 掃描，均無異常。",
+      "本 sidecar 未修改 canonical truth、runtime、registry 或 governance 實作。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T12:02:35Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "aa281e1db3be14dfc1c5c46cb5774e335a7ca2a1",
+      "commit_subject": "BFF-CONSOL-015-SIDECAR-BFF-HANDOFF closeout finalization",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-CONSOL-015-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 27,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 22,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-015-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by idle Claude; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-13T11:23:35Z",
+      "resolved_at": "2026-05-13T11:23:47Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-015-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Support-only BFF/frontend handoff packet created at support/sidecars/BFF-CONSOL-015/BFF-CONSOL-015-SIDECAR-BFF-HANDOFF.md and committed in b9c69a2d. Packet covers mock-only badge contract (4 category->behavior mapping), taxonomy count baseline (83 helpers: 52/25/4/2), live-mode seed gate rules (liveEmpty/delaySeed), wired UI surfaces table, operator journey for live/mock/strict modes, gap matrix for deferred helpers and BFF-CONSOL-025/028 follow-ups, frontend test matrix, and parent absorption risks. Verification: git diff --check and ASCII scan clean. No canonical truth, runtime, registry, or governance files changed by this sidecar.",
+      "status": "done",
+      "created_at": "2026-05-13T11:27:47Z",
+      "resolved_at": "2026-05-13T11:45:36Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-015-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review returned: handoff packet is support-only and commit b9c69a2d touches only the expected sidecar file, but taxonomy/gap facts need refresh before approval. Packet states 83 helpers as 52 live_required / 25 deferred / 4 mock_only_dev / 2 deprecated and says BFF-CONSOL-025 seed elimination is still open. Current durable taxonomy docs and ../execute-plans HEAD are 62 live_required / 15 deferred / 4 mock_only_dev / 2 deprecated after BFF-CONSOL-025, and BFF-CONSOL-028 is now in review with the same 62/15/4/2 baseline. Please update the packet to distinguish the BFF-CONSOL-015 snapshot from current post-025/028 state, adjust deferred-helper and follow-up language, then hand back to Codex.",
+      "status": "done",
+      "created_at": "2026-05-13T11:45:36Z",
+      "resolved_at": "2026-05-13T11:45:36Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-015-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-13T11:51:33Z",
+      "resolved_at": "2026-05-13T11:51:34Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-015-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Refreshed support-only handoff packet in commit 248122b8. It now distinguishes the original BFF-CONSOL-015/BFF-CONSOL-007 83-helper snapshot (52 live_required / 25 deferred / 4 mock_only_dev / 2 deprecated) from current post-025/028 taxonomy state (62 / 15 / 4 / 2 in docs and execute-plans), updates gated/deferred gap language, fixes reviewer/surface labels, and records scoped verification. No canonical truth, runtime, registry, or governance implementation changed.",
+      "status": "done",
+      "created_at": "2026-05-13T11:58:47Z",
+      "resolved_at": "2026-05-13T12:00:15Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-015-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: packet accurately distinguishes original 52/25/4/2 snapshot from current 62/15/4/2 post-025/028 state, updates deferred language to strict-live unavailable, and records clean verification. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-13T12:00:15Z",
+      "resolved_at": "2026-05-13T12:02:36Z"
+    }
+  ],
+  "blockers": []
+}

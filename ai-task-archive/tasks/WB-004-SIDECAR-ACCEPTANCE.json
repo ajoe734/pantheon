@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "WB-004-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-14T09:50:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "WB-004-SIDECAR-ACCEPTANCE",
+    "title": "Prepare WB-004 acceptance packet and dependency map",
+    "summary_zh": "平行支援 WB-004，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Workbench Backlog",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LOOP-001"
+    ],
+    "artifacts": [
+      "support/sidecars/WB-004/WB-004-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support-only acceptance packet committed at f0fc12b and formally closed after Claude review approval; parent reviewer can use the packet to judge the Wave 2 vs Wave 3 and EV/LN/KNO wording calls for WB-004.",
+    "last_update": "2026-04-14T09:50:14Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "WB-004",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "sidecar acceptance packet 審查通過：所有三個 AC 項目均有明確原始文件佐證（pantheon-console-workbench-backlog.md、qwen-readout.md、claude-readout.md、execution-materialization.md），dependency map 正確區分真實封鎖項與未來 Knowledge 執行工作，兩個開放判斷點（Wave 2 vs 3 保守定位、EV/LN/KNO 現有支援表述）已明確移交給 WB-004 parent reviewer 決定，符合 support-only 原則，未修改 canonical truth。"
+    ],
+    "review_file": "support/sidecars/WB-004/WB-004-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T09:50:14Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "f0fc12ba77ef691d5379755eea4f558dcc19743e",
+      "commit_subject": "WB-004-SIDECAR-ACCEPTANCE: finalize acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "WB-004-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 129,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "WB-004-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Support-only acceptance packet is ready at support/sidecars/WB-004/WB-004-SIDECAR-ACCEPTANCE.md. Review focus: AC mapping for WB-004, conservative existing-support wording vs partial EV/LN/KNO support, and whether Wave 3 should remain conservative or reflect the Wave 2 partial-readiness reading.",
+      "status": "done",
+      "created_at": "2026-04-14T09:37:02Z",
+      "resolved_at": "2026-04-14T09:46:13Z"
+    },
+    {
+      "task_id": "WB-004-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-14T09:46:13Z",
+      "resolved_at": "2026-04-14T09:47:11Z"
+    },
+    {
+      "task_id": "WB-004-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet reviewed and approved as Claude: all ACs evidenced against source files, dependency map is accurate, open judgment calls on Wave 2/3 and EV/LN/KNO wording are correctly surfaced for the WB-004 parent reviewer. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-14T09:47:11Z",
+      "resolved_at": "2026-04-14T09:50:14Z"
+    }
+  ],
+  "blockers": []
+}

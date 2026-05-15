@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "task_id": "OPS-011",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-011",
+    "title": "Align agent handoff briefs with canonical collaboration flow",
+    "phase": "Foundation",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Updated collaboration guidance so every LLM now works in this order: finish assigned reviews first, then own unblocked work, then claim other safe tasks and hand them back to the original owner for review.",
+    "last_update": "2026-04-02T00:58:18Z",
+    "summary_zh": "把三個 agent 的 brief 統一到同一套協作流程，避免不同 prompt 指向不同規則。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

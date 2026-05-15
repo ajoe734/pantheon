@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "task_id": "OSS-IMPL-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-17T18:52:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-IMPL-001-SIDECAR-REVIEW",
+    "title": "Prepare OSS-IMPL-001 review packet and evidence summary",
+    "summary_zh": "平行支援 OSS-IMPL-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/OSS-IMPL-001/OSS-IMPL-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: review packet complete and verified by Codex. All three acceptance criteria confirmed pass (20 unit tests, smoke test artifact_state=draft, checklist smoke-tested). utcnow deprecation warning recorded as non-blocking follow-up. Sidecar support artifact closed.",
+    "last_update": "2026-04-17T18:52:01Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OSS-IMPL-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T18:52:01Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "cf322799a42646ad2a739cf4201656d039207cd2",
+      "commit_subject": "OSS-IMPL-001-SIDECAR-REVIEW: update closeout note with correct owner reassignment history",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "OSS-IMPL-001-SIDECAR-REVIEW",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 471,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-IMPL-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T17:56:24Z",
+      "resolved_at": "2026-04-17T18:01:50Z"
+    },
+    {
+      "task_id": "OSS-IMPL-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review packet ready at support/sidecars/OSS-IMPL-001/OSS-IMPL-001-SIDECAR-REVIEW.md. Fresh evidence reproduced from current repo snapshot: statsmodels smoke test passes, 20 unit tests pass, checklist promotion confirmed. One non-blocking utcnow deprecation warning documented for follow-up.",
+      "status": "done",
+      "created_at": "2026-04-17T18:04:14Z",
+      "resolved_at": "2026-04-17T18:46:00Z"
+    },
+    {
+      "task_id": "OSS-IMPL-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review packet verified against current statsmodels implementation; smoke test and 20 unit tests reproduced; checklist promotion confirmed; utcnow warning recorded as non-blocking follow-up.",
+      "status": "done",
+      "created_at": "2026-04-17T18:46:00Z",
+      "resolved_at": "2026-04-17T18:49:15Z"
+    },
+    {
+      "task_id": "OSS-IMPL-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Auto-reassigned ownership from Codex2 to Qwen after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-17T18:49:15Z",
+      "resolved_at": "2026-04-17T18:50:39Z"
+    },
+    {
+      "task_id": "OSS-IMPL-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-17T18:50:39Z",
+      "resolved_at": "2026-04-17T18:52:02Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,19 @@
+flow_id,flow_name,frontend_routes,bff_endpoints,pass_condition
+F01,Startup / Session Bootstrap,/management; /management/control-room,GET /bff/me; GET /bff/v5/control-room; GET /bff/events/stream,MeResponse loaded; no mock fallback in strict
+F02,Control Room Overview,/management/control-room,GET /bff/v5/control-room; GET /bff/v5/loop-runs; GET /bff/v5/sentinel/findings; GET /bff/v5/interventions,KPI/loops/findings/interventions render
+F03,Execution Loop / Persona Health,/management/loops/execution,GET /bff/v5/execution/persona-health; GET /bff/v5/execution/strategy-health,Persona matrix renders mode/status/score
+F04,Optimization Loop,/management/loops/optimization,GET /bff/v5/loop-runs?loopKind=optimization; GET /bff/rebalances,Stage timeline + approval links render
+F05,Sentinel Remediation,/management/sentinel,GET /bff/v5/sentinel/findings; POST /bff/v5/sentinel/remediation/{actionId}/execute,Precondition errors non-2xx; remediation command accepted
+F06,Human Intervention Queue,/management/interventions,GET /bff/v5/interventions; POST /bff/v5/interventions/{id}/decide,Decision flow and SSE update
+F07,Entity Registry,/management/* registry pages,GET /bff/{resource}; GET /bff/{resource}/{id},ListResponse + detail + 404 envelope
+F08,Create Write Intent,entity registry create drawers,POST /bff/{resource},Idempotency-Key; CommandResponse<T>; validation errors
+F09,High Risk Confirm Token,detail actions,GET cooldown; POST confirm-tokens; POST actions,Cooldown priority; token binding/reuse semantics
+F10,Incident Rollback Saga,/management/incidents/{id},POST rollback dry-run; POST rollback; GET rollback-sagas/{id},Saga stepper + audit + SSE
+F11,Handoff Reopen SLA,handoff drawer/routes,GET handoffs; POST reopen/respond/escalate,SLA not reset by default; segments visible
+F12,Approval Governance,/management/approvals,GET approvals; POST decide; POST two-man-sign; POST batch-decide,Quorum and partial bulk behavior
+F13,Agora Signal/Ask/Journal,/agora/*,GET /bff/agora/*; PATCH journal; POST ask,Ask streaming; merge patch atomic
+F14,SSE Reconnect/Resync,global,GET /bff/events/stream,Last-Event-Id replay; resync_required refetch
+F15,Strict vs Hybrid,global,all BFF calls,strict no fallback; hybrid banner
+F16,Audit / Correlation,write/action flows,all write/action endpoints,X-Request-Id / correlationId / audit/SSE chain
+F17,A11y,v5 key pages,n/a,No axe critical/serious
+F18,Perf/Stability,key pages,n/a,No rerender/perf budget violation

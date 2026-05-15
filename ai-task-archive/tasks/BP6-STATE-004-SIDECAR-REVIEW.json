@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "task_id": "BP6-STATE-004-SIDECAR-REVIEW",
+  "archived_at": "2026-04-17T09:55:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP6-STATE-004-SIDECAR-REVIEW",
+    "title": "Prepare BP6-STATE-004 review packet and evidence summary",
+    "summary_zh": "平行支援 BP6-STATE-004，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 6: Full Blueprint Completion",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/BP6-STATE-004/BP6-STATE-004-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized approved BP6-STATE-004 sidecar review packet as support-only done; artifact remains limited to the archived evidence summary and reviewer handoff packet, with no canonical or runtime changes.",
+    "last_update": "2026-04-17T09:55:06Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP6-STATE-004",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "review packet 已核對 archived task、confirmation doc 與 planning materialization；DB user、12-secret version coverage、以及 Step 3 的 semicolon normalization 敘述一致，可交還 owner 正式收尾。"
+    ],
+    "review_file": "support/sidecars/BP6-STATE-004/BP6-STATE-004-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T09:55:06Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "2b5832822a1c2c8d1adefcffd35fa973a69b35b1",
+      "commit_subject": "BP6-STATE-004-SIDECAR-REVIEW: finalize sidecar review packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BP6-STATE-004-SIDECAR-REVIEW",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 391,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP6-STATE-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T09:06:37Z",
+      "resolved_at": "2026-04-17T09:11:57Z"
+    },
+    {
+      "task_id": "BP6-STATE-004-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T09:17:21Z",
+      "resolved_at": "2026-04-17T09:20:33Z"
+    },
+    {
+      "task_id": "BP6-STATE-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-17T09:27:15Z",
+      "resolved_at": "2026-04-17T09:28:02Z"
+    },
+    {
+      "task_id": "BP6-STATE-004-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-17T09:29:58Z",
+      "resolved_at": "2026-04-17T09:32:38Z"
+    },
+    {
+      "task_id": "BP6-STATE-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T09:42:30Z",
+      "resolved_at": "2026-04-17T09:43:55Z"
+    },
+    {
+      "task_id": "BP6-STATE-004-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T09:46:56Z",
+      "resolved_at": "2026-04-17T09:47:17Z"
+    },
+    {
+      "task_id": "BP6-STATE-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T09:49:40Z",
+      "resolved_at": "2026-04-17T09:50:28Z"
+    },
+    {
+      "task_id": "BP6-STATE-004-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review packet ready: support/sidecars/BP6-STATE-004/BP6-STATE-004-SIDECAR-REVIEW.md now reflects the archived parent BP6-STATE-004 evidence surface, including DB-user creation, 12 secret-version coverage, and the final Step 3 semicolon-normalization fix in docs/gcp-bootstrap-confirmation.md / ai-task-archive/tasks/BP6-STATE-004.json.",
+      "status": "done",
+      "created_at": "2026-04-17T09:51:28Z",
+      "resolved_at": "2026-04-17T09:53:39Z"
+    },
+    {
+      "task_id": "BP6-STATE-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review packet approved: sidecar summary matches the archived BP6-STATE-004 evidence surface, including DB-user creation, 12-secret version coverage, and the final Step 3 semicolon-normalization fix. Owner can finalize.",
+      "status": "done",
+      "created_at": "2026-04-17T09:53:39Z",
+      "resolved_at": "2026-04-17T09:55:06Z"
+    }
+  ],
+  "blockers": []
+}

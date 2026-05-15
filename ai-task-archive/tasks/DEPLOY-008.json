@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "DEPLOY-008",
+  "archived_at": "2026-04-18T00:12:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DEPLOY-008",
+    "title": "phase6-2026-04-16-oss-ecosystem-closure",
+    "summary_zh": "建立 docker-compose.exec.yml，包含 VM-2 Execution Plane 所有服務：runtime-manager、pantheon-lean paper runtime、broker/exchange adapter sidecars，加上 VM-2 專用的 env.example 和 secrets 注入指南。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "DEPLOY-007"
+    ],
+    "artifacts": [
+      "[\"docker-compose.exec.yml\"",
+      "\"env/prod-exec.env.example\"",
+      "\"docs/deployment/exec-vm-secrets-guide.md\"]"
+    ],
+    "acceptance": [
+      "[\"docker compose -f docker-compose.exec.yml up 後 runtime-manager healthy\"",
+      "\"BFF/registry 等 control plane 服務不出現在此 compose\"",
+      "\"paper runtime 可以啟動\"]"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T15:05:08Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized the approved VM-2 execution-plane slice. docker-compose.exec.yml, env/prod-exec.env.example, and docs/deployment/exec-vm-secrets-guide.md now define the execution-only compose, env template, and secret-boundary runbook for runtime-manager, pantheon-lean paper bootstrap, and broker/exchange sidecars.",
+    "last_update": "2026-04-18T00:12:22Z",
+    "review_notes_zh": [
+      "三份 artifacts 審查通過：docker-compose.exec.yml 正確包含 runtime-manager、pantheon-lean-paper、broker/exchange adapters 及 signal-store，無 BFF/registry/governance 等 control-plane 服務；healthcheck endpoint 均使用 /__health__；env/prod-exec.env.example 覆蓋所有 VM-2 執行面變數且未洩漏 VM-1 服務；secrets 指南清楚定義 VM-2 secret 邊界與注入流程。pantheon-lean-live 缺少 signal-store 依賴與 URL，但已正確鎖在 profiles: live 後，非阻塞。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-18T00:12:22Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "824ca7c855b2ebcaeed8bc3b554de5072fbb5a21",
+      "commit_subject": "DEPLOY-008: add VM-2 execution-plane deployment slice",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "DEPLOY-008",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 487,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DEPLOY-008",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented VM-2 execution-plane split artifacts: docker-compose.exec.yml, env/prod-exec.env.example, exec-vm-secrets guide, and a paper-runtime bootstrap wrapper. Verified locally with docker compose config plus bring-up: runtime-manager, pantheon-lean-paper, broker-adapter, and exchange-adapter all reported healthy before teardown.",
+      "status": "done",
+      "created_at": "2026-04-18T00:06:48Z",
+      "resolved_at": "2026-04-18T00:08:39Z"
+    },
+    {
+      "task_id": "DEPLOY-008",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all three VM-2 execution-plane artifacts are correct and meet acceptance criteria. Returning to owner Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-18T00:08:39Z",
+      "resolved_at": "2026-04-18T00:12:22Z"
+    }
+  ],
+  "blockers": []
+}

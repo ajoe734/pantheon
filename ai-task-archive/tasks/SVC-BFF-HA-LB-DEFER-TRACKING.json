@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "task_id": "SVC-BFF-HA-LB-DEFER-TRACKING",
+  "archived_at": "2026-05-04T05:28:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-BFF-HA-LB-DEFER-TRACKING",
+    "title": "Record BFF HA/LB as explicit deferred topology item",
+    "summary_zh": "只把 BFF HA/LB 明確記為 deferred，不實作 replicas/LB；避免未來把 staging dual-VM 誤讀成 BFF HA 已完成。",
+    "phase": "Blueprint production hardening follow-up 2026-05-04",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT"
+    ],
+    "artifacts": [
+      "BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md",
+      "TARGET_ARCHITECTURE.md",
+      "docker-compose.control.yml",
+      "docs/deployment"
+    ],
+    "acceptance": [
+      "documents state BFF HA is intentionally deferred",
+      "compose remains single BFF instance for current staging baseline",
+      "no LB or replica implementation is added",
+      "decision explains low operator concurrency and future trigger conditions"
+    ],
+    "next": "Owner closeout complete: committed 5e1ce5b6; verified git diff --cached --check, ./scripts/validate_split_topology.sh, and rendered compose JSON BFF deferred contract; BFF HA/LB remains deferred with one operator-bff and no LB/replicas.",
+    "last_update": "2026-05-04T05:28:20Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-gap-materialization-20260504",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過",
+      "BFF HA/LB 已正確標為 deferred",
+      "compose contract 機器可讀欄位完整",
+      "re-entry gate 條件明確",
+      "無任何 replica 或 LB 實作被加入"
+    ],
+    "review_file": "docs/reviews/2026-05-04-svc-bff-ha-lb-defer-tracking-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-04T05:28:20Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "5e1ce5b642bb0beed0f9dcc92eb9e0eb6489b9c2",
+      "commit_subject": "SVC-BFF-HA-LB-DEFER-TRACKING record BFF HA LB deferral",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-BFF-HA-LB-DEFER-TRACKING",
+        "Reviewer": "Claude",
+        "Verification": "git diff --cached --check; ./scripts/validate_split_topology.sh; docker compose --env-file env/prod-control.env.example -f docker-compose.control.yml config --format json | jq -e '.\"x-pantheon-compose-contract\".bff_ha_lb_topology == \"deferred\" and .\"x-pantheon-compose-contract\".operator_bff_instances == 1 and .\"x-pantheon-compose-contract\".bff_load_balancer == \"none\" and ([.services | keys[] | select(test(\"bff\"; \"i\"))] == [\"operator-bff\"]) and ((.services[\"operator-bff\"].deploy.replicas? // null) == null)'"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 18,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 13,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-BFF-HA-LB-DEFER-TRACKING",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-04T04:40:24Z",
+      "resolved_at": "2026-05-04T05:04:40Z"
+    },
+    {
+      "task_id": "SVC-BFF-HA-LB-DEFER-TRACKING",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-04T05:08:39Z",
+      "resolved_at": "2026-05-04T05:13:53Z"
+    },
+    {
+      "task_id": "SVC-BFF-HA-LB-DEFER-TRACKING",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-04T05:13:52Z",
+      "resolved_at": "2026-05-04T05:15:04Z"
+    },
+    {
+      "task_id": "SVC-BFF-HA-LB-DEFER-TRACKING",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-04T05:19:51Z",
+      "resolved_at": "2026-05-04T05:21:04Z"
+    },
+    {
+      "task_id": "SVC-BFF-HA-LB-DEFER-TRACKING",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: documented BFF HA/LB as explicitly deferred in BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md, TARGET_ARCHITECTURE.md, docker-compose.control.yml, and docs/deployment/staging-live-topology.md; no replica/LB implementation added. Verification: bash scripts/validate_split_topology.sh; git diff --cached --check -- BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md TARGET_ARCHITECTURE.md docker-compose.control.yml docs/deployment/staging-live-topology.md; docker compose config checks show only operator-bff, deploy=null, bff_ha_lb_topology=deferred, operator_bff_instances=1, bff_load_balancer=none.",
+      "status": "done",
+      "created_at": "2026-05-04T05:22:47Z",
+      "resolved_at": "2026-05-04T05:25:54Z"
+    },
+    {
+      "task_id": "SVC-BFF-HA-LB-DEFER-TRACKING",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all acceptance criteria met. BFF HA/LB deferred documented in L1 policy, compose machine-readable contract, deployment topology doc, and TARGET_ARCHITECTURE north-star. No replica or LB added. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-04T05:25:54Z",
+      "resolved_at": "2026-05-04T05:28:20Z"
+    }
+  ],
+  "blockers": []
+}

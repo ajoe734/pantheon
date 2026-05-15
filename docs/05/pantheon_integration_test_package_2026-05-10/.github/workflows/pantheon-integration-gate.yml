@@ -1,0 +1,106 @@
+name: Pantheon FE-BFF Integration Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      fe_base_url:
+        description: "Hosted frontend URL"
+        required: false
+        default: "https://pantheon-dev.lovable.app"
+      bff_base_url:
+        description: "BFF base URL"
+        required: false
+        default: "https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io"
+
+jobs:
+  integration-gate:
+    runs-on: ubuntu-latest
+    env:
+      PANTHEON_FE_BASE_URL: ${{ inputs.fe_base_url }}
+      PANTHEON_BFF_BASE_URL: ${{ inputs.bff_base_url }}
+      VITE_BFF_MODE: live
+      VITE_BFF_FALLBACK: strict
+      PANTHEON_E2E_STRICT: "1"
+      PANTHEON_AUDIT_OUT_DIR: .lovable/audits
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install
+        run: npm ci
+
+      - name: Unit / integration tests
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+      - name: Contract drift
+        run: npm run test:contract
+
+      - name: Anonymous BFF route probe
+        run: node scripts/probe-bff-routes.mjs --anonymous
+
+      - name: Acquire BFF JWT
+        env:
+          PANTHEON_BFF_OIDC_CLIENT_ID: ${{ secrets.PANTHEON_BFF_OIDC_CLIENT_ID }}
+          PANTHEON_BFF_OIDC_CLIENT_SECRET: ${{ secrets.PANTHEON_BFF_OIDC_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          node --input-type=module - <<'NODE'
+          import fs from "node:fs";
+          const base = process.env.PANTHEON_BFF_BASE_URL;
+          const clientId = process.env.PANTHEON_BFF_OIDC_CLIENT_ID;
+          const clientSecret = process.env.PANTHEON_BFF_OIDC_CLIENT_SECRET;
+          if (!clientId || !clientSecret) {
+            throw new Error("Missing PANTHEON_BFF_OIDC_CLIENT_ID or PANTHEON_BFF_OIDC_CLIENT_SECRET");
+          }
+          const res = await fetch(`${base}/bff/auth/dev-login`, {
+            method: "POST",
+            headers: { "Accept": "application/json", "Content-Type": "application/json" },
+            body: JSON.stringify({
+              grant_type: "client_credentials",
+              client_id: clientId,
+              client_secret: clientSecret,
+            }),
+            signal: AbortSignal.timeout(20000),
+          });
+          const text = await res.text();
+          const json = text ? JSON.parse(text) : {};
+          if (!res.ok || !json.access_token) {
+            throw new Error(`BFF dev-login failed: ${res.status} ${text.slice(0, 300)}`);
+          }
+          console.log(`::add-mask::${json.access_token}`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `PANTHEON_BFF_ACCESS_TOKEN=${json.access_token}\n`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `PANTHEON_BFF_SMOKE_BEARER_TOKEN=${json.access_token}\n`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `BFF_AUTH_TOKEN=${json.access_token}\n`);
+          console.log(`Acquired BFF JWT expiring at ${json.expires_at || "unknown"}`);
+          NODE
+
+      - name: Authenticated BFF smoke
+        run: node scripts/probe-bff-authenticated-live.mjs
+
+      - name: Install Playwright
+        run: npx playwright install chromium --with-deps
+
+      - name: Hosted browser BFF probe
+        run: node scripts/probe-hosted-browser-bff.mjs
+
+      - name: Playwright E2E
+        run: npm run e2e
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pantheon-integration-evidence
+          path: |
+            .lovable/audits/*.md
+            playwright-report
+            test-results

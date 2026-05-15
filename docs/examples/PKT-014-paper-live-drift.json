@@ -1,0 +1,233 @@
+{
+  "runtime_id": "runtime-042",
+  "plan_ref": {
+    "plan_id": "plan-F-042",
+    "href": "/operator/deployment-plans/plan-F-042"
+  },
+  "artifact_ref": {
+    "artifact_id": "artifact-042",
+    "artifact_version": "v2.1.0"
+  },
+  "paper_baseline": {
+    "captured_at": "2026-04-09T16:00:00Z",
+    "deployment_stage": "paper",
+    "window": "24h",
+    "metrics": {
+      "pnl": -0.04,
+      "max_drawdown": 0.06,
+      "fill_rate": 0.97,
+      "avg_slippage_bps": 2.4,
+      "turnover": 0.32
+    }
+  },
+  "observed_state": {
+    "deployment_stage": "live",
+    "runtime_status": "running",
+    "observed_at": "2026-04-10T15:00:00Z",
+    "metrics": {
+      "pnl": -0.12,
+      "drawdown": 0.125,
+      "fill_rate": 0.94,
+      "avg_slippage_bps": 3.2,
+      "turnover": 0.41
+    }
+  },
+  "drift_groups": [
+    {
+      "group_id": "execution",
+      "label": "Execution",
+      "status": "watch",
+      "metrics": [
+        {
+          "metric_id": "fill_rate",
+          "label": "Fill rate",
+          "baseline_value": 0.97,
+          "observed_value": 0.94,
+          "delta": -0.03,
+          "threshold": ">= 0.95",
+          "status": "watch",
+          "unit": "ratio"
+        },
+        {
+          "metric_id": "turnover",
+          "label": "Turnover",
+          "baseline_value": 0.32,
+          "observed_value": 0.41,
+          "delta": 0.09,
+          "threshold": "<= 0.40",
+          "status": "watch",
+          "unit": "ratio"
+        }
+      ]
+    },
+    {
+      "group_id": "exposure",
+      "label": "Exposure",
+      "status": "breached",
+      "metrics": [
+        {
+          "metric_id": "max_drawdown",
+          "label": "Max drawdown",
+          "baseline_value": 0.06,
+          "observed_value": 0.125,
+          "delta": 0.065,
+          "threshold": "<= 0.08",
+          "status": "breached",
+          "unit": "ratio"
+        }
+      ]
+    },
+    {
+      "group_id": "slippage",
+      "label": "Slippage",
+      "status": "breached",
+      "metrics": [
+        {
+          "metric_id": "avg_slippage_bps",
+          "label": "Average slippage",
+          "baseline_value": 2.4,
+          "observed_value": 3.2,
+          "delta": 0.8,
+          "threshold": "<= 3.0",
+          "status": "breached",
+          "unit": "bps"
+        }
+      ]
+    },
+    {
+      "group_id": "risk_signals",
+      "label": "Risk Signals",
+      "status": "breached",
+      "metrics": [
+        {
+          "metric_id": "active_incident_count",
+          "label": "Active incident count",
+          "baseline_value": 0,
+          "observed_value": 1,
+          "delta": 1,
+          "threshold": "== 0",
+          "status": "breached",
+          "unit": "count"
+        },
+        {
+          "metric_id": "safe_mode_active",
+          "label": "Safe mode active",
+          "baseline_value": 0,
+          "observed_value": 1,
+          "delta": 1,
+          "threshold": "== 0",
+          "status": "breached",
+          "unit": "flag"
+        }
+      ]
+    }
+  ],
+  "threshold_evaluation": {
+    "overall_status": "breached",
+    "summary": "Observed live metrics exceed the published paper baseline envelope; operator review is required.",
+    "breached_metric_ids": [
+      "max_drawdown",
+      "avg_slippage_bps",
+      "active_incident_count",
+      "safe_mode_active"
+    ]
+  },
+  "evidence_refs": [
+    {
+      "ref_id": "approval-042",
+      "type": "ApprovalDecision",
+      "href": "/governance-approval-queue"
+    },
+    {
+      "ref_id": "inc-20260410-001",
+      "type": "IncidentCase",
+      "href": "/operator/incidents/inc-20260410-001"
+    },
+    {
+      "ref_id": "evo-dec-001",
+      "type": "EvolutionDecision",
+      "href": "/operator/post-incident-review?incident=inc-20260410-001"
+    },
+    {
+      "ref_id": "drift-report-runtime-042",
+      "type": "drift_report",
+      "href": null
+    }
+  ],
+  "recommended_actions": [
+    {
+      "action_id": "open-deployment-review",
+      "label": "Open deployment review",
+      "reason": "Re-verify promotion assumptions against observed live drift.",
+      "target_ref": {
+        "surface_id": "PKT-001",
+        "label": "Open deployment review",
+        "href": "/operator/deployment-review?plan=plan-F-042",
+        "target_id": "plan-F-042"
+      }
+    },
+    {
+      "action_id": "open-incident-response",
+      "label": "Open incident response",
+      "reason": "The active incident already tracks the drawdown breach.",
+      "target_ref": {
+        "surface_id": "PKT-002",
+        "label": "Open incident response",
+        "href": "/operator/incidents/inc-20260410-001",
+        "target_id": "inc-20260410-001"
+      }
+    },
+    {
+      "action_id": "open-post-incident-review",
+      "label": "Open post-incident review",
+      "reason": "Review evolution follow-up and drift evidence before another promotion step.",
+      "target_ref": {
+        "surface_id": "PKT-003",
+        "label": "Open post-incident review",
+        "href": "/operator/post-incident-review?incident=inc-20260410-001",
+        "target_id": "inc-20260410-001"
+      }
+    }
+  ],
+  "meta": {
+    "snapshot_at": "2026-04-18T09:34:32Z",
+    "surfaces": {
+      "paper_live_drift": {
+        "status": "ok",
+        "source": "bff_composed"
+      },
+      "drift_report": {
+        "status": "ok",
+        "source": "service_store"
+      },
+      "runtime_binding": {
+        "status": "ok",
+        "source": "canonical"
+      },
+      "telemetry_summary": {
+        "status": "ok",
+        "source": "service_store"
+      },
+      "telemetry_performance": {
+        "status": "ok",
+        "source": "service_store"
+      },
+      "approval_decision": {
+        "status": "ok",
+        "source": "canonical"
+      },
+      "incident": {
+        "status": "ok",
+        "source": "service_store"
+      },
+      "evolution": {
+        "status": "ok",
+        "source": "service_store"
+      }
+    },
+    "supporting_counts": {
+      "active_incident_count": 1,
+      "evolution_decision_count": 1
+    }
+  }
+}

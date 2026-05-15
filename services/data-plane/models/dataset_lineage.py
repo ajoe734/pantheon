@@ -15,12 +15,12 @@ import json
 
 class SourceClass(str, Enum):
     """Data source classification."""
-    MARKET = "market"
-    FUNDAMENTAL = "fundamental"
-    EVENT = "event"
-    ALTERNATIVE = "alternative"
-    EXECUTION_INTERNAL = "execution_internal"
-    HUMAN_FEEDBACK = "human_feedback"
+    OFFICIAL_REFERENCE = "official_reference"
+    BROKER_EXECUTION = "broker_execution"
+    RESEARCH_GRADE = "research_grade"
+    DERIVATIVE_ANALYTICS = "derivative_analytics"
+    CRYPTO_ANALYTICS = "crypto_analytics"
+    INTERNAL_CANONICAL = "internal_can"
 
 
 class AvailableTimePolicy(str, Enum):

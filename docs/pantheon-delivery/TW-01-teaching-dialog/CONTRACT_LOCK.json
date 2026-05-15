@@ -1,0 +1,47 @@
+{
+  "feature_id": "TW-01-teaching-dialog",
+  "status": "runtime-and-remote-publication-followup-required",
+  "backend_commit": "c2ded5aaefa7ba03b2ee43306859ce97013953ca",
+  "working_tree_only": false,
+  "verified_runtime_ref": "pantheon-head@c2ded5aaefa7ba03b2ee43306859ce97013953ca",
+  "live_http_runtime_ref": "http://127.0.0.1:18001",
+  "bff_contract_version": "pantheon-bff@c2ded5aaefa7ba03b2ee43306859ce97013953ca",
+  "source_payload": ".coordination/requests/TW-01-teaching-dialog-ui-done.yaml",
+  "source_commit": "4d19e0f31104e87294e267e1e6e1bc36065bf961",
+  "source_commit_note": "The reviewed TW-01 request pair and feedback bundle are internally consistent in this local front commit, but Pantheon could not find any remote branch containing that SHA after fetch --prune.",
+  "verified_front_workspace_head": "4d19e0f31104e87294e267e1e6e1bc36065bf961",
+  "feedback_bundle": [
+    "docs/pantheon-feedback/TW-01-teaching-dialog/LOVABLE_CHANGE_FEEDBACK.md",
+    "docs/pantheon-feedback/TW-01-teaching-dialog/API_GAP_REQUESTS.json",
+    "docs/pantheon-feedback/TW-01-teaching-dialog/UI_DECISIONS.md",
+    "docs/pantheon-feedback/TW-01-teaching-dialog/QA_STATUS.md"
+  ],
+  "endpoints": [
+    "POST /api/v1/trainer/sessions",
+    "GET /api/v1/trainer/sessions",
+    "GET /api/v1/trainer/sessions/{session_id}",
+    "POST /api/v1/trainer/sessions/{session_id}/message"
+  ],
+  "contract_paths": [
+    "docs/bff/TW-01-teaching-dialog.md",
+    "docs/examples/TW-01-teaching-dialog.json",
+    "docs/screens/TW-01-teaching-dialog.md",
+    "docs/pantheon-handoffs/TW-01-teaching-dialog/FRONTEND_CHANGE_SPEC.md"
+  ],
+  "pantheon_api_gap": false,
+  "runtime_refresh_required": true,
+  "verification_evidence": [
+    "Targeted Pantheon TW-01 contract tests passed: python3 -m pytest services/control-plane/bff/test_tw01_teaching_dialog_contract.py -q",
+    "Local front publication commit 4d19e0f31104e87294e267e1e6e1bc36065bf961 contains the canonical TW-01 request pair, feedback bundle, and reviewed UI files",
+    "Front verification passed: cd ../front-ai-trading-system && npx eslint src/pages/trainer/TeachingDialogList.tsx src/pages/trainer/TeachingDialogDetail.tsx src/pages/trainer/types.ts src/lib/bffClient.ts src/App.tsx",
+    "Front verification passed: cd ../front-ai-trading-system && npm run build",
+    "Local FastAPI TestClient degraded list/detail and unavailable list/detail probes returned 200 with trainer_dialog surfaces and workbench_detail=/trainer/sessions/{session_id}",
+    "Active operator-bff runtime at http://127.0.0.1:18001 returns 404 for GET /api/v1/trainer/sessions?persona_id=persona-alpha and its live OpenAPI document exposes no /api/v1/trainer/* paths",
+    "git -C ../front-ai-trading-system branch -r --contains 4d19e0f31104e87294e267e1e6e1bc36065bf961 returned no remote branch after fetch --prune"
+  ],
+  "followup_scope": [
+    "Refresh or redeploy the live operator-bff runtime and verify the TW-01 route family plus links.workbench_detail over real HTTP and in the deployed environment",
+    "Push 4d19e0f31104e87294e267e1e6e1bc36065bf961 or republish the same TW-01 bundle from another GitHub-visible commit or branch",
+    "Re-run live/deployed TW-01 QA after runtime refresh; emit a bff-gap if any required live field diverges from the published contract"
+  ]
+}

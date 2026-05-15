@@ -1,6 +1,6 @@
 # AI Collaboration Guide
 
-Last updated: 2026-04-09
+Last updated: 2026-04-29
 Status: canonical collaboration rules for the Pantheon project
 
 ## 0. Repository Architecture (2026-04-04 — migration complete)
@@ -37,25 +37,33 @@ git submodule update --init --recursive
 Read these in order before starting work:
 
 1. `AI_COLLABORATION_GUIDE.md`
-2. `current-work.md`
-3. `ai-status.json`
-4. `docs/02-architecture/consensus/phase1/README.md` when `discussion_planning` is active
-5. `docs/02-architecture/consensus/phase1/planning-session.json` when `discussion_planning` is active
+2. `ai-status.json`
+3. `current-work.md` as a human summary only
+4. the active planning session README named by `.orchestrator/planning-state.json` when `discussion_planning` is active
+5. the active `planning-session.json` named by `.orchestrator/planning-state.json` when `discussion_planning` is active
 6. `TARGET_ARCHITECTURE.md`
 7. `CANONICAL_DOCUMENT_MAP.md`
-8. `ROADMAP.md`
-9. `DEVELOPMENT_WORKBREAKDOWN.md`
-10. the L1 policy file for the topic you are touching
-11. `OSS_INTEGRATION_CHECKLIST.md`
-12. L3 supporting docs only when you need rationale or migration history
+8. `DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md`
+9. `ROADMAP.md`
+10. `DEVELOPMENT_WORKBREAKDOWN.md`
+11. `WORKBENCH_DELIVERY_BACKLOG.md`
+12. `DELIVERY_CLOSURE_AND_LOOP_STATES.md`
+13. `EXECUTION_PROOF_AND_MATURITY_LEVELS.md`
+14. the L1 policy file for the topic you are touching
+15. `OSS_INTEGRATION_CHECKLIST.md`
+16. L3 supporting docs only when you need rationale or migration history
 
-Canonical truth now uses four layers:
+Canonical truth now uses five layers:
 
 ### L0 Collaboration & State
 
 - `AI_COLLABORATION_GUIDE.md`: stable collaboration rules and command usage
 - `ai-status.json`: machine-readable live task state, ownership, blockers, handoffs
 - `ai-activity-log.jsonl`: append-only activity history
+- `.orchestrator/skills/task-closeout-finalization.md`: owner finalization, commit, and publication rules for `review_approved -> done`
+
+### L0.5 Derived Narrative
+
 - `current-work.md`: generated human-readable sprint snapshot
 
 ### L1 Platform Architecture & Policy
@@ -80,11 +88,19 @@ Canonical truth now uses four layers:
 
 ### L2 Planning & Execution
 
-- `docs/02-architecture/consensus/phase1/README.md`: discussion planning operating model and baton loop
-- `docs/02-architecture/consensus/phase1/planning-session.json`: machine-readable planning session state
+- `CANONICAL_DOCUMENT_MAP.md`: canonical routing and precedence
+- `DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md`: blueprint-vs-record governance rules
 - `ROADMAP.md`: phased program plan and critical path
 - `DEVELOPMENT_WORKBREAKDOWN.md`: full platform backlog and task decomposition
+- `WORKBENCH_DELIVERY_BACKLOG.md`: remaining module-level productization backlog
+- `DELIVERY_CLOSURE_AND_LOOP_STATES.md`: truthful closure semantics for packet loops
+- `EXECUTION_PROOF_AND_MATURITY_LEVELS.md`: evidence ladder for runtime and system proof claims
 - `OSS_INTEGRATION_CHECKLIST.md`: upstream OSS integration evidence checklist
+
+Planning sessions remain working records, even when active:
+
+- the active planning session README named by `.orchestrator/planning-state.json`
+- the active `planning-session.json` named by `.orchestrator/planning-state.json`
 
 ### L3 Supporting Design & Migration
 
@@ -97,10 +113,50 @@ Canonical truth now uses four layers:
 Layer rules:
 
 - L0 state files coordinate work and do not define product semantics by themselves.
+- L0.5 derived files help humans navigate but never outrank machine-readable state.
 - L1 defines current canonical architecture and policy.
 - L2 may sequence work but must not override L1 semantics.
 - L3 may explain or motivate decisions but does not override L1/L2.
 - `CANONICAL_DOCUMENT_MAP.md` is the lookup table when two docs seem close in scope.
+- planning sessions, review docs, and execution artifacts are records unless explicitly promoted.
+
+### State Placement Rules
+
+Do not treat `ai-status.json` as a dump for every mode's internal state.
+
+Use this decision rule:
+
+- if another agent must still see the fact after process restart, worker replacement, or mode switch, it may belong in `ai-status.json`
+- if the value is mainly for one active mode's execution loop, debug, retry, approval, or rendering logic, it belongs in that mode's own state file instead
+
+What belongs in `ai-status.json`:
+
+- durable task identity and scope: `id`, `title`, `phase`, `depends_on`, `artifacts`, acceptance summary
+- canonical ownership and lifecycle: `owner`, `reviewer`, `status`, `waiting_for`, `terminal_outcome`
+- durable coordination facts shared across modes: blocker state, handoff state, review approval, final delivery summary
+- concise mode results that other modes must inherit: accepted planning outcome materialized as tasks, finalized delivery commit hash, approved owner/reviewer reassignment
+
+What must not be stored in `ai-status.json`:
+
+- worker/runtime internals such as `pid`, `session_id`, `queue_event_id`, `attempt_count`, `next_retry_at`, `last_heartbeat_at`, `dispatch_pause`, `provider quota`, or raw provider errors
+- approval workflow internals such as tool payloads, resume overrides, approval signatures, or broker evidence blobs
+- planning baton internals such as round ownership, current draft editor, intermediate objections, or per-round review packet metadata
+- dashboard-only derived values such as occupancy summaries, truth mismatches, humanized badges, or stale/runtime reconciliation helpers
+
+State file ownership:
+
+- `ai-status.json`: cross-mode durable execution truth
+- `.orchestrator/planning-state.json`: planning mode machine-readable session state
+- `.orchestrator/state.json`: supervisor / queue / worker / runtime state
+- `.orchestrator/approval-queue.json`: approval queue and approval lifecycle state
+- `ai-activity-log.jsonl`: append-only historical events and audit trail
+- `current-work.md` and dashboard bundle: derived human-readable summaries only
+
+Size rule:
+
+- prefer storing a short stable summary in `ai-status.json` and keep the heavy payload in the mode-specific file or evidence file
+- if a field would grow on every poll / retry / heartbeat, it does not belong in `ai-status.json`
+- if removing the field would not change task ownership, blocker truth, review truth, or delivery truth, it does not belong in `ai-status.json`
 
 Compatibility-only files:
 
@@ -136,8 +192,9 @@ Separate stable capability lanes from sprint ownership.
 
 - `Claude`: execution plane, control plane, governance review
 - `Gemini`: GCP, CI/CD, runtime packaging, worker operations
+- `Gemini2`: GCP, CI/CD, runtime packaging, worker operations
 - `Codex`: integration contracts, status system, schema, acceptance
-- `Qwen`: integration, schema, acceptance, code-agent execution
+- `Codex2`: integration contracts, schema, acceptance, sidecar review
 - `Copilot`: coding assist, research ingestion, external search, spec review, critique
 
 Recommended local mode for `Copilot`:
@@ -172,6 +229,36 @@ Lifecycle rule:
 - `done`: owner has finished final checks, accepted the approved state, and formally closed the task
 - `supersede`: exceptional retirement path for obsolete lanes; it closes the task with a terminal note instead of pretending the original scope was fully implemented
 
+### Task Closeout And Publication
+
+`review_approved` is not terminal. It means the reviewer gate passed and the owner must run the closeout checklist before `done`.
+
+Closeout is governed by `.orchestrator/skills/task-closeout-finalization.md`.
+
+Owner finalization requirements:
+
+- re-read the task brief, reviewer approval, and touched artifacts
+- update required task-specific records, docs, evidence notes, or handoff / acceptance packets
+- run focused verification and record exact commands or evidence
+- inspect `git status --short` and keep task-owned changes separate from unrelated dirty worktree changes
+- create a task-scoped commit whenever the task changed repo files and an isolated commit is possible
+- use `AI_NAME=<Owner> ./scripts/ai-status.sh done <task-id> "<checkpoint message>"` only after closeout is complete
+
+Commit requirements:
+
+- subject includes the task id
+- body includes `LLM-Agent: <owner>`, `Task-ID: <task-id>`, and `Reviewer: <reviewer>`
+- body includes a concise verification summary when tests or checks were run
+
+Publication rule:
+
+- closeout is not complete until the finished work is published to the configured upstream whenever that is safely possible
+- `scripts/ai-status.sh done` records branch, commit, dirty count, remote/upstream, and push status
+- after the task-scoped commit, `done` transition, generated state/archive update, and any required state/archive commit, run a normal non-force `git push` to the configured upstream
+- if delivery metadata shows `push_status: ahead`, the task is publish-incomplete until pushed or an explicit human hold says not to publish
+- chair man must approve a normal non-force `git push` when branch/upstream are clear, closeout commit metadata matches the task or closeout batch, and no human hold is present
+- never use force, mirror, delete, all-branch, or tag-wide pushes as routine closeout
+
 ### Discussion Planning Mode
 
 `discussion_planning` is additive. It does not replace the current execution lifecycle.
@@ -181,6 +268,18 @@ Use it before materializing execution tasks when we still need written consensus
 - architecture or source-of-truth boundaries
 - delivery order / wave order
 - task slicing and reviewer assignment
+
+Planning mode now follows two stages:
+
+1. `document_reconciliation`
+2. `execution_planning`
+
+That means the session must first identify whether canonical blueprint or planning docs are insufficient, and either:
+
+- update the canonical docs
+- or explicitly conclude that no canonical doc change is needed
+
+Only then may the session move to final human approval and execution materialization.
 
 Canonical planning workspace:
 
@@ -197,6 +296,7 @@ Rules:
 - reviewers write cited comments in the current round file instead of directly rewriting the shared draft
 - `planning-session.json` is the machine-readable source of truth for planning state
 - `.orchestrator/planning-state.json` is derived for dashboard rendering
+- document reconciliation must be completed before `ready_for_human`, `human-gate approved`, or `materialize`
 - execution tasks still live in `ai-status.json`; planning drafts should not be inserted there prematurely
 
 Typical flow:
@@ -204,7 +304,7 @@ Typical flow:
 1. all lanes read L0 -> L1 -> L2 canonical docs
 2. each lane writes an independent readout
 3. `Codex` creates the first starter draft
-4. `Qwen -> Gemini -> Copilot -> Claude` run cited cross-review rounds
+4. `Codex2 -> Gemini -> Copilot -> Claude` run cited cross-review rounds
 5. unresolved semantic conflicts become explicit `human_required` items
 6. `Claude` synthesizes the final `consensus-packet.md`
 7. after human acceptance, convert the agreed slices into execution tasks through `scripts/ai-status.sh`
@@ -231,12 +331,12 @@ Planning commands:
 ```bash
 ./scripts/planning-state.sh start phase1 "Kick off the discussion planning session"
 ./scripts/planning-state.sh readout Codex submitted "Codex readout is ready"
-./scripts/planning-state.sh baton Qwen Gemini "Baton moved to Qwen for cited cross-review"
+./scripts/planning-state.sh baton Codex2 Gemini "Baton moved to Codex2 for cited cross-review"
 ./scripts/planning-state.sh round 1 open "Opened review round 1"
 ./scripts/planning-state.sh issue DIV-001 high human_required "Ownership/source-of-truth conflict"
 ./scripts/planning-state.sh consensus ready_for_human "Consensus packet drafted and waiting for human acceptance"
 ./scripts/planning-state.sh human-gate approved "Human accepted the planning packet"
-./scripts/planning-state.sh propose-task W3-001A Qwen Claude "Callcenter & CTI correlation baseline"
+./scripts/planning-state.sh propose-task W3-001A Codex2 Claude "Callcenter & CTI correlation baseline"
 ./scripts/sync-state.sh
 ```
 
@@ -372,7 +472,7 @@ Please read these files before starting:
 - the L1 policy document that matches your task
 - L3 supporting docs only if you need rationale or migration history
 
-You are [Claude/Gemini/Codex/Qwen/Copilot].
+You are [Claude/Claude2/Gemini/Gemini2/Codex/Codex2/Copilot].
 Follow the current owner/reviewer assignments from ai-status.json.
 Update progress through scripts/ai-status.sh instead of manually editing multiple Markdown files.
 Work in this order: finish assigned reviews first, then finalize your own `review_approved` tasks, then continue your own unblocked tasks, then claim other safe tasks and set the original owner as reviewer.

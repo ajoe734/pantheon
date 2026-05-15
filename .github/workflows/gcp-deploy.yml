@@ -1,37 +1,128 @@
-name: Build and Deploy LEAN to GCP
+name: Publish images to Artifact Registry
 
+# Manual image publish. Keep Cloud Build off push to control GitHub Actions
+# minutes and GCP spend; run this workflow explicitly when a candidate image is
+# needed.
 on:
-  push:
-    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      services:
+        description: >
+          Comma-separated service IDs to build, or "all" for a full rebuild.
+          Leave blank to auto-detect from the selected ref's previous commit;
+          no build runs if nothing image-impacting changed.
+        required: false
+        default: ""
+      env_tag:
+        description: "Environment pointer tag (e.g. dev-candidate, paper-candidate)"
+        required: false
+        default: "dev-candidate"
+
+permissions:
+  contents: read
+  id-token: write   # required for OIDC token exchange with GCP Workload Identity
+
+concurrency:
+  group: gcp-deploy-${{ github.ref }}
+  cancel-in-progress: false   # never cancel an in-flight publish
 
 jobs:
-  setup-build-publish:
-    name: Setup, Build, and Publish
+  publish:
+    name: Build and publish to Artifact Registry
     runs-on: ubuntu-latest
+
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history needed for changed-path detection
+          submodules: recursive
 
-    - name: Authenticate to Google Cloud
-      uses: google-github-actions/auth@v2
-      with:
-        credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-    - name: Set up Cloud SDK
-      uses: google-github-actions/setup-gcloud@v2
+      # Identity: OIDC to GCP Workload Identity Federation.
+      # GitHub exchanges an OIDC token for a short-lived GCP access token.
+      # No long-lived service-account key is stored in GitHub.
+      #
+      # Required GCP-side setup is documented in Section 19 of
+      # Pantheon_GCP_GitHub_Docker deployment docs.
+      # Store these as repository variables, not secrets:
+      #   GCP_PROJECT_ID, GCP_PROJECT_NUMBER, GCP_WIF_PROVIDER,
+      #   GCP_SERVICE_ACCOUNT, and optionally GCP_BUILD_STAGING_BUCKET.
+      - name: Authenticate to Google Cloud via Workload Identity Federation
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
 
-    - name: Configure Docker for GCP
-      run: gcloud auth configure-docker asia-east1-docker.pkg.dev
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
 
-    - name: Build Docker Image
-      run: |
-        docker build -t asia-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/openclaw/lean-engine:${{ github.sha }} .
+      - name: Detect changed build targets
+        id: detect
+        run: |
+          # If the caller supplied an explicit service list, skip detection.
+          MANUAL_SERVICES="${{ github.event.inputs.services }}"
+          if [ -n "${MANUAL_SERVICES}" ]; then
+            echo "services=${MANUAL_SERVICES}" >> "$GITHUB_OUTPUT"
+            echo "[info] manual override: building ${MANUAL_SERVICES}"
+            exit 0
+          fi
 
-    - name: Push Docker Image
-      run: |
-        docker push asia-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/openclaw/lean-engine:${{ github.sha }}
+          BASE_SHA="$(git rev-parse "${GITHUB_SHA}^" 2>/dev/null || true)"
+          if [ -z "${BASE_SHA}" ]; then
+            echo "services=" >> "$GITHUB_OUTPUT"
+            echo "[info] no parent commit available; set services=all or a comma-separated service list"
+            exit 0
+          fi
 
-    # 這裡可以加入部署到 GKE 的指令
-    # - name: Deploy to GKE
-    #   run: |
-    #     kubectl set image deployment/lean-execution execution=asia-east1-docker.pkg.dev/...
+          export STAGE0_BASE_SHA="${BASE_SHA}"
+          export STAGE0_HEAD_SHA="${GITHUB_SHA}"
+          REPORT="$(python3 scripts/ci_stage0.py detect-changes)"
+
+          GLOBAL_CHANGED="$(printf '%s' "${REPORT}" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["global_changed"]).lower())')"
+          GLOBAL_IMAGE_CHANGED="$(printf '%s' "${REPORT}" | python3 -c 'import json,sys; files=json.load(sys.stdin)["changed_files"]; image_global_files={"cloudbuild.yaml","docker-compose.yml","docker-compose.remote-dev.yml"}; print(str(any(path in image_global_files for path in files)).lower())')"
+          if [ "${GLOBAL_CHANGED}" = "true" ] && [ "${GLOBAL_IMAGE_CHANGED}" = "true" ]; then
+            SERVICES="all"
+          elif [ "${GLOBAL_CHANGED}" = "true" ]; then
+            SERVICES=""
+          else
+            SERVICES="$(printf '%s' "${REPORT}" | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["build_ids"]))')"
+          fi
+
+          echo "services=${SERVICES}" >> "$GITHUB_OUTPUT"
+
+          if [ -z "${SERVICES}" ]; then
+            echo "[info] no image build targets changed; skipping Cloud Build submission"
+          elif [ "${SERVICES}" = "all" ]; then
+            echo "[info] image-impacting global change detected; building all services"
+          else
+            echo "[info] services to build: ${SERVICES}"
+          fi
+
+      # The build runs entirely in GCP; GitHub Actions only submits the job and
+      # waits for the result. All image construction and Artifact Registry
+      # publishing happens inside Cloud Build, never on the GitHub runner.
+      - name: Submit Cloud Build job
+        if: steps.detect.outputs.services != ''
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCS_SOURCE_STAGING_DIR: ${{ vars.GCP_BUILD_STAGING_BUCKET || 'gs://pantheon-493602-pantheon-builds/source' }}
+          ENV_TAG: ${{ github.event.inputs.env_tag || 'dev-candidate' }}
+          SERVICES: ${{ steps.detect.outputs.services }}
+        run: |
+          gcloud builds submit \
+            --project="${GCP_PROJECT_ID}" \
+            --config=cloudbuild.yaml \
+            --gcs-source-staging-dir="${GCS_SOURCE_STAGING_DIR}" \
+            --substitutions="_ENV_TAG=${ENV_TAG},_SERVICES=${SERVICES}" \
+            --timeout=3600s \
+            .
+
+      - name: Skip notice
+        if: steps.detect.outputs.services == ''
+        run: echo "No image build targets selected for this manual publish; Cloud Build submission skipped."

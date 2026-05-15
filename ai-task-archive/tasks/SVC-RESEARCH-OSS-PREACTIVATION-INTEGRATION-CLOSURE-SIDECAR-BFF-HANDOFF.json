@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-30T00:47:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Research / OSS Pre-Activation Integration",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC",
+      "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE",
+      "SVC-OSS-DORMANT-COMPOSE-PROFILES",
+      "SVC-OSS-DORMANT-SMOKE-MATRIX",
+      "SVC-OPENCLAW-RUNTIME-ADOPTION-SCAFFOLD",
+      "SVC-QLIB-GATED-PREACTIVATION-PREFLIGHT",
+      "SVC-TRL-GATED-PREACTIVATION-PREFLIGHT",
+      "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE/SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized sidecar BFF/frontend handoff packet after reviewer approval. Task-scoped commit 9d1743f. Verification: python3 -m pytest services/control-plane/bff/test_research_oss_preactivation_contract.py (2 passed).",
+    "last_update": "2026-04-30T00:47:56Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar packet is scoped to BFF/frontend handoff, accurately preserves pre-activation-only and fail-closed boundaries, and does not modify canonical truth or runtime behavior.",
+      "Reviewer note: the packet lists non-PANTHEON compose env aliases as observed wiring; current operator-bff compose wiring also uses PANTHEON_* API URL envs, and the read store supports both alias families."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T00:47:56Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "9d1743f701dca886ed5e7146c557759ec3c01816",
+      "commit_subject": "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE-SIDECAR-BFF-HANDOFF add BFF handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Verification": "python3 -m pytest services/control-plane/bff/test_research_oss_preactivation_contract.py (2 passed)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 14,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Sidecar BFF/frontend handoff packet created at support/sidecars/SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE/SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE-SIDECAR-BFF-HANDOFF.md. It summarizes the operator OSS preactivation read surface, response contract, frontend journey, query gaps, and acceptance checks without changing canonical truth or runtime code. Verification: python3 -m pytest services/control-plane/bff/test_research_oss_preactivation_contract.py passed (2 tests).",
+      "status": "done",
+      "created_at": "2026-04-30T00:45:39Z",
+      "resolved_at": "2026-04-30T00:46:38Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Sidecar packet reviewed and approved; return to Codex2 for owner finalization. Note current operator-bff compose uses PANTHEON_* API URL envs while the packet also documents supported legacy aliases.",
+      "status": "done",
+      "created_at": "2026-04-30T00:46:38Z",
+      "resolved_at": "2026-04-30T00:47:56Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "task_id": "P2-LIVE-KERNEL-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-05-01T14:59:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P2-LIVE-KERNEL-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare P2-LIVE-KERNEL-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 P2-LIVE-KERNEL-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "P2 Wave 7",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "P1-LIVE-PLAN-001",
+      "P1-KILL-001"
+    ],
+    "artifacts": [
+      "support/sidecars/P2-LIVE-KERNEL-001/P2-LIVE-KERNEL-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar acceptance packet finalized after Codex approval; support artifact and review packet committed in 4ac80e6. Verification: re-read packet/review and checked scoped git status.",
+    "last_update": "2026-05-01T14:59:55Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "P2-LIVE-KERNEL-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar packet 維持 support-only，不修改 canonical truth；父任務可吸收其 fail-closed checklist。"
+    ],
+    "review_file": "support/reviews/P2-LIVE-KERNEL-001-SIDECAR-ACCEPTANCE-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T14:59:55Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "4ac80e67bda6d812744942ff3441143ced24716b",
+      "commit_subject": "P2-LIVE-KERNEL-001-SIDECAR-ACCEPTANCE finalize packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "P2-LIVE-KERNEL-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Verification": "sed -n '1,260p' support/sidecars/P2-LIVE-KERNEL-001/P2-LIVE-KERNEL-001-SIDECAR-ACCEPTANCE.md; sed -n '1,220p' support/reviews/P2-LIVE-KERNEL-001-SIDECAR-ACCEPTANCE-codex-review.md; git status --short"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 145,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P2-LIVE-KERNEL-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet ready for review: support/sidecars/P2-LIVE-KERNEL-001/P2-LIVE-KERNEL-001-SIDECAR-ACCEPTANCE.md. Scope stayed support-only; no canonical truth or runtime implementation changed.",
+      "status": "done",
+      "created_at": "2026-05-01T14:54:28Z",
+      "resolved_at": "2026-05-01T14:55:20Z"
+    },
+    {
+      "task_id": "P2-LIVE-KERNEL-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Sidecar acceptance packet approved; support-only checklist is ready for parent task use.",
+      "status": "done",
+      "created_at": "2026-05-01T14:55:20Z",
+      "resolved_at": "2026-05-01T14:59:55Z"
+    }
+  ],
+  "blockers": []
+}

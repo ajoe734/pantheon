@@ -2,7 +2,6 @@ feature_id: PKT-003-inspiration-graph
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
 status: ready
-task: EW-04-OPEN-001
 pantheon_pr: null
 base_url: null
 workbench: evolution-workbench
@@ -10,19 +9,12 @@ screen: inspiration-graph
 screen_id: screen-evolution-inspiration-graph
 ui_spec_path: docs/screens/PKT-003-inspiration-graph.md
 frontend_change_spec_path: docs/pantheon-handoffs/PKT-003-inspiration-graph/FRONTEND_CHANGE_SPEC.md
-readiness_note: >-
-  BFF route GET /api/v1/lineage/inspiration/{artifact_id} is confirmed live.
-  Production UI build is unblocked. This PKT-003-named file remains only to
-  satisfy older delivery_dependency references; use
-  .coordination/responses/EW-04-inspiration-graph-lovable-ui-task.yaml as the
-  active route-live dispatch artifact.
 allowed_endpoints:
 - GET /api/v1/lineage/inspiration/{artifact_id}
 constraints:
 - use existing bff client only
 - do not add raw fetch in components
 - do not import demo providers
-- do not traverse GET /api/v1/lineage or GET /api/v1/lineage/graph to synthesize the graph
 - if any required field is missing, emit a bff-gap handoff instead of mocking
 acceptance:
 - build the Inspiration Graph panel from the BFF inspiration route only — route is
@@ -35,7 +27,6 @@ acceptance:
 - display meta.snapshot_at as the graph data timestamp
 - do not traverse GET /api/v1/lineage or GET /api/v1/lineage/graph to synthesize the
   graph
-- render "Artifact not found" on 404 — do not synthesize a graph
 required_feedback:
 - docs/pantheon-feedback/PKT-003-inspiration-graph/LOVABLE_CHANGE_FEEDBACK.md
 - docs/pantheon-feedback/PKT-003-inspiration-graph/API_GAP_REQUESTS.json
@@ -43,10 +34,8 @@ required_feedback:
 - docs/pantheon-feedback/PKT-003-inspiration-graph/QA_STATUS.md
 delivery_dependencies:
 - .coordination/responses/PKT-003-inspiration-graph-contract-ready.yaml
-- .coordination/responses/EW-04-inspiration-graph-contract-ready.yaml
 links:
   lovable_project_url: null
-  active_dispatch_ref: .coordination/responses/EW-04-inspiration-graph-lovable-ui-task.yaml
   bff_spec_path: docs/bff/PKT-003-inspiration-graph.md
   ui_spec_path: docs/screens/PKT-003-inspiration-graph.md
   frontend_change_spec_path: docs/pantheon-handoffs/PKT-003-inspiration-graph/FRONTEND_CHANGE_SPEC.md
@@ -57,11 +46,5 @@ gap_handoff_path: .coordination/requests/PKT-003-inspiration-graph-bff-gap.yaml
 gap_handoff_template: .coordination/requests/PKT-003-inspiration-graph-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/PKT-003-inspiration-graph-ui-done.yaml
 completion_handoff_template: .coordination/requests/PKT-003-inspiration-graph-ui-done.example.yaml
-frontend_feedback_handoff_path: .coordination/requests/PKT-003-inspiration-graph-frontend-feedback.yaml
-review_findings_ref: .coordination/reviews/PKT-003-inspiration-graph-review.md
-historical_note: >-
-  The cycle-2 republish called out by the old PKT-003 follow-up loop is already
-  closed by .coordination/requests/PKT-003-inspiration-graph-ui-done.yaml and
-  .coordination/requests/PKT-003-inspiration-graph-frontend-feedback.yaml. This
-  mirror remains for naming-chain compatibility only and should not be treated
-  as a pending frontend follow-up artifact.
+feedback_handoff_path: .coordination/requests/PKT-003-inspiration-graph-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/PKT-003-inspiration-graph-frontend-feedback.example.yaml

@@ -1,0 +1,264 @@
+{
+  "_note": "Contract-published example payloads for RW-04 Experiment Launch. Use as the implementation target for the BFF and frontend integration. Do not use as mock production state.",
+  "_packet_status": "contract-published",
+  "_task": "RW-04-EXPERIMENT-001",
+  "launch_request": {
+    "ticket_id": "rt-20260419-007",
+    "experiment_name": "Momentum decay replay - shorter half-life",
+    "strategy_selector": {
+      "strategy_id": "momentum-regime-replay",
+      "variant_id": "half-life-3d"
+    },
+    "parameter_set": {
+      "signal_half_life_days": 3.8,
+      "rebalance_interval": "1d",
+      "universe": "liquid-us-equities",
+      "risk_cap": 0.08
+    },
+    "run_config": {
+      "dataset_ref": "dataset-us-equities-2026q2",
+      "time_range": {
+        "start_at": "2025-01-01T00:00:00Z",
+        "end_at": "2026-04-18T23:59:59Z"
+      },
+      "execution_mode": "backtest",
+      "priority": "high",
+      "requested_by": "researcher-alpha"
+    },
+    "launch_context": {
+      "analysis_refs": [
+        "analysis-20260419-007-a"
+      ]
+    }
+  },
+  "launch_response": {
+    "experiment_id": "exp-20260419-015",
+    "ticket_id": "rt-20260419-007",
+    "status": "queued",
+    "queued_at": "2026-04-19T21:02:00Z",
+    "allowedActions": {
+      "canCancel": true
+    },
+    "links": {
+      "self": "/api/v1/experiments/exp-20260419-015",
+      "workbench_detail": "/research/experiments/exp-20260419-015"
+    }
+  },
+  "experiment_history_request": {
+    "ticket_id": "rt-20260419-007",
+    "status": null,
+    "page_token": null,
+    "page_size": 20
+  },
+  "experiment_history_response": {
+    "data": [
+      {
+        "experiment_id": "exp-20260419-015",
+        "ticket_id": "rt-20260419-007",
+        "experiment_name": "Momentum decay replay - shorter half-life",
+        "status": "running",
+        "queued_at": "2026-04-19T21:02:00Z",
+        "started_at": "2026-04-19T21:03:10Z",
+        "completed_at": null,
+        "artifact_ids": [],
+        "allowedActions": {
+          "canCancel": true
+        },
+        "links": {
+          "self": "/api/v1/experiments/exp-20260419-015",
+          "workbench_detail": "/research/experiments/exp-20260419-015"
+        }
+      },
+      {
+        "experiment_id": "exp-20260418-009",
+        "ticket_id": "rt-20260419-007",
+        "experiment_name": "Momentum decay replay - baseline half-life",
+        "status": "completed",
+        "queued_at": "2026-04-18T15:45:00Z",
+        "started_at": "2026-04-18T15:46:00Z",
+        "completed_at": "2026-04-18T16:12:00Z",
+        "artifact_ids": [
+          "artifact-20260418-041",
+          "artifact-20260418-042"
+        ],
+        "allowedActions": {
+          "canCancel": false
+        },
+        "links": {
+          "self": "/api/v1/experiments/exp-20260418-009",
+          "workbench_detail": "/research/experiments/exp-20260418-009"
+        }
+      },
+      {
+        "experiment_id": "exp-20260417-004",
+        "ticket_id": "rt-20260419-007",
+        "experiment_name": "Momentum decay replay - unstable universe draft",
+        "status": "failed",
+        "queued_at": "2026-04-17T09:10:00Z",
+        "started_at": "2026-04-17T09:11:12Z",
+        "completed_at": "2026-04-17T09:19:41Z",
+        "artifact_ids": [],
+        "allowedActions": {
+          "canCancel": false
+        },
+        "links": {
+          "self": "/api/v1/experiments/exp-20260417-004",
+          "workbench_detail": "/research/experiments/exp-20260417-004"
+        }
+      }
+    ],
+    "page_info": {
+      "next_page_token": null,
+      "total": 3
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T21:08:00Z",
+      "surfaces": {
+        "experiment_history": "fresh"
+      }
+    }
+  },
+  "experiment_detail_response": {
+    "experiment_id": "exp-20260419-015",
+    "ticket_id": "rt-20260419-007",
+    "experiment_name": "Momentum decay replay - shorter half-life",
+    "status": "running",
+    "queued_at": "2026-04-19T21:02:00Z",
+    "started_at": "2026-04-19T21:03:10Z",
+    "completed_at": null,
+    "progress": {
+      "percent": 58,
+      "phase": "simulation",
+      "message": "Processing the final third of replay windows for the shortened half-life configuration."
+    },
+    "strategy_selector": {
+      "strategy_id": "momentum-regime-replay",
+      "variant_id": "half-life-3d"
+    },
+    "parameter_set": {
+      "signal_half_life_days": 3.8,
+      "rebalance_interval": "1d",
+      "universe": "liquid-us-equities",
+      "risk_cap": 0.08
+    },
+    "run_config": {
+      "dataset_ref": "dataset-us-equities-2026q2",
+      "time_range": {
+        "start_at": "2025-01-01T00:00:00Z",
+        "end_at": "2026-04-18T23:59:59Z"
+      },
+      "execution_mode": "backtest",
+      "priority": "high",
+      "requested_by": "researcher-alpha"
+    },
+    "launch_context": {
+      "analysis_refs": [
+        "analysis-20260419-007-a"
+      ]
+    },
+    "validation_warnings": [
+      {
+        "code": "dataset_recency_lag",
+        "message": "The selected dataset watermark lags the latest ticket note by 6 hours."
+      }
+    ],
+    "artifact_ids": [],
+    "failure": {
+      "reason_code": null,
+      "message": null
+    },
+    "allowedActions": {
+      "canCancel": true
+    },
+    "links": {
+      "self": "/api/v1/experiments/exp-20260419-015",
+      "workbench_detail": "/research/experiments/exp-20260419-015",
+      "linked_ticket_detail": "/research/tickets/rt-20260419-007"
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T21:08:00Z",
+      "surfaces": {
+        "experiment_status": "fresh"
+      }
+    }
+  },
+  "cancel_request": {
+    "reason": "Stopping the replay because the strategy owner updated the universe definition."
+  },
+  "cancel_response": {
+    "experiment_id": "exp-20260419-015",
+    "status": "canceled",
+    "completed_at": "2026-04-19T21:09:12Z",
+    "allowedActions": {
+      "canCancel": false
+    }
+  },
+  "queued_cancel_response": {
+    "_note": "Cancel accepted for a run that was still queued (queued -> canceled direct path). canCancel must be false in response.",
+    "experiment_id": "exp-20260419-015",
+    "status": "canceled",
+    "completed_at": "2026-04-19T21:02:45Z",
+    "allowedActions": {
+      "canCancel": false
+    }
+  },
+  "terminal_detail_response": {
+    "experiment_id": "exp-20260417-004",
+    "ticket_id": "rt-20260419-007",
+    "experiment_name": "Momentum decay replay - unstable universe draft",
+    "status": "failed",
+    "queued_at": "2026-04-17T09:10:00Z",
+    "started_at": "2026-04-17T09:11:12Z",
+    "completed_at": "2026-04-17T09:19:41Z",
+    "progress": {
+      "percent": 100,
+      "phase": "validation",
+      "message": "Run halted after backend validation rejected the draft universe manifest."
+    },
+    "strategy_selector": {
+      "strategy_id": "momentum-regime-replay",
+      "variant_id": "unstable-universe-draft"
+    },
+    "parameter_set": {
+      "signal_half_life_days": 5.0,
+      "rebalance_interval": "1d",
+      "universe": "draft-us-equities",
+      "risk_cap": 0.08
+    },
+    "run_config": {
+      "dataset_ref": "dataset-us-equities-2026q2",
+      "time_range": {
+        "start_at": "2025-01-01T00:00:00Z",
+        "end_at": "2026-04-16T23:59:59Z"
+      },
+      "execution_mode": "backtest",
+      "priority": "normal",
+      "requested_by": "researcher-alpha"
+    },
+    "launch_context": {
+      "analysis_refs": [
+        "analysis-20260417-003-c"
+      ]
+    },
+    "validation_warnings": [],
+    "artifact_ids": [],
+    "failure": {
+      "reason_code": "invalid_universe_manifest",
+      "message": "The selected universe manifest references delisted symbols outside the dataset watermark."
+    },
+    "allowedActions": {
+      "canCancel": false
+    },
+    "links": {
+      "self": "/api/v1/experiments/exp-20260417-004",
+      "workbench_detail": "/research/experiments/exp-20260417-004",
+      "linked_ticket_detail": "/research/tickets/rt-20260419-007"
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T21:10:00Z",
+      "surfaces": {
+        "experiment_status": "fresh"
+      }
+    }
+  }
+}

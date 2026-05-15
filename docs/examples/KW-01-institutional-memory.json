@@ -1,0 +1,41 @@
+{
+  "entry_id": "mem-7f2a1b9c-4d5e-4f6a-8b0c-9d1e2f3a4b5c",
+  "knowledge_type": "incident_lesson",
+  "content": {
+    "headline": "Risk exposure exceeded thresholds during BTC-regime shift due to stale parameter sync",
+    "body": "Detailed investigation into the incident on 2026-04-05 revealed that the latency in parameter propagation from the Research Plane to the Execution Plane allowed the persona 'Alpha-Momentum' to maintain high exposure even as market volatility spiked. The lesson learned is that parameter staleness signals must trigger an immediate safety halt or aggressive de-risking if the drift exceeds 300ms during high-volatility regimes.",
+    "structured_payload": {
+      "affected_personas": ["Alpha-Momentum", "Beta-Arbitrage"],
+      "drift_observed_ms": 450,
+      "max_exposure_violation_pct": 12.5
+    },
+    "tags": ["risk", "latency", "regime-shift", "btc"]
+  },
+  "source_event": {
+    "type": "postmortem_published",
+    "id": "pm-2026-04-05-btc-drift",
+    "href": "/operator/post-incident-review?incident=inc-2026-04-05-001"
+  },
+  "contributing_persona_ids": ["Alpha-Momentum"],
+  "written_at": "2026-04-07T14:30:00Z",
+  "write_authority": "incident-svc",
+  "scope": {
+    "type": "system_wide",
+    "filter": null
+  },
+  "lifecycle": {
+    "status": "active",
+    "superseded_by": null
+  },
+  "usage": {
+    "reuse_count": 28,
+    "last_cited_at": "2026-04-19T08:45:00Z"
+  },
+  "meta": {
+    "snapshot_at": "2026-04-19T10:00:00Z",
+    "surfaces": {
+      "entry_detail": "ok",
+      "source_context": "ok"
+    }
+  }
+}

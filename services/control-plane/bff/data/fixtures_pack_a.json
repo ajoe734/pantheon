@@ -1,0 +1,420 @@
+{
+  "fixture_pack_id": "BFF-CONSOL-008-pack-a",
+  "generated_for_task": "BFF-CONSOL-008",
+  "description": "Canonical BFF fixture pack A for management-console live list and detail smoke coverage.",
+  "policy": {
+    "scope": "bff_fixture_only",
+    "production_truth": false,
+    "paper_canary_truth_impact": "none",
+    "activation": "Loaded only through ReadSurfaceStore local snapshot fixture fallback."
+  },
+  "families": {
+    "strategies": [
+      "strategy-pack-a-momentum"
+    ],
+    "personas": [
+      "persona-pack-a-momentum"
+    ],
+    "capital_pools": [
+      "pool-pack-a-ops"
+    ],
+    "rebalances": [
+      "rebalance-pack-a-001"
+    ],
+    "deployments": [
+      "plan-pack-a-paper-001"
+    ]
+  },
+  "datasets": {
+    "strategy_specs": {
+      "strategy-pack-a-momentum": {
+        "id": "strategy-pack-a-momentum",
+        "strategy_id": "strategy-pack-a-momentum",
+        "title": "Pack A Momentum Carry Strategy",
+        "current_spec_version_id": "spec-pack-a-momentum-v1",
+        "current_spec_version": "v1.0.0",
+        "persona_ids": [
+          "persona-pack-a-momentum"
+        ],
+        "versions": [
+          {
+            "spec_version_id": "spec-pack-a-momentum-v1",
+            "spec_version": "v1.0.0",
+            "strategy_id": "strategy-pack-a-momentum",
+            "title": "Pack A Momentum Carry Strategy",
+            "lifecycle_state": "approved",
+            "source_kind": "bff_fixture_pack_a",
+            "persona_ids": [
+              "persona-pack-a-momentum"
+            ],
+            "created_at": "2026-05-13T00:00:00Z",
+            "updated_at": "2026-05-13T00:20:00Z",
+            "created_by": "BFF-CONSOL-008",
+            "hypothesis": "Short horizon momentum carry remains positive in the paper fixture universe when volatility gates are enforced.",
+            "objective": "Provide a non-empty canonical strategy fixture linked to experiment, artifact, lineage, and audit records.",
+            "market_scope": {
+              "universe": "fixture-paper-us-equities",
+              "asset_classes": [
+                "equity"
+              ],
+              "regions": [
+                "US"
+              ]
+            },
+            "execution_profile": {
+              "execution_mode_hint": "paper",
+              "capital_pool_id": "pool-pack-a-ops",
+              "max_concurrent_runtime_count": 1
+            },
+            "evaluation_plan": {
+              "metric_gates": [
+                {
+                  "metric": "sharpe_ratio",
+                  "operator": ">=",
+                  "threshold": 1.0
+                },
+                {
+                  "metric": "max_drawdown",
+                  "operator": "<=",
+                  "threshold": 0.08
+                }
+              ],
+              "review_window": "30d"
+            },
+            "governance": {
+              "approval_required": true,
+              "approval_decision_id": "approval-pack-a-deploy",
+              "risk_policy_ref": "risk-policy-pack-a-paper"
+            },
+            "citation_bundle": {
+              "evidence_refs": [
+                {
+                  "ref_id": "audit-pack-a-strategy-approved",
+                  "kind": "governance_audit_event"
+                }
+              ],
+              "memory_anchors": [],
+              "insight_citations": []
+            }
+          }
+        ]
+      }
+    },
+    "research_experiments": {
+      "exp-pack-a-momentum-001": {
+        "experiment_id": "exp-pack-a-momentum-001",
+        "ticket_id": "rt-pack-a-momentum",
+        "experiment_name": "Pack A momentum carry validation",
+        "status": "completed",
+        "queued_at": "2026-05-13T00:05:00Z",
+        "started_at": "2026-05-13T00:06:00Z",
+        "completed_at": "2026-05-13T00:16:00Z",
+        "linked_strategy_id": "strategy-pack-a-momentum",
+        "strategy_selector": {
+          "strategy_id": "strategy-pack-a-momentum",
+          "variant_id": "pack-a-v1"
+        },
+        "parameter_set": {
+          "lookback_days": 20,
+          "volatility_gate": true
+        },
+        "run_config": {
+          "dataset_ref": "fixture://bff-consol-008/ohlcv-paper",
+          "time_range": {
+            "start_at": "2026-04-01T00:00:00Z",
+            "end_at": "2026-05-01T00:00:00Z"
+          },
+          "execution_mode": "offline_fixture",
+          "priority": "normal",
+          "requested_by": "BFF-CONSOL-008"
+        },
+        "launch_context": {
+          "analysis_refs": [],
+          "operator_note": "Fixture experiment only; no broker or paper-canary side effect."
+        },
+        "progress": {
+          "percent": 100,
+          "phase": "completed",
+          "message": "Fixture validation completed."
+        },
+        "artifact_ids": [
+          "artifact-pack-a-momentum-v1"
+        ],
+        "failure": {
+          "reason_code": null,
+          "message": null
+        }
+      }
+    },
+    "research_artifacts": {
+      "artifact-pack-a-momentum-v1": {
+        "artifact_id": "artifact-pack-a-momentum-v1",
+        "lineage_id": "lineage-pack-a-momentum",
+        "version": 1,
+        "status": "sealed",
+        "name": "Pack A Momentum Carry Model",
+        "artifact_type": "strategy_model",
+        "description": "Sealed fixture artifact linked to strategy-pack-a-momentum.",
+        "produced_by_experiment_id": "exp-pack-a-momentum-001",
+        "linked_ticket_id": "rt-pack-a-momentum",
+        "linked_strategy_id": "strategy-pack-a-momentum",
+        "created_at": "2026-05-13T00:17:00Z",
+        "sealed_at": "2026-05-13T00:18:00Z",
+        "metrics": {
+          "sharpe_ratio": 1.21,
+          "sortino_ratio": 1.58,
+          "max_drawdown": 0.047,
+          "annualized_return": 0.142,
+          "win_rate": 0.56,
+          "total_trades": 42
+        },
+        "parameters": {
+          "fast_period": 10,
+          "slow_period": 30,
+          "position_sizing": "risk_parity_fixture",
+          "risk_per_trade": 0.004
+        },
+        "provenance": {
+          "source_refs": [
+            "spec-pack-a-momentum-v1"
+          ],
+          "experiment_refs": [
+            {
+              "experiment_id": "exp-pack-a-momentum-001",
+              "strategy_id": "strategy-pack-a-momentum"
+            }
+          ],
+          "created_by": "BFF-CONSOL-008"
+        }
+      }
+    },
+    "lineage_edges": {
+      "lineage-pack-a-strategy-artifact": {
+        "id": "lineage-pack-a-strategy-artifact",
+        "strategy_id": "strategy-pack-a-momentum",
+        "from_artifact_id": "spec-pack-a-momentum-v1",
+        "to_artifact_id": "artifact-pack-a-momentum-v1",
+        "edge_type": "derived_artifact",
+        "created_at": "2026-05-13T00:18:30Z",
+        "created_by": "BFF-CONSOL-008"
+      }
+    },
+    "governance_audit_events": [
+      {
+        "entry_id": "audit-pack-a-strategy-approved",
+        "timestamp": "2026-05-13T00:19:00Z",
+        "actor": "fixture-governance-reviewer",
+        "action_type": "strategy_spec_approved",
+        "target_type": "strategy",
+        "target_id": "strategy-pack-a-momentum",
+        "summary": "Fixture strategy approved for BFF management-console smoke only.",
+        "evidence_ref": "fixture://bff-consol-008/strategy-pack-a-momentum"
+      },
+      {
+        "entry_id": "audit-pack-a-persona-policy",
+        "timestamp": "2026-05-13T00:21:00Z",
+        "actor": "fixture-persona-reviewer",
+        "action_type": "route_policy_published",
+        "target_type": "persona",
+        "target_id": "persona-pack-a-momentum",
+        "summary": "Fixture persona route policy and evaluation skeleton published."
+      }
+    ],
+    "personas": {
+      "persona-pack-a-momentum": {
+        "id": "persona-pack-a-momentum",
+        "persona_id": "persona-pack-a-momentum",
+        "name": "Pack A Momentum Operator",
+        "lifecycle_state": "active",
+        "mandate": "systematic_momentum_paper_ops",
+        "strategy_family": "momentum",
+        "created_at": "2026-05-13T00:00:00Z",
+        "last_active_at": "2026-05-13T00:21:00Z",
+        "metadata": {
+          "route_policy_id": "route-policy-pack-a-momentum",
+          "evaluation_profile_id": "eval-pack-a-momentum"
+        }
+      }
+    },
+    "persona_route_policies": {
+      "persona-pack-a-momentum": {
+        "personaId": "persona-pack-a-momentum",
+        "version": "v1",
+        "rules": [
+          {
+            "route": "strategy-pack-a-momentum",
+            "mode": "paper_only",
+            "capital_pool_id": "pool-pack-a-ops",
+            "requires_consult_policy": "consult-policy-pack-a-momentum"
+          }
+        ],
+        "consult_policy": {
+          "id": "consult-policy-pack-a-momentum",
+          "persona_id": "persona-pack-a-momentum"
+        }
+      }
+    },
+    "consult_policies": {
+      "persona-pack-a-momentum": {
+        "id": "consult-policy-pack-a-momentum",
+        "persona_id": "persona-pack-a-momentum",
+        "required_reviewers": 1,
+        "required_committees": [],
+        "trigger_rules": [
+          {
+            "condition": "paper_deployment_change",
+            "description": "Fixture persona must request governance review before changing paper deployment routing."
+          }
+        ],
+        "forbidden_solo_actions": [
+          "approve_live_deployment"
+        ],
+        "escalation_rules": [
+          {
+            "trigger": "risk_gate_breach",
+            "escalate_to": "governance_committee"
+          }
+        ]
+      }
+    },
+    "sessions": {
+      "session-pack-a-momentum-activity": {
+        "id": "session-pack-a-momentum-activity",
+        "session_id": "session-pack-a-momentum-activity",
+        "persona_id": "persona-pack-a-momentum",
+        "session_type": "operator_activity",
+        "status": "completed",
+        "topic": "Pack A persona routed strategy activity",
+        "started_at": "2026-05-13T00:21:30Z",
+        "ended_at": "2026-05-13T00:22:30Z",
+        "summary": "Fixture activity row for persona detail smoke; no runtime side effect."
+      }
+    },
+    "teaching_sessions": {
+      "eval-pack-a-momentum-001": {
+        "session_id": "eval-pack-a-momentum-001",
+        "persona_id": "persona-pack-a-momentum",
+        "status": "completed",
+        "objective": "Fixture evaluation skeleton for Pack A persona routing behavior.",
+        "started_at": "2026-05-13T00:22:00Z",
+        "ended_at": "2026-05-13T00:27:00Z",
+        "evaluation": {
+          "suite_id": "eval-suite-pack-a",
+          "score": 0.82,
+          "passed": true,
+          "notes": "Non-empty evaluation skeleton for BFF persona detail smoke."
+        }
+      }
+    },
+    "capital_pools": {
+      "pool-pack-a-ops": {
+        "id": "pool-pack-a-ops",
+        "pool_id": "pool-pack-a-ops",
+        "name": "Pack A Paper Operations Pool",
+        "status": "ready",
+        "owner_id": "fixture-ops-team",
+        "owner_type": "control-plane",
+        "single_runtime_enforced": true,
+        "risk_policy_ref": "risk-policy-pack-a-paper",
+        "capital_allocation": 1000000,
+        "currency": "USD",
+        "max_drawdown_pct": 8.0
+      }
+    },
+    "bindings": {
+      "binding-pack-a-persona-pool": {
+        "id": "binding-pack-a-persona-pool",
+        "binding_id": "binding-pack-a-persona-pool",
+        "persona_id": "persona-pack-a-momentum",
+        "capital_pool_id": "pool-pack-a-ops",
+        "role": "paper_owner",
+        "validity": "active",
+        "status": "active",
+        "allowed_deployment_scope": "paper"
+      }
+    },
+    "deployment_plans": {
+      "plan-pack-a-paper-001": {
+        "id": "plan-pack-a-paper-001",
+        "plan_id": "plan-pack-a-paper-001",
+        "stage": "paper",
+        "current_stage": "none",
+        "target_stage": "paper",
+        "status": "approved",
+        "transition_type": "activate",
+        "artifact_id": "artifact-pack-a-momentum-v1",
+        "artifact_version": "v1.0.0",
+        "submitted_at": "2026-05-13T00:28:00Z",
+        "approval_decision_id": "approval-pack-a-deploy",
+        "approval_ref": {
+          "approval_decision_id": "approval-pack-a-deploy",
+          "href": "/bff/approvals/approval-pack-a-deploy"
+        },
+        "capital_pool_id": "pool-pack-a-ops",
+        "binding_ids": [
+          "binding-pack-a-persona-pool"
+        ],
+        "runtime_binding_id": "runtime-pack-a-paper-001",
+        "stages": [
+          {
+            "stage": "paper",
+            "status": "approved",
+            "approved_by": "fixture-governance-reviewer",
+            "approved_at": "2026-05-13T00:29:00Z"
+          }
+        ]
+      }
+    },
+    "approval_decisions": {
+      "approval-pack-a-deploy": {
+        "id": "approval-pack-a-deploy",
+        "decision_id": "approval-pack-a-deploy",
+        "outcome": "approved",
+        "state": "decided",
+        "reviewer": "fixture-governance-reviewer",
+        "actor_role": "reviewer",
+        "decided_at": "2026-05-13T00:29:00Z",
+        "risk_level": "low",
+        "rationale": "Fixture paper deployment approved for BFF smoke; no live or canary authority granted."
+      }
+    },
+    "runtime_bindings": {
+      "runtime-pack-a-paper-001": {
+        "id": "runtime-pack-a-paper-001",
+        "binding_id": "runtime-pack-a-paper-001",
+        "runtime_id": "runtime-pack-a-paper-001",
+        "plan_id": "plan-pack-a-paper-001",
+        "artifact_id": "artifact-pack-a-momentum-v1",
+        "artifact_version": "v1.0.0",
+        "deployment_stage": "paper",
+        "status": "bound",
+        "capital_pool_id": "pool-pack-a-ops"
+      }
+    },
+    "rebalances": {
+      "rebalance-pack-a-001": {
+        "id": "rebalance-pack-a-001",
+        "rebalance_id": "rebalance-pack-a-001",
+        "capital_pool_id": "pool-pack-a-ops",
+        "status": "completed",
+        "reason": "Fixture rebalance keeps pack A pool weights aligned to the paper strategy.",
+        "params": {
+          "target_weights": [
+            {
+              "strategy_id": "strategy-pack-a-momentum",
+              "weight": 1.0
+            }
+          ]
+        },
+        "created_at": "2026-05-13T00:30:00Z",
+        "updated_at": "2026-05-13T00:31:00Z",
+        "created_by": "BFF-CONSOL-008",
+        "command_audit": {
+          "submitted_by": "BFF-CONSOL-008",
+          "submitted_at": "2026-05-13T00:30:00Z",
+          "side_effect_scope": "fixture_only"
+        }
+      }
+    }
+  }
+}

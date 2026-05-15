@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "task_id": "AUD-CLAUDE-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AUD-CLAUDE-001",
+    "title": "Audit prior execution and control-plane work against the OSS integration model",
+    "phase": "Audit",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "audits/oss-alignment/claude_audit.md"
+    ],
+    "acceptance": [
+      "P3-001, P4-001, EX-001, OC-001, OC-003 assessed against OSS integration checklist",
+      "findings written to audits/oss-alignment/claude_audit.md",
+      "required follow-up tasks identified"
+    ],
+    "next": "Audit accepted as a valid corrective checkpoint. Confirmed: EX-001 is already reset to in_progress, upstream OpenClaw source selection is already captured in SPIKE-OC-001, and router contract now documents the persona stub as a temporary local surrogate. Remaining value: keep the audit as sequencing guidance for LEAN-native smoke coverage and upstream adapter follow-up.",
+    "last_update": "2026-04-04T13:54:39Z",
+    "review_notes_zh": [
+      "審查通過：Claude 的 audit 仍是有效的 OSS 整合校正點，主要缺口判斷成立。",
+      "需要加註時序修正：EX-001 已在 audit 後被重設為 in_progress，且 contract path 已補到 services/execution/artifact-loader/。",
+      "P4-001 的 persona stub 定位也已正式寫入 router contract；後續重點保留在 P3-001 的真 LEAN bridge、EX-001 的實作與 smoke test，以及 repo 邊界收斂。"
+    ],
+    "review_file": "audits/oss-alignment/review_aud_claude_001_codex.md",
+    "summary_zh": "審查先前執行層與 control-plane 工作是否符合 upstream OSS 整合模型。"
+  },
+  "handoffs": [
+    {
+      "task_id": "AUD-CLAUDE-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Audit complete. Full findings at audits/oss-alignment/claude_audit.md. Summary: (1) EX-001 must be reset to in_progress/blocked — artifact-loader/ does not exist despite done status. (2) P3-001 valid design but needs LEAN integration bridge: pin LEAN dep, fix _resolve_symbol() to use Symbol.Create(), add smoke test. (3) P4-001 valid; persona agent is local stub — upstream OpenClaw integration decision must be formally documented. (4) OC-001 and OC-003 valid as local contracts; upstream adapter work blocked on OpenClaw source selection. Recommended follow-up: 6 new tasks or corrections listed in §Required Follow-up.",
+      "status": "done",
+      "created_at": "2026-04-02T13:51:16Z",
+      "resolved_at": "2026-04-04T13:54:39Z"
+    }
+  ],
+  "blockers": []
+}

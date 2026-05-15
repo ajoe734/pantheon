@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "task_id": "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
+  "archived_at": "2026-04-30T14:12:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
+    "title": "W&B dormant OSS smoke matrix alignment",
+    "summary_zh": "Dormant OSS matrix has a stale W&B denial-string assertion while the code now permits offline local-store opt-in and keeps online SDK activation gated. Align smoke evidence with current gate policy.",
+    "phase": "OSS Pre-activation Hardening",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "scripts/smoke_dormant_oss_matrix.py",
+      "services/registry/experiments/config.py",
+      "services/registry/experiments/WANDB_ACTIVATION.md",
+      "docs"
+    ],
+    "acceptance": [
+      "python3 scripts/smoke_dormant_oss_matrix.py passes",
+      "W&B row verifies offline-store gate and deferred-prep compatibility alias",
+      "PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1 python3 services/registry/experiments/smoke_test.py --backend wandb passes",
+      "no W&B SDK-backed or online activation is introduced"
+    ],
+    "next": "Closed W&B dormant matrix alignment after Codex review; offline-store gate and deferred-prep compatibility alias are both verified without online W&B activation.",
+    "last_update": "2026-04-30T14:12:20Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-fulltest-materialization-20260430",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Codex review approved W&B dormant matrix alignment. The matrix now verifies the offline-store gate, keeps deferred-prep alias compatibility, and does not introduce W&B SDK-backed or online activation."
+    ],
+    "review_file": ".orchestrator/reviews/SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T14:12:20Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "7346726d60b4acb18da20a4c9bce091d57d12039",
+      "commit_subject": "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN align W&B gate smoke",
+      "commit_author": {
+        "name": "Codex2",
+        "email": "codex2@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verification": "cd services/registry/experiments && python3 -m unittest test_adapter.py",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 22,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:21:19Z",
+      "resolved_at": "2026-04-30T13:25:15Z"
+    },
+    {
+      "task_id": "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:25:14Z",
+      "resolved_at": "2026-04-30T13:28:22Z"
+    },
+    {
+      "task_id": "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:28:37Z",
+      "resolved_at": "2026-04-30T13:49:46Z"
+    },
+    {
+      "task_id": "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Aligned dormant W&B matrix with offline-store gate policy: denial check now scrubs both W&B gate env vars, asserts offline local-store denial text, verifies canonical PANTHEON_ENABLE_WANDB_OFFLINE_STORE smoke, and verifies PANTHEON_ENABLE_WANDB_DEFERRED_PREP compatibility alias. Verification: python3 scripts/smoke_dormant_oss_matrix.py; python3 scripts/smoke_dormant_oss_matrix.py --json-out /tmp/pantheon-dormant-matrix.json; PANTHEON_ENABLE_WANDB_OFFLINE_STORE=1 python3 services/registry/experiments/smoke_test.py --backend wandb; PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1 python3 services/registry/experiments/smoke_test.py --backend wandb; cd services/registry/experiments && python3 -m unittest test_adapter.py.",
+      "status": "done",
+      "created_at": "2026-04-30T14:10:41Z",
+      "resolved_at": "2026-04-30T14:12:05Z"
+    },
+    {
+      "task_id": "SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Codex review approved W&B dormant matrix alignment; owner may finalize with review artifact .orchestrator/reviews/SVC-OSS-WANDB-DORMANT-MATRIX-ALIGN-review-codex.md.",
+      "status": "done",
+      "created_at": "2026-04-30T14:12:05Z",
+      "resolved_at": "2026-04-30T14:12:21Z"
+    }
+  ],
+  "blockers": []
+}

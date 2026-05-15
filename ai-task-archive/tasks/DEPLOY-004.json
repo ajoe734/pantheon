@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "task_id": "DEPLOY-004",
+  "archived_at": "2026-04-17T23:18:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DEPLOY-004",
+    "title": "phase6-2026-04-16-oss-ecosystem-closure",
+    "summary_zh": "建立 lineage-read-svc 和 promotion-svc 兩個全新的最小 HTTP 服務：lineage read 提供 GET /api/v1/lineage 查詢路徑，promotion-svc 提供 ApprovalDecision / DeploymentPlan CRUD，各自補 main.py、Dockerfile、requirements.txt，並加入 docker-compose.yml。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "DEPLOY-001"
+    ],
+    "artifacts": [
+      "[\"services/lineage-read/main.py\"",
+      "\"services/lineage-read/Dockerfile\"",
+      "\"services/promotion/main.py\"",
+      "\"services/promotion/Dockerfile\"",
+      "\"docker-compose.yml\"]"
+    ],
+    "acceptance": [
+      "[\"lineage-read GET /api/v1/lineage 回傳有效 JSON\"",
+      "\"promotion POST /api/v1/approvals 可建立 ApprovalDecision\"",
+      "\"兩個服務 docker compose up 後 healthy\"]"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T15:05:08Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized: lineage-read and promotion artifacts complete, compose healthchecks wired, reviewer smoke checks passed. Task closed.",
+    "last_update": "2026-04-17T23:18:54Z",
+    "review_notes_zh": [
+      "Reviewer acceptance: 已核對 services/lineage-read 與 services/promotion 的 main.py、Dockerfile、requirements.txt、docker-compose wiring 與 healthcheck；並以 TestClient 完成 lineage-read health/create/list/get 及 promotion approval->decide->deployment smoke 驗證，happy path 正常、governance validation 生效。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T23:18:54Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "9609466c8caa9361c5653053b273a24678bc1466",
+      "commit_subject": "DEPLOY-004: finalize lineage-read and promotion service closure",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owner finalization": "artifacts verified (lineage-read GET /api/v1/lineage,",
+        "LLM-Agent": "Claude",
+        "Task-ID": "DEPLOY-004",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 478,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DEPLOY-004",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T22:55:43Z",
+      "resolved_at": "2026-04-17T22:56:51Z"
+    },
+    {
+      "task_id": "DEPLOY-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All DEPLOY-004 artifacts verified complete: services/lineage-read/main.py (GET /api/v1/lineage, port 8094) + Dockerfile + requirements.txt; services/promotion/main.py (POST /api/v1/approvals, POST /api/v1/deployments, port 8089) + Dockerfile + requirements.txt; docker-compose.yml entries with healthchecks for both services. Governance module dependencies confirmed at services/control-plane/governance. Ready for Codex acceptance review.",
+      "status": "done",
+      "created_at": "2026-04-17T23:10:20Z",
+      "resolved_at": "2026-04-17T23:17:16Z"
+    },
+    {
+      "task_id": "DEPLOY-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Approved after reviewer verification: lineage-read and promotion artifacts are complete, compose healthchecks are wired, and service-level smoke checks passed. Ready for owner finalization.",
+      "status": "done",
+      "created_at": "2026-04-17T23:17:16Z",
+      "resolved_at": "2026-04-17T23:18:54Z"
+    }
+  ],
+  "blockers": []
+}

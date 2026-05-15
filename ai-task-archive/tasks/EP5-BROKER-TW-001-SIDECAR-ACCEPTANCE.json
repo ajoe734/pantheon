@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "EP5-BROKER-TW-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-05-10T15:06:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EP5-BROKER-TW-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare EP5-BROKER-TW-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 EP5-BROKER-TW-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EP5 Broker TW Activation 2026-05-10",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/EP5-BROKER-TW-001/EP5-BROKER-TW-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: support artifact finalized in commit 0ee9936f; verification passed with git diff --check -- support/sidecars/EP5-BROKER-TW-001/EP5-BROKER-TW-001-SIDECAR-ACCEPTANCE.md. Pre-existing dirty files outside this sidecar scope remain unstaged.",
+    "last_update": "2026-05-10T15:06:29Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EP5-BROKER-TW-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar acceptance packet approved: accurately reflects parent scope, no canonical truth mutation, fail-closed boundary explicit, dependency map correct",
+      "Section 8 reviewer checklist passes on all 6 checks; parent implementation already confirmed at 32 tests passing"
+    ],
+    "review_file": "support/sidecars/EP5-BROKER-TW-001/EP5-BROKER-TW-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-10T15:06:29Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "0ee9936f5c4dcd9ef3145695a69fd1c2ec2de161",
+      "commit_subject": "EP5-BROKER-TW-001-SIDECAR-ACCEPTANCE: finalize support packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "EP5-BROKER-TW-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude",
+        "Verification": "git diff --check -- support/sidecars/EP5-BROKER-TW-001/EP5-BROKER-TW-001-SIDECAR-ACCEPTANCE.md"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 9,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 14,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EP5-BROKER-TW-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only acceptance packet created at support/sidecars/EP5-BROKER-TW-001/EP5-BROKER-TW-001-SIDECAR-ACCEPTANCE.md; ready for Claude review. Verification: git diff --check on the sidecar artifact passed.",
+      "status": "done",
+      "created_at": "2026-05-10T13:34:51Z",
+      "resolved_at": "2026-05-10T13:46:45Z"
+    },
+    {
+      "task_id": "EP5-BROKER-TW-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet approved by Claude. All review guardrails satisfied: support-artifact only, no L1 mutation, parent acceptance matrix is concrete and grounded in current repo files. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-10T13:46:45Z",
+      "resolved_at": "2026-05-10T15:06:29Z"
+    }
+  ],
+  "blockers": []
+}

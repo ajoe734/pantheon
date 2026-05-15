@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-FE-004-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-09T17:54:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-FE-004-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BFF-LUV-FE-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BFF-LUV-FE-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "BFF Execute-Plans Frontend Live Completion 2026-05-09",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "BFF-LUV-FE-001"
+    ],
+    "artifacts": [
+      "support/sidecars/BFF-LUV-FE-004/BFF-LUV-FE-004-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: support packet and Claude2 approval reviewed; task artifact committed as dc385fc9. Verification: git diff --check -- support/sidecars/BFF-LUV-FE-004/BFF-LUV-FE-004-SIDECAR-BFF-HANDOFF.md .orchestrator/reviews/BFF-LUV-FE-004-SIDECAR-BFF-HANDOFF-review-claude2.md; git diff --cached --check.",
+    "last_update": "2026-05-09T17:54:00Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BFF-LUV-FE-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar packet 僅含支援材料，未修改 canonical/runtime/frontend 實作。",
+      "Gap matrix 與 Codex Rev3 blocking finding 一致，Rev4 已交付 adaptLive normalization 修正。",
+      "Operator journey 明確排除 live-capital side-effect routes，smoke 範圍安全。",
+      "Parent owner (Codex) 可直接依 absorption checklist 決定是否納入 FE-004 實作記錄。"
+    ],
+    "review_file": ".orchestrator/reviews/BFF-LUV-FE-004-SIDECAR-BFF-HANDOFF-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-09T17:54:00Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "dc385fc920d32e733ea66c1690ce07d3d7ba9aad",
+      "commit_subject": "BFF-LUV-FE-004-SIDECAR-BFF-HANDOFF: add support packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-LUV-FE-004-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude2",
+        "Verification": "git diff --check -- support/sidecars/BFF-LUV-FE-004/BFF-LUV-FE-004-SIDECAR-BFF-HANDOFF.md .orchestrator/reviews/BFF-LUV-FE-004-SIDECAR-BFF-HANDOFF-review-claude2.md; git diff --cached --check."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 8,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 12,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-FE-004-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Support-only BFF/frontend handoff packet is ready for review: support/sidecars/BFF-LUV-FE-004/BFF-LUV-FE-004-SIDECAR-BFF-HANDOFF.md. It captures FE-004 live write normalization gaps, non-capital operator smoke path, and parent absorption checklist without changing canonical/runtime/frontend implementation.",
+      "status": "done",
+      "created_at": "2026-05-09T17:45:27Z",
+      "resolved_at": "2026-05-09T17:51:43Z"
+    },
+    {
+      "task_id": "BFF-LUV-FE-004-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Sidecar BFF handoff packet approved: support-only, gap matrix accurate, operator journey safe, absorption checklist aligned with Rev4 delivery. Returning to owner (Codex) for finalization.",
+      "status": "done",
+      "created_at": "2026-05-09T17:51:43Z",
+      "resolved_at": "2026-05-09T17:54:00Z"
+    }
+  ],
+  "blockers": []
+}

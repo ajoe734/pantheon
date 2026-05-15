@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "task_id": "P2-LIVE-KERNEL-001",
+  "archived_at": "2026-05-01T15:34:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P2-LIVE-KERNEL-001",
+    "title": "Full Lean Launcher + broker SDK production readiness plan",
+    "summary_zh": null,
+    "phase": "P2 Wave 7",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "P1-LIVE-PLAN-001",
+      "P1-KILL-001"
+    ],
+    "artifacts": [
+      "docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md",
+      "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md",
+      "OPENCLAW_RUNTIME_CONTRACT.md"
+    ],
+    "acceptance": [
+      "Lean Launcher plus broker SDK production readiness plan requires broker paper/sandbox/test-key order API smoke without enabling production live by default",
+      "broker entitlement subaccount isolation and capital authorization gaps block production live but do not block sandbox/test broker API integration",
+      "paper/canary/live promotion gates reference kill-switch ack and drill prerequisites before any live activation"
+    ],
+    "next": "Closed after Claude approval. Artifact commit 4e36777 documents P2 live-kernel readiness; closeout checkpoint 1ba9a12 preserves task-specific HEAD metadata after a concurrent same-branch commit. Scope verified: broker sandbox/test-key smoke is required before canary/live readiness, entitlement/subaccount/capital gaps block production live only, and kill-switch drill ack gates remain required. Verification: git diff --check on task files; rg acceptance scan across three artifacts; secret pattern scan returned no matches.",
+    "last_update": "2026-05-01T15:34:04Z",
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "wave": "7",
+      "source_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "priority": "P2",
+    "wave": 7,
+    "review_notes_zh": [
+      "二次審查通過（修正版）：三項更新驗收標準全部通過。broker paper/sandbox/test-key smoke 已明確列為 canary/live readiness 先決條件，不得延後；production live 真實資金路徑仍 fail-closed。broker entitlement、subaccount 隔離、capital authorization 缺口阻擋 production live，但不阻擋 sandbox/test 整合本身（§1.2、§1.3 invariant 13、§6.1、§6.4、§9.5）。canary/live 晉升門控引用 kill-switch drill 與 telemetry_ack.ack_status=acknowledged 先決條件（§6.1、§6.2、§8、KILL_SWITCH §8.2、§10）。三份 artifact 互相一致且與來源 L1 政策文件對齊。修正後審查通過，交回 Codex 收尾。"
+    ],
+    "review_file": "support/reviews/P2-LIVE-KERNEL-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T15:34:04Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "1ba9a1285366fb2c073c59dbb12698c55285c48c",
+      "commit_subject": "P2-LIVE-KERNEL-001 closeout checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "P2-LIVE-KERNEL-001",
+        "Reviewer": "Claude",
+        "- Task artifact commit": "4e36777 P2-LIVE-KERNEL-001 document live kernel readiness",
+        "Reason": "preserve task-specific HEAD for done metadata after a concurrent same-branch commit by another task."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 156,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P2-LIVE-KERNEL-001",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Auto-reassigned P2-LIVE-KERNEL-001 away from sidecar-only lane Gemini; owner Gemini -> Codex. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-05-01T14:52:17Z",
+      "resolved_at": "2026-05-01T14:52:51Z"
+    },
+    {
+      "task_id": "P2-LIVE-KERNEL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "P2 live-kernel readiness plan is ready for review. Updated docs/04/CANARY_LIVE_ACTIVATION_CRITERIA_AND_RUNBOOK.md with fail-closed Full Lean Launcher + broker SDK readiness gates, broker entitlement/subaccount isolation, capital authorization procedure, launch input/evidence requirements, and gap register. Updated KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md to require stage-appropriate kill-switch drills with telemetry_ack.ack_status=acknowledged before promotion. Updated OPENCLAW_RUNTIME_CONTRACT.md to keep OpenClaw outside Lean Launcher/broker SDK/capital paths. Verification: git diff --check on touched docs; rg checks for P2-LIVE-KERNEL-001, broker SDK, capital authorization, telemetry_ack, OpenClaw, and fail-closed posture.",
+      "status": "done",
+      "created_at": "2026-05-01T15:00:46Z",
+      "resolved_at": "2026-05-01T15:05:36Z"
+    },
+    {
+      "task_id": "P2-LIVE-KERNEL-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all three acceptance criteria pass. Fail-closed posture confirmed. Readiness plan documented without enabling live. Broker entitlement/subaccount/capital gaps explicitly blocked. Promotion gates require acknowledged kill-switch drill evidence. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-01T15:05:36Z",
+      "resolved_at": "2026-05-01T15:09:37Z"
+    },
+    {
+      "task_id": "P2-LIVE-KERNEL-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1777661400,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_dis",
+      "status": "done",
+      "created_at": "2026-05-01T15:09:37Z",
+      "resolved_at": "2026-05-01T15:16:24Z"
+    },
+    {
+      "task_id": "P2-LIVE-KERNEL-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Owner correction complete after post-review clarification: broker paper/sandbox/test-key order API smoke is required before canary/live readiness; production-live real-capital order/cancel/position/capital side effects remain fail-closed until explicit activation; entitlement/subaccount/capital and acknowledged kill-switch drill gates remain hard blockers. Codex2 review requested on the corrected acceptance scope.",
+      "status": "done",
+      "created_at": "2026-05-01T15:16:24Z",
+      "resolved_at": "2026-05-01T15:20:27Z"
+    },
+    {
+      "task_id": "P2-LIVE-KERNEL-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: - 2026-05-01T15:09:48Z · Orchestrator · task_reassigned · Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":",
+      "status": "done",
+      "created_at": "2026-05-01T15:20:27Z",
+      "resolved_at": "2026-05-01T15:23:30Z"
+    },
+    {
+      "task_id": "P2-LIVE-KERNEL-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Correction verification complete: all three updated acceptance criteria pass. Broker sandbox/test-key smoke is required before canary/live readiness and correctly documented throughout. Entitlement/capital gaps block production live only, not sandbox/test integration. Kill-switch drill ack gates unchanged and confirmed. Approved and returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-01T15:23:30Z",
+      "resolved_at": "2026-05-01T15:34:04Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "task_id": "APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-24T18:22:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW",
+    "title": "Prepare APP-003-DATASOURCE-OPS-001 review packet and evidence summary",
+    "summary_zh": "平行支援 APP-003-DATASOURCE-OPS-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 5",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-DATASOURCE-OPS-001/APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized approved sidecar review packet after refreshing reviewer/header lifecycle state for Claude approval and archived parent done alignment; support-only artifact remains ready for parent-owner absorption decisions.",
+    "last_update": "2026-04-24T18:22:45Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-DATASOURCE-OPS-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "review packet 已與 archived parent done 狀態 (ai-task-archive/tasks/APP-003-DATASOURCE-OPS-001.json, commit 95ba6c16…) 及 docs/reviews/2026-04-24-app-003-datasource-ops-001-codex-review.md 對齊；IBKR/Shioaji/Kraken/TEJ 的 env provider matrix、secret-name refs、smoke defaults 與 VM-2 onboarding runbook 皆確認存在",
+      "本地重跑 4 項 evidence 全部 pass：python3 scripts/test_run_ep5_canary_readiness.py (3 tests)、run-datasource-smoke (canary env)、run-operator-checklist (canary env, --allow-empty-secrets)、run-datasource-smoke (prod-example env)",
+      "packet 維持 support-only，未改動 canonical truth 或重開 archived parent",
+      "小缺 (non-blocking)：packet 頁首『Sidecar Reviewer: Codex2』未跟上 orchestrator 最新 auto-reassign 回 Claude 的狀態，owner 於 finalize 收尾時可順手刷新 header/generated 段"
+    ],
+    "review_file": "support/sidecars/APP-003-DATASOURCE-OPS-001/APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T18:22:45Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "4148695cf366959c17bd9133e8ed9991350fa863",
+      "commit_subject": "APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW finalize review packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1171,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review packet ready at support/sidecars/APP-003-DATASOURCE-OPS-001/APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW.md. Support-only sidecar: summarizes live parent review_approved state, governed provider env/runbook/smoke evidence, notes companion acceptance sidecar is still todo, and records reruns 3 tests + canary smoke pass + operator checklist pass + prod-example smoke pass. No canonical truth mutated.",
+      "status": "done",
+      "created_at": "2026-04-24T17:52:00Z",
+      "resolved_at": "2026-04-24T17:55:53Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review packet refreshed and still ready at support/sidecars/APP-003-DATASOURCE-OPS-001/APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW.md. Support-only sidecar: live parent review_approved state, governed provider env/runbook/smoke evidence, and reruns (3 tests + canary smoke + operator checklist + prod-example smoke = pass) are preserved; stale in_progress lifecycle references were corrected to match the live review status. No canonical truth mutated.",
+      "status": "done",
+      "created_at": "2026-04-24T17:55:53Z",
+      "resolved_at": "2026-04-24T17:56:31Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1777062600,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_dis",
+      "status": "done",
+      "created_at": "2026-04-24T17:56:31Z",
+      "resolved_at": "2026-04-24T17:59:26Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: {'task_id': 'APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW', 'from': 'Claude', 'to': 'Codex2', 'message': 'Auto-reassigned review from Claude to Codex2 after repeated Claude terminal:",
+      "status": "done",
+      "created_at": "2026-04-24T17:59:26Z",
+      "resolved_at": "2026-04-24T18:07:43Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review packet refreshed and ready at support/sidecars/APP-003-DATASOURCE-OPS-001/APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW.md. Support-only sidecar: aligns header/body with live reviewer=Claude and archived parent done state (ai-task-archive/tasks/APP-003-DATASOURCE-OPS-001.json, commit 95ba6c16…); reruns 3 ep5-canary-readiness tests + canary datasource smoke + operator checklist + prod-example datasource smoke = pass. No canonical truth mutated.",
+      "status": "done",
+      "created_at": "2026-04-24T18:07:43Z",
+      "resolved_at": "2026-04-24T18:08:28Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1777062600,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_dis",
+      "status": "done",
+      "created_at": "2026-04-24T18:08:28Z",
+      "resolved_at": "2026-04-24T18:10:25Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review packet refreshed and ready at support/sidecars/APP-003-DATASOURCE-OPS-001/APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW.md. Support-only sidecar: aligns header/body with live reviewer=Codex2 and archived parent done state (ai-task-archive/tasks/APP-003-DATASOURCE-OPS-001.json, commit 95ba6c16…); preserved governed provider env/runbook/smoke evidence and prior reruns (3 tests + canary datasource smoke + operator checklist + prod-example datasource smoke = pass). No canonical truth mutated.",
+      "status": "done",
+      "created_at": "2026-04-24T18:10:25Z",
+      "resolved_at": "2026-04-24T18:10:58Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: - 2026-04-24T18:08:42Z · Orchestrator · task_reassigned · Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":",
+      "status": "done",
+      "created_at": "2026-04-24T18:10:58Z",
+      "resolved_at": "2026-04-24T18:12:44Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-OPS-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar review packet verified against archived parent done record (commit 95ba6c16…), env/runbook surfaces, and reruns of 3 unit tests + canary datasource smoke + operator checklist + prod-example datasource smoke (all pass). Packet stays support-only; returning to owner Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-24T18:12:44Z",
+      "resolved_at": "2026-04-24T18:22:45Z"
+    }
+  ],
+  "blockers": []
+}

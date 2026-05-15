@@ -53,6 +53,7 @@ class WatcherBookkeepingTests(unittest.TestCase):
 
         with (
             mock.patch.object(watch_events, "load_status", return_value=status),
+            mock.patch.object(watch_events, "recent_terminal_summaries", return_value=[{"task_id": "OPS-001"}]),
             mock.patch.object(watch_events, "queue_delivery_event", side_effect=AssertionError("watcher should not queue runtime events")),
             mock.patch.object(watch_events, "save_runtime_state"),
         ):
@@ -60,6 +61,7 @@ class WatcherBookkeepingTests(unittest.TestCase):
 
         self.assertTrue(changed)
         self.assertEqual(state["tasks"]["P3-001"]["status"], "review")
+        self.assertEqual(state["recent_terminal_tasks"], [{"task_id": "OPS-001"}])
         self.assertEqual(state["pending_handoff_keys"], [])
         self.assertIsNotNone(state["last_scan_at"])
 

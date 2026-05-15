@@ -22,7 +22,7 @@ from read_store import ReadSurfaceStore
 def test_store():
     with tempfile.TemporaryDirectory() as td:
         store_path = os.path.join(td, "read_surfaces.json")
-        store = ReadSurfaceStore(store_path)
+        store = ReadSurfaceStore(store_path, allow_local_snapshot_fallback=True)
 
         # PS-02: persona detail
         persona = store.get_persona("persona-alpha")
@@ -104,7 +104,7 @@ def test_store():
         print("✅ backend_shaped_persona_actions: returns None for invalid persona_id")
 
         # Persistence: reload and verify
-        store2 = ReadSurfaceStore(store_path)
+        store2 = ReadSurfaceStore(store_path, allow_local_snapshot_fallback=True)
         assert store2.get_persona("persona-alpha") is not None
         assert store2.get_bindings_for_persona("persona-alpha") is not None
         assert store2.get_sessions_for_persona("persona-alpha") is not None

@@ -1,0 +1,6 @@
+{
+  "run_timestamp_utc": "2026-04-19T00:36:16Z",
+  "overall_result": "fail",
+  "error": "AcceptanceError: incident-create failed with HTTP 422: {\"detail\": {\"reference_errors\": [\"telemetry_event_id '71662fe2-bff1-4cf6-ae05-e0e82ace1894' does not resolve through the canonical telemetry lineage path\"]}}",
+  "output_dir": "docs/deployment/evidence/ep4-governed-paper/20260419T003614Z"
+}

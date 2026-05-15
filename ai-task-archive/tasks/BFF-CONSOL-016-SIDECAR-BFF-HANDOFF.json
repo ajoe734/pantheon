@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-016-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-13T11:59:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-016-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BFF-CONSOL-016 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BFF-CONSOL-016，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-008"
+    ],
+    "artifacts": [
+      "support/sidecars/BFF-CONSOL-016/BFF-CONSOL-016-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized reviewed support-only handoff packet; scoped artifact commit aba7daca is unchanged and contains only support/sidecars/BFF-CONSOL-016/BFF-CONSOL-016-SIDECAR-BFF-HANDOFF.md. Closeout marker e31b9c8f records finalization metadata without staging unrelated dirty worktree changes. Verification: git diff -- support/sidecars/BFF-CONSOL-016/BFF-CONSOL-016-SIDECAR-BFF-HANDOFF.md; git diff --check -- support/sidecars/BFF-CONSOL-016/BFF-CONSOL-016-SIDECAR-BFF-HANDOFF.md; LC_ALL=C grep -n '[^ -~]' support/sidecars/BFF-CONSOL-016/BFF-CONSOL-016-SIDECAR-BFF-HANDOFF.md || true; python3 -m json.tool support/evidence/BFF-CONSOL-016-detail-smoke-a.json >/dev/null; python3 -m py_compile services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py; python3 -m pytest services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py -q (6 passed). Existing unrelated dirty/staged worktree changes were left untouched.",
+    "last_update": "2026-05-13T11:59:12Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BFF-CONSOL-016",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Codex2 review approved. Scope is support-only: commit aba7daca adds only support/sidecars/BFF-CONSOL-016/BFF-CONSOL-016-SIDECAR-BFF-HANDOFF.md. Packet route list and Pack A IDs match support/evidence/BFF-CONSOL-016-detail-smoke-a.json and services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py. Verification passed: python3 -m json.tool support/evidence/BFF-CONSOL-016-detail-smoke-a.json >/dev/null; python3 -m py_compile services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py; python3 -m pytest services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py -q (6 passed)."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T11:59:12Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "e31b9c8f22464f8e5a0fde9257ddc706c6f049aa",
+      "commit_subject": "BFF-CONSOL-016-SIDECAR-BFF-HANDOFF closeout finalization",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-CONSOL-016-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex2",
+        "Closeout": "preserves approved support-only handoff packet from aba7daca; no file changes in this commit because unrelated staged/dirty worktree state belongs to other tasks.",
+        "Verification": "git diff -- support/sidecars/BFF-CONSOL-016/BFF-CONSOL-016-SIDECAR-BFF-HANDOFF.md; git diff --check -- support/sidecars/BFF-CONSOL-016/BFF-CONSOL-016-SIDECAR-BFF-HANDOFF.md; LC_ALL=C grep -n '[^ -~]' support/sidecars/BFF-CONSOL-016/BFF-CONSOL-016-SIDECAR-BFF-HANDOFF.md || true; python3 -m json.tool support/evidence/BFF-CONSOL-016-detail-smoke-a.json >/dev/null; python3 -m py_compile services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py; python3 -m pytest services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py -q (6 passed)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 26,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 21,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-016-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: created support-only handoff packet at support/sidecars/BFF-CONSOL-016/BFF-CONSOL-016-SIDECAR-BFF-HANDOFF.md and committed it in aba7daca. Packet covers BFF-CONSOL-016 Pack A route evidence, stale route-manifest caveat, BFF/frontend query gaps, operator journeys, frontend absorption checklist, suggested tests, and explicit support-only scope confirmation. Verification: git diff --cached --check before commit; git diff --check for scoped path; ASCII scan; python3 -m json.tool support/evidence/BFF-CONSOL-016-detail-smoke-a.json >/dev/null; python3 -m py_compile services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py. No canonical truth, runtime, registry, governance, or execute-plans files changed by this sidecar.",
+      "status": "done",
+      "created_at": "2026-05-13T11:19:35Z",
+      "resolved_at": "2026-05-13T11:26:31Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-016-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: support-only handoff packet matches parent evidence/test route set; commit aba7daca is scoped to the sidecar artifact; verification passed (json.tool, py_compile, focused pytest 6 passed). Owner Codex should run closeout finalization before done.",
+      "status": "done",
+      "created_at": "2026-05-13T11:26:31Z",
+      "resolved_at": "2026-05-13T11:59:14Z"
+    }
+  ],
+  "blockers": []
+}

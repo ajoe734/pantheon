@@ -60,7 +60,7 @@ acceptance_verified:
   - criterion: front TypeScript compile passes on the current publication tuple
     status: pass
     note: >-
-      `cd /tmp/front-prompt-publish-main && /home/edna/code/front-ai-trading-system/node_modules/.bin/tsc --noEmit`
+      `cd /tmp/front-prompt-publish-main && /home/lupin/code/front-ai-trading-system/node_modules/.bin/tsc --noEmit`
       completed successfully at `origin/main@68fc766daf6f7d0eecafed38b965894de35a42e6`.
 
 api_gaps: []

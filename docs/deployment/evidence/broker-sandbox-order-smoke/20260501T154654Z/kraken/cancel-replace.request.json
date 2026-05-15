@@ -1,0 +1,13 @@
+{
+  "status": "validate_only_payload_validated",
+  "cancel_request": {
+    "txid": "kraken-validate-only-txid",
+    "account_ref": "KRAKEN-TEST-REF"
+  },
+  "replace_request": {
+    "txid": "kraken-validate-only-txid",
+    "price": "59000.0",
+    "validate": true
+  },
+  "side_effect": "none"
+}

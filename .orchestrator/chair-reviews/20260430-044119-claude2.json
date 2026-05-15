@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Claude2 is idle/unpaused with all owned tasks dependency-blocked; SVC-WANDB review is accumulating dwell with Claude lane paused — reassigning reviewer to Claude2 unblocks review and absorbs idle capacity.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER",
+      "role": "reviewer",
+      "from": "Claude",
+      "to": "Claude2",
+      "reason": "Claude dispatch lane is paused; the pending Codex2-to-Claude review handoff (created 04:36:30Z) cannot be consumed and dwell in review will accumulate indefinitely. Claude2 has the same capability lane (execution, control-plane, governance-review) and is currently idle/waiting with no runnable owned tasks."
+    }
+  ],
+  "recommended_focus": [
+    "SVC-QLIB-ACTIVATION-READY-ADAPTER",
+    "SVC-OPENCLAW-UPSTREAM-CLIENT",
+    "SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER",
+    "SVC-OPENCLAW-SESSION-LIFECYCLE"
+  ]
+}

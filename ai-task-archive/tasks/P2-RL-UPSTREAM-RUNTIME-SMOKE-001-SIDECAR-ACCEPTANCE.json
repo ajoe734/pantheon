@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-05-01T16:04:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare P2-RL-UPSTREAM-RUNTIME-SMOKE-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 P2-RL-UPSTREAM-RUNTIME-SMOKE-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "P2 Wave 8 External Activation",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "P2-OSS-ACTIVATE-001"
+    ],
+    "artifacts": [
+      "support/sidecars/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: acceptance packet finalized with reviewer-approved scope. Artifact updated to record Ray Tune allowed_next_action naming caveat (offline_search_review_only vs offline_registry_review_only) in AC-3.6 and NB-002. Stub-backend smoke confirmed for all three components (49 tests passed, RL gate closed, no canonical truth modified). Isolated task-scoped commit 8710fa5 created.",
+    "last_update": "2026-05-01T16:04:51Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar acceptance packet 符合 support-only 邊界，artifact scope 只新增 support packet，未修改 L1 canonical truth、runtime、registry 或 governance 實作。",
+      "已核對 parent acceptance、RL_PATH_APPROVAL_GATE=closed、FinRL/RLlib/Ray Tune package pins與 prep gates；focused verification 通過：python3 -m pytest services/research/finrl/test_adapter.py services/research/rllib/test_adapter.py services/research/rllib/test_ray_tune_adapter.py（49 passed）與 git diff --check support packet。",
+      "Reviewer caveat：Ray Tune candidate packet 使用 offline_search_review_only，而非 FinRL/RLlib 的 offline_registry_review_only；這不破壞 research-only/no-broker 邊界，但 parent owner 應在主線實作時保留此命名差異。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T16:04:51Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "8710fa56c426d148abc7dd17de1ae2f1f6bfec9f",
+      "commit_subject": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE: finalize acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Verification": "acceptance packet structure confirmed against 49-test suite result"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 163,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Acceptance packet ready for review. Artifact: support/sidecars/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE.md. Package contains: 21-item acceptance checklist across 3 parent criteria, dependency map (upstream package pins, gate dependencies, transitive chain), stub-backend smoke verification evidence for FinRL/RLlib/RayTune (all draft+closed+none confirmed 2026-05-01), and 4 non-blocking open items. RL gate confirmed closed; no canonical truth modified. Commit c06cd59.",
+      "status": "done",
+      "created_at": "2026-05-01T15:53:41Z",
+      "resolved_at": "2026-05-01T15:57:24Z"
+    },
+    {
+      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review approved: acceptance packet is support-only, aligns with parent RL runtime-smoke acceptance criteria, and focused FinRL/RLlib/Ray Tune adapter verification passed (49 tests). Ray Tune allowed_next_action naming difference is recorded as a parent-task caveat, not a sidecar blocker.",
+      "status": "done",
+      "created_at": "2026-05-01T15:57:24Z",
+      "resolved_at": "2026-05-01T16:04:51Z"
+    }
+  ],
+  "blockers": []
+}

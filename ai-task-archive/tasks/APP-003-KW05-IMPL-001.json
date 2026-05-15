@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "APP-003-KW05-IMPL-001",
+  "archived_at": "2026-04-22T06:08:21Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-KW05-IMPL-001",
+    "title": "Implement KW-05 Strategy Spec route family",
+    "summary_zh": "補上已 ratified 但尚未落地的 KW-05 browse/detail/history/compare route family，讓 strategy spec workbench 從 contract-ready 走到 route-live。",
+    "phase": "Execution / Knowledge Workbench Completion",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md",
+      "docs/bff/KW-05-strategy-spec.md",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/read_store.py"
+    ],
+    "acceptance": [
+      "Strategy spec list detail versions and compare routes are implemented",
+      "Version identity ancestry and compare semantics match the ratified contract",
+      "Tests cover lifecycle filters citation bundle and compare errors"
+    ],
+    "next": "Owner finalized approved KW-05 strategy spec route family. Browse/detail/version-history/compare endpoints are live in the BFF, contract verification passed, and the task is closed.",
+    "last_update": "2026-04-22T06:08:21Z",
+    "source_plane": "audit_followup",
+    "source_ref": {
+      "type": "execution_packet",
+      "path": "docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md"
+    },
+    "task_class": "execution_followup",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "未發現 blocking findings。已依 task brief 重新驗證 KW-05 browse/detail/version-history/compare route family，並以單一 pytest invocation 確認 `services/control-plane/bff/test_kw05_strategy_spec_contract.py`、`services/control-plane/bff/test_kw03_evidence_refs_contract.py`、`services/control-plane/bff/test_kw04_insight_cards_contract.py` 全數通過。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-22T06:08:21Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "bd03adf32d58c899ebb30c5dcc379a4669e6c965",
+      "commit_subject": "APP-003-KW05-IMPL-001 finalize owner checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-KW05-IMPL-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 990,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-KW05-IMPL-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented KW-05 strategy spec route family in the BFF: browse/detail/version-history/compare are live, version identity and ancestry are backend-owned, compare enforces lifecycle semantics, and contract tests pass (pytest -q services/control-plane/bff/test_kw05_strategy_spec_contract.py services/control-plane/bff/test_kw03_evidence_refs_contract.py services/control-plane/bff/test_kw04_insight_cards_contract.py).",
+      "status": "done",
+      "created_at": "2026-04-22T05:54:55Z",
+      "resolved_at": "2026-04-22T06:04:28Z"
+    },
+    {
+      "task_id": "APP-003-KW05-IMPL-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved after serial contract verification: KW-05 strategy spec browse/detail/version-history/compare routes match the ratified contract, backend-owned version identity and compare semantics hold, and pytest -q services/control-plane/bff/test_kw05_strategy_spec_contract.py services/control-plane/bff/test_kw03_evidence_refs_contract.py services/control-plane/bff/test_kw04_insight_cards_contract.py passed (10 passed).",
+      "status": "done",
+      "created_at": "2026-04-22T06:04:28Z",
+      "resolved_at": "2026-04-22T06:08:21Z"
+    }
+  ],
+  "blockers": []
+}

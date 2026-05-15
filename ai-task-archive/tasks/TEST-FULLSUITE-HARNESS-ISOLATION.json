@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "task_id": "TEST-FULLSUITE-HARNESS-ISOLATION",
+  "archived_at": "2026-04-30T14:06:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "TEST-FULLSUITE-HARNESS-ISOLATION",
+    "title": "Full-suite pytest harness import isolation",
+    "summary_zh": "Root pytest collection currently fails because service-local main.py adapter.py smoke_test.py and test_main.py modules collide across import paths. Build a canonical harness so full pytest collection is usable without cross-service module pollution.",
+    "phase": "Full Test Stabilization",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "pytest.ini",
+      "conftest.py",
+      "services/**/conftest.py",
+      "scripts",
+      "docs/testing"
+    ],
+    "acceptance": [
+      "python3 -m pytest -q --collect-only has no import mismatch or module shadowing failures",
+      "root python3 -m pytest -q reports real test failures only and not collection pollution",
+      "direct smoke files are not accidentally collected as pytest tests unless intended",
+      "canonical CI or runbook commands are updated"
+    ],
+    "next": "Closed pytest isolation harness after Codex review; root collection now reaches 2214 tests without import mismatch, and remaining full-suite failures are runtime/domain issues outside this task.",
+    "last_update": "2026-04-30T14:06:18Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-fulltest-materialization-20260430",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Codex review approved pytest isolation harness. Root collect-only collected 2214 tests without import mismatch; direct smoke entrypoints remain outside default pytest collection; remaining capital failures are runtime/domain failures, not collection pollution."
+    ],
+    "review_file": ".orchestrator/reviews/TEST-FULLSUITE-HARNESS-ISOLATION-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T14:06:18Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "2a8afc233ac7817227f0950056ba198ddd37322d",
+      "commit_subject": "TEST-FULLSUITE-HARNESS-ISOLATION finalize review",
+      "commit_author": {
+        "name": "Codex2",
+        "email": "codex2@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verification": "python3 -m pytest -q --collect-only services/capital/smoke_test.py -> no tests collected",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "TEST-FULLSUITE-HARNESS-ISOLATION",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 4,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 71,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TEST-FULLSUITE-HARNESS-ISOLATION",
+      "from": "Codex",
+      "to": "Gemini2",
+      "message": "Helper-claimed by Gemini2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:08:42Z",
+      "resolved_at": "2026-04-30T13:09:05Z"
+    },
+    {
+      "task_id": "TEST-FULLSUITE-HARNESS-ISOLATION",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:21:09Z",
+      "resolved_at": "2026-04-30T13:21:25Z"
+    },
+    {
+      "task_id": "TEST-FULLSUITE-HARNESS-ISOLATION",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:21:25Z",
+      "resolved_at": "2026-04-30T13:21:43Z"
+    },
+    {
+      "task_id": "TEST-FULLSUITE-HARNESS-ISOLATION",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:21:43Z",
+      "resolved_at": "2026-04-30T13:23:34Z"
+    },
+    {
+      "task_id": "TEST-FULLSUITE-HARNESS-ISOLATION",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:28:25Z",
+      "resolved_at": "2026-04-30T13:28:43Z"
+    },
+    {
+      "task_id": "TEST-FULLSUITE-HARNESS-ISOLATION",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T13:28:43Z",
+      "resolved_at": "2026-04-30T13:30:19Z"
+    },
+    {
+      "task_id": "TEST-FULLSUITE-HARNESS-ISOLATION",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review in commit 2e96deb: root pytest.ini uses importlib mode and test_*.py collection, root conftest.py isolates service-local import roots and transient modules, docs/testing/pytest-harness.md records canonical commands. Verification: python3 -m pytest -q --collect-only collected 2214 tests with no import mismatch/module shadowing; python3 -m pytest -q reached normal execution with 3 runtime failures in services/capital/test_service.py, 2210 passed, 1 skipped; smoke_test.py explicit collect-only checks reported no tests collected.",
+      "status": "done",
+      "created_at": "2026-04-30T13:57:35Z",
+      "resolved_at": "2026-04-30T14:06:05Z"
+    },
+    {
+      "task_id": "TEST-FULLSUITE-HARNESS-ISOLATION",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Codex review approved pytest isolation harness; owner may finalize with review artifact .orchestrator/reviews/TEST-FULLSUITE-HARNESS-ISOLATION-review-codex.md.",
+      "status": "done",
+      "created_at": "2026-04-30T14:06:05Z",
+      "resolved_at": "2026-04-30T14:06:18Z"
+    }
+  ],
+  "blockers": []
+}

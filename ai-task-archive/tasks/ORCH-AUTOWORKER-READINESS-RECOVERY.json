@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "task_id": "ORCH-AUTOWORKER-READINESS-RECOVERY",
+  "archived_at": "2026-05-03T13:50:17Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ORCH-AUTOWORKER-READINESS-RECOVERY",
+    "title": "Recover and document auto worker readiness",
+    "summary_zh": "修復 Gemini/Gemini2/Copilot/Claude2 不能當 auto worker 的 readiness gap：補 auth/profile 檢查、文件化必要登入/credential migration，並讓 doctor/dashboard 明確呈現可自動派工與不可派工原因。",
+    "phase": "Orchestrator runtime cleanup 2026-05-03",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".orchestrator/doctor.py",
+      ".orchestrator/config.local.json",
+      ".orchestrator/config.json",
+      "docs/operations/auto-worker-readiness.md"
+    ],
+    "acceptance": [
+      "doctor 能清楚顯示 Claude/Codex/Codex2/Gemini/Gemini2/Copilot/Claude2 的 auto-ready 狀態與阻塞原因",
+      "補齊不需密碼外洩的 setup/runbook",
+      "未 ready provider 不會被 supervisor 主線任務誤派",
+      "ready provider 可重新進入 fallback list"
+    ],
+    "next": "Closed auto-worker readiness recovery: current doctor truth, blocked auth/profile lanes, Copilot disabled-mainline nuance, and recovery checklist are documented for safe future dispatch.",
+    "last_update": "2026-05-03T13:50:17Z",
+    "review_notes_zh": [
+      "依使用者指示不再派 auto worker；此為行政核准。已核對 doctor 輸出：Claude/Codex 可用但 Claude 有近期 rate-limit caution；Claude2/Gemini/Gemini2 仍 auth/profile blocked；Copilot auth-ready 但 mainline disabled。文件已把 blocked 與 broken 區分清楚。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-03T13:50:17Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "228027a1c39822a1ee593e859dfa0ff7666d4e1a",
+      "commit_subject": "ORCH-AUTOWORKER-READINESS-RECOVERY: close out readiness runbook",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "ORCH-AUTOWORKER-READINESS-RECOVERY",
+        "Reviewer": "Claude",
+        "Verification": "python3 .orchestrator/doctor.py --no-write"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 531,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 10,
+      "behind": 12,
+      "push_status": "diverged"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ORCH-AUTOWORKER-READINESS-RECOVERY",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Manual closeout ready: auto-worker readiness now records current doctor truth, blocked auth/profile lanes, Copilot disabled mainline state, Claude rate-limit caution, and recovery checklist.",
+      "status": "done",
+      "created_at": "2026-05-03T13:49:50Z",
+      "resolved_at": "2026-05-03T13:50:00Z"
+    },
+    {
+      "task_id": "ORCH-AUTOWORKER-READINESS-RECOVERY",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Administrative approval: readiness runbook matches current doctor output and keeps non-ready providers fail-closed from mainline dispatch.",
+      "status": "done",
+      "created_at": "2026-05-03T13:50:00Z",
+      "resolved_at": "2026-05-03T13:50:17Z"
+    }
+  ],
+  "blockers": []
+}

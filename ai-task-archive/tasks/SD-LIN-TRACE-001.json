@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "SD-LIN-TRACE-001",
+  "archived_at": "2026-04-27T14:35:50Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SD-LIN-TRACE-001",
+    "title": "Build source-to-runtime-to-telemetry lineage trace query",
+    "summary_zh": "建立第一條 operator-facing derived lineage trace query，串 source/strategy/artifact/deployment/runtime/telemetry/evolution refs。",
+    "phase": "SD Residual / Lineage",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-27-sd-materializable-execution-task-packet.md"
+    ],
+    "acceptance": [
+      "Follow packet acceptance boundary"
+    ],
+    "next": "Owner finalized after Claude approval: committed source_runtime_telemetry_trace implementation, route, contract note, and review record at 5a6c954; targeted suite passed 38 tests.",
+    "last_update": "2026-04-27T14:35:50Z",
+    "task_class": "sd_materialization",
+    "source_packet": "docs/reviews/2026-04-27-sd-materializable-execution-task-packet.md",
+    "auto_dispatch_boundary": "respect_dependencies_and_human_gates",
+    "review_notes_zh": [
+      "審查通過：source_runtime_telemetry_trace 將來源/策略/實驗/工件/審批/部署計畫/執行綁定/Broker 訂單生命週期/遙測/事故/事後檢討/演化參考串成單一 derived 讀取投影，缺漏節點以 missing_edges/conflict_markers 顯示且不偽造。",
+      "HTTP 路由 GET /api/telemetry/lineage/traces/<trace_id>/source-runtime-telemetry 重用 _lineage_query_response，缺少 trace 對應 LINEAGE_TARGET_NOT_FOUND 404。",
+      "targeted 測試 pytest services/telemetry/lineage_read/test_service.py services/telemetry/test_main_routes.py -q 通過 38 passed in 0.65s。",
+      "後續：SD-RECON-001 補上對齊與生命週期一致性、SD-SRC-EVIDENCE-001 補來源/證據治理、EP5-002-PACKET-PREP-001 才使用此 trace 做 dry-run packet，皆不在本次驗收範圍內。"
+    ],
+    "review_file": "docs/reviews/2026-04-27-sd-lin-trace-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-27T14:35:50Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "5a6c954ae6a491ccd02e551af5a3fdf9169c3569",
+      "commit_subject": "SD-LIN-TRACE-001 source runtime telemetry trace",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SD-LIN-TRACE-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 136,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SD-LIN-TRACE-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-27T12:47:53Z",
+      "resolved_at": "2026-04-27T12:51:44Z"
+    },
+    {
+      "task_id": "SD-LIN-TRACE-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Implemented source_runtime_telemetry_trace derived query, HTTP route, contract note, and targeted tests; ready for review.",
+      "status": "done",
+      "created_at": "2026-04-27T13:03:54Z",
+      "resolved_at": "2026-04-27T14:13:10Z"
+    },
+    {
+      "task_id": "SD-LIN-TRACE-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-27T14:13:09Z",
+      "resolved_at": "2026-04-27T14:22:44Z"
+    },
+    {
+      "task_id": "SD-LIN-TRACE-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Approved: source_runtime_telemetry_trace derived-only trace, missing-edge handling, HTTP route, and contract note all match the SD materializable packet's Registry/Lineage acceptance shape; targeted suite (38 passed) reruns clean. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-27T14:22:44Z",
+      "resolved_at": "2026-04-27T14:35:50Z"
+    }
+  ],
+  "blockers": []
+}

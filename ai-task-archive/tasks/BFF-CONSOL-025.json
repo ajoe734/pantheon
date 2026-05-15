@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-025",
+  "archived_at": "2026-05-13T11:21:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-025",
+    "title": "Seed-only surface elimination",
+    "summary_zh": "用 007 taxonomy 與 016/017/018 detail evidence 把 live_required helper 全部接上 BFF route mock_only_dev 在 live mode 隱藏 deprecated 移除 deferred 寫進 follow-up task。strict live mode 下沒有頁面會暗中用 seed 當 live 資料。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-015",
+      "BFF-CONSOL-016",
+      "BFF-CONSOL-017",
+      "BFF-CONSOL-018"
+    ],
+    "artifacts": [
+      "execute-plans/src/lib/bff/seed.ts",
+      "docs/bff/seed-elimination-2026-05-13.md"
+    ],
+    "acceptance": [
+      "live_required helper 全部對應到實際 BFF route",
+      "mock_only_dev helper 在 live mode 隱藏",
+      "deprecated helper 從 seed.ts 移除",
+      "deferred helper 對應到新 follow-up task",
+      "strict live mode 0 seed misuse",
+      "Copilot 簽核 elimination 完成"
+    ],
+    "next": "Owner finalized approved seed-only surface elimination. Commits: execute-plans 226d7e4; pantheon f37b1099. Verification rerun from ../execute-plans: 5 Vitest files / 46 tests passed; npm run build succeeded with existing Vite chunk/Browserslist warnings; scoped diff-check and taxonomy JSON validation passed.",
+    "last_update": "2026-05-13T11:21:14Z",
+    "review_notes_zh": [
+      "審查通過",
+      "所有 5 項驗收標準通過：live_required 全部接上 BFF route；mock_only_dev 在 live mode 返回空值；deprecated（bff.mutations/bff.commands）已從 seed.ts 移除；deferred helpers 返回空值並指向 BFF-CONSOL-028；strict live mode 下無 silent seed fallback。5 個 Vitest 檔案共 46 個測試通過，production build 成功。"
+    ],
+    "review_file": "support/sidecars/BFF-CONSOL-025/BFF-CONSOL-025-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T11:21:14Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "f37b1099c0d42dd0264564467c245a24913bd480",
+      "commit_subject": "BFF-CONSOL-025 record seed elimination evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-CONSOL-025",
+        "Reviewer": "Claude",
+        "Verification": "npm test -- src/lib/bff-v1/__tests__/seedTaxonomy.test.ts src/lib/bff-v1/__tests__/lists.test.ts src/lib/bff/__tests__/client.test.ts src/lib/bff-v1/__tests__/writes.test.ts src/lib/v4/h1-wiring.test.ts (46 tests passed from ../execute-plans); npm run build (succeeded with existing Vite warnings); jq empty docs/bff/seed-taxonomy.json; git diff --cached --check."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 14,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 4,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-025",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-13T10:50:52Z",
+      "resolved_at": "2026-05-13T10:50:59Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-025",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Ready for review: live_required seed helpers now strict-read actual BFF routes in ../execute-plans/src/lib/bff-v1/seed.ts; mock_only_dev/deferred live gating remains empty/disabled; bff.mutations and bff.commands are removed from the seed accessor and write callers now import mutations/runActionSafe directly; deferred helpers now point at new follow-up BFF-CONSOL-028. Evidence in docs/bff/seed-elimination-2026-05-13.md. Verified npm test -- src/lib/bff-v1/__tests__/seedTaxonomy.test.ts src/lib/bff-v1/__tests__/lists.test.ts src/lib/bff/__tests__/client.test.ts src/lib/bff-v1/__tests__/writes.test.ts src/lib/v4/h1-wiring.test.ts; npm test -- src/lib/bff-v1/__tests__/seedTaxonomy.test.ts; npm run build; scoped git diff --check; jq empty on taxonomy JSON.",
+      "status": "done",
+      "created_at": "2026-05-13T11:06:53Z",
+      "resolved_at": "2026-05-13T11:12:59Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-025",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Chair reassigned review from Claude2 to Claude: Claude2 lane is paused (agent idle since 2026-05-13T02:04:59Z, ~9h); review handoff to Claude2 cannot be auto-dispatched; Claude has governance-review capability and is available immediately after this chair review completes, making it the correct fallback without disrupting Codex2 ownership.",
+      "status": "done",
+      "created_at": "2026-05-13T11:12:59Z",
+      "resolved_at": "2026-05-13T11:15:11Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-025",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 5 acceptance criteria satisfied — live_required wired to BFF routes, mock_only_dev empty in live mode, deprecated removed, deferred point to BFF-CONSOL-028, zero silent seed fallback in strict live. 46 tests passed, production build clean.",
+      "status": "done",
+      "created_at": "2026-05-13T11:15:11Z",
+      "resolved_at": "2026-05-13T11:21:15Z"
+    }
+  ],
+  "blockers": []
+}

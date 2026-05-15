@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-017",
+  "archived_at": "2026-05-13T10:50:43Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-017",
+    "title": "Detail journey smoke B (evolution research v5 agora artifacts)",
+    "summary_zh": "detail journey smoke B: evolution/research/v5/agora/artifacts list→detail→related tabs。每個 family 走過 live detail 而非 mock。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-009"
+    ],
+    "artifacts": [
+      "execute-plans/tests/e2e/detail-smoke-b.spec.ts",
+      "support/evidence/BFF-CONSOL-017-detail-smoke-b.json"
+    ],
+    "acceptance": [
+      "5 個 family detail route 都回 2xx 或 typed 404",
+      "v5 intervention detail 含 governed remediation skeleton",
+      "agora detail 顯示 topic 內歷史 event",
+      "research detail 連 analysis",
+      "artifacts detail 含 lineage",
+      "evidence JSON 含每個 family transcript"
+    ],
+    "next": "Closeout complete: committed task evidence/review in 83c42310 after focused verification (2 passed in 3.92s; 51 passed in 26.14s).",
+    "last_update": "2026-05-13T10:50:43Z",
+    "review_notes_zh": [
+      "所有驗收標準通過；Codex 的兩項審查意見已完全解決：(1) research linkage 改用 /bff/research-experiments/{id} BFF 路由，正確暴露 analysis_ids/analysis_links；(2) evolution program detail 透過 read_store local snapshot fallback 解析 200。Playwright spec 正確斷言所有條件。",
+      "Reviewer 驗證：2 passed focused pytest + 51 passed 廣域 regression suite。無阻擋問題，批准並回到 Codex2 進行收尾。"
+    ],
+    "review_file": ".orchestrator/reviews/BFF-CONSOL-017-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T10:50:43Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "83c42310794d8e044f620a814186ac5de333bcfc",
+      "commit_subject": "BFF-CONSOL-017 closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-CONSOL-017",
+        "Reviewer": "Claude",
+        "Verification": "PANTHEON_BFF_AUTH_STUB=true PANTHEON_BFF_AUTH_MODE=permissive python3 -m pytest services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py -q -> 2 passed in 3.92s; PANTHEON_BFF_AUTH_STUB=true PANTHEON_BFF_AUTH_MODE=permissive python3 -m pytest services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py services/control-plane/bff/test_rw03_analyze_contract.py services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py services/control-plane/bff/test_ew04_inspiration_graph_contract.py -q -> 51 passed in 26.14s"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 8,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-017",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Claude2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-13T04:06:29Z",
+      "resolved_at": "2026-05-13T04:06:51Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-017",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Detail smoke B complete. Commit aea5d8b4 adds: (1) execute-plans/tests/e2e/detail-smoke-b.spec.ts — 14 Playwright tests covering list→detail→related-tabs for evolution/research/v5/agora/artifacts families with degraded-path phantom-ID typed-404 check; (2) support/evidence/BFF-CONSOL-017-detail-smoke-b.json — code-verified per-family transcripts against main.py and read_store.py. All 6 acceptance criteria PASS: 5 family routes 2xx/typed-404, v5 remediation_skeleton verified (two_man_rule_enforced + policy ref), agora messages historical events, research links analysis, artifacts carries lineage_id. Fixture pack B IDs used throughout. Ready for Claude2 review.",
+      "status": "done",
+      "created_at": "2026-05-13T04:15:41Z",
+      "resolved_at": "2026-05-13T04:58:08Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-017",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Chair reassigned review from Claude2 to Codex: Claude2 is quota-paused until 2026-05-13T17:00:00Z; Codex is not the owner and can unblock the review after this chair cycle.",
+      "status": "done",
+      "created_at": "2026-05-13T04:58:08Z",
+      "resolved_at": "2026-05-13T05:13:16Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-017",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested by Codex review: .orchestrator/reviews/BFF-CONSOL-017-review-codex.md. The spec accepts 404 for research ticket/analysis detail, so it does not prove research detail links analysis; local Pack B TestClient probe shows /api/v1/research/tickets/rt-pack-b-001 and /api/v1/research/analysis/analysis-pack-b-001 return typed 404 while evidence claims expected_status 200. /bff/evolution-programs/evoprog-pack-b-001 also returns typed 404 against current route registration while evidence claims fixture-backed 200. Please wire/prove a 200 research detail linkage path or make the acceptance assertion fail on 404, and align evidence with actual route behavior.",
+      "status": "done",
+      "created_at": "2026-05-13T05:13:16Z",
+      "resolved_at": "2026-05-13T05:13:16Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-017",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-13T05:13:20Z",
+      "resolved_at": "2026-05-13T05:13:20Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-017",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-13T09:03:11Z",
+      "resolved_at": "2026-05-13T09:03:44Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-017",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-13T09:36:29Z",
+      "resolved_at": "2026-05-13T09:36:58Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-017",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review findings addressed: Pack B evolution detail resolves 200 via read-store fallback; research experiment detail exposes analysis_ids/analysis_links and /bff/research-analyses/{id} resolves 200. Verification rerun: BFF-CONSOL-017 focused pytest 2 passed; adjacent Pack B/read-surface regression 51 passed.",
+      "status": "done",
+      "created_at": "2026-05-13T09:44:08Z",
+      "resolved_at": "2026-05-13T10:43:55Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-017",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Chair reassigned review from Codex to Claude: Codex reviewer exited twice after owner fixes; Claude is unpaused and can complete the post-fix review.",
+      "status": "done",
+      "created_at": "2026-05-13T10:43:55Z",
+      "resolved_at": "2026-05-13T10:47:52Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-017",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all 6 acceptance criteria PASS. Codex findings addressed — research linkage via BFF routes confirmed, evolution program 200 confirmed. 2+51 tests pass. Returned to Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-05-13T10:47:52Z",
+      "resolved_at": "2026-05-13T10:50:43Z"
+    }
+  ],
+  "blockers": []
+}

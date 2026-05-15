@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "P1-SEARCH-001",
+  "archived_at": "2026-05-01T08:17:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P1-SEARCH-001",
+    "title": "OpenClaw governed SearchGateway integration",
+    "summary_zh": "把 OpenClaw search 接到 governed SearchGateway，只能回傳 evidence bundle/citation pack，不能越權碰 execution。",
+    "phase": "P1 Wave 5",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "P0-CI-BOUNDED-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_sa/SA-15_governance_boundary_gap_analysis.md",
+      "docs/04/pantheon_sa/SA-20_v2_risk_register_corrected.md"
+    ],
+    "acceptance": [
+      "OpenClaw search goes through SearchGateway",
+      "ACL/license/available_time checked before retrieval",
+      "no broker/runtime/capital direct tool access"
+    ],
+    "next": "Closed out P1-SEARCH-001 after task-scoped commit 208978b. Verified governed OpenClaw SearchGateway integration: pytest services/search/tests -q (46 passed); focused OpenClaw/search/tool-bridge suite (103 passed); scoped git diff --check passed. Execution runtime dirty files remain unrelated and were excluded.",
+    "last_update": "2026-05-01T08:17:37Z",
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "wave": "5",
+      "source_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "review_notes_zh": [
+      "審查通過：OpenClaw search 經 OpenClawSearchGateway/SearchGateway，回傳已去敏 citation pack/evidence bundle references；未新增 execution/broker/runtime/capital 直通。",
+      "驗證通過：103 passed focused OpenClaw/search/tool-bridge suite；46 passed services/search/tests；git diff --check passed。",
+      "範圍註記：worktree 中 execution runtime dirty files 視為其他 bracket/runtime task，未納入本 task deliverable。"
+    ],
+    "review_file": "support/reviews/P1-SEARCH-001-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T08:17:37Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "208978be4394c06997657a93636513ede11f2c07",
+      "commit_subject": "P1-SEARCH-001 govern OpenClaw search gateway",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "P1-SEARCH-001",
+        "Reviewer": "Codex",
+        "Verification": "pytest services/search/tests -q (46 passed); pytest services/search/tests/test_governed_search.py services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_tool_workflow_bridge.py -q (103 passed); git diff --check for scoped files passed."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 117,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P1-SEARCH-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented governed OpenClaw SearchGateway integration: sanitized citation-pack endpoint, available_time pre-ranking filter, no execution/tool bypass; verified search suite and OpenClaw adapter/tool bridge tests.",
+      "status": "done",
+      "created_at": "2026-05-01T08:09:36Z",
+      "resolved_at": "2026-05-01T08:14:01Z"
+    },
+    {
+      "task_id": "P1-SEARCH-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: governed OpenClaw SearchGateway integration verified; owner to finalize task-scoped artifacts and close out.",
+      "status": "done",
+      "created_at": "2026-05-01T08:14:01Z",
+      "resolved_at": "2026-05-01T08:17:38Z"
+    }
+  ],
+  "blockers": []
+}

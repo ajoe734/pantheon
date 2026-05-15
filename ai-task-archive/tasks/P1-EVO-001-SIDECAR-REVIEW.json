@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "P1-EVO-001-SIDECAR-REVIEW",
+  "archived_at": "2026-05-01T14:11:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P1-EVO-001-SIDECAR-REVIEW",
+    "title": "Prepare P1-EVO-001 review packet and evidence summary",
+    "summary_zh": "平行支援 P1-EVO-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "P1 Wave 6",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "P0-REC-001"
+    ],
+    "artifacts": [
+      "support/sidecars/P1-EVO-001/P1-EVO-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only P1-EVO-001 sidecar review packet after Codex approval. Task-scoped commit 7d7cebf records the packet and review approval. Verification: git diff --check -- support/sidecars/P1-EVO-001/P1-EVO-001-SIDECAR-REVIEW.md .orchestrator/chair-reviews/P1-EVO-001-SIDECAR-REVIEW-codex-review.md.",
+    "last_update": "2026-05-01T14:11:48Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "P1-EVO-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "support-only artifact 未修改 canonical truth，且只引用 parent P1-EVO-001 approval，不取代或擴大 parent review",
+      "Verification: git diff --check -- support/sidecars/P1-EVO-001/P1-EVO-001-SIDECAR-REVIEW.md passed"
+    ],
+    "review_file": ".orchestrator/chair-reviews/P1-EVO-001-SIDECAR-REVIEW-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T14:11:48Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "7d7cebff028408349659ec53c558bb4c2dc21494",
+      "commit_subject": "P1-EVO-001-SIDECAR-REVIEW add review packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "P1-EVO-001-SIDECAR-REVIEW",
+        "Reviewer": "Codex",
+        "Verification": "git diff --check -- support/sidecars/P1-EVO-001/P1-EVO-001-SIDECAR-REVIEW.md .orchestrator/chair-reviews/P1-EVO-001-SIDECAR-REVIEW-codex-review.md"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 138,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P1-EVO-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review packet ready: support/sidecars/P1-EVO-001/P1-EVO-001-SIDECAR-REVIEW.md summarizes parent approval evidence and remains support-only.",
+      "status": "done",
+      "created_at": "2026-05-01T14:06:50Z",
+      "resolved_at": "2026-05-01T14:10:47Z"
+    },
+    {
+      "task_id": "P1-EVO-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Sidecar review approved by Codex. Artifact is support-only, references parent P1-EVO-001 approval without broadening scope, and git diff --check on the sidecar packet passed. Owner Codex2 should finalize.",
+      "status": "done",
+      "created_at": "2026-05-01T14:10:47Z",
+      "resolved_at": "2026-05-01T14:11:48Z"
+    }
+  ],
+  "blockers": []
+}

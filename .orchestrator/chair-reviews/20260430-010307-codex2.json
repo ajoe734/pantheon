@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Low-risk approval triage can unblock the active review while underutilized lanes have runnable support work.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260430T010256Z-d22999b3",
+      "decision": "allow",
+      "reason": "Read-only docker compose config validation scoped to the reviewed task; it parses configuration and writes no project state.",
+      "remember": false
+    },
+    {
+      "approval_id": "apr-20260430T010257Z-9724d3ac",
+      "decision": "allow",
+      "reason": "Read-only prod-control compose config validation using the task env example; it parses configuration and writes no project state.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-POSTGRES-PRODUCTION-OWNERSHIP-WAVE2",
+    "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE",
+    "SVC-STAGING-DUAL-VM-COMPOSE-CONTRACT"
+  ]
+}

@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "SVC-OSS-ACTIVATION-READY-BFF-OPS-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-30T06:28:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OSS-ACTIVATION-READY-BFF-OPS-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-OSS-ACTIVATION-READY-BFF-OPS BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-OSS-ACTIVATION-READY-BFF-OPS，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "OSS Activation-Ready Development",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-OSS-ACTIVATION-READY-DISPATCH-KERNEL",
+      "SVC-QLIB-ACTIVATION-READY-ADAPTER",
+      "SVC-TRL-ACTIVATION-READY-ADAPTER",
+      "SVC-RL-FINRL-RLLIB-RAYTUNE-ACTIVATION-READY",
+      "SVC-WANDB-OFFLINE-GATED-SYNC-ADAPTER"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-OSS-ACTIVATION-READY-BFF-OPS/SVC-OSS-ACTIVATION-READY-BFF-OPS-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Done: support-only BFF/frontend handoff packet finalized after Codex review approval. Artifact committed in 4cec36b. Verification: git diff --check -- support/sidecars/SVC-OSS-ACTIVATION-READY-BFF-OPS/SVC-OSS-ACTIVATION-READY-BFF-OPS-SIDECAR-BFF-HANDOFF.md; git diff --cached --check -- support/sidecars/SVC-OSS-ACTIVATION-READY-BFF-OPS/SVC-OSS-ACTIVATION-READY-BFF-OPS-SIDECAR-BFF-HANDOFF.md; pytest services/control-plane/bff/test_research_oss_preactivation_contract.py (3 passed).",
+    "last_update": "2026-04-30T06:28:24Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-OSS-ACTIVATION-READY-BFF-OPS",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：handoff packet 僅新增 support artifact，未修改 L1 canonical truth 或 runtime/registry/governance implementation。",
+      "route、alias、activity_limit、read-only write_paths/operator_controls、backend inventory、artifact/log/error/degraded guidance 均與目前父任務 BFF patch 與 focused tests 對齊。",
+      "Verification: git diff --check -- support/sidecars/SVC-OSS-ACTIVATION-READY-BFF-OPS/SVC-OSS-ACTIVATION-READY-BFF-OPS-SIDECAR-BFF-HANDOFF.md; pytest services/control-plane/bff/test_research_oss_preactivation_contract.py."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T06:28:24Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "4cec36b403ef6ce5062598d0767e01e304eb0f94",
+      "commit_subject": "SVC-OSS-ACTIVATION-READY-BFF-OPS-SIDECAR-BFF-HANDOFF closeout packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-OSS-ACTIVATION-READY-BFF-OPS-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Verification": "git diff --check -- support/sidecars/SVC-OSS-ACTIVATION-READY-BFF-OPS/SVC-OSS-ACTIVATION-READY-BFF-OPS-SIDECAR-BFF-HANDOFF.md; git diff --cached --check -- support/sidecars/SVC-OSS-ACTIVATION-READY-BFF-OPS/SVC-OSS-ACTIVATION-READY-BFF-OPS-SIDECAR-BFF-HANDOFF.md; pytest services/control-plane/bff/test_research_oss_preactivation_contract.py (3 passed)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 51,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 15,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OSS-ACTIVATION-READY-BFF-OPS-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: added support-only BFF/frontend handoff packet for OSS activation-ready operations. Artifact: support/sidecars/SVC-OSS-ACTIVATION-READY-BFF-OPS/SVC-OSS-ACTIVATION-READY-BFF-OPS-SIDECAR-BFF-HANDOFF.md. Verification: git diff --check -- support/sidecars/SVC-OSS-ACTIVATION-READY-BFF-OPS/SVC-OSS-ACTIVATION-READY-BFF-OPS-SIDECAR-BFF-HANDOFF.md.",
+      "status": "done",
+      "created_at": "2026-04-30T06:02:46Z",
+      "resolved_at": "2026-04-30T06:26:00Z"
+    },
+    {
+      "task_id": "SVC-OSS-ACTIVATION-READY-BFF-OPS-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: support-only BFF/frontend handoff packet matches the parent BFF surface and preserves fail-closed/read-only activation posture. Returning to Codex2 for task-scoped closeout.",
+      "status": "done",
+      "created_at": "2026-04-30T06:26:00Z",
+      "resolved_at": "2026-04-30T06:28:24Z"
+    }
+  ],
+  "blockers": []
+}

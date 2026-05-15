@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "task_id": "OPS-010",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-010",
+    "title": "Validate status command flow",
+    "phase": "Foundation",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Validated assign/start/progress/blocker/handoff/done flow end-to-end",
+    "last_update": "2026-04-01T04:30:43Z",
+    "summary_zh": "驗證狀態指令流程可用，確認 assign、start、progress、handoff、blocker、done 會正確更新資料。"
+  },
+  "handoffs": [
+    {
+      "task_id": "OPS-010",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Review the generated task board and blocker rendering",
+      "status": "done",
+      "created_at": "2026-04-01T04:30:41Z",
+      "resolved_at": "2026-04-01T04:30:43Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "OPS-010",
+      "owner": "Codex",
+      "waiting_for": "Gemini",
+      "message": "Need reviewer eyes on state transitions",
+      "status": "resolved",
+      "created_at": "2026-04-01T04:30:38Z",
+      "resolved_at": "2026-04-01T04:30:41Z"
+    }
+  ]
+}

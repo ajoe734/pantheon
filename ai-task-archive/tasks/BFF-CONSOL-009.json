@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-009",
+  "archived_at": "2026-05-13T04:06:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-009",
+    "title": "Canonical fixture pack B (evolution research artifacts v5 agora runtimes)",
+    "summary_zh": "canonical fixture pack B (evolution/research/artifacts/v5 interventions/agora/runtimes) 各 ≥1 筆 non-empty。v5 intervention 對應 governed remediation flow;agora 至少有一個 active topic;research 含 ticket 與 analysis sample。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-002"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/data/fixtures_pack_b.json"
+    ],
+    "acceptance": [
+      "6 個 family 各 ≥1 non-empty fixture",
+      "v5 intervention 連結 governed remediation skeleton",
+      "agora topic 可被 EventSource subscribe",
+      "research ticket 連 analysis",
+      "runtime fixture 對應 paper-canary 但 fail-closed",
+      "authenticated live smoke 跑 data_count 都 ≥1"
+    ],
+    "next": "Owner closeout complete. Committed read_store.py+main.py fixture pack B integration (d0efa73d): _load_default_fixture_pack_datasets now merges both packs, list_v5_interventions surface added, _v5_intervention_records helper wires pack B governed interventions into all three call sites. Verification: 15 tests passed (11 BFF-CONSOL-009 + 4 pack A regression). All 6 acceptance criteria met.",
+    "last_update": "2026-05-13T04:06:19Z",
+    "review_notes_zh": [
+      "核准。檢查 services/control-plane/bff/data/fixtures_pack_b.json 與 test_bff_consol_009_fixture_pack_b.py，fixture pack B 六個 family 皆非空；v5 intervention 含 remediation_skeleton/two_man_rule_enforced=true；agora active session 含 sse_topic；research ticket/experiment/analysis/artifact linkage 存在；runtime 為 paper 且 live_write_enabled=false/fail_closed=true。驗證：python3 -m pytest services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py -q => 11 passed；python3 -m pytest services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py -q => 15 passed；git diff --check -- services/control-plane/bff/data/fixtures_pack_b.json services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py services/control-plane/bff/main.py services/control-plane/bff/read_store.py => clean。注意：目前工作樹有 task-owned main.py/read_store.py fixture pack B 整合變更未包含在 HEAD commit 6d525fd4；owner closeout 前應確認並納入 task-scoped commit 或在 closeout 訊息說明例外。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T04:06:19Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "d0efa73d270d93a86dbe4ba9f66835535b44c8b7",
+      "commit_subject": "BFF-CONSOL-009 integrate fixture pack B into read_store and main",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "- read_store.py": "merge pack B path into _FIXTURE_PACK_PATHS; add",
+        "- main.py": "introduce _v5_intervention_records() helper that merges the",
+        "Verification": "python3 -m pytest test_bff_consol_009_fixture_pack_b.py",
+        "LLM-Agent": "Claude",
+        "Task-ID": "BFF-CONSOL-009",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 27,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-009",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-13T03:09:33Z",
+      "resolved_at": "2026-05-13T03:09:51Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-009",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-13T03:28:52Z",
+      "resolved_at": "2026-05-13T03:29:17Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-009",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-13T03:50:05Z",
+      "resolved_at": "2026-05-13T03:50:20Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-009",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Fixture pack B complete. Commit 6d525fd4 adds fixtures_pack_b.json (6 families: evolution/research/artifacts/v5_interventions/agora/runtimes, each ≥1 non-empty) and test_bff_consol_009_fixture_pack_b.py (11 tests, all pass). v5 intervention has governed remediation_skeleton with two_man_rule_enforced=true. Agora session is active with sse_topic. Research ticket links experiment + analysis. Runtime is paper-only with fail_closed=true. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-05-13T03:58:38Z",
+      "resolved_at": "2026-05-13T04:04:06Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-009",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Approved for owner closeout. Fixture pack B acceptance verified; focused pytest passed (11 BFF-CONSOL-009 tests, 15 with pack A regression) and diff check clean. Owner closeout should include task-owned main/read_store integration if still uncommitted before done.",
+      "status": "done",
+      "created_at": "2026-05-13T04:04:06Z",
+      "resolved_at": "2026-05-13T04:06:20Z"
+    }
+  ],
+  "blockers": []
+}

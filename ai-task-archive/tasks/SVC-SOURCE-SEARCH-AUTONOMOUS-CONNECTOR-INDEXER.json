@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "SVC-SOURCE-SEARCH-AUTONOMOUS-CONNECTOR-INDEXER",
+  "archived_at": "2026-04-30T02:53:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-SOURCE-SEARCH-AUTONOMOUS-CONNECTOR-INDEXER",
+    "title": "Add autonomous connector and index refresh baseline for source search",
+    "summary_zh": "把 source-ingest/search 從 bounded external_feed + query-time durable reload 推進到 autonomous connector/indexer baseline：scheduled ingest、bounded connector adapter、materialized index refresh、DLQ/replay 與 smoke 驗證。",
+    "phase": "Source / Search Autonomous Pipeline",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "SVC-POSTGRES-PRODUCTION-OWNERSHIP-WAVE2",
+      "SVC-SOURCE-INGEST-EXTERNAL-FETCH-BASELINE",
+      "SVC-SEARCH-DURABLE-COMPAT-QUARANTINE"
+    ],
+    "artifacts": [
+      "services/source_ingestion",
+      "services/search",
+      "scripts/smoke_honest_stack.py",
+      "docker-compose.yml",
+      "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion"
+    ],
+    "acceptance": [
+      "source-ingest has scheduled bounded connector execution not only caller-triggered external_feed",
+      "search has materialized index refresh path not only query-time reload",
+      "watermark DLQ replay and max records bytes timeout guards remain enforced",
+      "request-document compat remains quarantined",
+      "autonomous ingest index smoke passes",
+      "focused source/search tests and compose config pass"
+    ],
+    "next": "Owner finalized review_approved task. Implementation in 7c4a924 (scheduled connector + materialized index baseline); closeout note added in fe03838 (phase4 gap-inventory section 14). Verified: python3 -m pytest services/source_ingestion/ services/search/ -> 64 passed; docker compose config --quiet -> exit 0.",
+    "last_update": "2026-04-30T02:53:59Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "review_notes_zh": [
+      "審查 7c4a924 與目前工作樹中的 source_ingestion/search/smoke scope，scheduled connector、watermark due check、DLQ/replay、bounded fetch guard、request-doc compat quarantine、materialized index append/replay 均符合 acceptance。",
+      "驗證通過：python3 -m pytest services/source_ingestion/ services/search/ -> 64 passed；docker compose config --quiet -> exit 0。",
+      "注意：工作樹已有無關 orchestrator/archive dirty files，未影響本 task touched artifacts；owner closeout 時需依 closeout spec 分離處理。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T02:53:59Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "fe03838d1469954ab18faacaf8530c0abec8b092",
+      "commit_subject": "SVC-SOURCE-SEARCH-AUTONOMOUS-CONNECTOR-INDEXER finalize closeout note",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-SOURCE-SEARCH-AUTONOMOUS-CONNECTOR-INDEXER",
+        "Reviewer": "Codex2",
+        "Verification": "python3 -m pytest services/source_ingestion/ services/search/ -> 64 passed; docker compose config --quiet -> exit 0."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 40,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 11,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-SOURCE-SEARCH-AUTONOMOUS-CONNECTOR-INDEXER",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Ready for review. Implementation: (1) source-ingest scheduled connector path - ConnectorScheduleConfig + JsonlConnectorScheduleStore (append/replay), PUT/GET /connectors/{id}/schedule, POST /run-scheduled (watermark-driven due check). (2) search materialized index path - JsonlMaterializedIndexStore (append/replay last state), POST/GET /index/materialize. Existing watermark/DLQ/replay/bounded fetch guards and request-document compat quarantine preserved. (3) Smoke updated and 14 focused tests added. Verification: python3 -m pytest services/source_ingestion/ services/search/ -> 64 passed; docker compose config --quiet -> exit 0. Commit: 7c4a924.",
+      "status": "done",
+      "created_at": "2026-04-30T02:31:07Z",
+      "resolved_at": "2026-04-30T02:43:11Z"
+    },
+    {
+      "task_id": "SVC-SOURCE-SEARCH-AUTONOMOUS-CONNECTOR-INDEXER",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review approved by Codex2. Verified source-ingest scheduled connector and search materialized index baseline; tests and compose config pass. Owner Claude should run closeout finalization and mark done.",
+      "status": "done",
+      "created_at": "2026-04-30T02:43:11Z",
+      "resolved_at": "2026-04-30T02:53:59Z"
+    }
+  ],
+  "blockers": []
+}

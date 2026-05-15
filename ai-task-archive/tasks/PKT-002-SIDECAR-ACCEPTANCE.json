@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "PKT-002-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-14T11:17:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PKT-002-SIDECAR-ACCEPTANCE",
+    "title": "Prepare PKT-002 acceptance packet and dependency map",
+    "summary_zh": "平行支援 PKT-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "APP-002 Packetization",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LOOP-001",
+      "LOOP-003"
+    ],
+    "artifacts": [
+      "support/sidecars/PKT-002/PKT-002-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only PKT-002 acceptance packet after Claude review approval. Artifact remains limited to support/sidecars/PKT-002/PKT-002-SIDECAR-ACCEPTANCE.md and preserves acceptance checklist, dependency map, reviewer gates, and inherited caveat visibility for parent-owner absorption.",
+    "last_update": "2026-04-14T11:17:56Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PKT-002",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar 為 support-only，未修改任何 canonical truth 或 L1 政策文件",
+      "acceptance checklist 涵蓋全部三個 AC，每項均有可追溯的 W2 sidecar 來源",
+      "dependency map 清楚區分正式上游依賴與繼承的 BFF caveats",
+      "reviewer gates G1-G5 具體可執行，可直接用於 parent PKT-002 審查",
+      "Non-dependencies 清單防止 Operator Home 或後端缺口阻塞 packetization 進度"
+    ],
+    "review_file": "support/sidecars/PKT-002/PKT-002-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T11:17:56Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "97a7ea327b38179b8bbea8bf82805864cd364174",
+      "commit_subject": "PKT-002-SIDECAR-ACCEPTANCE: finalize acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "PKT-002-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 147,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PKT-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Support-only acceptance packet is ready at support/sidecars/PKT-002/PKT-002-SIDECAR-ACCEPTANCE.md. It consolidates PKT-002 acceptance criteria, formal dependencies, W2 incident read/control evidence, and reviewer gates without changing canonical packet truth or runtime code.",
+      "status": "done",
+      "created_at": "2026-04-14T10:51:00Z",
+      "resolved_at": "2026-04-14T11:02:45Z"
+    },
+    {
+      "task_id": "PKT-002-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-14T11:02:45Z",
+      "resolved_at": "2026-04-14T11:03:56Z"
+    },
+    {
+      "task_id": "PKT-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: support-only sidecar meets all three acceptance criteria. Artifact is scoped correctly — no canonical truth modified. AC checklist, dependency map, and reviewer gates are complete and source-traceable. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-14T11:03:56Z",
+      "resolved_at": "2026-04-14T11:17:57Z"
+    }
+  ],
+  "blockers": []
+}

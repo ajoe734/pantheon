@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "4 idle workers, no blockers, no active provider guardrails; sidecar pressure is zero and both active tasks are at clean review_approved closure.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-BFF-AUTH-FACADE-HARDENING"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-BFF-AUTH-FACADE-HARDENING",
+    "SVC-BFF-AUTH-FACADE-HARDENING-SIDECAR-BFF-HANDOFF"
+  ]
+}

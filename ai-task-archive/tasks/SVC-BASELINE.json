@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "SVC-BASELINE",
+  "archived_at": "2026-04-28T11:16:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-BASELINE",
+    "title": "Lock the single-VM service baseline contract",
+    "summary_zh": "鎖定 single-VM service baseline：ports、env names、volume mounts、health checks、compose profiles 與 Dockerfile 慣例。",
+    "phase": "Phase 4: Service Layer Completion",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "depends_on": [],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/phase2-phase6-gap-inventory.md",
+      "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/starter-draft.md"
+    ],
+    "acceptance": [
+      "port/env/volume contract is explicit across the target stack",
+      "compose profile boundaries and Dockerfile conventions are documented for implementation"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase4-2026-04-15-service-layer-completion",
+      "phase": "phase4",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion",
+      "session_file": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-28T09:09:29Z",
+      "session_id": "phase4-2026-04-15-service-layer-completion",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized approved SVC-BASELINE. Single-VM service baseline contract is locked, reviewed by Claude, and ready for downstream SVC tasks.",
+    "last_update": "2026-04-28T11:16:05Z",
+    "review_notes_zh": [
+      "SVC-BASELINE 通過審查：starter-draft.md 鎖定的 port/host port/health path/profile/volume/env/Dockerfile 慣例與根目錄 docker-compose.yml 完全一致；所有列出的 service 都已存在 Dockerfile；phase2-phase6-gap-inventory.md §8 已正確將舊內容降級為 2026-04-15 規劃 snapshot 並指向 starter-draft 為現行契約。",
+      "docker compose config --quiet 退出 0，契約語法與 compose 解析皆通過。",
+      "驗收兩條皆達成：port/env/volume 契約明確；compose profile 與 Dockerfile 慣例已記錄供下游 SVC-* 任務使用。"
+    ],
+    "review_file": "docs/reviews/2026-04-28-svc-baseline-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T11:16:05Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "5b2dd6c63fd8d2f1778a0eadec07913a765483df",
+      "commit_subject": "SVC-BASELINE lock single VM service contract",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-BASELINE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 25,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 7,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-BASELINE",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "SVC-BASELINE ready for review: starter-draft.md now locks the single-VM port/env/volume/health/profile/Dockerfile contract, and phase2-phase6-gap-inventory.md records the closure note against the older planning snapshot. Verified docker compose config --quiet.",
+      "status": "done",
+      "created_at": "2026-04-28T10:19:22Z",
+      "resolved_at": "2026-04-28T10:26:32Z"
+    },
+    {
+      "task_id": "SVC-BASELINE",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-28T10:26:32Z",
+      "resolved_at": "2026-04-28T11:12:29Z"
+    },
+    {
+      "task_id": "SVC-BASELINE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved by Claude after auto-reassignment from Gemini. Locked single-VM baseline contract verified against docker-compose.yml and on-disk Dockerfiles; returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-28T11:12:29Z",
+      "resolved_at": "2026-04-28T11:16:05Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,28 @@
+{
+  "feature_id": "PKT-008-rollback-review",
+  "status": "loop-complete",
+  "backend_commit": "7135fb0098f29f0b3744e82999b85b7d44a3b83f",
+  "bff_contract_version": "pantheon-bff@7135fb0098f29f0b3744e82999b85b7d44a3b83f",
+  "source_payload": ".coordination/requests/PKT-008-rollback-review-frontend-feedback.yaml",
+  "transport_commit": "73d2b83549564e22cdd1b462a3fe5601db675071",
+  "metadata_commit": "bfb87a995d3360aef5ab42d32d25fb6d2ae0328a",
+  "review_file": ".coordination/reviews/BP6-LUV-019-review.md",
+  "needs_runtime_request": ".coordination/requests/PKT-008-rollback-review-needs-runtime.yaml",
+  "endpoints": [
+    "GET /api/v1/operator/rollback-review/{rollback_id}",
+    "POST /api/v1/operator/commands"
+  ],
+  "contract_paths": [
+    "docs/bff/PKT-008-rollback-review.md",
+    "docs/examples/PKT-008-rollback-review.json",
+    "docs/screens/PKT-008-rollback-review.md",
+    "docs/pantheon-handoffs/PKT-008-rollback-review/FRONTEND_CHANGE_SPEC.md"
+  ],
+  "closure_evidence": [
+    "Pantheon BFF now serves the published rollback-review read route",
+    "Pantheon command validation and executor now accept ApproveRollback and RejectRollback",
+    "front request pair is replayable from transport_commit",
+    "frontend-feedback.source_commit truthfully points back to transport_commit from metadata_commit",
+    "targeted Pantheon tests and sibling front production build passed"
+  ]
+}

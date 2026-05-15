@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3",
+  "archived_at": "2026-05-04T01:05:46Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3",
+    "title": "Move remaining production owner stores off JSONL baseline",
+    "summary_zh": "把剩餘 control/data-plane owner store 從 JSON/JSONL baseline 推到 staging/prod Postgres ownership cutoff；dev 可以保留 JSONL rollback，但 staging/prod 必須 fail closed 或要求 Postgres backend。",
+    "phase": "Blueprint gap execution wave 2026-05-03",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT"
+    ],
+    "artifacts": [
+      "DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md",
+      "docker-compose.yml",
+      "docker-compose.control.yml",
+      "services",
+      "env/prod-control.env.example"
+    ],
+    "acceptance": [
+      "staging/prod env 不會靜默使用 JSON/JSONL owner store；owner table 與 migration/runbook 更新；focused store tests 通過"
+    ],
+    "next": "Owner finalized: 8 store/posture tests pass; runbook Section 9 records final verification and Codex approval; task-scoped commit 0d62c33 (runbook only); docker-compose.control.yml healthcheck updates excluded (belong to OBSERVABILITY-PROBE-FINALIZE).",
+    "last_update": "2026-05-04T01:05:46Z",
+    "review_notes_zh": [
+      "Codex review approved. Verified b2c4de8/current artifacts: wave3 prod-control env selects Postgres backends, persistence posture fails closed for staging/prod JSON/JSONL, reconciliation-drift-svc is present in docker-compose.control.yml with external runtime-manager URL, and runbook documents env gates/schema bootstrap/dev rollback. Verification: python3 -m pytest services/foundation/tests/test_control_plane_postgres_owner_stores.py services/foundation/tests/test_persistence_posture.py -v (8 passed); docker compose -f docker-compose.control.yml config --quiet; docker compose --env-file env/prod-control.env.example -f docker-compose.control.yml config --quiet."
+    ],
+    "review_file": ".orchestrator/reviews/SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-04T01:05:46Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "0d62c3350a92181d6c7520193f82dbd4e7c1bd20",
+      "commit_subject": "SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3 finalize postgres cutoff wave3 closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Task-ID": "SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3",
+        "LLM-Agent": "Claude",
+        "Reviewer": "Codex",
+        "Verification": "python3 -m pytest services/foundation/tests/test_control_plane_postgres_owner_stores.py services/foundation/tests/test_persistence_posture.py -v -- 8 passed in 1.77s"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 545,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 16,
+      "behind": 12,
+      "push_status": "diverged"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Auto-reassigned SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3 away from sidecar-only lane Gemini; reviewer Gemini -> Codex. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-05-03T12:56:13Z",
+      "resolved_at": "2026-05-03T13:37:55Z"
+    },
+    {
+      "task_id": "SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete. Gaps fixed: (1) reconciliation-drift-svc added to docker-compose.control.yml — was missing from the VM-1 control-plane slice; adapts runtime-manager dependency to PANTHEON_RUNTIME_MANAGER_URL env var; adds reconciliation-drift-data volume. (2) docs/operations/postgres-cutoff-wave3-runbook.md created with env var table, fail-closed guarantee verification, schema bootstrap steps, dev rollback procedure, compose topology notes, and verification commands. All existing implementations (governance, capital, incidents, postmortems, promotion, memory + reconciliation-drift) already had postgres backends with require_persistence_posture() fail-closed enforcement. Focused tests: 8 passed (test_control_plane_postgres_owner_stores + test_persistence_posture). Commit: b2c4de8",
+      "status": "done",
+      "created_at": "2026-05-03T13:47:09Z",
+      "resolved_at": "2026-05-03T14:23:42Z"
+    },
+    {
+      "task_id": "SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved by Codex. Focused store/posture tests passed (8), control compose config passed with and without prod-control env file, and review artifact recorded at .orchestrator/reviews/SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3-review-codex.md. Owner should perform task closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-03T14:23:42Z",
+      "resolved_at": "2026-05-04T01:05:47Z"
+    }
+  ],
+  "blockers": []
+}

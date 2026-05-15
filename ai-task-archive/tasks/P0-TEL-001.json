@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "P0-TEL-001",
+  "archived_at": "2026-05-01T07:26:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-TEL-001",
+    "title": "Add paper runtime telemetry emitter and ingest validation",
+    "summary_zh": "新增 paper heartbeat/deploy/pnl/bracket_logged telemetry producer 與 ingest validation tests。",
+    "phase": "Pantheon P0 Paper Loop",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "depends_on": [
+      "P0-CTX-002",
+      "P0-LEAN-CTX-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_p0_sd/SD-P0-04_Paper_Runtime_TelemetryEvent_Contract.md"
+    ],
+    "acceptance": [
+      "paper heartbeat validates as TelemetryEvent and dedupes by event_id",
+      "stage mismatch and missing binding are rejected where required"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-05-01T03:58:17Z",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Closeout complete for P0-TEL-001 at commit 9884be6. Paper telemetry emitter and ingest contract accepted: heartbeat/deploy/pnl/paper_fill_simulated/bracket_order_logged emit canonical paper envelopes with binding and bridge metadata; ingest dedupes event_id and rejects missing binding/stage mismatch; bracket remains logged_only/submitted_to_broker=false. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.execution.lean_runtime.test_paper_runtime services.telemetry.test_paper_runtime_ingest_contract; PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.telemetry.test_main_routes services.execution.lean_runtime.test_runtime_bootstrap services.execution.lean_runtime.test_runtime_context; cd services/telemetry && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_capture; PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/lupin/code/pantheon:/home/lupin/code/pantheon/lean/Algorithm.Python python3 lean/Algorithm.Python/pantheon_algo/test_base.py.",
+    "last_update": "2026-05-01T07:26:28Z",
+    "review_notes_zh": [
+      "審查通過：P0-TEL-001 producer 和 ingest validation 符合 scope。確認 RuntimeTelemetryEmitter 建立 paper-only TelemetryEvent envelope，包含 binding/runtime/capital/artifact/plan/persona_capital_binding 與 bridge metadata；非 paper deployment_stage 和缺 binding identity 會被拒絕；ingest 透過 binding_store 驗證 stage/identity、event_id dedupe、missing binding rejection；bracket_order_logged 以 logged_only / submitted_to_broker=false 保持非 broker submission。Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.execution.lean_runtime.test_paper_runtime services.telemetry.test_paper_runtime_ingest_contract; PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.telemetry.test_main_routes services.execution.lean_runtime.test_runtime_bootstrap services.execution.lean_runtime.test_runtime_context; PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_capture from services/telemetry; PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/lupin/code/pantheon:/home/lupin/code/pantheon/lean/Algorithm.Python python3 lean/Algorithm.Python/pantheon_algo/test_base.py."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T07:26:28Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "9884be67781d298ab9f5507a118301dc3e2f6891",
+      "commit_subject": "P0-TEL-001 add paper telemetry emitter",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "P0-TEL-001",
+        "Reviewer": "Codex2",
+        "Verification": "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.execution.lean_runtime.test_paper_runtime services.telemetry.test_paper_runtime_ingest_contract; PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.telemetry.test_main_routes services.execution.lean_runtime.test_runtime_bootstrap services.execution.lean_runtime.test_runtime_context; cd services/telemetry && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_capture; PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/lupin/code/pantheon:/home/lupin/code/pantheon/lean/Algorithm.Python python3 lean/Algorithm.Python/pantheon_algo/test_base.py"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 115,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-TEL-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Implemented paper RuntimeTelemetryEmitter canonical envelopes for heartbeat/deploy/pnl/paper_fill_simulated/bracket_order_logged with bridge metadata; schema/ingest validation covers producer heartbeat dedupe, stage mismatch rejection, missing binding rejection, and bracket logged_only. Verified: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.execution.lean_runtime.test_paper_runtime services.telemetry.test_paper_runtime_ingest_contract; PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.telemetry.test_main_routes services.execution.lean_runtime.test_runtime_bootstrap services.execution.lean_runtime.test_runtime_context; PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_capture from services/telemetry; PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/lupin/code/pantheon:/home/lupin/code/pantheon/lean/Algorithm.Python python3 lean/Algorithm.Python/pantheon_algo/test_base.py",
+      "status": "done",
+      "created_at": "2026-05-01T07:20:00Z",
+      "resolved_at": "2026-05-01T07:22:49Z"
+    },
+    {
+      "task_id": "P0-TEL-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Approved P0-TEL-001 review. Producer emits canonical paper telemetry for heartbeat/deploy/pnl/paper_fill_simulated/bracket_order_logged with binding and bridge metadata; ingest validation covers event_id dedupe, stage mismatch, missing binding, and logged_only bracket semantics. Verified focused unittest suites.",
+      "status": "done",
+      "created_at": "2026-05-01T07:22:49Z",
+      "resolved_at": "2026-05-01T07:26:28Z"
+    }
+  ],
+  "blockers": []
+}

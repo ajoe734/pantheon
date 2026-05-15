@@ -16,7 +16,8 @@
   "properties": {
     "entry_id": {
       "type": "string",
-      "description": "Immutable unique identifier for this institutional memory entry (UUID)."
+      "pattern": "^mem-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "Immutable unique identifier for this institutional memory entry. Format: mem-{UUID} (e.g. mem-7f2a1b9c-4d5e-4f6a-8b0c-9d1e2f3a4b5c). The mem- prefix makes the ID self-describing in a multi-entity system."
     },
     "knowledge_type": {
       "type": "string",
@@ -110,6 +111,20 @@
     "superseded_by": {
       "type": ["string", "null"],
       "description": "entry_id that supersedes this one. Superseded entries are kept for lineage but excluded from active retrieval."
+    },
+    "expires_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "UTC timestamp after which the retention policy archives this entry unless it has already been superseded or archived. Null means the entry follows an explicit indefinite-retention exception."
+    },
+    "archived_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "UTC timestamp when the retention policy archived this entry. Archived entries remain durable for lineage and replay but are excluded from active retrieval."
+    },
+    "archived_reason": {
+      "type": ["string", "null"],
+      "description": "Reason recorded when the entry was archived, for example retention_ttl_expired."
     },
     "reuse_count": {
       "type": "integer",

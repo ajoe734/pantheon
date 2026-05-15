@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "task_id": "STATE-REBASE-001",
+  "archived_at": "2026-04-19T15:54:38Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "STATE-REBASE-001",
+    "title": "Rebaseline canonical state trackers to one truthful execution picture",
+    "summary_zh": "對齊 ai-status.json、current-work.md、WORKBENCH_DELIVERY_BACKLOG.md 與 orchestrator summary，消除 operator/governance loop closeout 與 active backlog 的 tracking drift。",
+    "phase": "Execution / Wave 1 - State Rebaseline",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "ai-status.json",
+      "current-work.md",
+      "WORKBENCH_DELIVERY_BACKLOG.md",
+      ".orchestrator/state.json",
+      "docs/reviews/2026-04-18-current-state-reconciliation.md"
+    ],
+    "acceptance": [
+      "current-work backlog and ai-status describe the same remaining backlog",
+      "execution mode summary no longer conflicts with loop closeout truth",
+      "state rebaseline is recorded with explicit drift findings and resolutions"
+    ],
+    "next": "Checkpoint: rebaseline landed; canonical state/backlog drift resolved and recorded. Owner finalized approved task to done.",
+    "last_update": "2026-04-19T15:54:38Z",
+    "source_plane": "gap_reconciliation",
+    "source_ref": {
+      "type": "gap_reconciliation",
+      "recorded_at": "2026-04-19T00:00:00Z",
+      "summary": "Materialized from the 2026-04-19 complete-system gap audit and Lovable master SA reconciliation",
+      "canonical_refs": [
+        "current-work.md",
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "DEVELOPMENT_WORKBREAKDOWN.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md"
+      ]
+    },
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-19-system-completion-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "三項 drift findings 已確認：idle-agent stale next text 已清除（ai_status.py:1057），reviewed operator/governance loops 已移至 landed baselines（PKT-001–014），closeout bookkeeping 已分離至 APP-003-CLOSEOUT-001",
+      "四項 resolutions 均已落地並可追蹤",
+      "WORKBENCH_DELIVERY_BACKLOG.md remaining backlog 現在只含真正未完成模組",
+      "ai_status.py idle branch 確實清除 stale text",
+      "接受此次 rebaseline 為 canonical truth"
+    ],
+    "review_file": "docs/reviews/2026-04-19-state-rebaseline-001.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T15:54:38Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "8323b4f86243fa527e55a01b1d70d147684455f6",
+      "commit_subject": "STATE-REBASE-001: finalize delivery metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "STATE-REBASE-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 686,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "STATE-REBASE-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Rebaseline is ready for review. Verified  clears stale idle-agent next text,  now removes reviewed operator/governance loops from remaining backlog, and drift findings/resolutions are recorded in docs/reviews/2026-04-19-state-rebaseline-001.md.",
+      "status": "done",
+      "created_at": "2026-04-19T15:49:10Z",
+      "resolved_at": "2026-04-19T15:49:21Z"
+    },
+    {
+      "task_id": "STATE-REBASE-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Rebaseline is ready for review. Verified scripts/ai_status.py clears stale idle-agent next text, WORKBENCH_DELIVERY_BACKLOG.md now removes reviewed operator/governance loops from remaining backlog, and drift findings/resolutions are recorded in docs/reviews/2026-04-19-state-rebaseline-001.md.",
+      "status": "done",
+      "created_at": "2026-04-19T15:49:21Z",
+      "resolved_at": "2026-04-19T15:51:21Z"
+    },
+    {
+      "task_id": "STATE-REBASE-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all three acceptance criteria verified. Idle-agent stale-next fix confirmed at ai_status.py:1057. Reviewed loops correctly removed from remaining backlog. Drift record is complete. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-19T15:51:21Z",
+      "resolved_at": "2026-04-19T15:54:38Z"
+    }
+  ],
+  "blockers": []
+}

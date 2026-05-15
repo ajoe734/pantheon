@@ -1,6 +1,6 @@
 # KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY
 
-Last updated: 2026-04-09
+Last updated: 2026-05-01
 Status: canonical kill switch and safe mode execution policy for Pantheon
 Tier: L1 Platform Architecture & Policy
 Scope: emergency fast-path execution, kill switch routing, safe mode transitions, risk-off and liquidate command authority
@@ -36,7 +36,7 @@ Pantheon 需要：
 - **Hard emergency path**
 
 ### 2.2 不繞過 runtime-manager
-即使是 hard emergency，**也不直接繞過 runtime-manager 直打 LEAN runtime**。  
+即使是 hard emergency，**也不直接繞過 runtime-manager 直打 LEAN runtime**。
 最短路徑的正確定義是：
 
 > 直達 runtime-manager 的高優先權 fast path
@@ -190,6 +190,50 @@ flowchart LR
     A --> B --> C --> D --> E --> F
 ```
 
+### 8.1 Runtime-manager secondary path and telemetry ack
+
+Runtime-manager dispatch must not stop at a UI or controller state change.
+The authorised kill-switch path is complete only after runtime-manager attempts
+the RuntimeBinding follow-through and returns a telemetry acknowledgement:
+
+```text
+kill-switch command
+  -> RuntimeBinding write path
+  -> KillSwitchAuditEntry / AuditAction
+  -> telemetry_ack
+```
+
+Ack rules:
+
+- `telemetry_ack.ack_status = acknowledged` only when runtime-manager records the runtime/capital follow-through, such as pause/risk_off to `paused`, liquidate/terminate to terminal state, or replace to a fallback RuntimeBinding.
+- `telemetry_ack.ack_status = fail_closed` when no target binding can be resolved or runtime follow-through is missing.
+- A `fail_closed` ack is still an ack record, but it means the command must be treated as not runtime-confirmed and the pool/environment remains in the safest available safe-mode state.
+- The ack must carry `command_id`, `audit_id`, `capital_pool_id`, action type, safe-mode state, and any resolved RuntimeBinding/runtime identity.
+- Audit persistence and idempotency state must be durable before the command is returned as acknowledged.
+
+### 8.2 Activation gate use of telemetry ack
+
+Canary/live promotion gates may cite kill-switch readiness only when a
+stage-appropriate drill exercises the Runtime Manager path and produces an
+`acknowledged` telemetry ack.
+
+Gate rules:
+
+- Before canary activation, the readiness packet must include a paper-stage
+  drill that reaches Runtime Manager fast path and returns
+  `telemetry_ack.ack_status = acknowledged`.
+- Before live activation, the readiness packet must include a canary or
+  staging-live drill for the active `RuntimeBinding`, `capital_pool_id`, and
+  target broker subaccount.
+- The drill must cover pause or risk_off and, where applicable to the target
+  stage, liquidate, terminate, or replace behavior.
+- A `fail_closed` ack is audit evidence for safe fallback, not promotion
+  evidence. It blocks activation until a later drill returns `acknowledged`.
+- A direct LEAN runtime call, broker SDK script, UI-only state change, or
+  OpenClaw/tool invocation cannot satisfy this gate.
+- Drill evidence must be linked to the `DeploymentPlan`, `RuntimeBinding`,
+  operator identity, audit id, command id, and resulting safe-mode state.
+
 ---
 
 ## 9. Safe Mode 狀態
@@ -224,6 +268,9 @@ flowchart LR
 4. risk_off / pause / liquidate / replace 都是正式動作
 5. 所有 kill switch 動作必須有 audit
 6. active runtime state 必須由 runtime-manager 更新，而非旁路修改
+7. paper/canary/live promotion gates require stage-appropriate drill evidence
+   with `telemetry_ack.ack_status = acknowledged`; `fail_closed` remains
+   audit-only and blocks promotion
 
 ---
 

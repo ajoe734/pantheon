@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "task_id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
+  "archived_at": "2026-05-15T05:26:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
+    "title": "Restore hosted Lovable dev real-write gate for F05",
+    "summary_zh": "F05 hosted Lovable DOM selector 已確認正確，但 pantheon-dev.lovable.app bundle 缺 VITE_BFF_REAL_WRITES/VITE_BFF_FALLBACK；remediation action 只走 overlay，不會 POST /bff/v5/interventions/{id}/remediate。需更新 dev Lovable deploy/write-gate 設定後重跑 F05 hosted 兩次。",
+    "phase": "Pantheon FE Integration Gate 2026-05-13",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "execute-plans/.lovable/audits/current-run/fe-int-gate-align-f05-hosted-write-gate-gap.md",
+      "execute-plans/e2e/04-sentinel-remediation.spec.ts"
+    ],
+    "acceptance": [
+      "hosted bundle exposes dev-scoped real-write integration gate",
+      "F05 hosted headed run observes remediation POST",
+      "F05 hosted npx playwright test passes twice"
+    ],
+    "next": "Done: evidence committed at c5528c58; hosted bundle still serves /assets/index-vlevju41.js with VITE_BFF_REAL_WRITES/VITE_BFF_FALLBACK/dev BFF markers, and owner closeout reran hosted e2e/04-sentinel-remediation.spec.ts twice with strict fallback + real writes enabled (2 passed each).",
+    "last_update": "2026-05-15T05:26:13Z",
+    "review_notes_zh": [
+      "Codex2 review approved: pantheon-dev hosted asset now references /assets/index-vlevju41.js and bundle contains VITE_BFF_REAL_WRITES/VITE_BFF_FALLBACK plus the dev BFF URL/token marker.",
+      "Reviewer reran hosted e2e/04-sentinel-remediation.spec.ts twice against pantheon-dev + dev BFF with VITE_BFF_FALLBACK=strict and VITE_BFF_REAL_WRITES=true; both runs passed 2/2 with traces under support/evidence/FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE-codex2-review/.",
+      "The original stale-bundle gap artifact is superseded by support/evidence/OPS-GEM-REDEPLOY-001.md and this review evidence; no selector masking or acceptance downgrade found."
+    ],
+    "review_file": "support/reviews/FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE-codex2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T05:26:13Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "c5528c587fae5b89d7edde862ff373d7dec04327",
+      "commit_subject": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE finalize review evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
+        "Reviewer": "Codex2",
+        "Verification": "hosted bundle check confirmed /assets/index-vlevju41.js with VITE_BFF_REAL_WRITES, VITE_BFF_FALLBACK, dev BFF URL, and dev browser marker; hosted e2e/04-sentinel-remediation.spec.ts passed twice from execute-plans with strict fallback and real writes enabled."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 12,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Gemini is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-14T12:03:07Z",
+      "resolved_at": "2026-05-14T12:03:33Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Hosted write-gate redeploy verification complete: pantheon-dev now serves /assets/index-vlevju41.js, F05 hosted e2e/04-sentinel-remediation.spec.ts passed twice with VITE_BFF_REAL_WRITES=true and strict fallback. Evidence: support/evidence/OPS-GEM-REDEPLOY-001.md and commit a165abe7.",
+      "status": "done",
+      "created_at": "2026-05-15T05:06:23Z",
+      "resolved_at": "2026-05-15T05:14:26Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-05-15T05:14:26Z",
+      "resolved_at": "2026-05-15T05:19:51Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: hosted Lovable dev write gate is restored and F05 hosted passed twice under strict real-writes verification.",
+      "status": "done",
+      "created_at": "2026-05-15T05:19:51Z",
+      "resolved_at": "2026-05-15T05:26:13Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
+      "owner": "Codex",
+      "waiting_for": "Gemini",
+      "message": "Code remediation committed and pushed in execute-plans (104f06b, artifact update 49899d0). Production-preview F05 passed twice, but pantheon-dev.lovable.app still serves old asset /assets/index-BYfBkno5.js as of 2026-05-14T12:32:26Z; hosted F05 rerun is waiting on Lovable dev redeploy/refresh.",
+      "status": "resolved",
+      "created_at": "2026-05-14T12:33:18Z",
+      "resolved_at": "2026-05-15T05:06:23Z"
+    }
+  ]
+}

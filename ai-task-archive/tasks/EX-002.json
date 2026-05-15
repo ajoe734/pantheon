@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "task_id": "EX-002",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EX-002",
+    "title": "Align rollback execution actions with runtime-manager semantics",
+    "summary_zh": "把 replace、pause_then_replace、liquidate_then_replace 對齊到 runtime-manager 的正式執行行為。",
+    "phase": "Phase 2: Capital, Runtime, and Execution Control",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "RUN-001"
+    ],
+    "artifacts": [
+      "ROLLBACK_AND_POSITION_SEMANTICS.md",
+      "services/execution/artifact-loader/contract.md"
+    ],
+    "acceptance": [
+      "action mapping is explicit",
+      "position handling and cutover semantics are preserved"
+    ],
+    "next": "EX-002 closed. Rollback execution semantics are aligned end-to-end: ROLLBACK_AND_POSITION_SEMANTICS.md is the L1 source of truth, rollback_action_matrix.md preserves the explicit replace/pause_then_replace/liquidate_then_replace mapping with position treatment and telemetry cutover semantics, deployment_plan.py keeps legacy replace_binding only at the compatibility boundary, and artifact-loader validates fallback metadata without owning rollback behavior. Claude review approved at services/execution/review_ex002_claude_approved_zh.md; verification remained green (9 saga, 24 plan, 13/13 smoke, 10/10 binding, 9/9 loader).",
+    "last_update": "2026-04-10T08:00:16Z"
+  },
+  "handoffs": [
+    {
+      "task_id": "EX-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "EX-002 ready for review. Canonical rollback_action_type now stays in replace/pause_then_replace/liquidate_then_replace vocabulary through deployment_saga compensation, with legacy replace_binding normalized only at the compatibility boundary. Updated rollback policy, runtime-manager rollback matrix, and artifact-loader contract so cutover semantics use replacement RuntimeBinding creation/retire rather than in-place mutation, and loader validates fallback metadata without inventing rollback execution semantics. Verification: PYTHONPATH=services/control-plane/governance python3 -m unittest services/control-plane/governance/test_deployment_saga.py (9 tests), PYTHONPATH=services/control-plane/governance python3 -m unittest services/control-plane/governance/test_deployment_plan.py (24 tests), python3 services/control-plane/governance/smoke_test_deployment_saga.py (13/13), python3 services/execution/runtime-manager/smoke_test_runtime_binding.py (10/10 groups), python3 -m unittest services/execution/test_artifact_loader.py (9 tests), plus py_compile pass.",
+      "status": "done",
+      "created_at": "2026-04-10T07:31:23Z",
+      "resolved_at": "2026-04-10T07:59:12Z"
+    },
+    {
+      "task_id": "EX-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "EX-002 approved. ROLLBACK_AND_POSITION_SEMANTICS.md locked as L1, rollback_action_matrix.md has explicit 3-action mapping (replace/pause_then_replace/liquidate_then_replace) with position treatment and telemetry cutover semantics. Legacy replace_binding normalized only at compatibility boundary in deployment_plan.py. Loader restricted to fallback metadata validation only. All tests pass: 9 saga, 24 plan, 13/13 smoke, 10/10 binding, 9/9 loader. Review at services/execution/review_ex002_claude_approved_zh.md.",
+      "status": "done",
+      "created_at": "2026-04-10T07:59:12Z",
+      "resolved_at": "2026-04-10T08:00:16Z"
+    }
+  ],
+  "blockers": []
+}

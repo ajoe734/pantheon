@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+host_home="${PANTHEON_HOST_HOME:-/home/lupin}"
+node_bin="$(ls -d "$host_home"/.vscode-server/cli/servers/Stable-*/server/node 2>/dev/null | sort -V | tail -n1)"
+gemini_js="$(ls -d "$host_home"/.local/share/pantheon-orchestrator-tools/gemini-cli-*/package/bundle/gemini.js 2>/dev/null | sort -V | tail -n1)"
+
+if [[ -z "${node_bin}" ]]; then
+  echo "VS Code server node binary not found." >&2
+  exit 1
+fi
+if [[ -z "${gemini_js}" ]]; then
+  echo "Gemini CLI bundle not found under ~/.local/share/pantheon-orchestrator-tools." >&2
+  exit 1
+fi
+
+export GOOGLE_GENAI_USE_GCA="${GOOGLE_GENAI_USE_GCA:-1}"
+if [[ -n "${GEMINI_CLI_HOME:-}" ]]; then
+  mkdir -p "${GEMINI_CLI_HOME}"
+  export HOME="${GEMINI_CLI_HOME}"
+fi
+exec "${node_bin}" "${gemini_js}" "$@"

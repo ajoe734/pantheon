@@ -4,7 +4,10 @@ import {
   laneLabelMap,
   scheduleOpenTaskStatuses,
   statusLabelMap,
-} from "./dashboard-config.js?v=20260413-1745";
+} from "./dashboard-config.js?v=20260513-claim";
+
+export const DISPLAY_TIME_ZONE = "Asia/Taipei";
+export const DISPLAY_TIME_ZONE_LABEL = "台灣時間 (UTC+8)";
 
 export const qs = (selector) => document.querySelector(selector);
 
@@ -17,7 +20,7 @@ export function defaultPlanningState() {
     facilitator: "Claude",
     baton_owner: "Codex",
     starter_owner: "Codex",
-    next_reviewer: "Qwen",
+    next_reviewer: "Codex2",
     current_round: 0,
     consensus_status: "not_started",
     human_gate_status: "not_requested",
@@ -58,10 +61,18 @@ export function defaultDashboardBundle() {
       running_workers: 0,
       pending_workers: 0,
       mismatch_count: 0,
+      mode_occupancy: {
+        planning: { running: 0, pending: 0, queued: 0 },
+        execution: { running: 0, pending: 0, queued: 0 },
+        coordination: { running: 0, pending: 0, queued: 0 },
+        chair_review: { running: 0, pending: 0, queued: 0 },
+      },
       lanes: {},
+      dispatch_targets: {},
     },
     execution_summary: {
       ready_now: 0,
+      dependency_ready: 0,
       in_progress: 0,
       in_review: 0,
       blocked: 0,
@@ -77,6 +88,19 @@ export function defaultDashboardBundle() {
       counts: {},
       materialized_count: 0,
       proposed_execution_tasks: 0,
+    },
+    coordination_summary: {
+      last_scan_at: null,
+      counts: {
+        tracked_features: 0,
+        lovable_ready: 0,
+        mirrored_to_target_repo: 0,
+        waiting_for_lovable: 0,
+        ui_done_received: 0,
+        frontend_feedback_received: 0,
+        open_bff_gaps: 0,
+      },
+      features: [],
     },
     bridge_summary: {
       source_plane: "planning",
@@ -104,6 +128,30 @@ export function defaultDashboardBundle() {
       current_session_materialized: 0,
       missing_source_ref_count: 0,
     },
+    chair_summary: {
+      current_index: 0,
+      last_chair_agent: null,
+      last_chair_run_at: null,
+      last_chair_reason: null,
+      last_review_path: null,
+      last_review_summary: [],
+      pending_review_path: null,
+      pending_review_agent: null,
+      sidecar_approved_until: null,
+    },
+    dispatch_policy: {
+      mode: "supervisor_owned_dispatch",
+      helper_claim_enabled: true,
+      claim_idle_work: false,
+      claim_sidecars_when_idle: false,
+      require_owner_higher_priority_load: true,
+      owned_work_first: true,
+      max_dispatches_per_tick: 4,
+      max_tasks_per_agent: 1,
+      sidecar_only_agents: [],
+      disabled_agents: [],
+    },
+    recent_helper_claims: [],
     worker_task_links: [],
     truth_mismatches: [],
   };
@@ -118,7 +166,25 @@ export function normalizeDashboardBundle(value) {
     runtime_summary: { ...base.runtime_summary, ...(value.runtime_summary || {}) },
     execution_summary: { ...base.execution_summary, ...(value.execution_summary || {}) },
     planning_summary: { ...base.planning_summary, ...(value.planning_summary || {}) },
+    coordination_summary: {
+      ...base.coordination_summary,
+      ...(value.coordination_summary || {}),
+      counts: { ...base.coordination_summary.counts, ...((value.coordination_summary || {}).counts || {}) },
+      features: Array.isArray((value.coordination_summary || {}).features) ? value.coordination_summary.features : [],
+    },
     bridge_summary: { ...base.bridge_summary, ...(value.bridge_summary || {}) },
+    chair_summary: { ...base.chair_summary, ...(value.chair_summary || {}) },
+    dispatch_policy: {
+      ...base.dispatch_policy,
+      ...(value.dispatch_policy || {}),
+      sidecar_only_agents: Array.isArray((value.dispatch_policy || {}).sidecar_only_agents)
+        ? value.dispatch_policy.sidecar_only_agents
+        : base.dispatch_policy.sidecar_only_agents,
+      disabled_agents: Array.isArray((value.dispatch_policy || {}).disabled_agents)
+        ? value.dispatch_policy.disabled_agents
+        : base.dispatch_policy.disabled_agents,
+    },
+    recent_helper_claims: Array.isArray(value.recent_helper_claims) ? value.recent_helper_claims : [],
     worker_task_links: Array.isArray(value.worker_task_links) ? value.worker_task_links : [],
     truth_mismatches: Array.isArray(value.truth_mismatches) ? value.truth_mismatches : [],
   };
@@ -162,6 +228,8 @@ export function normalizeReviewNotes(value) {
 
 export function providerLabel(value) {
   if (!value) return "-";
+  const normalized = String(value).toLowerCase().replace(/_/g, "-");
+  if (/^codex[12]-[1-4]$/.test(normalized)) return normalized;
   if (value === "copilot") return "GitHub Copilot";
   return value;
 }
@@ -176,11 +244,15 @@ export function titleCase(value) {
 
 export function agentLabel(value) {
   if (!value) return "-";
-  const normalized = String(value).toLowerCase();
+  const normalized = String(value).toLowerCase().replace(/-/g, "_");
   if (normalized === "claude") return "Claude";
+  if (normalized === "claude2") return "Claude (2)";
   if (normalized === "gemini") return "Gemini";
+  if (normalized === "gemini2") return "Gemini (2)";
   if (normalized === "codex") return "Codex";
-  if (normalized === "qwen") return "Qwen";
+  if (normalized === "codex2") return "Codex (2)";
+  if (/^codex1_[1-4]$/.test(normalized)) return "Codex";
+  if (/^codex2_[1-4]$/.test(normalized)) return "Codex (2)";
   if (normalized === "grok") return "Copilot";
   if (normalized === "copilot") return "Copilot";
   return value;
@@ -189,6 +261,10 @@ export function agentLabel(value) {
 export function actorLabel(agentId, provider) {
   const agent = agentLabel(agentId);
   const host = providerLabel(provider);
+  const normalizedProvider = String(provider || "").toLowerCase().replace(/_/g, "-");
+  if (/^codex[12]-[1-4]$/.test(normalizedProvider)) {
+    return `${agent} · ${normalizedProvider}`;
+  }
   if (agentId && provider && String(agentId).toLowerCase() !== String(provider).toLowerCase()) {
     return `${agent} (${host})`;
   }
@@ -200,15 +276,79 @@ export function terminalTaskStatus(value) {
 }
 
 export function logicalWorkerAgentId(worker) {
+  const explicit = String(worker?.logical_agent_id || "").trim().toLowerCase().replace(/-/g, "_");
+  if (explicit) {
+    if (/^codex1_[1-4]$/.test(explicit)) return "codex";
+    if (/^codex2_[1-4]$/.test(explicit)) return "codex2";
+    return explicit;
+  }
   const candidates = [worker?.agent_id, worker?.target_agent, worker?.provider];
   for (const candidate of candidates) {
-    const normalized = String(candidate || "").trim().toLowerCase();
+    const normalized = String(candidate || "").trim().toLowerCase().replace(/-/g, "_");
     if (!normalized) continue;
-    if (["claude", "gemini", "codex", "qwen"].includes(normalized)) return normalized;
+    if (["claude", "claude2", "gemini", "gemini2", "codex", "codex2"].includes(normalized)) return normalized;
+    if (/^codex1_[1-4]$/.test(normalized)) return "codex";
+    if (/^codex2_[1-4]$/.test(normalized)) return "codex2";
     if (["grok", "copilot"].includes(normalized)) return "copilot";
   }
   if (String(worker?.provider || "").toLowerCase() === "copilot") return "copilot";
   return String(worker?.agent_id || worker?.provider || "").trim().toLowerCase() || "unknown";
+}
+
+export const codexWorkerSlots = [
+  { id: "codex1-1", agent_id: "codex1_1", logical_agent_id: "codex", quota_group: "codex1", account_label: "Codex1", auth_home: "~/.codex" },
+  { id: "codex1-2", agent_id: "codex1_2", logical_agent_id: "codex", quota_group: "codex1", account_label: "Codex1", auth_home: "~/.codex" },
+  { id: "codex1-3", agent_id: "codex1_3", logical_agent_id: "codex", quota_group: "codex1", account_label: "Codex1", auth_home: "~/.codex" },
+  { id: "codex1-4", agent_id: "codex1_4", logical_agent_id: "codex", quota_group: "codex1", account_label: "Codex1", auth_home: "~/.codex" },
+  { id: "codex2-1", agent_id: "codex2_1", logical_agent_id: "codex2", quota_group: "codex2", account_label: "Codex2", auth_home: "~/.codex2" },
+  { id: "codex2-2", agent_id: "codex2_2", logical_agent_id: "codex2", quota_group: "codex2", account_label: "Codex2", auth_home: "~/.codex2" },
+  { id: "codex2-3", agent_id: "codex2_3", logical_agent_id: "codex2", quota_group: "codex2", account_label: "Codex2", auth_home: "~/.codex2" },
+  { id: "codex2-4", agent_id: "codex2_4", logical_agent_id: "codex2", quota_group: "codex2", account_label: "Codex2", auth_home: "~/.codex2" },
+];
+
+function normalizeCodexSlotId(value) {
+  const normalized = String(value || "").trim().toLowerCase().replace(/_/g, "-");
+  return /^codex[12]-[1-4]$/.test(normalized) ? normalized : "";
+}
+
+function codexSlotWorkerScore(worker) {
+  const bucket = String(worker?.bucket || "").toLowerCase();
+  const priority = bucket === "running" ? 3 : bucket === "pending" ? 2 : bucket === "transition" ? 1 : 0;
+  const timestamp = Date.parse(worker?.last_event_at || worker?.updated_at || worker?.started_at || "") || 0;
+  return [priority, timestamp];
+}
+
+function preferCodexSlotWorker(candidate, current) {
+  if (!current) return true;
+  const [candidatePriority, candidateTimestamp] = codexSlotWorkerScore(candidate);
+  const [currentPriority, currentTimestamp] = codexSlotWorkerScore(current);
+  if (candidatePriority !== currentPriority) return candidatePriority > currentPriority;
+  return candidateTimestamp > currentTimestamp;
+}
+
+export function buildCodexSlotRoster(orchState, status) {
+  const workers = normalizeWorkerRecords(orchState, status);
+  const bySlot = new Map();
+  for (const worker of workers) {
+    const slotId = normalizeCodexSlotId(
+      worker.dispatch_slot || worker.slot_id || worker.provider || worker.agent_id || worker.dispatch_slot_id
+    );
+    if (!slotId || !preferCodexSlotWorker(worker, bySlot.get(slotId))) continue;
+    bySlot.set(slotId, worker);
+  }
+  return codexWorkerSlots.map((slot) => {
+    const worker = bySlot.get(slot.id) || null;
+    const active = worker && ["running", "pending"].includes(worker.bucket);
+    return {
+      ...slot,
+      label: slot.id.replace(/^codex/, "Codex"),
+      worker,
+      status: active ? worker.bucket : "idle",
+      task_id: active ? worker.task_id || null : null,
+      worker_status: active ? worker.status || null : null,
+      last_event_at: active ? worker.last_event_at || null : null,
+    };
+  });
 }
 
 export function normalizeWorkerRecords(orchState, status) {
@@ -234,7 +374,9 @@ export function normalizeWorkerRecords(orchState, status) {
       run_id: runId,
       logical_agent_id: logicalAgentId,
       task_status: taskStatus,
+      dispatch_mode: runtimeDispatchMode(worker),
       bucket,
+      reason: worker?.reason || worker?.request_snapshot?.reason || null,
       display_actor: actorLabel(logicalAgentId, worker?.provider),
     };
   });
@@ -306,7 +448,38 @@ export function normalizeDispatchQueue(orchState, status) {
 }
 
 function normalizedActorName(value) {
-  return String(value || "").trim().toLowerCase();
+  const lowered = String(value || "").trim().toLowerCase();
+  const aliases = {
+    "claude 2": "claude2",
+    "gemini 2": "gemini2",
+    "codex (2)": "codex2",
+    "codex 2": "codex2",
+    "codex (3)": "codex",
+    codex3: "codex",
+    grok: "copilot",
+    "copilot host": "copilot",
+    copilot_host: "copilot",
+  };
+  return aliases[lowered] || lowered;
+}
+
+function runtimeDispatchMode(payload) {
+  const explicit = String(payload?.dispatch_mode || "").trim();
+  if (explicit) return explicit;
+  const requestSnapshot = payload?.request_snapshot && typeof payload.request_snapshot === "object" ? payload.request_snapshot : {};
+  const metadata = payload?.metadata && typeof payload.metadata === "object"
+    ? payload.metadata
+    : (requestSnapshot.metadata && typeof requestSnapshot.metadata === "object" ? requestSnapshot.metadata : {});
+  if (metadata?.planning && typeof metadata.planning === "object" && Object.keys(metadata.planning).length) {
+    return String(metadata.planning.mode || "discussion_planning");
+  }
+  if (metadata?.coordination && typeof metadata.coordination === "object" && Object.keys(metadata.coordination).length) {
+    return "coordination";
+  }
+  const reason = String(payload?.reason || requestSnapshot.reason || "").trim();
+  if (reason.startsWith("discussion_planning_")) return "discussion_planning";
+  if (reason.startsWith("coordination:")) return "coordination";
+  return "execution";
 }
 
 function expectedTaskActor(task) {
@@ -353,6 +526,9 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
 
     const task = taskMap.get(worker.task_id);
     if (!task) {
+      if (["discussion_planning", "coordination"].includes(runtimeDispatchMode(worker))) {
+        continue;
+      }
       pushMismatch({
         id: `worker-task-missing:${worker.run_id}`,
         type: "worker_task_missing",
@@ -416,7 +592,7 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
   for (const task of status?.tasks || []) {
     const taskStatus = String(task.status || "").toLowerCase();
     const live = liveWorkersByTask.get(task.id) || [];
-    if (["in_progress", "review"].includes(taskStatus) && live.length === 0) {
+    if (taskStatus === "in_progress" && live.length === 0) {
       pushMismatch({
         id: `active-task-without-worker:${task.id}`,
         type: "active_task_without_worker",
@@ -432,6 +608,9 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
 
   for (const event of queueEvents) {
     const hasLiveWorker = liveWorkers.some((worker) => worker.queue_event_id === event.id);
+    if (["discussion_planning", "coordination"].includes(runtimeDispatchMode(event))) {
+      continue;
+    }
     if (["started", "manual_pending"].includes(String(event.status || "").toLowerCase()) && !hasLiveWorker) {
       pushMismatch({
         id: `queue-without-worker:${event.id}`,
@@ -517,6 +696,7 @@ export function formatTime(value) {
     minute: "2-digit",
     second: "2-digit",
     hour12: false,
+    timeZone: DISPLAY_TIME_ZONE,
   });
 }
 
@@ -658,6 +838,7 @@ export function deriveAgentState(status, orchState) {
       approved_count: approved.length,
       live_running_count: liveRunningWorkers.length,
       live_pending_count: livePendingWorkers.length,
+      target_workload: Number.isFinite(Number(status?.workload?.[agent.name])) ? Number(status.workload[agent.name]) : null,
     };
   });
 }

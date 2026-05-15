@@ -1,0 +1,12 @@
+{
+  "result": {
+    "summary": "Research intake fixture for the BP5-OSS-001 OpenClaw governed-boundary smoke test."
+  },
+  "metadata": {
+    "topic": "momentum-risk-screen",
+    "source_id": "openclaw-fixture-001"
+  },
+  "lineage": {
+    "run_id": "openclaw-fixture-run-001"
+  }
+}

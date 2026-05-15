@@ -47,3 +47,5 @@ gap_handoff_path: .coordination/requests/RW-01-research-ticket-bff-gap.yaml
 gap_handoff_template: .coordination/requests/RW-01-research-ticket-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/RW-01-research-ticket-ui-done.yaml
 completion_handoff_template: .coordination/requests/RW-01-research-ticket-ui-done.example.yaml
+feedback_handoff_path: .coordination/requests/RW-01-research-ticket-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/RW-01-research-ticket-frontend-feedback.example.yaml

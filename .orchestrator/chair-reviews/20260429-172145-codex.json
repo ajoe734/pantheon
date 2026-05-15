@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization remains present and support work is runnable once the safe SVC-DATA read-only approval is cleared.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-DATA-OWNERSHIP-MIGRATION-MAP"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260429T171459Z-99b6d981",
+      "decision": "allow",
+      "reason": "Read-only Agent Explore scan scoped to services and docker-compose for the active SVC-DATA owner task; no write, destructive, credential, or network action is requested.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-DATA-OWNERSHIP-MIGRATION-MAP",
+    "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+    "SVC-RESEARCH-GATEWAY-DORMANT-CAPABILITY-SURFACE-SIDECAR-BFF-HANDOFF"
+  ]
+}

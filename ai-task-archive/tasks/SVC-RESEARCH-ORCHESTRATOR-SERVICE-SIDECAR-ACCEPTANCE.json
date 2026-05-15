@@ -1,0 +1,631 @@
+{
+  "version": 1,
+  "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-29T04:50:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+    "title": "Prepare SVC-RESEARCH-ORCHESTRATOR-SERVICE acceptance packet and dependency map",
+    "summary_zh": "平行支援 SVC-RESEARCH-ORCHESTRATOR-SERVICE，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Future-State Service Materialization",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "SVC-SOURCE-INGEST-SERVICE",
+      "SVC-SEARCH-SERVICE",
+      "SVC-COMPOSE"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved support-only acceptance packet; delivery commit 5ee4530 records the packet and Claude2 approval returned no blocking changes.",
+    "last_update": "2026-04-29T04:50:57Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-RESEARCH-ORCHESTRATOR-SERVICE",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar acceptance packet 與已 archived 的 parent (SVC-RESEARCH-ORCHESTRATOR-SERVICE) 及三項依賴 (SOURCE-INGEST/SEARCH/COMPOSE) 證據一致；14 條 API 路由與 compose env/port/volume 全部對得上。",
+      "只動了 support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/，未碰 L1 canonical 真相、contract 真相、registry/governance/runtime 實作。",
+      "小提醒（非阻擋）：§2 寫 compose 是 \"/health healthcheck\"，實際 docker-compose.yml 是 /readyz（由 register_fastapi_health_routes 提供）；行為正確只是用詞不準，建議 parent 吸收時順手收緊文案。"
+    ],
+    "review_file": "docs/reviews/2026-04-29-svc-research-orchestrator-service-sidecar-acceptance-claude2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T04:50:57Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "5ee45300393e88412ade429ba9d5ffc01d9d1080",
+      "commit_subject": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE add acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 137,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 29,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Support-only acceptance packet is ready for review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. It maps approved parent evidence, done dependencies, API/compose boundaries, and fresh sidecar verification: focused pytest 3 passed; docker compose config --quiet passed; diff check passed.",
+      "status": "done",
+      "created_at": "2026-04-28T19:21:30Z",
+      "resolved_at": "2026-04-28T19:34:33Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-28T19:34:33Z",
+      "resolved_at": "2026-04-28T20:02:17Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-28T20:02:17Z",
+      "resolved_at": "2026-04-28T20:03:56Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet is updated for the current reviewer at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. It maps approved parent evidence, done dependencies, API/compose boundaries, non-activation policy, and sidecar verification; reviewer handoff target is now Codex2.",
+      "status": "done",
+      "created_at": "2026-04-28T20:03:56Z",
+      "resolved_at": "2026-04-28T20:09:10Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet revalidated after worker restart and remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Verification rerun: focused pytest 3 passed; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T20:09:10Z",
+      "resolved_at": "2026-04-28T20:14:31Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet revalidated again after worker restart and remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Verification rerun: focused pytest 3 passed in 1.41s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T20:14:31Z",
+      "resolved_at": "2026-04-28T20:20:05Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet revalidated after worker restart and remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Verification rerun: focused pytest 3 passed in 1.36s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T20:20:05Z",
+      "resolved_at": "2026-04-28T20:25:25Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet revalidated after worker restart and remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Verification rerun: focused pytest 3 passed in 1.37s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T20:25:25Z",
+      "resolved_at": "2026-04-28T20:30:50Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet revalidated after worker restart and remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Verification rerun: focused pytest 3 passed in 1.42s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T20:30:50Z",
+      "resolved_at": "2026-04-28T20:36:09Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated after worker restart: focused pytest 3 passed in 1.38s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T20:36:09Z",
+      "resolved_at": "2026-04-28T20:41:25Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated after worker wake: focused pytest 3 passed in 1.39s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T20:41:25Z",
+      "resolved_at": "2026-04-28T20:46:30Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated after worker wake: focused pytest 3 passed in 1.42s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T20:46:30Z",
+      "resolved_at": "2026-04-28T20:51:53Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated after latest worker wake: focused pytest 3 passed in 1.39s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T20:51:53Z",
+      "resolved_at": "2026-04-28T20:57:34Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated after latest worker wake: focused pytest 3 passed in 1.37s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T20:57:34Z",
+      "resolved_at": "2026-04-28T21:07:47Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated after latest worker wake: focused pytest 3 passed in 1.49s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T21:07:47Z",
+      "resolved_at": "2026-04-28T21:13:12Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated after latest worker wake: focused pytest 3 passed in 1.41s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T21:13:12Z",
+      "resolved_at": "2026-04-28T21:18:42Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet is ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-28: focused pytest 3 passed in 1.46s; docker compose config --quiet passed; support packet diff check passed. Only the sidecar support packet and normal L0 handoff state were updated; no canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T21:18:42Z",
+      "resolved_at": "2026-04-28T21:24:21Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated after latest wake: focused pytest 3 passed in 1.40s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T21:24:21Z",
+      "resolved_at": "2026-04-28T21:29:18Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated after wake: focused pytest 3 passed in 1.36s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T21:29:18Z",
+      "resolved_at": "2026-04-28T21:34:34Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated after worker wake: focused pytest 3 passed in 1.43s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T21:34:34Z",
+      "resolved_at": "2026-04-28T21:39:59Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated after latest worker wake: focused pytest 3 passed in 1.38s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T21:39:59Z",
+      "resolved_at": "2026-04-28T21:45:22Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated after current wake: focused pytest 3 passed in 1.39s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T21:45:22Z",
+      "resolved_at": "2026-04-28T21:50:45Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated after wake: focused pytest 3 passed in 1.45s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T21:50:45Z",
+      "resolved_at": "2026-04-28T21:55:55Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated after latest wake: focused pytest 3 passed in 1.40s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T21:55:55Z",
+      "resolved_at": "2026-04-28T22:01:28Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated after latest wake: focused pytest 3 passed in 1.39s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T22:01:28Z",
+      "resolved_at": "2026-04-28T22:07:10Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on current wake: focused pytest 3 passed in 1.37s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T22:07:10Z",
+      "resolved_at": "2026-04-28T22:12:23Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-28 current wake: focused pytest 3 passed in 1.37s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T22:12:23Z",
+      "resolved_at": "2026-04-28T22:17:56Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet is ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-28 current wake: focused pytest 3 passed in 1.37s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T22:17:56Z",
+      "resolved_at": "2026-04-28T22:28:28Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on latest wake: focused pytest 3 passed in 1.40s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T22:28:28Z",
+      "resolved_at": "2026-04-28T22:33:46Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on current wake: focused pytest 3 passed in 1.47s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T22:33:46Z",
+      "resolved_at": "2026-04-28T22:44:17Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on current wake: focused pytest 3 passed in 1.41s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T22:44:17Z",
+      "resolved_at": "2026-04-28T22:49:44Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-28 current wake: focused pytest 3 passed in 1.41s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T22:49:44Z",
+      "resolved_at": "2026-04-28T22:55:19Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-28 current wake: focused pytest 3 passed in 1.40s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T22:55:19Z",
+      "resolved_at": "2026-04-28T23:00:22Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-28 current wake: focused pytest 3 passed in 1.52s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made.",
+      "status": "done",
+      "created_at": "2026-04-28T23:00:22Z",
+      "resolved_at": "2026-04-28T23:05:44Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet is ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-28: focused pytest 3 passed in 1.40s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made. Codex cannot approve its own sidecar; waiting for Codex2 review.",
+      "status": "done",
+      "created_at": "2026-04-28T23:05:44Z",
+      "resolved_at": "2026-04-28T23:10:50Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-28: focused pytest 3 passed in 1.40s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made. Codex cannot approve its own sidecar; waiting for Codex2 review.",
+      "status": "done",
+      "created_at": "2026-04-28T23:10:50Z",
+      "resolved_at": "2026-04-28T23:16:33Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-28 current wake: focused pytest 3 passed in 1.49s; docker compose config --quiet passed; support packet diff check passed. Updated only the sidecar support artifact verification result and normal L0 handoff state. No canonical/runtime implementation changes were made. Codex cannot approve its own sidecar; waiting for Codex2 review.",
+      "status": "done",
+      "created_at": "2026-04-28T23:16:33Z",
+      "resolved_at": "2026-04-28T23:21:34Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-28 wake: focused pytest 3 passed in 1.51s; docker compose config --quiet passed; support packet diff check passed. No canonical/runtime implementation changes were made. Codex cannot approve its own sidecar; waiting for Codex2 review.",
+      "status": "done",
+      "created_at": "2026-04-28T23:21:34Z",
+      "resolved_at": "2026-04-28T23:27:16Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet is ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-28: focused pytest 3 passed in 1.37s; docker compose config --quiet passed; support packet diff check passed. No L1 canonical truth, core contract truth, registry/governance, or runtime implementation edits were made. Codex cannot approve its own sidecar; waiting for Codex2 review.",
+      "status": "done",
+      "created_at": "2026-04-28T23:27:16Z",
+      "resolved_at": "2026-04-28T23:38:00Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-28 current wake: focused pytest 3 passed in 1.46s; docker compose config --quiet passed; support packet diff check passed. Updated only the sidecar support artifact verification result and normal L0 handoff state. No L1 canonical truth, core contract truth, registry/governance, or runtime implementation edits were made. Codex cannot approve its own sidecar; waiting for Codex2 review.",
+      "status": "done",
+      "created_at": "2026-04-28T23:38:00Z",
+      "resolved_at": "2026-04-28T23:43:26Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-28 current wake: focused pytest 3 passed in 1.38s; docker compose config --quiet passed; support packet diff check passed. Updated only the sidecar support artifact verification result and normal L0 handoff state. No L1 canonical truth, core contract truth, registry/governance, or runtime implementation edits were made. Codex cannot approve its own sidecar; waiting for Codex2 review.",
+      "status": "done",
+      "created_at": "2026-04-28T23:43:26Z",
+      "resolved_at": "2026-04-28T23:48:25Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-28 current wake: focused pytest 3 passed in 1.49s; docker compose config --quiet passed; support packet diff check passed. Updated only the sidecar support artifact verification result and normal L0 handoff state. No L1 canonical truth, core contract truth, registry/governance, or runtime implementation edits were made. Codex cannot approve its own sidecar; waiting for Codex2 review.",
+      "status": "done",
+      "created_at": "2026-04-28T23:48:25Z",
+      "resolved_at": "2026-04-28T23:59:00Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-28 current wake: focused pytest 3 passed in 1.38s; docker compose config --quiet passed; support packet diff check passed. Updated only the sidecar support artifact verification result and normal L0 handoff state. No L1 canonical truth, core contract truth, registry/governance, or runtime implementation edits were made. Codex cannot approve its own sidecar; waiting for Codex2 review.",
+      "status": "done",
+      "created_at": "2026-04-28T23:59:00Z",
+      "resolved_at": "2026-04-29T00:04:57Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-29 current wake: focused pytest 3 passed in 1.52s; docker compose config --quiet passed; support packet whitespace check passed via git diff --no-index --check. Updated only the sidecar support artifact verification result and normal L0 handoff state. No L1 canonical truth, core contract truth, registry/governance, or runtime implementation edits were made. Codex cannot approve its own sidecar; waiting for Codex2 review.",
+      "status": "done",
+      "created_at": "2026-04-29T00:04:57Z",
+      "resolved_at": "2026-04-29T00:10:08Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-29 current wake: focused pytest 3 passed in 1.40s; docker compose config --quiet passed; support packet whitespace check passed via git diff --check. Updated only the sidecar support artifact verification result and normal L0 handoff state. No L1 canonical truth, core contract truth, registry/governance, or runtime implementation edits were made. Codex cannot approve its own sidecar; waiting for Codex2 review.",
+      "status": "done",
+      "created_at": "2026-04-29T00:10:08Z",
+      "resolved_at": "2026-04-29T00:15:39Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-29 current wake: focused pytest 3 passed in 1.48s; docker compose config --quiet passed; support packet whitespace check passed via git diff --check. Updated only the sidecar support artifact verification result and normal L0 handoff state. No L1 canonical truth, core contract truth, registry/governance, or runtime implementation edits were made. Codex cannot approve its own sidecar; waiting for Codex2 review.",
+      "status": "done",
+      "created_at": "2026-04-29T00:15:39Z",
+      "resolved_at": "2026-04-29T00:20:53Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-29 current wake: focused pytest 3 passed in 1.42s; docker compose config --quiet passed; support packet whitespace check passed via git diff --no-index --check. Updated only the sidecar support artifact verification result and normal L0 handoff state. No L1 canonical truth, core contract truth, registry/governance, or runtime implementation edits were made. Codex cannot approve its own sidecar; waiting for Codex2 review.",
+      "status": "done",
+      "created_at": "2026-04-29T00:20:53Z",
+      "resolved_at": "2026-04-29T00:27:00Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-29 current wake: focused pytest 3 passed in 1.39s; docker compose config --quiet passed; support packet whitespace check passed via git diff --check. Updated only the sidecar support artifact verification result and normal L0 handoff state. No L1 canonical truth, core contract truth, registry/governance, or runtime implementation edits were made. Codex cannot approve its own sidecar; waiting for Codex2 review.",
+      "status": "done",
+      "created_at": "2026-04-29T00:27:00Z",
+      "resolved_at": "2026-04-29T01:40:56Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Codex2 to Claude2: Codex2 has 50 consecutive non-terminal exits on this review; Claude2 is an independent reviewer for owner Codex and is not currently listed in dispatch pauses.",
+      "status": "done",
+      "created_at": "2026-04-29T01:40:56Z",
+      "resolved_at": "2026-04-29T01:52:50Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Sidecar packet refreshed to reflect chair-reassigned reviewer (Codex2 -> Claude2). Section 7 reviewer checklist and section 8 handoff note now name Claude2; verification table from 2026-04-29 retained. Support-only artifact untouched in scope; ready for Claude2 review.",
+      "status": "done",
+      "created_at": "2026-04-29T01:52:50Z",
+      "resolved_at": "2026-04-29T01:57:28Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude2 to Copilot after repeated Claude2 terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1777442400,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_dis",
+      "status": "done",
+      "created_at": "2026-04-29T01:57:28Z",
+      "resolved_at": "2026-04-29T02:24:31Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Copilot",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Copilot to Codex2 after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-29T02:24:31Z",
+      "resolved_at": "2026-04-29T02:27:00Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet refreshed after reviewer reassignment from Copilot to Codex2. Updated only support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md to align reviewer checklist and handoff text with ai-status.json; no L1 canonical truth, core contract truth, registry/governance, or runtime implementation edits were made. Waiting for Codex2 review.",
+      "status": "done",
+      "created_at": "2026-04-29T02:27:00Z",
+      "resolved_at": "2026-04-29T02:30:00Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex2 to Gemini after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-29T02:30:00Z",
+      "resolved_at": "2026-04-29T02:57:13Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-29T02:57:13Z",
+      "resolved_at": "2026-04-29T03:04:39Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Updated sidecar acceptance packet reviewer reassignment note to match durable state; verification passed: focused pytest 3 passed, docker compose config --quiet passed, artifact whitespace check passed. Ready for Codex2 review.",
+      "status": "done",
+      "created_at": "2026-04-29T03:04:39Z",
+      "resolved_at": "2026-04-29T03:08:37Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Codex2 to Copilot after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-29T03:08:37Z",
+      "resolved_at": "2026-04-29T03:30:49Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Copilot",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Copilot to Codex2 after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-29T03:30:49Z",
+      "resolved_at": "2026-04-29T03:33:17Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet refreshed for the current Copilot-to-Codex2 review reassignment at support/sidecars/SVC-RESEARCH-ORCHESTRATOR-SERVICE/SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE.md. Updated only sidecar support text: parent archived-done status, reviewer reassignment note, and latest verification result. Verification: focused pytest 3 passed in 1.62s; docker compose config --quiet passed; support packet whitespace check passed. No L1 canonical truth, core contract truth, registry/governance, or runtime implementation edits were made. Codex cannot approve its own sidecar; waiting for Codex2 review.",
+      "status": "done",
+      "created_at": "2026-04-29T03:33:17Z",
+      "resolved_at": "2026-04-29T03:36:36Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex2 to Gemini after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-29T03:36:36Z",
+      "resolved_at": "2026-04-29T04:09:59Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Gemini to Claude2: Gemini has repeated terminal quota failures on this review with a multi-hour reset window; Claude2 is auth-ready and should be the next independent reviewer after its short pause expires.",
+      "status": "done",
+      "created_at": "2026-04-29T04:09:59Z",
+      "resolved_at": "2026-04-29T04:36:12Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet faithfully mirrors the approved parent evidence and dep map, no canonical truth touched; minor /health vs /readyz wording flagged as non-blocking follow-up. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-29T04:36:12Z",
+      "resolved_at": "2026-04-29T04:50:57Z"
+    }
+  ],
+  "blockers": []
+}

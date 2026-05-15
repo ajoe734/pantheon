@@ -1,7 +1,7 @@
 feature_id: PKT-004-capital-binding-drilldowns
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: loop-complete
+status: ready
 pantheon_pr: null
 base_url: null
 workbench: persona-workbench
@@ -43,3 +43,5 @@ gap_handoff_path: .coordination/requests/PKT-004-capital-binding-drilldowns-bff-
 gap_handoff_template: .coordination/requests/PKT-004-capital-binding-drilldowns-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/PKT-004-capital-binding-drilldowns-ui-done.yaml
 completion_handoff_template: .coordination/requests/PKT-004-capital-binding-drilldowns-ui-done.example.yaml
+feedback_handoff_path: .coordination/requests/PKT-004-capital-binding-drilldowns-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/PKT-004-capital-binding-drilldowns-frontend-feedback.example.yaml

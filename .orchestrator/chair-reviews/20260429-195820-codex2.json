@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Idle capacity exists and the current support sidecar is valid, but duplicate sidecars for the active smoke-matrix parent should be held.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-OSS-DORMANT-SMOKE-MATRIX"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-OSS-DORMANT-SMOKE-MATRIX",
+    "SVC-OSS-DORMANT-SMOKE-MATRIX-SIDECAR-ACCEPTANCE",
+    "SVC-OSS-ACTIVATION-GATED-TRUTH-SYNC"
+  ]
+}

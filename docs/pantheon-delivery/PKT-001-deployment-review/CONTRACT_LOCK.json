@@ -1,0 +1,42 @@
+{
+  "feature_id": "PKT-001-deployment-review",
+  "status": "front-followup-required",
+  "backend_commit": "f85d6bdec9a8d7e5ca7a11899a6545b842882fda",
+  "working_tree_only": true,
+  "verified_runtime_ref": "pantheon-working-tree@f85d6bdec9a8d7e5ca7a11899a6545b842882fda",
+  "bff_contract_version": "pantheon-bff@f85d6bdec9a8d7e5ca7a11899a6545b842882fda+working-tree",
+  "source_payload": ".coordination/requests/PKT-001-deployment-review-ui-done.yaml",
+  "reported_source_commit": "HEAD",
+  "resolved_source_checkout_commit": "7f2fbbeefc988eb2ef30d1fed5edb0918ad5276f",
+  "verified_front_workspace_head": "7f2fbbeefc988eb2ef30d1fed5edb0918ad5276f",
+  "verified_remote_publish_commit": "5444be87c1eb52d9a622d3ff521d66ebf5631b43",
+  "review_file": ".coordination/reviews/PKT-001-deployment-review-review.md",
+  "feedback_request": ".coordination/requests/PKT-001-deployment-review-frontend-feedback.yaml",
+  "endpoints": [
+    "GET /api/v1/operator/deployment-plans",
+    "GET /api/v1/operator/deployment-review/{plan_id}",
+    "POST /api/v1/operator/commands"
+  ],
+  "contract_paths": [
+    "docs/bff/PKT-001-deployment-review-console.md",
+    "docs/examples/PKT-001-deployment-review-console.json",
+    "docs/screens/PKT-001-deployment-review-console.md",
+    "docs/pantheon-handoffs/PKT-001-deployment-review/FRONTEND_CHANGE_SPEC.md"
+  ],
+  "pantheon_api_gap": false,
+  "verification_evidence": [
+    "Targeted Pantheon PKT-001 contract proof passed: python3 -m pytest -q services/control-plane/bff/test_pkt001_deployment_review_console_contract.py",
+    "services/control-plane/bff/main.py still serves GET /api/v1/operator/deployment-plans and GET /api/v1/operator/deployment-review/{plan_id} in the current workspace",
+    "Git-visible origin/main commit 5444be87c1eb52d9a622d3ff521d66ebf5631b43 contains the PKT-001 ui-done request and the claimed UI files",
+    "The paired PKT-001 frontend-feedback request is absent from origin/main, so the current front return is not yet a truthful request pair",
+    "The published ui-done request still uses source_commit HEAD instead of an immutable SHA",
+    "Current Git-visible PKT-001 list and detail readers still do not enforce the required meta.surfaces key sets through findMissingSurfaceFields()"
+  ],
+  "followup_scope": [
+    "Publish the canonical PKT-001 frontend-feedback request and docs/pantheon-feedback/PKT-001-deployment-review bundle from the front repo",
+    "Republish the PKT-001 ui-done request from that same immutable front commit and replace source_commit HEAD with that exact commit SHA",
+    "Update DeploymentReviewConsole.tsx to fail closed when meta.surfaces.deployment_plans or meta.surfaces.allowedActions are missing",
+    "Update DeploymentPlanDetail.tsx to fail closed when meta.surfaces.deployment_plan, approval_decision, allowedActions, latestRun, review, or runtime_binding are missing",
+    "Redispatch Pantheon review after the replay-clean request pair and fail-closed surface validation land"
+  ]
+}

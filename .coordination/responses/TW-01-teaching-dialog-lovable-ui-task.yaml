@@ -62,4 +62,5 @@ gap_handoff_path: .coordination/requests/TW-01-teaching-dialog-bff-gap.yaml
 gap_handoff_template: .coordination/requests/TW-01-teaching-dialog-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/TW-01-teaching-dialog-ui-done.yaml
 completion_handoff_template: .coordination/requests/TW-01-teaching-dialog-ui-done.example.yaml
-frontend_feedback_handoff_path: .coordination/requests/TW-01-teaching-dialog-frontend-feedback.yaml
+feedback_handoff_path: .coordination/requests/TW-01-teaching-dialog-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/TW-01-teaching-dialog-frontend-feedback.example.yaml

@@ -1,0 +1,133 @@
+feature_id: BFF-2026-05-07-final
+type: backend-delivery
+status: delivered
+delivery_date: "2026-05-08"
+backend_commit: 325197f1dc9f21d724ae7cc7d9d4e1238350924f
+runtime_code_commit: d39496c4ee83af66a98e42bf5c8788814c370c09
+working_tree_only: false
+verified_runtime_ref: pantheon-bff@d39496c4ee83af66a98e42bf5c8788814c370c09
+bff_contract_version: pantheon-bff@d39496c4ee83af66a98e42bf5c8788814c370c09
+test_result: "457 passed, 0 failures, 36 warnings"
+test_command: "python3 -m pytest services/control-plane/bff -q --tb=no"
+delivery_note_path: docs/pantheon-delivery/BFF-2026-05-07-final/DELIVERY_NOTE.md
+contract_lock_path: docs/pantheon-delivery/BFF-2026-05-07-final/CONTRACT_LOCK.json
+
+completed_tasks:
+  - BFF-FINAL-001  # Contract foundation — ActionCommandStatus, CommandResponse<T>, BffErrorEnvelope
+  - BFF-FINAL-002  # Idempotency and command envelope — header-only Idempotency-Key
+  - BFF-FINAL-003  # Precondition errors — 11 final error codes
+  - BFF-FINAL-004  # Canonical action catalog — GET /bff/actions, 20 CommandType entries
+  - BFF-FINAL-005  # SSE approval and ask channels — 21 channels
+  - BFF-FINAL-006  # MCP server tool import — closeout commit 08ac4543
+  - BFF-FINAL-007  # Evidence redaction — EvidenceKind capability gate, 15-kind map
+  - BFF-FINAL-008  # Agora journal merge patch — PATCH /bff/agora/journal/{id}
+  - BFF-FINAL-009  # v5 interventions — R1/R2/R3 resolved, closeout c0eb50cf
+  - BFF-FINAL-010  # Contract verification and delivery closeout — this delivery
+
+endpoints:
+  command_surface:
+    - "POST /bff/v1/commands"
+    - "POST /api/v1/operator/commands"
+  action_catalog:
+    - "GET /bff/actions"
+  sse_stream:
+    - "GET /api/v1/stream/{channel}"
+  mcp_tool_import:
+    - "POST /bff/v1/mcp/servers/{server_id}/import-tools"
+    - "POST /bff/mcp-servers/{server_id}/import-tools"
+    - "POST /bff/v1/mcp/servers/{server_id}/tools/{tool_id}/actions/{action}"
+    - "POST /bff/mcp-tools/{tool_id}/{action}"
+  agora_journal:
+    - "PATCH /bff/agora/journal/{entry_id}"
+  v5_interventions:
+    - "GET /bff/v5/interventions"
+    - "POST /bff/v5/interventions/{id}/remediate"
+    - "GET /bff/approvals"
+
+sse_channels:
+  - approval
+  - ask
+  - artifact
+  - runtime
+  - mcp
+  - skill
+  - channel
+  - tool
+  - ranking
+  - rebalance
+  - evolution
+  - research
+  - signal
+  - inbox
+  - journal
+  - postmortem
+  - loop
+  - sentinel
+  - intervention
+  - audit
+  - system
+
+error_codes:
+  - code: CONFIRM_TOKEN_REQUIRED
+    http: 428
+    trigger: X-Confirm-Token header absent on critical route
+  - code: APPROVAL_REQUIRED
+    http: 409
+    trigger: approval gate not satisfied
+  - code: TWO_MAN_REQUIRED
+    http: 409
+    trigger: second-signer precondition not met
+  - code: IDEMPOTENCY_CONFLICT
+    http: 409
+    trigger: same idempotency key, different payload
+  - code: SSE_REPLAY_UNAVAILABLE
+    http: 409
+    trigger: replay requested beyond supported replay window
+  - code: INVALID_PARAMS
+    http: 400
+    trigger: missing or malformed required headers/params
+  - code: INVALID_REQUEST
+    http: 400
+    trigger: body contains idempotencyKey or malformed payload
+  - code: AUTHZ_DENIED
+    http: 403
+    trigger: operator lacks role or capability
+  - code: OBJECT_NOT_FOUND
+    http: 404
+    trigger: target entity not found
+  - code: CONCURRENT_MODIFICATION
+    http: 409
+    trigger: in-flight command for the same entity
+  - code: INVALID_STATE
+    http: 409
+    trigger: entity state does not allow the requested action
+
+deferred_items:
+  - id: D1
+    item: "POST /bff/v5/interventions/{id}/decision"
+    reason: not in BFF-FINAL-009 acceptance; follow-on task
+  - id: D2
+    item: "POST /bff/v5/interventions/{id}/two-man-sign"
+    reason: not in BFF-FINAL-009 acceptance; follow-on task
+  - id: D3
+    item: SSE event emission from /remediate handler
+    reason: post-BFF-FINAL-009 follow-up; alias fix (R3) is complete
+  - id: D4
+    item: MCP tool read projections (GET /bff/mcp-tools, GET /bff/mcp-servers/{id}/tools)
+    reason: not in BFF-FINAL-006 acceptance scope
+  - id: D5
+    item: datetime.utcnow() deprecation warnings in read_store.py (36 pre-existing)
+    reason: no functional impact; file as tech-debt follow-up
+  - id: D6
+    item: multi-replica SSE replay store
+    reason: BFF HA policy explicitly defers
+
+followup_expectation: >-
+  All nine BFF-FINAL contracts are implemented and verified. The full BFF test suite passes
+  (457 passed, 0 failures) against runtime code at d39496c4; delivery metadata prior anchor
+  at 325197f1 (the commit containing these artifacts is the final delivery commit). The cleanup pass confirms no unresolved
+  TODO/FIXME/STUB in BFF-FINAL production paths. Known stubs are env-gated and appropriate for
+  paper/dev operation. Frontend consumers should consult the sidecar handoff packet at
+  support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md for the complete route
+  surface, integration checklist, and deferred item register. No additional BFF-FINAL API-gap
+  follow-up is required within this wave; deferred items D1–D6 are queued for follow-on tasks.

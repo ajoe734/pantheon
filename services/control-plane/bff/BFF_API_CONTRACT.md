@@ -1,21 +1,22 @@
 # BFF API Contract (v1)
 
-Last updated: 2026-04-12
-Status: canonical — governed BFF API contract for APP-001
+Last updated: 2026-05-01
+Status: canonical — governed BFF read API contract for APP-001
 Tier: L2 Planning & Execution (formal API contract derived from L1 policy)
-Scope: API routes, request/response shapes, error contract, staleness model, RBAC matrix, composed views, and real-time feed contract for the governed BFF
+Scope: read API routes, request/response shapes, error contract, staleness model, RBAC matrix, composed views, and real-time feed contract for the governed BFF
 Owner: Qwen
 Reviewer: Codex
 Derived from: PERSONA_RUNTIME_MODEL.md, BINDING_AND_DEPLOYMENT_SEMANTICS.md, BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md, TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md, LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md, EVOLUTION_REVIEW_AND_THRESHOLDS.md, ROLLBACK_AND_POSITION_SEMANTICS.md, KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md, TARGET_ARCHITECTURE.md
+Companion command contract: BFF_COMMAND_API_CONTRACT.md
 
 ---
 
 ## 1. Purpose
 
-This document defines the **formal API contract** for the governed BFF (Backend-for-Frontend) in APP-001.
+This document defines the **formal read API contract** for the governed BFF (Backend-for-Frontend) in APP-001.
 
 It establishes:
-- All API routes with request/response shapes
+- All read API routes with request/response shapes
 - RBAC matrix mapping each surface to required roles
 - Error contract and staleness model
 - Composed view specifications for operator journeys
@@ -23,6 +24,10 @@ It establishes:
 - Versioning and deprecation policy
 
 **Design rule**: The BFF is **read-oriented**. It must never create, modify, or delete canonical state. Every field returned by the BFF traces back to a canonical L1 object or a documented derived read-model. The BFF does not invent parallel truth sources.
+
+Runtime, deployment, approval, incident, rollback, kill-switch, and evolution
+commands are governed separately by `BFF_COMMAND_API_CONTRACT.md`. They must not
+be folded into the GET read surfaces defined here.
 
 ---
 
@@ -35,6 +40,7 @@ These principles come directly from L1 canonical policy and are non-negotiable:
 3. **Partial degradation** — If a downstream service is unavailable, only the affected surface degrades (BFF_HA §5.1).
 4. **Secondary control path** — High-privilege operators have a non-BFF path for safety-critical operations (BFF_HA §6).
 5. **Stateless operation** — The BFF must not store canonical state locally (BFF_HA §3.1).
+6. **Read/command split** — Read surfaces are GET-only; command admission uses the separate governed command facade and requires actor, trace, idempotency, policy/RBAC, and audit controls.
 
 ---
 
@@ -327,7 +333,7 @@ Degraded access policy: When a surface is in degraded mode, the RBAC check still
 |---|---|---|---|---|
 | `/api/v1/capital-pools` | GET | CP-01 | `{ data: [CapitalPool], meta }` | `status`, `risk_policy_ref` |
 | `/api/v1/capital-pools/{pool_id}` | GET | CP-02 | `{ data: CapitalPool + bindings[], meta }` | — |
-| `/api/v1/bindings` | GET | CP-03 | `{ data: [PersonaCapitalBinding], meta }` | `capital_pool_id`, `role`, `validity` |
+| `/api/v1/bindings` | GET | CP-03 | `{ data: [PersonaCapitalBinding], meta }` | `persona_id`, `capital_pool_id`, `role`, `validity` |
 | `/api/v1/bindings/{binding_id}` | GET | CP-04 | `{ data: PersonaCapitalBinding + Persona, meta }` | — |
 
 ### 9.3 Deployment Surfaces (DP-01–DP-04)
@@ -336,9 +342,9 @@ Degraded access policy: When a surface is in degraded mode, the RBAC check still
 
 | Route | Method | Surface | Response | Filterable Fields |
 |---|---|---|---|---|
-| `/api/v1/deployment-plans` | GET | DP-01 | `{ data: [DeploymentPlan], meta }` | `stage`, `target_pool_id` |
+| `/api/v1/deployment-plans` | GET | DP-01 | `{ data: [DeploymentPlan], meta }` | `status`, `capital_pool_id` |
 | `/api/v1/deployment-plans/{plan_id}` | GET | DP-02 | `{ data: DeploymentPlan + ApprovalDecision, meta }` | — |
-| `/api/v1/approval-decisions` | GET | DP-03 | `{ data: [ApprovalDecision], meta }` | `outcome`, `reviewer`, `time_range` |
+| `/api/v1/approval-decisions` | GET | DP-03 | `{ data: [ApprovalDecision], meta }` | `outcome`, `state` |
 | `/api/v1/approval-decisions/{decision_id}` | GET | DP-04 | `{ data: ApprovalDecision, meta }` | — |
 
 ### 9.4 Runtime Surfaces (RT-01–RT-04)
@@ -370,9 +376,9 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
 
 | Route | Method | Surface | Response | Filterable Fields |
 |---|---|---|---|---|
-| `/api/v1/lineage` | GET | LN-01 | `{ data: [LineageEdge], meta }` | `artifact_id` |
-| `/api/v1/lineage/edges/{edge_id}` | GET | LN-02 | `{ data: LineageEdge, meta }` | — |
-| `/api/v1/lineage/graph` | GET | LN-03 | `{ data: [LineageEdge], meta }` | `root_type`, `root_id`, `depth` |
+| `/api/v1/lineage` | GET | LN-01 | `{ items: [{ artifact_id, edge_count, last_edge_at }], page_info: { next_page_token }, meta }` | `artifact_id`, `page_token`, `page_size` |
+| `/api/v1/lineage/edges/{edge_id}` | GET | LN-02 | `{ id, from_artifact_id, to_artifact_id, relationship, created_at, meta }` | — |
+| `/api/v1/lineage/graph` | GET | LN-03 | `{ nodes: [{ artifact_id, artifact_version, artifact_type }], edges: [{ id, from_artifact_id, to_artifact_id, relationship }], meta }` | `root_type`, `root_id`, `depth` |
 
 ### 9.7 Incident Surfaces (IN-01–IN-05)
 
@@ -392,10 +398,10 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
 
 | Route | Method | Surface | Response | Filterable Fields |
 |---|---|---|---|---|
-| `/api/v1/evolution-decisions` | GET | EV-01 | `{ data: [EvolutionDecision], meta }` | `action_type`, `risk_level`, `status` |
-| `/api/v1/evolution-decisions/{decision_id}` | GET | EV-02 | `{ data: EvolutionDecision, meta }` | — |
-| `/api/v1/freeze-orders` | GET | EV-03 | `{ data: [FreezeOrder], meta }` | `status`, `scope` |
-| `/api/v1/rollbacks` | GET | EV-04 | `{ data: [RollbackRecord], meta }` | `runtime_id`, `action_type`, `time_range` |
+| `/api/v1/evolution-decisions` | GET | EV-01 | `{ items: [EvolutionDecision], page_info: { next_page_token }, meta: { snapshot_at } }` | `action_type`, `risk_level`, `status`, `page_token`, `page_size` |
+| `/api/v1/evolution-decisions/{decision_id}` | GET | EV-02 | `EvolutionDecision` fields at the response root plus `meta: { snapshot_at }` | — |
+| `/api/v1/freeze-orders` | GET | EV-03 | `{ items: [FreezeOrder], meta: { snapshot_at } }` | `status`, `scope` |
+| `/api/v1/rollbacks` | GET | EV-04 | `{ items: [RollbackRecord], meta: { snapshot_at } }` | `runtime_id`, `action_type`, `time_range` |
 
 ---
 
@@ -405,6 +411,17 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
 
 | Route | Composes | Primary Use Case | Min Role |
 |---|---|---|---|
+| `/api/v1/operator/runtime-state` | RT-03, RT-04, TL-02 | Multi-runtime operator roster with telemetry and rollback summaries | `operator` |
+| `/api/v1/operator/health-status` | RT-01, TL-02, IN-01, governance review + approval queues, IN-05 | Operator health board with safe-mode state and fallback guidance | `operator` |
+| `/api/v1/operator/alerts` | IN-01, governance review + approval queues, IN-05, RT-01, TL-02 | Operator alert rail with backend-owned severity, category, and target refs | `operator` |
+| `/api/v1/operator/home` | OC-02, OC-03, OC-04 summaries plus IN-05 safe-mode state | Operator home dashboard with card hierarchy and escalation shortcuts | `operator` |
+| `/api/v1/operator/paper-live-drift/{runtime_id}` | drift report, RT-01, TL-02, TL-03, approval decision, incidents, evolution evidence | Paper-vs-live drift review with backend-owned threshold evaluation and follow-up actions | `operator` |
+| `/api/v1/operator/research/oss-activation-ready` | Research orchestrator, policy-learning, research-worker gateway, and OpenClaw adapter capability/activity metadata | Read-only OSS activation-ready operations view: capability, gate state, run history, artifact refs, logs, and error summaries; no activation, registry, governance, broker, or capital-binding write path | `operator` |
+| `/api/v1/operator/research/oss-preactivation` | Alias for `/api/v1/operator/research/oss-activation-ready` | Backward-compatible pre-activation route name; same read-only non-bypass contract | `operator` |
+| `/api/v1/operator/openclaw/ops` | OpenClaw adapter upstream status, Pantheon-owned lifecycle sessions, tool/workflow policy, and invocation audit | OpenClaw operator operations surface showing upstream reachability, degraded reasons, session lifecycle state, paper/live gate state, and bridge audit without enabling broker, paper, live, or capital-binding paths | `operator` |
+| `/api/v1/operator/openclaw/tool-workflow-bridge` | Alias for `/api/v1/operator/openclaw/ops` focused on bridge-oriented UI adoption | Backward-compatible bridge handoff route name; same read-only OpenClaw operations projection and fail-closed gate contract | `operator` |
+| `/api/v1/workbench/consultation` | CW-008 packet-family truth only | Consultation Workbench overview surface; truthful module status without fake request or committee UI | `operator` |
+| `/api/v1/workbench/knowledge` | KW-006 packet-family truth only | Knowledge Workbench overview surface; truthful module status without fake registry or evidence UI | `operator` |
 | `/api/v1/operator/deployment-review/{plan_id}` | DP-02, CP-02, CP-04, RT-02, RT-04 | Pre-deployment approval review | `operator` |
 | `/api/v1/operator/incident-response/{incident_id}` | IN-02, RT-03, TL-02, RT-04, EV-04, IN-05 | Active incident response | `operator` |
 | `/api/v1/operator/post-incident-review/{incident_id}` | IN-04, EV-01, EV-02, LN-01, TL-03 | Post-incident analysis | `operator` |
@@ -463,8 +480,14 @@ Each composed view returns `meta.surfaces` showing the status of each sub-surfac
 | SSE Endpoint | Data Stream | Reconnection |
 |---|---|---|
 | `GET /api/v1/runtime/{runtime_id}/events/stream` | Runtime state changes | `?last_event_id=` |
-| `GET /api/v1/incidents/stream` | Active incident events | `?last_event_id=` |
+| `GET /api/v1/incidents/stream` | Active incident events (Legacy) | `?last_event_id=` |
 | `GET /api/v1/kill-switch/updates` | Kill-switch state changes | `?last_event_id=` |
+| `GET /api/v1/approvals/stream` | Approval lifecycle events | `?last_event_id=` |
+| `GET /api/v1/agora/ask/stream` | Ask session events | `?last_event_id=` |
+| `GET /api/v1/stream/{channel}` | Generic stream for any catalog channel | `?last_event_id=` |
+
+**Channel Catalog**:
+`approval, ask, artifact, runtime, mcp, skill, channel, tool, ranking, rebalance, evolution, research, signal, inbox, journal, postmortem, loop, sentinel, intervention, audit, system`
 
 ### 11.3 Stream Event Shape
 
@@ -482,20 +505,72 @@ Each composed view returns `meta.surfaces` showing the status of each sub-surfac
 }
 ```
 
-Event types:
-- `runtime_state_changed`: Runtime binding state transition
-- `incident_created`: New incident case
-- `incident_updated`: Incident status change
-- `kill_switch_activated`: Kill switch engaged
-- `kill_switch_deactivated`: Kill switch released
+**New Event Types**:
 
-### 11.4 SSE Headers
+- **Approval**:
+  - `approval.created`: New approval request submitted
+  - `approval.stage.changed`: Approval moved to next review stage
+  - `approval.decided`: Approval reached terminal state (approved/rejected)
+  - `approval.sla.escalated`: Approval breached SLA threshold
+
+- **Ask**:
+  - `ask.session.started`: New Agora ask session initialized
+  - `ask.message.delta`: Real-time token streaming for ask responses
+  - `ask.tool.called`: Persona calling a tool/skill
+  - `ask.message.completed`: Full message content delivered
+  - `ask.session.completed`: Session finished successfully
+  - `ask.session.failed`: Session terminated with error
+
+### 11.4 Replay and Resync
+
+BFF maintains an in-memory buffer of the last 500 events per channel.
+
+- If `last_event_id` is found in the buffer, BFF replays all events after that ID before streaming new events.
+- If `last_event_id` is provided but **not found** in the buffer (due to buffer rotation or server restart), BFF returns **HTTP 409** with `SSE_REPLAY_UNAVAILABLE`.
+- In case of 409, the client **must** resync full canonical state via the channel-specific resync routes (advertised in `X-SSE-Resync-Routes`) before reconnecting.
+
+**Channel-specific resync routes**:
+
+| Channel | Resync Routes |
+|---|---|
+| `approval` | `GET /bff/approvals`, `GET /bff/v5/interventions` |
+| `ask` | `GET /bff/agora/ask/sessions/{id}` |
+| All others | No canonical resync route; reconnect with `last_event_id=` omitted |
+
+**SSE_REPLAY_UNAVAILABLE error shape** (HTTP 409):
+```json
+{
+  "error": {
+    "code": "SSE_REPLAY_UNAVAILABLE",
+    "message": "Event ID <id> is no longer in the buffer",
+    "details": {
+      "reason": "SSE_REPLAY_HISTORY_MISSING",
+      "channel": "<channel>",
+      "lastEventId": "<id>",
+      "replaySupported": true,
+      "replayWindowEvents": 500,
+      "replayStore": "in-memory",
+      "resyncRoutes": ["<resync-route>", ...]
+    }
+  }
+}
+```
+
+**BFF HA note**: replay store is single-replica in-memory only. Multi-replica shared replay store is out of scope.
+
+### 11.5 SSE Headers
 
 ```
 Content-Type: text/event-stream
 Cache-Control: no-cache
 Connection: keep-alive
 X-Accel-Buffering: no
+X-SSE-Channel: <channel>
+X-SSE-Replay-Supported: true
+X-SSE-Replay-Window-Events: 500
+X-SSE-Buffer-Size: 500
+X-SSE-Replay-Store: in-memory
+X-SSE-Resync-Routes: <comma-separated resync routes>   (approval and ask channels only)
 ```
 
 ---
@@ -519,10 +594,10 @@ The BFF exposes `GET /api/v1/kill-switch/status` (IN-05) as a read-only status c
 
 ## 13. BFF Design Rule: Read-Only Guarantee
 
-The BFF API contract enforces a strict **read-only guarantee**:
+The BFF read API contract enforces a strict **read-only guarantee**:
 
-1. All BFF endpoints are **GET** only (no POST/PUT/PATCH/DELETE on the BFF API surface)
-2. This contract covers the **read-oriented APP-001 surface only**. Any downstream write or admin command path must be documented separately and must not reuse these GET surfaces as a pseudo-write channel.
+1. All endpoints listed in this read contract are **GET** only (no POST/PUT/PATCH/DELETE on the read API surface)
+2. This contract covers the **read-oriented APP-001 surface only**. Runtime/deployment/approval/incident command paths are documented separately in `BFF_COMMAND_API_CONTRACT.md` and must not reuse these GET surfaces as a pseudo-write channel.
 3. The BFF does not maintain its own canonical state
 4. Every response field traces back to a canonical L1 object or a documented derived read-model
 
@@ -543,9 +618,9 @@ This ensures the BFF remains on the control/UI plane and never becomes a source 
 | Incident (IN) | IN-01 to IN-05 | 5 |
 | Evolution (EV) | EV-01 to EV-04 | 4 |
 | **Canonical v1 Subtotal** | | **33** |
-| Composed views | 4 | 4 |
-| SSE streams | 3 | 3 |
-| **Total v1 endpoints** | | **40** |
+| Composed views | 9 | 9 |
+| SSE streams (runtime, incidents, kill-switch, approvals, ask, generic) | 6 | 6 |
+| **Total v1 endpoints** | | **48** |
 
 ---
 
@@ -553,7 +628,8 @@ This ensures the BFF remains on the control/UI plane and never becomes a source 
 
 | APP-001 Acceptance Criterion | Status | Evidence |
 |---|---|---|
-| BFF is read-oriented | ✅ | §1 Purpose, §13 Read-Only Guarantee — all endpoints are GET-only, no canonical state writes |
+| BFF read contract is read-oriented | ✅ | §1 Purpose, §13 Read-Only Guarantee — all read-contract endpoints are GET-only, no canonical state writes |
+| Runtime/deployment/approval/incident commands are split from read surfaces | ✅ | Companion `BFF_COMMAND_API_CONTRACT.md` defines the governed command facade with actor, trace, idempotency, RBAC/policy, and audit requirements |
 | Consultation surfaces cite canonical objects | ✅ | See CONSULTATION_SURFACE_CONTRACT.md — all consultation surfaces reference L1 canonical objects with explicit object lineage |
 | Degraded operator path is documented | ✅ | §7 Staleness and Degradation Model, §12 Secondary Control Path, BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md §5-§6 |
 

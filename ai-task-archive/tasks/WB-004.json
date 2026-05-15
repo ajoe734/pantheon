@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "WB-004",
+  "archived_at": "2026-04-14T14:28:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "WB-004",
+    "title": "Define the Knowledge Workbench backlog and wave plan",
+    "summary_zh": "整理 Knowledge Workbench 的 screen inventory、現況支撐、缺規格與推薦執行波次。",
+    "phase": "Workbench Backlog",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "LOOP-001"
+    ],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+    ],
+    "acceptance": [
+      "insight cards, strategy spec, evidence refs, research notes, and institutional memory are all captured as modules",
+      "the backlog separates knowledge-specific BFF needs from screen-spec needs",
+      "recommended waves avoid bundling Knowledge Workbench into unrelated operator packetization work"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "phase": "phase3",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-14T09:07:58Z",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Final checks complete: Knowledge Workbench backlog fully expanded across all 5 modules (Institutional Memory, Research Notes, Evidence Refs, Insight Cards, Strategy Spec). Each module has BFF gap analysis, packetization prerequisites, per-module canonical inventory table, Wave 3 internal ordering with dependency chain, and separation rules. Artifact committed. Closing WB-004.",
+    "last_update": "2026-04-14T14:28:32Z",
+    "review_notes_zh": [
+      "Knowledge Workbench 現在已明確拆成 Institutional Memory、Research Notes、Evidence Refs、Insight Cards、Strategy Spec 五個模組。",
+      "文件已把 knowledge 專屬的 BFF/read-model 缺口與 screen-spec/packet work 分開描述。",
+      "Wave 3 排程與內部依賴鏈清楚，且未把 Knowledge Workbench 混入 operator packetization。"
+    ],
+    "review_file": "docs/reviews/WB-004-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T14:28:32Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "a6446d5941776f133be8a158cf1dd32013b2a8f1",
+      "commit_subject": "WB-004: finalize Knowledge Workbench backlog and wave plan",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "All 5 Knowledge Workbench modules fully documented": "Institutional Memory,",
+        "LLM-Agent": "Claude",
+        "Task-ID": "WB-004",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 167,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "WB-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Knowledge Workbench backlog section fully expanded: 5-module inventory (Institutional Memory, Research Notes, Evidence Refs, Insight Cards, Strategy Spec), per-module BFF gap and packetization prerequisite analysis, canonical module inventory table with all columns, Wave 3 internal ordering and dependency chain, and separation rules. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-04-14T13:57:51Z",
+      "resolved_at": "2026-04-14T14:11:10Z"
+    },
+    {
+      "task_id": "WB-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Knowledge Workbench backlog and wave plan approved. All five knowledge modules are explicitly separated, knowledge-specific backend gaps are cleanly split from screen-spec work, and the Wave 3 ordering keeps this backlog independent from unrelated operator packetization. Owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-14T14:11:10Z",
+      "resolved_at": "2026-04-14T14:28:32Z"
+    }
+  ],
+  "blockers": []
+}

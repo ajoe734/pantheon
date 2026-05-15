@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "TW-04-REPLAY-001",
+  "archived_at": "2026-04-19T22:14:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "TW-04-REPLAY-001",
+    "title": "Publish Teaching Replay event model and commit-discard contract",
+    "summary_zh": "為 TW-04 補齊 trainer replay route、full TeachingEvent schema、evidence links 與 commit/discard authority。",
+    "phase": "Execution / Wave 4 - Workbench Completion Chain",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "TW-03-COMPARE-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+      "docs/pantheon-handoffs/TW-007-trainer-workbench/PACKET_FAMILY.md",
+      "docs/lovable/PANTHEON_FRONTEND_SA.md"
+    ],
+    "acceptance": [
+      "replay route and full event schema are published",
+      "evidence links are BFF resolved",
+      "commit and discard authority are explicit"
+    ],
+    "next": "Owner finalized approved task and recorded the replay contract publication commit. TW-04 Teaching Replay is now contract-published pending live BFF implementation.",
+    "last_update": "2026-04-19T22:14:16Z",
+    "source_plane": "architecture_gap_matrix",
+    "source_ref": {
+      "type": "architecture_gap_matrix",
+      "recorded_at": "2026-04-19T00:00:00Z",
+      "summary": "Materialized from the 2026-04-19 architecture-team input gap matrix for blocked module contracts",
+      "canonical_refs": [
+        "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md",
+        "DEVELOPMENT_WORKBREAKDOWN.md"
+      ]
+    },
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-19-wave3-wave4-architecture-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "三項驗收標準全數通過：（1）replay list/detail 路由及完整 TeachingEvent schema（6 種事件類型）已發布，patch_delta 繼承 TW-02 diff shape，eval_ref 引用 TW-03 eval_id；（2）evidence_ref 已由 BFF 解析為 {type, id, display_label, url_pattern}，客戶端禁止從原始 ID 重建導航連結；（3）commit/discard 寫入路由已發布，allowedActions.canCommit/canDiscard 為唯一 CTA 授權訊號，expected_candidate_snapshot_at 防止 stale commit，terminal state 正確設為不可逆，before/after artifact refs 在 commit response 中完整呈現。合約設計乾淨，與 TW-01/TW-02/TW-03 上游 field shape 一致，未修改任何 canonical L1 政策文件。"
+    ],
+    "review_file": "docs/reviews/TW-04-REPLAY-001-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T22:14:16Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "d465866913c48735eae575b485f72f1f6cbd51c2",
+      "commit_subject": "TW-04-REPLAY-001: publish teaching replay contract pack",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "TW-04-REPLAY-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 764,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TW-04-REPLAY-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review. Published TW-04 replay contract pack with dedicated replay list/detail routes, full replay-grade TeachingEvent schema, BFF-resolved evidence_link semantics, explicit commit/discard authority gating, and before/candidate/after artifact refs. Added canonical docs at docs/bff/TW-04-teaching-replay.md, docs/screens/TW-04-teaching-replay.md, and docs/examples/TW-04-teaching-replay.json; updated Trainer packet family, backlog, and frontend SA to contract-published pending-bff.",
+      "status": "done",
+      "created_at": "2026-04-19T22:08:27Z",
+      "resolved_at": "2026-04-19T22:10:07Z"
+    },
+    {
+      "task_id": "TW-04-REPLAY-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All three acceptance criteria pass. Replay routes, full TeachingEvent schema, BFF-resolved evidence links, and commit/discard authority model are all correctly specified. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-19T22:10:07Z",
+      "resolved_at": "2026-04-19T22:14:16Z"
+    }
+  ],
+  "blockers": []
+}

@@ -255,7 +255,7 @@ This bundle only seeds the collaboration/control-plane layer. As the repo gains 
 - `Claude`: execution plane, control plane, governance review
 - `Gemini`: cloud/runtime packaging, CI/CD, worker operations
 - `Codex`: contracts, state system, schema, acceptance
-- `Qwen`: integration, schema, acceptance, code-agent execution
+- `Codex2`: contracts, state system, schema, acceptance, sidecar review
 - `Copilot`: coding assist, research ingestion, external search, critique
 
 ### Task Ownership
@@ -305,7 +305,7 @@ AI_NAME=Claude REVIEW_NOTES_ZH="審查通過||回到 owner 收尾" ./scripts/ai-
 AI_NAME=Codex ./scripts/ai-status.sh done <task-id> "Owner finalized approved task and closed it"
 ./scripts/planning-state.sh start phase1 "Kick off discussion planning"
 ./scripts/planning-state.sh readout Codex submitted "Codex readout is ready"
-./scripts/planning-state.sh baton Qwen Gemini "Baton moved to Qwen for cross-review"
+./scripts/planning-state.sh baton Codex2 Gemini "Baton moved to Codex2 for cross-review"
 ./scripts/planning-state.sh consensus ready_for_human "Consensus packet drafted"
 ./scripts/sync-state.sh
 ```
@@ -422,7 +422,7 @@ If you add project-specific docs later, update `AI_COLLABORATION_GUIDE.md`, `FOR
 ```bash
 ./scripts/planning-state.sh start phase1 "Kick off the planning session"
 ./scripts/planning-state.sh readout Codex submitted "Codex readout is ready"
-./scripts/planning-state.sh baton Qwen Gemini "Baton moved to Qwen for cross-review"
+./scripts/planning-state.sh baton Codex2 Gemini "Baton moved to Codex2 for cross-review"
 ./scripts/planning-state.sh consensus ready_for_human "Consensus packet drafted"
 ./scripts/sync-state.sh
 ```
@@ -488,7 +488,7 @@ Planning:
 ```bash
 ./scripts/planning-state.sh start phase1 "Kick off discussion planning"
 ./scripts/planning-state.sh readout Codex submitted "Codex readout is ready"
-./scripts/planning-state.sh baton Qwen Gemini "Baton moved to Qwen for cited cross-review"
+./scripts/planning-state.sh baton Codex2 Gemini "Baton moved to Codex2 for cited cross-review"
 ./scripts/planning-state.sh consensus ready_for_human "Consensus packet drafted"
 ./scripts/planning-state.sh human-gate approved "Human accepted the packet"
 ./scripts/sync-state.sh

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "task_id": "BUS-VAL-003",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BUS-VAL-003",
+    "title": "Validate Pantheon blocked-task GitHub bus after workspace cutover",
+    "phase": "Tooling",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [
+      "pantheon supervisor creates an ops issue from the blocked task",
+      "github-bus-state records BUS-VAL-003 under pantheon repo",
+      "current-work and dashboard reflect the blocked validation task"
+    ],
+    "next": "Hardened orchestrator worker-failure detection while investigating bus re-dispatches: transcript scans now only match anchored runtime/tool failure lines, so borrowed log text like Error:/QUOTA_EXHAUSTED inside BUS-VAL-001 or FB-002 sessions no longer triggers false worker_failed + retry loops. Added .orchestrator/test_supervisor.py regression coverage and verified python3 -m unittest discover -s .orchestrator -p 'test_*.py' plus py_compile.",
+    "last_update": "2026-04-05T14:08:50Z",
+    "summary_zh": "第三輪 blocked 驗證任務，專門確認 cutover 後的 Pantheon supervisor 會從 pantheon repo 本身建立 GitHub ops issue。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

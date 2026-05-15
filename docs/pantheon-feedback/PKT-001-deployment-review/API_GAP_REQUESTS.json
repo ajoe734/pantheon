@@ -1,0 +1,7 @@
+{
+  "feature_id": "PKT-001-deployment-review",
+  "reviewed_source_commit": "faa1bc2d1bd02e0a3d9fc1e1e5c35bc510182ea7",
+  "status": "no_open_gaps",
+  "note": "Pantheon now serves GET /api/v1/operator/deployment-plans in the current workspace. DeploymentReviewConsole also uses GET /api/v1/runtime/{runtime_id}/events/stream only through the approved PKT-005 SSE substrate after the detail snapshot reveals runtime_binding.id. That live feed is a documented cross-cut dependency, not a new PKT-001 snapshot API gap.",
+  "requests": []
+}

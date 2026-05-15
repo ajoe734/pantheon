@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Capacity remains underused and runnable backlog exists, but the current source/search parent already has a sidecar in review.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260429T181620Z-d3b4c680",
+      "decision": "allow",
+      "reason": "Scoped git add with an explicit task-owned file list for the source/search Postgres pilot; it stages only and does not commit, push, delete, or access credentials.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-POSTGRES-SOURCE-SEARCH-STORE-PILOT",
+    "SVC-WANDB-OFFLINE-PREP-SCAFFOLD-CLOSEOUT",
+    "SVC-CONSULTATION-POSTGRES-STORE-PILOT"
+  ]
+}

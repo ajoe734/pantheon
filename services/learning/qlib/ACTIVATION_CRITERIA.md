@@ -5,7 +5,7 @@
 **Reviewer**: Codex
 **Scope**: Define hard entry criteria for Microsoft Qlib activation as the supervised alpha research path
 **Status**: APPROVED for OSS-003 activation-gate lock
-**Last Updated**: 2026-04-10
+**Last Updated**: 2026-05-01
 
 ---
 
@@ -95,6 +95,7 @@ Qlib requires data in its native format or a compatible adapter. The Pantheon ad
 1. **Convert** Pantheon-governed data sources into Qlib-compatible format without bypassing governance boundaries.
 2. **Preserve lineage**: Every Qlib dataset must reference the source registry IDs and dataset refs.
 3. **Filter by governance**: Only governed dataset refs or approved upstream artifacts may feed the adapter; no ad hoc local files, notebook exports, or direct live-runtime side channels may bypass lineage and registry boundaries.
+4. **Attach production-data proof before candidate handoff**: first production-data activation packets must name provider/source class, entitlement/license and allowed-use terms, freshness, point-in-time fields, durable storage refs/checksum, rate-limit/audit refs, and explicit no-order-route controls.
 
 #### Minimum Data Requirements
 
@@ -258,6 +259,16 @@ Before a Qlib alpha artifact reaches the registry, it must pass:
 #### Gate 1: Replication Criteria (RS-003)
 - **Input**: Research strategy candidate that satisfies entry criteria (§1).
 - **Requirement**: RS-003 validates the source research strategy before Qlib training begins.
+
+#### Gate 1A: Production Dataset Proof
+- **Input**: Governed market-data proof attached to the Qlib activation packet.
+- **Requirement**: proof must validate provider/source class, entitlement/license,
+  freshness, point-in-time fields, durable storage, audit/rate-limit evidence,
+  and `no_order_route=true`.
+- **Implementation**: `services/research/qlib/adapter/production_activation.py`.
+- **Output boundary**: the packet may request only `artifact_state=draft -> candidate`
+  with `deployment_summary.current_stage=none`; registry writes remain owned by
+  the registry service.
 - **Artifact**: Replication report confirming strategy normalization and first-pass validation.
 
 #### Gate 2: Entry Criteria Verification (OSS-003)

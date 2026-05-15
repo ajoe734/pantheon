@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-30T03:23:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Auth / IdP Integration",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-STAGING-DUAL-VM-COMPOSE-CONTRACT",
+      "SVC-BFF-SERVICE-BACKED-READ-STORE-CUTOFF"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING/SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: task-scoped commit bdcacd0 records the support-only BFF/frontend handoff packet and Claude review note; verification python3 -m pytest services/control-plane/bff/test_bff_auth_facade.py -q -> 56 passed in 4.07s; unrelated dirty runtime/env/status files left out of the commit.",
+    "last_update": "2026-04-30T03:23:56Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：support artifact 結構完整，正確分離現況事實與 parent gap，未觸及 canonical truth，測試 52 passed",
+      "後續 Codex 收尾後 parent owner 可吸收 staging compose/env example 更新與 JWKS rotation 測試"
+    ],
+    "review_file": ".orchestrator/chair-reviews/20260430-SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING-SIDECAR-BFF-HANDOFF-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T03:23:56Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "bdcacd00b71466b41c16dfa1fe9b11f2385dfa55",
+      "commit_subject": "SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING-SIDECAR-BFF-HANDOFF closeout packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude",
+        "Verification": "python3 -m pytest services/control-plane/bff/test_bff_auth_facade.py -q (56 passed in 4.07s)",
+        "Scope": "support-only BFF/frontend handoff packet plus Claude review note."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 41,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 17,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "BFF/OIDC provider config handoff packet is ready for review. Added support-only artifact with BFF query gaps, operator journey, frontend handoff notes, non-claims, and verification: python3 -m pytest services/control-plane/bff/test_bff_auth_facade.py -q (52 passed).",
+      "status": "done",
+      "created_at": "2026-04-30T03:13:25Z",
+      "resolved_at": "2026-04-30T03:19:43Z"
+    },
+    {
+      "task_id": "SVC-BFF-OIDC-PROVIDER-CONFIG-HARDENING-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: handoff packet accurate and complete, all acceptance criteria met, no canonical edits. Returning to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-04-30T03:19:43Z",
+      "resolved_at": "2026-04-30T03:23:56Z"
+    }
+  ],
+  "blockers": []
+}

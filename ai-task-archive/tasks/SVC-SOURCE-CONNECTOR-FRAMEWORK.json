@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "SVC-SOURCE-CONNECTOR-FRAMEWORK",
+  "archived_at": "2026-04-30T05:18:53Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-SOURCE-CONNECTOR-FRAMEWORK",
+    "title": "Build source connector framework",
+    "summary_zh": "把 source-ingest connector 抽成正式 framework：connector SDK、config schema、secret refs、auth、rate limit、license policy、source registry 與 provider examples。",
+    "phase": "Source / Search Platform",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-SOURCE-SEARCH-AUTONOMOUS-CONNECTOR-INDEXER"
+    ],
+    "artifacts": [
+      "services/source_ingestion",
+      "services/source_ingestion/connectors",
+      "docs/deployment",
+      "services/control-plane/bff"
+    ],
+    "acceptance": [
+      "connector base interface supports auth secrets rate limits license and source metadata",
+      "static external feed and at least one provider example share the same contract",
+      "config validation rejects unsafe urls secrets and overlarge payloads",
+      "source registry exposes connector status and policy",
+      "BFF can read connector metadata through service client"
+    ],
+    "next": "Closeout complete: task-scoped commit 8ab30f7 created; verified py_compile clean, services/source_ingestion 37 passed, BFF source/search service-client tests 2 passed; deployment note and Claude review artifact recorded.",
+    "last_update": "2026-04-30T05:18:53Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-materialization-20260430",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：五項 acceptance criteria 全部達標",
+      "後續：Codex 執行 closeout finalization"
+    ],
+    "review_file": ".orchestrator/chair-reviews/SVC-SOURCE-CONNECTOR-FRAMEWORK-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T05:18:53Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "8ab30f75785c10c243430279a362d796a7bbde0d",
+      "commit_subject": "SVC-SOURCE-CONNECTOR-FRAMEWORK source connector framework",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-SOURCE-CONNECTOR-FRAMEWORK",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 26,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 9,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-SOURCE-CONNECTOR-FRAMEWORK",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T04:36:19Z",
+      "resolved_at": "2026-04-30T04:45:47Z"
+    },
+    {
+      "task_id": "SVC-SOURCE-CONNECTOR-FRAMEWORK",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: source-ingest connector framework now has SDK policy models for auth secret refs rate limits license and source metadata, provider examples sharing static/external fetch config, stricter unsafe URL/inline secret/payload validation, /api/source-ingest/registry status+policy surface, BFF source-ingest service client and /api/v1/research/source-connectors read endpoint, compose wiring, and deployment note. Verified: PYTHONPYCACHEPREFIX=/tmp/pantheon-pycache python3 -m py_compile services/source_ingestion/connectors/base.py services/source_ingestion/connectors/examples.py services/source_ingestion/configured.py services/source_ingestion/main.py services/control-plane/bff/read_store.py services/control-plane/bff/main.py; python3 -m pytest services/source_ingestion -q (37 passed); python3 -m pytest services/control-plane/bff/test_source_connector_service_client.py services/control-plane/bff/test_search_service_client.py -q (2 passed).",
+      "status": "done",
+      "created_at": "2026-04-30T05:10:07Z",
+      "resolved_at": "2026-04-30T05:15:41Z"
+    },
+    {
+      "task_id": "SVC-SOURCE-CONNECTOR-FRAMEWORK",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 5 acceptance criteria met. 37 source_ingestion + 2 BFF client tests passed. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-04-30T05:15:41Z",
+      "resolved_at": "2026-04-30T05:18:53Z"
+    }
+  ],
+  "blockers": []
+}

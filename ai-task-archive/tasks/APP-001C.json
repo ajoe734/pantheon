@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "task_id": "APP-001C",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-001C",
+    "title": "Prepare APP-001 design skeleton and open-questions packet",
+    "summary_zh": "平行支援 APP-001，先把 APP-001A/B 的 inventory 與 owner packet 收斂成正式 BFF design skeleton、query contract outline 與 open questions 清單，避免等到 PER-001/LIN-001 都完成後才從零開始。",
+    "phase": "Phase 5: Persona and Application Surfaces",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "APP-001B"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/APP_001C_DESIGN_SKELETON.md",
+      "services/control-plane/bff/APP_001C_QUERY_CONTRACT_OUTLINE.md",
+      "services/control-plane/bff/APP_001C_OPEN_QUESTIONS.md"
+    ],
+    "acceptance": [
+      "design skeleton written",
+      "query contract outline written",
+      "open questions list written"
+    ],
+    "next": "APP-001C finalized to done. All BFF design artifacts complete: design skeleton, query contract outline, open questions packet. Awaiting next assignment.",
+    "last_update": "2026-04-10T03:43:46Z",
+    "review_notes_zh": [
+      "審查通過：APP-001C 已把 APP-001A inventory 與 APP-001B critique 收斂成 design skeleton、query contract outline、open questions packet；component boundary、4 條 composed views、7 個 contract gaps 與 decider-ready open questions 均已成形。",
+      "reviewer cleanup：修正 list failure 不得假裝空陣列、RT-03 回到 RuntimeBinding、以及 `_surfaces`→`meta.surfaces` 命名一致；待 APP-001 follow-up：formalize RBAC matrix、realtime transport、cache TTL 與 PER-001/LIN-001 field-level schema lock。"
+    ],
+    "review_file": "services/control-plane/bff/review_app001c_codex_approved_zh.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-001C",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "BFF design skeleton complete at services/control-plane/bff/APP_001C_DESIGN_SKELETON.md. 15/15 validation checks passed. Includes: 8 surface group contract outlines (33+ surfaces), standard request/response envelopes, error/degraded response shapes, field-level staleness model, 4 composed view endpoints with degradation behavior, 3 SSE real-time feed designs, secondary control path table, cache/staleness strategy, RBAC matrix, and 6 open questions for APP-001 contract lock.",
+      "status": "done",
+      "created_at": "2026-04-10T03:32:59Z",
+      "resolved_at": "2026-04-10T03:37:11Z"
+    },
+    {
+      "task_id": "APP-001C",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "APP-001C artifacts complete: design skeleton, query contract outline, open questions list. All 7 APP-001B critique gaps addressed. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-10T03:37:11Z",
+      "resolved_at": "2026-04-10T03:41:55Z"
+    },
+    {
+      "task_id": "APP-001C",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review approved after reviewer cleanup. APP-001C BFF packet now aligns with APP-001A/B and L1 degraded-path semantics; list-failure handling, RT-03 RuntimeBinding typing, and meta.surfaces naming are cleaned up. Owner can finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-10T03:41:55Z",
+      "resolved_at": "2026-04-10T03:43:29Z"
+    }
+  ],
+  "blockers": []
+}

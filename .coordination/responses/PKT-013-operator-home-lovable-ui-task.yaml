@@ -42,3 +42,5 @@ gap_handoff_path: .coordination/requests/PKT-013-operator-home-bff-gap.yaml
 gap_handoff_template: .coordination/requests/PKT-013-operator-home-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/PKT-013-operator-home-ui-done.yaml
 completion_handoff_template: .coordination/requests/PKT-013-operator-home-ui-done.example.yaml
+feedback_handoff_path: .coordination/requests/PKT-013-operator-home-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/PKT-013-operator-home-frontend-feedback.example.yaml

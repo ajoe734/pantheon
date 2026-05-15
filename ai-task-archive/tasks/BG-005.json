@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "BG-005",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BG-005",
+    "title": "Define golden replay scenario and acceptance runbook",
+    "summary_zh": "定義 golden replay scenario 與 acceptance runbook，銜接資料面與決策面前段。",
+    "phase": "Blueprint Gap P0",
+    "owner": "Claude",
+    "reviewer": "Qwen",
+    "depends_on": [
+      "BG-000",
+      "BG-001",
+      "BG-003"
+    ],
+    "artifacts": [],
+    "acceptance": [],
+    "status": "done",
+    "next": "Owner finalized: GOLDEN_REPLAY_SCENARIO_AND_RUNBOOK.md delivered with two golden replay scenarios (US equities + TW TAIFEX derivatives), full five-stage decision chain refs, pinned DatasetVersion/DeploymentPlan/RuntimeBinding refs, 13-criterion acceptance checklist, and step-by-step runbook. Qwen review approved all 13 criteria. Two non-blocking follow-ups (five_stage_chain_tw_derivs.json + 6 verification scripts) tracked for implementation wave. GAP-05 closed.",
+    "last_update": "2026-04-14T03:06:56Z",
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+      "phase": "phase2",
+      "profile": "blueprint-gap-convergence",
+      "planning_dir": "docs/02-architecture/consensus/phase2",
+      "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-13T07:05:23Z",
+      "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+    },
+    "review_notes_zh": [
+      "審查通過",
+      "1. 兩組 golden replay scenario（US equities + TW TAIFEX）已完整定義，DatasetVersion/五階段決策鏈/DeploymentPlan/RuntimeBinding refs 都與 BG-000/BG-001/BG-003 對齊。2. 13 項 acceptance criterion 涵蓋 frozen state、available-time、telemetry、lineage、durable store、regression test，可接受。3. EX-001 deferral 明確記錄，scope exclusions 清楚。4. 需追蹤事項：(a) five_stage_chain_tw_derivs.json 在 Step 2 被引用但尚未存在，需在實作時補上；(b) runbook 引用的 6 個驗證腳本尚未實作，這對 runbook 定義階段可接受，但需在 BG-005 收尾或追隨任務中完成。"
+    ],
+    "review_file": "GOLDEN_REPLAY_SCENARIO_AND_RUNBOOK.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T03:06:56Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "ebabd0790469a9857a00ce8e89aa1672f1f3d56a",
+      "commit_subject": "BG-005: Add golden replay scenario and acceptance runbook",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Task-ID": "BG-005",
+        "Reviewer": "Qwen",
+        "LLM-Agent": "Claude",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 89,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BG-005",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "GOLDEN_REPLAY_SCENARIO_AND_RUNBOOK.md delivered: two golden replay scenarios (US equities momentum + TW TAIFEX derivatives) with pinned DatasetVersion refs, five-stage decision chain refs, DeploymentPlan/RuntimeBinding refs, expected telemetry/durable-store outputs, and 13-criterion acceptance checklist. EX-001 deferral is documented. Ready for Qwen review against GAP-05 acceptance evidence requirements.",
+      "status": "done",
+      "created_at": "2026-04-14T00:36:01Z",
+      "resolved_at": "2026-04-14T00:37:26Z"
+    },
+    {
+      "task_id": "BG-005",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Review approved: golden replay scenarios and acceptance runbook are structurally complete and aligned with GAP-05 evidence requirements. Two follow-up items noted: (1) five_stage_chain_tw_derivs.json referenced but missing; (2) six verification scripts not yet implemented (acceptable for runbook definition, needs tracking).",
+      "status": "done",
+      "created_at": "2026-04-14T00:37:26Z",
+      "resolved_at": "2026-04-14T03:06:56Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "EP5-001",
+  "archived_at": "2026-04-22T15:18:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EP5-001",
+    "title": "Prepare the canary-ready execution path",
+    "summary_zh": "在既有 EP4 基礎上準備 canary-ready entry path，補齊 operator checklist rollback drill harness 與 capital gate artifacts，但不提前宣稱 EP5 已達成。",
+    "phase": "Execution / Proof Follow-on",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md",
+      "EXECUTION_PROOF_AND_MATURITY_LEVELS.md",
+      "docs/deployment/ep4-evidence-packet.md",
+      "docs/deployment/evidence/ep4-governed-paper/20260419T003720Z/README.md"
+    ],
+    "acceptance": [
+      "Canary ready prerequisites are documented as executable repo artifacts",
+      "Rollback drill harness and operator checklist are runnable",
+      "Execution proof docs point at the prepared EP5 entry path without claiming EP5 proof"
+    ],
+    "next": "Owner finalized approved task and closed it. Canary-ready entry bundle, dry-run checklist/plan/rollback harness, and proof-doc pointers are now recorded without claiming EP5 proof.",
+    "last_update": "2026-04-22T15:18:25Z",
+    "source_plane": "audit_followup",
+    "source_ref": {
+      "type": "execution_packet",
+      "path": "docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md"
+    },
+    "task_class": "execution_followup",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Canary-ready prerequisite bundle、operator checklist、rollback drill harness 三項 acceptance 皆通過：dry-run 驗證 run-operator-checklist/emit-canary-plan/run-rollback-drill 全綠，canary plan 落在 5% / 25% 政策上限，rollback action_type=pause_then_replace 與 PAPER_CANARY_LIVE_POLICY 一致。",
+      "EXECUTION_PROOF_AND_MATURITY_LEVELS.md 與 ep4-evidence-packet.md 僅新增指標路徑指向 docs/deployment/ep5-canary-ready/，保留 EP5 仍未證明的文字邊界，未越界宣稱 EP5 已達成。",
+      "執行 packet 表中的 planning-origin owner (Gemini/Codex) 與 ai-status.json 現況 (Codex/Claude) 不一致，屬於 helper-claim lineage，非此審查阻斷項。"
+    ],
+    "review_file": ".coordination/reviews/EP5-001-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-22T15:18:25Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "c78bbb6755479f0c18828ab6f38587d7bd9c413d",
+      "commit_subject": "EP5-001 finalize canary-ready execution path",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "EP5-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1150,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EP5-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review. Added docs/deployment/ep5-canary-ready/ bundle, env/canary-exec.env.example, and scripts/run_ep5_canary_readiness.py; updated EXECUTION_PROOF_AND_MATURITY_LEVELS.md and docs/deployment/ep4-evidence-packet.md to point at the prepared EP5 entry path without overclaiming beyond EP4. Verified with python3 -m py_compile scripts/run_ep5_canary_readiness.py plus dry-run commands for run-operator-checklist, emit-canary-plan, and run-rollback-drill against env/canary-exec.env.example.",
+      "status": "done",
+      "created_at": "2026-04-22T08:58:09Z",
+      "resolved_at": "2026-04-22T14:42:28Z"
+    },
+    {
+      "task_id": "EP5-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review. Added docs/deployment/ep5-canary-ready/ bundle, env/canary-exec.env.example, and scripts/run_ep5_canary_readiness.py; updated EXECUTION_PROOF_AND_MATURITY_LEVELS.md and docs/deployment/ep4-evidence-packet.md to point at the prepared EP5 entry path without overclaiming beyond EP4. Verified with python3 -m py_compile scripts/run_ep5_canary_readiness.py plus dry-run commands for run-operator-checklist, emit-canary-plan, and run-rollback-drill against env/canary-exec.env.example.",
+      "status": "done",
+      "created_at": "2026-04-22T14:42:28Z",
+      "resolved_at": "2026-04-22T15:12:42Z"
+    },
+    {
+      "task_id": "EP5-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: EP5-001 canary-ready entry bundle satisfies all three acceptance items without overclaiming beyond stable EP4.",
+      "status": "done",
+      "created_at": "2026-04-22T15:12:42Z",
+      "resolved_at": "2026-04-22T15:18:25Z"
+    }
+  ],
+  "blockers": []
+}

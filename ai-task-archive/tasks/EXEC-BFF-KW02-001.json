@@ -1,0 +1,192 @@
+{
+  "version": 1,
+  "task_id": "EXEC-BFF-KW02-001",
+  "archived_at": "2026-04-21T01:43:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-BFF-KW02-001",
+    "title": "Implement KW-02 research notes BFF routes from the ratified contract",
+    "summary_zh": "實作 KW-02 research notes create / list / detail BFF routes，對齊 owner_ref、attachment taxonomy、referential integrity 與 degradation semantics。",
+    "phase": "Execution / BFF Implementation",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/KW-02-research-notes.md",
+      "docs/examples/KW-02-research-notes.json",
+      "MODULE_READINESS_RATIFICATION_2026-04-20.md"
+    ],
+    "acceptance": [
+      "實作 KW-02 create / list / detail routes 並遵守 owner_ref / attachment taxonomy / referential integrity",
+      "不得用本地假資料或跳過 published degradation surfaces",
+      "完成後補 contract verification 與 next-action truth"
+    ],
+    "next": "Owner finalized KW-02 after review approval. Delivery metadata recorded on commit d78f546; create/list/detail research notes routes remain contract-aligned, with dataset-based list availability semantics and empty-store regressions verified.",
+    "last_update": "2026-04-21T01:43:35Z",
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-20-gap-audit-execution-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "已確認 KW-02 list surface health 改為依 research_notes dataset availability 判定，不再把 empty-but-available service store 誤報為 unavailable。",
+      "已重跑指定回歸 10 passed，並額外重跑 empty service-store / empty-filter 最小回歸 2 passed。"
+    ],
+    "review_file": "docs/reviews/2026-04-21-exec-bff-kw02-001-codex-approval.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T01:43:35Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "d78f54676c1136243cac5cfc7b26387e3b7d633a",
+      "commit_subject": "EXEC-BFF-KW02-001: record finalize metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EXEC-BFF-KW02-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 937,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-BFF-KW02-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-20T14:21:34Z",
+      "resolved_at": "2026-04-20T14:23:41Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW02-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T16:01:27Z",
+      "resolved_at": "2026-04-20T16:04:33Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW02-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T16:04:33Z",
+      "resolved_at": "2026-04-20T23:36:36Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW02-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T23:36:35Z",
+      "resolved_at": "2026-04-20T23:59:01Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW02-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T23:59:51Z",
+      "resolved_at": "2026-04-21T00:00:14Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW02-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:16:39Z",
+      "resolved_at": "2026-04-21T00:50:57Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW02-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:52:05Z",
+      "resolved_at": "2026-04-21T00:54:09Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW02-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T00:54:09Z",
+      "resolved_at": "2026-04-21T01:00:25Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW02-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "KW-02 routes implemented in BFF: create/list/detail, owner_ref server assignment, attachment/memory validation, and degraded surface semantics. Verified with pytest: test_kw02_research_notes_contract.py, test_kw01_institutional_memory_contract.py, test_pkt016_knowledge_workbench_contract.py.",
+      "status": "done",
+      "created_at": "2026-04-21T01:12:54Z",
+      "resolved_at": "2026-04-21T01:24:04Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW02-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review found a KW-02 contract bug: GET /api/v1/knowledge/notes derives research_note_list surface health from bool(filtered_notes), so a legitimate empty result set is reported as unavailable. Reproduced on a service-backed store by creating one note and querying with tags=does-not-match; response is 200 with notes=[] but meta.surfaces.research_note_list=unavailable. Please make surface health reflect dataset availability rather than post-filter row count, then rerun test_kw02_research_notes_contract.py, test_kw01_institutional_memory_contract.py, and test_pkt016_knowledge_workbench_contract.py with an added empty-filter regression.",
+      "status": "done",
+      "created_at": "2026-04-21T01:24:04Z",
+      "resolved_at": "2026-04-21T01:24:04Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW02-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Fixed KW-02 list surface health to reflect research_notes dataset availability before filters, added the empty-filter regression, and re-ran pytest -q services/control-plane/bff/test_kw02_research_notes_contract.py services/control-plane/bff/test_kw01_institutional_memory_contract.py services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py (4 passed, 4 passed, 1 passed).",
+      "status": "done",
+      "created_at": "2026-04-21T01:28:43Z",
+      "resolved_at": "2026-04-21T01:34:54Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW02-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review requested changes: KW-02 list surface health still misreports an empty but available research_notes store as unavailable. See docs/reviews/2026-04-21-exec-bff-kw02-001-codex-rereview.md and fix list availability from dataset source rather than bool(notes), then add an empty-store regression and re-handoff for review.",
+      "status": "done",
+      "created_at": "2026-04-21T01:34:54Z",
+      "resolved_at": "2026-04-21T01:34:54Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW02-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Fixed KW-02 list availability to derive from research_notes dataset source instead of bool(notes), added empty service-store regression coverage, and reran pytest -q services/control-plane/bff/test_kw02_research_notes_contract.py services/control-plane/bff/test_kw01_institutional_memory_contract.py services/control-plane/bff/test_pkt016_knowledge_workbench_contract.py (5 passed, 5 passed).",
+      "status": "done",
+      "created_at": "2026-04-21T01:37:55Z",
+      "resolved_at": "2026-04-21T01:41:19Z"
+    },
+    {
+      "task_id": "EXEC-BFF-KW02-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "KW-02 review approved after verifying dataset-based list availability semantics and empty-store regressions; owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-21T01:41:19Z",
+      "resolved_at": "2026-04-21T01:43:35Z"
+    }
+  ],
+  "blockers": []
+}

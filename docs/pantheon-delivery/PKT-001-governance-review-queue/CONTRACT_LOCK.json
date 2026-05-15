@@ -1,0 +1,26 @@
+{
+  "feature_id": "PKT-001-governance-review-queue",
+  "status": "delivered",
+  "backend_commit": "67849d460e3c14e7399efc830b322b048c9557cc",
+  "bff_contract_version": "pantheon-bff@67849d460e3c14e7399efc830b322b048c9557cc",
+  "source_payload": ".coordination/requests/PKT-001-governance-review-queue-bff-gap.yaml",
+  "review_file": ".coordination/reviews/PKT-001-governance-review-queue-review.md",
+  "needs_runtime_request": ".coordination/requests/PKT-001-governance-review-queue-needs-runtime.yaml",
+  "endpoints": [
+    "GET /api/v1/operator/governance/review-queue",
+    "POST /api/v1/operator/commands"
+  ],
+  "contract_paths": [
+    "docs/bff/PKT-001-governance-review-queue.md",
+    "docs/examples/PKT-001-governance-review-queue.json",
+    "docs/screens/PKT-001-governance-review-queue.md",
+    "docs/pantheon-handoffs/PKT-001-governance-review-queue/FRONTEND_CHANGE_SPEC.md"
+  ],
+  "pantheon_api_gap": false,
+  "followup_scope": [
+    "resume the Governance Review Queue UI cycle against the corrected review-queue BFF envelope",
+    "reuse the published contract and example payload without inventing new endpoints or shadow state",
+    "republish frontend-feedback and ui-done from one truthful Git-visible front commit that contains the request pair, feedback bundle, and governance review queue wiring",
+    "emit a fresh bff-gap if command execution or live payload inspection discovers a new divergence"
+  ]
+}

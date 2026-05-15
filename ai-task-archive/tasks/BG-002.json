@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "task_id": "BG-002",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BG-002",
+    "title": "Publish research backend maturity matrix and production-path mapping",
+    "summary_zh": "整理 research backend maturity matrix 與 production path 對照。",
+    "phase": "Blueprint Gap P1",
+    "owner": "Codex",
+    "reviewer": "Qwen",
+    "depends_on": [
+      "PLAN-002"
+    ],
+    "artifacts": [],
+    "acceptance": [],
+    "status": "done",
+    "next": "RESEARCH_BACKEND_MATURITY_MATRIX.md and the companion review packet are committed in 18ffb54, with closure metadata recorded in e013cd1. The earlier Qwen approval was restored after finalize-dispatch state drift, and BG-002 is formally closed.",
+    "last_update": "2026-04-13T03:45:46Z",
+    "review_file": "support/sidecars/BG-002/BG-002-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-13T03:45:46Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "e013cd16469dc248ebf1c09ad97f7960ba7eed6f",
+      "commit_subject": "BG-002 Record closure metadata v2",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "ajoe734@local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BG-002",
+        "Reviewer": "Qwen"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 51,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 8,
+      "behind": 0,
+      "push_status": "ahead"
+    },
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+      "phase": "phase2",
+      "profile": "blueprint-gap-convergence",
+      "planning_dir": "docs/02-architecture/consensus/phase2",
+      "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-13T07:05:23Z",
+      "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BG-002",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-13T02:15:37Z",
+      "resolved_at": "2026-04-13T02:18:18Z"
+    },
+    {
+      "task_id": "BG-002",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "RESEARCH_BACKEND_MATURITY_MATRIX.md published. 13 backends classified: 3 production-path (DSPy, imitation, MLflow), 7 activation-ready (OpenClaw, Qlib, TRL, FinRL, RLlib, Ray Tune, W&B), 3 not-integrated (vectorbt, statsmodels, QuantLib). Sidecar packet at support/sidecars/BG-002/BG-002-SIDECAR-REVIEW.md. Please verify tier assignments and GAP-02 format compliance.",
+      "status": "done",
+      "created_at": "2026-04-13T02:24:47Z",
+      "resolved_at": "2026-04-13T02:26:21Z"
+    },
+    {
+      "task_id": "BG-002",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Review approved. Tier assignments verified: 3 production-path (DSPy/imitation/MLflow smoke-tested), 7 activation-ready (OpenClaw/Qlib/TRL/FinRL/RLlib/Ray Tune/W&B), 3 not-integrated (vectorbt/statsmodels/QuantLib). Cross-backend consistency assessment sound. GAP-02 format compliance satisfied.",
+      "status": "done",
+      "created_at": "2026-04-13T02:26:21Z",
+      "resolved_at": "2026-04-13T02:33:11Z"
+    },
+    {
+      "task_id": "BG-002",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Metadata-only owner-alignment cleanup committed in 18ffb54 after the earlier approval/finalize-state drift. Please reaffirm the existing tier/format approval so BG-002 can be formally closed.",
+      "status": "done",
+      "created_at": "2026-04-13T03:45:00Z",
+      "resolved_at": "2026-04-13T03:45:00Z"
+    },
+    {
+      "task_id": "BG-002",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Prior approval reaffirmed after metadata-only cleanup and commit 18ffb54. Tier assignments, production-path mapping, and GAP-02 format compliance remain approved.",
+      "status": "done",
+      "created_at": "2026-04-13T03:45:00Z",
+      "resolved_at": "2026-04-13T03:45:46Z"
+    }
+  ],
+  "blockers": []
+}

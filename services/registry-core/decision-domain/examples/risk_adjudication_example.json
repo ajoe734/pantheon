@@ -1,130 +1,176 @@
 {
-  "risk_adjudication_id": "risk-us-equity-mom-2026q2-001",
-  "strategy_id": "strat-us-equity-momentum-v3",
-  "artifact_id": "artifact-risk-engine-var-v2.0",
-  "version": "2.0.0",
-  "evaluated_at": "2026-04-13T09:04:00Z",
-  "allocation_decision_id": "alloc-us-equity-mom-2026q2-001",
-  "risk_outcome": "approved",
-  "risk_checks": [
-    {
-      "check_name": "max_position_size",
-      "check_result": "pass",
-      "check_value": 0.10,
-      "threshold": 0.10,
-      "check_detail": "NVDA at 8% cap, within 10% single-position limit"
-    },
-    {
-      "check_name": "portfolio_var_limit",
-      "check_result": "pass",
-      "check_value": 0.038,
-      "threshold": 0.05,
-      "check_detail": "Portfolio VaR 3.8% < 5% limit"
-    },
-    {
-      "check_name": "sector_concentration",
-      "check_result": "pass",
-      "check_value": 0.25,
-      "threshold": 0.30,
-      "check_detail": "Technology sector exposure 25% < 30% limit"
-    },
-    {
-      "check_name": "gross_exposure_limit",
-      "check_result": "pass",
-      "check_value": 0.30,
-      "threshold": 1.5,
-      "check_detail": "Gross exposure 30% << 150% limit"
-    },
-    {
-      "check_name": "volatility_target",
-      "check_result": "pass",
-      "check_value": 0.12,
-      "threshold": 0.15,
-      "check_detail": "Portfolio volatility 12% < 15% target"
-    },
-    {
-      "check_name": "stress_test_scenario",
-      "check_result": "warning",
-      "check_value": -0.08,
-      "threshold": -0.15,
-      "check_detail": "2020 COVID crash scenario: -8% estimated, within -15% threshold but notable"
-    }
-  ],
-  "portfolio_risk_metrics": {
-    "portfolio_var_95": 0.038,
-    "portfolio_var_99": 0.055,
-    "expected_shortfall_95": 0.048,
-    "max_drawdown_estimate": 0.12,
-    "annualized_volatility": 0.12,
-    "sharpe_ratio_estimate": 1.35,
-    "correlation_matrix_summary": {
-      "max_pairwise_correlation": 0.72,
-      "avg_pairwise_correlation": 0.45,
-      "effective_num_bets": 2.8
-    }
+  "adjudication_id": "risk-20260413-001",
+  "strategy_id": "strat-equities-momentum-us-001",
+  "artifact_id": "risk-engine-historical-var-v2.0.0",
+  "version": "1.0.0",
+  "allocation_ref": {
+    "allocation_id": "alloc-20260413-001",
+    "allocation_version": "1.0.0"
   },
-  "stress_test_results": [
-    {
-      "scenario_name": "2008_financial_crisis",
-      "scenario_description": "Global financial crisis replay: credit freeze, equity drawdown -50%",
-      "pnl_impact": -120000,
-      "pnl_pct_of_nav": -0.12
-    },
-    {
-      "scenario_name": "2020_covid_crash",
-      "scenario_description": "COVID-19 market crash: rapid equity decline -34% in 4 weeks",
-      "pnl_impact": -80000,
-      "pnl_pct_of_nav": -0.08
-    },
-    {
-      "scenario_name": "rate_shock_200bp",
-      "scenario_description": "Unexpected 200bp Fed rate hike",
-      "pnl_impact": -45000,
-      "pnl_pct_of_nav": -0.045
-    }
-  ],
-  "conditions": [],
+  "risk_assessment": {
+    "overall_risk_level": "within_budget",
+    "checks": [
+      {
+        "check_type": "max_position_weight",
+        "status": "pass",
+        "observed_value": 0.09,
+        "threshold_value": 0.1,
+        "policy_ref": "risk-policy-us-equity-growth-v1",
+        "detail": "Largest position remains below the single-name cap."
+      },
+      {
+        "check_type": "max_leverage",
+        "status": "pass",
+        "observed_value": 0.27,
+        "threshold_value": 1.5,
+        "policy_ref": "risk-policy-us-equity-growth-v1",
+        "detail": "Gross exposure remains far below the leverage ceiling."
+      },
+      {
+        "check_type": "var_limit",
+        "status": "pass",
+        "observed_value": 0.038,
+        "threshold_value": 0.05,
+        "policy_ref": "risk-policy-us-equity-growth-v1",
+        "detail": "Daily 95% historical VaR stays inside the approved limit."
+      },
+      {
+        "check_type": "expected_shortfall_limit",
+        "status": "pass",
+        "observed_value": 0.044,
+        "threshold_value": 0.06,
+        "policy_ref": "risk-policy-us-equity-growth-v1",
+        "detail": "Expected shortfall remains below the policy threshold."
+      },
+      {
+        "check_type": "correlation_concentration",
+        "status": "warn",
+        "observed_value": 0.71,
+        "threshold_value": 0.75,
+        "policy_ref": "risk-policy-us-equity-growth-v1",
+        "detail": "The basket is growth-heavy but still within the concentration warning band."
+      },
+      {
+        "check_type": "liquidity_coverage",
+        "status": "pass",
+        "observed_value": 3.4,
+        "threshold_value": 2.0,
+        "policy_ref": "risk-policy-us-equity-growth-v1",
+        "detail": "Expected liquidation time remains inside the liquidity coverage requirement."
+      }
+    ],
+    "stress_test_results": [
+      {
+        "scenario_name": "market_crash",
+        "impact": {
+          "estimated_pnl": -720000,
+          "max_drawdown": 0.11,
+          "var_breach": false
+        },
+        "status": "pass"
+      },
+      {
+        "scenario_name": "rate_shock",
+        "impact": {
+          "estimated_pnl": -180000,
+          "max_drawdown": 0.04,
+          "var_breach": false
+        },
+        "status": "pass"
+      },
+      {
+        "scenario_name": "volatility_spike",
+        "impact": {
+          "estimated_pnl": -310000,
+          "max_drawdown": 0.07,
+          "var_breach": false
+        },
+        "status": "warn"
+      }
+    ]
+  },
+  "verdict": "approved",
+  "evaluated_at": "2026-04-13T09:30:20Z",
   "input_refs": [
     {
-      "ref_type": "allocation_decision",
-      "ref_id": "alloc-us-equity-mom-2026q2-001",
-      "storage_ref": {
-        "backend": "object_store",
-        "path": "decisions/alloc-us-equity-mom-2026q2-001.json"
-      }
+      "ref_type": "regime_state",
+      "ref_id": "regime-20260413-001"
+    },
+    {
+      "ref_type": "universe_selection",
+      "ref_id": "universe-20260413-001"
     },
     {
       "ref_type": "signal_inference",
-      "ref_id": "signal-us-equity-mom-2026q2-001"
+      "ref_id": "signal-20260413-001"
     },
     {
-      "ref_type": "regime_state",
-      "ref_id": "regime-us-equity-mom-2026q2-001"
+      "ref_type": "allocation_decision",
+      "ref_id": "alloc-20260413-001"
     },
     {
-      "ref_type": "risk_budget_template",
-      "ref_id": "risk-budget-us-equity-core-v1"
+      "ref_type": "dataset_version",
+      "ref_id": "dataset-us-equities-daily-20260413"
+    },
+    {
+      "ref_type": "security_master",
+      "ref_id": "secmaster-us-large-cap-20260413"
+    },
+    {
+      "ref_type": "risk_budget_policy",
+      "ref_id": "risk-policy-us-equity-growth-v1"
+    },
+    {
+      "ref_type": "capital_pool_state",
+      "ref_id": "capital-pool-us-growth-20260413"
+    },
+    {
+      "ref_type": "current_portfolio_snapshot",
+      "ref_id": "portfolio-us-growth-20260413-open"
     }
   ],
   "output_refs": [
     {
       "ref_type": "approval_decision",
-      "ref_id": "approval-us-equity-mom-2026q2-001"
+      "ref_id": "approval-20260413-001"
+    },
+    {
+      "ref_type": "deployment_plan",
+      "ref_id": "deploy-20260413-001"
     }
   ],
-  "decision_reasoning": "Risk adjudication APPROVED. All mandatory risk checks pass. Portfolio VaR 3.8% within 5% limit. Volatility 12% within 15% target. Position sizing compliant. Stress tests show manageable losses: worst case 2008 crisis at -12%, well within -15% drawdown tolerance. Effective number of bets 2.8 indicates moderate concentration risk (all positions US equity long), but this is expected for a momentum strategy in trending regime and is within governance tolerance. Allocation cleared for downstream ApprovalDecision gate.",
-  "model_ref": {
-    "model_id": "risk-engine-hist-var-v2",
-    "model_version": "2.0.0",
-    "model_type": "historical_var",
-    "calibration_dataset_ref": "risk-cov-matrix-2020-2025"
+  "market_scope": {
+    "asset_classes": [
+      "equity"
+    ],
+    "markets": [
+      "US"
+    ],
+    "security_master_refs": [
+      "SEC-US-AAPL",
+      "SEC-US-NVDA",
+      "SEC-US-MSFT",
+      "SEC-US-AMZN"
+    ],
+    "dataset_version_refs": [
+      "dataset-us-equities-daily-20260413"
+    ]
   },
-  "adjudication_state": "accepted",
-  "persona_id": "persona-quant-mom-01",
-  "capital_pool_id": "pool-us-equity-core",
+  "model_ref": {
+    "model_family": "historical_var",
+    "model_version": "2.0.0",
+    "risk_model_parameters": {
+      "confidence_level": 0.95,
+      "lookback_days": 252,
+      "stress_pack": "us_equity_core_v1"
+    }
+  },
+  "decision_reasoning": "The proposal clears all hard risk limits. Concentration remains elevated but still inside the warning band, and the stress pack shows manageable losses under crash, rate-shock, and volatility-spike scenarios. The allocation may proceed to governance approval.",
+  "state": "validated",
+  "persona_id": "persona-senior-quant-001",
+  "capital_pool_id": "pool-us-equity-growth",
   "metadata": {
-    "risk_engine_run_duration_ms": 890,
-    "covariance_matrix_age_days": 5,
-    "var_backtest_p_value": 0.72
+    "adjudication_duration_ms": 890,
+    "risk_run_id": "risk-run-20260413-093020"
   }
 }

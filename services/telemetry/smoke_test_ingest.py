@@ -127,8 +127,10 @@ async def test_backpressure_behavior():
 
 
 async def test_dlq_and_replay():
-    """Dead-letter queue captures failures and supports replay."""
-    print("  [3/4] Dead-letter queue and replay...")
+    """Dead-letter queue captures failures and replay policy is enforced."""
+    print("  [3/4] Dead-letter queue and replay policy...")
+
+    from services.telemetry.dead_letter import TAG_BINDING_MISMATCH, TAG_WRITER_ERROR
 
     svc = TelemetryIngestService(
         batch_size=10,
@@ -140,7 +142,8 @@ async def test_dlq_and_replay():
     for i in range(5):
         await svc.ingest(_make_event(i))
 
-    # Ingest invalid events (missing binding_id)
+    # Ingest binding-invalid events (missing binding_id) — these land in DLQ
+    # with TAG_BINDING_MISMATCH and must NOT be replayed automatically.
     for i in range(3):
         bad = _make_event(100 + i)
         del bad["binding_id"]
@@ -148,16 +151,42 @@ async def test_dlq_and_replay():
 
     await asyncio.sleep(0.3)
 
-    # Replay DLQ BEFORE stopping (buffer must be open)
+    # replay_dlq() with no filter only replays write-failure entries.
+    # The 3 binding-invalid events must NOT be forwarded into the write path.
     replay_count = await svc.replay_dlq()
 
     await svc.stop(graceful=True)
 
     dlq_entries = svc.get_dlq_entries()
-    assert len(dlq_entries) >= 3, f"Expected >= 3 DLQ entries, got {len(dlq_entries)}"
-    assert replay_count >= 3, f"Expected >= 3 replayed, got {replay_count}"
+    binding_invalid = svc.get_dlq_entries(tag_filter=TAG_BINDING_MISMATCH)
 
-    print(f"    PASS: {len(dlq_entries)} DLQ entries captured, {replay_count} replayed")
+    assert len(binding_invalid) >= 3, (
+        f"Expected >= 3 binding-mismatch DLQ entries, got {len(binding_invalid)}"
+    )
+    assert replay_count == 0, (
+        f"Binding-invalid events must NOT be replayed by default; "
+        f"got replay_count={replay_count}"
+    )
+
+    # Simulate a write failure in a fresh service and confirm those CAN be replayed
+    svc2 = TelemetryIngestService(batch_size=10, batch_interval=0.1)
+    await svc2.start()
+    svc2._dlq.reject(
+        _make_event(201),
+        tags=[TAG_WRITER_ERROR],
+        reason="simulated transient db error",
+    )
+    write_failure_replay = await svc2.replay_dlq()
+    await svc2.stop(graceful=True)
+    assert write_failure_replay >= 1, (
+        f"Write-failure events must be replayed; got {write_failure_replay}"
+    )
+
+    print(
+        f"    PASS: {len(dlq_entries)} DLQ entries captured; "
+        f"binding-invalid blocked from replay ({len(binding_invalid)} entries); "
+        f"write-failure replay={write_failure_replay}"
+    )
 
 
 async def test_buffer_choice_documented():

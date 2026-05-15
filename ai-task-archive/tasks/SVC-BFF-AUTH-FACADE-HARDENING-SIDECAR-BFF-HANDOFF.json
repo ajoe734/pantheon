@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "task_id": "SVC-BFF-AUTH-FACADE-HARDENING-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-29T12:37:17Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-BFF-AUTH-FACADE-HARDENING-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-BFF-AUTH-FACADE-HARDENING BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-BFF-AUTH-FACADE-HARDENING，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Production Readiness / BFF Security",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-RUNTIME-HARDENING",
+      "SVC-SURFACES"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-BFF-AUTH-FACADE-HARDENING/SVC-BFF-AUTH-FACADE-HARDENING-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved support-only BFF handoff packet. Parent task review is approved and the sidecar has no remaining action.",
+    "last_update": "2026-04-29T12:37:17Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-BFF-AUTH-FACADE-HARDENING",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T12:37:17Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 104,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ]
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-BFF-AUTH-FACADE-HARDENING-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only BFF/frontend handoff packet is ready for review. Artifact: support/sidecars/SVC-BFF-AUTH-FACADE-HARDENING/SVC-BFF-AUTH-FACADE-HARDENING-SIDECAR-BFF-HANDOFF.md. Verified ASCII check and 34 auth facade tests passing.",
+      "status": "done",
+      "created_at": "2026-04-29T12:30:36Z",
+      "resolved_at": "2026-04-29T12:33:28Z"
+    },
+    {
+      "task_id": "SVC-BFF-AUTH-FACADE-HARDENING-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar BFF handoff packet approved. Verified against live implementation: JWT-secret-missing maps to 401, MFA env enforced at identity extraction, conftest autouse fixture guards stub scope, test_settings_contract uses explicit @patch.dict stub mode. All 313 BFF tests pass (34 auth facade). Compose JWT config gap correctly documented. Packet is accurate and ready for parent owner to absorb as support material.",
+      "status": "done",
+      "created_at": "2026-04-29T12:33:28Z",
+      "resolved_at": "2026-04-29T12:37:18Z"
+    }
+  ],
+  "blockers": []
+}

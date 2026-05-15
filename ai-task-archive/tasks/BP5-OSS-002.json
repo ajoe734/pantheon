@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "task_id": "BP5-OSS-002",
+  "archived_at": "2026-04-16T18:56:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-OSS-002",
+    "title": "Realize the OpenClaw runtime adapter and smoke-tested execution path",
+    "summary_zh": "把 OpenClaw 從 adapter-started 真正推進到 gateway adapter、runtime dependency path、smoke-tested execution substrate。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "BP5-OSS-001",
+      "BP5-SVC-007",
+      "BP5-SVC-016"
+    ],
+    "artifacts": [
+      "OSS_INTEGRATION_CHECKLIST.md",
+      "OPENCLAW_RUNTIME_CONTRACT.md",
+      "integrations/openclaw/"
+    ],
+    "acceptance": [
+      "OpenClaw gateway adapter and runtime dependency path are implemented and smoke-tested",
+      "the checklist state can move beyond adapter-started with concrete evidence"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Finalized after commit cb89585 checkpointed the reviewed OpenClaw gateway adapter delivery; targeted cron tests passed (11/11), and the approved live smoke evidence remains recorded in integrations/openclaw/smoke_test.md and .coordination/reviews/BP5-OSS-002-review.md.",
+    "last_update": "2026-04-16T18:56:12Z",
+    "review_notes_zh": [
+      "審查通過",
+      "gateway adapter 與 cron transport 實作正確，符合 L1 contract §4.6 與 §9.1–9.4",
+      "live smoke 通過（2026-04-16，4 個 workflow）",
+      "後續追蹤：session lifecycle、audit events、error envelope 補 session_id/trace_id"
+    ],
+    "review_file": ".coordination/reviews/BP5-OSS-002-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T18:56:12Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "cb89585f6adf5e2c1f8a1dc3ce1059ede2f698f9",
+      "commit_subject": "BP5-OSS-002: finalize OpenClaw adapter closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BP5-OSS-002",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 260,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-OSS-002",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T17:51:06Z",
+      "resolved_at": "2026-04-16T18:08:50Z"
+    },
+    {
+      "task_id": "BP5-OSS-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T18:10:30Z",
+      "resolved_at": "2026-04-16T18:12:44Z"
+    },
+    {
+      "task_id": "BP5-OSS-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T18:12:44Z",
+      "resolved_at": "2026-04-16T18:18:42Z"
+    },
+    {
+      "task_id": "BP5-OSS-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented the live OpenClaw gateway adapter and compose runtime path; unittest passed and scripts/openclaw-gateway-adapter-smoke.sh passed with artifacts in /tmp/openclaw-bp5-oss-002.fXeSom.",
+      "status": "done",
+      "created_at": "2026-04-16T18:47:30Z",
+      "resolved_at": "2026-04-16T18:50:23Z"
+    },
+    {
+      "task_id": "BP5-OSS-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: gateway adapter, runtime path, and smoke evidence all pass. See .coordination/reviews/BP5-OSS-002-review.md. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-16T18:50:23Z",
+      "resolved_at": "2026-04-16T18:56:12Z"
+    }
+  ],
+  "blockers": []
+}

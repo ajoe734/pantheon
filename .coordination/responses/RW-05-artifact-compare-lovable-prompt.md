@@ -1,10 +1,5 @@
 Build the `RW-05-artifact-compare` UI flow in `front-ai-trading-system` using only Pantheon APIs.
 Pantheon has already published the contract-ready handoff for this feature.
-Pantheon has resolved the returned list-authority gap: the live
-`GET /api/v1/artifacts` route now returns
-`artifacts[].allowedActions.canCompare`, and the registry plus compare-page
-selectors must treat that backend-owned list field as the sole compare
-selection authority.
 If backend fields are missing or the live payload diverges from the synced contract, stop implementation and write `.coordination/requests/RW-05-artifact-compare-bff-gap.yaml` using `.coordination/requests/RW-05-artifact-compare-bff-gap.example.yaml` as the template. Then sync that file back to GitHub through the normal Lovable flow so Pantheon supervisor can continue the loop.
 Screen: `artifact-compare`.
 Workbench: `research-workbench`.

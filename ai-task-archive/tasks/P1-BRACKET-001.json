@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "P1-BRACKET-001",
+  "archived_at": "2026-05-01T09:46:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P1-BRACKET-001",
+    "title": "Guarded paper/sim bracket order execution",
+    "summary_zh": "在 paper/sim broker 範圍內實作受治理 bracket order execution；live 仍 fail-closed。",
+    "phase": "P1 Wave 5",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "P0-LIVE-GUARD-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_sa/SA-20_v2_risk_register_corrected.md"
+    ],
+    "acceptance": [
+      "paper/sim bracket order path guarded",
+      "logged_only and submitted_to_broker semantics remain distinct",
+      "live broker submission remains fail-closed without activation guard"
+    ],
+    "next": "Finalized guarded paper/sim bracket execution after Claude review approval. Task commit 854c5a7. Verification: python3 -m pytest services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_paper_runtime.py (13 passed).",
+    "last_update": "2026-05-01T09:46:29Z",
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "wave": "5",
+      "source_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "review_notes_zh": [
+      "審查通過：paper/sim bracket execution guard 符合規範，logged_only 與 submitted_to_broker 語義明確區分，live fail-closed 行為由測試覆蓋驗證。13 個測試全部通過。"
+    ],
+    "review_file": ".orchestrator/chair-reviews/p1-bracket-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T09:46:29Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "854c5a7d12e8178edc950967414590ca4deacb2c",
+      "commit_subject": "P1-BRACKET-001 guard paper bracket execution",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "P1-BRACKET-001",
+        "Reviewer": "Claude",
+        "Verification": "python3 -m pytest services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_paper_runtime.py (13 passed)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 137,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P1-BRACKET-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Guarded paper/sim bracket execution implemented in services/execution/lean_runtime with explicit logged_only vs submitted_to_broker semantics; live remains fail-closed. Verification: python3 -m pytest services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_paper_runtime.py (13 passed).",
+      "status": "done",
+      "created_at": "2026-05-01T09:37:14Z",
+      "resolved_at": "2026-05-01T09:41:15Z"
+    },
+    {
+      "task_id": "P1-BRACKET-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: paper/sim bracket guard, logged_only vs submitted_to_broker semantics, and live fail-closed all verified. 13 tests pass. Returned to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-01T09:41:15Z",
+      "resolved_at": "2026-05-01T09:46:29Z"
+    }
+  ],
+  "blockers": []
+}

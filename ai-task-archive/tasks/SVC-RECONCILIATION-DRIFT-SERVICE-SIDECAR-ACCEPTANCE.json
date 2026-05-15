@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "SVC-RECONCILIATION-DRIFT-SERVICE-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-28T18:51:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-RECONCILIATION-DRIFT-SERVICE-SIDECAR-ACCEPTANCE",
+    "title": "Prepare SVC-RECONCILIATION-DRIFT-SERVICE acceptance packet and dependency map",
+    "summary_zh": "平行支援 SVC-RECONCILIATION-DRIFT-SERVICE，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Future-State Service Materialization",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "SVC-EVIDENCE",
+      "SVC-COMPOSE"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-RECONCILIATION-DRIFT-SERVICE/SVC-RECONCILIATION-DRIFT-SERVICE-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar acceptance packet for SVC-RECONCILIATION-DRIFT-SERVICE. Support-only artifact at support/sidecars/SVC-RECONCILIATION-DRIFT-SERVICE/SVC-RECONCILIATION-DRIFT-SERVICE-SIDECAR-ACCEPTANCE.md committed (c2e415e); no canonical truth modified. Parent owner Codex2 retains all implementation decisions.",
+    "last_update": "2026-04-28T18:51:05Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-RECONCILIATION-DRIFT-SERVICE",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar acceptance packet 通過審查：僅新增/使用 support/sidecars/SVC-RECONCILIATION-DRIFT-SERVICE/SVC-RECONCILIATION-DRIFT-SERVICE-SIDECAR-ACCEPTANCE.md 作為 support artifact，未要求修改 L1 canonical truth、核心 contract、runtime/registry/governance 或 compose；canonical references 已抽查 Pantheon_API_Service_Contract_設計版.md §5.13 routes 與 §6 drift.report.created event，內容相符；SVC-EVIDENCE 與 SVC-COMPOSE 已在 ai-task-archive/tasks 中確認 terminal done，delivery commits 分別為 82a6efd 與 5a4ece7；packet 清楚保留 telemetry/lineage canonical truth 與 emergency control chain 邊界，implementation/port/env wiring 決策仍留給 parent owner。"
+    ],
+    "review_file": "support/sidecars/SVC-RECONCILIATION-DRIFT-SERVICE/SVC-RECONCILIATION-DRIFT-SERVICE-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T18:51:05Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "c2e415edd1c80afe20f804d51289c9c9b8d322c0",
+      "commit_subject": "SVC-RECONCILIATION-DRIFT-SERVICE-SIDECAR-ACCEPTANCE add acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-RECONCILIATION-DRIFT-SERVICE-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 83,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 25,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-RECONCILIATION-DRIFT-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Sidecar acceptance packet ready for review at support/sidecars/SVC-RECONCILIATION-DRIFT-SERVICE/SVC-RECONCILIATION-DRIFT-SERVICE-SIDECAR-ACCEPTANCE.md. Support-only artifact: maps parent acceptance items onto canonical §3.16/§5.13/§6 routes, documents compose precedent (telemetry 8083 / lineage-read 8094 / incidents 8090) and proposed BFF env wiring without choosing a final port, confirms SVC-EVIDENCE and SVC-COMPOSE are archived done (commits 82a6efd, 5a4ece7), and explicitly keeps reconciliation-drift out of canonical telemetry/lineage/runtime-control authority. Parent owner Codex2 retains all implementation decisions.",
+      "status": "done",
+      "created_at": "2026-04-28T18:12:46Z",
+      "resolved_at": "2026-04-28T18:21:23Z"
+    },
+    {
+      "task_id": "SVC-RECONCILIATION-DRIFT-SERVICE-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review approved by Codex2. Packet is accepted as support-only acceptance/dependency material for parent SVC-RECONCILIATION-DRIFT-SERVICE; owner Claude should finalize the sidecar to done. Parent implementation decisions remain with Codex2.",
+      "status": "done",
+      "created_at": "2026-04-28T18:21:23Z",
+      "resolved_at": "2026-04-28T18:51:05Z"
+    }
+  ],
+  "blockers": []
+}

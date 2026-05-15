@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "task_id": "PKT-001",
+  "archived_at": "2026-04-14T13:12:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PKT-001",
+    "title": "Packetize Governance and Deployment Review screens from existing APP-002 slices",
+    "summary_zh": "把 Promotion Review 與 Deployment Review 相關 operator screens 整理成正式 Lovable packet set。",
+    "phase": "APP-002 Packetization",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "LOOP-001",
+      "LOOP-003"
+    ],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md"
+    ],
+    "acceptance": [
+      "F-042 is reframed as one Governance Workbench screen instead of the whole admin surface",
+      "deployment review and governance queue follow-up screens receive canonical packet requirements",
+      "required example payloads and screen-spec gaps are explicitly listed"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "phase": "phase3",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-14T09:07:58Z",
+      "session_id": "phase3-2026-04-14-pantheon-console-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner final check complete: F-042 reframed as single Governance Workbench screen; deployment-review and governance-review-queue packets carry canonical BFF contract, list-level meta.surfaces, and example payloads. All three Codex review notes satisfied. Commit c277545.",
+    "last_update": "2026-04-14T13:12:41Z",
+    "review_notes_zh": [
+      "複審通過：deployment-review list 已補上 list-level meta.surfaces，可直接驅動 degradation banner。",
+      "複審通過：governance-review-queue 已將 review_summary 內嵌到 items[]，BFF contract 與 example payload 一致。",
+      "複審通過：F-042 lovable handoff 已改為 governance-workbench，與 Governance Workbench 命名一致。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T13:12:41Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "c27754511ddb9a4091dabf82cfeb80c3da99d162",
+      "commit_subject": "PKT-001: finalize Governance and Deployment Review packet family",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Stage all PKT-001 artifacts": "BFF contracts, screen specs, example payloads,",
+        "LLM-Agent": "Claude",
+        "Task-ID": "PKT-001",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 130,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PKT-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-14T10:06:46Z",
+      "resolved_at": "2026-04-14T10:07:00Z"
+    },
+    {
+      "task_id": "PKT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "PKT-001 packet family complete. F-042 is reframed as one Governance Workbench screen. Deployment Review Console and Governance Review Queue are packet-ready with contract-ready + lovable-ui-task YAML, screen specs, BFF contracts, example payloads, and bff-gap/ui-done request templates. Four blocked screens (Approval Queue, Deployment Diff, Rollback Review, Audit Rail) have explicit BFF gap requirements listed in the packet family spec. Please review against the three acceptance criteria in the task.",
+      "status": "done",
+      "created_at": "2026-04-14T10:27:05Z",
+      "resolved_at": "2026-04-14T10:40:00Z"
+    },
+    {
+      "task_id": "PKT-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review requested changes: align the Deployment Review list contract vs example on where list-level snapshot metadata lives, and define a concrete detail-fetch contract for Governance Review Queue (route/query shape + response placement) so the item detail drawer is implementable from the published endpoints.",
+      "status": "done",
+      "created_at": "2026-04-14T10:40:00Z",
+      "resolved_at": "2026-04-14T10:40:00Z"
+    },
+    {
+      "task_id": "PKT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "PKT-001 artifact set complete and ready for review. All acceptance criteria met: (1) F-042 reframed as one Governance Workbench screen, not a full admin surface. (2) Deployment Review Console and Governance Review Queue have BFF contract, screen spec, example payload, contract-ready response, lovable-ui-task, and FRONTEND_CHANGE_SPEC handoff bundle. (3) Blocked screens (Approval Queue, Deployment Diff, Rollback Review, Audit Rail) have explicit BFF gap requirements documented in the packet family doc. Please review all PKT-001 artifacts and either approve or return with concrete required changes.",
+      "status": "done",
+      "created_at": "2026-04-14T11:00:52Z",
+      "resolved_at": "2026-04-14T11:16:00Z"
+    },
+    {
+      "task_id": "PKT-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes required: align deployment-review list degradation contract/example with UI expectations, align governance-review-queue detail payload shape across BFF/spec/example, and update F-042 machine-readable workbench naming to match Governance Workbench reframe before resubmitting.",
+      "status": "done",
+      "created_at": "2026-04-14T11:16:00Z",
+      "resolved_at": "2026-04-14T11:16:00Z"
+    },
+    {
+      "task_id": "PKT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All three required review changes applied. Please re-review PKT-001 artifacts: (1) docs/bff/PKT-001-deployment-review-console.md and docs/examples/PKT-001-deployment-review-console.json now include meta.surfaces at the list level; (2) docs/bff/PKT-001-governance-review-queue.md and docs/examples/PKT-001-governance-review-queue.json now have review_summary embedded per-item, consistent across BFF spec and example; (3) .coordination/responses/F-042-lovable-ui-task.yaml now has workbench: governance-workbench.",
+      "status": "done",
+      "created_at": "2026-04-14T11:24:24Z",
+      "resolved_at": "2026-04-14T11:26:37Z"
+    },
+    {
+      "task_id": "PKT-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Re-review passed. All requested contract and handoff fixes are applied; ready for Claude to finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-14T11:26:37Z",
+      "resolved_at": "2026-04-14T13:12:41Z"
+    }
+  ],
+  "blockers": []
+}

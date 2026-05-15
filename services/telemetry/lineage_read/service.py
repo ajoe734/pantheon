@@ -15,6 +15,8 @@ contract to produce derived-only lineage projections within the L1 SLA budgets:
 - runtime_binding_projection:  p95 < 500ms  (sync summary)
 - capital_pool_projection:     p95 < 500ms  (sync summary)
 - telemetry_event_trace:       p95 < 500ms  (sync summary)
+- source_runtime_telemetry_trace:
+                               operator-facing derived trace by trace_id
 - forensic_plan_trace:         p95 < 5000ms (forensic / async-capable)
 """
 
@@ -35,6 +37,7 @@ EDGE_STRATEGY_SPEC_SOURCE = "strategy_spec.source_record"
 EDGE_EXPERIMENT_STRATEGY = "experiment_run.strategy_spec"
 EDGE_ARTIFACT_EXPERIMENT = "candidate_artifact.experiment_run"
 EDGE_APPROVAL_TARGET = "approval_decision.registry_target"
+EDGE_DEPLOYMENT_APPROVAL = "deployment_plan.approval_decision"
 EDGE_DEPLOYMENT_ARTIFACT = "deployment_plan.artifact"
 EDGE_DEPLOYMENT_POOL = "deployment_plan.capital_pool"
 EDGE_DEPLOYMENT_PERSONA = "deployment_plan.persona_binding"
@@ -48,17 +51,45 @@ EDGE_TELEMETRY_PLAN = "telemetry_event.deployment_plan"
 EDGE_TELEMETRY_POOL = "telemetry_event.capital_pool"
 EDGE_TELEMETRY_PERSONA = "telemetry_event.persona_binding"
 EDGE_INCIDENT_BINDING = "incident_case.runtime_binding"
+EDGE_INCIDENT_TELEMETRY = "incident_case.telemetry_event"
 EDGE_POSTMORTEM_INCIDENT = "postmortem.incident_case"
 EDGE_EVOLUTION_POSTMORTEM = "evolution_decision.postmortem"
+EDGE_EVOLUTION_INCIDENT = "evolution_decision.incident_case"
+EDGE_EVOLUTION_TARGET = "evolution_decision.registry_target"
+EDGE_BROKER_ORDER_BINDING = "broker_order_event.runtime_binding"
+EDGE_BROKER_ORDER_PLAN = "broker_order_event.deployment_plan"
+EDGE_BROKER_ORDER_TELEMETRY = "broker_order_event.telemetry_event"
+EDGE_POSITION_SNAPSHOT_BINDING = "position_snapshot.runtime_binding"
+EDGE_POSITION_SNAPSHOT_TELEMETRY = "position_snapshot.telemetry_event"
+EDGE_RECONCILIATION_RUN_BINDING = "reconciliation_run.runtime_binding"
+EDGE_RECONCILIATION_RUN_PLAN = "reconciliation_run.deployment_plan"
+EDGE_RECONCILIATION_RECORD_RUN = "reconciliation_record.reconciliation_run"
+EDGE_DRIFT_REPORT_RUN = "drift_report.reconciliation_run"
+EDGE_ALERT_CANDIDATE_SOURCE = "alert_candidate.source_ref"
 
 # Node type constants
+NODE_SOURCE_RECORD = "source_record"
+NODE_STRATEGY_SPEC = "strategy_spec"
+NODE_EXPERIMENT_RUN = "experiment_run"
+NODE_CANDIDATE_ARTIFACT = "candidate_artifact"
+NODE_APPROVAL_DECISION = "approval_decision"
 NODE_CAPITAL_POOL = "capital_pool"
 NODE_PERSONA_BINDING = "persona_capital_binding"
 NODE_DEPLOYMENT_PLAN = "deployment_plan"
 NODE_RUNTIME_BINDING = "runtime_binding"
 NODE_TELEMETRY_EVENT = "telemetry_event"
+NODE_BROKER_ORDER_EVENT = "broker_order_event"
+NODE_POSITION_SNAPSHOT = "position_snapshot"
+NODE_RECONCILIATION_RUN = "reconciliation_run"
+NODE_RECONCILIATION_RECORD = "reconciliation_record"
+NODE_DRIFT_REPORT = "drift_report"
+NODE_ALERT_CANDIDATE = "alert_candidate"
+NODE_INCIDENT_CASE = "incident_case"
+NODE_POSTMORTEM = "postmortem"
+NODE_EVOLUTION_DECISION = "evolution_decision"
 NODE_ARTIFACT_REF = "artifact_ref"
 NODE_RUNTIME_REF = "runtime_ref"
+NODE_TRACE = "trace"
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -397,6 +428,26 @@ class LineageTraverser:
             item["rollback_parent"] = data["rollback_parent"]
         if "rollback_action_type" in data and data["rollback_action_type"]:
             item["rollback_action_type"] = data["rollback_action_type"]
+        if "event_produced_at" in data:
+            item["event_produced_at"] = data["event_produced_at"]
+        if "created_at" in data:
+            item["created_at"] = data["created_at"]
+        if "strategy_id" in data:
+            item["strategy_id"] = data["strategy_id"]
+        if "run_id" in data:
+            item["run_id"] = data["run_id"]
+        if "approval_decision_id" in data:
+            item["approval_decision_id"] = data["approval_decision_id"]
+        if "decision_state" in data:
+            item["decision_state"] = data["decision_state"]
+        if "action_type" in data:
+            item["action_type"] = data["action_type"]
+        if "broker" in data:
+            item["broker"] = data["broker"]
+        if "order_id" in data:
+            item["order_id"] = data["order_id"]
+        if "order_status" in data:
+            item["order_status"] = data["order_status"]
         return item
 
     def _detect_rollback_conflicts(
@@ -672,9 +723,1488 @@ class ProjectionBuilder:
         )
         return _enrich_forensic_plan_trace(result, graph)
 
+    @staticmethod
+    def source_runtime_telemetry_trace(
+        traverser: LineageTraverser,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        return _build_source_runtime_telemetry_trace(traverser.graph, trace_id)
+
 
 def _artifact_ref(artifact_id: str, artifact_version: str) -> str:
     return f"{artifact_id}@{artifact_version}"
+
+
+def _record_identifier(record: dict[str, Any], *keys: str) -> Optional[str]:
+    for key in keys:
+        value = record.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def _timestamp_value(data: dict[str, Any]) -> str:
+    for key in ("event_produced_at", "created_at", "effective_at", "executed_at"):
+        value = data.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def _node_sort_key(node: GraphNode) -> tuple[str, str, str]:
+    return (_timestamp_value(node.data), node.node_type, node.node_id)
+
+
+def _chain_item(node: GraphNode, *, include_data: bool = False) -> dict[str, Any]:
+    item: dict[str, Any] = {"type": node.node_type, "id": node.node_id}
+    data = node.data
+    passthrough_fields = (
+        "event_type",
+        "status",
+        "decision_state",
+        "action_type",
+        "strategy_id",
+        "run_id",
+        "source_id",
+        "approval_decision_id",
+        "plan_id",
+        "binding_id",
+        "runtime_id",
+        "runtime_binding_id",
+        "deployment_plan_id",
+        "capital_pool_id",
+        "persona_capital_binding_id",
+        "artifact_id",
+        "artifact_version",
+        "trace_id",
+        "request_id",
+        "broker",
+        "account_ref",
+        "order_id",
+        "order_status",
+        "fill_status",
+        "symbol",
+        "quantity",
+        "position_qty",
+        "recon_run_id",
+        "recon_type",
+        "record_id",
+        "drift_report_id",
+        "drift_type",
+        "severity",
+        "source_type",
+        "source_ref",
+        "rule_id",
+        "scope_type",
+        "scope_id",
+        "scope_ref",
+        "resolution",
+        "recommended_action",
+        "lifecycle_state",
+        "rollback_parent",
+        "rollback_action_type",
+        "baseline_ref",
+        "current_ref",
+        "expected_ref",
+        "actual_ref",
+        "created_at",
+        "event_produced_at",
+        "effective_at",
+        "executed_at",
+        "started_at",
+        "finished_at",
+        "generated_at",
+    )
+    for field_name in passthrough_fields:
+        value = data.get(field_name)
+        if value not in (None, ""):
+            item[field_name] = value
+    if include_data:
+        item["data"] = dict(data)
+    return item
+
+
+def _append_unique(items: list[dict[str, Any]], item: dict[str, Any]) -> None:
+    key = (item.get("type"), item.get("id"))
+    if not any((existing.get("type"), existing.get("id")) == key for existing in items):
+        items.append(item)
+
+
+def _add_missing_edge(
+    missing_edges: list[dict[str, Any]],
+    conflict_markers: list[dict[str, Any]],
+    *,
+    edge_type: str,
+    from_type: str,
+    from_id: str,
+    to_type: str,
+    to_id: str,
+) -> None:
+    marker = {
+        "edge_type": edge_type,
+        "from_type": from_type,
+        "from_id": from_id,
+        "to_type": to_type,
+        "to_id": to_id,
+    }
+    if marker not in missing_edges:
+        missing_edges.append(marker)
+    conflict = {
+        "code": "missing_lineage_edge",
+        **marker,
+    }
+    if conflict not in conflict_markers:
+        conflict_markers.append(conflict)
+
+
+def _known_or_missing(
+    graph: LineageGraph,
+    missing_edges: list[dict[str, Any]],
+    conflict_markers: list[dict[str, Any]],
+    *,
+    edge_type: str,
+    from_type: str,
+    from_id: str,
+    to_type: str,
+    to_id: Optional[str],
+) -> Optional[GraphNode]:
+    if not to_id:
+        return None
+    node = graph.get_node(to_type, to_id)
+    if node is None:
+        _add_missing_edge(
+            missing_edges,
+            conflict_markers,
+            edge_type=edge_type,
+            from_type=from_type,
+            from_id=from_id,
+            to_type=to_type,
+            to_id=to_id,
+        )
+    return node
+
+
+def _nested_value(data: dict[str, Any], outer: str, inner: str) -> Optional[Any]:
+    value = data.get(outer)
+    if isinstance(value, dict):
+        nested = value.get(inner)
+        if nested not in (None, ""):
+            return nested
+    return None
+
+
+def _as_str_set(value: Any) -> set[str]:
+    if value in (None, ""):
+        return set()
+    if isinstance(value, list):
+        return {str(item) for item in value if item not in (None, "")}
+    if isinstance(value, tuple) or isinstance(value, set):
+        return {str(item) for item in value if item not in (None, "")}
+    return {str(value)}
+
+
+def _data_refs(data: dict[str, Any], *keys: str) -> set[str]:
+    values: set[str] = set()
+    for key in keys:
+        values.update(_as_str_set(data.get(key)))
+    return values
+
+
+def _matches_any_ref(data: dict[str, Any], refs: set[str], *keys: str) -> bool:
+    return bool(refs and (_data_refs(data, *keys) & refs))
+
+
+_ORDER_LIFECYCLE_EVENT_TYPES = {
+    "fill_observation",
+    "fill_received",
+    "order_rejection",
+    "order_filled",
+    "order_partially_filled",
+    "order_canceled",
+    "order_cancelled",
+    "order_submitted",
+    "order_accepted",
+    "order_acknowledged",
+    "slippage_observation",
+}
+
+_ORDER_OPEN_EVENT_TYPES = {
+    "order_submitted",
+    "order_acknowledged",
+    "order_updated",
+    "order_opened",
+    "order_accepted",
+}
+
+_ORDER_FILL_EVENT_TYPES = {
+    "fill_observation",
+    "fill_received",
+    "order_filled",
+    "order_partially_filled",
+}
+
+_ORDER_CANCEL_EVENT_TYPES = {
+    "order_canceled",
+    "order_cancelled",
+    "order_cancel_requested",
+    "order_cancel_rejected",
+}
+
+_POSITION_EVENT_TYPES = {
+    "position_snapshot",
+    "position_snapshot_received",
+    "broker_position_snapshot",
+}
+
+_ORDER_FILL_POSITION_RECON_TYPES = {
+    "order_fill_position",
+    "order_fill_cancel_position",
+    "execution_lifecycle",
+}
+
+_PAPER_LIVE_DRIFT_TYPES = {
+    "paper_live",
+    "paper_live_drift",
+    "backtest_paper_live",
+    "execution",
+    "slippage",
+    "pnl",
+    "cost",
+}
+
+_ALERT_CLOSED_STATUSES = {
+    "suppressed",
+    "promoted_to_alert",
+    "linked_to_incident",
+    "closed",
+    "resolved",
+}
+
+_DRIFT_CLOSED_STATUSES = {
+    "acknowledged",
+    "closed",
+    "linked_to_incident",
+    "resolved",
+    "suppressed",
+}
+
+_RECON_PASS_STATUSES = {"pass", "passed", "ok", "none"}
+_RECON_FAIL_STATUSES = {"fail", "failed", "mismatch"}
+_HIGH_SEVERITIES = {"high", "critical"}
+
+
+def _build_source_runtime_telemetry_trace(
+    graph: LineageGraph,
+    trace_id: str,
+) -> dict[str, Any]:
+    """Build the first operator-facing source->runtime->telemetry trace.
+
+    The payload is derived from owner-written refs only. Missing referenced
+    nodes are surfaced as explicit missing_edges/conflict_markers instead of
+    being inferred or backfilled.
+    """
+    telemetry_nodes = sorted(
+        [
+            node
+            for node in graph.nodes_by_type(NODE_TELEMETRY_EVENT)
+            if (
+                node.data.get("trace_id") == trace_id
+                or _nested_value(node.data, "authority_refs", "trace_id") == trace_id
+            )
+        ],
+        key=_node_sort_key,
+    )
+
+    if not telemetry_nodes:
+        return {
+            "target_type": NODE_TRACE,
+            "target_id": trace_id,
+            "derived_only": True,
+            "projection_updated_at": None,
+            "upstream_chain": [],
+            "downstream_chain": [],
+            "conflict_markers": [
+                {"code": "node_not_found", "node_key": f"{NODE_TRACE}:{trace_id}"}
+            ],
+            "missing_edges": [],
+            "operator_trace": {
+                "source_chain": [],
+                "deployment_chain": [],
+                "runtime_chain": [],
+                "broker_order_lifecycle": [],
+                "telemetry_events": [],
+                "position_snapshots": [],
+                "reconciliation_runs": [],
+                "reconciliation_records": [],
+                "drift_reports": [],
+                "alert_candidates": [],
+                "reconciliation_closure": _build_reconciliation_closure(
+                    telemetry_events=[],
+                    broker_order_lifecycle=[],
+                    position_snapshots=[],
+                    reconciliation_runs=[],
+                    reconciliation_records=[],
+                    drift_reports=[],
+                    alert_candidates=[],
+                ),
+                "evolution_refs": [],
+            },
+            "refs": _operator_trace_refs(trace_id=trace_id),
+            "telemetry_event_count": 0,
+            "broker_order_event_count": 0,
+            "position_snapshot_count": 0,
+            "reconciliation_run_count": 0,
+            "reconciliation_record_count": 0,
+            "drift_report_count": 0,
+            "alert_candidate_count": 0,
+            "evolution_decision_count": 0,
+            "_meta": {"visited_node_count": 0, "visited_edge_count": 0},
+        }
+
+    conflict_markers: list[dict[str, Any]] = []
+    missing_edges: list[dict[str, Any]] = []
+    source_chain: list[dict[str, Any]] = []
+    deployment_chain: list[dict[str, Any]] = []
+    runtime_chain: list[dict[str, Any]] = []
+    telemetry_events: list[dict[str, Any]] = []
+    broker_order_lifecycle: list[dict[str, Any]] = []
+    position_snapshots: list[dict[str, Any]] = []
+    reconciliation_runs: list[dict[str, Any]] = []
+    reconciliation_records: list[dict[str, Any]] = []
+    drift_reports: list[dict[str, Any]] = []
+    alert_candidates: list[dict[str, Any]] = []
+    incident_refs: list[dict[str, Any]] = []
+    postmortem_refs: list[dict[str, Any]] = []
+    evolution_refs: list[dict[str, Any]] = []
+    visited_nodes: dict[tuple[str, str], GraphNode] = {}
+
+    def remember(node: Optional[GraphNode]) -> Optional[GraphNode]:
+        if node is not None:
+            visited_nodes[(node.node_type, node.node_id)] = node
+        return node
+
+    binding_ids: set[str] = set()
+    plan_ids: set[str] = set()
+    pool_ids: set[str] = set()
+    persona_binding_ids: set[str] = set()
+    artifact_ids: set[str] = set()
+    artifact_refs: set[str] = set()
+    strategy_ids: set[str] = set()
+    request_ids: set[str] = set()
+    telemetry_event_ids: set[str] = {node.node_id for node in telemetry_nodes}
+    order_ids: set[str] = set()
+    position_snapshot_event_nodes: list[GraphNode] = []
+
+    for event_node in telemetry_nodes:
+        remember(event_node)
+        event_data = event_node.data
+        telemetry_item = _chain_item(event_node)
+        _append_unique(telemetry_events, telemetry_item)
+
+        request_id = event_data.get("request_id") or _nested_value(event_data, "authority_refs", "request_id")
+        if request_id:
+            request_ids.add(str(request_id))
+
+        binding_id = event_data.get("runtime_binding_id") or event_data.get("binding_id")
+        if binding_id:
+            binding_ids.add(str(binding_id))
+            remember(_known_or_missing(
+                graph,
+                missing_edges,
+                conflict_markers,
+                edge_type=EDGE_TELEMETRY_BINDING,
+                from_type=NODE_TELEMETRY_EVENT,
+                from_id=event_node.node_id,
+                to_type=NODE_RUNTIME_BINDING,
+                to_id=str(binding_id),
+            ))
+
+        plan_id = event_data.get("deployment_plan_id") or event_data.get("plan_id")
+        if plan_id:
+            plan_ids.add(str(plan_id))
+            remember(_known_or_missing(
+                graph,
+                missing_edges,
+                conflict_markers,
+                edge_type=EDGE_TELEMETRY_PLAN,
+                from_type=NODE_TELEMETRY_EVENT,
+                from_id=event_node.node_id,
+                to_type=NODE_DEPLOYMENT_PLAN,
+                to_id=str(plan_id),
+            ))
+
+        if event_data.get("capital_pool_id"):
+            pool_ids.add(str(event_data["capital_pool_id"]))
+        if event_data.get("persona_capital_binding_id"):
+            persona_binding_ids.add(str(event_data["persona_capital_binding_id"]))
+        if event_data.get("artifact_id"):
+            artifact_ids.add(str(event_data["artifact_id"]))
+        if event_data.get("artifact_id") and event_data.get("artifact_version"):
+            artifact_refs.add(_artifact_ref(str(event_data["artifact_id"]), str(event_data["artifact_version"])))
+        strategy_id = event_data.get("strategy_id") or _nested_value(event_data, "target", "strategy_id")
+        if strategy_id:
+            strategy_ids.add(str(strategy_id))
+        if event_data.get("order_id"):
+            order_ids.add(str(event_data["order_id"]))
+
+        event_type = str(event_data.get("event_type") or "")
+        if event_type in _POSITION_EVENT_TYPES:
+            position_snapshot_event_nodes.append(event_node)
+        if (
+            event_type in _ORDER_LIFECYCLE_EVENT_TYPES
+            or event_data.get("broker")
+            or event_data.get("order_id")
+            or event_data.get("signal_id")
+        ):
+            lifecycle_item = dict(telemetry_item)
+            lifecycle_item["source"] = NODE_TELEMETRY_EVENT
+            _append_unique(broker_order_lifecycle, lifecycle_item)
+
+    for binding_id in sorted(binding_ids):
+        binding_node = remember(graph.get_node(NODE_RUNTIME_BINDING, binding_id))
+        if binding_node is None:
+            continue
+        binding_data = binding_node.data
+        _append_unique(runtime_chain, _chain_item(binding_node))
+        if binding_data.get("runtime_id"):
+            _append_unique(runtime_chain, {"type": NODE_RUNTIME_REF, "id": binding_data["runtime_id"]})
+        if binding_data.get("plan_id"):
+            plan_ids.add(str(binding_data["plan_id"]))
+        if binding_data.get("capital_pool_id"):
+            pool_ids.add(str(binding_data["capital_pool_id"]))
+        if binding_data.get("persona_capital_binding_id"):
+            persona_binding_ids.add(str(binding_data["persona_capital_binding_id"]))
+        if binding_data.get("artifact_id"):
+            artifact_ids.add(str(binding_data["artifact_id"]))
+        if binding_data.get("artifact_id") and binding_data.get("artifact_version"):
+            artifact_refs.add(_artifact_ref(str(binding_data["artifact_id"]), str(binding_data["artifact_version"])))
+
+    for plan_id in sorted(plan_ids):
+        plan_node = remember(graph.get_node(NODE_DEPLOYMENT_PLAN, plan_id))
+        if plan_node is None:
+            continue
+        plan_data = plan_node.data
+        approval_id = plan_data.get("approval_decision_id")
+        if approval_id:
+            approval_node = remember(_known_or_missing(
+                graph,
+                missing_edges,
+                conflict_markers,
+                edge_type=EDGE_DEPLOYMENT_APPROVAL,
+                from_type=NODE_DEPLOYMENT_PLAN,
+                from_id=plan_id,
+                to_type=NODE_APPROVAL_DECISION,
+                to_id=str(approval_id),
+            ))
+            if approval_node is not None:
+                _append_unique(deployment_chain, _chain_item(approval_node))
+        _append_unique(deployment_chain, _chain_item(plan_node))
+        if plan_data.get("capital_pool_id"):
+            pool_ids.add(str(plan_data["capital_pool_id"]))
+        if plan_data.get("binding_id"):
+            persona_binding_ids.add(str(plan_data["binding_id"]))
+        if plan_data.get("artifact_id"):
+            artifact_ids.add(str(plan_data["artifact_id"]))
+            remember(_known_or_missing(
+                graph,
+                missing_edges,
+                conflict_markers,
+                edge_type=EDGE_DEPLOYMENT_ARTIFACT,
+                from_type=NODE_DEPLOYMENT_PLAN,
+                from_id=plan_id,
+                to_type=NODE_CANDIDATE_ARTIFACT,
+                to_id=str(plan_data["artifact_id"]),
+            ))
+        if plan_data.get("artifact_id") and plan_data.get("artifact_version"):
+            artifact_refs.add(_artifact_ref(str(plan_data["artifact_id"]), str(plan_data["artifact_version"])))
+        if plan_data.get("strategy_id"):
+            strategy_ids.add(str(plan_data["strategy_id"]))
+
+    for pool_id in sorted(pool_ids):
+        pool_node = remember(graph.get_node(NODE_CAPITAL_POOL, pool_id))
+        if pool_node is not None:
+            _append_unique(deployment_chain, _chain_item(pool_node))
+
+    for persona_binding_id in sorted(persona_binding_ids):
+        persona_node = remember(graph.get_node(NODE_PERSONA_BINDING, persona_binding_id))
+        if persona_node is not None:
+            _append_unique(deployment_chain, _chain_item(persona_node))
+
+    for artifact_id in sorted(artifact_ids):
+        artifact_node = remember(graph.get_node(NODE_CANDIDATE_ARTIFACT, artifact_id))
+        if artifact_node is not None:
+            _append_research_chain_for_artifact(
+                graph,
+                artifact_node,
+                source_chain,
+                missing_edges,
+                conflict_markers,
+                remember,
+            )
+        else:
+            for artifact_ref in sorted(ref for ref in artifact_refs if ref.startswith(f"{artifact_id}@")):
+                _append_unique(source_chain, {"type": NODE_ARTIFACT_REF, "id": artifact_ref})
+
+    for strategy_id in sorted(strategy_ids):
+        if not any(item.get("type") == NODE_STRATEGY_SPEC and item.get("id") == strategy_id for item in source_chain):
+            strategy_node = remember(graph.get_node(NODE_STRATEGY_SPEC, strategy_id))
+            if strategy_node is not None:
+                _append_research_chain_for_strategy(
+                    graph,
+                    strategy_node,
+                    source_chain,
+                    missing_edges,
+                    conflict_markers,
+                    remember,
+                )
+
+    broker_order_nodes = _related_broker_order_nodes(
+        graph,
+        trace_id=trace_id,
+        binding_ids=binding_ids,
+        plan_ids=plan_ids,
+        telemetry_event_ids=telemetry_event_ids,
+    )
+    for node in broker_order_nodes:
+        remember(node)
+        _append_unique(broker_order_lifecycle, _chain_item(node))
+        if node.data.get("order_id"):
+            order_ids.add(str(node.data["order_id"]))
+
+    position_snapshot_nodes = _related_position_snapshot_nodes(
+        graph,
+        trace_id=trace_id,
+        binding_ids=binding_ids,
+        plan_ids=plan_ids,
+        telemetry_event_ids=telemetry_event_ids,
+    )
+    for node in position_snapshot_nodes:
+        remember(node)
+        _append_unique(position_snapshots, _chain_item(node))
+
+    linked_position_telemetry_ids = {
+        str(value)
+        for node in position_snapshot_nodes
+        for value in (node.data.get("telemetry_event_id"), node.data.get("event_id"))
+        if value not in (None, "")
+    }
+    for event_node in position_snapshot_event_nodes:
+        if event_node.node_id in linked_position_telemetry_ids:
+            continue
+        snapshot_item = _chain_item(event_node)
+        snapshot_item["type"] = NODE_POSITION_SNAPSHOT
+        snapshot_item["id"] = str(
+            event_node.data.get("position_snapshot_id")
+            or event_node.data.get("snapshot_id")
+            or event_node.node_id
+        )
+        snapshot_item["source"] = NODE_TELEMETRY_EVENT
+        snapshot_item["telemetry_event_id"] = event_node.node_id
+        _append_unique(position_snapshots, snapshot_item)
+
+    reconciliation_run_nodes = _related_reconciliation_run_nodes(
+        graph,
+        trace_id=trace_id,
+        binding_ids=binding_ids,
+        plan_ids=plan_ids,
+        pool_ids=pool_ids,
+        artifact_ids=artifact_ids,
+        telemetry_event_ids=telemetry_event_ids,
+        order_ids=order_ids,
+    )
+    reconciliation_run_ids = {node.node_id for node in reconciliation_run_nodes}
+    for node in reconciliation_run_nodes:
+        remember(node)
+        _append_unique(reconciliation_runs, _chain_item(node))
+
+    reconciliation_record_nodes = _related_reconciliation_record_nodes(
+        graph,
+        trace_id=trace_id,
+        binding_ids=binding_ids,
+        plan_ids=plan_ids,
+        telemetry_event_ids=telemetry_event_ids,
+        order_ids=order_ids,
+        reconciliation_run_ids=reconciliation_run_ids,
+    )
+    reconciliation_record_ids = {node.node_id for node in reconciliation_record_nodes}
+    for node in reconciliation_record_nodes:
+        remember(node)
+        _append_unique(reconciliation_records, _chain_item(node))
+
+    drift_report_nodes = _related_drift_report_nodes(
+        graph,
+        trace_id=trace_id,
+        binding_ids=binding_ids,
+        plan_ids=plan_ids,
+        pool_ids=pool_ids,
+        artifact_ids=artifact_ids,
+        reconciliation_run_ids=reconciliation_run_ids,
+        reconciliation_record_ids=reconciliation_record_ids,
+    )
+    drift_report_ids = {node.node_id for node in drift_report_nodes}
+    for node in drift_report_nodes:
+        remember(node)
+        _append_unique(drift_reports, _chain_item(node))
+
+    alert_candidate_nodes = _related_alert_candidate_nodes(
+        graph,
+        trace_id=trace_id,
+        binding_ids=binding_ids,
+        plan_ids=plan_ids,
+        telemetry_event_ids=telemetry_event_ids,
+        order_ids=order_ids,
+        reconciliation_run_ids=reconciliation_run_ids,
+        reconciliation_record_ids=reconciliation_record_ids,
+        drift_report_ids=drift_report_ids,
+    )
+    for node in alert_candidate_nodes:
+        remember(node)
+        _append_unique(alert_candidates, _chain_item(node))
+
+    incident_nodes = _related_incident_nodes(
+        graph,
+        trace_id=trace_id,
+        binding_ids=binding_ids,
+        telemetry_event_ids=telemetry_event_ids,
+    )
+    incident_ids = {node.node_id for node in incident_nodes}
+    for node in incident_nodes:
+        remember(node)
+        _append_unique(incident_refs, _chain_item(node))
+
+    postmortem_nodes = _related_postmortem_nodes(graph, incident_ids)
+    postmortem_ids = {node.node_id for node in postmortem_nodes}
+    for node in postmortem_nodes:
+        remember(node)
+        _append_unique(postmortem_refs, _chain_item(node))
+
+    evolution_nodes = _related_evolution_nodes(
+        graph,
+        trace_id=trace_id,
+        artifact_ids=artifact_ids,
+        strategy_ids=strategy_ids,
+        pool_ids=pool_ids,
+        persona_binding_ids=persona_binding_ids,
+        incident_ids=incident_ids,
+        postmortem_ids=postmortem_ids,
+        telemetry_event_ids=telemetry_event_ids,
+        plan_ids=plan_ids,
+        binding_ids=binding_ids,
+    )
+    for node in evolution_nodes:
+        remember(node)
+        _append_unique(evolution_refs, _chain_item(node))
+
+    upstream_chain: list[dict[str, Any]] = []
+    downstream_chain: list[dict[str, Any]] = []
+    for item in [*source_chain, *deployment_chain, *runtime_chain]:
+        _append_unique(upstream_chain, item)
+    for item in [
+        *telemetry_events,
+        *broker_order_lifecycle,
+        *position_snapshots,
+        *reconciliation_runs,
+        *reconciliation_records,
+        *drift_reports,
+        *alert_candidates,
+        *incident_refs,
+        *postmortem_refs,
+        *evolution_refs,
+    ]:
+        _append_unique(downstream_chain, item)
+
+    projection_updated_at = max(
+        (_timestamp_value(node.data) for node in visited_nodes.values()),
+        default=None,
+    )
+    if projection_updated_at == "":
+        projection_updated_at = None
+
+    refs = _operator_trace_refs(
+        trace_id=trace_id,
+        base_refs=_build_refs_from_chains(upstream_chain, downstream_chain, graph),
+        source_chain=source_chain,
+        deployment_chain=deployment_chain,
+        runtime_chain=runtime_chain,
+        telemetry_events=telemetry_events,
+        broker_order_lifecycle=broker_order_lifecycle,
+        position_snapshots=position_snapshots,
+        reconciliation_runs=reconciliation_runs,
+        reconciliation_records=reconciliation_records,
+        drift_reports=drift_reports,
+        alert_candidates=alert_candidates,
+        incident_refs=incident_refs,
+        postmortem_refs=postmortem_refs,
+        evolution_refs=evolution_refs,
+        request_ids=request_ids,
+        artifact_refs=artifact_refs,
+    )
+
+    reconciliation_closure = _build_reconciliation_closure(
+        telemetry_events=telemetry_events,
+        broker_order_lifecycle=broker_order_lifecycle,
+        position_snapshots=position_snapshots,
+        reconciliation_runs=reconciliation_runs,
+        reconciliation_records=reconciliation_records,
+        drift_reports=drift_reports,
+        alert_candidates=alert_candidates,
+    )
+
+    return {
+        "target_type": NODE_TRACE,
+        "target_id": trace_id,
+        "query_family": "source_runtime_telemetry_trace",
+        "derived_only": True,
+        "projection_updated_at": projection_updated_at,
+        "upstream_chain": upstream_chain,
+        "downstream_chain": downstream_chain,
+        "conflict_markers": conflict_markers,
+        "missing_edges": missing_edges,
+        "operator_trace": {
+            "source_chain": source_chain,
+            "deployment_chain": deployment_chain,
+            "runtime_chain": runtime_chain,
+            "broker_order_lifecycle": broker_order_lifecycle,
+            "telemetry_events": telemetry_events,
+            "position_snapshots": position_snapshots,
+            "reconciliation_runs": reconciliation_runs,
+            "reconciliation_records": reconciliation_records,
+            "drift_reports": drift_reports,
+            "alert_candidates": alert_candidates,
+            "reconciliation_closure": reconciliation_closure,
+            "incident_refs": incident_refs,
+            "postmortem_refs": postmortem_refs,
+            "evolution_refs": evolution_refs,
+        },
+        "refs": refs,
+        "telemetry_event_count": len(telemetry_events),
+        "broker_order_event_count": len(broker_order_lifecycle),
+        "position_snapshot_count": len(position_snapshots),
+        "reconciliation_run_count": len(reconciliation_runs),
+        "reconciliation_record_count": len(reconciliation_records),
+        "drift_report_count": len(drift_reports),
+        "alert_candidate_count": len(alert_candidates),
+        "evolution_decision_count": len(evolution_refs),
+        "_meta": {
+            "visited_node_count": len(visited_nodes),
+            "visited_edge_count": len(upstream_chain) + len(downstream_chain),
+        },
+    }
+
+
+def _append_research_chain_for_artifact(
+    graph: LineageGraph,
+    artifact_node: GraphNode,
+    chain: list[dict[str, Any]],
+    missing_edges: list[dict[str, Any]],
+    conflict_markers: list[dict[str, Any]],
+    remember,
+) -> None:
+    artifact_data = artifact_node.data
+    run_id = artifact_data.get("run_id") or artifact_data.get("experiment_run_id")
+    experiment_node = remember(_known_or_missing(
+        graph,
+        missing_edges,
+        conflict_markers,
+        edge_type=EDGE_ARTIFACT_EXPERIMENT,
+        from_type=NODE_CANDIDATE_ARTIFACT,
+        from_id=artifact_node.node_id,
+        to_type=NODE_EXPERIMENT_RUN,
+        to_id=str(run_id) if run_id else None,
+    ))
+    if experiment_node is not None:
+        _append_research_chain_for_experiment(
+            graph,
+            experiment_node,
+            chain,
+            missing_edges,
+            conflict_markers,
+            remember,
+        )
+    _append_unique(chain, _chain_item(artifact_node))
+    if artifact_data.get("artifact_id") and artifact_data.get("artifact_version"):
+        _append_unique(chain, {
+            "type": NODE_ARTIFACT_REF,
+            "id": _artifact_ref(str(artifact_data["artifact_id"]), str(artifact_data["artifact_version"])),
+        })
+
+
+def _append_research_chain_for_experiment(
+    graph: LineageGraph,
+    experiment_node: GraphNode,
+    chain: list[dict[str, Any]],
+    missing_edges: list[dict[str, Any]],
+    conflict_markers: list[dict[str, Any]],
+    remember,
+) -> None:
+    strategy_id = experiment_node.data.get("strategy_id") or experiment_node.data.get("strategy_spec_id")
+    strategy_node = remember(_known_or_missing(
+        graph,
+        missing_edges,
+        conflict_markers,
+        edge_type=EDGE_EXPERIMENT_STRATEGY,
+        from_type=NODE_EXPERIMENT_RUN,
+        from_id=experiment_node.node_id,
+        to_type=NODE_STRATEGY_SPEC,
+        to_id=str(strategy_id) if strategy_id else None,
+    ))
+    if strategy_node is not None:
+        _append_research_chain_for_strategy(
+            graph,
+            strategy_node,
+            chain,
+            missing_edges,
+            conflict_markers,
+            remember,
+        )
+    _append_unique(chain, _chain_item(experiment_node))
+
+
+def _append_research_chain_for_strategy(
+    graph: LineageGraph,
+    strategy_node: GraphNode,
+    chain: list[dict[str, Any]],
+    missing_edges: list[dict[str, Any]],
+    conflict_markers: list[dict[str, Any]],
+    remember,
+) -> None:
+    source_id = strategy_node.data.get("source_id") or strategy_node.data.get("source_record_id")
+    source_node = remember(_known_or_missing(
+        graph,
+        missing_edges,
+        conflict_markers,
+        edge_type=EDGE_STRATEGY_SPEC_SOURCE,
+        from_type=NODE_STRATEGY_SPEC,
+        from_id=strategy_node.node_id,
+        to_type=NODE_SOURCE_RECORD,
+        to_id=str(source_id) if source_id else None,
+    ))
+    if source_node is not None:
+        _append_unique(chain, _chain_item(source_node))
+    _append_unique(chain, _chain_item(strategy_node))
+
+
+def _related_broker_order_nodes(
+    graph: LineageGraph,
+    *,
+    trace_id: str,
+    binding_ids: set[str],
+    plan_ids: set[str],
+    telemetry_event_ids: set[str],
+) -> list[GraphNode]:
+    nodes: list[GraphNode] = []
+    for node in graph.nodes_by_type(NODE_BROKER_ORDER_EVENT):
+        data = node.data
+        telemetry_id = data.get("telemetry_event_id") or data.get("event_id")
+        binding_id = data.get("runtime_binding_id") or data.get("binding_id")
+        plan_id = data.get("deployment_plan_id") or data.get("plan_id")
+        if (
+            data.get("trace_id") == trace_id
+            or telemetry_id in telemetry_event_ids
+            or binding_id in binding_ids
+            or plan_id in plan_ids
+        ):
+            nodes.append(node)
+    return sorted(nodes, key=_node_sort_key)
+
+
+def _trace_matches(data: dict[str, Any], trace_id: str) -> bool:
+    return (
+        data.get("trace_id") == trace_id
+        or _nested_value(data, "authority_refs", "trace_id") == trace_id
+    )
+
+
+def _evidence_ref_ids(data: dict[str, Any]) -> set[str]:
+    refs: set[str] = set()
+    for ref in data.get("evidence_refs", []) or []:
+        if isinstance(ref, dict):
+            ref_id = ref.get("ref_id") or ref.get("id")
+            if ref_id not in (None, ""):
+                refs.add(str(ref_id))
+        elif ref not in (None, ""):
+            refs.add(str(ref))
+    return refs
+
+
+def _related_position_snapshot_nodes(
+    graph: LineageGraph,
+    *,
+    trace_id: str,
+    binding_ids: set[str],
+    plan_ids: set[str],
+    telemetry_event_ids: set[str],
+) -> list[GraphNode]:
+    nodes: list[GraphNode] = []
+    for node in graph.nodes_by_type(NODE_POSITION_SNAPSHOT):
+        data = node.data
+        telemetry_id = data.get("telemetry_event_id") or data.get("event_id")
+        binding_id = data.get("runtime_binding_id") or data.get("binding_id")
+        plan_id = data.get("deployment_plan_id") or data.get("plan_id")
+        if (
+            _trace_matches(data, trace_id)
+            or telemetry_id in telemetry_event_ids
+            or binding_id in binding_ids
+            or plan_id in plan_ids
+        ):
+            nodes.append(node)
+    return sorted(nodes, key=_node_sort_key)
+
+
+def _related_reconciliation_run_nodes(
+    graph: LineageGraph,
+    *,
+    trace_id: str,
+    binding_ids: set[str],
+    plan_ids: set[str],
+    pool_ids: set[str],
+    artifact_ids: set[str],
+    telemetry_event_ids: set[str],
+    order_ids: set[str],
+) -> list[GraphNode]:
+    known_refs = (
+        {trace_id}
+        | binding_ids
+        | plan_ids
+        | pool_ids
+        | artifact_ids
+        | telemetry_event_ids
+        | order_ids
+    )
+    nodes: list[GraphNode] = []
+    for node in graph.nodes_by_type(NODE_RECONCILIATION_RUN):
+        data = node.data
+        binding_id = data.get("runtime_binding_id") or data.get("binding_id")
+        plan_id = data.get("deployment_plan_id") or data.get("plan_id")
+        if (
+            _trace_matches(data, trace_id)
+            or binding_id in binding_ids
+            or plan_id in plan_ids
+            or data.get("capital_pool_id") in pool_ids
+            or data.get("artifact_id") in artifact_ids
+            or data.get("scope_id") in known_refs
+            or data.get("scope_ref") in known_refs
+            or data.get("baseline_ref") in known_refs
+            or data.get("current_ref") in known_refs
+            or bool(_evidence_ref_ids(data) & known_refs)
+        ):
+            nodes.append(node)
+    return sorted(nodes, key=_node_sort_key)
+
+
+def _related_reconciliation_record_nodes(
+    graph: LineageGraph,
+    *,
+    trace_id: str,
+    binding_ids: set[str],
+    plan_ids: set[str],
+    telemetry_event_ids: set[str],
+    order_ids: set[str],
+    reconciliation_run_ids: set[str],
+) -> list[GraphNode]:
+    known_refs = (
+        {trace_id}
+        | binding_ids
+        | plan_ids
+        | telemetry_event_ids
+        | order_ids
+        | reconciliation_run_ids
+    )
+    nodes: list[GraphNode] = []
+    for node in graph.nodes_by_type(NODE_RECONCILIATION_RECORD):
+        data = node.data
+        if (
+            _trace_matches(data, trace_id)
+            or data.get("recon_run_id") in reconciliation_run_ids
+            or data.get("scope_ref") in known_refs
+            or data.get("expected_ref") in known_refs
+            or data.get("actual_ref") in known_refs
+            or bool(_evidence_ref_ids(data) & known_refs)
+        ):
+            nodes.append(node)
+    return sorted(nodes, key=_node_sort_key)
+
+
+def _related_drift_report_nodes(
+    graph: LineageGraph,
+    *,
+    trace_id: str,
+    binding_ids: set[str],
+    plan_ids: set[str],
+    pool_ids: set[str],
+    artifact_ids: set[str],
+    reconciliation_run_ids: set[str],
+    reconciliation_record_ids: set[str],
+) -> list[GraphNode]:
+    known_refs = (
+        {trace_id}
+        | binding_ids
+        | plan_ids
+        | pool_ids
+        | artifact_ids
+        | reconciliation_run_ids
+        | reconciliation_record_ids
+    )
+    nodes: list[GraphNode] = []
+    for node in graph.nodes_by_type(NODE_DRIFT_REPORT):
+        data = node.data
+        if (
+            _trace_matches(data, trace_id)
+            or data.get("recon_run_id") in reconciliation_run_ids
+            or data.get("scope_ref") in known_refs
+            or data.get("baseline_ref") in known_refs
+            or data.get("current_ref") in known_refs
+            or bool(_evidence_ref_ids(data) & known_refs)
+        ):
+            nodes.append(node)
+    return sorted(nodes, key=_node_sort_key)
+
+
+def _related_alert_candidate_nodes(
+    graph: LineageGraph,
+    *,
+    trace_id: str,
+    binding_ids: set[str],
+    plan_ids: set[str],
+    telemetry_event_ids: set[str],
+    order_ids: set[str],
+    reconciliation_run_ids: set[str],
+    reconciliation_record_ids: set[str],
+    drift_report_ids: set[str],
+) -> list[GraphNode]:
+    known_refs = (
+        {trace_id}
+        | binding_ids
+        | plan_ids
+        | telemetry_event_ids
+        | order_ids
+        | reconciliation_run_ids
+        | reconciliation_record_ids
+        | drift_report_ids
+    )
+    nodes: list[GraphNode] = []
+    for node in graph.nodes_by_type(NODE_ALERT_CANDIDATE):
+        data = node.data
+        if (
+            _trace_matches(data, trace_id)
+            or data.get("source_ref") in known_refs
+            or data.get("scope_ref") in known_refs
+            or data.get("scope_id") in known_refs
+            or bool(_evidence_ref_ids(data) & known_refs)
+        ):
+            nodes.append(node)
+    return sorted(nodes, key=_node_sort_key)
+
+
+def _status_counts(items: list[dict[str, Any]], *fields: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        status = None
+        for field_name in fields:
+            value = item.get(field_name)
+            if value not in (None, ""):
+                status = str(value).lower()
+                break
+        if status is not None:
+            counts[status] = counts.get(status, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _type_counts(items: list[dict[str, Any]], field_name: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        value = item.get(field_name)
+        if value not in (None, ""):
+            key = str(value).lower()
+            counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _latest_item(items: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    if not items:
+        return None
+    return max(items, key=lambda item: str(
+        item.get("event_produced_at")
+        or item.get("generated_at")
+        or item.get("finished_at")
+        or item.get("created_at")
+        or item.get("executed_at")
+        or ""
+    ))
+
+
+def _numeric_value(item: dict[str, Any], *fields: str) -> Optional[float]:
+    for field_name in fields:
+        value = item.get(field_name)
+        if value in (None, ""):
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _build_reconciliation_closure(
+    *,
+    telemetry_events: list[dict[str, Any]],
+    broker_order_lifecycle: list[dict[str, Any]],
+    position_snapshots: list[dict[str, Any]],
+    reconciliation_runs: list[dict[str, Any]],
+    reconciliation_records: list[dict[str, Any]],
+    drift_reports: list[dict[str, Any]],
+    alert_candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build a derived SD-09 lifecycle closure summary from trace-local refs."""
+    lifecycle_event_types = {
+        str(item.get("event_type") or "").lower()
+        for item in broker_order_lifecycle
+        if item.get("event_type")
+    }
+    lifecycle_statuses = {
+        str(item.get("order_status") or item.get("status") or item.get("fill_status") or "").lower()
+        for item in broker_order_lifecycle
+        if item.get("order_status") or item.get("status") or item.get("fill_status")
+    }
+    order_ids = sorted(
+        {
+            str(item["order_id"])
+            for item in broker_order_lifecycle
+            if item.get("order_id") not in (None, "")
+        }
+    )
+    has_open_event = bool(lifecycle_event_types & _ORDER_OPEN_EVENT_TYPES) or bool(
+        lifecycle_statuses & {"submitted", "accepted", "acknowledged", "open", "opened"}
+    )
+    has_fill_event = bool(lifecycle_event_types & _ORDER_FILL_EVENT_TYPES) or bool(
+        lifecycle_statuses & {"filled", "partially_filled", "partial_fill"}
+    )
+    has_cancel_event = bool(lifecycle_event_types & _ORDER_CANCEL_EVENT_TYPES) or bool(
+        lifecycle_statuses & {"canceled", "cancelled", "cancel_requested", "cancel_rejected"}
+    )
+    has_reject_event = "order_rejection" in lifecycle_event_types or "rejected" in lifecycle_statuses
+    order_resolved = has_fill_event or has_cancel_event or has_reject_event
+
+    latest_position = _latest_item(position_snapshots)
+    latest_position_qty = _numeric_value(latest_position or {}, "position_qty", "quantity")
+    flat_position = latest_position_qty == 0 if latest_position_qty is not None else None
+
+    run_statuses = _status_counts(reconciliation_runs, "status")
+    record_statuses = _status_counts(reconciliation_records, "status")
+    record_severities = _status_counts(reconciliation_records, "severity")
+    failed_records = sum(record_statuses.get(status, 0) for status in _RECON_FAIL_STATUSES)
+    high_severity_records = sum(record_severities.get(severity, 0) for severity in _HIGH_SEVERITIES)
+    pass_records = sum(record_statuses.get(status, 0) for status in _RECON_PASS_STATUSES)
+
+    drift_statuses = _status_counts(drift_reports, "status")
+    open_drift_reports = [
+        item for item in drift_reports
+        if str(item.get("status") or "open").lower() not in _DRIFT_CLOSED_STATUSES
+    ]
+    paper_live_drift_reports = [
+        item for item in drift_reports
+        if str(item.get("drift_type") or "").lower() in _PAPER_LIVE_DRIFT_TYPES
+    ]
+
+    alert_statuses = _status_counts(alert_candidates, "status")
+    open_alert_candidates = [
+        item for item in alert_candidates
+        if str(item.get("status") or "pending").lower() not in _ALERT_CLOSED_STATUSES
+    ]
+
+    proof_gaps: list[str] = []
+    if not broker_order_lifecycle:
+        proof_gaps.append("missing_order_lifecycle")
+    elif not order_resolved:
+        proof_gaps.append("order_lifecycle_unresolved")
+    if not position_snapshots:
+        proof_gaps.append("missing_position_snapshot")
+    if not reconciliation_runs:
+        proof_gaps.append("missing_reconciliation_run")
+    if not reconciliation_records:
+        proof_gaps.append("missing_reconciliation_record")
+    if open_drift_reports:
+        proof_gaps.append("open_drift_report")
+    if open_alert_candidates:
+        proof_gaps.append("open_alert_candidate")
+    if failed_records or high_severity_records:
+        proof_gaps.append("failed_or_high_severity_reconciliation_record")
+
+    if proof_gaps:
+        if open_drift_reports or open_alert_candidates:
+            status = "open"
+        elif failed_records or high_severity_records or not order_resolved:
+            status = "attention_required"
+        else:
+            status = "incomplete"
+    else:
+        status = "closed"
+
+    return {
+        "derived_only": True,
+        "status": status,
+        "lifecycle_proof_complete": status == "closed",
+        "proof_gaps": proof_gaps,
+        "order_lifecycle": {
+            "order_ids": order_ids,
+            "event_count": len(broker_order_lifecycle),
+            "event_type_counts": _type_counts(broker_order_lifecycle, "event_type"),
+            "status_counts": _status_counts(broker_order_lifecycle, "order_status", "status", "fill_status"),
+            "has_open_event": has_open_event,
+            "has_fill_event": has_fill_event,
+            "has_cancel_event": has_cancel_event,
+            "has_reject_event": has_reject_event,
+            "resolved": order_resolved,
+        },
+        "position_closure": {
+            "snapshot_count": len(position_snapshots),
+            "latest_snapshot_id": (latest_position or {}).get("id"),
+            "latest_position_qty": latest_position_qty,
+            "flat_position": flat_position,
+        },
+        "reconciliation": {
+            "run_count": len(reconciliation_runs),
+            "record_count": len(reconciliation_records),
+            "run_status_counts": run_statuses,
+            "record_status_counts": record_statuses,
+            "record_severity_counts": record_severities,
+            "pass_record_count": pass_records,
+            "failed_record_count": failed_records,
+            "high_severity_record_count": high_severity_records,
+        },
+        "paper_live_drift": {
+            "report_count": len(paper_live_drift_reports),
+            "status_counts": drift_statuses,
+            "open_report_count": len(open_drift_reports),
+            "closed_report_count": len(drift_reports) - len(open_drift_reports),
+            "recommended_actions": sorted(
+                {
+                    str(item["recommended_action"])
+                    for item in drift_reports
+                    if item.get("recommended_action") not in (None, "")
+                }
+            ),
+        },
+        "alert_closure": {
+            "candidate_count": len(alert_candidates),
+            "status_counts": alert_statuses,
+            "open_candidate_count": len(open_alert_candidates),
+            "closed_candidate_count": len(alert_candidates) - len(open_alert_candidates),
+        },
+        "telemetry_event_count": len(telemetry_events),
+    }
+
+
+def _related_incident_nodes(
+    graph: LineageGraph,
+    *,
+    trace_id: str,
+    binding_ids: set[str],
+    telemetry_event_ids: set[str],
+) -> list[GraphNode]:
+    nodes: list[GraphNode] = []
+    for node in graph.nodes_by_type(NODE_INCIDENT_CASE):
+        data = node.data
+        event_ids = {str(value) for value in data.get("telemetry_event_ids", []) if value}
+        binding_id = data.get("runtime_binding_id") or data.get("binding_id")
+        if (
+            data.get("trace_id") == trace_id
+            or binding_id in binding_ids
+            or bool(event_ids & telemetry_event_ids)
+        ):
+            nodes.append(node)
+    return sorted(nodes, key=_node_sort_key)
+
+
+def _related_postmortem_nodes(
+    graph: LineageGraph,
+    incident_ids: set[str],
+) -> list[GraphNode]:
+    nodes: list[GraphNode] = []
+    for node in graph.nodes_by_type(NODE_POSTMORTEM):
+        if node.data.get("incident_id") in incident_ids or node.data.get("linked_incident_id") in incident_ids:
+            nodes.append(node)
+    return sorted(nodes, key=_node_sort_key)
+
+
+def _related_evolution_nodes(
+    graph: LineageGraph,
+    *,
+    trace_id: str,
+    artifact_ids: set[str],
+    strategy_ids: set[str],
+    pool_ids: set[str],
+    persona_binding_ids: set[str],
+    incident_ids: set[str],
+    postmortem_ids: set[str],
+    telemetry_event_ids: set[str],
+    plan_ids: set[str],
+    binding_ids: set[str],
+) -> list[GraphNode]:
+    known_refs = (
+        {trace_id}
+        | artifact_ids
+        | strategy_ids
+        | pool_ids
+        | persona_binding_ids
+        | incident_ids
+        | postmortem_ids
+        | telemetry_event_ids
+        | plan_ids
+        | binding_ids
+    )
+    nodes: list[GraphNode] = []
+    for node in graph.nodes_by_type(NODE_EVOLUTION_DECISION):
+        data = node.data
+        evidence_ref_ids = {
+            str(ref.get("ref_id"))
+            for ref in data.get("evidence_refs", [])
+            if isinstance(ref, dict) and ref.get("ref_id")
+        }
+        if (
+            data.get("target_id") in known_refs
+            or data.get("capital_pool_id") in pool_ids
+            or data.get("linked_incident_id") in incident_ids
+            or data.get("linked_postmortem_id") in postmortem_ids
+            or bool(evidence_ref_ids & known_refs)
+        ):
+            nodes.append(node)
+    return sorted(nodes, key=_node_sort_key)
+
+
+def _operator_trace_refs(
+    *,
+    trace_id: str,
+    base_refs: Optional[dict[str, Any]] = None,
+    source_chain: Optional[list[dict[str, Any]]] = None,
+    deployment_chain: Optional[list[dict[str, Any]]] = None,
+    runtime_chain: Optional[list[dict[str, Any]]] = None,
+    telemetry_events: Optional[list[dict[str, Any]]] = None,
+    broker_order_lifecycle: Optional[list[dict[str, Any]]] = None,
+    position_snapshots: Optional[list[dict[str, Any]]] = None,
+    reconciliation_runs: Optional[list[dict[str, Any]]] = None,
+    reconciliation_records: Optional[list[dict[str, Any]]] = None,
+    drift_reports: Optional[list[dict[str, Any]]] = None,
+    alert_candidates: Optional[list[dict[str, Any]]] = None,
+    incident_refs: Optional[list[dict[str, Any]]] = None,
+    postmortem_refs: Optional[list[dict[str, Any]]] = None,
+    evolution_refs: Optional[list[dict[str, Any]]] = None,
+    request_ids: Optional[set[str]] = None,
+    artifact_refs: Optional[set[str]] = None,
+) -> dict[str, Any]:
+    refs = dict(base_refs or {
+        "strategy_ids": [],
+        "registry_ids": [],
+        "runtime_binding_ids": [],
+        "deployment_plan_ids": [],
+        "capital_pool_ids": [],
+        "persona_capital_binding_ids": [],
+        "artifact_refs": [],
+        "trace_ids": [],
+    })
+    buckets: dict[str, set[str]] = {
+        key: {str(value) for value in refs.get(key, []) if value}
+        for key in (
+            "strategy_ids",
+            "registry_ids",
+            "runtime_binding_ids",
+            "deployment_plan_ids",
+            "capital_pool_ids",
+            "persona_capital_binding_ids",
+            "artifact_refs",
+            "trace_ids",
+        )
+    }
+    buckets.setdefault("trace_ids", set()).add(trace_id)
+    if artifact_refs:
+        buckets.setdefault("artifact_refs", set()).update(artifact_refs)
+
+    extra: dict[str, set[str]] = {
+        "source_record_ids": set(),
+        "experiment_run_ids": set(),
+        "approval_decision_ids": set(),
+        "telemetry_event_ids": set(),
+        "broker_order_event_ids": set(),
+        "broker_order_ids": set(),
+        "position_snapshot_ids": set(),
+        "reconciliation_run_ids": set(),
+        "reconciliation_record_ids": set(),
+        "drift_report_ids": set(),
+        "alert_candidate_ids": set(),
+        "incident_ids": set(),
+        "postmortem_ids": set(),
+        "evolution_decision_ids": set(),
+        "runtime_ids": set(),
+        "request_ids": set(request_ids or set()),
+    }
+
+    all_items = (
+        list(source_chain or [])
+        + list(deployment_chain or [])
+        + list(runtime_chain or [])
+        + list(telemetry_events or [])
+        + list(broker_order_lifecycle or [])
+        + list(position_snapshots or [])
+        + list(reconciliation_runs or [])
+        + list(reconciliation_records or [])
+        + list(drift_reports or [])
+        + list(alert_candidates or [])
+        + list(incident_refs or [])
+        + list(postmortem_refs or [])
+        + list(evolution_refs or [])
+    )
+    for item in all_items:
+        item_type = item.get("type")
+        item_id = str(item.get("id") or "")
+        if not item_id:
+            continue
+        if item_type == NODE_SOURCE_RECORD:
+            extra["source_record_ids"].add(item_id)
+        elif item_type == NODE_STRATEGY_SPEC:
+            buckets.setdefault("strategy_ids", set()).add(item_id)
+        elif item_type == NODE_EXPERIMENT_RUN:
+            extra["experiment_run_ids"].add(item_id)
+        elif item_type == NODE_CANDIDATE_ARTIFACT:
+            if item.get("artifact_version"):
+                buckets.setdefault("artifact_refs", set()).add(_artifact_ref(item_id, str(item["artifact_version"])))
+        elif item_type == NODE_APPROVAL_DECISION:
+            extra["approval_decision_ids"].add(item_id)
+        elif item_type == NODE_DEPLOYMENT_PLAN:
+            buckets.setdefault("deployment_plan_ids", set()).add(item_id)
+        elif item_type == NODE_RUNTIME_BINDING:
+            buckets.setdefault("runtime_binding_ids", set()).add(item_id)
+        elif item_type == NODE_RUNTIME_REF:
+            extra["runtime_ids"].add(item_id)
+        elif item_type == NODE_TELEMETRY_EVENT:
+            extra["telemetry_event_ids"].add(item_id)
+        elif item_type == NODE_BROKER_ORDER_EVENT:
+            extra["broker_order_event_ids"].add(item_id)
+        elif item_type == NODE_POSITION_SNAPSHOT:
+            extra["position_snapshot_ids"].add(item_id)
+        elif item_type == NODE_RECONCILIATION_RUN:
+            extra["reconciliation_run_ids"].add(item_id)
+        elif item_type == NODE_RECONCILIATION_RECORD:
+            extra["reconciliation_record_ids"].add(item_id)
+        elif item_type == NODE_DRIFT_REPORT:
+            extra["drift_report_ids"].add(item_id)
+        elif item_type == NODE_ALERT_CANDIDATE:
+            extra["alert_candidate_ids"].add(item_id)
+        elif item_type == NODE_INCIDENT_CASE:
+            extra["incident_ids"].add(item_id)
+        elif item_type == NODE_POSTMORTEM:
+            extra["postmortem_ids"].add(item_id)
+        elif item_type == NODE_EVOLUTION_DECISION:
+            extra["evolution_decision_ids"].add(item_id)
+        if item.get("order_id"):
+            extra["broker_order_ids"].add(str(item["order_id"]))
+        if item.get("runtime_id"):
+            extra["runtime_ids"].add(str(item["runtime_id"]))
+        if item.get("request_id"):
+            extra["request_ids"].add(str(item["request_id"]))
+
+    output = {key: sorted(values) for key, values in buckets.items()}
+    output.update({key: sorted(values) for key, values in extra.items()})
+    return output
 
 
 # ---------------------------------------------------------------------------
@@ -814,10 +2344,12 @@ def _merge_refs_from_node(
             artifact_refs_set.add(_artifact_ref(data["artifact_id"], data["artifact_version"]))
         if data.get("trace_id"):
             trace_ids.add(data["trace_id"])
-        if data.get("strategy_id"):
-            strategy_ids.add(data["strategy_id"])
-        if data.get("registry_id"):
-            registry_ids.add(data["registry_id"])
+        strategy_id = data.get("strategy_id") or _nested_value(data, "target", "strategy_id")
+        if strategy_id:
+            strategy_ids.add(str(strategy_id))
+        registry_id = data.get("registry_id") or _nested_value(data, "target", "registry_id")
+        if registry_id:
+            registry_ids.add(str(registry_id))
 
     elif node_type == "artifact_ref":
         artifact_refs_set.add(node_id)
@@ -1148,6 +2680,73 @@ class CorpusLoader:
         graph = LineageGraph()
         node_sets = corpus.get("node_sets", {})
 
+        # Load upstream research/source records
+        for record in node_sets.get("source_records", []):
+            source_id = _record_identifier(record, "source_id", "record_id", "id")
+            if source_id:
+                graph.add_node(NODE_SOURCE_RECORD, source_id, record)
+
+        for record in node_sets.get("strategy_specs", []):
+            strategy_id = _record_identifier(record, "strategy_id", "strategy_spec_id", "id")
+            if not strategy_id:
+                continue
+            graph.add_node(NODE_STRATEGY_SPEC, strategy_id, record)
+            source_id = record.get("source_id") or record.get("source_record_id")
+            if source_id:
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_STRATEGY_SPEC_SOURCE,
+                    from_type=NODE_STRATEGY_SPEC,
+                    from_id=strategy_id,
+                    to_type=NODE_SOURCE_RECORD,
+                    to_id=str(source_id),
+                ))
+
+        for record in node_sets.get("experiment_runs", []):
+            run_id = _record_identifier(record, "run_id", "experiment_id", "id")
+            if not run_id:
+                continue
+            graph.add_node(NODE_EXPERIMENT_RUN, run_id, record)
+            strategy_id = record.get("strategy_id") or record.get("strategy_spec_id")
+            if strategy_id:
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_EXPERIMENT_STRATEGY,
+                    from_type=NODE_EXPERIMENT_RUN,
+                    from_id=run_id,
+                    to_type=NODE_STRATEGY_SPEC,
+                    to_id=str(strategy_id),
+                ))
+
+        for artifact_set in ("candidate_artifacts", "allocation_policy_artifacts", "research_artifacts"):
+            for record in node_sets.get(artifact_set, []):
+                artifact_id = _record_identifier(record, "artifact_id", "registry_id", "id")
+                if not artifact_id:
+                    continue
+                graph.add_node(NODE_CANDIDATE_ARTIFACT, artifact_id, record)
+                run_id = record.get("run_id") or record.get("experiment_run_id") or record.get("experiment_id")
+                if run_id:
+                    graph.add_edge(GraphEdge(
+                        edge_type=EDGE_ARTIFACT_EXPERIMENT,
+                        from_type=NODE_CANDIDATE_ARTIFACT,
+                        from_id=artifact_id,
+                        to_type=NODE_EXPERIMENT_RUN,
+                        to_id=str(run_id),
+                    ))
+
+        for record in node_sets.get("approval_decisions", []):
+            decision_id = _record_identifier(record, "decision_id", "approval_decision_id", "id")
+            if not decision_id:
+                continue
+            graph.add_node(NODE_APPROVAL_DECISION, decision_id, record)
+            target_id = record.get("target_id") or record.get("registry_target_id") or record.get("artifact_id")
+            if target_id:
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_APPROVAL_TARGET,
+                    from_type=NODE_APPROVAL_DECISION,
+                    from_id=decision_id,
+                    to_type=NODE_CANDIDATE_ARTIFACT,
+                    to_id=str(target_id),
+                ))
+
         # Load capital pools
         for record in node_sets.get("capital_pools", []):
             graph.add_node(NODE_CAPITAL_POOL, record["pool_id"], record)
@@ -1167,6 +2766,24 @@ class CorpusLoader:
         # Load deployment plans
         for record in node_sets.get("deployment_plans", []):
             graph.add_node(NODE_DEPLOYMENT_PLAN, record["plan_id"], record)
+            # Edge: deployment_plan.approval_decision
+            if record.get("approval_decision_id"):
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_DEPLOYMENT_APPROVAL,
+                    from_type=NODE_DEPLOYMENT_PLAN,
+                    from_id=record["plan_id"],
+                    to_type=NODE_APPROVAL_DECISION,
+                    to_id=record["approval_decision_id"],
+                ))
+            # Edge: deployment_plan.artifact
+            if record.get("artifact_id"):
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_DEPLOYMENT_ARTIFACT,
+                    from_type=NODE_DEPLOYMENT_PLAN,
+                    from_id=record["plan_id"],
+                    to_type=NODE_CANDIDATE_ARTIFACT,
+                    to_id=record["artifact_id"],
+                ))
             # Edge: deployment_plan.capital_pool
             graph.add_edge(GraphEdge(
                 edge_type=EDGE_DEPLOYMENT_POOL,
@@ -1187,6 +2804,15 @@ class CorpusLoader:
         # Load runtime bindings
         for record in node_sets.get("runtime_bindings", []):
             graph.add_node(NODE_RUNTIME_BINDING, record["binding_id"], record)
+            # Edge: runtime_binding.artifact
+            if record.get("artifact_id"):
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_RUNTIME_ARTIFACT,
+                    from_type=NODE_RUNTIME_BINDING,
+                    from_id=record["binding_id"],
+                    to_type=NODE_CANDIDATE_ARTIFACT,
+                    to_id=record["artifact_id"],
+                ))
             # Edge: runtime_binding.capital_pool
             graph.add_edge(GraphEdge(
                 edge_type=EDGE_RUNTIME_POOL,
@@ -1233,13 +2859,14 @@ class CorpusLoader:
                     to_type=NODE_RUNTIME_BINDING,
                     to_id=binding_id,
                 ))
-            if record.get("plan_id"):
+            plan_id = record.get("deployment_plan_id") or record.get("plan_id")
+            if plan_id:
                 graph.add_edge(GraphEdge(
                     edge_type=EDGE_TELEMETRY_PLAN,
                     from_type=NODE_TELEMETRY_EVENT,
                     from_id=record["event_id"],
                     to_type=NODE_DEPLOYMENT_PLAN,
-                    to_id=record["plan_id"],
+                    to_id=plan_id,
                 ))
             if record.get("capital_pool_id"):
                 graph.add_edge(GraphEdge(
@@ -1256,6 +2883,205 @@ class CorpusLoader:
                     from_id=record["event_id"],
                     to_type=NODE_PERSONA_BINDING,
                     to_id=record["persona_capital_binding_id"],
+                ))
+
+        # Load broker/order lifecycle refs when a reconciliation slice supplies
+        # owned records. Telemetry-derived lifecycle events still work without
+        # this optional node set.
+        for record in node_sets.get("broker_order_events", []):
+            order_event_id = _record_identifier(record, "order_event_id", "event_id", "id", "order_id")
+            if not order_event_id:
+                continue
+            graph.add_node(NODE_BROKER_ORDER_EVENT, order_event_id, record)
+            binding_id = record.get("runtime_binding_id") or record.get("binding_id")
+            if binding_id:
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_BROKER_ORDER_BINDING,
+                    from_type=NODE_BROKER_ORDER_EVENT,
+                    from_id=order_event_id,
+                    to_type=NODE_RUNTIME_BINDING,
+                    to_id=str(binding_id),
+                ))
+            plan_id = record.get("deployment_plan_id") or record.get("plan_id")
+            if plan_id:
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_BROKER_ORDER_PLAN,
+                    from_type=NODE_BROKER_ORDER_EVENT,
+                    from_id=order_event_id,
+                    to_type=NODE_DEPLOYMENT_PLAN,
+                    to_id=str(plan_id),
+                ))
+            telemetry_event_id = record.get("telemetry_event_id")
+            if telemetry_event_id:
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_BROKER_ORDER_TELEMETRY,
+                    from_type=NODE_BROKER_ORDER_EVENT,
+                    from_id=order_event_id,
+                    to_type=NODE_TELEMETRY_EVENT,
+                    to_id=str(telemetry_event_id),
+                ))
+
+        for record in node_sets.get("position_snapshots", []):
+            snapshot_id = _record_identifier(record, "position_snapshot_id", "snapshot_id", "event_id", "id")
+            if not snapshot_id:
+                continue
+            graph.add_node(NODE_POSITION_SNAPSHOT, snapshot_id, record)
+            binding_id = record.get("runtime_binding_id") or record.get("binding_id")
+            if binding_id:
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_POSITION_SNAPSHOT_BINDING,
+                    from_type=NODE_POSITION_SNAPSHOT,
+                    from_id=snapshot_id,
+                    to_type=NODE_RUNTIME_BINDING,
+                    to_id=str(binding_id),
+                ))
+            telemetry_event_id = record.get("telemetry_event_id") or record.get("event_id")
+            if telemetry_event_id:
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_POSITION_SNAPSHOT_TELEMETRY,
+                    from_type=NODE_POSITION_SNAPSHOT,
+                    from_id=snapshot_id,
+                    to_type=NODE_TELEMETRY_EVENT,
+                    to_id=str(telemetry_event_id),
+                ))
+
+        for record in node_sets.get("reconciliation_runs", []):
+            recon_run_id = _record_identifier(record, "recon_run_id", "run_id", "id")
+            if not recon_run_id:
+                continue
+            graph.add_node(NODE_RECONCILIATION_RUN, recon_run_id, record)
+            binding_id = record.get("runtime_binding_id") or record.get("binding_id")
+            if binding_id:
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_RECONCILIATION_RUN_BINDING,
+                    from_type=NODE_RECONCILIATION_RUN,
+                    from_id=recon_run_id,
+                    to_type=NODE_RUNTIME_BINDING,
+                    to_id=str(binding_id),
+                ))
+            plan_id = record.get("deployment_plan_id") or record.get("plan_id")
+            if plan_id:
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_RECONCILIATION_RUN_PLAN,
+                    from_type=NODE_RECONCILIATION_RUN,
+                    from_id=recon_run_id,
+                    to_type=NODE_DEPLOYMENT_PLAN,
+                    to_id=str(plan_id),
+                ))
+
+        for record in node_sets.get("reconciliation_records", []):
+            record_id = _record_identifier(record, "record_id", "id")
+            if not record_id:
+                continue
+            graph.add_node(NODE_RECONCILIATION_RECORD, record_id, record)
+            recon_run_id = record.get("recon_run_id") or record.get("run_id")
+            if recon_run_id:
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_RECONCILIATION_RECORD_RUN,
+                    from_type=NODE_RECONCILIATION_RECORD,
+                    from_id=record_id,
+                    to_type=NODE_RECONCILIATION_RUN,
+                    to_id=str(recon_run_id),
+                ))
+
+        for record in node_sets.get("drift_reports", []):
+            drift_report_id = _record_identifier(record, "drift_report_id", "report_id", "id")
+            if not drift_report_id:
+                continue
+            graph.add_node(NODE_DRIFT_REPORT, drift_report_id, record)
+            recon_run_id = record.get("recon_run_id") or record.get("run_id")
+            if recon_run_id:
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_DRIFT_REPORT_RUN,
+                    from_type=NODE_DRIFT_REPORT,
+                    from_id=drift_report_id,
+                    to_type=NODE_RECONCILIATION_RUN,
+                    to_id=str(recon_run_id),
+                ))
+
+        for record in node_sets.get("alert_candidates", []):
+            alert_candidate_id = _record_identifier(record, "alert_candidate_id", "candidate_id", "id")
+            if not alert_candidate_id:
+                continue
+            graph.add_node(NODE_ALERT_CANDIDATE, alert_candidate_id, record)
+            source_ref = record.get("source_ref")
+            source_type = str(record.get("source_type") or "").lower()
+            if source_ref:
+                to_type = NODE_DRIFT_REPORT if source_type == "drift" else NODE_RECONCILIATION_RECORD
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_ALERT_CANDIDATE_SOURCE,
+                    from_type=NODE_ALERT_CANDIDATE,
+                    from_id=alert_candidate_id,
+                    to_type=to_type,
+                    to_id=str(source_ref),
+                ))
+
+        for record in [*node_sets.get("incident_cases", []), *node_sets.get("incidents", [])]:
+            incident_id = _record_identifier(record, "incident_id", "id")
+            if not incident_id:
+                continue
+            graph.add_node(NODE_INCIDENT_CASE, incident_id, record)
+            binding_id = record.get("runtime_binding_id") or record.get("binding_id")
+            if binding_id:
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_INCIDENT_BINDING,
+                    from_type=NODE_INCIDENT_CASE,
+                    from_id=incident_id,
+                    to_type=NODE_RUNTIME_BINDING,
+                    to_id=str(binding_id),
+                ))
+            for event_id in record.get("telemetry_event_ids", []) or []:
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_INCIDENT_TELEMETRY,
+                    from_type=NODE_INCIDENT_CASE,
+                    from_id=incident_id,
+                    to_type=NODE_TELEMETRY_EVENT,
+                    to_id=str(event_id),
+                ))
+
+        for record in node_sets.get("postmortems", []):
+            postmortem_id = _record_identifier(record, "postmortem_id", "id")
+            if not postmortem_id:
+                continue
+            graph.add_node(NODE_POSTMORTEM, postmortem_id, record)
+            incident_id = record.get("incident_id") or record.get("linked_incident_id")
+            if incident_id:
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_POSTMORTEM_INCIDENT,
+                    from_type=NODE_POSTMORTEM,
+                    from_id=postmortem_id,
+                    to_type=NODE_INCIDENT_CASE,
+                    to_id=str(incident_id),
+                ))
+
+        for record in node_sets.get("evolution_decisions", []):
+            decision_id = _record_identifier(record, "decision_id", "id")
+            if not decision_id:
+                continue
+            graph.add_node(NODE_EVOLUTION_DECISION, decision_id, record)
+            if record.get("linked_postmortem_id"):
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_EVOLUTION_POSTMORTEM,
+                    from_type=NODE_EVOLUTION_DECISION,
+                    from_id=decision_id,
+                    to_type=NODE_POSTMORTEM,
+                    to_id=str(record["linked_postmortem_id"]),
+                ))
+            if record.get("linked_incident_id"):
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_EVOLUTION_INCIDENT,
+                    from_type=NODE_EVOLUTION_DECISION,
+                    from_id=decision_id,
+                    to_type=NODE_INCIDENT_CASE,
+                    to_id=str(record["linked_incident_id"]),
+                ))
+            if record.get("target_id"):
+                graph.add_edge(GraphEdge(
+                    edge_type=EDGE_EVOLUTION_TARGET,
+                    from_type=NODE_EVOLUTION_DECISION,
+                    from_id=decision_id,
+                    to_type=NODE_CANDIDATE_ARTIFACT,
+                    to_id=str(record["target_id"]),
                 ))
 
         return graph
@@ -1298,6 +3124,7 @@ class LineageReadService:
         pool_id: Optional[str] = None,
         event_id: Optional[str] = None,
         plan_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """
         Execute a lineage query by family name.
@@ -1306,7 +3133,8 @@ class LineageReadService:
         ----------
         query_family : str
             One of: runtime_binding_projection, capital_pool_projection,
-            telemetry_event_trace, forensic_plan_trace.
+            telemetry_event_trace, forensic_plan_trace,
+            source_runtime_telemetry_trace.
         binding_id : str, optional
             Runtime binding ID (for runtime_binding_projection).
         pool_id : str, optional
@@ -1315,6 +3143,8 @@ class LineageReadService:
             Telemetry event ID (for telemetry_event_trace).
         plan_id : str, optional
             Deployment plan ID (for forensic_plan_trace).
+        trace_id : str, optional
+            Distributed trace ID (for source_runtime_telemetry_trace).
 
         Returns
         -------
@@ -1337,5 +3167,9 @@ class LineageReadService:
             if not plan_id:
                 raise ValueError("plan_id required for forensic_plan_trace")
             return self.projection.forensic_plan_trace(self.traverser, plan_id)
+        if query_family == "source_runtime_telemetry_trace":
+            if not trace_id:
+                raise ValueError("trace_id required for source_runtime_telemetry_trace")
+            return self.projection.source_runtime_telemetry_trace(self.traverser, trace_id)
 
         raise ValueError(f"Unknown query family: {query_family}")

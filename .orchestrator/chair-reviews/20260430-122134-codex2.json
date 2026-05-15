@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 0,
+  "reason": "No active parent task or runnable execution backlog exists for sidecar support.",
+  "blocked_by": [
+    "active task board is empty",
+    "execution backlog has not been materialized from the accepted phase4 plan",
+    "no parent task has a declared sidecar support need"
+  ],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SUP-MATERIALIZE-NEXT-WAVE",
+    "OPS-PUBLISH-BRANCH-DIVERGENCE"
+  ]
+}

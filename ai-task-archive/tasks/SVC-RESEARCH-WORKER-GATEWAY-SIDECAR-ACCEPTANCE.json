@@ -1,0 +1,193 @@
+{
+  "version": 1,
+  "task_id": "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-29T06:05:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+    "title": "Prepare SVC-RESEARCH-WORKER-GATEWAY acceptance packet and dependency map",
+    "summary_zh": "平行支援 SVC-RESEARCH-WORKER-GATEWAY，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Future-State Service Materialization",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-RESEARCH-ORCHESTRATOR-SERVICE"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-RESEARCH-WORKER-GATEWAY/SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar acceptance packet and closed it. Claude approved the support-only packet; artifact remains limited to support/sidecars/SVC-RESEARCH-WORKER-GATEWAY/SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE.md with no canonical truth, runtime, registry, governance, or compose implementation changes by this sidecar.",
+    "last_update": "2026-04-29T06:05:16Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-RESEARCH-WORKER-GATEWAY",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar acceptance packet 通過審查：(1) 僅建立 support/sidecars/ artifact，未修改任何 canonical truth；(2) 所有 7 個必要 API routes 在 services/research-worker-gateway/main.py 確認存在；(3) docker-compose.yml 有完整的 service/env/volume/port/smoke wiring；(4) 全部 3 個 Section 8 指定的 focused test files 已存在；(5) rejection policy 函數 (_rejection_for, _production_adapters_allowed) 存在；(6) 依賴圖涵蓋唯一直接依賴 SVC-RESEARCH-ORCHESTRATOR-SERVICE (已 done)；(7) non-activation boundaries (production learning, EP5, registry write, governance write, live trading) 全部明確標示。Packet 可作為已 archived SVC-RESEARCH-WORKER-GATEWAY 的 acceptance support 材料。"
+    ],
+    "review_file": "support/sidecars/SVC-RESEARCH-WORKER-GATEWAY/SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T06:05:16Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 150,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 31,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only acceptance packet created for research-worker-gateway: parent-current-state snapshot, dependency map, API/storage/compose/test checklist, and non-activation rejection policy. Ready for Claude review.",
+      "status": "done",
+      "created_at": "2026-04-28T19:44:21Z",
+      "resolved_at": "2026-04-29T02:57:22Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Claude to Claude2: Review has been idle since 2026-04-28T19:44:21Z while Claude is quota-paused until 2026-04-29T12:20:00Z.",
+      "status": "done",
+      "created_at": "2026-04-29T02:57:22Z",
+      "resolved_at": "2026-04-29T03:21:11Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Support-only acceptance packet revalidated for the chair-reassigned reviewer at support/sidecars/SVC-RESEARCH-WORKER-GATEWAY/SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE.md. Updates: reviewer Claude->Claude2 in metadata/Section 10/Section 11, plus a parent-state note that SVC-RESEARCH-WORKER-GATEWAY has since been archived as done with services/research-worker-gateway/ matching the packet's HTTP/storage/rejection/compose surface. Verification rerun: docker compose config --quiet passed; support packet diff check passed (still single-file under support/sidecars/SVC-RESEARCH-WORKER-GATEWAY/). pytest could not be rerun locally (pytest module not available in this environment); previous orchestrator runs already recorded the focused 3-test pass on this packet's parent. No canonical/runtime/contract/registry/governance changes were made.",
+      "status": "done",
+      "created_at": "2026-04-29T03:21:11Z",
+      "resolved_at": "2026-04-29T03:25:02Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude2 to Codex2 after repeated Claude2 terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1777442400,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_dis",
+      "status": "done",
+      "created_at": "2026-04-29T03:25:02Z",
+      "resolved_at": "2026-04-29T03:30:40Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Codex2 to Copilot after repeated Codex2 terminal: - 2026-04-29T03:25:10Z · Orchestrator · task_reassigned · Auto-reassigned review from Claude2 to Codex2 after repeated Claude2 terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info",
+      "status": "done",
+      "created_at": "2026-04-29T03:30:40Z",
+      "resolved_at": "2026-04-29T03:53:22Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+      "from": "Copilot",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Copilot to Codex2 after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-29T03:53:22Z",
+      "resolved_at": "2026-04-29T03:55:13Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet revalidated for current reviewer Codex2 at support/sidecars/SVC-RESEARCH-WORKER-GATEWAY/SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE.md. Updates are limited to the sidecar artifact: reviewer/handoff text now matches durable state, and parent state language distinguishes original todo packet-time state from last-revalidated archived done state. No L1 canonical truth, contract truth, runtime, registry, governance, or compose implementation files were changed. Please review and either approve as support input for the archived parent task or reopen with concrete required edits.",
+      "status": "done",
+      "created_at": "2026-04-29T03:55:13Z",
+      "resolved_at": "2026-04-29T03:58:57Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Codex2 to Gemini after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-29T03:58:57Z",
+      "resolved_at": "2026-04-29T04:27:06Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-29T04:27:06Z",
+      "resolved_at": "2026-04-29T04:32:38Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Codex2 to Copilot after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-29T04:32:38Z",
+      "resolved_at": "2026-04-29T05:27:47Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+      "from": "Copilot",
+      "to": "Codex2",
+      "message": "Chair reassigned review from Copilot to Codex2: Copilot has two quota-terminal failures on this review; Codex2 is no longer dispatch-paused and successfully finalized another task at 2026-04-29T05:18:04Z, while owner Codex remains separate from the reviewer role.",
+      "status": "done",
+      "created_at": "2026-04-29T05:27:47Z",
+      "resolved_at": "2026-04-29T05:29:12Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Owner revalidated the support-only acceptance packet for current reviewer Codex2 at support/sidecars/SVC-RESEARCH-WORKER-GATEWAY/SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE.md. Scope remains sidecar-only: no L1 canonical truth, contract truth, runtime, registry, governance, or compose implementation files were changed. Verification on 2026-04-29: docker compose config --quiet passed; focused research-worker-gateway pytest suite passed, 7 tests. Please review and either approve or reopen with concrete required edits.",
+      "status": "done",
+      "created_at": "2026-04-29T05:29:12Z",
+      "resolved_at": "2026-04-29T05:32:21Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Codex2 to Copilot after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-29T05:32:21Z",
+      "resolved_at": "2026-04-29T05:57:36Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-29T05:57:36Z",
+      "resolved_at": "2026-04-29T06:00:18Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet approved. All verification checks pass: 7 API routes confirmed, compose wiring present, 3 test files exist, rejection policy implemented, dependency map complete, non-activation boundaries intact. Owner Codex may finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-29T06:00:18Z",
+      "resolved_at": "2026-04-29T06:05:16Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,224 @@
+{
+  "overall_status": "degraded",
+  "headline": "Operator attention required",
+  "message": "Safe mode or kill-switch activity requires immediate review.",
+  "safe_mode_state": {
+    "status": "soft",
+    "kill_switch_status": "triggered",
+    "active": true,
+    "last_confirmed_at": "2026-04-18T06:07:00Z",
+    "last_triggered_at": "2026-04-18T06:08:00Z",
+    "secondary_path_available": true
+  },
+  "cards": [
+    {
+      "card_id": "alerts",
+      "label": "Alerts",
+      "status": "degraded",
+      "summary": "5 active alert(s); highest severity critical.",
+      "details": {
+        "total_active": 5,
+        "highest_severity": "critical",
+        "by_severity": {
+          "critical": 3,
+          "high": 1,
+          "medium": 1,
+          "low": 0
+        },
+        "by_category": {
+          "incident": 1,
+          "kill_switch": 1,
+          "governance": 2,
+          "runtime": 1
+        }
+      },
+      "target_refs": [
+        {
+          "surface_id": "OC-02",
+          "label": "Open alerts rail",
+          "href": "/alerts"
+        }
+      ]
+    },
+    {
+      "card_id": "incidents",
+      "label": "Incidents",
+      "status": "ok",
+      "summary": "1 active incident(s); highest severity sev1.",
+      "details": {
+        "total_incident_count": 1,
+        "active_incident_count": 1,
+        "open_count": 1,
+        "in_progress_count": 0,
+        "highest_severity": "sev1"
+      },
+      "target_refs": [
+        {
+          "label": "Incident Home",
+          "href": "/operator/incidents"
+        }
+      ]
+    },
+    {
+      "card_id": "governance",
+      "label": "Governance",
+      "status": "degraded",
+      "summary": "2 governance item(s) pending review or approval.",
+      "details": {
+        "review_queue_count": 1,
+        "approval_queue_count": 1,
+        "total_pending_items": 2,
+        "highest_risk_level": "high"
+      },
+      "target_refs": [
+        {
+          "label": "Governance Review Queue",
+          "href": "/governance-review-queue"
+        },
+        {
+          "label": "Governance Approval Queue",
+          "href": "/governance-approval-queue"
+        }
+      ]
+    },
+    {
+      "card_id": "runtime",
+      "label": "Runtime",
+      "status": "degraded",
+      "summary": "1 runtime(s) tracked across 1 stage(s). Telemetry: Telemetry coverage available for all 1 runtime(s).",
+      "details": {
+        "runtime": {
+          "total_runtime_count": 1,
+          "by_stage": {
+            "live": 1
+          },
+          "by_status": {
+            "running": 1
+          }
+        },
+        "telemetry": {
+          "total_runtime_count": 1,
+          "covered_runtime_count": 1,
+          "missing_runtime_count": 0,
+          "latest_collected_at": "2026-04-18T06:10:00Z"
+        }
+      },
+      "target_refs": [
+        {
+          "surface_id": "OC-04",
+          "label": "Open runtime state board",
+          "href": "/operator/runtime-state"
+        }
+      ]
+    },
+    {
+      "card_id": "health",
+      "label": "Health",
+      "status": "degraded",
+      "summary": "3 of 5 health groups need attention.",
+      "details": {
+        "headline": "Safe mode active",
+        "group_counts": {
+          "ok": 2,
+          "degraded": 3,
+          "unavailable": 0
+        },
+        "safe_mode_state": {
+          "status": "soft",
+          "kill_switch_status": "triggered",
+          "active": true,
+          "last_confirmed_at": "2026-04-18T06:07:00Z",
+          "last_triggered_at": "2026-04-18T06:08:00Z",
+          "secondary_path_available": true
+        }
+      },
+      "target_refs": [
+        {
+          "surface_id": "OC-03",
+          "label": "Open health status board",
+          "href": "/operator/health-status"
+        }
+      ]
+    }
+  ],
+  "escalation_shortcuts": [
+    {
+      "shortcut_id": "open-alerts-rail",
+      "label": "Open alerts rail",
+      "reason": "There are active operator alerts that need triage.",
+      "href": "/alerts",
+      "priority": "high"
+    },
+    {
+      "shortcut_id": "open-incident-home",
+      "label": "Open incident home",
+      "reason": "Active incidents are open and may require response.",
+      "href": "/operator/incidents",
+      "priority": "high"
+    },
+    {
+      "shortcut_id": "open-health-status",
+      "label": "Open health status board",
+      "reason": "Health status or safe-mode state needs verification.",
+      "href": "/operator/health-status",
+      "priority": "high"
+    },
+    {
+      "shortcut_id": "open-approval-queue",
+      "label": "Open approval queue",
+      "reason": "Pending governance items may block execution changes.",
+      "href": "/governance-approval-queue",
+      "priority": "medium"
+    },
+    {
+      "shortcut_id": "open-runtime-state",
+      "label": "Open runtime state board",
+      "reason": "Inspect current runtime and telemetry status.",
+      "href": "/operator/runtime-state",
+      "priority": "medium"
+    }
+  ],
+  "meta": {
+    "snapshot_at": "2026-04-18T09:25:20Z",
+    "surfaces": {
+      "operator_home": {
+        "status": "degraded",
+        "source": "bff_composed",
+        "message": "Operator home summary is degraded because alerts or health inputs are degraded."
+      },
+      "alerts": {
+        "status": "degraded",
+        "source": "bff_composed",
+        "message": "Operator alert feed is available, but one or more contributing surfaces are degraded."
+      },
+      "health_status": {
+        "status": "degraded",
+        "source": "bff_composed",
+        "message": "One or more health groups are degraded or unavailable."
+      },
+      "incident": {
+        "status": "ok",
+        "source": "bff_composed"
+      },
+      "governance": {
+        "status": "degraded",
+        "source": "bff_composed",
+        "message": "Governance review or approval surfaces are degraded."
+      },
+      "runtime": {
+        "status": "ok",
+        "source": "bff_composed"
+      },
+      "telemetry": {
+        "status": "degraded",
+        "source": "bff_composed",
+        "message": "Telemetry summary coverage is degraded or stale."
+      },
+      "kill_switch": {
+        "status": "degraded",
+        "source": "bff_composed",
+        "message": "Kill-switch or safe-mode state is degraded or stale."
+      }
+    }
+  }
+}

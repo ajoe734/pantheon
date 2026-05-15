@@ -1,0 +1,440 @@
+{
+  "version": 1,
+  "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-27T13:29:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare APP-003-WANDB-DEFERRED-PREP-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 APP-003-WANDB-DEFERRED-PREP-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5 / Deferred Prep",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-WANDB-DEFERRED-PREP-001/APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved acceptance sidecar. Packet remains support-only, matches archived parent closeout, preserves W&B deferred-prep boundary, and made no canonical/runtime changes.",
+    "last_update": "2026-04-27T13:29:44Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-WANDB-DEFERRED-PREP-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Acceptance packet checked against archived parent and current repo truth; sidecar is support-only and does not edit canonical/runtime files.|Packet correctly preserves W&B as criteria-defined, mlflow-default, explicit-flag/offline-only deferred prep; no activation or production-readiness claim is introduced."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-27T13:29:44Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 136,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet added at support/sidecars/APP-003-WANDB-DEFERRED-PREP-001/APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md; ready for reviewer check. No canonical or runtime files changed.",
+      "status": "done",
+      "created_at": "2026-04-25T05:02:38Z",
+      "resolved_at": "2026-04-25T10:04:06Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-25T10:04:06Z",
+      "resolved_at": "2026-04-25T10:04:27Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T10:04:27Z",
+      "resolved_at": "2026-04-25T11:40:32Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet ready at support/sidecars/APP-003-WANDB-DEFERRED-PREP-001/APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Packet is aligned to the archived parent closeout: parent remains done/completed, W&B remains explicit-opt-in and offline-only, mlflow remains default, and canonical maturity stays criteria-defined. Review this sidecar as a support-only artifact; no canonical/runtime files changed.",
+      "status": "done",
+      "created_at": "2026-04-25T11:40:32Z",
+      "resolved_at": "2026-04-25T11:41:11Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-25T11:41:11Z",
+      "resolved_at": "2026-04-25T11:41:25Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T11:41:25Z",
+      "resolved_at": "2026-04-25T12:21:13Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet is ready at support/sidecars/APP-003-WANDB-DEFERRED-PREP-001/APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Parent closeout remains archived as done/completed; this sidecar is support-only and preserves the same deferred boundary: mlflow default, wandb explicit opt-in plus offline-only, canonical maturity still criteria-defined. Please review it as a support artifact only; no canonical/runtime files changed.",
+      "status": "done",
+      "created_at": "2026-04-25T12:21:13Z",
+      "resolved_at": "2026-04-25T12:21:46Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-25T12:21:46Z",
+      "resolved_at": "2026-04-25T12:21:59Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T12:21:59Z",
+      "resolved_at": "2026-04-25T13:02:22Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet is ready for review at support/sidecars/APP-003-WANDB-DEFERRED-PREP-001/APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated against current task state on 2026-04-25: this remains a support-only artifact, parent stays archived as done/completed, mlflow remains default, wandb remains explicit opt-in plus offline-only, and canonical maturity remains criteria-defined. Please review only the packet/handoff truth; no canonical or runtime files were changed in this slice.",
+      "status": "done",
+      "created_at": "2026-04-25T13:02:22Z",
+      "resolved_at": "2026-04-25T13:02:57Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T13:02:57Z",
+      "resolved_at": "2026-04-25T13:18:00Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T13:18:00Z",
+      "resolved_at": "2026-04-25T13:23:58Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet revalidated for Codex2 at support/sidecars/APP-003-WANDB-DEFERRED-PREP-001/APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Rechecked on 2026-04-25T13:23:33Z against task-scoped context: parent archive still resolves to done/completed, companion review packet still matches current repo truth, mlflow remains default, wandb remains explicit opt-in plus offline-only, and canonical maturity remains criteria-defined. This slice is still support-only; no canonical or runtime files changed.",
+      "status": "done",
+      "created_at": "2026-04-25T13:23:58Z",
+      "resolved_at": "2026-04-25T13:24:31Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T13:24:31Z",
+      "resolved_at": "2026-04-25T13:39:32Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T13:39:32Z",
+      "resolved_at": "2026-04-25T13:43:39Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-WANDB-DEFERRED-PREP-001/APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T13:46:00Z against task-scoped context: parent archive still resolves to done/completed, companion review packet still matches current repo truth, mlflow remains default, wandb remains explicit opt-in plus offline-only, and canonical maturity remains criteria-defined. This slice remains support-only; no canonical or runtime files were changed.",
+      "status": "done",
+      "created_at": "2026-04-25T13:43:39Z",
+      "resolved_at": "2026-04-25T13:44:13Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T13:44:13Z",
+      "resolved_at": "2026-04-25T13:59:23Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T13:59:23Z",
+      "resolved_at": "2026-04-25T14:03:25Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-WANDB-DEFERRED-PREP-001/APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T14:03:07Z against task-scoped context after review_ready_dispatch: parent archive still resolves to done/completed, companion review packet still matches current repo truth, mlflow remains default, wandb remains explicit opt-in plus offline-only, and canonical maturity remains criteria-defined. This slice remains support-only; no canonical or runtime files were changed.",
+      "status": "done",
+      "created_at": "2026-04-25T14:03:25Z",
+      "resolved_at": "2026-04-25T14:23:19Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-WANDB-DEFERRED-PREP-001/APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T14:22:29Z against task-scoped context: parent archive still resolves to done/completed, parent Codex2 approval writeup and companion review packet still match current repo truth, mlflow remains default, wandb remains explicit opt-in plus offline-only, and canonical maturity remains criteria-defined. This slice remains support-only; no canonical or runtime files were changed.",
+      "status": "done",
+      "created_at": "2026-04-25T14:23:19Z",
+      "resolved_at": "2026-04-25T14:23:57Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T14:23:57Z",
+      "resolved_at": "2026-04-25T14:39:15Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T14:39:15Z",
+      "resolved_at": "2026-04-25T14:58:28Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-WANDB-DEFERRED-PREP-001/APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T15:03:58Z: python3 -m pytest services/registry/experiments/test_adapter.py -q => 7 passed in 0.26s; python3 services/registry/experiments/smoke_test.py => pass; python3 services/registry/experiments/smoke_test.py --backend wandb => pass; selected_backend() => mlflow by default; EXPERIMENT_BACKEND=wandb still raises without PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1; explicit opt-in still resolves to wandb dryrun. Parent archive, Codex2 approval writeup, and companion review packet still match the same prep-only, offline-only, non-activating W&B story. This slice remains support-only; no canonical or runtime files were changed.",
+      "status": "done",
+      "created_at": "2026-04-25T14:58:28Z",
+      "resolved_at": "2026-04-25T15:18:43Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-WANDB-DEFERRED-PREP-001/APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T15:17:45Z: pytest services/registry/experiments/test_adapter.py -q => 7 passed in 0.11s; smoke_test.py => pass on default in-memory helper path; smoke_test.py --backend wandb => pass; config.py still defaults selected_backend() to mlflow while the smoke harness convenience default remains memory; EXPERIMENT_BACKEND=wandb still requires PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1 and stays offline/dryrun prep-only. This slice remains support-only; no canonical or runtime files changed.",
+      "status": "done",
+      "created_at": "2026-04-25T15:18:43Z",
+      "resolved_at": "2026-04-25T15:19:28Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T15:19:28Z",
+      "resolved_at": "2026-04-25T15:34:40Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T15:34:40Z",
+      "resolved_at": "2026-04-25T15:55:39Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-WANDB-DEFERRED-PREP-001/APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T15:54:56Z: pytest services/registry/experiments/test_adapter.py -q => 7 passed in 0.10s; smoke_test.py => pass on backend=memory; smoke_test.py --backend wandb => pass; selected_backend() => mlflow by default; EXPERIMENT_BACKEND=wandb still raises without PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1; explicit opt-in still resolves to wandb dryrun. Parent archive, companion review packet, and current repo truth remain aligned. This slice stays support-only; no canonical or runtime files changed.",
+      "status": "done",
+      "created_at": "2026-04-25T15:55:39Z",
+      "resolved_at": "2026-04-25T15:56:12Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T15:56:12Z",
+      "resolved_at": "2026-04-25T16:11:29Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T16:11:29Z",
+      "resolved_at": "2026-04-25T16:32:42Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-WANDB-DEFERRED-PREP-001/APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T16:31:49Z: pytest services/registry/experiments/test_adapter.py -q => 7 passed in 0.12s; smoke_test.py => pass on backend=memory; smoke_test.py --backend wandb => pass; selected_backend() still defaults to mlflow; EXPERIMENT_BACKEND=wandb still raises without PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1; explicit opt-in still resolves to the wandb selector in repo-local offline prep mode. This slice remains support-only; no canonical or runtime files changed.",
+      "status": "done",
+      "created_at": "2026-04-25T16:32:42Z",
+      "resolved_at": "2026-04-25T16:39:25Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-WANDB-DEFERRED-PREP-001/APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-25T16:39:06Z: pytest services/registry/experiments/test_adapter.py -q => 7 passed in 0.33s; smoke_test.py => pass on backend=memory; smoke_test.py --backend wandb => pass; selected_backend() still defaults to mlflow; EXPERIMENT_BACKEND=wandb still raises without PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1; explicit opt-in still resolves to the wandb selector in repo-local offline prep mode. This slice remains support-only; no canonical or runtime files changed.",
+      "status": "done",
+      "created_at": "2026-04-25T16:39:25Z",
+      "resolved_at": "2026-04-25T16:40:11Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T16:40:11Z",
+      "resolved_at": "2026-04-27T12:23:17Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-27T12:23:17Z",
+      "resolved_at": "2026-04-27T12:27:49Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance support packet ready at support/sidecars/APP-003-WANDB-DEFERRED-PREP-001/APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Parent archive revalidated as done/completed; packet is support-only, preserves W&B deferred-prep boundary, and makes no canonical/runtime changes. Please review as sidecar artifact only.",
+      "status": "done",
+      "created_at": "2026-04-27T12:27:49Z",
+      "resolved_at": "2026-04-27T12:28:36Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-27T12:28:36Z",
+      "resolved_at": "2026-04-27T12:43:37Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-27T12:43:37Z",
+      "resolved_at": "2026-04-27T12:47:33Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet refreshed for Codex2 review at support/sidecars/APP-003-WANDB-DEFERRED-PREP-001/APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Revalidated on 2026-04-27T12:47:16Z: parent still resolves to archived done/completed; pytest services/registry/experiments/test_adapter.py -q => 7 passed in 0.10s; smoke_test.py => pass on backend=memory; smoke_test.py --backend wandb => pass; selected_backend() still defaults to mlflow; EXPERIMENT_BACKEND=wandb still requires PANTHEON_ENABLE_WANDB_DEFERRED_PREP=1; explicit opt-in resolves to wandb. This slice remains support-only; no canonical/runtime files changed.",
+      "status": "done",
+      "created_at": "2026-04-27T12:47:33Z",
+      "resolved_at": "2026-04-27T12:48:18Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-27T12:48:18Z",
+      "resolved_at": "2026-04-27T13:03:35Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-27T13:03:35Z",
+      "resolved_at": "2026-04-27T13:07:49Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar packet is ready for Codex2 review at support/sidecars/APP-003-WANDB-DEFERRED-PREP-001/APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Parent archive still shows done/completed; packet remains support-only and preserves W&B as criteria-defined, mlflow-default, explicit-flag/offline-only deferred prep.",
+      "status": "done",
+      "created_at": "2026-04-27T13:07:49Z",
+      "resolved_at": "2026-04-27T13:08:34Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-27T13:08:34Z",
+      "resolved_at": "2026-04-27T13:24:04Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-27T13:24:04Z",
+      "resolved_at": "2026-04-27T13:28:05Z"
+    },
+    {
+      "task_id": "APP-003-WANDB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: acceptance packet is support-only, matches archived parent closeout, and preserves W&B deferred-prep boundaries without canonical/runtime changes.",
+      "status": "done",
+      "created_at": "2026-04-27T13:28:05Z",
+      "resolved_at": "2026-04-27T13:29:45Z"
+    }
+  ],
+  "blockers": []
+}

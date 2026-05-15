@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Codex is idle and the two existing sidecars are in review; no new sidecars needed now, but approval is open for post-closeout dispatch once review queue drains.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260430T091328Z-daecdb9e",
+      "decision": "deny",
+      "reason": "Cross-task contamination: worker is registered under SVC-OPENCLAW-LIVE-GATE-HARNESS-SIDECAR-BFF-HANDOFF (Claude2 as reviewer) but the command stages artifacts belonging to SVC-SOURCE-SEARCH-PROD-HARDENING-SIDECAR-ACCEPTANCE, whose assigned reviewer is Codex2, not Claude2. Merging would pollute commit attribution and bypass the correct review chain.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [
+    {
+      "task_id": "SVC-SOURCE-SEARCH-PROD-HARDENING-SIDECAR-ACCEPTANCE",
+      "role": "reviewer",
+      "from": "Codex2",
+      "to": "Codex",
+      "reason": "Codex2 lane is paused and cannot receive the review dispatch; Codex is idle, shares the same integration/acceptance capability lane, and has prior familiarity with the source/search surface as reviewer on SVC-SEARCH-RETRIEVAL-AND-CUTOFF."
+    }
+  ],
+  "recommended_focus": [
+    "SVC-OPENCLAW-LIVE-GATE-HARNESS",
+    "SVC-SOURCE-SEARCH-PROD-HARDENING-SIDECAR-ACCEPTANCE"
+  ]
+}

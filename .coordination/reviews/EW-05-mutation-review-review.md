@@ -18,9 +18,9 @@ Disposition: `close`
   `b2baed2c1a6107f31f530fad127492f74f65607a` contains the full advertised EW-05
   transport set: the request pair,
   `docs/pantheon-feedback/EW-05-mutation-review/*`,
-  [MutationReview.tsx](/home/edna/code/front-ai-trading-system/src/pages/evolution/MutationReview.tsx),
+  [MutationReview.tsx](/home/lupin/code/front-ai-trading-system/src/pages/evolution/MutationReview.tsx),
   and
-  [PostIncidentReviewConsole.tsx](/home/edna/code/front-ai-trading-system/src/pages/operator/PostIncidentReviewConsole.tsx).
+  [PostIncidentReviewConsole.tsx](/home/lupin/code/front-ai-trading-system/src/pages/operator/PostIncidentReviewConsole.tsx).
 - Re-checked the reviewed UI diff at `b2baed2...`: the postmortem deep link
   now stays on `/operator/post-incident-review?postmortem=...` until the
   destination resolves the matching resolved incident, the live

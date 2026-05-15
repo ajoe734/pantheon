@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "task_id": "APP-003-TRL-ACTIVATION-001",
+  "archived_at": "2026-04-24T17:17:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-TRL-ACTIVATION-001",
+    "title": "Clear TRL production activation gate",
+    "summary_zh": "清 TRL production activation gate：feedback volume、preference pairs、imitation baseline 與下游 consumer 準備度。",
+    "phase": "Phase 5",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/learning/trl/",
+      "integrations/trl/",
+      "OSS_INTEGRATION_CHECKLIST.md"
+    ],
+    "acceptance": [
+      "TRL activation criteria are satisfied or truthfully blocked with evidence",
+      "First governed DPO activation packet is prepared",
+      "Canonical OSS docs and evidence agree on TRL activation status"
+    ],
+    "next": "Owner finalized approved TRL activation packet after Codex review revalidated smoke + 16 unit tests on 2026-04-24; status remains truthfully runtime-gated, with canonical activation evidence aligned and no production overclaim.",
+    "last_update": "2026-04-24T17:17:55Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "TRL activation packet 已審核通過：我重跑 smoke test 與 16 個 unit tests，確認目前狀態仍是 smoke-tested 且 runtime-gated，沒有過度宣稱 production activation。",
+      "review 期間已修正 services/learning/trl/requirements.txt 的 pyqlib 相容性註解漂移，現在 activation packet、integration doc、checklist 與依據一致。"
+    ],
+    "review_file": "docs/reviews/2026-04-24-app-003-trl-activation-001-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T17:17:55Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "6e8119b6bc28c126261e3895623532fa78beefef",
+      "commit_subject": "APP-003-DATASOURCE-TW-002 finalize Taiwan normalization pipeline",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-DATASOURCE-TW-002",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1172,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-TRL-ACTIVATION-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Prepared TRL production activation packet at integrations/trl/activation_packet.md, aligned integrations/trl/integration.md and OSS_INTEGRATION_CHECKLIST.md to the same smoke-tested but runtime-gated status, and revalidated TRL smoke plus 16 unit tests on 2026-04-24. Review the packet for truthful gating and acceptance readiness.",
+      "status": "done",
+      "created_at": "2026-04-24T17:10:26Z",
+      "resolved_at": "2026-04-24T17:16:32Z"
+    },
+    {
+      "task_id": "APP-003-TRL-ACTIVATION-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewed TRL activation packet and revalidated smoke + 16 unit tests on 2026-04-24; runtime gates remain truthfully blocked and canonical evidence is aligned. Owner may finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-24T17:16:32Z",
+      "resolved_at": "2026-04-24T17:17:55Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-SEM-001",
+  "archived_at": "2026-05-09T09:54:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-SEM-001",
+    "title": "Complete execute-plans BFF session auth lifecycle",
+    "summary_zh": "把 session refresh/logout/switch tenant/locale 從 generic receipt 補成真 session lifecycle 語意。",
+    "phase": "BFF Execute-Plans Semantic Completion 2026-05-09",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-09-execute-plans-semantic-completion/BFF-LUV-SEM-001-session-auth-lifecycle.md"
+    ],
+    "acceptance": [
+      "session mutation routes return frontend-ready DTOs",
+      "no generic receipt-only payload",
+      "tenant and locale semantics covered by tests",
+      "session auth tests and final live wiring tests pass"
+    ],
+    "next": "Finalized after Claude review approval. Task-scoped commit 21ebcbe6 created. Verification: py_compile passed; pytest session auth + final live wiring -> 20 passed, 4 warnings. Unrelated dirty worktree files remain outside this task.",
+    "last_update": "2026-05-09T09:54:32Z",
+    "task_class": "semantic_completion",
+    "auto_created_by": "Codex",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：四個 session mutation 路由均已升級為真實 lifecycle 語意",
+      "合約測試 20 通過，idempotency replay、tenant 驗證、locale 正規化均已覆蓋",
+      "無新引入的警告或安全問題"
+    ],
+    "review_file": "docs/bff/execution-tasks/2026-05-09-execute-plans-semantic-completion/BFF-LUV-SEM-001-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-09T09:54:32Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "21ebcbe62170d7081a9dd46395376764b9cbd6f2",
+      "commit_subject": "BFF-LUV-SEM-001 complete session auth lifecycle",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-LUV-SEM-001",
+        "Reviewer": "Claude",
+        "Verification": "python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/session_lifecycle_store.py services/control-plane/bff/test_bff_session_auth_me_contract.py; python3 -m pytest services/control-plane/bff/test_bff_session_auth_me_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q -> 20 passed, 4 warnings."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 37,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-SEM-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-09T05:49:23Z",
+      "resolved_at": "2026-05-09T05:51:43Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented session lifecycle DTO semantics for refresh/logout/switch-tenant/locale; artifact updated. Verification: python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/session_lifecycle_store.py services/control-plane/bff/test_bff_session_auth_me_contract.py; python3 -m pytest services/control-plane/bff/test_bff_session_auth_me_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q -> 16 passed, 2 existing duplicate OpenAPI operation-id warnings.",
+      "status": "done",
+      "created_at": "2026-05-09T06:02:11Z",
+      "resolved_at": "2026-05-09T06:46:31Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Chair reassigned review from Claude to Codex2: Claude is quota-paused for several hours; Codex2 is unpaused and is not the owner of this review-ready task.",
+      "status": "done",
+      "created_at": "2026-05-09T06:46:31Z",
+      "resolved_at": "2026-05-09T07:23:43Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-001",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Chair reassigned review from Codex2 to Gemini: Codex2 failed twice as reviewer; Codex owns the task, Claude lanes are quota-paused, and Gemini2 should avoid BFF runtime work after the truncation incident.",
+      "status": "done",
+      "created_at": "2026-05-09T07:23:43Z",
+      "resolved_at": "2026-05-09T07:25:17Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-001",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-05-09T07:25:17Z",
+      "resolved_at": "2026-05-09T07:28:48Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-001",
+      "from": "Copilot",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Copilot to Codex2 after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-05-09T07:28:48Z",
+      "resolved_at": "2026-05-09T09:33:50Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Owner refreshed review packet after re-verification. Verification: python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/session_lifecycle_store.py services/control-plane/bff/test_bff_session_auth_me_contract.py -> passed; python3 -m pytest services/control-plane/bff/test_bff_session_auth_me_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q -> 20 passed, 4 known warnings. Artifact updated.",
+      "status": "done",
+      "created_at": "2026-05-09T09:33:50Z",
+      "resolved_at": "2026-05-09T09:43:13Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Owner re-verified review packet after Codex2 quota failure. Verification: python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/session_lifecycle_store.py services/control-plane/bff/test_bff_session_auth_me_contract.py -> passed; python3 -m pytest services/control-plane/bff/test_bff_session_auth_me_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q -> 20 passed, 4 known warnings. Task remains ready for reviewer approval.",
+      "status": "done",
+      "created_at": "2026-05-09T09:43:13Z",
+      "resolved_at": "2026-05-09T09:48:41Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Chair reassigned review from Codex2 to Claude: Codex2 has failed twice on the same review; move to the independent Claude reviewer lane after the quota guardrail clears instead of looping Codex2.",
+      "status": "done",
+      "created_at": "2026-05-09T09:48:41Z",
+      "resolved_at": "2026-05-09T09:50:55Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: session auth lifecycle implementation complete. All four mutation routes return frontend-ready DTOs with BFF-LUV-SEM-001 contract; idempotency, tenant scope, and locale normalization covered by 20 passing tests. Returning to owner (Codex) for finalization.",
+      "status": "done",
+      "created_at": "2026-05-09T09:50:55Z",
+      "resolved_at": "2026-05-09T09:54:33Z"
+    }
+  ],
+  "blockers": []
+}

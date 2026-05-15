@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "PER-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PER-001",
+    "title": "Adopt persona registry/session/runtime model in platform contracts",
+    "summary_zh": "把 persona registry / session / runtime model 正式寫回平台契約與 service boundary。",
+    "phase": "Phase 5: Persona and Application Surfaces",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "CAP-001",
+      "RUN-001"
+    ],
+    "artifacts": [
+      "PERSONA_RUNTIME_MODEL.md",
+      "OPENCLAW_RUNTIME_CONTRACT.md"
+    ],
+    "acceptance": [
+      "persona identity, session, and runtime instance boundaries are explicit"
+    ],
+    "next": "PER-001 complete: persona registry/session/runtime three-layer model adopted. SessionPersona carries runtime_binding_id, deployment_stage, capital_pool_id as first-class contract fields. Blank audit-chain identifier validation enforced. All schemas, contracts, Python objects, tests aligned. Dependencies CAP-001 and RUN-001 satisfied. Ready for APP-001.",
+    "last_update": "2026-04-10T09:16:45Z"
+  },
+  "handoffs": [
+    {
+      "task_id": "PER-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "PER-001 complete. Deliverables: persona_registry.py (Persona, SessionPersona, CapabilitySnapshot, PersonaRegistry, PersonaSessionStore + lifecycle transitions), persona_registry.schema.json, session_persona.schema.json, capability_snapshot.schema.json, contract.md. Key PER-001A follow-ups resolved: (1) SessionPersona.runtime_binding_id/deployment_stage/capital_pool_id are first-class contract fields with consistency enforcement; (2) DeploymentPlan.binding_id vs RuntimeBinding.persona_capital_binding_id naming clarified in contract.md §5.1. Verification: 54 unit tests OK, 50/50 smoke test checks PASS.",
+      "status": "done",
+      "created_at": "2026-04-10T07:31:16Z",
+      "resolved_at": "2026-04-10T07:37:50Z"
+    },
+    {
+      "task_id": "PER-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review requested changes. See services/control-plane/persona/review_per001_codex_zh.md. Blockers: (1) SessionPersona still allows deployment_stage/capital_pool_id without runtime_binding_id; (2) trace_id/request_id remain optional in code/schema despite contract requiring them always; (3) PERSONA_RUNTIME_MODEL.md still exposes the old SessionPersona shape and has not absorbed the first-class runtime-context fields.",
+      "status": "done",
+      "created_at": "2026-04-10T07:37:50Z",
+      "resolved_at": "2026-04-10T07:37:50Z"
+    },
+    {
+      "task_id": "PER-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All three Codex blockers resolved: (1) symmetric constraint — deployment_stage/capital_pool_id now raise without runtime_binding_id in __post_init__ and JSON schema allOf inverse if/then; (2) trace_id/request_id promoted to required positional fields in SessionPersona dataclass, added to schema required[], and checked in validate_session(); (3) PERSONA_RUNTIME_MODEL.md §14 SessionPersona block updated to match contract field shape with consistency invariant note. 61 unit tests + 55 smoke checks all pass.",
+      "status": "done",
+      "created_at": "2026-04-10T08:07:52Z",
+      "resolved_at": "2026-04-10T08:13:01Z"
+    },
+    {
+      "task_id": "PER-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Blank runtime_binding_id/capital_pool_id still pass SessionPersona constructor + validate_session + session_persona.schema.json, so deployment-bound audit chain identifiers remain forgeable. See services/control-plane/persona/review_per001_codex_zh.md.",
+      "status": "done",
+      "created_at": "2026-04-10T08:13:01Z",
+      "resolved_at": "2026-04-10T08:13:01Z"
+    },
+    {
+      "task_id": "PER-001",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "All Codex review blockers from review_per001_codex_zh.md have been addressed. Blank audit-chain identifier validation implemented in __post_init__() + validate_session() + schema minLength:1. 67 unit tests + 60 smoke checks all passing. py_compile clean. Contract.md, schemas, and Python objects all aligned. Requesting re-review and approval.",
+      "status": "done",
+      "created_at": "2026-04-10T09:16:13Z",
+      "resolved_at": "2026-04-10T09:16:37Z"
+    },
+    {
+      "task_id": "PER-001",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Re-verified: all blockers from review_per001_codex_zh.md resolved. Blank audit-chain identifier checks in __post_init__() + validate_session() + schema minLength:1 confirmed. 67 unit tests + 60 smoke checks pass. py_compile clean. Contract, schemas, and Python objects aligned. Approving for done.",
+      "status": "done",
+      "created_at": "2026-04-10T09:16:37Z",
+      "resolved_at": "2026-04-10T09:16:45Z"
+    }
+  ],
+  "blockers": []
+}

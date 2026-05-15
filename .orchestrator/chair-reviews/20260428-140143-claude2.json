@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Idle auto workers exist, no global blocker is active, and SVC-COMPOSE / SVC-RUNTIME-CONTROL-CLOSEOUT have safe parallelizable support work; two parents already saturated and excluded.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-SURFACES",
+    "SVC-RUNTIME-CONTROL"
+  ],
+  "recommended_focus": [
+    "SVC-COMPOSE",
+    "SVC-RUNTIME-CONTROL-CLOSEOUT"
+  ]
+}

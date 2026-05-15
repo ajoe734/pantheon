@@ -1,0 +1,38 @@
+{
+  "schema_version": "source_search_evaluator_packet.v1",
+  "task_id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001",
+  "evaluator": "Claude2",
+  "evaluated_at": "2026-05-02T14:00:00Z",
+  "verdict": "activation_evidence_produced",
+  "scope": "bounded_live_test_connector",
+  "acceptance_summary": {
+    "A1_governed_ingest": {
+      "criterion": "Bounded live/test connector smoke ingests at least one governed external source through SourceRecord and EvidenceBundle with entitlement license PIT and available_time preserved",
+      "result": "passed",
+      "proof": "test_live_connector_smoke_path_enforces_governance_and_preserves_pit + source_search_live_connector_smoke.local.json"
+    },
+    "A2_durable_search_readback": {
+      "criterion": "Search index and BFF/SearchGateway readback prove durable citation/evidence refs without caller-supplied document normal path",
+      "result": "passed",
+      "proof": "Local run: search.index_refresh passed, search.gateway_query returned result with evidence_bundle_id and citation_count=1"
+    },
+    "A3_no_execution_route": {
+      "criterion": "No connector can route directly to Lean broker order-capable execution paper/canary/live deployment or capital binding",
+      "result": "passed",
+      "proof": "test_live_connector_smoke_rejects_forbidden_execution_routes: broker/live_execution/order_router/direct_lean_feed all raise SourceEvidenceError"
+    }
+  },
+  "governance_boundary": {
+    "deployment_stage": "none",
+    "gate_state": "closed",
+    "broker_session": false,
+    "order_routing": false,
+    "paper_canary_live_promotion": false,
+    "capital_binding": false
+  },
+  "schema_contract": {
+    "evidence_bundle_schema_fixed": true,
+    "contract_test": "services/search/tests/test_contracts.py::test_sd03_contract_schemas_accept_model_payloads",
+    "contract_test_result": "passed"
+  }
+}

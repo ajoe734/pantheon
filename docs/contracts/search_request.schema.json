@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantheon SD-03 SearchRequest",
+  "type": "object",
+  "required": [
+    "request_id",
+    "query",
+    "source_types",
+    "environment",
+    "top_k",
+    "require_citations",
+    "trace_id"
+  ],
+  "properties": {
+    "request_id": {"type": "string", "minLength": 1},
+    "query": {"type": "string", "minLength": 1},
+    "persona_id": {"type": ["string", "null"]},
+    "workspace_id": {"type": ["string", "null"]},
+    "source_types": {"type": "array", "items": {"type": "string"}},
+    "time_window": {"type": "object"},
+    "environment": {"type": "string", "enum": ["dev", "sandbox", "paper", "canary", "live"]},
+    "top_k": {"type": "integer", "minimum": 1, "maximum": 100},
+    "require_citations": {"type": "boolean"},
+    "trace_id": {"type": "string", "minLength": 1},
+    "filters_applied": {"type": "object"}
+  },
+  "additionalProperties": false
+}

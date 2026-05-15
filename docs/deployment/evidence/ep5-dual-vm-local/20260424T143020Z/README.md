@@ -45,3 +45,11 @@ So the current state is:
 - `EP5-001` dual-VM readiness and rollback rehearsal: materially raised
 - `EP5-002` real canary/live proof: still blocked on real execution secrets and
   operator-owned credential injection
+
+Event-trace disposition for closeout:
+
+- this evidence directory does not yet include replay-clean
+  `telemetry_event_trace` request/response artifacts for the new rollback
+  events
+- the current repo treats that gap as explicitly `packetized` in
+  `docs/deployment/app-003-openclaw-closeout-packet.md`, not silently closed

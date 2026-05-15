@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "task_id": "RUN-001A",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RUN-001A",
+    "title": "Prepare runtime authority matrix and rollback prework",
+    "summary_zh": "平行支援 RUN-001 與 EX-002，先整理 runtime-manager write authority、RuntimeBinding 欄位草圖與 rollback action matrix，讓 CAP-001 一落地就能直接接續。",
+    "phase": "Phase 2: Capital, Runtime, and Execution Control",
+    "owner": "Gemini",
+    "reviewer": "Qwen",
+    "status": "done",
+    "depends_on": [
+      "DEP-001"
+    ],
+    "artifacts": [
+      "services/execution/runtime-manager/authority_matrix.md",
+      "services/execution/runtime-manager/runtime_binding.schema.json",
+      "services/execution/runtime-manager/rollback_action_matrix.md"
+    ],
+    "acceptance": [
+      "authority matrix maps deployment plan binding and runtime binding write owners",
+      "runtime binding field inventory is documented against L1 semantics",
+      "rollback action matrix is ready for RUN-001 and EX-002 handoff"
+    ],
+    "next": "RUN-001A finalized after Qwen review approval. Runtime authority matrix, RuntimeBinding schema, and rollback action matrix are locked and aligned with L1 canonical documents. Metadata field write authority is added, and rollback action types are standardized for EX-002 consumption.",
+    "last_update": "2026-04-10T02:00:00Z",
+    "review_notes_zh": [
+      "審查通過：權限矩陣明確劃分了 Runtime Manager 的寫入邊界，JSON schema 與 L1 語意對齊，rollback action matrix 已準備好對接後續 EX-002 實作。",
+      "非阻塞建議：`action_type` 命名建議收斂為 `replace`（較簡短且符合 L1 文件 §10 列表）。"
+    ],
+    "review_file": "services/execution/runtime-manager/review_run001a_qwen_approved.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "RUN-001A",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Review approved: authority matrix, RuntimeBinding schema, and rollback action matrix aligned with L1 canonical documents. Ready for RUN-001 and EX-002 follow-on.",
+      "status": "done",
+      "created_at": "2026-04-10T00:58:47Z",
+      "resolved_at": "2026-04-10T01:51:04Z"
+    }
+  ],
+  "blockers": []
+}

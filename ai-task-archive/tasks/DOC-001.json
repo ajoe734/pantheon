@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "task_id": "DOC-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DOC-001",
+    "title": "Promote L1/L3 files and normalize canonical tiers",
+    "summary_zh": "將所有新 L1/L3 政策文件晉升至正式 canonical tier，統一 Tier/Status/Scope/Conflict rule 標頭，確保 guide 與 map 一致。",
+    "phase": "Phase 0: Canonical Cutover",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "TARGET_ARCHITECTURE.md",
+      "OPENCLAW_RUNTIME_CONTRACT.md",
+      "CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md",
+      "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md",
+      "MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md",
+      "TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md",
+      "DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md",
+      "EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md",
+      "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md",
+      "BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md"
+    ],
+    "acceptance": [
+      "canonical tiers published",
+      "all L1/L3 file headers carry Tier, Status, Scope, Conflict rule",
+      "AI_COLLABORATION_GUIDE.md and CANONICAL_DOCUMENT_MAP.md L1 lists agree"
+    ],
+    "last_update": "2026-04-09T16:00:00Z"
+  },
+  "handoffs": [],
+  "blockers": []
+}

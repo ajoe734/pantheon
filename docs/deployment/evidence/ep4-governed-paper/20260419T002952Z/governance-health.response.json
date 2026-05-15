@@ -1,0 +1,7 @@
+{
+  "status": 200,
+  "payload": {
+    "status": "ok",
+    "service": "governance"
+  }
+}

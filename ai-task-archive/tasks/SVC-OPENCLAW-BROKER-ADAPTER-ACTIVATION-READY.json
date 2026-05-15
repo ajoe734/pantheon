@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "task_id": "SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY",
+  "archived_at": "2026-05-04T05:58:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY",
+    "title": "Make OpenClaw broker adapter activation-ready without live enablement",
+    "summary_zh": "把 OpenClaw facade 往 ready-to-enable adapter 推進：完成 broker adapter interface、sandbox/paper contract smoke、session lifecycle evidence；live broker execution 仍 gate closed。",
+    "phase": "Blueprint production hardening follow-up 2026-05-04",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-BLUEPRINT-OPENCLAW-READY-FACADE"
+    ],
+    "artifacts": [
+      "services/openclaw-gateway-adapter",
+      "services/control-plane/bff",
+      "docker-compose.yml",
+      "OPENCLAW_RUNTIME_CONTRACT.md",
+      "scripts",
+      "tests"
+    ],
+    "acceptance": [
+      "adapter interface has explicit sandbox paper live capability states",
+      "sandbox or fake-paper smoke proves place cancel readback reconcile contract without real capital",
+      "live and canary broker execution remain fail-closed",
+      "BFF surfaces gate reason and adapter readiness without claiming live activation"
+    ],
+    "next": "Owner finalized reviewed broker adapter readiness scope in commit ca55e3c8. Verified: python3 -m pytest services/openclaw-gateway-adapter -q (219 passed); python3 -m pytest services/control-plane/bff/test_openclaw_ops_surface.py -q (9 passed); python3 -m pytest scripts/test_smoke_openclaw_activation_ready_e2e.py -q (3 passed). Live/canary remain fail-closed and BFF exposes read-only readiness only.",
+    "last_update": "2026-05-04T05:58:05Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-gap-materialization-20260504",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Codex review approved after scoped BFF canonical route and L1 contract alignment. Verified adapter 219 tests, BFF OpenClaw ops surface 9 tests, activation-ready E2E 3 tests. Live/canary remain fail-closed and BFF exposes readiness without activation commands."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-04T05:58:05Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "ca55e3c8d6d99fb3e0ca08bb8eef2fd915e121ca",
+      "commit_subject": "SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY activation-ready broker adapter",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 13,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 14,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-04T04:45:26Z",
+      "resolved_at": "2026-05-04T04:46:41Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-04T05:08:33Z",
+      "resolved_at": "2026-05-04T05:09:52Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-04T05:09:51Z",
+      "resolved_at": "2026-05-04T05:11:03Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-04T05:27:31Z",
+      "resolved_at": "2026-05-04T05:28:44Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All 4 acceptance criteria verified: (1) PaperBrokerAdapter.capability_snapshot() has explicit sandbox/paper/live/canary states; (2) 16 smoke tests in test_sandbox_paper_smoke.py prove place→readback→cancel→reconcile with no real capital; (3) live gate and canary both fail-closed in test_live_gate_adapter.py; (4) BFF /api/v1/operator/openclaw/broker-adapter-readiness surfaces gate reason/adapter readiness without claiming live activation. Total: 219+9+3 tests pass. Ready for review.",
+      "status": "done",
+      "created_at": "2026-05-04T05:32:29Z",
+      "resolved_at": "2026-05-04T05:38:50Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved by Codex. Acceptance verified: explicit sandbox/paper/live/canary states; fake-paper place/readback/cancel/reconcile smoke with no real capital; live and canary fail-closed; BFF broker-adapter-readiness exposes gate reasons without activation commands. Verification: python3 -m pytest services/openclaw-gateway-adapter -q (219 passed); python3 -m pytest services/control-plane/bff/test_openclaw_ops_surface.py -q (9 passed); python3 -m pytest scripts/test_smoke_openclaw_activation_ready_e2e.py -q (3 passed). Owner should finalize with task closeout.",
+      "status": "done",
+      "created_at": "2026-05-04T05:38:50Z",
+      "resolved_at": "2026-05-04T05:54:07Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-BROKER-ADAPTER-ACTIVATION-READY",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Auto-reassigned ownership from Claude to Codex2 after repeated Claude auth: Authentication failure",
+      "status": "done",
+      "created_at": "2026-05-04T05:54:07Z",
+      "resolved_at": "2026-05-04T05:58:06Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "task_id": "LP-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LP-001",
+    "title": "Integrate DSPy for persona policy optimization",
+    "phase": "Epic F",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "FB-001",
+      "OC-003"
+    ],
+    "artifacts": [
+      "services/learning/dspy/"
+    ],
+    "acceptance": [
+      "persona policy optimization contract documented",
+      "DSPy artifact linkage to registry defined",
+      "evaluation inputs identified"
+    ],
+    "next": "Finalized LP-001: canonical DSPy adapter now lives under services/learning/dspy with governed FB-001 example filtering, BootstrapFewShot-compatible backends, prompt_bundle packaging plus registry-ready metadata, and validated smoke/unit test coverage. Verification: python3 -m py_compile services/learning/dspy/*.py; python3 -m unittest discover -s services/learning/dspy -p 'test_*.py' (3 tests OK); python3 services/learning/dspy/smoke_test.py (stub backend, 4 training + 4 evaluation examples, intent_accuracy=1.0, tool_selection_precision=1.0, deny_coverage_delta=0.0).",
+    "last_update": "2026-04-06T15:59:05Z",
+    "summary_zh": "把 DSPy 用在 persona policy 優化，優化的是工具使用與推理流程，不是直接改 live 策略。"
+  },
+  "handoffs": [
+    {
+      "task_id": "LP-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "LP-001 contract draft ready at services/control-plane/persona/lp001/contract.md. Key decisions made: DSPy scope limited to persona programs only, training from FB-001 preference store with operator-only signal quality gate, output is prompt_bundle through REG-001 lifecycle, evaluation gate includes denial-rate regression check (optimized persona must not weaken OC-001 deny-first coverage). Three open questions in §9 for Codex to decide: optimizer choice, prompt_bundle schema need, denial-rate threshold expression.",
+      "status": "done",
+      "created_at": "2026-04-02T06:25:17Z",
+      "resolved_at": "2026-04-02T13:42:42Z"
+    },
+    {
+      "task_id": "LP-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "LP-001 updated with concrete DSPy decisions and prompt_bundle.schema.json. Please re-review the contract under the new upstream-integration model.",
+      "status": "done",
+      "created_at": "2026-04-02T13:42:42Z",
+      "resolved_at": "2026-04-05T11:56:45Z"
+    },
+    {
+      "task_id": "LP-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Codex to implement DSPy adapter under services/learning/dspy/ with BootstrapFewShot optimizer, pin DSPy version, and run smoke test with FB-001 governed examples.",
+      "status": "done",
+      "created_at": "2026-04-06T15:36:53Z",
+      "resolved_at": "2026-04-06T15:59:05Z"
+    }
+  ],
+  "blockers": []
+}

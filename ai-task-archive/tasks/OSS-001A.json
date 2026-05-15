@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "OSS-001A",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-001A",
+    "title": "Collect OSS-001 upstream evidence pack and smoke-test checklist",
+    "summary_zh": "平行支援 OSS-001，先蒐集 upstream OpenClaw pinning 證據、來源候選、版本資訊與 smoke-test checklist，讓主 owner 能直接進入整合決策與落地。",
+    "phase": "Phase 6: OSS Integration Hardening",
+    "owner": "Codex",
+    "reviewer": "Qwen",
+    "status": "done",
+    "depends_on": [
+      "DOC-003"
+    ],
+    "artifacts": [
+      "OPENCLAW_RUNTIME_CONTRACT.md",
+      "OSS_INTEGRATION_CHECKLIST.md",
+      "spikes/openclaw_upstream_selection.md"
+    ],
+    "acceptance": [
+      "upstream source candidates and pin evidence are collected",
+      "smoke-test checklist is drafted",
+      "evidence pack can be handed to OSS-001 owner without blocking adapter work"
+    ],
+    "next": "All acceptance criteria met. Evidence pack complete, smoke test plan validated against canonical schemas. Task complete.",
+    "last_update": "2026-04-09T16:48:53Z",
+    "review_file": "integrations/openclaw/review_oss001a_qwen.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-001A",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T15:58:12Z",
+      "resolved_at": "2026-04-09T15:58:42Z"
+    },
+    {
+      "task_id": "OSS-001A",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T15:58:59Z",
+      "resolved_at": "2026-04-09T15:59:56Z"
+    },
+    {
+      "task_id": "OSS-001A",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:00:11Z",
+      "resolved_at": "2026-04-09T16:01:08Z"
+    },
+    {
+      "task_id": "OSS-001A",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:01:27Z",
+      "resolved_at": "2026-04-09T16:01:58Z"
+    },
+    {
+      "task_id": "OSS-001A",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:02:40Z",
+      "resolved_at": "2026-04-09T16:03:14Z"
+    },
+    {
+      "task_id": "OSS-001A",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-09T16:03:30Z",
+      "resolved_at": "2026-04-09T16:06:35Z"
+    },
+    {
+      "task_id": "OSS-001A",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Collected the OpenClaw upstream evidence pack in integrations/openclaw/evidence_pack.md, updated OSS_INTEGRATION_CHECKLIST.md to reflect adapter-started status, and locally validated the smoke-plan reference StrategySpec + WorkflowHandoff against the canonical schemas. No Docker runtime execution is claimed; remaining work is adapter implementation and pinned-image smoke execution. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-09T16:44:12Z",
+      "resolved_at": "2026-04-09T16:48:20Z"
+    },
+    {
+      "task_id": "OSS-001A",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Review approved. All 3 acceptance criteria met: upstream pin evidence collected, smoke-test checklist drafted, evidence pack ready for OSS-001 handoff. Schema validation confirmed StrategySpec + WorkflowHandoff both pass against canonical schemas. Prior review blocking findings addressed.",
+      "status": "done",
+      "created_at": "2026-04-09T16:48:20Z",
+      "resolved_at": "2026-04-09T16:48:53Z"
+    }
+  ],
+  "blockers": []
+}

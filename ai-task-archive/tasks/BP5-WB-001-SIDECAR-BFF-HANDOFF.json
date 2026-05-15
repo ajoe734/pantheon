@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "task_id": "BP5-WB-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-16T06:23:50Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-WB-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BP5-WB-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BP5-WB-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BP5-SVC-014"
+    ],
+    "artifacts": [
+      "support/sidecars/BP5-WB-001/BP5-WB-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner final closeout: handoff packet verified against live BFF routes (PM-01, Module A/B/C), 5 non-blocking query gaps documented, operator journeys and allowedActions semantics confirmed accurate, Module C/PKT-001 shared boundary correctly expressed. Review approved by Codex. Sidecar support artifact complete; no canonical truth modified.",
+    "last_update": "2026-04-16T06:23:50Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP5-WB-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已核對 support/sidecars/BP5-WB-001/BP5-WB-001-SIDECAR-BFF-HANDOFF.md、services/control-plane/bff/main.py 與 services/control-plane/bff/read_store.py。Wave 1 route inventory、5 個 non-blocking gap、operator journey、seed data 與 allowedActions 說明都與目前實作一致；Module C 與 PKT-001 的共享邊界也表達正確，可交還 Claude 做正式 closeout。"
+    ],
+    "review_file": "support/sidecars/BP5-WB-001/BP5-WB-001-SIDECAR-BFF-HANDOFF-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T06:23:50Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "f9d5d77341874fb0abae68f8e9a41e94d750a20a",
+      "commit_subject": "BP5-WB-001-SIDECAR-BFF-HANDOFF: finalize reviewer-approved BFF handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP5-WB-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 137,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-WB-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:23:26Z",
+      "resolved_at": "2026-04-16T02:26:49Z"
+    },
+    {
+      "task_id": "BP5-WB-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:35:28Z",
+      "resolved_at": "2026-04-16T02:39:07Z"
+    },
+    {
+      "task_id": "BP5-WB-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:39:07Z",
+      "resolved_at": "2026-04-16T02:41:41Z"
+    },
+    {
+      "task_id": "BP5-WB-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:44:44Z",
+      "resolved_at": "2026-04-16T02:46:13Z"
+    },
+    {
+      "task_id": "BP5-WB-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:49:46Z",
+      "resolved_at": "2026-04-16T02:56:19Z"
+    },
+    {
+      "task_id": "BP5-WB-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-16T03:01:00Z",
+      "resolved_at": "2026-04-16T03:02:12Z"
+    },
+    {
+      "task_id": "BP5-WB-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "BFF handoff packet created at support/sidecars/BP5-WB-001/BP5-WB-001-SIDECAR-BFF-HANDOFF.md. Catalogs all Wave 1 BFF routes (PM-01, Module A/B/C), identifies 5 non-blocking query gaps, maps operator journeys per module, documents frontend handoff notes and allowedActions semantics, and marks Wave 2 dependencies. Ready for reviewer acceptance.",
+      "status": "done",
+      "created_at": "2026-04-16T03:10:51Z",
+      "resolved_at": "2026-04-16T03:41:24Z"
+    },
+    {
+      "task_id": "BP5-WB-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. The handoff packet matches the live BFF routes, seed data, deferred query gaps, and frontend guidance. Return to Claude for final closeout as done.",
+      "status": "done",
+      "created_at": "2026-04-16T03:41:24Z",
+      "resolved_at": "2026-04-16T06:23:50Z"
+    }
+  ],
+  "blockers": []
+}

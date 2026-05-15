@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "AUTO-TEST-LINREAD-001",
+  "archived_at": "2026-04-20T06:26:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AUTO-TEST-LINREAD-001",
+    "title": "Add tests for standalone lineage-read service",
+    "summary_zh": "為 services/lineage-read 補 tests，先提高 coverage，不處理 lineage ownership 決策。",
+    "phase": "Execution / Auto Worker - Tests and Tech Debt",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+      "services/lineage-read/main.py"
+    ],
+    "acceptance": [
+      "lineage-read 有 service tests",
+      "核心 route 受測",
+      "不改 ownership truth"
+    ],
+    "next": "Owner finalized approved task and closed it. Added 6 lineage-read service-path tests covering health, create/fetch, filters, 404, validation, and corrupted-store fallback; targeted pytest passes.",
+    "last_update": "2026-04-20T06:26:10Z",
+    "task_class": "auto_worker_implementation",
+    "auto_created_by": "auto-worker-implementation-materialization-20260420",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "6 tests pass；覆蓋 health、POST create + persistence + round-trip GET、list filter 組合、404 missing record、422 validation、corrupted store fallback 全路徑；STORE_PATH 透過 setUp/tearDown 隔離，uuid4 與 _utc_now 均 mock，測試行為穩定；acceptance criteria 全數滿足，ownership truth 未觸碰。"
+    ],
+    "review_file": "docs/reviews/2026-04-20-auto-test-linread-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T06:26:10Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "1e9dc4bc23126a155c3b66a9e29bc9b48e9c255c",
+      "commit_subject": "AUTO-TEST-LINREAD-001: add lineage-read service-path tests",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "AUTO-TEST-LINREAD-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 823,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AUTO-TEST-LINREAD-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T05:42:40Z",
+      "resolved_at": "2026-04-20T06:14:16Z"
+    },
+    {
+      "task_id": "AUTO-TEST-LINREAD-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "請 review services/lineage-read/test_main.py。已新增 standalone lineage-read service-path tests，驗證 POST/GET/list/filter/422/corrupted-store fallback；......                                                                   [100%]\n6 passed in 1.33s 與  皆通過。",
+      "status": "done",
+      "created_at": "2026-04-20T06:19:05Z",
+      "resolved_at": "2026-04-20T06:21:30Z"
+    },
+    {
+      "task_id": "AUTO-TEST-LINREAD-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: 6 tests pass covering all core service paths. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-20T06:21:30Z",
+      "resolved_at": "2026-04-20T06:26:10Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "task_id": "BP5-WB-005-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-16T01:53:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-WB-005-SIDECAR-ACCEPTANCE",
+    "title": "Prepare BP5-WB-005 acceptance packet and dependency map",
+    "summary_zh": "平行支援 BP5-WB-005，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BP5-SVC-005",
+      "BP5-SVC-014"
+    ],
+    "artifacts": [
+      "support/sidecars/BP5-WB-005/BP5-WB-005-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner final checks complete; acceptance checklist, dependency map, and canonical-truth verification confirmed. Sidecar closed.",
+    "last_update": "2026-04-16T01:53:19Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP5-WB-005",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已核對 PACKET_FAMILY.md、REVIEW.md、planning-session.json 與相關路徑 git status；內容一致且本次 sidecar 只新增 support artifact。"
+    ],
+    "review_file": "support/sidecars/BP5-WB-005/BP5-WB-005-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T01:53:19Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "d27869b457209e3c4d6f3b5379c62d1674c7c92a",
+      "commit_subject": "BP5-WB-005-SIDECAR-ACCEPTANCE: owner closeout checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP5-WB-005-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 100,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-WB-005-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T00:45:55Z",
+      "resolved_at": "2026-04-16T00:52:16Z"
+    },
+    {
+      "task_id": "BP5-WB-005-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:14:07Z",
+      "resolved_at": "2026-04-16T01:15:49Z"
+    },
+    {
+      "task_id": "BP5-WB-005-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:18:28Z",
+      "resolved_at": "2026-04-16T01:34:43Z"
+    },
+    {
+      "task_id": "BP5-WB-005-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet and dependency map complete. All acceptance criteria met and verified against PACKET_FAMILY.md and REVIEW.md. No canonical files modified. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-04-16T01:45:16Z",
+      "resolved_at": "2026-04-16T01:51:48Z"
+    },
+    {
+      "task_id": "BP5-WB-005-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Reviewed by Codex: acceptance checklist, dependency map, and support-only scope verified against RW-005 PACKET_FAMILY.md and REVIEW.md. Ready for owner finalize.",
+      "status": "done",
+      "created_at": "2026-04-16T01:51:48Z",
+      "resolved_at": "2026-04-16T01:53:19Z"
+    }
+  ],
+  "blockers": []
+}

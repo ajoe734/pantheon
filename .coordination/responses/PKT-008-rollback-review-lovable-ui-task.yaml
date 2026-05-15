@@ -1,8 +1,7 @@
 feature_id: PKT-008-rollback-review
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: loop-complete
-cycle: 2
+status: ready
 pantheon_pr: null
 base_url: null
 workbench: governance-workbench
@@ -18,12 +17,6 @@ constraints:
 - do not add raw fetch in components
 - do not import demo providers
 - if any required field is missing, emit a bff-gap handoff instead of mocking
-- keep the read path on GET /api/v1/operator/rollback-review/{rollback_id} and
-  the write path on POST /api/v1/operator/commands; do not invent alternate
-  endpoints or shadow state
-- keep frontend-feedback.source_commit pinned to the replayable front transport
-  commit that contains the request pair, feedback bundle, and
-  GovernanceRollbackReview.tsx
 acceptance:
 - build the Governance Rollback Review screen with rollback identity header, scope
   summary, position impact table, affected bindings panel, and trigger evidence drawer
@@ -36,9 +29,6 @@ acceptance:
   regardless of allowedActions.canApproveRollback
 - show stale-data badge and unknown impact message for position_impact rows where
   position_data_stale is true
-- republished frontend-feedback and ui-done truthfully reference the same
-  Git-visible front commit that contains the PKT-008 request pair, feedback
-  bundle, and rollback review UI files
 required_feedback:
 - docs/pantheon-feedback/PKT-008-rollback-review/LOVABLE_CHANGE_FEEDBACK.md
 - docs/pantheon-feedback/PKT-008-rollback-review/API_GAP_REQUESTS.json
@@ -58,5 +48,5 @@ gap_handoff_path: .coordination/requests/PKT-008-rollback-review-bff-gap.yaml
 gap_handoff_template: .coordination/requests/PKT-008-rollback-review-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/PKT-008-rollback-review-ui-done.yaml
 completion_handoff_template: .coordination/requests/PKT-008-rollback-review-ui-done.example.yaml
-frontend_feedback_handoff_path: .coordination/requests/PKT-008-rollback-review-frontend-feedback.yaml
-review_findings_ref: .coordination/reviews/BP6-LUV-019-review.md
+feedback_handoff_path: .coordination/requests/PKT-008-rollback-review-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/PKT-008-rollback-review-frontend-feedback.example.yaml

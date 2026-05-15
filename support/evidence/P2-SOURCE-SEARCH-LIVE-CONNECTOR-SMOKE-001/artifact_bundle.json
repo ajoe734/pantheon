@@ -1,0 +1,44 @@
+{
+  "schema_version": "source_search_artifact_bundle.v1",
+  "task_id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001",
+  "created_at": "2026-05-02T14:00:00Z",
+  "artifacts": [
+    {
+      "artifact_id": "smoke-script",
+      "type": "smoke_script",
+      "path": "scripts/run_source_search_live_connector_smoke.py",
+      "description": "Credentialed/test source-search connector smoke script. Runs against live or test-env services with a governed external feed URL. Produces dependency_missing evidence when no feed is configured."
+    },
+    {
+      "artifact_id": "smoke-test",
+      "type": "test_file",
+      "path": "scripts/test_run_source_search_live_connector_smoke.py",
+      "description": "Tests for smoke script: dependency_missing behavior and allowlist enforcement."
+    },
+    {
+      "artifact_id": "governance-tests",
+      "type": "test_file",
+      "path": "services/source_ingestion/tests/test_external_source_connectors.py",
+      "description": "7 tests covering news/social/alpha_db governance, live connector smoke path, and execution route rejection."
+    },
+    {
+      "artifact_id": "schema-contract",
+      "type": "contract_schema",
+      "path": "docs/contracts/evidence_bundle.schema.json",
+      "description": "EvidenceBundle JSON schema updated to include available_time and entitlement_tags fields added by P1-SOURCE-001."
+    },
+    {
+      "artifact_id": "local-smoke-evidence",
+      "type": "smoke_evidence",
+      "path": "support/evidence/P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001/source_search_live_connector_smoke.local.json",
+      "description": "Local smoke run evidence: 8 checks passed, connector config -> ingest -> SourceRecord -> EvidenceBundle -> search refresh -> search query all passed."
+    }
+  ],
+  "governance": {
+    "no_broker_session": true,
+    "no_order_routing": true,
+    "no_paper_canary_live_promotion": true,
+    "no_capital_binding": true,
+    "research_only_sink": "SourceRecord/EvidenceBundle"
+  }
+}

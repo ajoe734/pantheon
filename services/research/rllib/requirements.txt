@@ -1,0 +1,11 @@
+# RLlib + Ray Tune research container dependencies
+# Status: version-pinned deferred-prep scaffold; repo-local adapters and smoke paths exist
+# Activation gate: explicit prep env/CLI gates are required; RL path approval is still required
+# before production training/eval, registry writes, or paper/live activation
+# See: services/learning/rl/PATH_DEFINITION.md §1
+# See: services/learning/DEFERRED_OSS_ACTIVATION_MAP.md §4
+
+ray[rllib]>=2.9.0,<3.0.0
+ray[tune]>=2.9.0,<3.0.0
+pydantic>=2.6.3
+redis>=5.0.0

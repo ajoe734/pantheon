@@ -1,6 +1,6 @@
 # OPENCLAW_RUNTIME_CONTRACT.md
 
-Last updated: 2026-04-09
+Last updated: 2026-05-01
 Status: canonical runtime-boundary contract for upstream OpenClaw-compatible runtimes
 Tier: L1 Platform Architecture & Policy
 Scope: upstream runtime dependency, adapter boundary, and ownership split between Pantheon and runtime substrate
@@ -17,8 +17,20 @@ Conflict rule: this document overrides broader OpenClaw mentions in overview/pla
 - 哪些能力由 Pantheon adapter 負責補足
 - OpenClaw 與 Pantheon 的 ownership 邊界
 
-> 核心決議：**OpenClaw 在 Pantheon 中被視為外部 agent runtime / control-plane substrate。**  
+> 核心決議：**OpenClaw 在 Pantheon 中被視為外部 agent runtime / control-plane substrate。**
 > Pantheon 不重寫 OpenClaw，本文件描述的是 **Pantheon 對 OpenClaw-compatible runtime 的最小依賴契約**。
+
+> 實作邊界：OpenClaw 相關 adapter / facade / runtime-adoption scaffold 可以先開發並以
+> fail-closed 方式驗證；不得因此啟用 paper / canary / live execution、broker session、
+> capital binding，或讓 OpenClaw 成為 execution kernel。
+>
+> 目前 repo truth（2026-04-30）：OpenClaw 的 fail-closed runtime-adoption scaffold 已落地，
+> `openclaw-gateway-adapter` 已具備 typed upstream client（capabilities、session lifecycle）、
+> Pantheon-owned session lifecycle store（durable state machine、idempotent create、operator
+> audit trail）、以及 tool/workflow bridge（allowed-tool policy、deny-by-default、operator
+> context mapping、request/response audit trail、broker/live/paper/capital 永久拒絕）。
+> 所有 invocation 均須提供 `X-Operator-Id`；broker session、paper/canary/live route、
+> capital binding 與 execution-kernel 角色仍然關閉，必須等未來明確 activation gate。
 
 ---
 
@@ -45,6 +57,21 @@ OpenClaw **不負責**：
 - canonical telemetry / lineage
 - paper / canary / live execution kernel
 
+P2 live-kernel boundary:
+
+- Full Lean Launcher and broker SDK production readiness belongs to the
+  execution plane, Runtime Manager, and the `pantheon/lean` bridge.
+- OpenClaw-compatible runtimes may prepare research, review notes, and support
+  packets, but they must not create `RuntimeBootstrapRequest`, mutate
+  `RuntimeBinding`, invoke the Lean Launcher, invoke broker SDK order routes, or
+  approve capital authorization.
+- Any OpenClaw tool/workflow that targets broker execution, paper/canary/live
+  runtime control, or capital binding remains denied by adapter policy even if a
+  future Lean Launcher readiness packet exists.
+- `OPENCLAW_PRODUCTION_BROKER_ENABLED` and broker/live/capital gates remain
+  false/deny-by-default until a separate activation task explicitly changes
+  policy and evidence.
+
 ### 2.2 Pantheon Adapter 的角色
 
 `openclaw-gateway-adapter` 是 Pantheon 的封裝層，負責把 Pantheon domain model 映射到 OpenClaw runtime contract。
@@ -58,6 +85,45 @@ OpenClaw **不負責**：
 5. consult bus / sub-agent orchestration
 6. cron / hooks 到 Pantheon jobs 的橋接
 7. auth / capability resolution / policy filtering
+
+目前 adapter 的 upstream client surface：
+
+**Session / capability surfaces（SVC-OPENCLAW-UPSTREAM-CLIENT + SVC-OPENCLAW-SESSION-LIFECYCLE）：**
+- `GET /livez`：Pantheon adapter process liveness；不得因 optional upstream OpenClaw gateway absent 而失敗。
+- `GET /readyz`：Pantheon adapter readiness；upstream OpenClaw gateway absent / degraded 時回 degraded/503。
+- Root compose 的 `openclaw-gateway-adapter` healthcheck 使用 `/livez`；optional `openclaw-gateway` profile healthcheck 使用 upstream `/readyz`。
+- `GET /api/openclaw-adapter/capabilities`：回傳 Pantheon fail-closed capability snapshot；若 upstream 可達則 `activation_state=upstream_client_ready` 並附帶 upstream capabilities，若 upstream absent/degraded 則 `activation_state=upstream_client_degraded` 且 upstream envelope 維持 degraded。兩種狀態都不得啟用 broker / paper / canary / live / capital binding gate。
+- `GET /api/openclaw-adapter/sessions`：呼叫 upstream session list 並正規化 session metadata。
+- `GET /api/openclaw-adapter/sessions/{session_id}`：呼叫 upstream session get。
+- `POST /api/openclaw-adapter/sessions`：呼叫 upstream session create；upstream absent/degraded 時回 typed upstream error envelope（例如 `UPSTREAM_UNAVAILABLE`），但不啟用 broker/paper/live/capital binding。
+- `POST /api/openclaw-adapter/sessions/{session_id}/cancel`：呼叫 upstream cancel。
+- `GET /api/openclaw-adapter/lifecycle/sessions`：Pantheon-owned 持久化 session list，可依 operator_id 與 state 篩選。
+- `GET /api/openclaw-adapter/lifecycle/sessions/{id}`：Pantheon-owned session record，active 時從 upstream 同步狀態。
+- `POST /api/openclaw-adapter/lifecycle/sessions`：idempotent create；記錄 operator identity、idempotency key、審計軌跡。
+- `POST /api/openclaw-adapter/lifecycle/sessions/{id}/cancel`：operator-owned cancel；upstream 不可達時保留 local record。
+- `GET /api/openclaw-adapter/lifecycle/sessions/{id}/audit`：append-only 審計軌跡。
+
+**Tool / workflow bridge surfaces（SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE）：**
+- `GET /api/openclaw-adapter/tools/policy`：查詢目前 allowed_tools / allowed_workflows policy；預設 deny-all。
+- `GET /api/openclaw-adapter/tools`：列出對目前 operator/session 有效的 tool set（policy allowlist ∩ upstream reported tools）；需 `X-Operator-Id`。
+- `POST /api/openclaw-adapter/tools/invoke`：invoked a named tool within a session；須通過 policy check；需 `X-Operator-Id` 與 session_id；audit trail 必寫；broker/live/paper tools 永遠拒絕。
+- `POST /api/openclaw-adapter/workflows/trigger`：觸發 workflow ref；須通過 policy check；需 `X-Operator-Id`；audit trail 必寫；broker/live/paper/capital workflow 前綴永遠拒絕。
+- `GET /api/openclaw-adapter/workflows/jobs/{job_id}`：查詢 workflow job 狀態（呼叫 upstream）。
+- `GET /api/openclaw-adapter/audit/invocations`：讀取 tool/workflow invocation audit log；可依 session_id / operator_id 篩選。
+
+**Broker execution gate surfaces（activation-ready facade only）：**
+- `POST /api/openclaw-adapter/broker/paper/orders`：僅在 `OPENCLAW_PAPER_ADAPTER_ENABLED=true` 且 runtime-manager 回傳 active paper `RuntimeBinding` 時可走 simulated paper broker sidecar；預設 fail-closed。
+- `POST /api/openclaw-adapter/broker/live/orders`：永遠回 fail-closed `LIVE_EXECUTION_DISABLED`；live gate harness 只允許 dry handoff / validation evidence，不送真實 broker order。
+- `POST /api/openclaw-adapter/broker/canary/orders`：永遠回 fail-closed `CANARY_EXECUTION_DISABLED`；`OPENCLAW_CANARY_ADAPTER_ENABLED` 在本階段只作為顯示用 activation gate，不得啟用 canary order route。
+- `GET /api/openclaw-adapter/broker/capabilities`：回傳 paper/live/canary broker gate posture；`is_real_order=false` 且 `is_real_capital=false`。
+- BFF `GET /api/v1/operator/openclaw/broker-adapter-readiness`：只讀投影 sandbox / paper / canary / live adapter state、gate reason、adapter readiness 與 `is_real_order=false` / `is_real_capital=false`；不得暴露 activation command，也不得宣稱 live activation。
+- BFF `GET /api/v1/operator/openclaw/ops` 必須投影 `broker_execution`、`paper_adapter`、`canary_adapter`、`live_adapter`、`capital_binding` 的 `gate_state`，包含 `activation_gate`、`enabled`、`allowed_scope`、`gate_reason`，且所有 enable command 顯示為 `not_exposed` / fail-closed。
+
+**Policy 環境變數：**
+- `OPENCLAW_ALLOWED_TOOLS`：comma-separated 允許呼叫的 tool names；預設空 = deny all。
+- `OPENCLAW_ALLOWED_WORKFLOWS`：comma-separated 允許觸發的 workflow refs；預設空 = deny all。
+- `OPENCLAW_CANARY_ADAPTER_ENABLED`：本階段必須維持 false；即使被設定，canary order route 仍 fail-closed，直到未來獨立 activation gate 改變 L1 policy。
+- `OPENCLAW_UPSTREAM_TIMEOUT` 與 `OPENCLAW_UPSTREAM_RETRIES` 控制 adapter 對 upstream 的 timeout/retry；未設定 upstream 或 upstream 不健康時，adapter 必須回 degraded/error envelope，不得自動啟用 execution path。
 
 ---
 

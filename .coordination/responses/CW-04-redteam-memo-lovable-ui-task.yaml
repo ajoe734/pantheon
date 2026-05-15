@@ -6,7 +6,7 @@ pantheon_pr: null
 base_url: null
 workbench: consultation-workbench
 screen: redteam-memo
-screen_id: screen-consultation-redteam-memo
+screen_id: null
 ui_spec_path: docs/screens/CW-04-redteam-memo.md
 frontend_change_spec_path: docs/pantheon-handoffs/CW-04-redteam-memo/FRONTEND_CHANGE_SPEC.md
 allowed_endpoints:
@@ -52,3 +52,5 @@ gap_handoff_path: .coordination/requests/CW-04-redteam-memo-bff-gap.yaml
 gap_handoff_template: .coordination/requests/CW-04-redteam-memo-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/CW-04-redteam-memo-ui-done.yaml
 completion_handoff_template: .coordination/requests/CW-04-redteam-memo-ui-done.example.yaml
+feedback_handoff_path: .coordination/requests/CW-04-redteam-memo-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/CW-04-redteam-memo-frontend-feedback.example.yaml

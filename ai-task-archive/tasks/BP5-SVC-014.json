@@ -1,0 +1,176 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-014",
+  "archived_at": "2026-04-16T00:28:03Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-014",
+    "title": "Realize persona platform and consultation read surfaces",
+    "summary_zh": "把 persona identity/session/runtime model 與 consultation read surfaces 落成真實 service/BFF path，避免 persona workbench 只靠文件語意。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "BP5-SVC-006",
+      "BP5-SVC-007",
+      "BP5-SVC-010"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/",
+      "PERSONA_RUNTIME_MODEL.md",
+      "OPENCLAW_RUNTIME_CONTRACT.md"
+    ],
+    "acceptance": [
+      "persona identity, session, and runtime instance reads are exposed through one governed BFF/service path",
+      "consultation surfaces cite canonical persona, lineage, and governance objects instead of shadow copies"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner final check complete: all consultation surface tests pass (CS-01–CS-06 + HTTP regression coverage, 10/10). Responder session resolution via root_session_id, canonical seed refs (p-risk-analyst/cp-risk-analyst), and TestClient-level coverage confirmed. Commit 3f7e6fd is the delivery state. BP5-SVC-014 closed.",
+    "last_update": "2026-04-16T00:28:03Z",
+    "review_notes_zh": [
+      "已驗證 responder consultation path 會經由 root_session_id 回到 canonical requester session。",
+      "p-risk-analyst persona 與 cp-risk-analyst consult policy 已補齊，相關 links 不再是 dead refs。",
+      "HTTP-level regression coverage 已補齊，consultation + 既有 BFF 測試共 10 passed。"
+    ],
+    "review_file": ".coordination/reviews/BP5-SVC-014-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T00:28:03Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "42deb4524875729467a5cf56d71ae822669a3b11",
+      "commit_subject": "BP5-SVC-014: finalize — close task after review_approved",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owner final check": "all 10 consultation surface tests pass (CS-01–CS-06 +",
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP5-SVC-014",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 85,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-014",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T22:29:39Z",
+      "resolved_at": "2026-04-15T22:31:19Z"
+    },
+    {
+      "task_id": "BP5-SVC-014",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T22:31:40Z",
+      "resolved_at": "2026-04-15T22:31:57Z"
+    },
+    {
+      "task_id": "BP5-SVC-014",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T22:32:38Z",
+      "resolved_at": "2026-04-15T22:36:24Z"
+    },
+    {
+      "task_id": "BP5-SVC-014",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T22:36:24Z",
+      "resolved_at": "2026-04-15T22:40:24Z"
+    },
+    {
+      "task_id": "BP5-SVC-014",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T22:40:24Z",
+      "resolved_at": "2026-04-15T22:41:05Z"
+    },
+    {
+      "task_id": "BP5-SVC-014",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-15T22:53:58Z",
+      "resolved_at": "2026-04-15T22:54:41Z"
+    },
+    {
+      "task_id": "BP5-SVC-014",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "CS-01 to CS-06 consultation surfaces realized: seed data, read_store helpers, 6 HTTP routes in main.py, and 17-assertion test file. All pre-existing tests pass. Commit: b0b96fa. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-16T00:12:49Z",
+      "resolved_at": "2026-04-16T00:17:17Z"
+    },
+    {
+      "task_id": "BP5-SVC-014",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review requested changes: responder consultation ids resolve to empty participants/outcome/evidence, and the new consultation seed data contains broken consult-policy/persona refs. See .coordination/reviews/BP5-SVC-014-review.md.",
+      "status": "done",
+      "created_at": "2026-04-16T00:17:17Z",
+      "resolved_at": "2026-04-16T00:17:17Z"
+    },
+    {
+      "task_id": "BP5-SVC-014",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All three review findings addressed (commit 3f7e6fd): (1) CS-03/04/05 responder sessions now resolve to root via root_session_id; (2) p-risk-analyst persona + cp-risk-analyst policy added to seed data, consult_policy_ref and participant persona links are no longer dead; (3) three HTTP-level TestClient tests added covering requester path, responder path, and persona link resolution. All 10 tests pass.",
+      "status": "done",
+      "created_at": "2026-04-16T00:23:01Z",
+      "resolved_at": "2026-04-16T00:26:13Z"
+    },
+    {
+      "task_id": "BP5-SVC-014",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: commit 3f7e6fd closes responder resolution, canonical seed refs, and HTTP regression coverage for consultation surfaces.",
+      "status": "done",
+      "created_at": "2026-04-16T00:26:13Z",
+      "resolved_at": "2026-04-16T00:28:03Z"
+    }
+  ],
+  "blockers": []
+}

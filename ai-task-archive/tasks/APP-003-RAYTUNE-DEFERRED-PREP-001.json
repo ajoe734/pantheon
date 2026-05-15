@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "task_id": "APP-003-RAYTUNE-DEFERRED-PREP-001",
+  "archived_at": "2026-04-25T11:23:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-RAYTUNE-DEFERRED-PREP-001",
+    "title": "Scaffold Ray Tune deferred prep lane",
+    "summary_zh": "在不重開 RL gate 的前提下，先完成 Ray Tune 的 deferred prep lane：search-space schema、result adapter、offline tuning artifact format 與 smoke fixtures。",
+    "phase": "Phase 5 / Deferred Prep",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "APP-003-RLLIB-DEFERRED-PREP-001"
+    ],
+    "artifacts": [
+      "services/research/rllib/",
+      "services/learning/rl/",
+      "docs/reviews/2026-04-25-deferred-prep-execution-packet.md",
+      "OSS_INTEGRATION_CHECKLIST.md",
+      "RESEARCH_BACKEND_MATURITY_MATRIX.md"
+    ],
+    "acceptance": [
+      "Ray Tune deferred prep scaffold lands behind the RL gate",
+      "Search output schema and offline tuning fixtures land without activation claim",
+      "Canonical docs and packet preserve version-pinned deferred truth"
+    ],
+    "next": "Owner finalized the approved Ray Tune deferred-prep lane. Repo-local scaffold remains version-pinned, gate-closed, and prep-only with no activation claim.",
+    "last_update": "2026-04-25T11:23:33Z",
+    "deferred_scope": "prep_only",
+    "activation_boundary": "does_not_reopen_rl_gate",
+    "canonical_status_expected": "version-pinned",
+    "materialization_packet": "docs/reviews/2026-04-25-deferred-prep-execution-packet.md",
+    "task_class": "execution",
+    "auto_created_by": "Codex-deferred-prep-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Ray Tune deferred-prep lane 已核對通過；search-space schema、result adapter、offline optimizer_result artifact 與 smoke/unit evidence 已落地，且文件、matrix 與 checklist 皆維持 version-pinned / gate-closed / non-default truth。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-25T11:23:33Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "591656c9a6dee498753ddd93e7a669a26135a25d",
+      "commit_subject": "APP-003-RAYTUNE-DEFERRED-PREP-001 Finalize Ray Tune deferred prep lane",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-RAYTUNE-DEFERRED-PREP-001",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 68,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-RAYTUNE-DEFERRED-PREP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-25T09:44:35Z",
+      "resolved_at": "2026-04-25T09:45:24Z"
+    },
+    {
+      "task_id": "APP-003-RAYTUNE-DEFERRED-PREP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ray Tune deferred-prep scaffold is ready for review; see docs/reviews/2026-04-25-app-003-raytune-deferred-prep-001-codex-handoff.md for scope, verification, and canonical truth updates.",
+      "status": "done",
+      "created_at": "2026-04-25T10:00:52Z",
+      "resolved_at": "2026-04-25T10:09:01Z"
+    },
+    {
+      "task_id": "APP-003-RAYTUNE-DEFERRED-PREP-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T10:09:01Z",
+      "resolved_at": "2026-04-25T10:24:17Z"
+    },
+    {
+      "task_id": "APP-003-RAYTUNE-DEFERRED-PREP-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T10:24:17Z",
+      "resolved_at": "2026-04-25T10:47:43Z"
+    },
+    {
+      "task_id": "APP-003-RAYTUNE-DEFERRED-PREP-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-25T10:47:43Z",
+      "resolved_at": "2026-04-25T11:02:58Z"
+    },
+    {
+      "task_id": "APP-003-RAYTUNE-DEFERRED-PREP-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T11:02:58Z",
+      "resolved_at": "2026-04-25T11:21:57Z"
+    },
+    {
+      "task_id": "APP-003-RAYTUNE-DEFERRED-PREP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: deferred-prep scaffold, evidence, and canonical boundary are consistent. Owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-25T11:21:57Z",
+      "resolved_at": "2026-04-25T11:23:33Z"
+    }
+  ],
+  "blockers": []
+}

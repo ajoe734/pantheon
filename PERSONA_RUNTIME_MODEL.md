@@ -16,7 +16,7 @@ Conflict rule: this document overrides broader persona wording in architecture/p
 2. persona 執行時是什麼？
 3. persona 的 lifecycle / binding / session 之間如何互動？
 
-> 核心決議：persona 不是 prompt，也不是固定 process；  
+> 核心決議：persona 不是 prompt，也不是固定 process；
 > persona 是 **registry object + session object + runtime instance** 三層表示。
 
 ---
@@ -192,7 +192,7 @@ Consult Policy 決定 persona 何時不能單獨行動。
 計算出的 **effective capability set**。
 
 ### 規則
-capability snapshot 是 **session-bound immutable snapshot**。  
+capability snapshot 是 **session-bound immutable snapshot**。
 session 啟動後，不因 registry 中的政策變更而自動漂移。
 
 ---
@@ -344,6 +344,15 @@ metadata                    — arbitrary session metadata
 
 **Consistency invariant:** `runtime_binding_id`, `deployment_stage`, and `capital_pool_id` are co-dependent — all three must be set together or all absent. Setting `deployment_stage` or `capital_pool_id` without `runtime_binding_id` is a contract violation.
 
+deployment-bound session bootstrap 應透過 `services/capital/` 的治理 read path
+解析 capital / binding context，而不是直接改寫 binding store：
+
+- `GET /api/bindings/admissibility?persona_id=...&capital_pool_id=...&target_stage=...`
+- `GET /api/capital-pools/{pool_id}/live-owner`
+
+`SessionPersona` 只攜帶解析後的 `capital_pool_id` / `runtime_binding_id` /
+`deployment_stage` context；它不是 binding writer。
+
 ### CapabilitySnapshot
 ```text
 snapshot_id
@@ -411,7 +420,7 @@ current_control_state
 
 ## 17. 結論
 
-Pantheon 的 persona 不是 prompt，也不是固定 process。  
+Pantheon 的 persona 不是 prompt，也不是固定 process。
 它是：
 
 - 靜態上：registry object

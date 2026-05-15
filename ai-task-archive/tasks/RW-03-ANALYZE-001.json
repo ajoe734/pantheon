@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "task_id": "RW-03-ANALYZE-001",
+  "archived_at": "2026-04-19T19:09:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RW-03-ANALYZE-001",
+    "title": "Publish Research Analyze read model and metric aggregation contract",
+    "summary_zh": "為 RW-03 補齊 analysis list/detail、metric aggregation 與 comparative summary contract，讓分析頁不再需要 client-side grouping。",
+    "phase": "Execution / Wave 3 - Module Contract Expansion",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "RW-01-FOUNDATION-001",
+      "RW-02-SEARCH-001"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+      "docs/pantheon-handoffs/RW-005-research-workbench/PACKET_FAMILY.md",
+      "docs/lovable/PANTHEON_FRONTEND_SA.md"
+    ],
+    "acceptance": [
+      "analysis list and detail contracts are published",
+      "metric grouping is backend owned",
+      "compare summary no longer relies on client side aggregation"
+    ],
+    "next": "Owner finalized approved RW-03 Analyze contract bundle to done. Analysis list/detail, metric aggregation, and comparative summary contracts are accepted in commit 3535805; client-side grouping dependency removed.",
+    "last_update": "2026-04-19T19:09:33Z",
+    "source_plane": "architecture_gap_matrix",
+    "source_ref": {
+      "type": "architecture_gap_matrix",
+      "recorded_at": "2026-04-19T00:00:00Z",
+      "summary": "Materialized from the 2026-04-19 architecture-team input gap matrix for blocked module contracts",
+      "canonical_refs": [
+        "docs/reviews/2026-04-19-architecture-team-input-gap-matrix.md",
+        "WORKBENCH_DELIVERY_BACKLOG.md",
+        "docs/lovable/PANTHEON_FRONTEND_SA.md",
+        "DEVELOPMENT_WORKBREAKDOWN.md"
+      ]
+    },
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-19-wave3-wave4-architecture-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "RW-03 contract bundle 通過審查：BFF contract（兩條路由）、example payload、test suite（三個測試）、PACKET_FAMILY.md 更新、FRONTEND_SA 路由表修正均在 commit 420084f 中提交。三個接受標準全部通過；metric grouping 為 backend-owned，comparative_summary 不依賴前端聚合，無 mock 狀態或 client-side 推導。"
+    ],
+    "review_file": ".coordination/reviews/RW-03-ANALYZE-001-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T19:09:33Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "353580506b5f6bd107690cb3ee5b622d3ee82876",
+      "commit_subject": "RW-03-ANALYZE-001 finalize delivery metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "RW-03-ANALYZE-001",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 735,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "RW-03-ANALYZE-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T18:31:44Z",
+      "resolved_at": "2026-04-19T18:47:24Z"
+    },
+    {
+      "task_id": "RW-03-ANALYZE-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T18:48:34Z",
+      "resolved_at": "2026-04-19T18:48:45Z"
+    },
+    {
+      "task_id": "RW-03-ANALYZE-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "RW-03 Analyze contract is ready for review: published docs/bff + example payload, added BFF analysis list/detail read surfaces with backend-owned metric groups and comparative summary, updated Research Workbench / frontend SA status markers, and verified with pytest on RW-03 plus RW-01 contract tests.",
+      "status": "done",
+      "created_at": "2026-04-19T18:59:23Z",
+      "resolved_at": "2026-04-19T19:02:30Z"
+    },
+    {
+      "task_id": "RW-03-ANALYZE-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Two issues block approval: (1) FRONTEND_SA top route table line 283 still says 'blocked shell only' — update to contract-published pattern matching RW-01/RW-02. (2) All RW-03 files are uncommitted (untracked or unstaged) — same class as TW-01 blocker. Fix both and commit all seven files before re-handoff.",
+      "status": "done",
+      "created_at": "2026-04-19T19:02:30Z",
+      "resolved_at": "2026-04-19T19:02:30Z"
+    },
+    {
+      "task_id": "RW-03-ANALYZE-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Fixed the FRONTEND_SA route table inconsistency, committed the seven-file RW-03 contract bundle in 420084f, and re-ran RW-03 plus RW-01 contract tests (7 passed). Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-19T19:05:45Z",
+      "resolved_at": "2026-04-19T19:07:26Z"
+    },
+    {
+      "task_id": "RW-03-ANALYZE-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "RW-03 Analyze contract bundle approved. All three acceptance criteria pass. Both prior blockers resolved in commit 420084f.",
+      "status": "done",
+      "created_at": "2026-04-19T19:07:26Z",
+      "resolved_at": "2026-04-19T19:09:33Z"
+    }
+  ],
+  "blockers": []
+}

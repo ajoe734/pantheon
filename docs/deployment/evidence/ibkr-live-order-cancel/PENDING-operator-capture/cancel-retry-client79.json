@@ -1,0 +1,187 @@
+{
+  "status": "cancel_requested",
+  "generated_at": "2026-04-26T13:28:36Z",
+  "client_id": 79,
+  "order_id": "1",
+  "events": [
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "event": "orderStatus",
+      "order_id": 1,
+      "status": "PendingCancel",
+      "filled": 0.0,
+      "remaining": 1.0,
+      "perm_id": 204599504,
+      "client_id": 79
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "event": "nextValidId",
+      "order_id": 2
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "event": "orderStatus",
+      "order_id": 1,
+      "status": "PendingCancel",
+      "filled": 0.0,
+      "remaining": 1.0,
+      "perm_id": 204599504,
+      "client_id": 79
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "event": "nextValidId",
+      "order_id": 2
+    }
+  ],
+  "errors": [
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:cashfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usfuture",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usopt.nj",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usfarm.nj",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usopt",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "req_id": -1,
+      "error_code": 2106,
+      "error": "HMDS data farm connection is OK:euhmds",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "req_id": -1,
+      "error_code": 2106,
+      "error": "HMDS data farm connection is OK:fundfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "req_id": -1,
+      "error_code": 2106,
+      "error": "HMDS data farm connection is OK:ushmds",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "req_id": -1,
+      "error_code": 2158,
+      "error": "Sec-def data farm connection is OK:secdefil",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:cashfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usfuture",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usopt.nj",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usfarm.nj",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usopt",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "req_id": -1,
+      "error_code": 2106,
+      "error": "HMDS data farm connection is OK:euhmds",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "req_id": -1,
+      "error_code": 2106,
+      "error": "HMDS data farm connection is OK:fundfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "req_id": -1,
+      "error_code": 2106,
+      "error": "HMDS data farm connection is OK:ushmds",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "req_id": -1,
+      "error_code": 2158,
+      "error": "Sec-def data farm connection is OK:secdefil",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:28:31Z",
+      "req_id": 1,
+      "error_code": 10148,
+      "error": "OrderId 1 that needs to be cancelled cannot be cancelled, state: PendingCancel.",
+      "advanced_reject_json": null
+    }
+  ]
+}

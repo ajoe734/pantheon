@@ -34,10 +34,10 @@ implementation before allowing `BP5-LUV-004` to move to `review_approved`.
   - `docs/examples/PKT-002-incident-detail.json`
   - `docs/pantheon-handoffs/PKT-002-incident-detail/FRONTEND_CHANGE_SPEC.md`
 - Reviewed the mirrored frontend implementation in the sibling checkout:
-  - `/home/edna/code/front-ai-trading-system/src/pages/operator/IncidentDetail.tsx`
-  - `/home/edna/code/front-ai-trading-system/src/pages/operator/types.ts`
-  - `/home/edna/code/front-ai-trading-system/src/lib/bffClient.ts`
-  - `/home/edna/code/front-ai-trading-system/src/App.tsx`
+  - `/home/lupin/code/front-ai-trading-system/src/pages/operator/IncidentDetail.tsx`
+  - `/home/lupin/code/front-ai-trading-system/src/pages/operator/types.ts`
+  - `/home/lupin/code/front-ai-trading-system/src/lib/bffClient.ts`
+  - `/home/lupin/code/front-ai-trading-system/src/App.tsx`
 - Confirmed the shared BFF client is used for the composed detail endpoint and
   that the page does not re-fetch individual incident surfaces.
 - Re-ran targeted front-end validation successfully:
@@ -51,12 +51,12 @@ implementation before allowing `BP5-LUV-004` to move to `review_approved`.
 The detail page renders a plain button labeled "Open Action Drawer" but does not
 wire it to any drawer component or navigation path:
 
-- `/home/edna/code/front-ai-trading-system/src/pages/operator/IncidentDetail.tsx:549-555`
+- `/home/lupin/code/front-ai-trading-system/src/pages/operator/IncidentDetail.tsx:549-555`
 
 The mirrored app also mounts the detail page at `/incidents/:incidentId`, not
 the returned `/operator/incident/:incident_id` route:
 
-- `/home/edna/code/front-ai-trading-system/src/App.tsx:128-130`
+- `/home/lupin/code/front-ai-trading-system/src/App.tsx:128-130`
 - `.coordination/requests/PKT-002-incident-detail-ui-done.yaml:52-55`
 
 This blocks approval because the shipped UI does not yet enter the action-drawer
@@ -75,12 +75,12 @@ The mirrored frontend only derives the `stale` banner variant when a surface is
 already degraded and `served_from` is `cache` or `reconstructed`; otherwise the
 banner state falls back to `none`:
 
-- `/home/edna/code/front-ai-trading-system/src/pages/operator/IncidentDetail.tsx:201-205`
-- `/home/edna/code/front-ai-trading-system/src/lib/degradationBanner.ts:260-287`
+- `/home/lupin/code/front-ai-trading-system/src/pages/operator/IncidentDetail.tsx:201-205`
+- `/home/lupin/code/front-ai-trading-system/src/lib/degradationBanner.ts:260-287`
 
 The kill-switch panel itself also has no dedicated staleness banner render path:
 
-- `/home/edna/code/front-ai-trading-system/src/pages/operator/IncidentDetail.tsx:469-517`
+- `/home/lupin/code/front-ai-trading-system/src/pages/operator/IncidentDetail.tsx:469-517`
 
 ### 3. The kill-switch panel does not render `active_commands[]`
 
@@ -93,7 +93,7 @@ OK state:
 The mirrored implementation renders `status`, `last_confirmed_at`, and
 `last_triggered_at`, but no `active_commands` list:
 
-- `/home/edna/code/front-ai-trading-system/src/pages/operator/IncidentDetail.tsx:480-505`
+- `/home/lupin/code/front-ai-trading-system/src/pages/operator/IncidentDetail.tsx:480-505`
 
 ### 4. The returned QA/evidence bundle is not rerunnable against the mirrored tree
 

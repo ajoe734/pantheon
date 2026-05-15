@@ -1,0 +1,303 @@
+{
+  "provider": "Shioaji",
+  "mode": "test_key_simulation",
+  "auth": {
+    "status": "credential_ref_recorded",
+    "credential_ref": "secret://pantheon/shioaji-sim-test-key"
+  },
+  "account_readiness": {
+    "status": "simulation_account_ref_recorded",
+    "account_ref": "SHIOAJI-SIM-001"
+  },
+  "place": {
+    "status": "simulation_payload_validated",
+    "request": {
+      "symbol": "2330",
+      "side": "BUY",
+      "quantity": 1,
+      "order_type": "ROD",
+      "price_type": "LMT",
+      "odd_lot": false,
+      "day_trade_short": false,
+      "account": "SHIOAJI-SIM-001",
+      "price": 950.0,
+      "metadata": {
+        "smoke_mode": "test_key_simulation",
+        "task_id": "P2-BROKER-SANDBOX-ORDER-001"
+      },
+      "simulation": true
+    },
+    "side_effect": "simulation_only"
+  },
+  "cancel_replace": {
+    "status": "simulation_payload_validated",
+    "cancel_request": {
+      "order_ref": "shioaji-simulation-order-ref",
+      "account_ref": "SHIOAJI-SIM-001"
+    },
+    "replace_request": {
+      "order_ref": "shioaji-simulation-order-ref",
+      "price": 949.0
+    },
+    "side_effect": "simulation_only"
+  },
+  "task_id": "P2-BROKER-SANDBOX-ORDER-001",
+  "source_task_id": "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY",
+  "status": "passed",
+  "generated_at": "2026-05-04T05:00:08Z",
+  "symbol": "2330.TW",
+  "production_live": {
+    "enabled": false,
+    "order_side_effects_allowed": false,
+    "activation_gate": "not_requested"
+  },
+  "readback": {
+    "status": "readback_shape_validated",
+    "source": "sandbox_lifecycle_adapter",
+    "observed_order": {
+      "symbol": "2330",
+      "side": "BUY",
+      "quantity": 1,
+      "order_type": "ROD",
+      "price_type": "LMT",
+      "odd_lot": false,
+      "day_trade_short": false,
+      "account": "SHIOAJI-SIM-001",
+      "price": 950.0,
+      "metadata": {
+        "smoke_mode": "test_key_simulation",
+        "task_id": "P2-BROKER-SANDBOX-ORDER-001"
+      },
+      "simulation": true
+    },
+    "after_place": {
+      "status": "observed_open_or_validate_only",
+      "order_ref": "shioaji-simulation-order-ref",
+      "source": "sandbox_lifecycle_adapter",
+      "submitted_to_production_broker": false,
+      "real_capital_reserved": false,
+      "observed_order": {
+        "symbol": "2330",
+        "side": "BUY",
+        "quantity": 1,
+        "order_type": "ROD",
+        "price_type": "LMT",
+        "odd_lot": false,
+        "day_trade_short": false,
+        "account": "SHIOAJI-SIM-001",
+        "price": 950.0,
+        "metadata": {
+          "smoke_mode": "test_key_simulation",
+          "task_id": "P2-BROKER-SANDBOX-ORDER-001"
+        },
+        "simulation": true
+      }
+    },
+    "after_cancel": {
+      "status": "observed_cancelled_or_validate_only",
+      "order_ref": "shioaji-simulation-order-ref",
+      "source": "sandbox_lifecycle_adapter",
+      "submitted_to_production_broker": false,
+      "real_capital_reserved": false,
+      "cancel_request": {
+        "order_ref": "shioaji-simulation-order-ref",
+        "account_ref": "SHIOAJI-SIM-001"
+      }
+    }
+  },
+  "execution": {
+    "status": "no_broker_execution_attempted",
+    "fill_status": "no_fill_validate_only",
+    "matching_execution_count": 0,
+    "matching_quantity": 0
+  },
+  "telemetry": {
+    "status": "event_shape_validated",
+    "event": {
+      "event_type": "broker_order_smoke.validate_only",
+      "task_id": "P2-BROKER-SANDBOX-ORDER-001",
+      "source_task_id": "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY",
+      "provider": "Shioaji",
+      "mode": "test_key_simulation",
+      "generated_at": "2026-05-04T05:00:08Z",
+      "account_ref": "SHIOAJI-SIM-001",
+      "symbol": "2330.TW",
+      "side": "BUY",
+      "quantity": 1,
+      "production_live_enabled": false,
+      "raw_secret_material_present": false
+    }
+  },
+  "reconciliation": {
+    "status": "passed",
+    "checks": {
+      "place_request_symbol_matches": true,
+      "place_request_quantity_matches": true,
+      "cancel_or_replace_targets_same_order_ref": true,
+      "cancel_readback_present": true,
+      "production_live_side_effect_disabled": true,
+      "raw_secret_material_absent": true,
+      "no_real_capital_used": true
+    }
+  },
+  "order_lifecycle": {
+    "adapter": "sandbox_test_key_order_lifecycle",
+    "provider": "Shioaji",
+    "mode": "test_key_simulation",
+    "generated_at": "2026-05-04T05:00:08Z",
+    "order_ref": "shioaji-simulation-order-ref",
+    "account_ref": "SHIOAJI-SIM-001",
+    "credential_boundary": {
+      "credential_ref": "secret://pantheon/shioaji-sim-test-key",
+      "raw_secret_material_present": false,
+      "secret_material_source": "repo_safe_reference_or_absent"
+    },
+    "capital_boundary": {
+      "real_capital_used": false,
+      "real_capital_reserved": false,
+      "production_live_side_effects_allowed": false,
+      "production_live_order_submitted": false
+    },
+    "steps": [
+      {
+        "step": "place",
+        "status": "simulation_payload_validated",
+        "side_effect": "simulation_only",
+        "submitted_to_production_broker": false
+      },
+      {
+        "step": "readback_after_place",
+        "status": "observed_open_or_validate_only",
+        "order_ref": "shioaji-simulation-order-ref",
+        "source": "sandbox_lifecycle_adapter",
+        "submitted_to_production_broker": false,
+        "real_capital_reserved": false,
+        "observed_order": {
+          "symbol": "2330",
+          "side": "BUY",
+          "quantity": 1,
+          "order_type": "ROD",
+          "price_type": "LMT",
+          "odd_lot": false,
+          "day_trade_short": false,
+          "account": "SHIOAJI-SIM-001",
+          "price": 950.0,
+          "metadata": {
+            "smoke_mode": "test_key_simulation",
+            "task_id": "P2-BROKER-SANDBOX-ORDER-001"
+          },
+          "simulation": true
+        }
+      },
+      {
+        "step": "cancel",
+        "status": "simulation_payload_validated",
+        "side_effect": "simulation_only",
+        "submitted_to_production_broker": false
+      },
+      {
+        "step": "readback_after_cancel",
+        "status": "observed_cancelled_or_validate_only",
+        "order_ref": "shioaji-simulation-order-ref",
+        "source": "sandbox_lifecycle_adapter",
+        "submitted_to_production_broker": false,
+        "real_capital_reserved": false,
+        "cancel_request": {
+          "order_ref": "shioaji-simulation-order-ref",
+          "account_ref": "SHIOAJI-SIM-001"
+        }
+      },
+      {
+        "step": "reconcile",
+        "status": "passed",
+        "checks": {
+          "place_request_present": true,
+          "cancel_targets_same_order_ref": true,
+          "readback_after_place_present": true,
+          "readback_after_cancel_present": true,
+          "no_production_live_order": true,
+          "no_real_capital_reserved": true,
+          "credential_ref_only": true
+        }
+      }
+    ],
+    "readback": {
+      "after_place": {
+        "status": "observed_open_or_validate_only",
+        "order_ref": "shioaji-simulation-order-ref",
+        "source": "sandbox_lifecycle_adapter",
+        "submitted_to_production_broker": false,
+        "real_capital_reserved": false,
+        "observed_order": {
+          "symbol": "2330",
+          "side": "BUY",
+          "quantity": 1,
+          "order_type": "ROD",
+          "price_type": "LMT",
+          "odd_lot": false,
+          "day_trade_short": false,
+          "account": "SHIOAJI-SIM-001",
+          "price": 950.0,
+          "metadata": {
+            "smoke_mode": "test_key_simulation",
+            "task_id": "P2-BROKER-SANDBOX-ORDER-001"
+          },
+          "simulation": true
+        }
+      },
+      "after_cancel": {
+        "status": "observed_cancelled_or_validate_only",
+        "order_ref": "shioaji-simulation-order-ref",
+        "source": "sandbox_lifecycle_adapter",
+        "submitted_to_production_broker": false,
+        "real_capital_reserved": false,
+        "cancel_request": {
+          "order_ref": "shioaji-simulation-order-ref",
+          "account_ref": "SHIOAJI-SIM-001"
+        }
+      }
+    },
+    "execution": {
+      "status": "no_production_broker_execution_attempted",
+      "fill_status": "no_fill_sandbox_or_validate_only",
+      "matching_execution_count": 0,
+      "matching_quantity": 0
+    },
+    "reconciliation": {
+      "status": "passed",
+      "checks": {
+        "place_request_present": true,
+        "cancel_targets_same_order_ref": true,
+        "readback_after_place_present": true,
+        "readback_after_cancel_present": true,
+        "no_production_live_order": true,
+        "no_real_capital_reserved": true,
+        "credential_ref_only": true
+      }
+    }
+  },
+  "no_real_capital": {
+    "status": "passed",
+    "source_task_id": "SVC-EXECUTION-SANDBOX-CANARY-ACTIVATION-READY",
+    "real_capital_used": false,
+    "real_capital_reserved": false,
+    "production_live_order_submitted": false,
+    "production_live_cancel_submitted": false,
+    "broker_secret_boundary": {
+      "credential_ref": "secret://pantheon/shioaji-sim-test-key",
+      "raw_secret_material_present": false,
+      "secret_material_source": "repo_safe_reference_or_absent"
+    },
+    "capital_boundary": {
+      "real_capital_used": false,
+      "real_capital_reserved": false,
+      "production_live_side_effects_allowed": false,
+      "production_live_order_submitted": false
+    }
+  },
+  "notes": [
+    "This packet contains no raw broker secrets.",
+    "This runner validates sandbox/simulation/test-key/validate-only order API lifecycle shape only.",
+    "Production-live order, cancel/replace, position, and capital side effects remain disabled."
+  ]
+}

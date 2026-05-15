@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "P2-TRL-RUNTIME-DATA-ACTIVATION-001",
+  "archived_at": "2026-05-01T16:58:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P2-TRL-RUNTIME-DATA-ACTIVATION-001",
+    "title": "TRL runtime-data activation and real DPO smoke",
+    "summary_zh": "把 TRL 從 runtime-data gated 推進到實作完成：接 FB-002 preference pairs，跑 real TRL DPO 或明確 install/config error，產生 model artifact 與 evaluator/registry candidate handoff。",
+    "phase": "P2 Wave 8 External Activation",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "P2-OSS-ACTIVATE-001"
+    ],
+    "artifacts": [
+      "services/learning/trl",
+      "services/feedback",
+      "services/evaluation",
+      "services/research-worker-gateway",
+      "services/registry",
+      "OSS_INTEGRATION_CHECKLIST.md",
+      "docs/deployment/external-data-integration-execution-task-inventory.md"
+    ],
+    "acceptance": [
+      "TRL reads governed FB-002 preference pairs and records volume/quality gate evidence",
+      "Real TRL DPO backend runs with bounded test data or fails with explicit dependency/config evidence not silent stub",
+      "Model artifact checksum evaluator packet and registry candidate handoff are produced without direct governance write or order routing"
+    ],
+    "next": "Done: task-scoped closeout committed in a9c7bf1. TRL runtime-data activation evidence is durable: 240 governed FB-002 events/pairs, evaluator/registry/candidate packets, explicit real backend dependency/config evidence (ModuleNotFoundError: No module named 'trl', silent_stub_fallback=false), no governance write or order routing. Verification: python3 -m unittest discover -s services/learning/trl -p 'test_*.py' => 42 OK; python3 services/learning/trl/smoke_test.py => assertions OK; python3 services/learning/trl/activation_smoke.py --enable-activation-ready --backend real --output-dir /tmp/pantheon/learning/trl/finalize-runtime-data-activation-real => explicit dependency/config evidence.",
+    "last_update": "2026-05-01T16:58:28Z",
+    "task_class": "execution",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：TRL unit tests 42 項 OK、stub smoke OK、real-backend activation smoke 重現 explicit dependency/config evidence。",
+      "確認 FB-002 bounded evidence、evaluator/registry/candidate packets 與 no governance write/no order routing boundary 符合 acceptance。",
+      "Owner closeout 時請刷新仍寫 review handoff pending 的 task inventory/status wording。"
+    ],
+    "review_file": "support/reviews/P2-TRL-RUNTIME-DATA-ACTIVATION-001-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T16:58:28Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "a9c7bf15e894a95d7bd35a63af072f9a2e3ccdc9",
+      "commit_subject": "P2-TRL-RUNTIME-DATA-ACTIVATION-001 finalize TRL runtime data activation",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "P2-TRL-RUNTIME-DATA-ACTIVATION-001",
+        "Reviewer": "Codex",
+        "- python3 services/learning/trl/activation_smoke.py --enable-activation-ready --backend real --output-dir /tmp/pantheon/learning/trl/finalize-runtime-data-activation-real => explicit TRL dependency/config evidence, ModuleNotFoundError": "No module named 'trl', silent_stub_fallback=false"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 173,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P2-TRL-RUNTIME-DATA-ACTIVATION-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implementation ready for review: added explicit-gated TRL activation evidence harness plus evaluator_packet persistence; bounded FB-002 evidence produced at support/evidence/P2-TRL-RUNTIME-DATA-ACTIVATION-001 with 240 governed events/pairs, 3 strategy families, all approve/edit/reject actions, checksum artifact bundle, evaluator packet, registry entry, candidate packet, deployment_stage none, no governance write/order route; real TRL backend attempted and recorded explicit dependency/config error No module named 'trl' with silent_stub_fallback=false. Verification: python3 -m unittest discover -s services/learning/trl -p 'test_*.py' => 42 OK; python3 services/learning/trl/smoke_test.py => assertions OK; activation_smoke.py --backend real completed and wrote evidence.",
+      "status": "done",
+      "created_at": "2026-05-01T16:32:47Z",
+      "resolved_at": "2026-05-01T16:46:42Z"
+    },
+    {
+      "task_id": "P2-TRL-RUNTIME-DATA-ACTIVATION-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved by Codex. Evidence bundle and focused verification satisfy acceptance; owner Codex2 should perform task-scoped closeout, commit, and done finalization.",
+      "status": "done",
+      "created_at": "2026-05-01T16:46:42Z",
+      "resolved_at": "2026-05-01T16:58:28Z"
+    }
+  ],
+  "blockers": []
+}

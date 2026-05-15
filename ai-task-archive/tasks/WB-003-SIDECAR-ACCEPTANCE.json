@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "WB-003-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-14T09:20:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "WB-003-SIDECAR-ACCEPTANCE",
+    "title": "Prepare WB-003 acceptance packet and dependency map",
+    "summary_zh": "平行支援 WB-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Workbench Backlog",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LOOP-001"
+    ],
+    "artifacts": [
+      "support/sidecars/WB-003/WB-003-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only acceptance packet after Claude review approval; AC-2.4 citation gap and AC-3 per-module mapping gap remain flagged for parent owner follow-up.",
+    "last_update": "2026-04-14T09:20:26Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "WB-003",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過｜sidecar 範圍正確：僅建立支援材料，未修改 canonical truth｜AC-1 五個模組完整列舉，依據充分｜AC-2 正確標記前端方向引用缺失 (AC-2.4 ⚠️)，flag 本身判斷正確｜AC-3 正確識別僅 workbench 層級描述，per-module 矩陣缺失，scaffold 有效｜Dependency map 準確：LOOP-001→WB-003，非依賴項與下游消費者分類清晰｜G1-G5 reviewer gate 為 parent task 審查提供有效框架｜小瑕疵：Header 仍顯示 Sidecar Reviewer: Qwen，為 auto-reassign 前遺留，不阻斷審查"
+    ],
+    "review_file": "support/sidecars/WB-003/WB-003-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-14T09:20:26Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "64c4daebd3d909129ffb6f5e06b2d12f8742a55e",
+      "commit_subject": "WB-003-SIDECAR-ACCEPTANCE normalize reviewer dispatch note",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "WB-003-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 130,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "WB-003-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Acceptance packet created at support/sidecars/WB-003/WB-003-SIDECAR-ACCEPTANCE.md. It verifies module inventory and blocked-on-BFF positioning, and flags two review gates for the parent task: missing citation for 'directionally-correct front-end work' and missing per-module backend prerequisite mapping.",
+      "status": "done",
+      "created_at": "2026-04-14T09:10:40Z",
+      "resolved_at": "2026-04-14T09:15:26Z"
+    },
+    {
+      "task_id": "WB-003-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-14T09:15:26Z",
+      "resolved_at": "2026-04-14T09:16:31Z"
+    },
+    {
+      "task_id": "WB-003-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar review passed. Packet accurately characterizes WB-003 evidence state, correctly flags AC-2.4 citation gap and AC-3 per-module mapping gap as open questions for the parent task owner. Scope boundary maintained — no canonical truth modified. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-14T09:16:31Z",
+      "resolved_at": "2026-04-14T09:20:26Z"
+    }
+  ],
+  "blockers": []
+}

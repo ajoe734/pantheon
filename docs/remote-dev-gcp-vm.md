@@ -1,0 +1,368 @@
+# GCP VM Remote Development
+
+This repo can be developed on the GCP VM through a small remote stack and a local sync loop.
+
+## Pull Full Developer State From An Old VM
+
+Use this on the new VM when cutting over from an old development VM. The default source is `edna@pantheon-taiwan` in project `pantheon-493602`, zone `asia-east1-b`, reached through `gcloud compute ssh`.
+
+```bash
+cd ~/code/pantheon
+bash scripts/pull_old_vm_dev_state.sh \
+  --include-cache \
+  --include-vscode-server \
+  --include-docker-volumes
+```
+
+It copies repo workspaces, VS Code extensions and history, VS Code server data, Codex/Claude development records, shell history, Git/GitHub/Docker config, selected package and Playwright caches, Docker volumes, SSH config/development keys, and gcloud config/auth state.
+
+Existing target files are backed up under `~/.migration-backups/old-vm-dev-state-*`. The script keeps the new VM's `~/.ssh/authorized_keys` and GCP compute SSH key unless `--include-authorized-keys` is passed.
+
+For an exact Docker volume copy, stop services that write those volumes on both VMs first, then restart them after the copy.
+
+## VS Code Remote SSH
+
+The local SSH alias is already configured in [~/.ssh/config](/home/ajoe734/.ssh/config:1):
+
+```sshconfig
+Host pantheon-gcp
+  HostName 34.68.24.220
+  User edna
+  IdentityFile ~/.ssh/pantheon_gcp_vm_ed25519
+```
+
+Use it like this:
+
+```bash
+ssh pantheon-gcp
+cd ~/code/pantheon
+```
+
+In VS Code:
+
+1. Install the `Remote - SSH` extension.
+2. Run `Remote-SSH: Connect to Host...`.
+3. Choose `pantheon-gcp`.
+4. Open `/home/lupin/code/pantheon`.
+
+Recommended first checks in the remote terminal:
+
+```bash
+git status
+docker --version
+docker compose version
+```
+
+## Sync Local Changes To The VM
+
+Use the sync helper from the local repo root:
+
+```bash
+bash scripts/sync_remote_dev.sh
+```
+
+What it does:
+
+- rsyncs the local working tree to `/home/lupin/code/pantheon`
+- excludes local-only state such as `.git/`, venvs, `__pycache__`, and orchestrator runtime files
+- refreshes git submodules on the VM
+- prints the remote `git status`
+
+Optional overrides:
+
+```bash
+PANTHEON_REMOTE_HOST=pantheon-gcp \
+PANTHEON_REMOTE_PATH=/home/lupin/code/pantheon \
+bash scripts/sync_remote_dev.sh
+```
+
+For VM cutover or full-state handoff, use the handoff wrapper instead:
+
+```bash
+bash scripts/sync_remote_handoff.sh
+```
+
+That mode keeps only machine-local exclusions such as `.git/`, venvs, cache files, `*.pid`, and `*.lock`, so repo state like `.orchestrator/state.json`, planning state, task briefs, and evidence also move to the VM.
+
+## Minimal Remote Dev Stack
+
+The minimal stack is defined in [docker-compose.remote-dev.yml](/home/ajoe734/code/pantheon/docker-compose.remote-dev.yml:1).
+
+It starts only:
+
+- `signal-store`
+- `control-plane-persona`
+- `control-plane-router`
+
+All ports bind to `127.0.0.1` on the VM, so they are not exposed directly to the public internet.
+
+Start it from your local machine:
+
+```bash
+bash scripts/remote_dev_stack.sh up
+```
+
+Check status:
+
+```bash
+bash scripts/remote_dev_stack.sh status
+bash scripts/remote_dev_stack.sh health
+```
+
+Stop it:
+
+```bash
+bash scripts/remote_dev_stack.sh down
+```
+
+## Remote Orchestrator Control
+
+Use the helper below to manage repo-writer processes on the VM:
+
+```bash
+bash scripts/remote_orchestrator.sh status
+bash scripts/remote_orchestrator.sh stop
+bash scripts/remote_orchestrator.sh start
+bash scripts/remote_orchestrator.sh logs
+```
+
+Recommended handoff sequence:
+
+```bash
+bash scripts/remote_orchestrator.sh stop
+bash scripts/sync_remote_handoff.sh
+bash scripts/remote_orchestrator.sh start
+```
+
+If you want to access the router from your local browser, open an SSH tunnel:
+
+```bash
+ssh -L 8001:127.0.0.1:8001 -L 8002:127.0.0.1:8002 pantheon-gcp
+```
+
+Then browse:
+
+- `http://127.0.0.1:8001/health`
+- `http://127.0.0.1:8002/health`
+
+## Honest Service Stack
+
+The full single-VM baseline for `BP5-SVC-016` now lives in [docker-compose.yml](/home/lupin/code/pantheon/docker-compose.yml:1).
+
+It boots the honest backend stack instead of the old research-worker topology:
+
+- `runtime-manager`
+- `governance`
+- `telemetry`
+- `incidents`
+- `postmortems`
+- `operator-bff`
+- `signal-store`
+
+Start it on the VM:
+
+```bash
+cd ~/code/pantheon
+COMPOSE_BAKE=false docker compose up -d --build
+```
+
+Check health:
+
+```bash
+docker compose ps
+curl -fsS http://127.0.0.1:18081/__health__ && printf '\n'
+curl -fsS http://127.0.0.1:18082/health && printf '\n'
+curl -fsS http://127.0.0.1:18083/__health__ && printf '\n'
+curl -fsS http://127.0.0.1:18090/__health__ && printf '\n'
+curl -fsS http://127.0.0.1:18091/__health__ && printf '\n'
+curl -fsS http://127.0.0.1:18001/health && printf '\n'
+```
+
+Run the compose-backed smoke path from inside the same topology:
+
+```bash
+cd ~/code/pantheon
+COMPOSE_BAKE=false docker compose --profile smoke up --build --abort-on-container-exit smoke-stack
+```
+
+That smoke profile proves:
+
+- runtime-manager can create a canonical runtime binding
+- telemetry can ingest an event against that binding
+- incident and postmortem evidence services can persist linked records
+- operator BFF stays in `fresh` mode and replays SSE without local fallback data
+
+When you are done:
+
+```bash
+cd ~/code/pantheon
+docker compose down --remove-orphans
+```
+
+## Nonprod GCP Baseline Bootstrap
+
+`BP5-GCP-001` adds a repo-local bootstrap helper for the first real GCP nonprod foundation:
+
+```bash
+cd ~/code/pantheon
+bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-shared --dry-run
+```
+
+Then execute it for real once the target project is confirmed:
+
+```bash
+cd ~/code/pantheon
+bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-shared
+```
+
+What it establishes:
+
+- GitHub Actions OIDC -> GCP Workload Identity Federation
+- `pantheon-cloud-build` submitter service account for `.github/workflows/gcp-deploy.yml`
+- baseline runtime service accounts for Cloud Run, GKE Autopilot, and GKE execution workloads
+- `pantheon-dev-*` Secret Manager namespace plus secret-level IAM bindings
+
+Recommended operator flow on the VM:
+
+```bash
+gcloud auth login
+gcloud config set project pantheon-shared
+bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-shared --dry-run
+bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-shared
+```
+
+If the dry run cannot read the project number from `gcloud projects describe`, pass it explicitly:
+
+```bash
+bash scripts/gcp_nonprod_baseline.sh \
+  --project-id pantheon-shared \
+  --project-number 123456789012 \
+  --dry-run
+```
+
+After the bootstrap, add real secret versions explicitly:
+
+```bash
+printf '%s' 'REPLACE_ME' | gcloud secrets versions add pantheon-dev-postgres-url \
+  --project='pantheon-shared' --data-file=-
+```
+
+Then wire runtime identities during deploy rather than in GitHub secrets:
+
+```bash
+gcloud run deploy pantheon-dev-bff \
+  --project='pantheon-shared' \
+  --region='asia-east1' \
+  --service-account='pantheon-dev-control-plane@pantheon-shared.iam.gserviceaccount.com' \
+  --image='asia-east1-docker.pkg.dev/pantheon-shared/pantheon/bff:dev-candidate' \
+  --set-secrets='DATABASE_URL=pantheon-dev-postgres-url:1'
+```
+
+This keeps the boundary explicit:
+
+- GitHub only submits builds with short-lived WIF credentials
+- Secret Manager remains the environment truth for runtime credentials
+- Cloud Run / GKE service accounts, not local shell lore, define who can read which secret
+
+## Nonprod Runtime Foundation
+
+`BP5-GCP-002` extends the baseline from identity-only bootstrap to actual nonprod runtime infrastructure. Run it from the VM after `BP5-GCP-001` is understood and the target runtime project is decided:
+
+```bash
+cd ~/code/pantheon
+gcloud auth login
+gcloud config set project pantheon-nonprod
+bash scripts/gcp_nonprod_foundation.sh \
+  --project-id pantheon-nonprod \
+  --shared-project-id pantheon-shared \
+  --dry-run
+```
+
+Then execute it for real:
+
+```bash
+cd ~/code/pantheon
+bash scripts/gcp_nonprod_foundation.sh \
+  --project-id pantheon-nonprod \
+  --shared-project-id pantheon-shared
+```
+
+What it establishes:
+
+- one custom nonprod VPC plus separate `dev` and `sandbox` subnets
+- Private Service Access for Cloud SQL private IP
+- `pantheon-dev-*` and `pantheon-sandbox-*` runtime service accounts and secret containers
+- per-environment Cloud SQL instances: `pantheon-dev-pg` and `pantheon-sandbox-pg`
+- per-environment Pub/Sub backbone topics and smoke subscriptions
+- per-environment VPC connectors for Cloud Run internal ingress + private egress
+
+Recommended operator follow-up:
+
+```bash
+DEV_DB_HOST=$(gcloud sql instances describe pantheon-dev-pg --project='pantheon-nonprod' --format='value(ipAddresses[0].ipAddress)')
+printf '%s' "postgresql://pantheon_app:REPLACE_ME@${DEV_DB_HOST}:5432/pantheon" | \
+  gcloud secrets versions add pantheon-dev-postgres-url --project='pantheon-nonprod' --data-file=-
+```
+
+Use internal-only Cloud Run deploys in nonprod:
+
+```bash
+gcloud run deploy pantheon-dev-bff \
+  --project='pantheon-nonprod' \
+  --region='asia-east1' \
+  --service-account='pantheon-dev-control-plane@pantheon-nonprod.iam.gserviceaccount.com' \
+  --ingress='internal' \
+  --no-allow-unauthenticated \
+  --vpc-connector='pantheon-dev-connector' \
+  --vpc-egress='private-ranges-only' \
+  --image='asia-east1-docker.pkg.dev/pantheon-shared/pantheon/bff:dev-candidate' \
+  --set-secrets='DATABASE_URL=pantheon-dev-postgres-url:1'
+```
+
+This keeps the nonprod split explicit:
+
+- shared project owns build and image publication truth
+- runtime project owns environment-scoped DB, Pub/Sub, networking, and runtime secrets
+- `dev` and `sandbox` do not share Cloud SQL instances, Pub/Sub topics, or runtime identities
+
+## Dashboard Via `/dashboard/`
+
+If you want the dashboard on the standard web port instead of exposing `4173`, install the nginx reverse proxy from the repo:
+
+```bash
+bash scripts/install_dashboard_proxy.sh
+```
+
+That maps:
+
+- `http://<vm-host>/dashboard/` -> `http://127.0.0.1:4173/`
+
+Recommended dashboard launch on the VM:
+
+```bash
+cd ~/code/pantheon
+HOST=127.0.0.1 PORT=4173 bash scripts/run-dashboard.sh
+```
+
+Important: if `http://<external-ip>/dashboard/` still times out after nginx is up, the remaining issue is outside the VM, usually GCP ingress rules or missing instance network tags such as `http-server`.
+
+## Dashboard Via Cloudflare Quick Tunnel
+
+If you want a temporary public URL like `https://<random>.trycloudflare.com`, you can tunnel the local web port without opening any GCP firewall ports.
+
+Install `cloudflared` once:
+
+```bash
+curl -fsSL -o /tmp/cloudflared.deb \
+  https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+sudo dpkg -i /tmp/cloudflared.deb
+```
+
+Then start the tunnel:
+
+```bash
+cd ~/code/pantheon
+bash scripts/start_dashboard_tunnel.sh
+```
+
+The helper tunnels `http://127.0.0.1:80`, so the public entrypoint will redirect to `/dashboard/`.

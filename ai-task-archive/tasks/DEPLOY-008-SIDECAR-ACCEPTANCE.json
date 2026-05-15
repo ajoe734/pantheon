@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "DEPLOY-008-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-18T04:08:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DEPLOY-008-SIDECAR-ACCEPTANCE",
+    "title": "Prepare DEPLOY-008 acceptance packet and dependency map",
+    "summary_zh": "平行支援 DEPLOY-008，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "DEPLOY-007"
+    ],
+    "artifacts": [
+      "support/sidecars/DEPLOY-008/DEPLOY-008-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar acceptance packet to done. Packet remains support-only historical context; Claude approval recorded the pre-implementation snapshot, and current DEPLOY-008 mainline landing is noted in review notes.",
+    "last_update": "2026-04-18T04:08:13Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "DEPLOY-008",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "封包準確反映準備時的 repo 快照：DEPLOY-007 已關閉、VM-2 三件 artifact 在封包準備時缺失（已如實記錄）。自封包提交後，DEPLOY-008 主線實作已落地（commit 824ca7c），docker-compose.exec.yml、env/prod-exec.env.example、docs/deployment/exec-vm-secrets-guide.md 現已存在。封包 acceptance checklist 未超出父任務範圍，dependency map 正確識別 DEPLOY-007（上游）與 DEPLOY-009（下游）。第 7 節 reviewer 名稱為 Gemini（原始指派），目前為 Claude，純外觀問題不影響實質內容。Sidecar 範圍限制符合要求，未修改任何 canonical truth。"
+    ],
+    "review_file": "support/sidecars/DEPLOY-008/DEPLOY-008-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-18T04:08:13Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "e895ac33a3823b58cfad0861a553bb19f855426e",
+      "commit_subject": "DEPLOY-008-SIDECAR-ACCEPTANCE: finalize metadata checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "DEPLOY-008-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 491,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DEPLOY-008-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Acceptance packet ready at support/sidecars/DEPLOY-008/DEPLOY-008-SIDECAR-ACCEPTANCE.md. It captures the accepted VM-2 scope, confirms DEPLOY-007 is complete, and records that docker-compose.exec.yml, env/prod-exec.env.example, and docs/deployment/exec-vm-secrets-guide.md are still absent, so the parent remains unimplemented.",
+      "status": "done",
+      "created_at": "2026-04-17T23:56:25Z",
+      "resolved_at": "2026-04-18T00:09:20Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-ACCEPTANCE",
+      "from": "Gemini",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Gemini to Qwen after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-18T00:09:20Z",
+      "resolved_at": "2026-04-18T00:11:56Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-18T00:11:56Z",
+      "resolved_at": "2026-04-18T04:05:50Z"
+    },
+    {
+      "task_id": "DEPLOY-008-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet approved: snapshot was accurate at preparation time; DEPLOY-008 artifacts have since landed in commit 824ca7c; checklist matches parent scope; dependency map correct; support-only scope respected throughout.",
+      "status": "done",
+      "created_at": "2026-04-18T04:05:50Z",
+      "resolved_at": "2026-04-18T04:08:14Z"
+    }
+  ],
+  "blockers": []
+}

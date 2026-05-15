@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-09T13:58:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BFF-LUV-GAP-010 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BFF-LUV-GAP-010，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/BFF-LUV-GAP-010/BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved support-only BFF-LUV-GAP-010 handoff packet. Task-scoped artifact commit: 9f0d77aa. Verification: pytest SSE substrate + route registry -> 17 passed; json.tool route snapshot passed; git diff --check support packet passed. Existing unrelated dirty worktree changes left unstaged.",
+    "last_update": "2026-05-09T13:58:11Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BFF-LUV-GAP-010",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審核通過：support packet 只變更 support/sidecars/BFF-LUV-GAP-010/BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF.md，未擴張 canonical truth 或 runtime 實作。",
+      "route/channel table 已對照 BFF-LUV-GAP-010 alias handlers 與 registry rows；/bff/events/stream 雖另有 later SEM generic route，FastAPI route order 仍先命中 bff_events_stream_alias。",
+      "Verification: python3 -m pytest services/control-plane/bff/test_pkt005_sse_substrate_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 17 passed; json.tool snapshot check passed; git diff --check support packet passed; HTTP replay-miss probe all 11 compatibility routes returned 409, no 404."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-09T13:58:11Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "9f0d77aa32990da150b3b344027f9a932befc043",
+      "commit_subject": "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF finalize handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex2",
+        "Verification": "python3 -m pytest services/control-plane/bff/test_pkt005_sse_substrate_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 17 passed; python3 -m json.tool services/control-plane/bff/contract_snapshots/execute_plans_bff_routes.json -> passed; git diff --check -- support/sidecars/BFF-LUV-GAP-010/BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF.md -> passed."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 29,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 20,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Preparing handoff packet for reviewer Codex2.",
+      "status": "done",
+      "created_at": "2026-05-08T17:56:59Z",
+      "resolved_at": "2026-05-08T23:03:19Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Chairman flagged this sidecar review as stale on 2026-05-08T22:59:11Z. Please review the support-only handoff packet and either approve it or return concrete issues; keep BFF-LUV-GAP-001 mainline refresh unblocked.",
+      "status": "done",
+      "created_at": "2026-05-08T23:03:19Z",
+      "resolved_at": "2026-05-09T10:19:21Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF",
+      "from": "Gemini",
+      "to": "Gemini2",
+      "message": "Chair reassigned review from Gemini to Gemini2: Gemini is disabled in ready_dispatcher.disabled_agents, so this support-only review will not auto-dispatch; Gemini2 is idle, verified, and can drain it sequentially with the adjacent sidecar review.",
+      "status": "done",
+      "created_at": "2026-05-09T10:19:21Z",
+      "resolved_at": "2026-05-09T10:53:13Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF",
+      "from": "Gemini2",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Gemini2 to Codex2 after repeated Gemini2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-05-09T10:53:13Z",
+      "resolved_at": "2026-05-09T13:44:12Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review changes requested: current handoff packet is a placeholder and does not satisfy the brief. Replace it with task-specific support content for BFF-LUV-GAP-010: summarize the delivered SSE compatibility routes and channel mappings, identify operator/frontend consumption notes and any query or realtime gaps, include parent-owner absorption guidance, and remove the inaccurate note that the task brief could not be accessed. Keep changes limited to support artifacts; no canonical truth or runtime implementation edits.",
+      "status": "done",
+      "created_at": "2026-05-09T13:44:12Z",
+      "resolved_at": "2026-05-09T13:44:12Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only BFF-LUV-GAP-010 SSE handoff packet replaced with task-specific content: delivered alias route/channel map, frontend/operator consumption notes, query/realtime gaps, and parent absorption guidance. Verification: python3 -m pytest services/control-plane/bff/test_pkt005_sse_substrate_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -q -> 17 passed; json.tool route snapshot passed; git diff --check support packet passed; placeholder/missing-brief language absent. Ready for Codex2 review.",
+      "status": "done",
+      "created_at": "2026-05-09T13:51:59Z",
+      "resolved_at": "2026-05-09T13:56:07Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-010-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved by Codex2: support-only handoff packet matches BFF-LUV-GAP-010 alias routes, registry rows, frontend caveats, and parent absorption guidance. Verification: pytest SSE substrate + route registry -> 17 passed; json.tool snapshot check passed; git diff --check support packet passed; HTTP replay-miss probe returned 409 for all 11 compatibility routes with no 404. Owner should finalize closeout.",
+      "status": "done",
+      "created_at": "2026-05-09T13:56:07Z",
+      "resolved_at": "2026-05-09T13:58:11Z"
+    }
+  ],
+  "blockers": []
+}

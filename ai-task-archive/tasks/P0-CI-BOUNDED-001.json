@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "task_id": "P0-CI-BOUNDED-001",
+  "archived_at": "2026-05-01T08:00:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-CI-BOUNDED-001",
+    "title": "Add source/search bounded and fail-closed adapter CI",
+    "summary_zh": "為 bounded source/search baseline 與 research/OpenClaw fail-closed posture 補 CI。",
+    "phase": "Pantheon P0 Paper Loop",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "depends_on": [
+      "P0-CI-BRIDGE-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_sa/SA-16_data_search_external_source_gap_analysis.md",
+      "docs/04/pantheon_p0_sd/SD-P0-06_Submodule_Compose_Health_CI_Verification.md"
+    ],
+    "acceptance": [
+      "static_records, guarded external_feed, DLQ/frontier/audit replay/incremental refresh smoke pass",
+      "no unrestricted crawler and OpenClaw/research production adapters fail closed by default"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-05-01T03:58:17Z",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Closed P0-CI-BOUNDED-001 after task-scoped commit 8a62430. Verified adapter runner, bounded source/search tests, posture/compose slice, OSS matrix, OpenClaw fail-closed smoke, and docker compose source-search-bounded smoke.",
+    "last_update": "2026-05-01T08:00:56Z",
+    "review_notes_zh": [
+      "Approved after rerunning adapter runner, source/search bounded tests, focused posture slice, OSS matrix, OpenClaw smoke, and docker compose source-search-bounded smoke. Previous blockers are resolved; owner may finalize with task-scoped commit."
+    ],
+    "review_file": ".orchestrator/reviews/P0-CI-BOUNDED-001-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T08:00:56Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "8a624309a5087b691bfc6755de5cb8b402a91909",
+      "commit_subject": "P0-CI-BOUNDED-001 add bounded adapter CI",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "P0-CI-BOUNDED-001",
+        "Reviewer": "Codex",
+        "Verification": "py_compile adapter smoke targets; pytest source/search bounded tests (7 passed); pytest posture/compose slice (9 passed); scripts/ci/run_adapter_checks.py passed; OSS matrix 16/16 passed; OpenClaw smoke 13/13 passed; docker compose source-search-bounded config/build/run passed."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 116,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 5,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-CI-BOUNDED-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned P0-CI-BOUNDED-001 away from sidecar-only lane Copilot; reviewer Copilot -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-05-01T03:59:41Z",
+      "resolved_at": "2026-05-01T06:32:13Z"
+    },
+    {
+      "task_id": "P0-CI-BOUNDED-001",
+      "from": "Codex",
+      "to": "Gemini2",
+      "message": "Helper-claimed by Gemini2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-01T06:32:13Z",
+      "resolved_at": "2026-05-01T06:37:50Z"
+    },
+    {
+      "task_id": "P0-CI-BOUNDED-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented P0 bounded source/search and fail-closed adapter CI. Verification: py_compile smoke scripts; pytest services/test_source_search_posture.py services/source_ingestion/test_compose_activation.py services/search/tests/test_service_activation_contract.py -q (9 passed); python3 scripts/test_smoke_oss_activation_ready_matrix.py (16/16 matrix passed); run_research_activation_gates --as-of 2026-05-01 exits 2 with activation_gates_blocked; smoke_openclaw_activation_ready_e2e.py 13/13 passed; docker compose --profile source-search-bounded run --rm --use-aliases source-search-bounded-smoke passed.",
+      "status": "done",
+      "created_at": "2026-05-01T07:19:22Z",
+      "resolved_at": "2026-05-01T07:23:49Z"
+    },
+    {
+      "task_id": "P0-CI-BOUNDED-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Changes requested by Codex review: cloudbuild.yaml references missing scripts/ci/run_adapter_checks.py; services/search/tests/test_search_refresh.py has SyntaxError; services/source_ingestion/tests/test_bounded_ingestion.py fails against nonexistent modules/attributes. Review artifact: .orchestrator/reviews/P0-CI-BOUNDED-001-codex-review.md",
+      "status": "done",
+      "created_at": "2026-05-01T07:23:49Z",
+      "resolved_at": "2026-05-01T07:23:49Z"
+    },
+    {
+      "task_id": "P0-CI-BOUNDED-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Addressed review blockers: added scripts/ci/run_adapter_checks.py; replaced placeholder source/search tests with runnable bounded tests; verified py_compile, new tests, adapter checks, and focused source/search posture slice.",
+      "status": "done",
+      "created_at": "2026-05-01T07:31:22Z",
+      "resolved_at": "2026-05-01T07:32:33Z"
+    },
+    {
+      "task_id": "P0-CI-BOUNDED-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review blockers fixed: added scripts/ci/run_adapter_checks.py for Cloud Build adapter CI; verified py_compile for adapter runner/search refresh/bounded ingestion; pytest search refresh + bounded ingestion 7 passed; focused source/search posture slice 9 passed; OSS matrix 16/16; OpenClaw smoke 13/13; source-search-bounded compose smoke passed.",
+      "status": "done",
+      "created_at": "2026-05-01T07:32:33Z",
+      "resolved_at": "2026-05-01T07:40:08Z"
+    },
+    {
+      "task_id": "P0-CI-BOUNDED-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved: adapter CI runner exists and passes; bounded source/search compose smoke passes; research/OpenClaw production adapters remain fail-closed. Owner Codex2 should finalize with a task-scoped commit and done closeout.",
+      "status": "done",
+      "created_at": "2026-05-01T07:40:08Z",
+      "resolved_at": "2026-05-01T08:00:56Z"
+    }
+  ],
+  "blockers": []
+}

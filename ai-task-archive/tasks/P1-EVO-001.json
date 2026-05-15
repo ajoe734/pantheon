@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "P1-EVO-001",
+  "archived_at": "2026-05-01T14:07:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P1-EVO-001",
+    "title": "Postmortem evidence and governed evolution dispatcher baseline",
+    "summary_zh": "建立 postmortem evidence 與 governed evolution dispatcher baseline；EvolutionDecision 只能 approved 後 dispatch，不能自動 mutate live。",
+    "phase": "P1 Wave 6",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "P0-REC-001"
+    ],
+    "artifacts": [
+      "EVOLUTION_REVIEW_AND_THRESHOLDS.md",
+      "docs/04/pantheon_sa/SA-17_telemetry_reconciliation_evolution_gap_analysis.md",
+      "docs/04/pantheon_sa/SA-20_v2_risk_register_corrected.md"
+    ],
+    "acceptance": [
+      "IncidentCase gathers telemetry/runtime binding/deployment/artifact/capital evidence",
+      "EvolutionDecision dispatch requires approved state",
+      "live mutation remains blocked by invariant tests"
+    ],
+    "next": "Closed P1-EVO-001 after Codex2 review approval. Task-scoped commit 7e12aa5 records postmortem evidence collector, approved-only evolution dispatcher invariants, SA-17 delivery note, and reviewer packet. Verification: python3 -m pytest services/incident -q (116 passed); python3 -m pytest services/control-plane/governance/test_evolution_decision.py services/control-plane/governance/test_evolution_controller.py services/control-plane/governance/test_evolution_dispatcher_invariants.py -q (50 passed); python3 -m pytest services/evolution -q (50 passed); git diff --cached --check passed.",
+    "last_update": "2026-05-01T14:07:35Z",
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "wave": "6",
+      "source_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "review_notes_zh": [
+      "審查通過",
+      "三項 acceptance criteria 通過：IncidentCase 透過 PostmortemEvidenceCollector 收齊 telemetry/runtime binding/deployment/artifact/capital evidence；EvolutionController.dispatch_approved 與 EvolutionDecision.execute 均拒絕非 approved decision；live freeze / force_risk_off 在 approval 前不能 dispatch，approval 後只產生 governed command/rollback request，不形成未審查 live mutation surface。",
+      "Verification: services/incident 116 passed；focused governance evolution suite 50 passed；services/evolution 50 passed；git diff --cached --check passed。"
+    ],
+    "review_file": ".orchestrator/chair-reviews/P1-EVO-001-codex2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T14:07:35Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "7e12aa5e9021232dbd94e067ba1b28739ad92237",
+      "commit_subject": "P1-EVO-001 governed evolution evidence baseline",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "P1-EVO-001",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 138,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P1-EVO-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Implemented postmortem evidence collector and governed evolution dispatcher baseline. IncidentCase now gathers telemetry/runtime binding/deployment/artifact/capital evidence via PostmortemEvidenceCollector; dispatcher invariants prove only approved EvolutionDecision records dispatch/execute and live mutation paths remain gated. SA-17 records delivered baseline and residual gaps. Verification: python3 -m pytest services/incident -q (116 passed); python3 -m pytest services/control-plane/governance/test_evolution_decision.py services/control-plane/governance/test_evolution_controller.py services/control-plane/governance/test_evolution_dispatcher_invariants.py -q (50 passed); python3 -m pytest services/evolution -q (50 passed); git diff --check on scoped task files passed.",
+      "status": "done",
+      "created_at": "2026-05-01T13:59:38Z",
+      "resolved_at": "2026-05-01T14:01:45Z"
+    },
+    {
+      "task_id": "P1-EVO-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved by Codex2. Acceptance criteria pass: postmortem evidence collector builds validated IncidentCase evidence, EvolutionDecision dispatch/execute require approved state, and live mutation paths remain gated before approval. Verification: python3 -m pytest services/incident -q (116 passed); python3 -m pytest services/control-plane/governance/test_evolution_decision.py services/control-plane/governance/test_evolution_controller.py services/control-plane/governance/test_evolution_dispatcher_invariants.py -q (50 passed); python3 -m pytest services/evolution -q (50 passed); git diff --cached --check passed.",
+      "status": "done",
+      "created_at": "2026-05-01T14:01:45Z",
+      "resolved_at": "2026-05-01T14:07:35Z"
+    }
+  ],
+  "blockers": []
+}

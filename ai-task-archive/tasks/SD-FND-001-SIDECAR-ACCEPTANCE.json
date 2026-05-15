@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "task_id": "SD-FND-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-27T16:01:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SD-FND-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare SD-FND-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 SD-FND-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "SD Residual / Foundations",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/SD-FND-001/SD-FND-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar acceptance packet after Claude review; support artifact remains non-canonical and ready for parent owner absorption decision.",
+    "last_update": "2026-04-27T16:01:02Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SD-FND-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar acceptance packet 通過審查：(1) 僅建立 support/sidecars/SD-FND-001/SD-FND-001-SIDECAR-ACCEPTANCE.md，未修改 L1 canonical / runtime / registry / governance 真相。",
+      "Section 3-4 acceptance checklist 與 services/foundation 套件實況一致：README、__init__.py 公開符號、services/foundation/tests/test_primitives.py 涵蓋 trace / command / error / idempotency / policy / audit / secret-ref；reviewer 重跑 PYTHONPATH=/home/lupin/.local/lib/python3.12/site-packages python3.12 -m pytest services/foundation/tests -q 結果為 10 passed in 0.17s，與 packet 宣稱的 10 passed in 0.16s 一致。",
+      "Section 5 dependency map 正確反映 SD-FND-002 (BFF / runtime-manager command-path adoption) 與 SD-FND-003 (outbox / DLQ / schema-registry / replay / persistence) 的下游邊界，並把 EP5-002-PACKET-PREP-001、CROSS-REPO-SD-VERIFY-001 與 SD-LIN-TRACE-001 / SD-SRC-EVIDENCE-001 / SD-CONSULT-001 / SD-RECON-001 的關係界定清楚。",
+      "Section 6-7 已標明 parent handoff doc reviewer 文字漂移 (Claude vs ai-status.json 的歷史 Codex2 / 目前 Claude) 並把 EP5 live / canary、raw secret resolution、L1 canonical 改寫排除在 sidecar 之外。",
+      "Packet 可作為 SD-FND-001 在 review 階段的 reviewer-facing 支援材料，parent owner 可決定是否吸收進主線。"
+    ],
+    "review_file": "support/sidecars/SD-FND-001/SD-FND-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-27T16:01:02Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "5f8acd40178fda761a36131374ae06302ca0630c",
+      "commit_subject": "SD-FND-001-SIDECAR-ACCEPTANCE finalize packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SD-FND-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 146,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SD-FND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-27T13:30:23Z",
+      "resolved_at": "2026-04-27T13:34:17Z"
+    },
+    {
+      "task_id": "SD-FND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet created with checklist, dependency map, fresh foundation primitive test evidence, and support-only reviewer guardrails. Artifact: support/sidecars/SD-FND-001/SD-FND-001-SIDECAR-ACCEPTANCE.md",
+      "status": "done",
+      "created_at": "2026-04-27T13:37:09Z",
+      "resolved_at": "2026-04-27T15:27:41Z"
+    },
+    {
+      "task_id": "SD-FND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SD-FND-001/SD-FND-001-SIDECAR-ACCEPTANCE.md; refreshed verification on 2026-04-27 UTC: pytest services/foundation/tests -q => 10 passed in 0.18s. No canonical, runtime, registry, or governance files changed by this sidecar.",
+      "status": "done",
+      "created_at": "2026-04-27T15:27:41Z",
+      "resolved_at": "2026-04-27T15:34:26Z"
+    },
+    {
+      "task_id": "SD-FND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet remains ready for Codex2 review at support/sidecars/SD-FND-001/SD-FND-001-SIDECAR-ACCEPTANCE.md; refreshed verification on 2026-04-27 UTC: pytest services/foundation/tests -q => 10 passed in 0.16s. No canonical, runtime, registry, or governance files changed by this sidecar.",
+      "status": "done",
+      "created_at": "2026-04-27T15:34:26Z",
+      "resolved_at": "2026-04-27T15:35:04Z"
+    },
+    {
+      "task_id": "SD-FND-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-27T15:35:04Z",
+      "resolved_at": "2026-04-27T15:40:24Z"
+    },
+    {
+      "task_id": "SD-FND-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet approved: support-only artifact at support/sidecars/SD-FND-001/SD-FND-001-SIDECAR-ACCEPTANCE.md accurately maps acceptance checklist and dependency map to repo-current services/foundation evidence; pytest services/foundation/tests -q rerun = 10 passed in 0.17s. No canonical / runtime / registry / governance changes. Returning to owner Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-27T15:40:24Z",
+      "resolved_at": "2026-04-27T15:42:30Z"
+    },
+    {
+      "task_id": "SD-FND-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Apr 28th, 2026 6:21 PM.",
+      "status": "done",
+      "created_at": "2026-04-27T15:42:30Z",
+      "resolved_at": "2026-04-27T16:01:02Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,26 @@
+{
+  "status": "validated_not_submitted",
+  "request": {
+    "contract": {
+      "symbol": "AAPL",
+      "exchange": "SMART",
+      "currency": "USD",
+      "secType": "STK"
+    },
+    "order": {
+      "action": "BUY",
+      "totalQuantity": 1,
+      "orderType": "LMT",
+      "tif": "DAY",
+      "outsideRth": false,
+      "lmtPrice": 120.0,
+      "metadata": {
+        "smoke_mode": "test_key_validate_only",
+        "task_id": "P2-BROKER-SANDBOX-ORDER-001"
+      },
+      "account": "DU-SANDBOX-001"
+    },
+    "broker": "IBKR"
+  },
+  "side_effect": "none"
+}

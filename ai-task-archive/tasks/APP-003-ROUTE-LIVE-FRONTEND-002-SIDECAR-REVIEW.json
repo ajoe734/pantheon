@@ -1,0 +1,227 @@
+{
+  "version": 1,
+  "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW",
+  "archived_at": "2026-04-23T05:48:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW",
+    "title": "Prepare APP-003-ROUTE-LIVE-FRONTEND-002 review packet and evidence summary",
+    "summary_zh": "平行支援 APP-003-ROUTE-LIVE-FRONTEND-002，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Execution / Frontend Activation Follow-through",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the approved reviewer support packet on 2026-04-23. The sidecar remains support-only, preserves the narrow TW-02 evidence scope, and records the non-blocking TW-01 wording drift without reopening canonical truth.",
+    "last_update": "2026-04-23T05:48:47Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-ROUTE-LIVE-FRONTEND-002",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar review packet 已核驗：八個 module-local FRONTEND_CHANGE_SPEC.md (RW-02/RW-04/RW-05/KW-02/KW-03/TW-01/TW-02/TW-04) 全部存在；docs/examples/TW-02-parameter-controls.json python3 -m json.tool OK；TW-02 FRONTEND_CHANGE_SPEC.md readiness gate 對齊 live GET /controls 與 POST /patch 的 accepted|rejected 結構；與 support note module matrix 一致。",
+      "Reviewer environment 缺 pytest，未能於此次現場重跑 services/control-plane/bff/test_tw02_parameter_controls_contract.py；packet 引用的 5 passed 結果保留為 owner evidence，不影響本 sidecar scope 的 review 結論。",
+      "保留 2 個非阻塞 caveat 追蹤：(1) WORKBENCH_DELIVERY_BACKLOG 對 TW-01 仍用 contract-live 標籤而其餘 Trainer 文件已轉 route-live；(2) 本 sidecar 只覆蓋 parent 自引 TW-02 窄證據，未擴大 Trainer sweep。"
+    ],
+    "review_file": "support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-23T05:48:47Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 1169,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T13:09:05Z",
+      "resolved_at": "2026-04-22T13:09:40Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review packet ready at support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW.md. Packet maps the parent TW-02 handoff publication to current Trainer-facing truth surfaces, reruns pytest -q services/control-plane/bff/test_tw02_parameter_controls_contract.py (5 passed), validates docs/examples/TW-02-parameter-controls.json (OK), confirms all eight module-local frontend packet files exist, and records the non-blocking TW-01 contract-live/route-live wording caveat without reopening canonical truth.",
+      "status": "done",
+      "created_at": "2026-04-22T13:15:07Z",
+      "resolved_at": "2026-04-22T14:42:28Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review packet ready at support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW.md. Packet maps the parent TW-02 handoff publication to current Trainer-facing truth surfaces, reruns pytest -q services/control-plane/bff/test_tw02_parameter_controls_contract.py (5 passed), validates docs/examples/TW-02-parameter-controls.json (OK), confirms all eight module-local frontend packet files exist, and records the non-blocking TW-01 contract-live/route-live wording caveat without reopening canonical truth.",
+      "status": "done",
+      "created_at": "2026-04-22T14:42:28Z",
+      "resolved_at": "2026-04-23T01:54:22Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Requeued to Gemini review because Claude, Claude2, and Codex2 reviewer lanes are currently failing authentication or quota checks.",
+      "status": "done",
+      "created_at": "2026-04-23T01:54:22Z",
+      "resolved_at": "2026-04-23T03:54:12Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T03:54:12Z",
+      "resolved_at": "2026-04-23T04:10:50Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:10:50Z",
+      "resolved_at": "2026-04-23T04:11:36Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:11:36Z",
+      "resolved_at": "2026-04-23T04:13:22Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:13:22Z",
+      "resolved_at": "2026-04-23T04:13:54Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:13:54Z",
+      "resolved_at": "2026-04-23T04:14:50Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:14:50Z",
+      "resolved_at": "2026-04-23T04:15:31Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:15:31Z",
+      "resolved_at": "2026-04-23T04:16:27Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:16:27Z",
+      "resolved_at": "2026-04-23T04:16:56Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:16:56Z",
+      "resolved_at": "2026-04-23T04:17:51Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:17:51Z",
+      "resolved_at": "2026-04-23T04:18:20Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:18:20Z",
+      "resolved_at": "2026-04-23T04:39:01Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Sidecar review packet refreshed by revalidation on 2026-04-23. support/sidecars/APP-003-ROUTE-LIVE-FRONTEND-002/APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW.md still matches current repo truth: TW-02 handoff exists, TW-02 contract test still passes, example JSON parses, the eight-packet existence check passes, and the remaining caveats are still non-blocking (TW-01 contract-live vs route-live wording drift plus narrow-vs-broad Trainer verification scope). Please review this sidecar as reviewer support material only; do not reopen canonical truth outside the parent lane.",
+      "status": "done",
+      "created_at": "2026-04-23T04:39:01Z",
+      "resolved_at": "2026-04-23T05:38:22Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Sidecar review packet refreshed on 2026-04-23. Updated support artifacts to match current reviewer assignment and the repo-current eight-packet matrix paths (RW-02-search, RW-04-experiment-launch, RW-05-artifact-compare, KW-02-research-notes, KW-03-evidence-refs, TW-01-teaching-dialog, TW-02-parameter-controls, TW-04-teaching-replay). Revalidated pytest -q services/control-plane/bff/test_tw02_parameter_controls_contract.py => 5 passed, python3 -m json.tool docs/examples/TW-02-parameter-controls.json => OK, and all eight packet paths => ALL_PRESENT. Remaining caveats stay non-blocking: TW-01 contract-live vs route-live wording drift and the intentionally narrow Trainer verification scope.",
+      "status": "done",
+      "created_at": "2026-04-23T05:38:22Z",
+      "resolved_at": "2026-04-23T05:39:12Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T05:39:12Z",
+      "resolved_at": "2026-04-23T05:40:58Z"
+    },
+    {
+      "task_id": "APP-003-ROUTE-LIVE-FRONTEND-002-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Sidecar review packet verified: eight packet paths present, TW-02 example JSON valid, TW-02 handoff readiness gate aligns with live accepted/rejected patch contract. Non-blocking TW-01 label drift and narrow verification scope recorded as caveats. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-23T05:40:58Z",
+      "resolved_at": "2026-04-23T05:48:50Z"
+    }
+  ],
+  "blockers": []
+}

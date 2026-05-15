@@ -1,0 +1,12 @@
+{
+  "backend": "finrl_ppo",
+  "cause_message": "No module named 'finrl'",
+  "cause_type": "ModuleNotFoundError",
+  "error_type": "FinRLDeferredPrepError",
+  "message": "FinRL backend requested but package import failed; install services/research/finrl requirements first",
+  "silent_stub_fallback": false,
+  "status": "dependency_or_config_error",
+  "traceback_tail": [
+    "services.research.finrl.adapter.finrl_adapter.FinRLDeferredPrepError: FinRL backend requested but package import failed; install services/research/finrl requirements first\n"
+  ]
+}

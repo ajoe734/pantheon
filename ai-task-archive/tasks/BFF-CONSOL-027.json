@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-027",
+  "archived_at": "2026-05-15T12:16:17Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-027",
+    "title": "Final BFF consolidation acceptance packet",
+    "summary_zh": "集合 001..026 evidence 輸出 support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md。內容含 contract diff baseline/live smoke (read+write)/SSE evidence/command receipt sample/staging+prod cutover log/regression follow-up/seed.ts post-state。Copilot 統整 Claude 最終簽核。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Copilot",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-001",
+      "BFF-CONSOL-002",
+      "BFF-CONSOL-003",
+      "BFF-CONSOL-004",
+      "BFF-CONSOL-005",
+      "BFF-CONSOL-006",
+      "BFF-CONSOL-007",
+      "BFF-CONSOL-008",
+      "BFF-CONSOL-009",
+      "BFF-CONSOL-010",
+      "BFF-CONSOL-011",
+      "BFF-CONSOL-012",
+      "BFF-CONSOL-013",
+      "BFF-CONSOL-014",
+      "BFF-CONSOL-015",
+      "BFF-CONSOL-016",
+      "BFF-CONSOL-017",
+      "BFF-CONSOL-018",
+      "BFF-CONSOL-019",
+      "BFF-CONSOL-020",
+      "BFF-CONSOL-021",
+      "BFF-CONSOL-022",
+      "BFF-CONSOL-023",
+      "BFF-CONSOL-024",
+      "BFF-CONSOL-025",
+      "BFF-CONSOL-026"
+    ],
+    "artifacts": [
+      "support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "acceptance packet 含 contract diff baseline",
+      "acceptance packet 含 read+write live smoke",
+      "acceptance packet 含 SSE evidence",
+      "acceptance packet 含 command receipt sample",
+      "acceptance packet 含 staging+prod cutover log",
+      "acceptance packet 含 regression follow-up 狀態",
+      "acceptance packet 含 seed.ts post-state",
+      "Claude 最終簽核"
+    ],
+    "next": "Done: final BFF consolidation acceptance packet is approved; all 001..026 evidence is summarized and remaining build-time Lovable env publish is non-blocking follow-up.",
+    "last_update": "2026-05-15T12:16:17Z",
+    "review_notes_zh": [
+      "Final BFF consolidation packet approved: ACCEPTANCE.md covers the required contract diff baseline, authenticated read/live smoke, write/command receipt evidence, SSE evidence, dev/main strict cutover logs, regression follow-up state, and seed post-state. Archive-materialization gaps for 016/017/019/020/025/026 are explicitly identified with evidence files or commits and are not blockers."
+    ],
+    "review_file": "support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T12:16:17Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "ca33fffc8d8033bcb8400ec1aa11953339394af6",
+      "commit_subject": "BFF-CONSOL-027: add final acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Copilot",
+        "Task-ID": "BFF-CONSOL-027",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 23,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-027",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Ready for final review: acceptance packet created at support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md, covering contract diff baseline, live smoke, SSE evidence, command receipts, cutover log, regression follow-ups, and seed post-state.",
+      "status": "done",
+      "created_at": "2026-05-15T12:15:48Z",
+      "resolved_at": "2026-05-15T12:16:00Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-027",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Approved: final BFF consolidation acceptance packet complete and reviewable evidence is present.",
+      "status": "done",
+      "created_at": "2026-05-15T12:16:00Z",
+      "resolved_at": "2026-05-15T12:16:17Z"
+    }
+  ],
+  "blockers": []
+}

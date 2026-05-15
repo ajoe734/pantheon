@@ -1,217 +1,160 @@
 # Decision Domain — Five-Stage Decision Chain
 
-**Owner Plane:** Decision Plane (front-half)
-**Schema directory:** `services/registry-core/decision-domain/`
-**Closure task:** `BG-003` — Formalize decision-front objects and adjudication boundaries
+Owner plane: Decision Plane (front-half)
+Task: `BG-003` — formalize decision-front objects and adjudication boundaries
 
----
+This directory is the canonical contract for the front-half decision objects:
 
-## Overview
+`RegimeState -> UniverseSelection -> SignalInference -> AllocationDecision -> RiskAdjudication`
 
-This directory defines the **five-stage decision chain** that forms the front-half of the Pantheon decision pipeline. Every trading decision flows through these five stages in order, producing an auditable provenance chain that can be replayed, attributed, and debugged.
+Stage 5 closes the front-half chain by linking to the back-half governance object `ApprovalDecision` in `services/control-plane/governance/`.
 
-```
-RegimeState → UniverseSelection → SignalInference → AllocationDecision → RiskAdjudication
-   (Stage 1)       (Stage 2)           (Stage 3)          (Stage 4)           (Stage 5)
-```
+## Contract Rules
 
-The output of Stage 5 (RiskAdjudication) flows downstream to the **back-half governance gate** (`ApprovalDecision` in `services/control-plane/governance/`), which then triggers `DeploymentPlan`, `RuntimeBinding`, and eventual LEAN execution.
+1. The JSON schemas in this directory are the source of truth for field names and required relationships.
+2. The example files under `examples/` must validate against those schemas.
+3. `examples/five_stage_chain.json` is the canonical end-to-end replay packet. The single-stage example files mirror the same payloads.
+4. These objects are first-class decision provenance, not raw research artifacts or governance approvals.
+5. BG-000 market scope and BG-001 lineage/master references must remain visible in the contract where they materially affect replay.
 
-## Design Principles
+## Object Map
 
-1. **First-class auditable objects.** Each stage produces a versioned JSON document with unique IDs, upstream/downstream references, lifecycle state, and decision reasoning.
-2. **Provenance chain.** Every object references its immediate upstream input(s) and downstream consumer(s), enabling end-to-end replay from regime inference through risk adjudication.
-3. **BG-000 / BG-001 alignment.** Objects reference the BG-000 market scope vocabulary (market_class, instrument_type) and BG-001 data plane IDs (SecurityMaster, ContractMaster, DatasetVersion) where applicable.
-4. **Back-half separation.** These are *decision calculation/validation* objects, distinct from the back-half *governance/approval* objects. `AllocationDecision` is a portfolio weight proposal; `ApprovalDecision` is the governance yes/no. `RiskAdjudication` is a risk validation; it is not a governance rejection.
-5. **Lifecycle states.** Each object carries a `decision_state` (or `allocation_state` / `adjudication_state`) that tracks it through `proposed` → `validated` → `active` → `superseded` / `invalidated`.
+### Stage 1 — `RegimeState`
 
----
+Captures the inferred market regime over an evaluation window.
 
-## Object Summaries
-
-### Stage 1 — RegimeState
-
-**File:** `regime_state.schema.json`
-
-Captures the inferred market regime at a point in time. Drives everything downstream.
-
-| Required field | Purpose |
+| Canonical field | Purpose |
 |---|---|
-| `regime_id` | Unique instance ID |
-| `strategy_id` | Owning strategy |
-| `version` | Semver of the inference artifact |
-| `evaluated_at` | RFC 3339 evaluation timestamp |
-| `regime_classification` | Enum: trending, mean_reverting, high_volatility, crisis, etc. |
-| `confidence` | [0, 1] confidence score |
-| `input_refs` | Upstream datasets / features used |
-| `decision_reasoning` | Human-readable reasoning |
+| `regime_id` | Unique ID for the regime inference |
+| `strategy_id` | Strategy this inference belongs to |
+| `artifact_id` | Artifact or model build that produced the inference |
+| `version` | Semver of this record shape/version |
+| `regime_class` | Final regime label consumed downstream |
+| `confidence` | Confidence in the selected regime label |
+| `window_start` / `window_end` | Observation window used for the inference |
+| `input_refs` | Dataset, feature, master, and calendar inputs |
+| `output_refs` | Downstream decision objects, typically `universe_selection` |
+| `model_ref` | Model provenance that distinguishes the decision record from research inputs |
+| `decision_reasoning` | Human-readable explanation of the decision |
 
-**Key relationships:**
-- **Upstream:** feature_dataset, normalized_dataset, experiment_result, telemetry_summary
-- **Downstream:** UniverseSelection (via `output_refs`)
-- **Optional:** market_scope_refs (BG-000 vocabulary), model_ref (HMM, clustering, etc.)
+Optional context: `regime_scores`, `feature_snapshot`, `market_scope`, `state`, `superseded_by`, `persona_id`, `capital_pool_id`, `metadata`.
 
----
+### Stage 2 — `UniverseSelection`
 
-### Stage 2 — UniverseSelection
+Records the eligible tradable set under the active regime.
 
-**File:** `universe_selection.schema.json`
-
-Records which instruments were selected for trading given a market regime.
-
-| Required field | Purpose |
+| Canonical field | Purpose |
 |---|---|
-| `universe_id` | Unique instance ID |
-| `strategy_id` | Owning strategy |
-| `version` | Semver of the selection artifact |
-| `evaluated_at` | RFC 3339 evaluation timestamp |
-| `regime_ref` | Reference to the upstream RegimeState |
-| `selected_instruments` | Array of instrument_type + instrument_id (BG-001 SecurityMaster/ContractMaster IDs) |
-| `input_refs` | Upstream datasets / regime_state used |
-| `decision_reasoning` | Human-readable reasoning |
+| `universe_id` | Unique ID for the selected universe |
+| `regime_ref` | Cached pointer to the upstream `RegimeState` |
+| `selected_universe` | Selected instruments with `symbol`, `asset_class`, BG-001 refs, and inclusion rationale |
+| `exclusion_reasons` | Explicit audit trail for excluded candidates |
+| `input_refs` | Regime, master, dataset, risk-budget, and calendar inputs |
+| `output_refs` | Downstream decision objects, typically `signal_inference` |
+| `decision_reasoning` | Why this universe was chosen |
 
-**Key relationships:**
-- **Upstream:** RegimeState (via `regime_ref`), feature_dataset, security_master
-- **Downstream:** SignalInference (via `output_refs`)
-- **Optional:** universe_criteria (min_liquidity, max_instruments, etc.), model_ref
+Optional context: `model_ref`, `universe_stats`, `state`, `superseded_by`, `persona_id`, `capital_pool_id`, `metadata`.
 
----
+### Stage 3 — `SignalInference`
 
-### Stage 3 — SignalInference
+Transforms the selected universe into per-instrument trading directives.
 
-**File:** `signal_inference.schema.json`
-
-Records the inferred trading signals (alpha, direction, magnitude) for instruments in the selected universe.
-
-| Required field | Purpose |
+| Canonical field | Purpose |
 |---|---|
-| `signal_id` | Unique instance ID |
-| `strategy_id` | Owning strategy |
-| `version` | Semver of the inference artifact |
-| `evaluated_at` | RFC 3339 evaluation timestamp |
-| `universe_ref` | Reference to the upstream UniverseSelection |
-| `signals` | Array of instrument_id + signal_type + signal_value |
-| `input_refs` | Upstream datasets / regime_state / universe_selection used |
-| `decision_reasoning` | Human-readable reasoning |
+| `signal_id` | Unique ID for this signal batch |
+| `regime_ref` | Cached regime context |
+| `universe_ref` | Cached pointer to the upstream `UniverseSelection` |
+| `signals` | Per-instrument directives with `symbol`, `direction`, `magnitude`, `confidence`, and optional BG-000/BG-001 context |
+| `input_refs` | Regime, universe, dataset, and feature inputs |
+| `output_refs` | Downstream decision objects, typically `allocation_decision` |
+| `model_ref` | Signal-model provenance |
+| `decision_reasoning` | Why these signals were emitted |
 
-**Key relationships:**
-- **Upstream:** UniverseSelection (via `universe_ref`), feature_dataset, regime_state
-- **Downstream:** AllocationDecision, RiskAdjudication (via `output_refs`)
-- **Signal types:** alpha, direction, mean_reversion, momentum, statistical_arbitrage, sentiment, macro, volatility
-- **Optional:** model_ref (linear_regression, tree_ensemble, neural_network, factor_model, etc.), decay_estimate
+Optional context: `inference_stats`, inherited `market_scope`, `state`, `superseded_by`, `persona_id`, `capital_pool_id`, `metadata`.
 
----
+### Stage 4 — `AllocationDecision`
 
-### Stage 4 — AllocationDecision
+Converts signals into a portfolio allocation proposal. This is a calculation object, not a governance approval.
 
-**File:** `allocation_decision.schema.json`
-
-Translates signal scores into concrete portfolio weight/size proposals. This is a **calculation** object, not a governance gate.
-
-| Required field | Purpose |
+| Canonical field | Purpose |
 |---|---|
-| `allocation_decision_id` | Unique instance ID |
-| `strategy_id` | Owning strategy |
-| `artifact_id` | Model/artifact that produced the allocation |
-| `version` | Semver of the allocation artifact |
-| `evaluated_at` | RFC 3339 evaluation timestamp |
-| `signal_inference_id` | The SignalInference that gates this allocation |
-| `allocations` | Array of instrument_id + weight + direction + notional_target |
-| `input_refs` | Upstream signal_inference, universe_selection, regime_state, capital_pool |
-| `output_refs` | Downstream risk_adjudication |
-| `decision_reasoning` | Human-readable reasoning |
+| `allocation_id` | Unique ID for the allocation proposal |
+| `regime_ref` | Cached regime context for replay and filtering |
+| `signal_ref` | Cached pointer to the upstream `SignalInference` |
+| `allocations` | Per-instrument targets with `target_weight`, `target_value`, and constraint annotations |
+| `portfolio_summary` | Portfolio-level exposure and turnover summary |
+| `input_refs` | Regime, universe, signal, budget, capital-pool, and current-portfolio inputs |
+| `output_refs` | Downstream decision objects, typically `risk_adjudication` |
+| `model_ref` | Allocation methodology provenance |
+| `decision_reasoning` | Why the proposal differs from raw signals, if at all |
 
-**Key relationships:**
-- **Upstream:** SignalInference (via `signal_inference_id`), risk_budget, capital_pool
-- **Downstream:** RiskAdjudication (via `output_refs`)
-- **Allocation methods:** equal_weight, signal_proportional, risk_parity, mean_variance, black_litterman, kelly_criterion, volatility_targeting
-- **Lifecycle state:** `allocation_state` (proposed, accepted, rejected_by_risk, superseded, invalidated)
+Optional context: inherited `market_scope`, `state`, `superseded_by`, `persona_id`, `capital_pool_id`, `metadata`.
 
----
+### Stage 5 — `RiskAdjudication`
 
-### Stage 5 — RiskAdjudication
+Assesses the allocation proposal against risk policy before the back-half governance gate.
 
-**File:** `risk_adjudication.schema.json`
-
-Validates the AllocationDecision against risk constraints before it proceeds to the governance approval gate.
-
-| Required field | Purpose |
+| Canonical field | Purpose |
 |---|---|
-| `risk_adjudication_id` | Unique instance ID |
-| `strategy_id` | Owning strategy |
-| `artifact_id` | Risk engine artifact that produced the adjudication |
-| `version` | Semver of the adjudication artifact |
-| `evaluated_at` | RFC 3339 evaluation timestamp |
-| `allocation_decision_id` | The AllocationDecision being validated |
-| `risk_outcome` | approved, approved_with_conditions, rejected, requires_manual_review |
-| `input_refs` | Upstream allocation_decision, signal_inference, stress_scenario_set |
-| `output_refs` | Downstream approval_decision, deployment_plan |
-| `decision_reasoning` | Human-readable reasoning |
+| `adjudication_id` | Unique ID for the adjudication record |
+| `allocation_ref` | Cached pointer to the upstream `AllocationDecision` |
+| `risk_assessment` | Structured risk checks and stress-test results |
+| `verdict` | Risk verdict: `approved`, `approved_with_conditions`, `requires_revision`, or `rejected` |
+| `input_refs` | Allocation plus any direct dataset, master, capital-pool, or policy evidence used by the risk engine |
+| `output_refs` | Downstream governance objects such as `approval_decision` and `deployment_plan` |
+| `decision_reasoning` | Why the verdict was reached |
 
-**Key relationships:**
-- **Upstream:** AllocationDecision (via `allocation_decision_id`), stress_scenario_set, correlation_matrix
-- **Downstream:** ApprovalDecision (back-half governance gate), DeploymentPlan
-- **Risk checks:** max_position_size, portfolio_var_limit, sector_concentration, drawdown_limit, stress_test_scenario, etc.
-- **Lifecycle state:** `adjudication_state` (proposed, accepted, escalated, superseded, invalidated)
+Optional context: `conditions`, inherited `market_scope`, `model_ref`, `state`, `superseded_by`, `persona_id`, `capital_pool_id`, `metadata`.
 
----
+## Provenance Chain
 
-## End-to-End Provenance Chain
+The canonical replay chain is:
 
-A complete decision provenance for one evaluation cycle looks like:
-
-```
+```text
 RegimeState.regime_id = "regime-20260413-001"
-  ↓ UniverseSelection.regime_ref.regime_id = "regime-20260413-001"
-UniverseSelection.universe_id = "univ-20260413-001"
-  ↓ SignalInference.universe_ref.universe_id = "univ-20260413-001"
+  -> UniverseSelection.regime_ref.regime_id
+UniverseSelection.universe_id = "universe-20260413-001"
+  -> SignalInference.universe_ref.universe_id
 SignalInference.signal_id = "signal-20260413-001"
-  ↓ AllocationDecision.signal_inference_id = "signal-20260413-001"
-AllocationDecision.allocation_decision_id = "alloc-20260413-001"
-  ↓ RiskAdjudication.allocation_decision_id = "alloc-20260413-001"
-RiskAdjudication.risk_adjudication_id = "risk-20260413-001"
-  ↓ RiskAdjudication.output_refs[0].ref_id = "approval-20260413-001"
-ApprovalDecision.decision_id = "approval-20260413-001"  ← back-half governance gate
+  -> AllocationDecision.signal_ref.signal_id
+AllocationDecision.allocation_id = "alloc-20260413-001"
+  -> RiskAdjudication.allocation_ref.allocation_id
+RiskAdjudication.adjudication_id = "risk-20260413-001"
+  -> RiskAdjudication.output_refs[*].ref_id = "approval-20260413-001"
+ApprovalDecision.decision_id = "approval-20260413-001"
 ```
 
-Each object's `input_refs` and `output_refs` arrays create a **bidirectional graph** that can be traversed forward (what did this decision produce?) or backward (what inputs drove this decision?).
+Every stage also preserves `input_refs` and `output_refs`, so the chain can be traversed forward or backward without depending on implicit runtime state.
 
----
+## Example Files
 
-## Relationship to Back-Half Objects
+- `examples/five_stage_chain.json` — end-to-end replay packet for a US equities momentum family
+- `examples/regime_state_example.json`
+- `examples/universe_selection_example.json`
+- `examples/signal_inference_example.json`
+- `examples/allocation_decision_example.json`
+- `examples/risk_adjudication_example.json`
 
-| Front-half object | Back-half consumer | Relationship |
-|---|---|---|
-| `RiskAdjudication` | `ApprovalDecision` | Risk outcome feeds governance decision |
-| `AllocationDecision` | `DeploymentPlan` | Approved allocations become deployment targets |
-| All five stages | `TelemetryEvent` | Telemetry events carry decision object IDs for attribution |
-| All five stages | `IncidentCase` | Incidents reference the decision chain at time of failure |
-| All five stages | `EvolutionDecision` | Evolution actions reference the decision chain for root cause |
+The five single-stage examples are intentionally the same payloads embedded inside `five_stage_chain.json`, which prevents the example surfaces from drifting.
 
----
+## Validation
 
-## Schema Validation
+Run either validator from the repo root:
 
-All five schemas conform to JSON Schema Draft-07 and share a consistent structure:
+```bash
+python3 services/registry-core/decision-domain/validate_schemas.py
+python3 scripts/validate_bg003.py
+```
 
-- Unique instance ID field (stage-specific naming)
-- `strategy_id`, `artifact_id`, `version` (semver), `evaluated_at` (RFC 3339)
-- `input_refs` array with typed references and optional storage_ref
-- `output_refs` array pointing to downstream consumers
-- `decision_reasoning` (non-empty string, required for provenance)
-- `model_ref` (optional, with model_type enum per domain)
-- Lifecycle state enum with `superseded_by` forward pointer
-- Optional `persona_id`, `capital_pool_id` for scoping
-- Conditional `allOf` rules enforcing cross-field constraints
+`validate_schemas.py` performs Draft-07 checks, validates every single-stage example, validates every stage inside `five_stage_chain.json`, verifies cross-stage reference closure, and confirms the single-stage examples mirror the chain payloads.
 
----
+## Acceptance Snapshot
 
-## Acceptance Criteria for BG-003
-
-- [x] Five decision-front object schemas defined and validated
-- [x] Decision Layer Object Map documented (this file)
-- [x] Provenance chain documented with forward/backward traversal
-- [x] Back-half separation clarified (AllocationDecision ≠ ApprovalDecision; RiskAdjudication ≠ governance rejection)
-- [x] BG-000 market scope vocabulary referenced (instrument_type, market_class, region)
-- [x] BG-001 data plane object IDs referenced (SecurityMaster, ContractMaster, DatasetVersion)
-- [x] TARGET_ARCHITECTURE.md updated to list decision-front objects in core canonical objects
+- [x] Five decision-front object schemas exist and validate as Draft-07
+- [x] README field map matches the schema field names
+- [x] Example payloads validate against the published schemas
+- [x] A complete five-stage provenance chain is documented and replayable
+- [x] Allocation and approval remain separate concerns
+- [x] Risk adjudication and governance rejection remain separate concerns
+- [x] BG-000 market scope vocabulary is visible in the front-half contract
+- [x] BG-001 dataset/master references are visible where replay needs them

@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "task_id": "SVC-CONSULTATION-SERVICE-ACTIVATION-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-28T15:31:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-CONSULTATION-SERVICE-ACTIVATION-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-CONSULTATION-SERVICE-ACTIVATION BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-CONSULTATION-SERVICE-ACTIVATION，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Phase 4 Follow-up / Deferred Service Activation",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-SERVICE-DISPOSITION"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-CONSULTATION-SERVICE-ACTIVATION/SVC-CONSULTATION-SERVICE-ACTIVATION-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar BFF/frontend handoff packet and closed it. Support-only artifact is committed; parent owner decides whether to absorb the packet into SVC-CONSULTATION-SERVICE-ACTIVATION.",
+    "last_update": "2026-04-28T15:31:34Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-CONSULTATION-SERVICE-ACTIVATION",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar 為 support-only：未動 canonical/contract/runtime/BFF/compose/frontend 真相，僅新增 packet 檔案。",
+      "重新驗證通過：services/consultation/run_smoke.py 2 tests OK；BFF consultation 6-suite pytest 41 passed (14 datetime.utcnow 警告為已知)。",
+      "§4 BFF query gap matrix 對齊實際程式碼：read_store.py:78-79 env 名稱、main.py:11321 record_sponsor_decision 寫路徑、services/consultation/main.py 缺 cancel / GET /api/consult/memos / 原子 sponsor-decision 端點全部對得上。",
+      "§5/§6 把 BFF 鎖為唯一 browser-facing 路徑、forbids 瀏覽器直接呼叫 consultation-svc，allowedActions 維持 backend-owned。",
+      "§3 建議 env (PANTHEON_CONSULTATION_SERVICE_URL、CONSULTATION_DATA_DIR) 與 §9 Non-Claims 已正確聲明非 canonical 決定，由 parent owner Codex 決定吸收程度。"
+    ],
+    "review_file": "docs/reviews/2026-04-28-svc-consultation-service-activation-sidecar-bff-handoff-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T15:31:34Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "0630adb47c6fe61b7c2e94100fe0cb6dc6039d5a",
+      "commit_subject": "SVC-CONSULTATION-SERVICE-ACTIVATION-SIDECAR-BFF-HANDOFF add packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-CONSULTATION-SERVICE-ACTIVATION-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 61,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 15,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-CONSULTATION-SERVICE-ACTIVATION-SIDECAR-BFF-HANDOFF",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Gemini completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-28T14:25:12Z",
+      "resolved_at": "2026-04-28T14:36:39Z"
+    },
+    {
+      "task_id": "SVC-CONSULTATION-SERVICE-ACTIVATION-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Support-only BFF/frontend handoff packet is ready at support/sidecars/SVC-CONSULTATION-SERVICE-ACTIVATION/SVC-CONSULTATION-SERVICE-ACTIVATION-SIDECAR-BFF-HANDOFF.md. It maps the consultation service activation gaps for BFF HTTP normal path, missing service query/cancel/sponsor-decision endpoints, runtime sponsor handoff boundary, and frontend BFF-only constraints. Verification: python3 services/consultation/run_smoke.py => 2 tests OK; python3 -m pytest services/control-plane/bff/test_consultation_surfaces.py services/control-plane/bff/test_pkt015_consultation_workbench_contract.py services/control-plane/bff/test_cw01_consult_request_contract.py services/control-plane/bff/test_cw02_debate_transcript_contract.py services/control-plane/bff/test_cw03_committee_board_contract.py services/control-plane/bff/test_cw04_redteam_memo_contract.py -q => 41 passed, 14 datetime.utcnow deprecation warnings. No canonical/runtime/compose/frontend files edited by this sidecar.",
+      "status": "done",
+      "created_at": "2026-04-28T14:42:32Z",
+      "resolved_at": "2026-04-28T15:12:01Z"
+    },
+    {
+      "task_id": "SVC-CONSULTATION-SERVICE-ACTIVATION-SIDECAR-BFF-HANDOFF",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-28T15:12:01Z",
+      "resolved_at": "2026-04-28T15:27:41Z"
+    },
+    {
+      "task_id": "SVC-CONSULTATION-SERVICE-ACTIVATION-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved and returned to the owner for finalization",
+      "status": "done",
+      "created_at": "2026-04-28T15:27:41Z",
+      "resolved_at": "2026-04-28T15:31:34Z"
+    }
+  ],
+  "blockers": []
+}

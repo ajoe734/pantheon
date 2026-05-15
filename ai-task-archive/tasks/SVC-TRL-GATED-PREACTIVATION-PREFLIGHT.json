@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "task_id": "SVC-TRL-GATED-PREACTIVATION-PREFLIGHT",
+  "archived_at": "2026-04-29T17:05:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-TRL-GATED-PREACTIVATION-PREFLIGHT",
+    "title": "Add fail-closed TRL pre-activation preflight scaffold",
+    "summary_zh": "為 TRL preference-learning activation gate 增加 repo-local preflight scaffold；只檢查 FB-002 volume、preference pair、imitation artifact、downstream consumer readiness，不執行 active DPO。",
+    "phase": "Activation-Gated Learning Scaffold",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/learning/trl",
+      "integrations/trl",
+      "services/feedback",
+      "services/learning/imitation",
+      "services/learning/DEFERRED_OSS_ACTIVATION_MAP.md"
+    ],
+    "acceptance": [
+      "preflight rejects insufficient FB-002 event volume",
+      "preflight rejects insufficient valid preference pairs",
+      "preflight reports imitation and downstream consumer gates without writing canonical state",
+      "existing TRL smoke and tests remain prep-only"
+    ],
+    "next": "Finalized TRL fail-closed pre-activation preflight scaffold. Task-scoped commit 49488cd adds non-writing FB-002/preference-pair required gates plus informational LP-002/downstream readiness gates and updates TRL evidence docs. Verification: python3 -m unittest discover -s services/learning/trl -p 'test_*.py' (29 tests); python3 services/learning/trl/smoke_test.py (passed, stub backend draft/none).",
+    "last_update": "2026-04-29T17:05:08Z",
+    "review_notes_zh": [
+      "Reviewer applied narrow fix before approval: imitation readiness now requires canonical artifact_state=approved, and downstream readiness opens when at least one accepted consumer is registered.",
+      "Verification passed: python3 -m unittest discover -s services/learning/trl -p 'test_*.py' (29 tests); python3 services/learning/trl/smoke_test.py (passed, stub backend, draft/none)."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T17:05:08Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "49488cd9fc13655c79e0fe664e703f9c2d4355a3",
+      "commit_subject": "SVC-TRL-GATED-PREACTIVATION-PREFLIGHT add TRL preflight gate",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-TRL-GATED-PREACTIVATION-PREFLIGHT",
+        "Reviewer": "Codex",
+        "Verification": "python3 -m unittest discover -s services/learning/trl -p 'test_*.py' (29 tests); python3 services/learning/trl/smoke_test.py (passed, stub backend draft/none)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 44,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 4,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-TRL-GATED-PREACTIVATION-PREFLIGHT",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: added non-writing TRL preflight scaffold and focused tests. Verification: python3 -m unittest discover -s services/learning/trl -p 'test_*.py' (28 passed); python3 services/learning/trl/smoke_test.py (passed, stub backend, draft/none). Note: worktree had pre-existing unrelated dirty files; task-owned changes are services/learning/trl/preflight.py, services/learning/trl/test_preflight.py, integrations/trl docs, and TRL entries in DEFERRED_OSS_ACTIVATION_MAP.md.",
+      "status": "done",
+      "created_at": "2026-04-29T16:44:59Z",
+      "resolved_at": "2026-04-29T17:02:28Z"
+    },
+    {
+      "task_id": "SVC-TRL-GATED-PREACTIVATION-PREFLIGHT",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved after narrow reviewer fix: TRL preflight remains non-writing/fail-closed, required FB-002 and preference-pair gates block activation, informational LP-002/downstream gates now match canonical activation criteria. Owner Codex2 should finalize with a task-scoped commit.",
+      "status": "done",
+      "created_at": "2026-04-29T17:02:28Z",
+      "resolved_at": "2026-04-29T17:05:08Z"
+    }
+  ],
+  "blockers": []
+}

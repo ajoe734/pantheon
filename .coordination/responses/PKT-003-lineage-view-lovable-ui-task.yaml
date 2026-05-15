@@ -48,3 +48,5 @@ gap_handoff_path: .coordination/requests/PKT-003-lineage-view-bff-gap.yaml
 gap_handoff_template: .coordination/requests/PKT-003-lineage-view-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/PKT-003-lineage-view-ui-done.yaml
 completion_handoff_template: .coordination/requests/PKT-003-lineage-view-ui-done.example.yaml
+feedback_handoff_path: .coordination/requests/PKT-003-lineage-view-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/PKT-003-lineage-view-frontend-feedback.example.yaml

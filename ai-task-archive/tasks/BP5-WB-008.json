@@ -1,0 +1,190 @@
+{
+  "version": 1,
+  "task_id": "BP5-WB-008",
+  "archived_at": "2026-04-16T02:07:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-WB-008",
+    "title": "Packetize the Consultation Workbench family",
+    "summary_zh": "把 consult requests、committee review、debate、red-team outputs 補成 Consultation Workbench packet family 與 backend gap matrix。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "depends_on": [
+      "BP5-SVC-003",
+      "BP5-SVC-012",
+      "BP5-SVC-014"
+    ],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md",
+      "docs/pantheon-handoffs/"
+    ],
+    "acceptance": [
+      "Consultation Workbench surfaces have canonical packets, queue semantics, and approval or debate dependencies",
+      "no consultation screen is marked Lovable-ready before its BFF routes and decision semantics are explicit"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized: Consultation Workbench packet family and backend gap matrix complete. Cross-cutting write-authority rule now explicitly lists both BFF write routes (POST /api/v1/consult/requests and POST /api/v1/consult/requests/:request_id/cancel). Review approved by Codex.",
+    "last_update": "2026-04-16T02:07:08Z",
+    "review_notes_zh": [
+      "已核准。Consultation write authority 現在一致列出建立與取消兩條 BFF write route，且 cancel 受 allowedActions.canCancel 管控；其餘模組範圍、L3 錨點與 promotion gate 檢查皆通過。"
+    ],
+    "review_file": "docs/reviews/WB-008-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T02:07:08Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "6881a9cd37607b1aecebdfe8a15eaf2ca120adcb",
+      "commit_subject": "BP5-WB-008: Consultation Workbench packet family and backend gap matrix",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP5-WB-008",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 101,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-WB-008",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:02:54Z",
+      "resolved_at": "2026-04-16T01:06:16Z"
+    },
+    {
+      "task_id": "BP5-WB-008",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:06:47Z",
+      "resolved_at": "2026-04-16T01:07:05Z"
+    },
+    {
+      "task_id": "BP5-WB-008",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:13:21Z",
+      "resolved_at": "2026-04-16T01:17:41Z"
+    },
+    {
+      "task_id": "BP5-WB-008",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:17:41Z",
+      "resolved_at": "2026-04-16T01:21:30Z"
+    },
+    {
+      "task_id": "BP5-WB-008",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:21:30Z",
+      "resolved_at": "2026-04-16T01:24:40Z"
+    },
+    {
+      "task_id": "BP5-WB-008",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:31:51Z",
+      "resolved_at": "2026-04-16T01:38:50Z"
+    },
+    {
+      "task_id": "BP5-WB-008",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "CW-008 Consultation Workbench packet family is complete. Please review: docs/pantheon-handoffs/CW-008-consultation-workbench/PACKET_FAMILY.md. Verify: (1) all four modules cover the correct surface scope from the backlog; (2) backend gap matrix rows are accurate against the existing CONSULTATION_SURFACE_CONTRACT.md (CS-01 to CS-06) and the known L3 design intent for ConsultRequest and ConsultMemo; (3) cross-cutting rules correctly prohibit client-side synthesis and correctly cite PKT-005, PKT-001, and F-042 precedents; (4) promotion criteria are consistent with the RW-005 pattern.",
+      "status": "done",
+      "created_at": "2026-04-16T01:43:17Z",
+      "resolved_at": "2026-04-16T01:48:29Z"
+    },
+    {
+      "task_id": "BP5-WB-008",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review requested changes. See docs/reviews/WB-008-review-codex.md: CW-01 and CW-04 drift from the cited L3 ConsultRequest/ConsultMemo intent, and the write-authority rules are internally inconsistent.",
+      "status": "done",
+      "created_at": "2026-04-16T01:48:29Z",
+      "resolved_at": "2026-04-16T01:48:29Z"
+    },
+    {
+      "task_id": "BP5-WB-008",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "CW-008 packet family is complete. Four modules defined (CW-01 Consult Request, CW-02 Debate Transcript, CW-03 Committee Board, CW-04 Red-team Memo) — all Wave 4 / not Lovable-ready. Fixed one inconsistency in the backend gap matrix: ConsultMemo row previously claimed 'draft → published → archived' and 'finding severity taxonomy' as L3-promoted truth; corrected to reflect that 'archived' state and per-recommendation severity tiers are net-new contract additions not present in L3, consistent with the CW-04 module spec. Please review PACKET_FAMILY.md for canonical accuracy and approve or request changes.",
+      "status": "done",
+      "created_at": "2026-04-16T01:57:45Z",
+      "resolved_at": "2026-04-16T02:02:03Z"
+    },
+    {
+      "task_id": "BP5-WB-008",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review complete: one blocking issue remains. PACKET_FAMILY.md still contradicts itself on Consultation write authority: CW-01 requires POST /api/v1/consult/requests/:request_id/cancel, but the cross-cutting rule says POST /api/v1/consult/requests is the only BFF write route added by this packet family. Please resolve that contradiction and re-handoff for review. See docs/reviews/WB-008-review-codex.md.",
+      "status": "done",
+      "created_at": "2026-04-16T02:02:03Z",
+      "resolved_at": "2026-04-16T02:02:03Z"
+    },
+    {
+      "task_id": "BP5-WB-008",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Resolved the write-authority contradiction: updated the cross-cutting rule to explicitly list both BFF write routes — POST /api/v1/consult/requests (creation) and POST /api/v1/consult/requests/:request_id/cancel (cancellation, gated by allowedActions.canCancel). The cancel route was already correctly defined in CW-01 backend gaps and module spec; the cross-cutting rule was the sole point of inconsistency. Please review and approve.",
+      "status": "done",
+      "created_at": "2026-04-16T02:03:17Z",
+      "resolved_at": "2026-04-16T02:05:52Z"
+    },
+    {
+      "task_id": "BP5-WB-008",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. Consultation write authority is now internally consistent; owner should finalize BP5-WB-008 to done.",
+      "status": "done",
+      "created_at": "2026-04-16T02:05:52Z",
+      "resolved_at": "2026-04-16T02:07:08Z"
+    }
+  ],
+  "blockers": []
+}

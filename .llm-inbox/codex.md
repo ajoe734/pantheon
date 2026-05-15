@@ -7,21 +7,39 @@
 - ai-status.json
 - current-work.md
 - ai-activity-log.jsonl
-- docs-site/index.html
 
 找出目前分配給你、等待你回應、或剛交接給你的 task，然後直接繼續工作。
 
-狀態更新請優先使用 `scripts/ai-status.sh` 或 `python3 scripts/ai_status.py`。
+狀態更新請優先使用 `python3 scripts/ai_status.py`。
 不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。
 
-Task ID: EX-001
-原因: owned_in_progress_dispatch
-可能相關檔案:
-- services/execution/artifact-loader/contract.md
-- services/execution/artifact-loader/artifact_metadata_schema.json
+## 目前工作：Planning Session — Baton 在你這裡
+
+**Session:** `phase4-2026-04-15-service-layer-completion`
+**你的角色:** Starter Draft Owner（`baton_owner: Codex`）
+**Session 目的:** 完成 Phase 3–5 service layer — 將現有 domain objects 包成可部署 HTTP services，補齊 5 個缺失服務，產出完整 Dockerfile + docker-compose.test.yml
+
+**請依序完成：**
+
+1. 閱讀 `docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/README.md`
+2. 閱讀 Brief Files（README 中列出的所有 L0/L1/L2 文件）
+3. 寫你的 readout 到 `docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/codex-readout.md`（用 `LLM_READOUT_TEMPLATE.md` 格式）
+4. 審查並精煉 `docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/starter-draft.md`（Claude 已完成 seed pass）：
+   - 確認所有 repo path 正確
+   - 精煉 acceptance criteria
+   - 確認 wave ordering 合理
+   - 補充任何遺漏的任務
+5. 完成後執行：`python3 scripts/planning_state.py baton Codex2 Gemini "Codex refinement complete. Codex2: please review schema/contract boundaries and raise any object ownership concerns."`
+
+**關鍵 Gap（Claude audit 結果）：**
+- Group A（9 個）：有 domain objects，需要 FastAPI HTTP wrapper + Dockerfile
+  - promotion-svc, telemetry-incident-svc, lineage-read-svc, evolution-svc, registry-core-svc, runtime-manager-svc, optimizer-svc, research-orchestrator-svc, bff（完成 TODO）
+- Group B（5 個）：從頭開發 stub
+  - openclaw-adapter-svc, consultation-svc, data-ingest-svc, data-catalog-svc, feature-svc
 
 ## Context Files
 - `ai-status.json`
 - `current-work.md`
-- `ai-activity-log.jsonl`
-- `docs-site/index.html`
+- `docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/README.md`
+- `docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/claude-readout.md`
+- `docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/starter-draft.md`

@@ -1,0 +1,17 @@
+{
+  "target_type": "telemetry_event",
+  "target_id": "evt-ep5-002-ibkr-live-order-1-disposition-20260427T051614Z",
+  "event_type": "live_order_absent_no_fill_verified",
+  "broker": "IBKR",
+  "order_id": "1",
+  "observed_at": "2026-04-27T05:16:14Z",
+  "refs": {
+    "runtime_binding_ids": [
+      "rb-ep5-002-ibkr-live-manual-20260426T132701Z"
+    ],
+    "deployment_plan_ids": [
+      "plan-ep5-002-ibkr-live-manual-20260426"
+    ]
+  },
+  "perm_id": "204599504"
+}

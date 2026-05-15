@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4",
+  "archived_at": "2026-05-04T04:44:21Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4",
+    "title": "Hard-enforce Postgres ownership for staging/prod",
+    "summary_zh": "把 Postgres ownership 從 env-gated adoption 推到 staging/prod hard enforcement：staging/prod 不允許 governance/capital/memory/source/search/consultation/reconciliation 回落到 JSON/JSONL；dev baseline 可保留。",
+    "phase": "Blueprint production hardening follow-up 2026-05-04",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3"
+    ],
+    "artifacts": [
+      "DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md",
+      "docker-compose.yml",
+      "docker-compose.control.yml",
+      "env/prod-control.env.example",
+      "services",
+      "tests"
+    ],
+    "acceptance": [
+      "staging/prod startup or config validation rejects json/jsonl owner backends",
+      "dev single-VM defaults stay explicitly dev-only",
+      "focused tests cover enforcement and allowed dev fallback",
+      "runbook records migration and rollback path"
+    ],
+    "next": "Closeout complete: all 20 tests pass (20/20), docker-compose.control.yml and staging-full overlay validate cleanly, Wave 4 implementation commit 6a23986a confirmed intact. Dirty worktree files belong to other active tasks and are excluded from this closeout.",
+    "last_update": "2026-05-04T04:44:21Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-gap-materialization-20260504",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Reviewer acceptance: no blocking findings. Verified Wave 4 commit 6a23986a keeps dev compose fallback while control/staging compose default to production/postgres.",
+      "Verification run: python3 -m pytest services/foundation/tests/test_persistence_posture.py services/test_source_search_posture.py -v; docker compose -f docker-compose.control.yml config --quiet; docker compose -f docker-compose.control.yml -f docker-compose.staging-full.yml config --quiet; docker compose config environment spot-checks; source/search and BFF cutoff contract tests."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-04T04:44:21Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "78dd0462cf29cda2d9c5f19ab5e8006e6a693df3",
+      "commit_subject": "SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4: closeout state sync (review_approved dispatch)",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Capture orchestrator state updates": "Claude agent moved to finalize, review_approved",
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4",
+        "Reviewer": "Codex",
+        "Verification": "20/20 tests pass; docker-compose.control.yml and staging-full overlay validate cleanly."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 4,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 5,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Wave 4 implementation complete. Changes: (1) docker-compose.control.yml — staging compose defaults PANTHEON_PERSISTENCE_POSTURE to production and all *_BACKEND vars to postgres for 7 control-plane services; (2) docker-compose.staging-full.yml — adds posture/backend overrides for 8 services extended from dev compose; (3) source_search_posture.py — aligns ENFORCED_MODES with persistence_posture.py, adds staging-live and startswith enforcement; (4) 8 new wave-4 tests, all 20 tests pass; (5) DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md wave 4 section with migration and rollback runbook. Commit: 6a23986a on backend-dev-publish-20260429.",
+      "status": "done",
+      "created_at": "2026-05-04T04:36:34Z",
+      "resolved_at": "2026-05-04T04:41:33Z"
+    },
+    {
+      "task_id": "SVC-PROD-POSTGRES-HARD-ENFORCEMENT-WAVE4",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: Wave 4 hard enforcement matches acceptance; focused posture, compose, source/search, and BFF cutoff checks passed. Owner should finalize with task closeout.",
+      "status": "done",
+      "created_at": "2026-05-04T04:41:33Z",
+      "resolved_at": "2026-05-04T04:44:21Z"
+    }
+  ],
+  "blockers": []
+}

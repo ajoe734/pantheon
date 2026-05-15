@@ -54,3 +54,5 @@ gap_handoff_path: .coordination/requests/TW-04-teaching-replay-bff-gap.yaml
 gap_handoff_template: .coordination/requests/TW-04-teaching-replay-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/TW-04-teaching-replay-ui-done.yaml
 completion_handoff_template: .coordination/requests/TW-04-teaching-replay-ui-done.example.yaml
+feedback_handoff_path: .coordination/requests/TW-04-teaching-replay-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/TW-04-teaching-replay-frontend-feedback.example.yaml

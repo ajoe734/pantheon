@@ -221,7 +221,45 @@ v1 canonical：
 
 ---
 
-## 11. 最終結論
+## 11. Actions → Commands 收斂時間表
+
+### 背景
+
+BFF 目前有兩條寫入路徑：
+
+| 路徑 | 狀態 | 說明 |
+|---|---|---|
+| `/bff/actions/{entityType}/{entityId}/{actionId}` | 現役（過渡期） | `runAction.ts` 的 canonical live-write seam；所有 entityType 的寫入都走這條路 |
+| `/bff/v1/commands` | 最終合約 | command admission / idempotency / RBAC / audit 的正式統一入口 |
+| `/api/v1/operator/commands` | Legacy | 向下相容；不得靜默移除 |
+
+`BFF_COMMAND_API_CONTRACT.md` §8 Command Adapter Mapping 建立了從 actions 路徑到 commands 路徑的完整映射表，覆蓋全部明確映射 entityType（strategy / persona / capital-pool / rebalance / deployment / evolution-program / research-experiment / artifact / ranking-formula / runtime / tool / mcp-server / mcp-tool / skill / channel）、review 指出的 active caller overlay（例如 strategy `update_params`、capital-pool `adjust_budget`、deployment `promote_live`、evolution-program `stop`、research-experiment `promote_artifact`、skill `publish` / `retire`、mcp-server `test_connection` / `health_check` / `update_env_grants`、mcp-tool `grant_env`）、generic approval / alert / incident fallback route family，以及 3 條特殊路徑（approvals decide / alerts acknowledge / v5 interventions decide）與 confirm-token lifecycle rows。
+
+### 收斂里程碑
+
+| Wave | 目標日期 | 任務 | 說明 |
+|---|---|---|---|
+| Wave 1 | 2026-05-13 | BFF-CONSOL-004 | 本文件 §8 mapping 表寫定（spec-only，不動 runtime） |
+| Wave 1 | 2026-05-13 | BFF-CONSOL-001/002/003 | Frontend ↔ backend route manifest 對齊，建立 CI diff baseline |
+| Wave 2 | 2026-05-13 | BFF-CONSOL-008/009/010 | Canonical fixture pack A/B/C，確保 live list 回 ≥1 non-empty entry |
+| Wave 2 | 2026-05-13 | BFF-CONSOL-019 前置 | EP5 paper-canary closeout（Day 12 gate） |
+| Wave 3 | EP5 closeout 後 | BFF-CONSOL-019 | 後端 `/bff/actions/*` 在 BFF 內轉 `/bff/v1/commands` admission；PR 準備好但 hold 在 review 直到 EP5 closeout signal |
+| Wave 3 | EP5 closeout 後 | BFF-CONSOL-020 | `runAction.ts` 新 caller 優先發 `/bff/v1/commands`；舊 caller 透過 BFF adapter 轉發 |
+| Wave 3 | EP5 closeout 後 | BFF-CONSOL-021 | Receipt dual-write soak（≥7 天）；action receipt + command receipt 並存 |
+| Wave 4 | dual-write soak 完成後 | BFF-CONSOL-024 | 舊 action receipt 標 deprecated；前端 default caller 切 `/bff/v1/commands` |
+| Wave 4 | cutover 完成後 | BFF-CONSOL-027 | Final BFF consolidation acceptance packet |
+
+### 收斂原則
+
+1. **不中斷現有 caller** — `/bff/actions/*` 路徑在 Wave 3 之前繼續完整運作。Wave 3 之後 BFF adapter 在後端透明轉發，路徑本身不下線。
+2. **EP5 gate 不得繞過** — BFF-CONSOL-019 runtime change 在 EP5 paper-canary closeout 之前禁止 merge 至 main。
+3. **Dual-write soak 決定 receipt deprecation 時間** — Wave 4 的 receipt deprecation 以 BFF-CONSOL-021 soak window 完成為觸發條件，不設固定日期。
+4. **Legacy route 保留** — `/api/v1/operator/commands` 在明確的 migration test 通過前不得移除，維持向下相容。
+5. **Spec-first** — 本 §11 與 `BFF_COMMAND_API_CONTRACT.md` §8 是 spec；runtime 行為仍由後續 BFF-CONSOL-019/020/021 task 實作。
+
+---
+
+## 13. 最終結論（原 §11）
 
 本文件的正式決議是：
 

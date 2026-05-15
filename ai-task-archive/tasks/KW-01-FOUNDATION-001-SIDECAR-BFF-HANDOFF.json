@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "KW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-19T18:18:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "KW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare KW-01-FOUNDATION-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 KW-01-FOUNDATION-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Execution / Wave 2 - Blocked Module Activation",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "STATE-REBASE-001",
+      "DEPTH-REBASE-001"
+    ],
+    "artifacts": [
+      "support/sidecars/KW-01-FOUNDATION-001/KW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar BFF handoff packet to done. Support-only artifact remains under support/sidecars/, reviewer approval is recorded, and the packet preserves the flagged readiness-wording mismatch for parent-owner disposition.",
+    "last_update": "2026-04-19T18:18:15Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "KW-01-FOUNDATION-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar BFF handoff packet 通過審查：（1）僅建立 support/sidecars/ artifact，未修改任何 canonical truth 或 L1 policy；（2）三條 Knowledge 路由（GET /api/v1/workbench/knowledge L4700、GET /api/v1/knowledge/memory L4932、GET /api/v1/knowledge/memory/{entry_id} L4979）已在 main.py 確認存在；（3）Overview contract test 檔案 test_pkt016_knowledge_workbench_contract.py 存在；（4）Section 4.3 truth mismatch flag 屬實且範圍正確，僅標記文件用詞與實作的落差，未超出 sidecar 授權範圍。Packet 可作為 KW-01-FOUNDATION-001 parent 正式 done 的支援材料。"
+    ],
+    "review_file": "support/sidecars/KW-01-FOUNDATION-001/KW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T18:18:15Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "543b6479826d5c9880842ec0cdd88b36d7e782a3",
+      "commit_subject": "KW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF: finalize sidecar BFF handoff",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "KW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 725,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "KW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "BFF/frontend handoff packet added under support/sidecars/KW-01-FOUNDATION-001/. Verified overview test passes and both KW-01 memory routes return 200 via TestClient. Packet flags one real risk: docs still say routes are pending even though main.py has live example-backed endpoints.",
+      "status": "done",
+      "created_at": "2026-04-19T18:09:43Z",
+      "resolved_at": "2026-04-19T18:15:07Z"
+    },
+    {
+      "task_id": "KW-01-FOUNDATION-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Sidecar BFF handoff packet approved. All three acceptance criteria met: support-only artifacts, no canonical truth modified, verified routes present in main.py. Returning to Codex2 for finalization to done.",
+      "status": "done",
+      "created_at": "2026-04-19T18:15:07Z",
+      "resolved_at": "2026-04-19T18:18:17Z"
+    }
+  ],
+  "blockers": []
+}

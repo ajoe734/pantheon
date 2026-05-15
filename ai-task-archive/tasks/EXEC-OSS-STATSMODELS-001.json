@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "task_id": "EXEC-OSS-STATSMODELS-001",
+  "archived_at": "2026-04-21T02:02:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-OSS-STATSMODELS-001",
+    "title": "Advance statsmodels next-wave execution readiness",
+    "summary_zh": "把 statsmodels 下一波執行面收斂成可執行工作，補齊 source selection、adapter boundary 與 smoke-test next step。",
+    "phase": "Execution / OSS Next Wave",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/research/statsmodels/ACTIVATION_CRITERIA.md",
+      "RESEARCH_BACKEND_MATURITY_MATRIX.md",
+      "docs/reviews/2026-04-20-development-progress-and-next-work-inventory.md"
+    ],
+    "acceptance": [
+      "statsmodels next-wave gap 與第一個可執行 slice 明確",
+      "adapter / smoke-test / governed I/O 邊界清楚",
+      "留下可 review 的 execution-ready plan 或 patch set"
+    ],
+    "next": "Owner finalized approved task and closed it. Governed input validation, regression coverage, maturity/inventory sync, review evidence, and statsmodels smoke/worker verification are complete.",
+    "last_update": "2026-04-21T02:02:09Z",
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-20-execution-continuation-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "statsmodels governed input boundary、regression 測試、maturity/inventory truth 已重新核對；pytest、smoke test、worker 與三個 reviewer repro 全數通過。"
+    ],
+    "review_file": "docs/reviews/2026-04-21-exec-oss-statsmodels-001-codex-rereview.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T02:02:09Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "51f8941afe75ff26d032be389b8f57101bc67590",
+      "commit_subject": "EXEC-OSS-STATSMODELS-001: finalize governed baseline",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "EXEC-OSS-STATSMODELS-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 936,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-OSS-STATSMODELS-001",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T12:42:09Z",
+      "resolved_at": "2026-04-20T13:47:54Z"
+    },
+    {
+      "task_id": "EXEC-OSS-STATSMODELS-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T23:41:30Z",
+      "resolved_at": "2026-04-21T00:00:05Z"
+    },
+    {
+      "task_id": "EXEC-OSS-STATSMODELS-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Statsmodels governed baseline closed out: added worker entrypoint and governed sample dataset, synced activation/maturity/inventory truth to governed status, and revalidated with python3 services/research/statsmodels/smoke_test.py, python3 -m pytest services/research/statsmodels/test_adapter.py -q (20 passed), and python3 services/research/statsmodels/worker.py.",
+      "status": "done",
+      "created_at": "2026-04-21T00:03:32Z",
+      "resolved_at": "2026-04-21T01:51:53Z"
+    },
+    {
+      "task_id": "EXEC-OSS-STATSMODELS-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Changes requested per docs/reviews/2026-04-21-exec-oss-statsmodels-001-codex-review.md: enforce the documented governed input validation (numeric/aligned/NaN/metadata) or narrow the governance claims, and sync the remaining maturity/inventory/evidence text that still treats statsmodels as pre-governed.",
+      "status": "done",
+      "created_at": "2026-04-21T01:51:53Z",
+      "resolved_at": "2026-04-21T01:51:53Z"
+    },
+    {
+      "task_id": "EXEC-OSS-STATSMODELS-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented the governed input boundary in the statsmodels adapter (numeric-only, equal-length alignment, non-finite rejection, metadata.governed enforcement), added regression tests for the prior review reproductions, and synced remaining maturity/inventory/requirements text to governed status. Revalidated with python3 -m pytest services/research/statsmodels/test_adapter.py -q (24 passed), python3 services/research/statsmodels/smoke_test.py, python3 services/research/statsmodels/worker.py, and the three reviewer repro commands now fail with StatsmodelsWorkflowError.",
+      "status": "done",
+      "created_at": "2026-04-21T01:55:49Z",
+      "resolved_at": "2026-04-21T01:59:43Z"
+    },
+    {
+      "task_id": "EXEC-OSS-STATSMODELS-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Re-review passed: governed input validation now matches the documented boundary, maturity/inventory text is synced to governed status, and focused verification plus the prior reviewer repros all pass. Owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-21T01:59:43Z",
+      "resolved_at": "2026-04-21T02:02:10Z"
+    }
+  ],
+  "blockers": []
+}

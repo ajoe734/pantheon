@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "No eligible idle worker exists and existing review work is blocked by provider quota guardrails.",
+  "blocked_by": [
+    "no idle eligible auto worker; recent activity logged sidecar_wave_skipped because no idle agents were eligible",
+    "provider:claude paused until 2026-04-29T12:20:00Z and auth_ready is false",
+    "provider:claude2 paused until 2026-04-29T04:08:31Z after 402 no quota",
+    "provider:codex2 paused until 2026-04-29T04:13:57Z after 402 no quota",
+    "provider:copilot paused until 2026-04-29T04:08:22Z after repeated 402 no quota",
+    "provider:gemini paused until 2026-04-29T04:19:31Z, with raw quota reset around 8h24m",
+    "three existing sidecars are already in review behind paused reviewer lanes"
+  ],
+  "blocked_sidecar_parents": [
+    "SVC-RESEARCH-ORCHESTRATOR-SERVICE",
+    "SVC-RESEARCH-WORKER-GATEWAY",
+    "SVC-DOCS-CODE-TRUTH-SYNC"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+      "role": "reviewer",
+      "from": "Gemini",
+      "to": "Claude2",
+      "reason": "Gemini has repeated terminal quota failures on this review with a multi-hour reset window; Claude2 is auth-ready and should be the next independent reviewer after its short pause expires."
+    }
+  ],
+  "recommended_focus": [
+    "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+    "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+    "SVC-DOCS-CODE-TRUTH-SYNC",
+    "SVC-DOCS-CODE-TRUTH-SYNC-SIDECAR-BFF-HANDOFF"
+  ]
+}

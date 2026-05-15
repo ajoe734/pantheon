@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "task_id": "INFRA-PG-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-17T18:46:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "INFRA-PG-001-SIDECAR-REVIEW",
+    "title": "Prepare INFRA-PG-001 review packet and evidence summary",
+    "summary_zh": "平行支援 INFRA-PG-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/INFRA-PG-001/INFRA-PG-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: review packet verified, Codex approval accepted. All 3 acceptance gates confirmed pass including late schema-owner fix (commit 4018762). Sidecar task closed.",
+    "last_update": "2026-04-17T18:46:28Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "INFRA-PG-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "live repro confirmed the 4018762 schema fix: `pantheon_app` successfully executed `CREATE TABLE review_probe(id int)` and `public` is owned by `pantheon_app`."
+    ],
+    "review_file": "support/sidecars/INFRA-PG-001/INFRA-PG-001-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T18:46:28Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "a76e78ba90c653ce969cd35b5065dffccb67ebd8",
+      "commit_subject": "INFRA-PG-001-SIDECAR-REVIEW: finalize sidecar — review approved, all gates confirmed pass",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "INFRA-PG-001-SIDECAR-REVIEW",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 474,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "INFRA-PG-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T18:22:04Z",
+      "resolved_at": "2026-04-17T18:22:30Z"
+    },
+    {
+      "task_id": "INFRA-PG-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T18:23:27Z",
+      "resolved_at": "2026-04-17T18:24:30Z"
+    },
+    {
+      "task_id": "INFRA-PG-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T18:25:10Z",
+      "resolved_at": "2026-04-17T18:26:43Z"
+    },
+    {
+      "task_id": "INFRA-PG-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T18:26:43Z",
+      "resolved_at": "2026-04-17T18:27:43Z"
+    },
+    {
+      "task_id": "INFRA-PG-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T18:28:38Z",
+      "resolved_at": "2026-04-17T18:29:27Z"
+    },
+    {
+      "task_id": "INFRA-PG-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review packet ready at support/sidecars/INFRA-PG-001/INFRA-PG-001-SIDECAR-REVIEW.md. All 3 acceptance gates verified against live codebase. One late addition (schema ownership grant, commit 4018762) documented. Recommend approve INFRA-PG-001.",
+      "status": "done",
+      "created_at": "2026-04-17T18:35:08Z",
+      "resolved_at": "2026-04-17T18:40:30Z"
+    },
+    {
+      "task_id": "INFRA-PG-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: review packet accurately captures the late schema-owner fix, and live revalidation confirmed that `pantheon_app` can create tables in `public`.",
+      "status": "done",
+      "created_at": "2026-04-17T18:40:30Z",
+      "resolved_at": "2026-04-17T18:46:28Z"
+    }
+  ],
+  "blockers": []
+}

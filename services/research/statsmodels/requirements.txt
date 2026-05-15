@@ -1,0 +1,5 @@
+# EXEC-OSS-STATSMODELS-001 governed baseline
+# Status: governed; adapter, smoke path, and evidence pack implemented
+statsmodels==0.14.2
+pandas>=2.2.2,<2.3.0
+numpy>=1.26.4,<2.0.0

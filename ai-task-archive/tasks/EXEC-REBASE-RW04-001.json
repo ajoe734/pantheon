@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "task_id": "EXEC-REBASE-RW04-001",
+  "archived_at": "2026-04-21T02:17:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-REBASE-RW04-001",
+    "title": "Refresh RW-04 experiment launch frontend handoff and coordination bundle",
+    "summary_zh": "補齊 RW-04 experiment launch 的前端 handoff / coordination bundle，讓已落地 route family 能被正確交接到前端 lane。",
+    "phase": "Execution / Handoff Activation and Rebaseline",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/RW-04-experiment-launch.md",
+      "docs/reviews/2026-04-20-development-progress-and-next-work-inventory.md",
+      "WORKBENCH_DELIVERY_BACKLOG.md"
+    ],
+    "acceptance": [
+      "RW-04 frontend handoff bundle 補齊到可直接使用",
+      "coordination truth 與 live route family 對齊",
+      "相關 readiness / next-action 敘述同步更新"
+    ],
+    "next": "Owner finalized the approved RW-04 route-live handoff bundle; frontend coordination package is aligned and ready for frontend lane activation.",
+    "last_update": "2026-04-21T02:17:57Z",
+    "task_class": "auto_worker_implementation",
+    "auto_created_by": "2026-04-20-execution-continuation-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "RW-04 handoff bundle、Lovable task、prompt、example payload 與新增的 bff-gap / ui-done template 已核對一致；coordination bundle 現在自洽，可直接交給前端 lane。"
+    ],
+    "review_file": "docs/reviews/2026-04-20-exec-rebase-rw04-001-codex2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T02:17:57Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "3d17768e2c862e3b6fe90c299ca18cc3af05e55f",
+      "commit_subject": "EXEC-REBASE-RW04-001: record finalize metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Review-File": "docs/reviews/2026-04-20-exec-rebase-rw04-001-codex2-review.md",
+        "Evidence-Commit": "9e5619139491b5b8e4d7eb0c6a2640ae03794586",
+        "LLM-Agent": "Codex",
+        "Task-ID": "EXEC-REBASE-RW04-001",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 926,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-REBASE-RW04-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-20T12:28:48Z",
+      "resolved_at": "2026-04-20T12:40:34Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-RW04-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "RW-04 coordination bundle created: contract-ready (status:live) and lovable-ui-task (status:ready) for POST /api/v1/experiments/launch + history + detail + cancel family.",
+      "status": "done",
+      "created_at": "2026-04-20T12:50:00Z",
+      "resolved_at": "2026-04-20T12:43:03Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-RW04-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review requested changes: publish the actual RW-04 handoff bundle and align canonical Research docs with the new live/ready truth. See docs/reviews/2026-04-20-exec-rebase-rw04-001-codex2-review.md.",
+      "status": "done",
+      "created_at": "2026-04-20T12:43:03Z",
+      "resolved_at": "2026-04-20T12:43:03Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-RW04-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "All review findings resolved: handoff bundle created at docs/pantheon-handoffs/RW-04-experiment-launch/FRONTEND_CHANGE_SPEC.md; lovable-ui-task.yaml paths populated; WORKBENCH_DELIVERY_BACKLOG, PACKET_FAMILY, LOVABLE_MASTER_SA, PANTHEON_FRONTEND_SA, and bff doc all updated to route-live/ready truth. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-20T12:50:33Z",
+      "resolved_at": "2026-04-20T12:53:39Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-RW04-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Re-review found one blocking coordination issue still open: .coordination/responses/RW-04-experiment-launch-lovable-ui-task.yaml references missing .coordination/requests/RW-04-experiment-launch-bff-gap.example.yaml and RW-04-experiment-launch-ui-done.example.yaml templates. Add both files and return for re-review. See docs/reviews/2026-04-20-exec-rebase-rw04-001-codex2-review.md.",
+      "status": "done",
+      "created_at": "2026-04-20T12:53:39Z",
+      "resolved_at": "2026-04-20T12:53:39Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-RW04-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Both missing template files added: .coordination/requests/RW-04-experiment-launch-bff-gap.example.yaml and RW-04-experiment-launch-ui-done.example.yaml. Coordination bundle is now self-contained. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-20T13:30:42Z",
+      "resolved_at": "2026-04-20T13:33:57Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-RW04-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "RW-04 coordination bundle re-reviewed and approved. Missing handoff templates are present, references resolve, and the frontend handoff is now self-contained; owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-20T13:33:57Z",
+      "resolved_at": "2026-04-20T13:37:56Z"
+    },
+    {
+      "task_id": "EXEC-REBASE-RW04-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned ownership from Claude to Codex after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1776970800,\"rateLimitType\":\"seven_day_sonnet\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_le",
+      "status": "done",
+      "created_at": "2026-04-20T13:37:56Z",
+      "resolved_at": "2026-04-21T02:17:57Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,1525 @@
+{
+  "failures": {
+    "backend_missing_frontend": [
+      {
+        "family": "governance-runtime-risk-audit",
+        "key": "DELETE /bff/confirm-tokens/{param}",
+        "method": "DELETE",
+        "path": "/bff/confirm-tokens/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/approval-decisions",
+        "method": "GET",
+        "path": "/api/v1/approval-decisions",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/approval-decisions/{param}",
+        "method": "GET",
+        "path": "/api/v1/approval-decisions/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/artifacts",
+        "method": "GET",
+        "path": "/api/v1/artifacts",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/artifacts/compare",
+        "method": "GET",
+        "path": "/api/v1/artifacts/compare",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/artifacts/{param}",
+        "method": "GET",
+        "path": "/api/v1/artifacts/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/bindings",
+        "method": "GET",
+        "path": "/api/v1/bindings",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/bindings/{param}",
+        "method": "GET",
+        "path": "/api/v1/bindings/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/capital-pools",
+        "method": "GET",
+        "path": "/api/v1/capital-pools",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/capital-pools/{param}",
+        "method": "GET",
+        "path": "/api/v1/capital-pools/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/committees",
+        "method": "GET",
+        "path": "/api/v1/committees",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/committees/{param}",
+        "method": "GET",
+        "path": "/api/v1/committees/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/consult/memos",
+        "method": "GET",
+        "path": "/api/v1/consult/memos",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/consult/memos/{param}",
+        "method": "GET",
+        "path": "/api/v1/consult/memos/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/consult/requests",
+        "method": "GET",
+        "path": "/api/v1/consult/requests",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/consult/requests/{param}",
+        "method": "GET",
+        "path": "/api/v1/consult/requests/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/consultations/{param}",
+        "method": "GET",
+        "path": "/api/v1/consultations/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/consultations/{param}/evidence",
+        "method": "GET",
+        "path": "/api/v1/consultations/{param}/evidence",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/consultations/{param}/outcome",
+        "method": "GET",
+        "path": "/api/v1/consultations/{param}/outcome",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/consultations/{param}/participants",
+        "method": "GET",
+        "path": "/api/v1/consultations/{param}/participants",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/consultations/{param}/transcript",
+        "method": "GET",
+        "path": "/api/v1/consultations/{param}/transcript",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/deployment-plans",
+        "method": "GET",
+        "path": "/api/v1/deployment-plans",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/deployment-plans/{param}",
+        "method": "GET",
+        "path": "/api/v1/deployment-plans/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/evolution-decisions",
+        "method": "GET",
+        "path": "/api/v1/evolution-decisions",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/evolution-decisions/{param}",
+        "method": "GET",
+        "path": "/api/v1/evolution-decisions/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/experiments",
+        "method": "GET",
+        "path": "/api/v1/experiments",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/experiments/{param}",
+        "method": "GET",
+        "path": "/api/v1/experiments/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/freeze-orders",
+        "method": "GET",
+        "path": "/api/v1/freeze-orders",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/incidents",
+        "method": "GET",
+        "path": "/api/v1/incidents",
+        "status": "implemented"
+      },
+      {
+        "family": "sse-substrate",
+        "key": "GET /api/v1/incidents/stream",
+        "method": "GET",
+        "path": "/api/v1/incidents/stream",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/incidents/{param}",
+        "method": "GET",
+        "path": "/api/v1/incidents/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/kill-switch/status",
+        "method": "GET",
+        "path": "/api/v1/kill-switch/status",
+        "status": "implemented"
+      },
+      {
+        "family": "sse-substrate",
+        "key": "GET /api/v1/kill-switch/updates",
+        "method": "GET",
+        "path": "/api/v1/kill-switch/updates",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/knowledge/evidence",
+        "method": "GET",
+        "path": "/api/v1/knowledge/evidence",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/knowledge/evidence/{param}",
+        "method": "GET",
+        "path": "/api/v1/knowledge/evidence/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/knowledge/insights",
+        "method": "GET",
+        "path": "/api/v1/knowledge/insights",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/knowledge/insights/{param}",
+        "method": "GET",
+        "path": "/api/v1/knowledge/insights/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/knowledge/memory",
+        "method": "GET",
+        "path": "/api/v1/knowledge/memory",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/knowledge/memory/{param}",
+        "method": "GET",
+        "path": "/api/v1/knowledge/memory/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/knowledge/notes",
+        "method": "GET",
+        "path": "/api/v1/knowledge/notes",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/knowledge/notes/{param}",
+        "method": "GET",
+        "path": "/api/v1/knowledge/notes/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/knowledge/strategy-specs",
+        "method": "GET",
+        "path": "/api/v1/knowledge/strategy-specs",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/knowledge/strategy-specs/{param}",
+        "method": "GET",
+        "path": "/api/v1/knowledge/strategy-specs/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/knowledge/strategy-specs/{param}/compare",
+        "method": "GET",
+        "path": "/api/v1/knowledge/strategy-specs/{param}/compare",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/knowledge/strategy-specs/{param}/versions",
+        "method": "GET",
+        "path": "/api/v1/knowledge/strategy-specs/{param}/versions",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/lineage",
+        "method": "GET",
+        "path": "/api/v1/lineage",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/lineage/edges/{param}",
+        "method": "GET",
+        "path": "/api/v1/lineage/edges/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/lineage/graph",
+        "method": "GET",
+        "path": "/api/v1/lineage/graph",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/lineage/inspiration/{param}",
+        "method": "GET",
+        "path": "/api/v1/lineage/inspiration/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/alerts",
+        "method": "GET",
+        "path": "/api/v1/operator/alerts",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/commands/{param}",
+        "method": "GET",
+        "path": "/api/v1/operator/commands/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/degraded-control-guidance",
+        "method": "GET",
+        "path": "/api/v1/operator/degraded-control-guidance",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/deployment-diff/{param}",
+        "method": "GET",
+        "path": "/api/v1/operator/deployment-diff/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/deployment-plans",
+        "method": "GET",
+        "path": "/api/v1/operator/deployment-plans",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/deployment-review/{param}",
+        "method": "GET",
+        "path": "/api/v1/operator/deployment-review/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/governance/approval-queue",
+        "method": "GET",
+        "path": "/api/v1/operator/governance/approval-queue",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/governance/audit",
+        "method": "GET",
+        "path": "/api/v1/operator/governance/audit",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/governance/review-queue",
+        "method": "GET",
+        "path": "/api/v1/operator/governance/review-queue",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/health-status",
+        "method": "GET",
+        "path": "/api/v1/operator/health-status",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/home",
+        "method": "GET",
+        "path": "/api/v1/operator/home",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/incident-response/{param}",
+        "method": "GET",
+        "path": "/api/v1/operator/incident-response/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/mutation-review/{param}",
+        "method": "GET",
+        "path": "/api/v1/operator/mutation-review/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/openclaw/broker-adapter-readiness",
+        "method": "GET",
+        "path": "/api/v1/operator/openclaw/broker-adapter-readiness",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/openclaw/broker/adapter-readiness",
+        "method": "GET",
+        "path": "/api/v1/operator/openclaw/broker/adapter-readiness",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/openclaw/live-gate/audit",
+        "method": "GET",
+        "path": "/api/v1/operator/openclaw/live-gate/audit",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/openclaw/live-gate/status",
+        "method": "GET",
+        "path": "/api/v1/operator/openclaw/live-gate/status",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/openclaw/ops",
+        "method": "GET",
+        "path": "/api/v1/operator/openclaw/ops",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/openclaw/tool-workflow-bridge",
+        "method": "GET",
+        "path": "/api/v1/operator/openclaw/tool-workflow-bridge",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/paper-live-drift/{param}",
+        "method": "GET",
+        "path": "/api/v1/operator/paper-live-drift/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/persona-management/{param}",
+        "method": "GET",
+        "path": "/api/v1/operator/persona-management/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/post-incident-review/{param}",
+        "method": "GET",
+        "path": "/api/v1/operator/post-incident-review/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/research/oss-activation-ready",
+        "method": "GET",
+        "path": "/api/v1/operator/research/oss-activation-ready",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/research/oss-preactivation",
+        "method": "GET",
+        "path": "/api/v1/operator/research/oss-preactivation",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/rollback-review/{param}",
+        "method": "GET",
+        "path": "/api/v1/operator/rollback-review/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/runtime-state",
+        "method": "GET",
+        "path": "/api/v1/operator/runtime-state",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/search/ops",
+        "method": "GET",
+        "path": "/api/v1/operator/search/ops",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "GET /api/v1/operator/source/ops",
+        "method": "GET",
+        "path": "/api/v1/operator/source/ops",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/personas",
+        "method": "GET",
+        "path": "/api/v1/personas",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/personas/{param}",
+        "method": "GET",
+        "path": "/api/v1/personas/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/personas/{param}/capabilities",
+        "method": "GET",
+        "path": "/api/v1/personas/{param}/capabilities",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/personas/{param}/consult-policy",
+        "method": "GET",
+        "path": "/api/v1/personas/{param}/consult-policy",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/personas/{param}/consultations",
+        "method": "GET",
+        "path": "/api/v1/personas/{param}/consultations",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/personas/{param}/sessions",
+        "method": "GET",
+        "path": "/api/v1/personas/{param}/sessions",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/personas/{param}/teaching",
+        "method": "GET",
+        "path": "/api/v1/personas/{param}/teaching",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/postmortems",
+        "method": "GET",
+        "path": "/api/v1/postmortems",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/postmortems/{param}",
+        "method": "GET",
+        "path": "/api/v1/postmortems/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/research/analysis",
+        "method": "GET",
+        "path": "/api/v1/research/analysis",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/research/analysis/{param}",
+        "method": "GET",
+        "path": "/api/v1/research/analysis/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/research/search",
+        "method": "GET",
+        "path": "/api/v1/research/search",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/research/source-connectors",
+        "method": "GET",
+        "path": "/api/v1/research/source-connectors",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/research/tickets",
+        "method": "GET",
+        "path": "/api/v1/research/tickets",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/research/tickets/{param}",
+        "method": "GET",
+        "path": "/api/v1/research/tickets/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/rollbacks",
+        "method": "GET",
+        "path": "/api/v1/rollbacks",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/runtime-bindings",
+        "method": "GET",
+        "path": "/api/v1/runtime-bindings",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/runtime-bindings/{param}",
+        "method": "GET",
+        "path": "/api/v1/runtime-bindings/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "sse-substrate",
+        "key": "GET /api/v1/runtime/{param}/events/stream",
+        "method": "GET",
+        "path": "/api/v1/runtime/{param}/events/stream",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/runtimes/{param}/rollbacks",
+        "method": "GET",
+        "path": "/api/v1/runtimes/{param}/rollbacks",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/runtimes/{param}/status",
+        "method": "GET",
+        "path": "/api/v1/runtimes/{param}/status",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/sessions/{param}",
+        "method": "GET",
+        "path": "/api/v1/sessions/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/settings",
+        "method": "GET",
+        "path": "/api/v1/settings",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/settings/export",
+        "method": "GET",
+        "path": "/api/v1/settings/export",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/telemetry",
+        "method": "GET",
+        "path": "/api/v1/telemetry",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/telemetry/{param}/performance",
+        "method": "GET",
+        "path": "/api/v1/telemetry/{param}/performance",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/telemetry/{param}/summary",
+        "method": "GET",
+        "path": "/api/v1/telemetry/{param}/summary",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/trainer/replay",
+        "method": "GET",
+        "path": "/api/v1/trainer/replay",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/trainer/replay/{param}",
+        "method": "GET",
+        "path": "/api/v1/trainer/replay/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/trainer/sessions",
+        "method": "GET",
+        "path": "/api/v1/trainer/sessions",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/trainer/sessions/{param}",
+        "method": "GET",
+        "path": "/api/v1/trainer/sessions/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/trainer/sessions/{param}/controls",
+        "method": "GET",
+        "path": "/api/v1/trainer/sessions/{param}/controls",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/trainer/sessions/{param}/preview",
+        "method": "GET",
+        "path": "/api/v1/trainer/sessions/{param}/preview",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/workbench/consultation",
+        "method": "GET",
+        "path": "/api/v1/workbench/consultation",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "GET /api/v1/workbench/knowledge",
+        "method": "GET",
+        "path": "/api/v1/workbench/knowledge",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "GET /bff/agora/alerts/triage",
+        "method": "GET",
+        "path": "/bff/agora/alerts/triage",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "GET /bff/agora/ask/sessions",
+        "method": "GET",
+        "path": "/bff/agora/ask/sessions",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "GET /bff/agora/evaluation-runs",
+        "method": "GET",
+        "path": "/bff/agora/evaluation-runs",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "GET /bff/agora/evaluation-suites",
+        "method": "GET",
+        "path": "/bff/agora/evaluation-suites",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "GET /bff/agora/inbox",
+        "method": "GET",
+        "path": "/bff/agora/inbox",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-extended",
+        "key": "GET /bff/agora/persona-lab/runs",
+        "method": "GET",
+        "path": "/bff/agora/persona-lab/runs",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "GET /bff/agora/postmortems",
+        "method": "GET",
+        "path": "/bff/agora/postmortems",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "GET /bff/agora/skill-coaching/sessions",
+        "method": "GET",
+        "path": "/bff/agora/skill-coaching/sessions",
+        "status": "implemented"
+      },
+      {
+        "family": "governance-runtime-risk-audit",
+        "key": "GET /bff/alerts/{param}",
+        "method": "GET",
+        "path": "/bff/alerts/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "governance-runtime-risk-audit",
+        "key": "GET /bff/approvals/{param}",
+        "method": "GET",
+        "path": "/bff/approvals/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "evolution-experiment-jobs-events",
+        "key": "GET /bff/artifacts",
+        "method": "GET",
+        "path": "/bff/artifacts",
+        "status": "implemented"
+      },
+      {
+        "family": "evolution-experiment-jobs-events",
+        "key": "GET /bff/artifacts/{param}",
+        "method": "GET",
+        "path": "/bff/artifacts/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "governance-runtime-risk-audit",
+        "key": "GET /bff/audit",
+        "method": "GET",
+        "path": "/bff/audit",
+        "status": "implemented"
+      },
+      {
+        "family": "health",
+        "key": "GET /bff/capabilities",
+        "method": "GET",
+        "path": "/bff/capabilities",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-extended",
+        "key": "GET /bff/channels",
+        "method": "GET",
+        "path": "/bff/channels",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-extended",
+        "key": "GET /bff/channels/{param}",
+        "method": "GET",
+        "path": "/bff/channels/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "governance-runtime-risk-audit",
+        "key": "GET /bff/confirm-tokens/{param}",
+        "method": "GET",
+        "path": "/bff/confirm-tokens/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "health",
+        "key": "GET /bff/feature-flags",
+        "method": "GET",
+        "path": "/bff/feature-flags",
+        "status": "implemented"
+      },
+      {
+        "family": "health",
+        "key": "GET /bff/healthz",
+        "method": "GET",
+        "path": "/bff/healthz",
+        "status": "implemented"
+      },
+      {
+        "covered_by": "GET /bff/mcp/servers",
+        "family": "mcp-final",
+        "key": "GET /bff/mcp-servers",
+        "method": "GET",
+        "path": "/bff/mcp-servers",
+        "status": "alias"
+      },
+      {
+        "covered_by": "GET /bff/mcp/servers/{param}",
+        "family": "mcp-final",
+        "key": "GET /bff/mcp-servers/{param}",
+        "method": "GET",
+        "path": "/bff/mcp-servers/{param}",
+        "status": "alias"
+      },
+      {
+        "covered_by": "GET /bff/mcp/servers/{param}/tools",
+        "family": "mcp-final",
+        "key": "GET /bff/mcp-tools",
+        "method": "GET",
+        "path": "/bff/mcp-tools",
+        "status": "alias"
+      },
+      {
+        "covered_by": "GET /bff/mcp/servers/{param}/tools",
+        "family": "mcp-final",
+        "key": "GET /bff/mcp-tools/{param}",
+        "method": "GET",
+        "path": "/bff/mcp-tools/{param}",
+        "status": "alias"
+      },
+      {
+        "covered_by": "GET /bff/ranking/formulas",
+        "family": "capital-ranking-rebalance",
+        "key": "GET /bff/ranking-formulas",
+        "method": "GET",
+        "path": "/bff/ranking-formulas",
+        "status": "alias"
+      },
+      {
+        "covered_by": "GET /bff/ranking/formulas/{param}",
+        "family": "capital-ranking-rebalance",
+        "key": "GET /bff/ranking-formulas/{param}",
+        "method": "GET",
+        "path": "/bff/ranking-formulas/{param}",
+        "status": "alias"
+      },
+      {
+        "family": "health",
+        "key": "GET /bff/readyz",
+        "method": "GET",
+        "path": "/bff/readyz",
+        "status": "implemented"
+      },
+      {
+        "family": "evolution-experiment-jobs-events",
+        "key": "GET /bff/research-experiments",
+        "method": "GET",
+        "path": "/bff/research-experiments",
+        "status": "implemented"
+      },
+      {
+        "family": "evolution-experiment-jobs-events",
+        "key": "GET /bff/research-experiments/{param}",
+        "method": "GET",
+        "path": "/bff/research-experiments/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "execute-plans-cutover-smoke",
+        "key": "GET /bff/v5/control-room",
+        "method": "GET",
+        "path": "/bff/v5/control-room",
+        "status": "implemented"
+      },
+      {
+        "family": "execute-plans-cutover-smoke",
+        "key": "GET /bff/v5/execution/strategy-health",
+        "method": "GET",
+        "path": "/bff/v5/execution/strategy-health",
+        "status": "implemented"
+      },
+      {
+        "family": "v5-interventions",
+        "key": "GET /bff/v5/interventions/{param}",
+        "method": "GET",
+        "path": "/bff/v5/interventions/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "execute-plans-cutover-smoke",
+        "key": "GET /bff/v5/loop-runs/{param}",
+        "method": "GET",
+        "path": "/bff/v5/loop-runs/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "execute-plans-cutover-smoke",
+        "key": "GET /bff/v5/sentinel/findings/{param}",
+        "method": "GET",
+        "path": "/bff/v5/sentinel/findings/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "health",
+        "key": "GET /docs",
+        "method": "GET",
+        "path": "/docs",
+        "status": "implemented"
+      },
+      {
+        "family": "health",
+        "key": "GET /docs/oauth2-redirect",
+        "method": "GET",
+        "path": "/docs/oauth2-redirect",
+        "status": "implemented"
+      },
+      {
+        "family": "health",
+        "key": "GET /healthz",
+        "method": "GET",
+        "path": "/healthz",
+        "status": "implemented"
+      },
+      {
+        "family": "health",
+        "key": "GET /livez",
+        "method": "GET",
+        "path": "/livez",
+        "status": "implemented"
+      },
+      {
+        "family": "health",
+        "key": "GET /metrics",
+        "method": "GET",
+        "path": "/metrics",
+        "status": "implemented"
+      },
+      {
+        "family": "health",
+        "key": "GET /openapi.json",
+        "method": "GET",
+        "path": "/openapi.json",
+        "status": "implemented"
+      },
+      {
+        "family": "health",
+        "key": "GET /readyz",
+        "method": "GET",
+        "path": "/readyz",
+        "status": "implemented"
+      },
+      {
+        "family": "health",
+        "key": "GET /redoc",
+        "method": "GET",
+        "path": "/redoc",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "PATCH /api/v1/research/tickets/{param}",
+        "method": "PATCH",
+        "path": "/api/v1/research/tickets/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "evolution-experiment-jobs-events",
+        "key": "PATCH /bff/artifacts/{param}",
+        "method": "PATCH",
+        "path": "/bff/artifacts/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "governance-runtime-risk-audit",
+        "key": "PATCH /bff/deployments/{param}",
+        "method": "PATCH",
+        "path": "/bff/deployments/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "session-auth-me",
+        "key": "PATCH /bff/me/locale",
+        "method": "PATCH",
+        "path": "/bff/me/locale",
+        "status": "implemented"
+      },
+      {
+        "covered_by": "PATCH /bff/ranking/formulas/{param}",
+        "family": "capital-ranking-rebalance",
+        "key": "PATCH /bff/ranking-formulas/{param}",
+        "method": "PATCH",
+        "path": "/bff/ranking-formulas/{param}",
+        "status": "alias"
+      },
+      {
+        "family": "capital-ranking-rebalance",
+        "key": "PATCH /bff/rebalances/{param}",
+        "method": "PATCH",
+        "path": "/bff/rebalances/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "evolution-experiment-jobs-events",
+        "key": "PATCH /bff/research-experiments/{param}",
+        "method": "PATCH",
+        "path": "/bff/research-experiments/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "POST /api/v1/consult/requests",
+        "method": "POST",
+        "path": "/api/v1/consult/requests",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "POST /api/v1/consult/requests/{param}/cancel",
+        "method": "POST",
+        "path": "/api/v1/consult/requests/{param}/cancel",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "POST /api/v1/experiments/launch",
+        "method": "POST",
+        "path": "/api/v1/experiments/launch",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "POST /api/v1/experiments/{param}/cancel",
+        "method": "POST",
+        "path": "/api/v1/experiments/{param}/cancel",
+        "status": "implemented"
+      },
+      {
+        "family": "sse-substrate",
+        "key": "POST /api/v1/internal/sse/publish",
+        "method": "POST",
+        "path": "/api/v1/internal/sse/publish",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "POST /api/v1/knowledge/notes",
+        "method": "POST",
+        "path": "/api/v1/knowledge/notes",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "POST /api/v1/operator/commands",
+        "method": "POST",
+        "path": "/api/v1/operator/commands",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "POST /api/v1/operator/openclaw/sessions",
+        "method": "POST",
+        "path": "/api/v1/operator/openclaw/sessions",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "POST /api/v1/operator/openclaw/sessions/{param}/cancel",
+        "method": "POST",
+        "path": "/api/v1/operator/openclaw/sessions/{param}/cancel",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "POST /api/v1/operator/search/index/materialize",
+        "method": "POST",
+        "path": "/api/v1/operator/search/index/materialize",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "POST /api/v1/operator/search/index/refresh",
+        "method": "POST",
+        "path": "/api/v1/operator/search/index/refresh",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "POST /api/v1/operator/source/dlq/replay",
+        "method": "POST",
+        "path": "/api/v1/operator/source/dlq/replay",
+        "status": "implemented"
+      },
+      {
+        "family": "operator",
+        "key": "POST /api/v1/operator/source/frontier/{param}/replay",
+        "method": "POST",
+        "path": "/api/v1/operator/source/frontier/{param}/replay",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "POST /api/v1/research/tickets",
+        "method": "POST",
+        "path": "/api/v1/research/tickets",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "POST /api/v1/settings",
+        "method": "POST",
+        "path": "/api/v1/settings",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "POST /api/v1/settings/import",
+        "method": "POST",
+        "path": "/api/v1/settings/import",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "POST /api/v1/trainer/sessions",
+        "method": "POST",
+        "path": "/api/v1/trainer/sessions",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "POST /api/v1/trainer/sessions/{param}/commit",
+        "method": "POST",
+        "path": "/api/v1/trainer/sessions/{param}/commit",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "POST /api/v1/trainer/sessions/{param}/discard",
+        "method": "POST",
+        "path": "/api/v1/trainer/sessions/{param}/discard",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "POST /api/v1/trainer/sessions/{param}/message",
+        "method": "POST",
+        "path": "/api/v1/trainer/sessions/{param}/message",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "POST /api/v1/trainer/sessions/{param}/patch",
+        "method": "POST",
+        "path": "/api/v1/trainer/sessions/{param}/patch",
+        "status": "implemented"
+      },
+      {
+        "family": "api-v1",
+        "key": "POST /api/v1/trainer/sessions/{param}/preview",
+        "method": "POST",
+        "path": "/api/v1/trainer/sessions/{param}/preview",
+        "status": "implemented"
+      },
+      {
+        "family": "final-contract",
+        "key": "POST /bff/actions/{param}/{param}/{param}",
+        "method": "POST",
+        "path": "/bff/actions/{param}/{param}/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "POST /bff/agora/ask",
+        "method": "POST",
+        "path": "/bff/agora/ask",
+        "status": "implemented"
+      },
+      {
+        "family": "governance-runtime-risk-audit",
+        "key": "POST /bff/alerts/{param}/acknowledge",
+        "method": "POST",
+        "path": "/bff/alerts/{param}/acknowledge",
+        "status": "implemented"
+      },
+      {
+        "family": "governance-runtime-risk-audit",
+        "key": "POST /bff/alerts/{param}/escalate-incident",
+        "method": "POST",
+        "path": "/bff/alerts/{param}/escalate-incident",
+        "status": "implemented"
+      },
+      {
+        "family": "governance-runtime-risk-audit",
+        "key": "POST /bff/approvals/batch-decide",
+        "method": "POST",
+        "path": "/bff/approvals/batch-decide",
+        "status": "implemented"
+      },
+      {
+        "family": "governance-runtime-risk-audit",
+        "key": "POST /bff/approvals/{param}/decide",
+        "method": "POST",
+        "path": "/bff/approvals/{param}/decide",
+        "status": "implemented"
+      },
+      {
+        "family": "evolution-experiment-jobs-events",
+        "key": "POST /bff/artifacts",
+        "method": "POST",
+        "path": "/bff/artifacts",
+        "status": "implemented"
+      },
+      {
+        "family": "governance-runtime-risk-audit",
+        "key": "POST /bff/audit/export",
+        "method": "POST",
+        "path": "/bff/audit/export",
+        "status": "implemented"
+      },
+      {
+        "family": "session-auth-me",
+        "key": "POST /bff/auth/refresh",
+        "method": "POST",
+        "path": "/bff/auth/refresh",
+        "status": "implemented"
+      },
+      {
+        "family": "governance-runtime-risk-audit",
+        "key": "POST /bff/confirm-tokens",
+        "method": "POST",
+        "path": "/bff/confirm-tokens",
+        "status": "implemented"
+      },
+      {
+        "family": "governance-runtime-risk-audit",
+        "key": "POST /bff/confirm-tokens/{param}/redeem",
+        "method": "POST",
+        "path": "/bff/confirm-tokens/{param}/redeem",
+        "status": "implemented"
+      },
+      {
+        "family": "governance-runtime-risk-audit",
+        "key": "POST /bff/deployments",
+        "method": "POST",
+        "path": "/bff/deployments",
+        "status": "implemented"
+      },
+      {
+        "family": "governance-runtime-risk-audit",
+        "key": "POST /bff/incidents/{param}/append-postmortem",
+        "method": "POST",
+        "path": "/bff/incidents/{param}/append-postmortem",
+        "status": "implemented"
+      },
+      {
+        "family": "governance-runtime-risk-audit",
+        "key": "POST /bff/incidents/{param}/resolve",
+        "method": "POST",
+        "path": "/bff/incidents/{param}/resolve",
+        "status": "implemented"
+      },
+      {
+        "family": "governance-runtime-risk-audit",
+        "key": "POST /bff/incidents/{param}/rollback-deployment",
+        "method": "POST",
+        "path": "/bff/incidents/{param}/rollback-deployment",
+        "status": "implemented"
+      },
+      {
+        "family": "governance-runtime-risk-audit",
+        "key": "POST /bff/incidents/{param}/start-mitigation",
+        "method": "POST",
+        "path": "/bff/incidents/{param}/start-mitigation",
+        "status": "implemented"
+      },
+      {
+        "family": "session-auth-me",
+        "key": "POST /bff/logout",
+        "method": "POST",
+        "path": "/bff/logout",
+        "status": "implemented"
+      },
+      {
+        "covered_by": "POST /bff/ranking/formulas",
+        "family": "capital-ranking-rebalance",
+        "key": "POST /bff/ranking-formulas",
+        "method": "POST",
+        "path": "/bff/ranking-formulas",
+        "status": "alias"
+      },
+      {
+        "family": "evolution-experiment-jobs-events",
+        "key": "POST /bff/research-experiments",
+        "method": "POST",
+        "path": "/bff/research-experiments",
+        "status": "implemented"
+      },
+      {
+        "family": "session-auth-me",
+        "key": "POST /bff/switch-tenant",
+        "method": "POST",
+        "path": "/bff/switch-tenant",
+        "status": "implemented"
+      },
+      {
+        "family": "v5-interventions",
+        "key": "POST /bff/v5/interventions/{param}/claim",
+        "method": "POST",
+        "path": "/bff/v5/interventions/{param}/claim",
+        "status": "implemented"
+      },
+      {
+        "family": "v5-interventions",
+        "key": "POST /bff/v5/interventions/{param}/decide",
+        "method": "POST",
+        "path": "/bff/v5/interventions/{param}/decide",
+        "status": "implemented"
+      },
+      {
+        "family": "v5-interventions",
+        "key": "POST /bff/v5/interventions/{param}/escalate",
+        "method": "POST",
+        "path": "/bff/v5/interventions/{param}/escalate",
+        "status": "implemented"
+      },
+      {
+        "family": "v5-interventions",
+        "key": "POST /bff/v5/interventions/{param}/release",
+        "method": "POST",
+        "path": "/bff/v5/interventions/{param}/release",
+        "status": "implemented"
+      },
+      {
+        "family": "execute-plans-cutover-smoke",
+        "key": "POST /bff/v5/sentinel/findings/{param}/status",
+        "method": "POST",
+        "path": "/bff/v5/sentinel/findings/{param}/status",
+        "status": "implemented"
+      },
+      {
+        "family": "execute-plans-cutover-smoke",
+        "key": "POST /bff/v5/sentinel/remediation/build",
+        "method": "POST",
+        "path": "/bff/v5/sentinel/remediation/build",
+        "status": "implemented"
+      },
+      {
+        "family": "execute-plans-cutover-smoke",
+        "key": "POST /bff/v5/sentinel/remediation/{param}/execute",
+        "method": "POST",
+        "path": "/bff/v5/sentinel/remediation/{param}/execute",
+        "status": "implemented"
+      }
+    ],
+    "duplicate_backend_keys": [],
+    "duplicate_frontend_keys": [],
+    "frontend_missing_backend": [],
+    "naming_mismatches": []
+  },
+  "metadata": {
+    "backend_manifest": "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json",
+    "backend_snapshot_date": "2026-05-13",
+    "frontend_manifest": "services/control-plane/bff/contract_snapshots/execute_plans_bff_routes.json",
+    "frontend_snapshot_date": "2026-05-08",
+    "generator": "scripts/bff_route_diff.py",
+    "mode": "fail-hard",
+    "non_blocking_route_statuses": [
+      "deferred",
+      "deferred_with_task",
+      "deprecated",
+      "mock_only",
+      "mock_only_dev",
+      "superseded",
+      "superseded_with_reason"
+    ],
+    "rules": [
+      "Frontend active routes absent from the backend are failures unless marked mock-only, deferred, superseded, or covered_by a backend route.",
+      "Backend active routes absent from the frontend manifest are failures in fail-hard mode unless marked mock-only, deferred, or superseded.",
+      "Shared active method/path routes with mismatched manifest family names are failures."
+    ],
+    "task_id": "BFF-CONSOL-026"
+  },
+  "summary": {
+    "backend_routes": 371,
+    "failure_count": 209,
+    "failures": {
+      "backend_missing_frontend": 209,
+      "duplicate_backend_keys": 0,
+      "duplicate_frontend_keys": 0,
+      "frontend_missing_backend": 0,
+      "naming_mismatches": 0
+    },
+    "frontend_routes": 178,
+    "mode_failure_count": 209,
+    "status": "fail",
+    "warning_count": 0,
+    "warnings": {
+      "backend_missing_frontend": 0
+    }
+  },
+  "warnings": {
+    "backend_missing_frontend": []
+  }
+}

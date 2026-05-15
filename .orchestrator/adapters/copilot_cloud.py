@@ -16,6 +16,12 @@ from common import (
 )
 
 
+def _configured_gh_cli(config: dict | None = None) -> str | None:
+    provider = ((config or {}).get("providers", {}).get("copilot", {}) or {})
+    runtime = provider.get("cloud", {})
+    return command_exists(runtime.get("cli") or "gh")
+
+
 def _parse_version(text: str) -> tuple[int, ...]:
     match = re.search(r"(\d+)\.(\d+)\.(\d+)", text)
     if not match:
@@ -44,7 +50,7 @@ class CopilotCloudAdapter(BaseAdapter):
     name = "copilot_cloud"
 
     def capability(self, agent_id: str) -> DeliveryCapability:
-        gh = command_exists("gh")
+        gh = _configured_gh_cli(self.config)
         if not gh:
             return DeliveryCapability(
                 adapter=self.name,
@@ -116,7 +122,7 @@ class CopilotCloudAdapter(BaseAdapter):
                 notes="Set `providers.copilot.cloud.repo` in config.local.json or configure `remote.origin.url`.",
             )
 
-        gh = command_exists("gh") or "gh"
+        gh = _configured_gh_cli(self.config) or "gh"
         command = [gh, "agent-task", "create", "--repo", repo]
         base_branch = cloud.get("base_branch")
         if base_branch:

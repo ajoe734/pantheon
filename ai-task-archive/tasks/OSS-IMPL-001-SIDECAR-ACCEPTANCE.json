@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "task_id": "OSS-IMPL-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-17T16:40:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-IMPL-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare OSS-IMPL-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 OSS-IMPL-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 7: Deployment",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/OSS-IMPL-001/OSS-IMPL-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support packet finalized after Claude review approval; acceptance packet and review note are committed as support-only artifacts for parent owner absorption.",
+    "last_update": "2026-04-17T16:40:39Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OSS-IMPL-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：packet 為 support-only，未觸碰 canonical truth；repo snapshot 確認準確，implementation 尚未啟動；checklist 正確標示 version-pinned；dependency map 和建議執行順序清晰合理。交回 Codex2 進行最終收尾。"
+    ],
+    "review_file": "support/sidecars/OSS-IMPL-001/OSS-IMPL-001-SIDECAR-ACCEPTANCE-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T16:40:39Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "67849d460e3c14e7399efc830b322b048c9557cc",
+      "commit_subject": "OSS-IMPL-001-SIDECAR-ACCEPTANCE finalize acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "OSS-IMPL-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 458,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-IMPL-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Acceptance packet is ready at support/sidecars/OSS-IMPL-001/OSS-IMPL-001-SIDECAR-ACCEPTANCE.md. It captures parent durable truth, confirms statsmodels is still only at the materialization baseline, and maps the missing adapter/smoke/test/governance artifacts plus sequencing guidance for the parent owner.",
+      "status": "done",
+      "created_at": "2026-04-17T16:33:52Z",
+      "resolved_at": "2026-04-17T16:38:29Z"
+    },
+    {
+      "task_id": "OSS-IMPL-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Packet is accurate and properly scoped. Repo snapshot confirmed correct, all acceptance criteria met for the support artifact. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-17T16:38:29Z",
+      "resolved_at": "2026-04-17T16:40:39Z"
+    }
+  ],
+  "blockers": []
+}

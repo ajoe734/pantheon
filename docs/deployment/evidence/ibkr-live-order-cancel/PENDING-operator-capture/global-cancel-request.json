@@ -1,0 +1,159 @@
+{
+  "status": "global_cancel_requested",
+  "generated_at": "2026-04-26T13:29:35Z",
+  "client_id": 83,
+  "events": [
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "event": "nextValidId",
+      "order_id": 1
+    },
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "event": "nextValidId",
+      "order_id": 1
+    }
+  ],
+  "errors": [
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:cashfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usfuture",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usopt.nj",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usfarm.nj",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usopt",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "req_id": -1,
+      "error_code": 2106,
+      "error": "HMDS data farm connection is OK:euhmds",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "req_id": -1,
+      "error_code": 2106,
+      "error": "HMDS data farm connection is OK:fundfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "req_id": -1,
+      "error_code": 2106,
+      "error": "HMDS data farm connection is OK:ushmds",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "req_id": -1,
+      "error_code": 2158,
+      "error": "Sec-def data farm connection is OK:secdefil",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:cashfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usfuture",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usopt.nj",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usfarm.nj",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usopt",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "req_id": -1,
+      "error_code": 2106,
+      "error": "HMDS data farm connection is OK:euhmds",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "req_id": -1,
+      "error_code": 2106,
+      "error": "HMDS data farm connection is OK:fundfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "req_id": -1,
+      "error_code": 2106,
+      "error": "HMDS data farm connection is OK:ushmds",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:29:30Z",
+      "req_id": -1,
+      "error_code": 2158,
+      "error": "Sec-def data farm connection is OK:secdefil",
+      "advanced_reject_json": null
+    }
+  ]
+}

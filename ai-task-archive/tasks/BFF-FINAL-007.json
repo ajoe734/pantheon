@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "task_id": "BFF-FINAL-007",
+  "archived_at": "2026-05-08T00:57:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-FINAL-007",
+    "title": "Complete evidence redaction contract",
+    "summary_zh": "完成 evidence refs redaction contract，含 source_type-only fallback 與 read-surface 測試。",
+    "phase": "BFF Final Contract 2026-05-07",
+    "owner": "Claude2",
+    "reviewer": "Codex2",
+    "status": "done",
+    "terminal_outcome": "completed",
+    "depends_on": [
+      "BFF-FINAL-001"
+    ],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-07-final/BFF-FINAL-007-evidence-redaction.md",
+      "services/control-plane/bff/models.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/test_kw03_evidence_refs_contract.py"
+    ],
+    "acceptance": [
+      "EvidenceKind capability gate enforced",
+      "redacted ref shape tested",
+      "source_type-only evidence refs gated"
+    ],
+    "next": "Archived dependency restored from completed commit fe30ed06 so BFF-FINAL live dispatch can resolve prerequisites.",
+    "last_update": "2026-05-08T00:57:25Z",
+    "delivery": {
+      "commit_hash": "fe30ed06",
+      "recorded_at": "2026-05-08T00:57:25Z",
+      "verification": [
+        "python3 -m pytest services/control-plane/bff/test_kw03_evidence_refs_contract.py -q (12 passed)",
+        "python3 -m pytest services/control-plane/bff -k evidence -q (18 passed)"
+      ],
+      "recovery_note": "Reconstructed terminal archive after live task board cleanup removed BFF-FINAL dependency truth."
+    }
+  },
+  "handoffs": [],
+  "blockers": []
+}

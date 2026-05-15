@@ -51,7 +51,17 @@ class EventType(str, Enum):
     DRAWDOWN_SNAPSHOT = "drawdown_snapshot"
     SLIPPAGE_OBSERVATION = "slippage_observation"
     FILL_OBSERVATION = "fill_observation"
+    FILL_RECEIVED = "fill_received"
+    ORDER_SUBMITTED = "order_submitted"
+    ORDER_ACCEPTED = "order_accepted"
+    ORDER_PARTIALLY_FILLED = "order_partially_filled"
+    ORDER_FILLED = "order_filled"
+    ORDER_CANCELED = "order_canceled"
+    ORDER_CANCELLED = "order_cancelled"
     ORDER_REJECTION = "order_rejection"
+    POSITION_SNAPSHOT = "position_snapshot"
+    POSITION_SNAPSHOT_RECEIVED = "position_snapshot_received"
+    BROKER_POSITION_SNAPSHOT = "broker_position_snapshot"
     DEPLOY_STARTED = "deploy_started"
     DEPLOY_COMPLETED = "deploy_completed"
     ROLLBACK_STARTED = "rollback_started"
@@ -100,7 +110,8 @@ class TelemetryCapture:
         binding_context : dict, optional
             Active RuntimeBinding context to inject into every telemetry event.
             Expected keys: binding_id, runtime_id, capital_pool_id, artifact_id,
-            artifact_version, deployment_stage, plan_id, persona_capital_binding_id.
+            artifact_version, deployment_stage, plan_id,
+            persona_capital_binding_id, authority_refs.
             If not provided, binding fields will be omitted from events (legacy mode).
         """
         self.schema_path = schema_path
@@ -134,12 +145,12 @@ class TelemetryCapture:
     def _validate_event(self, event: dict[str, Any]) -> bool:
         """
         Validate event against schema.
-        
+
         Parameters
         ----------
         event : dict
             Event payload to validate
-            
+
         Returns
         -------
         bool
@@ -147,7 +158,7 @@ class TelemetryCapture:
         """
         if not self.schema or not jsonschema:
             return True
-        
+
         try:
             jsonschema.validate(instance=event, schema=self.schema)
             return True
@@ -171,7 +182,7 @@ class TelemetryCapture:
     ) -> bool:
         """
         Capture a PnL snapshot.
-        
+
         Parameters
         ----------
         mode : ExecutionMode
@@ -190,7 +201,7 @@ class TelemetryCapture:
             Account reference
         metadata : dict, optional
             Additional metadata
-            
+
         Returns
         -------
         bool
@@ -222,7 +233,7 @@ class TelemetryCapture:
     ) -> bool:
         """
         Capture a drawdown snapshot.
-        
+
         Parameters
         ----------
         mode : ExecutionMode
@@ -241,7 +252,7 @@ class TelemetryCapture:
             Account reference
         metadata : dict, optional
             Additional metadata
-            
+
         Returns
         -------
         bool
@@ -273,10 +284,10 @@ class TelemetryCapture:
     ) -> bool:
         """
         Capture a slippage observation.
-        
+
         Slippage is measured in basis points (bps), representing the difference
         between expected execution price and actual fill price.
-        
+
         Parameters
         ----------
         mode : ExecutionMode
@@ -295,7 +306,7 @@ class TelemetryCapture:
             Account reference
         metadata : dict, optional
             Additional metadata
-            
+
         Returns
         -------
         bool
@@ -328,10 +339,10 @@ class TelemetryCapture:
     ) -> bool:
         """
         Capture a fill observation.
-        
+
         Fill events record actual order executions with quantity and price.
         This is a key metric for evaluating execution quality and slippage.
-        
+
         Parameters
         ----------
         mode : ExecutionMode
@@ -352,7 +363,7 @@ class TelemetryCapture:
             Account reference
         metadata : dict, optional
             Additional metadata
-            
+
         Returns
         -------
         bool
@@ -387,7 +398,7 @@ class TelemetryCapture:
     ) -> bool:
         """
         Capture an order rejection.
-        
+
         Parameters
         ----------
         mode : ExecutionMode
@@ -406,7 +417,7 @@ class TelemetryCapture:
             Account reference
         metadata : dict, optional
             Additional metadata
-            
+
         Returns
         -------
         bool
@@ -423,6 +434,107 @@ class TelemetryCapture:
             metrics={"reject_reason": reject_reason},
             metadata=metadata,
         )
+        return self._store_event(event, mode)
+
+    def capture_order_lifecycle(
+        self,
+        mode: ExecutionMode,
+        strategy_id: str,
+        event_type: EventType,
+        order_id: str,
+        order_status: str,
+        quantity: Optional[float] = None,
+        price: Optional[float] = None,
+        symbol: Optional[str] = None,
+        signal_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        broker: Optional[str] = None,
+        account_ref: Optional[str] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        """Capture an order/fill/cancel lifecycle event for reconciliation."""
+        allowed = {
+            EventType.ORDER_SUBMITTED,
+            EventType.ORDER_ACCEPTED,
+            EventType.ORDER_PARTIALLY_FILLED,
+            EventType.ORDER_FILLED,
+            EventType.ORDER_CANCELED,
+            EventType.ORDER_CANCELLED,
+            EventType.FILL_RECEIVED,
+            EventType.FILL_OBSERVATION,
+        }
+        if event_type not in allowed:
+            raise ValueError(f"{event_type.value} is not an order lifecycle event type")
+
+        metrics: dict[str, Any] = {"action": event_type.value}
+        if quantity is not None:
+            metrics["order_quantity"] = quantity
+        if price is not None:
+            metrics["order_price"] = price
+
+        event = self._build_event(
+            event_type=event_type,
+            mode=mode,
+            strategy_id=strategy_id,
+            signal_id=signal_id,
+            run_id=run_id,
+            broker=broker,
+            account_ref=account_ref,
+            metrics=metrics,
+            metadata=metadata,
+        )
+        if event is None:
+            return False
+
+        event["order_id"] = order_id
+        event["order_status"] = order_status
+        if event_type in {EventType.ORDER_PARTIALLY_FILLED, EventType.ORDER_FILLED, EventType.FILL_RECEIVED}:
+            event["fill_status"] = order_status
+        if quantity is not None:
+            event["quantity"] = quantity
+        if price is not None:
+            event["price"] = price
+        if symbol:
+            event["symbol"] = symbol
+        return self._store_event(event, mode)
+
+    def capture_position_snapshot(
+        self,
+        mode: ExecutionMode,
+        strategy_id: str,
+        position_qty: float,
+        symbol: Optional[str] = None,
+        price: Optional[float] = None,
+        signal_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        broker: Optional[str] = None,
+        account_ref: Optional[str] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        """Capture a position snapshot event for order/fill/position reconciliation."""
+        metrics: dict[str, Any] = {"position_qty": position_qty}
+        if price is not None:
+            metrics["order_price"] = price
+        event = self._build_event(
+            event_type=EventType.POSITION_SNAPSHOT,
+            mode=mode,
+            strategy_id=strategy_id,
+            signal_id=signal_id,
+            run_id=run_id,
+            broker=broker,
+            account_ref=account_ref,
+            metrics=metrics,
+            metadata=metadata,
+        )
+        if event is None:
+            return False
+
+        event["position_qty"] = position_qty
+        event["quantity"] = position_qty
+        if price is not None:
+            event["price"] = price
+        if symbol:
+            event["symbol"] = symbol
         return self._store_event(event, mode)
 
     # ── TEL-001: Deployment / Rollback / Governance event capture ──
@@ -620,6 +732,7 @@ class TelemetryCapture:
             artifact_version = self.binding_context.get("artifact_version")
             plan_id = self.binding_context.get("plan_id")
             persona_capital_binding_id = self.binding_context.get("persona_capital_binding_id")
+            authority_refs = self.binding_context.get("authority_refs")
             ctx_deployment_stage = self.binding_context.get("deployment_stage", deployment_stage)
 
             # Strict validation: require minimal binding identity (E-1)
@@ -649,6 +762,8 @@ class TelemetryCapture:
             event["deployment_stage"] = ctx_deployment_stage
             event["plan_id"] = plan_id
             event["persona_capital_binding_id"] = persona_capital_binding_id
+            if authority_refs:
+                event["authority_refs"] = authority_refs
             # environment MUST equal deployment_stage per TEL-001A evidence contract
             event["environment"] = event["deployment_stage"]
             # Update execution_mode alias to match deployment_stage
@@ -700,12 +815,12 @@ class TelemetryCapture:
         if not self._validate_event(event):
             log.error(f"Event validation failed; skipping storage: {event.get('event_id')}")
             return False
-        
+
         self.events[mode].append(event)
-        
+
         if self.storage_dir:
             self._persist_event(event)
-        
+
         log.debug(f"Captured {event['event_type']} in {mode.value} mode")
         return True
 
@@ -715,7 +830,7 @@ class TelemetryCapture:
             mode = event["execution_mode"]
             mode_dir = self.storage_dir / mode
             mode_dir.mkdir(parents=True, exist_ok=True)
-            
+
             event_file = mode_dir / f"{event['event_id']}.json"
             with open(event_file, "w") as f:
                 json.dump(event, f, indent=2)
@@ -725,12 +840,12 @@ class TelemetryCapture:
     def get_events(self, mode: Optional[ExecutionMode] = None) -> list[dict[str, Any]]:
         """
         Get captured events.
-        
+
         Parameters
         ----------
         mode : ExecutionMode, optional
             If provided, return only events from this mode. Otherwise return all.
-            
+
         Returns
         -------
         list[dict]
@@ -738,7 +853,7 @@ class TelemetryCapture:
         """
         if mode is not None:
             return self.events[mode]
-        
+
         return self.events[ExecutionMode.PAPER] + self.events[ExecutionMode.LIVE]
 
     def get_paper_events(self) -> list[dict[str, Any]]:
@@ -752,7 +867,7 @@ class TelemetryCapture:
     def clear_events(self, mode: Optional[ExecutionMode] = None) -> None:
         """
         Clear captured events.
-        
+
         Parameters
         ----------
         mode : ExecutionMode, optional

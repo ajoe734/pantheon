@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "task_id": "SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE",
+  "archived_at": "2026-05-04T01:06:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE",
+    "title": "Finalize health readiness probe standard across active services",
+    "summary_zh": "統一 active/default/control/exec services 的 /healthz /livez /readyz 與 compose healthcheck；保留舊 /health 或 /__health__ 只作 compatibility，不作 staging contract。",
+    "phase": "Blueprint gap execution wave 2026-05-03",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-BLUEPRINT-STAGING-DUALVM-CONTRACT"
+    ],
+    "artifacts": [
+      "services",
+      "docker-compose.yml",
+      "docker-compose.control.yml",
+      "docker-compose.exec.yml",
+      "services/foundation/health.py"
+    ],
+    "acceptance": [
+      "control/exec compose healthcheck 使用 readiness contract；active services 提供 /healthz /livez /readyz；compose config 與 health tests 通過"
+    ],
+    "next": "Closeout finalized by Codex. Commit f0383d0 records readiness probe standard across control/exec services, paper runtime standard health probes with legacy compatibility, runtime-manager optional URL readiness posture, focused health tests, and Claude review artifact. Verification: /tmp/pantheon-health-venv/bin/python -m pytest services/foundation/tests/test_health.py services/execution/lean_runtime/test_paper_runtime.py services/runtime-manager/test_internal_api_routes.py -q (20 passed); docker compose -f docker-compose.yml config --quiet; docker compose --env-file env/prod-control.env.example -f docker-compose.control.yml config --quiet; docker compose --env-file env/prod-exec.env.example -f docker-compose.exec.yml config --quiet.",
+    "last_update": "2026-05-04T01:06:42Z",
+    "review_notes_zh": [
+      "Claude review approved. Verified worktree: health.py exposes register_fastapi/flask_health_routes with /healthz /livez /readyz /metrics; control/exec compose healthchecks use /readyz only; paper runtime handles /healthz /livez /readyz plus legacy /health /__health__ as compatibility aliases; test_control_and_exec_app_healthchecks_use_readiness_contract and compose contract tests enforce staging contract. Verification: /tmp/pantheon-health-venv/bin/python -m pytest services/foundation/tests/test_health.py services/execution/lean_runtime/test_paper_runtime.py services/runtime-manager/test_internal_api_routes.py -q (20 passed); docker compose -f docker-compose.yml config --quiet (OK); docker compose --env-file env/prod-control.env.example -f docker-compose.control.yml config --quiet (OK); docker compose --env-file env/prod-exec.env.example -f docker-compose.exec.yml config --quiet (OK)."
+    ],
+    "review_file": ".orchestrator/reviews/SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-04T01:06:42Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "f0383d0cc6bf9801d9053dbbe44335206a96e71a",
+      "commit_subject": "SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE finalize readiness probes",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE",
+        "Reviewer": "Claude",
+        "Verification": "/tmp/pantheon-health-venv/bin/python -m pytest services/foundation/tests/test_health.py services/execution/lean_runtime/test_paper_runtime.py services/runtime-manager/test_internal_api_routes.py -q (20 passed); docker compose -f docker-compose.yml config --quiet; docker compose --env-file env/prod-control.env.example -f docker-compose.control.yml config --quiet; docker compose --env-file env/prod-exec.env.example -f docker-compose.exec.yml config --quiet."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 538,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 17,
+      "behind": 12,
+      "push_status": "diverged"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented readiness probe standard for control/exec compose healthchecks; preserved legacy /health and /__health__ as compatibility routes; added paper runtime /healthz /livez /readyz support and health tests. Verification: /tmp/pantheon-health-venv/bin/python -m pytest services/foundation/tests/test_health.py -q; /tmp/pantheon-health-venv/bin/python -m pytest services/execution/lean_runtime/test_paper_runtime.py -q; /tmp/pantheon-health-venv/bin/python -m pytest services/runtime-manager/test_internal_api_routes.py -q; docker compose -f docker-compose.yml config --quiet; docker compose --env-file env/prod-control.env.example -f docker-compose.control.yml config --quiet; docker compose --env-file env/prod-exec.env.example -f docker-compose.exec.yml config --quiet.",
+      "status": "done",
+      "created_at": "2026-05-03T14:49:24Z",
+      "resolved_at": "2026-05-04T01:04:09Z"
+    },
+    {
+      "task_id": "SVC-BLUEPRINT-OBSERVABILITY-PROBE-FINALIZE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved and returned to owner (Codex) for finalization",
+      "status": "done",
+      "created_at": "2026-05-04T01:04:09Z",
+      "resolved_at": "2026-05-04T01:06:42Z"
+    }
+  ],
+  "blockers": []
+}

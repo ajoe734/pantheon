@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 1,
+  "reason": "Idle workers and underutilization (0.14) justify sidecar approval; no global blocker; existing sidecar is in review and nearly closed; cap at 1 new sidecar targeted at TEST-FULLSUITE-RUNBOOK-CI-MATRIX pre-work only.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-OPENCLAW-HONEST-STACK-SEMANTICS"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-OPENCLAW-HONEST-STACK-SEMANTICS",
+    "SVC-OPENCLAW-HONEST-STACK-SEMANTICS-SIDECAR-ACCEPTANCE",
+    "OPS-BRANCH-NO-COMMON-HISTORY-20260430"
+  ],
+  "operational_notes": {
+    "F1_state_lag": "state.json shows SVC-OPENCLAW-HONEST-STACK-SEMANTICS as in_progress due to ~2-minute scan lag; ai-status.json and handoff queue correctly reflect review status. Rescan recommended.",
+    "F2_cross_review": "Codex should sequence sidecar review first, then parent review. Assignments are logically valid; no reassignment needed.",
+    "F3_pr_failure": "backend-dev-publish-20260429 branch has no history in common with master; PR creation for sidecar closeout failed twice. Track as OPS-BRANCH-NO-COMMON-HISTORY-20260430.",
+    "F4_claude2_paused": "claude2 lane pause is deliberate; appropriate given current board state.",
+    "F5_runbook_blocked": "TEST-FULLSUITE-RUNBOOK-CI-MATRIX is correctly blocked; no action needed until parent closes.",
+    "sidecar_scope": "Only 1 sidecar active; well-parented, non-canonical, in review. No excess or orphaned sidecars detected."
+  }
+}

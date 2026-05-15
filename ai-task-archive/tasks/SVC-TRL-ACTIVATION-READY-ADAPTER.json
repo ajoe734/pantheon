@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "SVC-TRL-ACTIVATION-READY-ADAPTER",
+  "archived_at": "2026-04-30T04:29:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-TRL-ACTIVATION-READY-ADAPTER",
+    "title": "Make TRL preference adapter activation-ready behind gate",
+    "summary_zh": "把 TRL DPO 從 pre-activation scaffold 補到 activation-ready：FB-002/preference pair ingestion、資料品質門檻、模型 persistence、evaluator/registry candidate handoff；預設仍 fail-closed。",
+    "phase": "OSS Activation-Ready Development",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-RESEARCH-OSS-PREACTIVATION-INTEGRATION-CLOSURE"
+    ],
+    "artifacts": [
+      "services/learning/trl",
+      "services/feedback",
+      "services/evaluation",
+      "services/research-worker-gateway",
+      "services/registry"
+    ],
+    "acceptance": [
+      "TRL enabled path runs real DPO backend or explicit install error not silent stub",
+      "FB-002 preference reader and pair quality floors are enforced",
+      "model artifacts persist with checksum and metadata",
+      "evaluator and registry candidate handoff is produced without direct governed write",
+      "gateway trl run succeeds under explicit offline gate and fails closed by default"
+    ],
+    "next": "Closeout complete for SVC-TRL-ACTIVATION-READY-ADAPTER. Task-scoped commit 242c77a finalized TRL activation-ready adapter behind gate: FB-002 ingestion, activation floors, artifact/checksum persistence, candidate/evaluator handoff, and fail-closed gateway metadata. Verification: PYTHONPATH=. pytest services/learning/trl/test_adapter.py services/learning/trl/test_preflight.py services/research-worker-gateway/tests/test_research_worker_gateway_rejection_policy.py (46 passed); PYTHONPATH=. PANTHEON_TRL_ACTIVATION_READY_ENABLED=1 TRL_ENFORCE_DATA_FLOORS=false TRL_OUTPUT_DIR=/tmp/pantheon-trl-worker-closeout-smoke python3 services/learning/trl/worker.py (exit 0).",
+    "last_update": "2026-04-30T04:29:15Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-materialization-20260430",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：FB-002 ingestion/品質門檻/artifact checksum/handoff packet/gateway fail-closed 全部驗證通過（33 passed）。",
+      "後續：owner Codex2 執行 closeout checklist，建立 task-scoped commit，再執行 ai-status.sh done。"
+    ],
+    "review_file": "/tmp/trl-review-20260430.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T04:29:15Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "242c77aa5f7d220c3b2f04bb86dac54448526bb7",
+      "commit_subject": "SVC-TRL-ACTIVATION-READY-ADAPTER finalize TRL adapter",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-TRL-ACTIVATION-READY-ADAPTER",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 11,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-TRL-ACTIVATION-READY-ADAPTER",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review. Implemented TRL activation-ready adapter behind PANTHEON_TRL_ACTIVATION_READY_ENABLED: FB-002 dataclass/dict ingestion, activation data floors, persisted artifact/registry/candidate packet, EV-001 handoff metadata, gated worker.py, and gateway capability metadata remains fail-closed. Verification: PYTHONPATH=. pytest services/learning/trl/test_adapter.py services/learning/trl/test_preflight.py services/research-worker-gateway/tests/test_research_worker_gateway_rejection_policy.py (46 passed); PYTHONPATH=. PANTHEON_TRL_ACTIVATION_READY_ENABLED=1 TRL_ENFORCE_DATA_FLOORS=false TRL_OUTPUT_DIR=/tmp/pantheon-trl-worker-smoke python3 services/learning/trl/worker.py (exit 0, persisted handoff files).",
+      "status": "done",
+      "created_at": "2026-04-30T04:22:34Z",
+      "resolved_at": "2026-04-30T04:25:15Z"
+    },
+    {
+      "task_id": "SVC-TRL-ACTIVATION-READY-ADAPTER",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all 5 acceptance criteria satisfied. FB-002 ingestion, activation floors, artifact checksum, candidate handoff without registry write, and gateway fail-closed verified. 33 tests pass. Returned to owner Codex2 for closeout and finalization.",
+      "status": "done",
+      "created_at": "2026-04-30T04:25:15Z",
+      "resolved_at": "2026-04-30T04:29:15Z"
+    }
+  ],
+  "blockers": []
+}

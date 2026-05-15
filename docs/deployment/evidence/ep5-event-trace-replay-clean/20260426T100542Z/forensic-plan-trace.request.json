@@ -1,0 +1,7 @@
+{
+  "query_family": "forensic_plan_trace",
+  "params": {
+    "plan_id": "plan-ep5-canary-20260424-003-rollback"
+  },
+  "replay_mode": "local_lineage_read_service"
+}

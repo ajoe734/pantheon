@@ -1,0 +1,165 @@
+{
+  "_note": "Ratified example payloads for CW-04 Red-team Memo after the 2026-04-22 follow-up architecture response.",
+  "_task": "CW-04-REDTEAM-MEMO-001",
+  "memo_list_response": {
+    "items": [
+      {
+        "object_ref": {
+          "type": "ConsultMemo",
+          "id": "memo-rt-20260419-007"
+        },
+        "memo_id": "memo-rt-20260419-007",
+        "memo_type": "red_team",
+        "status": "published",
+        "linked_request_id": "cr-20260419-011",
+        "recommendation_count": 3,
+        "published_at": "2026-04-19T15:42:00Z",
+        "created_at": "2026-04-19T13:10:00Z",
+        "route_href": "/consultation/memos/memo-rt-20260419-007"
+      }
+    ],
+    "page_info": {
+      "next_page_token": null,
+      "page_size": 25,
+      "total": 1
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T16:00:00Z",
+      "staleness": {
+        "status": "fresh",
+        "as_of": "2026-04-19T16:00:00Z"
+      },
+      "surfaces": {
+        "redteam_memo": {
+          "state": "ok"
+        }
+      }
+    }
+  },
+  "memo_detail_response": {
+    "object_ref": {
+      "type": "ConsultMemo",
+      "id": "memo-rt-20260419-007"
+    },
+    "memo_id": "memo-rt-20260419-007",
+    "memo_type": "red_team",
+    "status": "published",
+    "lifecycle_state": "published",
+    "author_ref": "p-risk-analyst",
+    "linked_request_id": "cr-20260419-011",
+    "linked_session_id": "cs-20260419-rt-007",
+    "session_to_memo_mapping": {
+      "mapping_id": "map-20260419-007",
+      "source_session_id": "cs-20260419-rt-007",
+      "transcript_id": "tr-20260419-rt-007",
+      "transcript_version": "v1",
+      "memo_id": "memo-rt-20260419-007",
+      "memo_type": "red_team",
+      "created_by": {
+        "actor_type": "persona",
+        "actor_id": "skeptic-red-team"
+      },
+      "evidence_refs": [
+        "ev-telemetry-atr-spike-20260419"
+      ],
+      "mapping_status": "active",
+      "created_at": "2026-04-19T15:38:00Z"
+    },
+    "summary": "Red-team review identified execution-path risks around volatility protection, rollback sequencing, and degraded-mode control handoff.",
+    "recommendations": [
+      "Raise circuit-breaker threshold from 2.5x to 3.5x ATR before enabling live deployment under macro-regime conditions.",
+      "Add explicit volatility guard in the rebalance loop and do not rely on degraded-mode persona behavior alone.",
+      "Validate rollback sequencing against position-limit breach scenarios before promotion."
+    ],
+    "evidence_refs": [
+      {
+        "id": "ev-telemetry-atr-spike-20260419",
+        "evidence_type": "telemetry",
+        "artifact_ref": "artifact-atr-042",
+        "description": "ATR spike event — 2026-04-19 macro window",
+        "link": "/telemetry/events/ev-telemetry-atr-spike-20260419"
+      }
+    ],
+    "published_at": "2026-04-19T15:42:00Z",
+    "created_at": "2026-04-19T13:10:00Z",
+    "supersedes_memo_id": null,
+    "superseded_by_memo_id": null,
+    "allowedActions": {
+      "canInitiateGovernanceReview": true
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T16:00:00Z",
+      "staleness": {
+        "status": "fresh",
+        "as_of": "2026-04-19T16:00:00Z"
+      },
+      "surfaces": {
+        "redteam_memo": {
+          "state": "ok"
+        }
+      }
+    }
+  },
+  "memo_degraded_response": {
+    "object_ref": {
+      "type": "ConsultMemo",
+      "id": "memo-rt-20260419-007"
+    },
+    "memo_id": "memo-rt-20260419-007",
+    "memo_type": "red_team",
+    "status": "published",
+    "lifecycle_state": "published",
+    "author_ref": "p-risk-analyst",
+    "linked_request_id": "cr-20260419-011",
+    "linked_session_id": "cs-20260419-rt-007",
+    "session_to_memo_mapping": {
+      "mapping_id": "map-20260419-007",
+      "source_session_id": "cs-20260419-rt-007",
+      "transcript_id": "tr-20260419-rt-007",
+      "transcript_version": "v1",
+      "memo_id": "memo-rt-20260419-007",
+      "memo_type": "red_team",
+      "created_by": {
+        "actor_type": "persona",
+        "actor_id": "skeptic-red-team"
+      },
+      "evidence_refs": [
+        "ev-telemetry-atr-spike-20260419"
+      ],
+      "mapping_status": "active",
+      "created_at": "2026-04-19T15:38:00Z"
+    },
+    "summary": "Red-team review identified execution-path risks around volatility protection, rollback sequencing, and degraded-mode control handoff.",
+    "recommendations": [
+      "Raise circuit-breaker threshold from 2.5x to 3.5x ATR before enabling live deployment under macro-regime conditions."
+    ],
+    "evidence_refs": [
+      {
+        "id": "ev-telemetry-atr-spike-20260419",
+        "evidence_type": "telemetry",
+        "artifact_ref": "artifact-atr-042",
+        "description": "ATR spike event — 2026-04-19 macro window",
+        "link": "/telemetry/events/ev-telemetry-atr-spike-20260419"
+      }
+    ],
+    "published_at": "2026-04-19T15:42:00Z",
+    "created_at": "2026-04-19T13:10:00Z",
+    "supersedes_memo_id": null,
+    "superseded_by_memo_id": null,
+    "allowedActions": {
+      "canInitiateGovernanceReview": false
+    },
+    "meta": {
+      "snapshot_at": "2026-04-19T15:55:00Z",
+      "staleness": {
+        "status": "stale",
+        "as_of": "2026-04-19T15:55:00Z"
+      },
+      "surfaces": {
+        "redteam_memo": {
+          "state": "degraded"
+        }
+      }
+    }
+  }
+}

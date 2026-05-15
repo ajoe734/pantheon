@@ -1,0 +1,248 @@
+{
+  "version": 1,
+  "task_id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-19T19:39:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare EW-05-OPEN-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 EW-05-OPEN-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / Wave 2 - Blocked Module Activation",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "APP-003-CLOSEOUT-001",
+      "DEPTH-REBASE-001"
+    ],
+    "artifacts": [
+      "support/sidecars/EW-05-OPEN-001/EW-05-OPEN-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar acceptance packet and closed it. Packet is archived as support evidence for EW-05-OPEN-001 and preserves the pending-bff/live-gate boundary.",
+    "last_update": "2026-04-19T19:39:19Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EW-05-OPEN-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：（1）僅建立 support/sidecars/ artifact，未修改任何 canonical truth；（2）三項 parent acceptance criteria 均有 cross-check 來源；（3）pending-bff 邊界已於 WORKBENCH_DELIVERY_BACKLOG.md、PACKET_FAMILY.md、coordination packets 全部驗證一致；（4）dependency map 清楚區分 contract-published 與 live-gate 尚未完成項目。Packet 可作為 EW-05-OPEN-001 正式封存的支援材料。"
+    ],
+    "review_file": "support/sidecars/EW-05-OPEN-001/EW-05-OPEN-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-19T19:39:19Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "c5b019cf4ffc689dadacb3352b61628ec240f2f3",
+      "commit_subject": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE finalize delivery metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 750,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T17:04:58Z",
+      "resolved_at": "2026-04-19T17:05:51Z"
+    },
+    {
+      "task_id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T17:25:49Z",
+      "resolved_at": "2026-04-19T17:26:25Z"
+    },
+    {
+      "task_id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T17:39:41Z",
+      "resolved_at": "2026-04-19T17:40:48Z"
+    },
+    {
+      "task_id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T17:47:18Z",
+      "resolved_at": "2026-04-19T17:48:18Z"
+    },
+    {
+      "task_id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T17:49:46Z",
+      "resolved_at": "2026-04-19T17:50:32Z"
+    },
+    {
+      "task_id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T17:53:04Z",
+      "resolved_at": "2026-04-19T17:56:24Z"
+    },
+    {
+      "task_id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T17:57:31Z",
+      "resolved_at": "2026-04-19T17:57:52Z"
+    },
+    {
+      "task_id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T18:00:36Z",
+      "resolved_at": "2026-04-19T18:01:47Z"
+    },
+    {
+      "task_id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T18:15:08Z",
+      "resolved_at": "2026-04-19T18:17:29Z"
+    },
+    {
+      "task_id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T18:22:12Z",
+      "resolved_at": "2026-04-19T18:22:36Z"
+    },
+    {
+      "task_id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T18:31:33Z",
+      "resolved_at": "2026-04-19T18:32:10Z"
+    },
+    {
+      "task_id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T18:33:21Z",
+      "resolved_at": "2026-04-19T18:34:04Z"
+    },
+    {
+      "task_id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T18:36:49Z",
+      "resolved_at": "2026-04-19T18:37:32Z"
+    },
+    {
+      "task_id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T18:38:35Z",
+      "resolved_at": "2026-04-19T18:51:51Z"
+    },
+    {
+      "task_id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-19T18:51:51Z",
+      "resolved_at": "2026-04-19T18:52:37Z"
+    },
+    {
+      "task_id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T18:55:44Z",
+      "resolved_at": "2026-04-19T18:56:30Z"
+    },
+    {
+      "task_id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-19T19:07:42Z",
+      "resolved_at": "2026-04-19T19:09:44Z"
+    },
+    {
+      "task_id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-19T19:15:28Z",
+      "resolved_at": "2026-04-19T19:16:02Z"
+    },
+    {
+      "task_id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Acceptance packet created at support/sidecars/EW-05-OPEN-001/EW-05-OPEN-001-SIDECAR-ACCEPTANCE.md. It summarizes the archived EW-05 parent acceptance, verifies the repo still truthfully describes Mutation Review as contract-published and pending-bff, and maps the remaining live BFF activation gates for review.",
+      "status": "done",
+      "created_at": "2026-04-19T19:28:36Z",
+      "resolved_at": "2026-04-19T19:33:28Z"
+    },
+    {
+      "task_id": "EW-05-OPEN-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved. Support packet accurately summarizes the closed EW-05 contract publication work, preserves the pending-bff boundary, and cleanly maps the remaining BFF activation gates. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-19T19:33:28Z",
+      "resolved_at": "2026-04-19T19:39:19Z"
+    }
+  ],
+  "blockers": []
+}

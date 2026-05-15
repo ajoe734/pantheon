@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Execution backlog remains parallelizable and provider pauses are lane-specific, not global.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-RUNTIME-CONTROL",
+    "SVC-RUNTIME-CONTROL-CLOSEOUT"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260428T143356Z-7fd5719e",
+      "decision": "allow",
+      "reason": "The command only stages explicit SVC-RUNTIME-CONTROL files and runs git status; it is scoped, non-destructive, and needed for finalize bookkeeping.",
+      "remember": false
+    }
+  ],
+  "recommended_focus": [
+    "SVC-GOVERNANCE-API",
+    "SVC-RUNTIME-CONTROL",
+    "SVC-RUNTIME-CONTROL-SIDECAR-BFF-HANDOFF",
+    "SVC-RUNTIME-CONTROL-CLOSEOUT-SIDECAR-ACCEPTANCE"
+  ]
+}

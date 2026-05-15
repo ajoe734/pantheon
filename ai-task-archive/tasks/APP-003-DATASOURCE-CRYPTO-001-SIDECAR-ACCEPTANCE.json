@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-24T18:02:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare APP-003-DATASOURCE-CRYPTO-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 APP-003-DATASOURCE-CRYPTO-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-DATASOURCE-CRYPTO-001/APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the approved support-only acceptance packet. Header/reviewer metadata now matches the final Claude approval, the packet stays scoped to support artifacts, and the task is closed without altering the archived parent APP-003-DATASOURCE-CRYPTO-001 record.",
+    "last_update": "2026-04-24T18:02:22Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-DATASOURCE-CRYPTO-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar acceptance packet 重新審查通過：refreshed 版本僅為支援性材料，未改動 canonical truth",
+      "Parent task APP-003-DATASOURCE-CRYPTO-001 已於 2026-04-24T17:32:37Z 歸檔為 done，packet 三項 acceptance 現況皆為 supported",
+      "Verification snapshot 重跑全部成立：80 unittest + 47/47 smoke + distinct last/close 直接重現 (quote_last=64321.1, quote_close=64320.4, joined_quote_close=64320.4)",
+      "此批准僅代表 support packet 正確最新，不重新觸動已歸檔的 parent task"
+    ],
+    "review_file": "docs/reviews/2026-04-24-app-003-datasource-crypto-001-sidecar-acceptance-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T18:02:22Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "76da7173138ffe396f32ace58748a392f689285d",
+      "commit_subject": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE finalize support packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1174,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T16:25:35Z",
+      "resolved_at": "2026-04-24T16:33:52Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T16:40:08Z",
+      "resolved_at": "2026-04-24T16:48:20Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Acceptance packet ready at support/sidecars/APP-003-DATASOURCE-CRYPTO-001/APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE.md. Support-only packet: current owner/reviewer corrected, parent acceptance mapped truthfully as gap/partial, stale Kraken-vs-Coinbase/Binance symbol-routing risk called out, and baseline verification recorded (12 execution tests, 47 data-plane tests, 4 Taiwan adapter tests).",
+      "status": "done",
+      "created_at": "2026-04-24T16:52:53Z",
+      "resolved_at": "2026-04-24T16:58:11Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1777062600,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_dis",
+      "status": "done",
+      "created_at": "2026-04-24T16:58:11Z",
+      "resolved_at": "2026-04-24T17:01:13Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet refreshed for the live parent-review state: reviewer corrected to Codex2, parent status updated to review, obsolete gap-only framing replaced with landed Kraken/CoinGecko evidence, and verification rerun (69 execution/data-plane tests, 5 governed-adapter tests). Packet ready at support/sidecars/APP-003-DATASOURCE-CRYPTO-001/APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE.md.",
+      "status": "done",
+      "created_at": "2026-04-24T17:01:13Z",
+      "resolved_at": "2026-04-24T17:03:45Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: - 2026-04-24T16:58:26Z · Orchestrator · task_reassigned · Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":",
+      "status": "done",
+      "created_at": "2026-04-24T17:03:45Z",
+      "resolved_at": "2026-04-24T17:05:39Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet approved as a support artifact; returning to Codex for owner finalization. Parent task APP-003-DATASOURCE-CRYPTO-001 remains in_progress under Codex2 until the CoinGecko/Kraken join mismatch is resolved.",
+      "status": "done",
+      "created_at": "2026-04-24T17:05:39Z",
+      "resolved_at": "2026-04-24T17:37:44Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Refreshed the support packet to match the final parent-closeout state: parent is now done, all three acceptance criteria are supported, historical CoinGecko join and last/close blockers are explicitly marked resolved, and the packet now points to the parent rereview plus archived terminal record. Re-ran python3 -m unittest services.execution.test_kraken_adapter services.research.adapters.test_adapters services.data-plane.tests.test_data_plane_schemas -v (80 tests), python3 services/data-plane/smoke_test.py (47/47), and the direct adapter-to-join distinct-price repro. Packet is ready for re-review at support/sidecars/APP-003-DATASOURCE-CRYPTO-001/APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE.md.",
+      "status": "done",
+      "created_at": "2026-04-24T17:41:11Z",
+      "resolved_at": "2026-04-24T17:48:43Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1777062600,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_dis",
+      "status": "done",
+      "created_at": "2026-04-24T17:48:43Z",
+      "resolved_at": "2026-04-24T17:51:25Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet refreshed at support/sidecars/APP-003-DATASOURCE-CRYPTO-001/APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE.md. Support-only sidecar: header and reviewer notes now match live reviewer Codex2, packet remains aligned with the archived parent done state, and verification snapshot remains 80 unittest + 47/47 smoke + direct distinct-price repro.",
+      "status": "done",
+      "created_at": "2026-04-24T17:51:25Z",
+      "resolved_at": "2026-04-24T17:53:39Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet refreshed at support/sidecars/APP-003-DATASOURCE-CRYPTO-001/APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE.md. Support-only sidecar: reviewer is Codex2, parent remains archived done, verification snapshot remains 80 unittest + 47/47 smoke + direct distinct-price repro, and the packet now explicitly marks older Claude approval metadata as historical pre-closeout context rather than the current review target.",
+      "status": "done",
+      "created_at": "2026-04-24T17:53:39Z",
+      "resolved_at": "2026-04-24T17:55:15Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: - 2026-04-24T17:48:56Z · Orchestrator · task_reassigned · Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":",
+      "status": "done",
+      "created_at": "2026-04-24T17:55:15Z",
+      "resolved_at": "2026-04-24T17:59:03Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Refreshed sidecar acceptance packet reviewed; approved as support-only artifact — parent task remains archived done and is not altered by this approval.",
+      "status": "done",
+      "created_at": "2026-04-24T17:59:03Z",
+      "resolved_at": "2026-04-24T18:02:22Z"
+    }
+  ],
+  "blockers": []
+}

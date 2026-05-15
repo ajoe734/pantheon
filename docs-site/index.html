@@ -4,22 +4,23 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>協作看板</title>
-    <link rel="stylesheet" href="./style.css?v=20260413-1745" />
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./style.css?v=20260513-fix8" />
   </head>
   <body>
     <div class="shell">
       <header class="hero">
-        <div class="hero-copy-block">
+        <div class="hero-id">
           <p id="project-badge" class="eyebrow">Project Runtime</p>
           <h1>協作看板</h1>
-          <p id="objective" class="hero-copy">正在載入目標...</p>
         </div>
+        <p id="objective" class="hero-objective">正在載入目標...</p>
         <div class="hero-actions">
-          <button id="refresh-button" class="primary-button" type="button">重新整理</button>
           <div class="hero-meta">
             <span class="chip">資料更新</span>
             <strong id="updated-at">-</strong>
           </div>
+          <button id="refresh-button" class="primary-button" type="button">重新整理</button>
         </div>
       </header>
 
@@ -27,34 +28,35 @@
         <div id="overview-metrics" class="overview-grid"></div>
       </section>
 
-      <section class="panel cockpit-panel">
+      <section class="alert-section">
+        <div id="alert-strip" class="alert-grid"></div>
+      </section>
+
+      <section id="bff-consol-section" class="panel bff-consol-panel" hidden>
         <div class="panel-head">
           <div>
-            <p class="panel-kicker">Control Plane</p>
-            <h2>現在最該看的事</h2>
+            <p class="panel-kicker">Track D</p>
+            <h2>BFF Consolidation Track</h2>
+            <p class="subpanel-copy">補完 BFF execute-plans live wiring 的剩餘 production gap，27 個 task 分 4 wave 推進。</p>
           </div>
+          <div id="bff-consol-summary" class="inline-summary panel-summary"></div>
         </div>
-        <div class="panel-body cockpit-grid">
-          <section class="subpanel cockpit-span-3">
-            <div class="subpanel-head">
-              <h3>全局判讀</h3>
-              <p class="subpanel-copy">先看目前焦點在哪裡、planning 和 execution 是否已順利接手，以及有沒有需要立刻處理的訊號。</p>
-            </div>
-            <div id="control-plane-strip" class="mode-grid"></div>
-          </section>
+        <div class="panel-body">
+          <div id="bff-consol-waves" class="bff-consol-waves"></div>
+        </div>
+      </section>
 
-          <section class="subpanel cockpit-span-2">
+      <section class="panel cockpit-panel">
+        <div class="cockpit-focus-row">
+          <section class="subpanel cockpit-focus-main">
             <div class="subpanel-head">
               <h3>現在結論是什麼</h3>
-              <p class="subpanel-copy">用一句人話告訴你目前該盯 planning、bridge，還是 execution。</p>
             </div>
             <div id="focus-summary" class="focus-summary"></div>
           </section>
-
-          <section class="subpanel">
+          <section class="subpanel cockpit-focus-side">
             <div class="subpanel-head">
               <h3>整體進度</h3>
-              <p class="subpanel-copy">同時看 planning 完成度、bridge materialization，以及 execution 正式完成比例。</p>
             </div>
             <div class="progress-panel">
               <p id="progress-label" class="metric-note">進度計算中...</p>
@@ -64,23 +66,14 @@
               <div id="progress-breakdown" class="mini-grid"></div>
             </div>
           </section>
-
-          <section class="subpanel cockpit-span-3">
-            <div class="subpanel-head">
-              <h3>需要你注意</h3>
-              <p class="subpanel-copy">把 quota、paused provider、mismatch、blocker 這些高優先訊號拉到最上面，不用再去 activity feed 翻。</p>
-            </div>
-            <div id="alert-strip" class="alert-grid"></div>
-          </section>
-
-          <section class="subpanel cockpit-span-3">
-            <div class="subpanel-head">
-              <h3>Planning -> Execution 橋接</h3>
-              <p class="subpanel-copy">這裡只回答一件事：這輪共識到底有沒有順利變成可以執行的工作。</p>
-            </div>
-            <div id="bridge-card" class="bridge-grid"></div>
-          </section>
         </div>
+        <details class="cockpit-details">
+          <summary class="cockpit-details-summary">全局判讀 &amp; Bridge 詳情</summary>
+          <div class="cockpit-details-body">
+            <div id="control-plane-strip" class="mode-grid"></div>
+            <div id="bridge-card" class="bridge-grid"></div>
+          </div>
+        </details>
       </section>
 
       <section id="planning-panel" class="panel planning-panel">
@@ -152,8 +145,8 @@
         <div class="section-shell-head">
           <div>
             <p class="panel-kicker">Execution</p>
-            <h2>Supervisor Managed Execution</h2>
-            <p class="subpanel-copy">planning 共識定下來之後，這裡是日常追進度、看 live runtime、處理 review 與 blocker 的主戰場。</p>
+            <h2>Worker Claim Execution</h2>
+            <p class="subpanel-copy">planning 共識定下來之後，空閒 autoworker 可以 claim ready work；這裡追蹤 live runtime、claim policy、review 與 blocker。</p>
           </div>
           <div class="panel-head-actions">
             <div id="execution-panel-summary" class="inline-summary panel-summary"></div>
@@ -162,6 +155,24 @@
         </div>
 
         <div class="section-shell-body">
+          <section class="panel work-panel">
+            <div class="panel-head mode-panel-head">
+              <div>
+                <p class="panel-kicker">Execution</p>
+                <h2>Task Board</h2>
+              </div>
+              <div id="work-panel-summary" class="inline-summary panel-summary"></div>
+            </div>
+            <div class="panel-body">
+              <section class="subpanel">
+                <div class="subpanel-head">
+                  <h3>Task Board</h3>
+                </div>
+                <div id="task-board" class="board"></div>
+              </section>
+            </div>
+          </section>
+
           <section class="panel execution-overview-panel">
             <div class="panel-head">
               <div>
@@ -181,7 +192,6 @@
               <section class="subpanel">
                 <div class="subpanel-head">
                   <h3>Lane Workload</h3>
-                  <p class="subpanel-copy">看每個 lane 手上總量、活躍量、阻塞量與完成量，避免把所有壓力都塞在同一條 lane。</p>
                 </div>
                 <div id="workload-grid" class="mini-grid"></div>
               </section>
@@ -189,9 +199,16 @@
               <section class="subpanel execution-span-2">
                 <div class="subpanel-head">
                   <h3>Agent Lanes</h3>
-                  <p class="subpanel-copy">把每條 lane 的焦點任務、下一步與能力分工攤平，方便一眼掌握誰現在最忙、誰可以接手。</p>
                 </div>
                 <div id="agent-lanes" class="agent-grid"></div>
+              </section>
+
+              <section class="subpanel execution-span-2">
+                <div class="subpanel-head">
+                  <h3>歷史封存紀錄</h3>
+                  <p class="subpanel-copy">已完成或已取代的任務會移到 archive；這裡保留最近封存紀錄，避免 active board 看起來像資料消失。</p>
+                </div>
+                <div id="archive-records" class="archive-records"></div>
               </section>
             </div>
           </section>
@@ -208,42 +225,20 @@
                 <section class="subpanel">
                   <div class="subpanel-head">
                     <h3>Runtime Snapshot</h3>
-                    <p class="subpanel-copy">先看 supervisor、queue、approval 與各 lane 的 live 狀態。</p>
                   </div>
                   <div id="system-status" class="runtime-grid"></div>
                 </section>
                 <section class="subpanel">
                   <div class="subpanel-head">
                     <h3>Live Workers</h3>
-                    <p class="subpanel-copy">依執行 lane 分組，拆成進行中、等待處理、已改派 / 已接手、已完成。</p>
                   </div>
                   <div id="worker-history" class="worker-groups"></div>
                 </section>
                 <section class="subpanel">
                   <div class="subpanel-head">
                     <h3>Truth Mismatches</h3>
-                    <p class="subpanel-copy">集中列出 runtime、queue、task board 彼此不一致的地方。</p>
                   </div>
                   <div id="truth-mismatches" class="stack"></div>
-                </section>
-              </div>
-            </section>
-
-            <section class="panel work-panel">
-              <div class="panel-head mode-panel-head">
-                <div>
-                  <p class="panel-kicker">Execution</p>
-                  <h2>Task Board</h2>
-                </div>
-                <div id="work-panel-summary" class="inline-summary panel-summary"></div>
-              </div>
-              <div class="panel-body">
-                <section class="subpanel">
-                  <div class="subpanel-head">
-                    <h3>Task Board</h3>
-                    <p class="subpanel-copy">task truth 為主，但每張卡都會顯示 live runtime attachment 與 mismatch。</p>
-                  </div>
-                  <div id="task-board" class="board"></div>
                 </section>
               </div>
             </section>
@@ -268,6 +263,14 @@
                     <h3>阻塞項目</h3>
                   </div>
                   <div id="blocker-list" class="stack"></div>
+                </section>
+
+                <section class="subpanel">
+                  <div class="subpanel-head">
+                    <h3>Frontend Coordination Records</h3>
+                    <p class="subpanel-copy">集中看 contract-ready、Lovable packet、ui-done 與 frontend feedback 回流紀錄；這不是 remaining backlog 清單。</p>
+                  </div>
+                  <div id="lovable-coordination" class="stack"></div>
                 </section>
 
                 <section class="subpanel">
@@ -330,10 +333,34 @@
               </details>
             </div>
           </section>
+
+          <section class="panel lovable-panel">
+            <div class="panel-head">
+              <div>
+                <p class="panel-kicker">Frontend Coordination</p>
+                <h2>前端協作追蹤</h2>
+              </div>
+              <div id="lovable-panel-summary" class="inline-summary panel-summary"></div>
+            </div>
+            <div class="panel-body lovable-grid">
+              <section class="subpanel">
+                <div class="subpanel-head">
+                  <h3>Feature 統計</h3>
+                </div>
+                <div id="lovable-overview" class="mini-grid"></div>
+              </section>
+              <section class="subpanel">
+                <div class="subpanel-head">
+                  <h3>Feature 狀態</h3>
+                </div>
+                <div id="lovable-features" class="stack"></div>
+              </section>
+            </div>
+          </section>
         </div>
       </section>
     </div>
 
-    <script src="./script.js?v=20260413-1745" type="module"></script>
+    <script src="./script.js?v=20260513-fix8" type="module"></script>
   </body>
 </html>

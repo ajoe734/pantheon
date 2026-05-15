@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-30T03:43:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Memory / Production Hardening",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-CONTROL-PLANE-POSTGRES-OWNERSHIP-WAVE3"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING/SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only BFF/frontend handoff packet after Codex review approval. Task artifact updated with reviewer/status closeout metadata; scoped commit 3f4de7f created. Verification: test -f support/sidecars/SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING/SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF.md; git diff --check -- support/sidecars/SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING/SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF.md.",
+    "last_update": "2026-04-30T03:43:13Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "No blocking findings. Scope is support-only; committed artifact is the single handoff markdown under support/sidecars.",
+      "Verified route/AuthZ/BFF claims against services/memory, services/governance, services/control-plane/bff, and docs/bff/KW-01-institutional-memory.md.",
+      "Verification: python3 services/memory/smoke_test_institutional_memory.py; python3 -m pytest services/memory/test_institutional_memory_store.py services/memory/test_main.py services/governance/test_governance_api.py -q; python3 -m pytest services/control-plane/bff/test_kw01_institutional_memory_contract.py services/control-plane/bff/test_read_store_service_clients.py -q; git diff --check."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T03:43:13Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "3f4de7f6dd0457ce1883cb6bb2cc31ca2a2d9bac",
+      "commit_subject": "SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF finalize handoff",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Verification": "test -f support/sidecars/SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING/SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF.md; git diff --check -- support/sidecars/SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING/SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF.md"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 39,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 21,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-30T03:22:31Z",
+      "resolved_at": "2026-04-30T03:28:35Z"
+    },
+    {
+      "task_id": "SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Sidecar BFF/frontend handoff packet is ready for review. Artifact: support/sidecars/SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING/SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF.md. Commit: 27d8f5b. Scope stayed support-only; no canonical/runtime changes. Verification: git diff --check on the artifact passed.",
+      "status": "done",
+      "created_at": "2026-04-30T03:35:39Z",
+      "resolved_at": "2026-04-30T03:37:47Z"
+    },
+    {
+      "task_id": "SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Copilot to Codex after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-30T03:37:47Z",
+      "resolved_at": "2026-04-30T03:40:33Z"
+    },
+    {
+      "task_id": "SVC-MEMORY-AUTHZ-RETENTION-REPLAY-HARDENING-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved for support-only BFF/frontend handoff packet. Owner Codex2 should perform closeout finalization.",
+      "status": "done",
+      "created_at": "2026-04-30T03:40:33Z",
+      "resolved_at": "2026-04-30T03:43:13Z"
+    }
+  ],
+  "blockers": []
+}

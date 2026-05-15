@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "SVC-RESEARCH-LEARNING-DEFERRED-BOUNDARY-AUDIT",
+  "archived_at": "2026-04-29T11:53:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-RESEARCH-LEARNING-DEFERRED-BOUNDARY-AUDIT",
+    "title": "Audit research and learning boundaries without production activation",
+    "summary_zh": "稽核 research-orchestrator policy-learning research-worker-gateway 的 service boundary 狀態，明確保持 Qlib/TRL/RL/W&B/paper/canary/live production activation deferred；必要時補測試與文件，避免被誤讀為 production activated。",
+    "phase": "Planning Truth / Future-State Boundary",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-RESEARCH-ORCHESTRATOR-SERVICE",
+      "SVC-POLICY-LEARNING-BOUNDARY",
+      "SVC-RESEARCH-WORKER-GATEWAY"
+    ],
+    "artifacts": [
+      "services/research/main.py",
+      "services/policy-learning/main.py",
+      "services/research-worker-gateway/main.py",
+      "services/research/test_service.py",
+      "services/policy-learning/test_service.py",
+      "services/research-worker-gateway/test_service.py",
+      "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/phase2-phase6-gap-inventory.md"
+    ],
+    "acceptance": [
+      "No EP5 human gate Qlib TRL production activation RL lane or W&B reopen is implemented",
+      "Production adapters and production modes remain disabled by default and covered by regression tests",
+      "Docs and task notes say boundary exists but production activation is intentionally deferred",
+      "Compose defaults keep production adapter enable env false or absent",
+      "Any missing rejection coverage is added without changing allowed safe stub manual handoff paths"
+    ],
+    "next": "Owner finalized approved deferred boundary audit. Claude review verified all acceptance criteria; production activation remains explicitly deferred; 13/13 tests pass.",
+    "last_update": "2026-04-29T11:53:48Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T11:53:48Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "15650c6a3e3e2655b04cc735828dd2a46f4e9aa4",
+      "commit_subject": "SVC-RESEARCH-LEARNING-DEFERRED-BOUNDARY-AUDIT finalize approved boundary audit",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-RESEARCH-LEARNING-DEFERRED-BOUNDARY-AUDIT",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 106,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-RESEARCH-LEARNING-DEFERRED-BOUNDARY-AUDIT",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Boundary audit ready for review. Added W&B to research/gateway production-deny vocabulary, made gateway TRL/RL/W&B return production_adapter_disabled before unknown_worker, expanded rejection tests for Qlib/TRL/RL/W&B and paper/canary/live modes, and documented that research-orchestrator/policy-learning/research-worker-gateway are safe service boundaries only. Verification: python3 -m pytest services/research/tests services/policy-learning/tests services/research-worker-gateway/tests -q (13 passed).",
+      "status": "done",
+      "created_at": "2026-04-29T11:45:56Z",
+      "resolved_at": "2026-04-29T11:49:51Z"
+    },
+    {
+      "task_id": "SVC-RESEARCH-LEARNING-DEFERRED-BOUNDARY-AUDIT",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Boundary audit approved. All 5 acceptance criteria verified: (1) No EP5/Qlib/TRL/RL/W&B production activation implemented across any of the three services. (2) All services default ENABLE_PRODUCTION_ADAPTERS=false; compose-activation tests assert these env vars. (3) gap-inventory.md lines 311-323 clearly document service boundaries and explicitly prohibit citing them as production activation evidence. (4) Compose env vars confirmed false for all three services. (5) Rejection coverage complete for qlib/trl/rl/wandb + paper/canary/live modes; stub/handoff/manual lifecycle paths unaffected. Gateway correctly returns production_adapter_disabled before unknown_worker for TRL/RL/W&B. Policy-learning has hardcoded block independent of env var. 13/13 tests pass.",
+      "status": "done",
+      "created_at": "2026-04-29T11:49:51Z",
+      "resolved_at": "2026-04-29T11:53:48Z"
+    }
+  ],
+  "blockers": []
+}

@@ -5,6 +5,9 @@ import json
 import os
 import re
 import sys
+import tempfile
+import fcntl
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,10 +25,11 @@ ROUND_GLOB = "review-round-*.md"
 DERIVED_STATE_FILE = ROOT / ".orchestrator" / "planning-state.json"
 PLANNING_POINTER_FILE = ROOT / ".orchestrator" / "planning-session-pointer.json"
 ORCHESTRATOR_STATE_FILE = ROOT / ".orchestrator" / "state.json"
+PLANNING_LOCK_FILE = ROOT / ".orchestrator" / "planning-state.lock"
 
-AGENT_ORDER = ["Claude", "Codex", "Gemini", "Qwen", "Copilot"]
-BATON_SEQUENCE = ["Codex", "Qwen", "Gemini", "Copilot", "Claude"]
-REVIEW_SEQUENCE = ["Qwen", "Gemini", "Copilot", "Claude"]
+AGENT_ORDER = ["Claude", "Claude2", "Codex", "Codex2", "Gemini", "Copilot"]
+BATON_SEQUENCE = ["Codex", "Codex2", "Gemini", "Copilot", "Claude", "Claude2"]
+REVIEW_SEQUENCE = ["Codex2", "Gemini", "Copilot", "Claude", "Claude2"]
 PHASE2_SESSION_ID = "phase2-2026-04-12-blueprint-gap-convergence"
 SESSION_PROFILE_GENERIC = "generic"
 SESSION_PROFILE_BACKEND_COMPLETION = "backend-completion"
@@ -55,6 +59,13 @@ HUMAN_GATE_STATUS_LABELS = {
     "approved",
     "rejected",
 }
+DOCUMENT_RECONCILIATION_STATUS_LABELS = {
+    "not_started",
+    "in_progress",
+    "completed",
+    "not_needed",
+    "human_required",
+}
 SESSION_PROFILE_ALIASES = {
     "generic": SESSION_PROFILE_GENERIC,
     "default": SESSION_PROFILE_GENERIC,
@@ -70,6 +81,40 @@ SESSION_PROFILE_ALIASES = {
 
 def iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+@contextmanager
+def planning_lock():
+    PLANNING_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with PLANNING_LOCK_FILE.open("w", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            json.dump(payload, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+            temp_path = Path(handle.name)
+        os.replace(temp_path, path)
+    finally:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink(missing_ok=True)
 
 
 def relative_to_root(path: Path) -> str:
@@ -253,7 +298,6 @@ def load_active_session_pointer() -> dict[str, Any]:
 
 
 def save_active_session_pointer(session: dict[str, Any]) -> None:
-    PLANNING_POINTER_FILE.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "session_id": session.get("session_id"),
         "phase": session.get("phase"),
@@ -261,7 +305,7 @@ def save_active_session_pointer(session: dict[str, Any]) -> None:
         "session_file": relative_to_root(SESSION_FILE),
         "updated_at": iso_now(),
     }
-    PLANNING_POINTER_FILE.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    write_json_atomic(PLANNING_POINTER_FILE, payload)
 
 
 def unique_strings(items: list[str]) -> list[str]:
@@ -298,7 +342,18 @@ def blueprint_gap_brief_files() -> list[str]:
 def planning_output_path(session: dict[str, Any], artifact_id: str) -> str:
     artifacts = session.get("artifacts") if isinstance(session.get("artifacts"), dict) else {}
     artifact = artifacts.get(artifact_id) if isinstance(artifacts.get(artifact_id), dict) else {}
-    return str(artifact.get("path") or "").strip()
+    path = str(artifact.get("path") or "").strip()
+    if path:
+        return path
+    for output in session.get("expected_outputs", []):
+        if not isinstance(output, dict):
+            continue
+        if str(output.get("id") or "").strip() != artifact_id:
+            continue
+        output_path = str(output.get("path") or "").strip()
+        if output_path:
+            return output_path
+    return ""
 
 
 def planning_task_source_ref(session: dict[str, Any]) -> dict[str, Any]:
@@ -316,14 +371,29 @@ def planning_task_source_ref(session: dict[str, Any]) -> dict[str, Any]:
 
 def materialization_contract(session: dict[str, Any]) -> dict[str, Any]:
     proposed = session.get("proposed_execution_tasks") or []
+    initial_task_ids = [
+        str(item).strip()
+        for item in session.get("initial_materialization_task_ids", [])
+        if str(item).strip()
+    ]
     return {
         **planning_task_source_ref(session),
         "source_plane": "planning",
         "planning_mode": str(session.get("planning_mode") or "discussion_planning"),
+        "document_reconciliation_status": str(session.get("document_reconciliation_status") or "not_started"),
         "runtime_mode": str(session.get("runtime_mode") or "supervisor_managed_execution"),
         "consensus_status": str(session.get("consensus_status") or "not_started"),
         "human_gate_status": str(session.get("human_gate_status") or "not_requested"),
         "proposed_execution_tasks": len(proposed),
+        "initial_materialization_task_ids": initial_task_ids,
+        "initial_materialization_task_count": len(initial_task_ids),
+    }
+
+
+def document_reconciliation_complete(session: dict[str, Any]) -> bool:
+    return str(session.get("document_reconciliation_status") or "not_started") in {
+        "completed",
+        "not_needed",
     }
 
 
@@ -337,6 +407,12 @@ def default_brief_files(profile: str) -> list[str]:
 
 def default_expected_outputs(profile: str) -> list[dict[str, Any]]:
     base = [
+        {
+            "id": "document_reconciliation",
+            "path": f"{relative_to_root(PLANNING_DIR)}/document-reconciliation.md",
+            "owner": "Codex",
+            "status": "not_started",
+        },
         {
             "id": "consensus_packet",
             "path": relative_to_root(CONSENSUS_PACKET_FILE),
@@ -367,16 +443,16 @@ def default_lane_focus(profile: str) -> dict[str, str]:
     generic = {
         "Claude": "Facilitate consensus, synthesize cited disagreements, and prepare the human gate packet.",
         "Codex": "Ground the plan in repo evidence and turn converged decisions into execution slices.",
+        "Codex2": "Audit schemas, object boundaries, and contract formalization gaps.",
         "Gemini": "Stress-test runtime, replay, and tooling feasibility.",
-        "Qwen": "Audit schemas, object boundaries, and contract formalization gaps.",
         "Copilot": "Pressure-test research readiness, external source assumptions, and acceptance wording.",
     }
     if profile == SESSION_PROFILE_BLUEPRINT_GAP:
         return {
             "Claude": "Facilitate the blueprint-gap session, integrate readouts and unresolved items, and draft the final consensus packet after every lane is resolved or waived.",
             "Codex": "Verify each gap claim against repo evidence, own the shared starter draft, and draft execution materialization for the next delivery wave.",
+            "Codex2": "Audit schema and object formalization for GAP-01, GAP-03, and GAP-06, especially canonical object boundaries and acceptance surface coverage.",
             "Gemini": "Evaluate runtime, replay, and tooling feasibility for GAP-02 and GAP-05; report blockers with cited implementation constraints.",
-            "Qwen": "Audit schema and object formalization for GAP-01, GAP-03, and GAP-06, especially canonical object boundaries and acceptance surface coverage.",
             "Copilot": "Critique market-source scope, research backend maturity, and product-facing acceptance language for GAP-00, GAP-02, and GAP-07.",
         }
     return generic
@@ -419,7 +495,7 @@ def phase2_proposed_execution_tasks() -> list[dict[str, Any]]:
         {
             "id": "BG-001",
             "title": "Formalize security master, contract master, market calendar, and dataset lineage objects",
-            "owner": "Qwen",
+            "owner": "Codex2",
             "reviewer": "Codex",
             "phase": "Blueprint Gap P0",
             "summary_zh": "正式定義 SecurityMaster、ContractMaster、MarketCalendarSession 與各級 dataset 物件。",
@@ -437,7 +513,7 @@ def phase2_proposed_execution_tasks() -> list[dict[str, Any]]:
         {
             "id": "BG-003",
             "title": "Formalize decision-front objects and adjudication boundaries",
-            "owner": "Qwen",
+            "owner": "Codex2",
             "reviewer": "Claude",
             "phase": "Blueprint Gap P0",
             "summary_zh": "正式定義 RegimeState、UniverseSelection、SignalInference、AllocationDecision、RiskAdjudication。",
@@ -456,7 +532,7 @@ def phase2_proposed_execution_tasks() -> list[dict[str, Any]]:
             "id": "BG-005",
             "title": "Define golden replay scenario and acceptance runbook",
             "owner": "Codex",
-            "reviewer": "Qwen",
+            "reviewer": "Codex2",
             "phase": "Blueprint Gap P2",
             "summary_zh": "定義 golden replay scenario 與 acceptance runbook，銜接資料面與決策面前段。",
             "depends_on": ["BG-000", "BG-001", "BG-003"],
@@ -464,7 +540,7 @@ def phase2_proposed_execution_tasks() -> list[dict[str, Any]]:
         {
             "id": "BG-006",
             "title": "Publish operator acceptance matrix across BFF, internal API, CLI, and fallback paths",
-            "owner": "Qwen",
+            "owner": "Codex2",
             "reviewer": "Claude",
             "phase": "Blueprint Gap P1",
             "summary_zh": "整理 BFF、internal API、CLI、fallback、support-only path 的 operator acceptance matrix。",
@@ -501,6 +577,7 @@ Usage:
   python3 scripts/planning_state.py readout <agent> [status] [message]
   python3 scripts/planning_state.py round <round-number> <status> [message]
   python3 scripts/planning_state.py issue <issue-id> <severity> <status> <summary>
+  python3 scripts/planning_state.py reconcile-docs <status> [message]
   python3 scripts/planning_state.py consensus <status> [message]
   python3 scripts/planning_state.py human-gate <status> [message]
   python3 scripts/planning_state.py propose-task <task-id> <owner> <reviewer> <title>
@@ -533,6 +610,10 @@ def default_artifacts(profile: str = SESSION_PROFILE_BACKEND_COMPLETION) -> dict
         "supervisor_queue": {
             "path": relative_to_root(SUPERVISOR_QUEUE_FILE),
             "status": "ready",
+        },
+        "document_reconciliation": {
+            "path": f"{relative_to_root(PLANNING_DIR)}/document-reconciliation.md",
+            "status": "not_started",
         },
         "consensus_packet": {
             "path": relative_to_root(CONSENSUS_PACKET_FILE),
@@ -592,7 +673,7 @@ def default_session(
         "facilitator": "Claude",
         "baton_owner": "Codex",
         "starter_owner": "Codex",
-        "next_reviewer": "Qwen",
+        "next_reviewer": "Codex2",
         "baton_sequence": BATON_SEQUENCE,
         "review_sequence": REVIEW_SEQUENCE,
         "brief_files": default_brief_files(resolved_profile),
@@ -600,6 +681,7 @@ def default_session(
         "lane_focus": default_lane_focus(resolved_profile),
         "fallback_policy": default_fallback_policy(resolved_profile),
         "current_round": 0,
+        "document_reconciliation_status": "not_started",
         "consensus_status": "not_started",
         "human_gate_status": "not_requested",
         "artifacts": default_artifacts(resolved_profile),
@@ -624,7 +706,7 @@ def default_session(
                 ),
                 "baton_owner": "Codex",
                 "starter_owner": "Codex",
-                "next_reviewer": "Qwen",
+                "next_reviewer": "Codex2",
             }
         )
     return session
@@ -658,6 +740,12 @@ This directory is the canonical workspace for `discussion_planning`.
 
 {output_lines}
 
+## Planning Stages
+
+1. audit the canonical blueprint and planning documents relevant to the session
+2. write down insufficiencies and either patch the canonical docs or explicitly conclude that no canonical update is needed
+3. only after document reconciliation is complete may the session finalize execution planning for human approval and materialization
+
 ## Baton Loop
 
 1. every lane reads the session brief and writes an independent readout using `LLM_READOUT_TEMPLATE.md`
@@ -675,6 +763,7 @@ This directory is the canonical workspace for `discussion_planning`.
 - `planning-session.json` is the machine-readable source of truth for planning state
 - `.orchestrator/planning-state.json` is the derived dashboard state
 - every planning round keeps its own session directory; archived sessions are immutable history
+- document reconciliation must be completed before final human approval or execution materialization
 - execution tasks stay in `ai-status.json`; do not mix planning drafts into the execution board too early
 """
 
@@ -860,6 +949,35 @@ and structured `source_ref` metadata back to `planning-session.json`, `consensus
 """
 
 
+def document_reconciliation_template() -> str:
+    return """# Document Reconciliation
+
+Use this file to prove that planning reviewed the canonical blueprint and planning docs before cutting execution work.
+
+## Canonical Inputs Reviewed
+
+- Canonical planning docs:
+- Canonical architecture or policy docs:
+
+## Insufficiencies Found
+
+- Gap 1:
+- Gap 2:
+
+## Canonical Updates Required
+
+- Document:
+  - Required change:
+  - Status:
+
+## Outcome
+
+- `completed` when canonical docs were updated and the planning gap is closed
+- `not_needed` when the session explicitly concluded that no canonical doc change is required
+- do not move execution planning to final approval until one of those two outcomes is true
+"""
+
+
 def starter_draft_template(session: dict[str, Any]) -> str:
     return f"""# Starter Draft
 
@@ -889,11 +1007,12 @@ def supervisor_queue_template(session: dict[str, Any]) -> str:
 
 | Order | Item | Owner | Status | Notes |
 |---|---|---|---|---|
-| 1 | Collect lane readouts | All lanes | pending | Use `LLM_READOUT_TEMPLATE.md` |
-| 2 | Create starter draft | {session.get("starter_owner", "Codex")} | pending | First editable shared draft |
-| 3 | Run cited cross-review | {' -> '.join(session.get('review_sequence', REVIEW_SEQUENCE))} | pending | One round at a time |
-| 4 | Draft consensus packet | {session.get("facilitator", "Claude")} | pending | Escalate unresolved semantic conflicts |
-| 5 | Wait for human acceptance | Human | pending | Required before execution task materialization |
+| 1 | Reconcile canonical docs and planning gaps | Codex | pending | Complete `document-reconciliation.md` first |
+| 2 | Collect lane readouts | All lanes | pending | Use `LLM_READOUT_TEMPLATE.md` |
+| 3 | Create starter draft | {session.get("starter_owner", "Codex")} | pending | First editable shared draft |
+| 4 | Run cited cross-review | {' -> '.join(session.get('review_sequence', REVIEW_SEQUENCE))} | pending | One round at a time |
+| 5 | Draft consensus packet | {session.get("facilitator", "Claude")} | pending | Escalate unresolved semantic conflicts |
+| 6 | Wait for human acceptance | Human | pending | Required before execution task materialization |
 """
 
 
@@ -969,7 +1088,9 @@ def ensure_artifact_files(session: dict[str, Any] | None = None) -> None:
         output_file = ROOT / output_path
         if output_file == CONSENSUS_PACKET_FILE:
             continue
-        if output_file.name == "gap-response-matrix.md":
+        if output_file.name == "document-reconciliation.md":
+            ensure_text_file(output_file, document_reconciliation_template())
+        elif output_file.name == "gap-response-matrix.md":
             ensure_text_file(output_file, gap_response_matrix_template())
         elif output_file.name == "execution-materialization.md":
             ensure_text_file(output_file, execution_materialization_template())
@@ -1101,7 +1222,7 @@ def normalize_session(raw: dict[str, Any]) -> dict[str, Any]:
     session["facilitator"] = canonical_agent(session.get("facilitator"), "Claude")
     session["baton_owner"] = canonical_agent(session.get("baton_owner"), "Codex")
     session["starter_owner"] = canonical_agent(session.get("starter_owner"), "Codex")
-    session["next_reviewer"] = canonical_agent(session.get("next_reviewer"), "Qwen")
+    session["next_reviewer"] = canonical_agent(session.get("next_reviewer"), "Codex2")
     fixed_baton_owner = profile_fixed_baton_owner(profile)
     if fixed_baton_owner:
         session["starter_owner"] = fixed_baton_owner
@@ -1166,6 +1287,16 @@ def normalize_session(raw: dict[str, Any]) -> dict[str, Any]:
     session["consensus_status"] = str(session.get("consensus_status") or "not_started")
     if session["consensus_status"] not in CONSENSUS_STATUS_LABELS:
         session["consensus_status"] = "not_started"
+    session["document_reconciliation_status"] = str(session.get("document_reconciliation_status") or "").strip()
+    if session["document_reconciliation_status"] not in DOCUMENT_RECONCILIATION_STATUS_LABELS:
+        if (
+            session.get("consensus_status") == "accepted"
+            or session.get("human_gate_status") == "approved"
+            or session.get("materialized_at")
+        ):
+            session["document_reconciliation_status"] = "not_needed"
+        else:
+            session["document_reconciliation_status"] = "not_started"
     session["human_gate_status"] = str(session.get("human_gate_status") or "not_requested")
     if session["human_gate_status"] not in HUMAN_GATE_STATUS_LABELS:
         session["human_gate_status"] = "not_requested"
@@ -1254,6 +1385,11 @@ def normalize_session(raw: dict[str, Any]) -> dict[str, Any]:
             }
         )
     session["proposed_execution_tasks"] = proposed_execution_tasks
+    session["initial_materialization_task_ids"] = [
+        str(item).strip()
+        for item in session.get("initial_materialization_task_ids", [])
+        if str(item).strip()
+    ]
     session["materialization_contract"] = materialization_contract(session)
 
     recent_events: list[dict[str, Any]] = []
@@ -1280,8 +1416,7 @@ def save_session(session: dict[str, Any]) -> None:
     configure_session_paths(planning_dir_for_session(session.get("session_id"), session.get("phase")))
     ensure_artifact_files(session)
     session["updated_at"] = iso_now()
-    SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
-    SESSION_FILE.write_text(json.dumps(session, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    write_json_atomic(SESSION_FILE, session)
     save_active_session_pointer(session)
 
 
@@ -1307,6 +1442,7 @@ def next_in_sequence(sequence: list[str], current: str, fallback: str) -> str:
 
 
 def derive_switch_gate(session: dict[str, Any]) -> dict[str, bool]:
+    reconciliation_complete = document_reconciliation_complete(session)
     submitted_statuses = {"submitted", "accepted", "waived"}
     all_readouts_submitted = all(
         str(entry.get("status") or "").lower() in submitted_statuses
@@ -1326,19 +1462,22 @@ def derive_switch_gate(session: dict[str, Any]) -> dict[str, bool]:
     }
     human_approved = session.get("human_gate_status") == "approved"
     prereqs_satisfied = (
+        reconciliation_complete
+        and
         all_readouts_submitted
         and cross_review_round_present
         and divergence_resolved_or_escalated
         and consensus_packet_drafted
     )
     return {
+        "document_reconciliation_complete": reconciliation_complete,
         "all_readouts_submitted": all_readouts_submitted,
         "cross_review_round_present": cross_review_round_present,
         "divergence_resolved_or_escalated": divergence_resolved_or_escalated,
         "consensus_packet_drafted": consensus_packet_drafted,
         "human_approved": human_approved,
-        "ready_for_human": prereqs_satisfied or human_approved,
-        "ready_to_materialize": human_approved or prereqs_satisfied,
+        "ready_for_human": prereqs_satisfied or (human_approved and reconciliation_complete),
+        "ready_to_materialize": human_approved and reconciliation_complete,
     }
 
 
@@ -1355,12 +1494,16 @@ def artifact_template_for(session: dict[str, Any], key: str, path: Path) -> str 
         return baton_log_template(session)
     if key == "supervisor_queue":
         return supervisor_queue_template(session)
+    if key == "document_reconciliation":
+        return document_reconciliation_template()
     if key == "consensus_packet":
         return consensus_packet_template(session)
     if key == "gap_response_matrix":
         return gap_response_matrix_template()
     if key == "execution_materialization":
         return execution_materialization_template()
+    if path.name == "document-reconciliation.md":
+        return document_reconciliation_template()
     if path.name == "gap-response-matrix.md":
         return gap_response_matrix_template()
     if path.name == "execution-materialization.md":
@@ -1384,6 +1527,13 @@ def auto_detect_artifact_activity(session: dict[str, Any]) -> None:
             session["artifacts"][key]["status"] = "active"
             if session.get("consensus_status") == "not_started":
                 session["consensus_status"] = "draft"
+            continue
+        if key == "document_reconciliation":
+            current_status = str(session["artifacts"][key].get("status") or "not_started")
+            if current_status in {"ready", "draft", "not_started"}:
+                session["artifacts"][key]["status"] = "active"
+            if str(session.get("document_reconciliation_status") or "not_started") == "not_started":
+                session["document_reconciliation_status"] = "in_progress"
             continue
         if key == "consensus_packet":
             session["artifacts"][key]["status"] = "draft"
@@ -1449,6 +1599,11 @@ def derive_artifact_statuses(session: dict[str, Any]) -> None:
         session["artifacts"]["baton_log"]["status"] = "active"
     if session["artifacts"]["supervisor_queue"]["status"] == "ready" and session["status"] != "inactive":
         session["artifacts"]["supervisor_queue"]["status"] = "active"
+    reconciliation_status = str(session.get("document_reconciliation_status") or "not_started")
+    if reconciliation_status in DOCUMENT_RECONCILIATION_STATUS_LABELS and reconciliation_status != "not_started":
+        session["artifacts"]["document_reconciliation"]["status"] = reconciliation_status
+    elif session["artifacts"]["document_reconciliation"]["status"] == "not_started":
+        session["artifacts"]["document_reconciliation"]["status"] = reconciliation_status
     consensus_status = str(session.get("consensus_status") or "not_started")
     if consensus_status in CONSENSUS_STATUS_LABELS and consensus_status != "not_started":
         session["artifacts"]["consensus_packet"]["status"] = consensus_status
@@ -1474,6 +1629,7 @@ def build_derived_state(session: dict[str, Any]) -> dict[str, Any]:
         "planning_dir": derived.get("planning_dir"),
         "session_file": derived.get("session_file"),
         "status": derived.get("status"),
+        "document_reconciliation_status": derived.get("document_reconciliation_status"),
         "consensus_status": derived.get("consensus_status"),
         "human_gate_status": derived.get("human_gate_status"),
         "updated_at": derived.get("updated_at"),
@@ -1506,8 +1662,7 @@ def build_derived_state(session: dict[str, Any]) -> dict[str, Any]:
 
 def save_derived_state(session: dict[str, Any]) -> None:
     derived = build_derived_state(session)
-    DERIVED_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    DERIVED_STATE_FILE.write_text(json.dumps(derived, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    write_json_atomic(DERIVED_STATE_FILE, derived)
 
 
 def sync_all(session: dict[str, Any]) -> None:
@@ -1525,10 +1680,6 @@ def command_sync(session: dict[str, Any], _args: list[str]) -> None:
 def command_start(session: dict[str, Any], args: list[str]) -> None:
     if not args:
         raise SystemExit("Usage: start <session-id> [summary]")
-    runtime_state = load_orchestrator_runtime_state()
-    supervisor_state = runtime_state.get("supervisor", {}) if isinstance(runtime_state.get("supervisor"), dict) else {}
-    if str(supervisor_state.get("focus_mode") or "").strip() == "execution" and execution_mode_has_inflight_work(runtime_state):
-        raise SystemExit("Cannot start a new planning session while execution mode still has inflight work. Drain execution first.")
     session_id = str(args[0]).strip()
     phase = phase_from_session_id(session_id, str(session.get("phase") or DEFAULT_PHASE))
     profile_override = canonical_session_profile(os.environ.get("PLANNING_PROFILE"))
@@ -1664,12 +1815,36 @@ def command_issue(session: dict[str, Any], args: list[str]) -> None:
     )
 
 
+def command_reconcile_docs(session: dict[str, Any], args: list[str]) -> None:
+    if not args:
+        raise SystemExit("Usage: reconcile-docs <status> [message]")
+    status = args[0]
+    if status not in DOCUMENT_RECONCILIATION_STATUS_LABELS:
+        raise SystemExit(f"Unknown document reconciliation status: {status}")
+    message = args[1] if len(args) > 1 else f"Document reconciliation updated to {status}"
+    session["document_reconciliation_status"] = status
+    if status == "human_required":
+        session["status"] = "human_required"
+    elif session.get("status") == "inactive":
+        session["status"] = "active"
+    append_event(
+        session,
+        "document_reconciliation_updated",
+        message,
+        status=status,
+    )
+
+
 def command_consensus(session: dict[str, Any], args: list[str]) -> None:
     if not args:
         raise SystemExit("Usage: consensus <status> [message]")
     status = args[0]
     if status not in CONSENSUS_STATUS_LABELS:
         raise SystemExit(f"Unknown consensus status: {status}")
+    if status in {"ready_for_human", "accepted"} and not document_reconciliation_complete(session):
+        raise SystemExit(
+            "Document reconciliation must be completed or marked not_needed before consensus can move to final approval."
+        )
     message = args[1] if len(args) > 1 else f"Consensus status updated to {status}"
     session["consensus_status"] = status
     if status == "human_required":
@@ -1693,6 +1868,10 @@ def command_human_gate(session: dict[str, Any], args: list[str]) -> None:
     status = args[0]
     if status not in HUMAN_GATE_STATUS_LABELS:
         raise SystemExit(f"Unknown human gate status: {status}")
+    if status == "approved" and not document_reconciliation_complete(session):
+        raise SystemExit(
+            "Document reconciliation must be completed or marked not_needed before human approval."
+        )
     message = args[1] if len(args) > 1 else f"Human gate updated to {status}"
     session["human_gate_status"] = status
     if status == "approved":
@@ -1754,6 +1933,7 @@ def upsert_materialized_task(
 ) -> str:
     task_id = str(payload.get("id") or "").strip()
     existing = ai_status.get_task(state, task_id)
+    archived = ai_status.archived_task_snapshot(task_id)
     timestamp = iso_now()
     task_payload = {
         "id": task_id,
@@ -1775,6 +1955,8 @@ def upsert_materialized_task(
             if value is not None and str(value).strip()
         }
     if existing is None:
+        if archived is not None:
+            return "archived"
         state.setdefault("tasks", []).append(
             {
                 **task_payload,
@@ -1798,6 +1980,8 @@ def upsert_materialized_task(
 
 def command_materialize(session: dict[str, Any], _args: list[str]) -> None:
     derived = build_derived_state(session)
+    if not document_reconciliation_complete(derived):
+        raise SystemExit("Document reconciliation must be completed or marked not_needed before materializing tasks.")
     if derived.get("human_gate_status") != "approved":
         raise SystemExit("Human gate must be approved before materializing proposed execution tasks.")
 
@@ -1805,6 +1989,17 @@ def command_materialize(session: dict[str, Any], _args: list[str]) -> None:
     state = ai_status.load_state()
     created = 0
     updated = 0
+    archived = 0
+    selected_task_ids = {
+        str(item).strip()
+        for item in derived.get("initial_materialization_task_ids", [])
+        if str(item).strip()
+    }
+    selected_payloads = [
+        payload
+        for payload in derived.get("proposed_execution_tasks", [])
+        if not selected_task_ids or str(payload.get("id") or "").strip() in selected_task_ids
+    ]
     materialization_ref = {
         "materialized_at": iso_now(),
         "session_id": str(derived.get("session_id") or "").strip(),
@@ -1812,26 +2007,35 @@ def command_materialize(session: dict[str, Any], _args: list[str]) -> None:
         "human_gate_status": str(derived.get("human_gate_status") or "").strip(),
         "execution_materialization": planning_output_path(derived, "execution_materialization"),
     }
-    for payload in derived.get("proposed_execution_tasks", []):
+    if selected_task_ids:
+        materialization_ref["initial_materialization_task_ids"] = ",".join(sorted(selected_task_ids))
+    for payload in selected_payloads:
         result = upsert_materialized_task(state, payload, materialization_ref=materialization_ref)
         if result == "created":
             created += 1
-        else:
+        elif result == "updated":
             updated += 1
-    ai_status.sync_all(state)
+        elif result == "archived":
+            archived += 1
+    session["materialized_at"] = materialization_ref["materialized_at"]
+    derived["materialized_at"] = materialization_ref["materialized_at"]
+    message = f"Materialized {created} new tasks and refreshed {updated} existing tasks in ai-status.json."
+    if archived:
+        message += f" Skipped {archived} archived terminal tasks."
     append_event(
         session,
         "execution_tasks_materialized",
-        f"Materialized {created} new tasks and refreshed {updated} existing tasks in ai-status.json.",
+        message,
         status="approved",
     )
+    save_session(session)
+    save_derived_state(derived)
+    ai_status.sync_all(state)
 
 
 def main(argv: list[str]) -> int:
     command = argv[1] if len(argv) > 1 else "sync"
     args = argv[2:]
-    session = load_session()
-
     commands = {
         "sync": command_sync,
         "start": command_start,
@@ -1839,6 +2043,7 @@ def main(argv: list[str]) -> int:
         "readout": command_readout,
         "round": command_round,
         "issue": command_issue,
+        "reconcile-docs": command_reconcile_docs,
         "consensus": command_consensus,
         "human-gate": command_human_gate,
         "propose-task": command_propose_task,
@@ -1846,8 +2051,10 @@ def main(argv: list[str]) -> int:
     }
     if command not in commands:
         raise SystemExit(command_usage().rstrip())
-    commands[command](session, args)
-    sync_all(session)
+    with planning_lock():
+        session = load_session()
+        commands[command](session, args)
+        sync_all(session)
     return 0
 
 

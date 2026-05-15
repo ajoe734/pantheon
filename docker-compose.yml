@@ -1,100 +1,1417 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# Pantheon + LEAN docker-compose
-#
-# Architecture:
-#   lean                  → QuantConnect LEAN execution engine (C# / .NET)
-#   signal-store          → Redis signal bus (decouples control-plane from LEAN)
-#   control-plane-router  → Permission-enforcing request router (FastAPI)
-#   control-plane-persona → Persona agent stub; will integrate upstream OpenClaw
-#   dspy-worker           → DSPy persona policy optimization (isolated Python env)
-#   qlib-worker           → Qlib alpha research worker (isolated Python env)
-#   finrl-worker          → FinRL RL policy worker (isolated Python env)
-#   imitation-worker      → imitation behavior cloning worker (isolated Python env)
-#   mlflow-server         → MLflow experiment tracking backend
-#
-# Each OSS learning framework runs in its own container with its own
-# requirements.txt to avoid dependency conflicts.
-#
-# The repo split is complete. LEAN now builds from the `lean/`
-# submodule and keeps its runtime assets there as well.
-# ─────────────────────────────────────────────────────────────────────────────
+# Pantheon default compose contract:
+# - dev single-VM baseline for local and non-prod VM development
+# - co-locates control-plane, runtime-manager, telemetry, research, and BFF
+# - staging-live uses docker-compose.control.yml + docker-compose.exec.yml
+x-pantheon-compose-contract:
+  topology: dev-single-vm-baseline
+  execution_boundary: co-located-dev-only
 
 services:
-
-  # ── Execution Plane ──────────────────────────────────────────────────────
-  lean:
-    build: ./lean
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-pantheon}
+      PANTHEON_APP_DB_USER: ${PANTHEON_APP_DB_USER:-pantheon_app}
+      PANTHEON_APP_DB_PASSWORD: ${PANTHEON_APP_DB_PASSWORD:-pantheon_app}
+      PANTHEON_APP_DB_NAME: ${PANTHEON_APP_DB_NAME:-pantheon}
     volumes:
-      - ./lean/Data:/Lean/Data
-      - ./lean/Launcher/config.json:/app/config.json
-    depends_on:
-      - signal-store
-    environment:
-      - SIGNAL_STORE_URL=redis://signal-store:6379
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/01-init-db.sh:ro
+    ports:
+      - "${POSTGRES_PORT:-15432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-pantheon}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
-  # ── Signal Bus ───────────────────────────────────────────────────────────
+  minio:
+    image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-pantheon}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-pantheonminio}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "${MINIO_API_PORT:-19000}:9000"
+      - "${MINIO_CONSOLE_PORT:-19001}:9001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  minio-init:
+    image: minio/mc:RELEASE.2024-01-16T16-06-34Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-pantheon}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-pantheonminio}
+      MINIO_DEFAULT_BUCKETS: ${MINIO_DEFAULT_BUCKETS:-pantheon-artifacts}
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\" &&
+        mc mb --ignore-existing \"local/$$MINIO_DEFAULT_BUCKETS\" &&
+        echo 'Bucket ready: '\"$$MINIO_DEFAULT_BUCKETS\"
+      "
+    restart: on-failure
+
+  nats:
+    image: nats:2.11-alpine
+    command: ["--jetstream", "--http_port", "8222", "--store_dir", "/data/jetstream"]
+    volumes:
+      - nats-data:/data/jetstream
+    ports:
+      - "${NATS_PORT:-14222}:4222"
+      - "${NATS_MONITOR_PORT:-18222}:8222"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8222/healthz >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
   signal-store:
-    image: redis:alpine
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  consultation-svc:
+    build:
+      context: .
+      dockerfile: services/consultation/Dockerfile
+    environment:
+      PORT: "8096"
+      CONSULTATION_DATA_DIR: /data/consultation
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
+      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
+      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
+      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
+      # Dev rollback defaults to JSONL; staging/prod select postgres via env.
+      CONSULTATION_STORE_BACKEND: ${CONSULTATION_STORE_BACKEND:-jsonl}
+      CONSULTATION_STORE_DSN: ${CONSULTATION_STORE_DSN:-}
+    volumes:
+      - consultation-data:/data/consultation
     ports:
-      - "6379:6379"
+      - "${CONSULTATION_PORT:-18096}:8096"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8096'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
 
-  # ── Control Plane ────────────────────────────────────────────────────────
-  control-plane-router:
-    build: ./services/control-plane/router
+  source-ingest:
+    build:
+      context: .
+      dockerfile: services/source_ingestion/Dockerfile
+    environment:
+      PORT: "8097"
+      SOURCE_INGEST_DATA_DIR: /data/source-ingest
+      SOURCE_INGEST_CONNECTOR_STORE_PATH: /data/source-ingest/connector_config.jsonl
+      SOURCE_INGEST_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
+      SOURCE_INGEST_MAX_RECORDS: ${SOURCE_INGEST_MAX_RECORDS:-100}
+      SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: ${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}
+      SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS: ${SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS:-2}
+      SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS: ${SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS:-60}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_SOURCE_SEARCH_POSTURE: ${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}
+      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
+      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
+      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
+      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
+      # Dev rollback defaults to JSONL; staging/prod select postgres via env.
+      SOURCE_INGEST_EVIDENCE_BACKEND: ${SOURCE_INGEST_EVIDENCE_BACKEND:-jsonl}
+      SOURCE_INGEST_EVIDENCE_DSN: ${SOURCE_INGEST_EVIDENCE_DSN:-}
+      # Notify search service after completed ingest runs (incremental index refresh trigger).
+      SEARCH_INGEST_NOTIFY_URL: ${SEARCH_INGEST_NOTIFY_URL:-http://search-svc:8098}
+    volumes:
+      - source-ingest-data:/data/source-ingest
     ports:
-      - "8001:8001"
-    environment:
-      - PERSONA_URL=http://control-plane-persona:8002
+      - "${SOURCE_INGEST_PORT:-18097}:8097"
     depends_on:
-      - control-plane-persona
-      - signal-store
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8097'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
 
-  control-plane-persona:
-    build: ./services/control-plane/persona
+  source-ingest-scheduler:
+    profiles: ["source-ingest-scheduler"]
+    build:
+      context: .
+      dockerfile: services/source_ingestion/Dockerfile
+    command: ["python", "-m", "services.source_ingestion.scheduler_worker"]
+    environment:
+      SOURCE_INGEST_API_URL: http://source-ingest:8097
+      SOURCE_INGEST_SCHEDULER_INTERVAL_SECONDS: ${SOURCE_INGEST_SCHEDULER_INTERVAL_SECONDS:-60}
+      SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: ${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}
+      SOURCE_INGEST_SCHEDULER_MAX_TICKS: ${SOURCE_INGEST_SCHEDULER_MAX_TICKS:-0}
+    depends_on:
+      source-ingest:
+        condition: service_healthy
+
+  search-svc:
+    build:
+      context: .
+      dockerfile: services/search/Dockerfile
+    environment:
+      PORT: "8098"
+      SEARCH_DATA_DIR: /data/search
+      SEARCH_INDEX_STORE_PATH: /data/search/search-index.jsonl
+      SEARCH_PIPELINE_STORE_PATH: /data/search/search-pipeline.jsonl
+      SEARCH_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
+      SEARCH_FRESHNESS_SLA_SECONDS: ${SEARCH_FRESHNESS_SLA_SECONDS:-3600}
+      SEARCH_PIPELINE_RETENTION_RUNS: ${SEARCH_PIPELINE_RETENTION_RUNS:-500}
+      SEARCH_DURABLE_INDEX_ONLY: ${SEARCH_DURABLE_INDEX_ONLY:-false}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_SOURCE_SEARCH_POSTURE: ${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}
+      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
+      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
+      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
+      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
+      # Dev rollback defaults to JSONL; staging/prod select postgres via env.
+      SEARCH_INDEX_STORE_BACKEND: ${SEARCH_INDEX_STORE_BACKEND:-jsonl}
+      SEARCH_INDEX_STORE_DSN: ${SEARCH_INDEX_STORE_DSN:-}
+      SEARCH_EVIDENCE_BACKEND: ${SEARCH_EVIDENCE_BACKEND:-jsonl}
+      SEARCH_EVIDENCE_DSN: ${SEARCH_EVIDENCE_DSN:-}
+    volumes:
+      - search-data:/data/search
+      - source-ingest-data:/data/source-ingest:ro
     ports:
-      - "8002:8002"
-    environment:
-      - REDIS_URL=redis://signal-store:6379
-
-  # ── OSS Learning Workers (each isolated Python environment) ───────────────
-  dspy-worker:
-    build: ./services/learning/dspy
-    environment:
-      - REDIS_URL=redis://signal-store:6379
-      - MLFLOW_TRACKING_URI=http://mlflow-server:5000
+      - "${SEARCH_PORT:-18098}:8098"
     depends_on:
-      - signal-store
-      - mlflow-server
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8098'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
 
-  qlib-worker:
-    build: ./services/research/qlib
+  search-index-scheduler:
+    profiles: ["search-index-scheduler"]
+    build:
+      context: .
+      dockerfile: services/search/Dockerfile
+    command: ["python", "-m", "services.search.scheduler_worker"]
     environment:
-      - REDIS_URL=redis://signal-store:6379
-      - MLFLOW_TRACKING_URI=http://mlflow-server:5000
+      SEARCH_API_URL: http://search-svc:8098
+      SEARCH_INDEX_SCHEDULER_INTERVAL_SECONDS: ${SEARCH_INDEX_SCHEDULER_INTERVAL_SECONDS:-300}
+      SEARCH_INDEX_SCHEDULER_MAX_TICKS: ${SEARCH_INDEX_SCHEDULER_MAX_TICKS:-0}
+      SEARCH_INDEX_SCHEDULER_FORCE_FULL: ${SEARCH_INDEX_SCHEDULER_FORCE_FULL:-false}
+      SEARCH_INDEX_SCHEDULER_MATERIALIZE: ${SEARCH_INDEX_SCHEDULER_MATERIALIZE:-true}
     depends_on:
-      - signal-store
-      - mlflow-server
+      search-svc:
+        condition: service_healthy
 
-  finrl-worker:
-    build: ./services/research/finrl
+  training-session-svc:
+    build:
+      context: .
+      dockerfile: services/training-session/Dockerfile
     environment:
-      - REDIS_URL=redis://signal-store:6379
-      - MLFLOW_TRACKING_URI=http://mlflow-server:5000
-    depends_on:
-      - signal-store
-      - mlflow-server
-
-  imitation-worker:
-    build: ./services/learning/imitation
-    environment:
-      - REDIS_URL=redis://signal-store:6379
-      - MLFLOW_TRACKING_URI=http://mlflow-server:5000
-    depends_on:
-      - signal-store
-      - mlflow-server
-
-  # ── Experiment Tracking ──────────────────────────────────────────────────
-  mlflow-server:
-    build: ./services/research/mlflow
+      PORT: "8099"
+      TRAINING_SESSION_DATA_DIR: /data/training-session
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
+      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
+      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
+      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
+      TRAINING_SESSION_EVENT_STORE_BACKEND: ${TRAINING_SESSION_EVENT_STORE_BACKEND:-jsonl}
+      TRAINING_SESSION_EVENT_STORE_DSN: ${TRAINING_SESSION_EVENT_STORE_DSN:-}
+    volumes:
+      - training-session-data:/data/training-session
     ports:
-      - "5000:5000"
+      - "${TRAINING_SESSION_PORT:-18099}:8099"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8099'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  policy-learning-svc:
+    build:
+      context: .
+      dockerfile: services/policy-learning/Dockerfile
+    environment:
+      PORT: "8100"
+      POLICY_LEARNING_DATA_DIR: /data/policy-learning
+      POLICY_LEARNING_ENABLE_PRODUCTION_ADAPTERS: "false"
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
+      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
+      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
+      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
+      POLICY_LEARNING_STORE_BACKEND: ${POLICY_LEARNING_STORE_BACKEND:-json}
+      POLICY_LEARNING_STORE_DSN: ${POLICY_LEARNING_STORE_DSN:-}
+    volumes:
+      - policy-learning-data:/data/policy-learning
+    ports:
+      - "${POLICY_LEARNING_PORT:-18100}:8100"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8100'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  research-orchestrator-svc:
+    build:
+      context: .
+      dockerfile: services/research/Dockerfile
+    environment:
+      PORT: "8101"
+      RESEARCH_ORCHESTRATOR_DATA_DIR: /data/research-orchestrator
+      RESEARCH_ORCHESTRATOR_MAX_ACTIVE_RUNS: ${RESEARCH_ORCHESTRATOR_MAX_ACTIVE_RUNS:-8}
+      RESEARCH_ORCHESTRATOR_ENABLE_PRODUCTION_ADAPTERS: "false"
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
+      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
+      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
+      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
+      RESEARCH_ORCHESTRATOR_EVENT_STORE_BACKEND: ${RESEARCH_ORCHESTRATOR_EVENT_STORE_BACKEND:-jsonl}
+      RESEARCH_ORCHESTRATOR_EVENT_STORE_DSN: ${RESEARCH_ORCHESTRATOR_EVENT_STORE_DSN:-}
+    volumes:
+      - research-orchestrator-data:/data/research-orchestrator
+    ports:
+      - "${RESEARCH_ORCHESTRATOR_PORT:-18101}:8101"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8101'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  openclaw-data-init:
+    profiles: ["openclaw"]
+    image: busybox:1.36
+    command: ["sh", "-c", "mkdir -p /home/node/.openclaw && chown -R 1000:1000 /home/node/.openclaw"]
+    volumes:
+      - openclaw-data:/home/node/.openclaw
+
+  openclaw-gateway:
+    profiles: ["openclaw"]
+    image: ghcr.io/openclaw/openclaw:2026.4.7
+    environment:
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
+    depends_on:
+      openclaw-data-init:
+        condition: service_completed_successfully
+    command:
+      [
+        "node",
+        "dist/index.js",
+        "gateway",
+        "--allow-unconfigured",
+        "--port",
+        "18789",
+        "--auth",
+        "token",
+        "--token",
+        "${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}",
+      ]
+    volumes:
+      - openclaw-data:/home/node/.openclaw
+    ports:
+      - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS --max-time 5 http://127.0.0.1:18789/readyz >/dev/null",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 60s
+
+  openclaw-gateway-adapter:
+    build:
+      context: .
+      dockerfile: services/openclaw-gateway-adapter/Dockerfile
+    environment:
+      PORT: "8104"
+      OPENCLAW_GATEWAY_URL: http://openclaw-gateway:18789
+      OPENCLAW_UPSTREAM_TIMEOUT: ${OPENCLAW_UPSTREAM_TIMEOUT:-3}
+      OPENCLAW_UPSTREAM_RETRIES: ${OPENCLAW_UPSTREAM_RETRIES:-1}
+      OPENCLAW_PRODUCTION_BROKER_ENABLED: "false"
+      OPENCLAW_PAPER_ADAPTER_ENABLED: "false"
+      OPENCLAW_LIVE_ADAPTER_ENABLED: "false"
+      OPENCLAW_CANARY_ADAPTER_ENABLED: "false"
+      OPENCLAW_CAPITAL_BINDING_ENABLED: "false"
+      OPENCLAW_BROKER_SIDECAR_URL: http://broker:8102
+      OPENCLAW_RUNTIME_MANAGER_URL: http://runtime-manager:8081
+      PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
+    ports:
+      - "${OPENCLAW_GATEWAY_ADAPTER_PORT:-18104}:8104"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8104'); urllib.request.urlopen(f'http://127.0.0.1:{port}/livez', timeout=5).read()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  broker:
+    build:
+      context: .
+      dockerfile: services/broker/Dockerfile
+    environment:
+      PORT: "8102"
+      BROKER_PAPER_ENABLED: "false"
+      BROKER_PAPER_STORE_PATH: /data/broker/paper_orders.jsonl
+    volumes:
+      - broker-data:/data/broker
+    ports:
+      - "${BROKER_PORT:-18106}:8102"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8102/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  runtime-manager:
+    build:
+      context: .
+      dockerfile: services/runtime-manager/Dockerfile
+    environment:
+      PORT: "8081"
+      PANTHEON_RUNTIME_BINDING_STORE_PATH: /data/runtime/runtime_bindings.json
+      PANTHEON_COMMAND_STATE_FILE: /data/runtime/internal_api_commands.json
+      PANTHEON_CONSULTATION_API_URL: http://consultation-svc:8096
+      # ApproveDeployment routes to the deployment service plan-status API.
+      # Governance ApprovalDecision lookups use a separate approval-service URL
+      # for audit cross-references; the runtime-manager itself does not write
+      # to the governance service from this path.
+      PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
+      PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
+    volumes:
+      - runtime-data:/data/runtime
+    depends_on:
+      consultation-svc:
+        condition: service_healthy
+    # Note: deployment/governance are not declared as `depends_on` because
+    # runtime-manager's primary contract (runtime CRUD, kill-switch) does not
+    # require them at boot. ApproveDeployment requests fail cleanly with
+    # DEPLOYMENT_API_UNAVAILABLE if the deployment service is unreachable.
+    ports:
+      - "18081:8081"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  governance:
+    build:
+      context: .
+      dockerfile: services/governance/Dockerfile
+    environment:
+      PORT: "8082"
+      GOVERNANCE_DATA_DIR: /data/governance
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      # Dev rollback defaults to JSON/JSONL; staging/prod select postgres via env.
+      GOVERNANCE_STORE_BACKEND: ${GOVERNANCE_STORE_BACKEND:-json}
+      GOVERNANCE_STORE_DSN: ${GOVERNANCE_STORE_DSN:-}
+      GOVERNANCE_AUDIT_BACKEND: ${GOVERNANCE_AUDIT_BACKEND:-jsonl}
+      GOVERNANCE_AUDIT_DSN: ${GOVERNANCE_AUDIT_DSN:-}
+      PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
+      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
+      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
+      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
+      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
+    volumes:
+      - governance-data:/data/governance
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    ports:
+      - "18082:8082"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  telemetry:
+    build:
+      context: .
+      dockerfile: services/telemetry/Dockerfile
+    environment:
+      PORT: "8083"
+      TELEMETRY_STORAGE_DIR: /data/telemetry
+      TELEMETRY_DB_DSN: ${TELEMETRY_DB_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
+      PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
+      PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
+    volumes:
+      - telemetry-data:/data/telemetry
+    depends_on:
+      runtime-manager:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    ports:
+      - "18083:8083"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8083/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  incidents:
+    build:
+      context: .
+      dockerfile: services/incidents/Dockerfile
+    environment:
+      PORT: "8090"
+      INCIDENTS_DATA_DIR: /data/incidents
+      PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
+      PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
+      PANTHEON_TELEMETRY_URL: http://telemetry:8083
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
+      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
+      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
+      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
+      # Dev rollback defaults to JSON; staging/prod select postgres via env.
+      INCIDENT_STORE_BACKEND: ${INCIDENT_STORE_BACKEND:-json}
+      INCIDENT_STORE_DSN: ${INCIDENT_STORE_DSN:-}
+      PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
+    volumes:
+      - incident-data:/data/incidents
+    depends_on:
+      runtime-manager:
+        condition: service_healthy
+      telemetry:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    ports:
+      - "18090:8090"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  postmortems:
+    build:
+      context: .
+      dockerfile: services/postmortems/Dockerfile
+    environment:
+      PORT: "8091"
+      POSTMORTEMS_DATA_DIR: /data/incidents
+      INCIDENTS_DATA_DIR: /data/incidents
+      PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
+      PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
+      PANTHEON_TELEMETRY_URL: http://telemetry:8083
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
+      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
+      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
+      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
+      # Shares the incident owner schema; dev rollback remains JSON.
+      POSTMORTEM_STORE_BACKEND: ${POSTMORTEM_STORE_BACKEND:-json}
+      POSTMORTEM_STORE_DSN: ${POSTMORTEM_STORE_DSN:-}
+    volumes:
+      - incident-data:/data/incidents
+    depends_on:
+      incidents:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "18091:8091"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  operator-bff:
+    build:
+      context: .
+      dockerfile: services/control-plane/bff/Dockerfile
+    environment:
+      BFF_DATA_DIR: /data/bff
+      BFF_READ_SURFACE_STATE: fresh
+      PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK: "false"
+      PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-dev.lovable.app,https://pantheon-ai-system-front-dev.lovable.app,https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app}
+      PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS: "2.0"
+      PANTHEON_ENV: ${PANTHEON_ENV:-dev}
+      PANTHEON_LIVE_BROKER_ENABLED: ${PANTHEON_LIVE_BROKER_ENABLED:-false}
+      # Dev tier defaults to strict JWT auth. CI/Lovable dev can exchange
+      # dev-only client credentials for a short-lived JWT through
+      # POST /bff/auth/dev-login.
+      #
+      # Dev tier defaults: permissive + colon-format stub bearer so the
+      # browser-side dev token (VITE_BFF_DEV_BEARER_TOKEN=pantheon-dev-browser:reviewer)
+      # is accepted by BFF-CONSOL-022 strict cutover preview. Staging/prod
+      # compose files must explicitly export PANTHEON_BFF_AUTH_STUB=false
+      # and PANTHEON_BFF_AUTH_MODE=strict.
+      PANTHEON_BFF_AUTH_STUB: ${PANTHEON_BFF_AUTH_STUB:-true}
+      PANTHEON_BFF_AUTH_MODE: ${PANTHEON_BFF_AUTH_MODE:-permissive}
+      PANTHEON_BFF_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-}
+      PANTHEON_BFF_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
+      PANTHEON_BFF_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
+      PANTHEON_BFF_JWKS_URI: ${PANTHEON_BFF_JWKS_URI:-}
+      PANTHEON_BFF_OIDC_DISCOVERY_URL: ${PANTHEON_BFF_OIDC_DISCOVERY_URL:-}
+      PANTHEON_BFF_OIDC_ISSUER: ${PANTHEON_BFF_OIDC_ISSUER:-}
+      PANTHEON_BFF_OIDC_AUDIENCE: ${PANTHEON_BFF_OIDC_AUDIENCE:-}
+      PANTHEON_BFF_OIDC_CLIENT_ID: ${PANTHEON_BFF_OIDC_CLIENT_ID:-}
+      PANTHEON_BFF_OIDC_CLIENT_SECRET: ${PANTHEON_BFF_OIDC_CLIENT_SECRET:-}
+      PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS: ${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-900}
+      PANTHEON_BFF_ROLE_CLAIMS: ${PANTHEON_BFF_ROLE_CLAIMS:-roles,role}
+      PANTHEON_BFF_ROLE_MAP: ${PANTHEON_BFF_ROLE_MAP:-}
+      PANTHEON_BFF_ROLE_MAP_MODE: ${PANTHEON_BFF_ROLE_MAP_MODE:-passthrough}
+      PANTHEON_BFF_DEFAULT_ROLE: ${PANTHEON_BFF_DEFAULT_ROLE:-operator}
+      PANTHEON_BFF_MFA_REQUIRED: ${PANTHEON_BFF_MFA_REQUIRED:-false}
+      PANTHEON_BFF_MFA_CLAIMS: ${PANTHEON_BFF_MFA_CLAIMS:-amr,acr,mfa,mfa_verified}
+      PANTHEON_BFF_MFA_VALUES: ${PANTHEON_BFF_MFA_VALUES:-true,1,yes,mfa,otp,totp,webauthn}
+      PANTHEON_INTERNAL_API_URL: http://runtime-manager:8081
+      PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
+      PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
+      PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
+      PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
+      PANTHEON_CAPITAL_API_URL: http://capital:8092
+      PANTHEON_EVOLUTION_API_URL: http://evolution:8093
+      PANTHEON_INCIDENTS_API_URL: http://incidents:8090
+      PANTHEON_POSTMORTEMS_API_URL: http://postmortems:8091
+      PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
+      PANTHEON_LINEAGE_READ_URL: http://lineage-read:8094
+      PANTHEON_CONSULTATION_API_URL: http://consultation-svc:8096
+      PANTHEON_SOURCE_INGEST_API_URL: http://source-ingest:8097
+      PANTHEON_SEARCH_API_URL: http://search-svc:8098
+      PANTHEON_TRAINING_SESSION_API_URL: http://training-session-svc:8099
+      PANTHEON_POLICY_LEARNING_API_URL: http://policy-learning-svc:8100
+      PANTHEON_RESEARCH_ORCHESTRATOR_API_URL: http://research-orchestrator-svc:8101
+      PANTHEON_RESEARCH_WORKER_GATEWAY_API_URL: http://research-worker-gateway-svc:8103
+      PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
+    volumes:
+      - bff-data:/data/bff
+      - governance-data:/data/governance:ro
+      - runtime-data:/data/runtime:ro
+      - incident-data:/data/incidents:ro
+    depends_on:
+      consultation-svc:
+        condition: service_healthy
+      source-ingest:
+        condition: service_healthy
+      search-svc:
+        condition: service_healthy
+      training-session-svc:
+        condition: service_healthy
+      policy-learning-svc:
+        condition: service_healthy
+      research-orchestrator-svc:
+        condition: service_healthy
+      research-worker-gateway-svc:
+        condition: service_healthy
+      openclaw-gateway-adapter:
+        condition: service_healthy
+      governance:
+        condition: service_healthy
+      runtime-manager:
+        condition: service_healthy
+      deployment:
+        condition: service_healthy
+      capital:
+        condition: service_healthy
+      evolution:
+        condition: service_healthy
+      incidents:
+        condition: service_healthy
+      postmortems:
+        condition: service_healthy
+      telemetry:
+        condition: service_healthy
+      lineage-read:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    ports:
+      - "18001:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  persona:
+    build:
+      context: .
+      dockerfile: services/control-plane/persona/Dockerfile
+    environment:
+      PORT: "8002"
+      PANTHEON_BFF_URL: http://operator-bff:8001
+      PANTHEON_REGISTRY_URL: http://registry:8087
+      PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
+      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
+    depends_on:
+      operator-bff:
+        condition: service_healthy
+      registry:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "18002:8002"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  router:
+    build:
+      context: services/control-plane/router
+      dockerfile: Dockerfile
+    environment:
+      PORT: "8001"
+      PERSONA_URL: http://persona:8002
+    depends_on:
+      persona:
+        condition: service_healthy
+      operator-bff:
+        condition: service_healthy
+      governance:
+        condition: service_healthy
+    ports:
+      - "18003:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  web-channel:
+    build:
+      context: .
+      dockerfile: services/channels/web/Dockerfile
+    environment:
+      PORT: "8000"
+      ROUTER_URL: http://router:8001
+      ROUTER_HEALTH_TIMEOUT_SECONDS: "2.0"
+    depends_on:
+      router:
+        condition: service_healthy
+    ports:
+      - "${WEB_CHANNEL_PORT:-18105}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, urllib.request; port=os.environ.get('PORT','8000'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  evaluation:
+    build:
+      context: .
+      dockerfile: services/evaluation/Dockerfile
+    environment:
+      PORT: "8084"
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
+      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
+      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    ports:
+      - "18084:8084"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8084/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  feedback:
+    build:
+      context: .
+      dockerfile: services/control-plane/feedback/Dockerfile
+    environment:
+      PORT: "8085"
+      TRADER_FEEDBACK_STORE_PATH: /data/feedback/trader_feedback_events.jsonl
+    volumes:
+      - feedback-data:/data/feedback
+    ports:
+      - "18085:8085"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8085/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  memory:
+    build:
+      context: .
+      dockerfile: services/memory/Dockerfile
+    environment:
+      PORT: "8086"
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      # Dev rollback defaults to JSON; staging/prod select postgres via env.
+      PANTHEON_MEMORY_STORE_BACKEND: ${PANTHEON_MEMORY_STORE_BACKEND:-json}
+      PANTHEON_MEMORY_STORE_DSN: ${PANTHEON_MEMORY_STORE_DSN:-}
+      PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
+      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
+      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
+      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
+      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    ports:
+      - "18086:8086"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8086/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  registry:
+    build:
+      context: .
+      dockerfile: services/registry/Dockerfile
+    environment:
+      PORT: "8087"
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
+      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
+      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
+      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
+      PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    ports:
+      - "18087:8087"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8087/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  optimizer-svc:
+    build:
+      context: .
+      dockerfile: services/optimizer-svc/Dockerfile
+    environment:
+      PORT: "8088"
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
+      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
+      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    ports:
+      - "18088:8088"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8088/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  promotion:
+    build:
+      context: .
+      dockerfile: services/promotion/Dockerfile
+    environment:
+      PORT: "8089"
+      PROMOTION_DATA_DIR: /data/promotion
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
+      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
+      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
+      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
+      # Dev rollback defaults to JSON; staging/prod select postgres via env.
+      PROMOTION_STORE_BACKEND: ${PROMOTION_STORE_BACKEND:-json}
+      PROMOTION_STORE_DSN: ${PROMOTION_STORE_DSN:-}
+    volumes:
+      - promotion-data:/data/promotion
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "18089:8089"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8089/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  capital:
+    build:
+      context: .
+      dockerfile: services/capital/Dockerfile
+    environment:
+      PORT: "8092"
+      CAPITAL_DATA_DIR: /data/capital
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
+      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
+      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
+      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
+      # Dev rollback defaults to JSON/JSONL; staging/prod select postgres via env.
+      CAPITAL_STORE_BACKEND: ${CAPITAL_STORE_BACKEND:-json}
+      CAPITAL_STORE_DSN: ${CAPITAL_STORE_DSN:-}
+      CAPITAL_AUDIT_BACKEND: ${CAPITAL_AUDIT_BACKEND:-jsonl}
+      CAPITAL_AUDIT_DSN: ${CAPITAL_AUDIT_DSN:-}
+    volumes:
+      - capital-data:/data/capital
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "18092:8092"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8092/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  deployment:
+    build:
+      context: .
+      dockerfile: services/deployment/Dockerfile
+    environment:
+      PORT: "8095"
+      DEPLOYMENT_DATA_DIR: /data/governance
+      PANTHEON_GOVERNANCE_DATA_DIR: /data/governance
+    volumes:
+      - governance-data:/data/governance
+    depends_on:
+      governance:
+        condition: service_healthy
+    ports:
+      - "18095:8095"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8095/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  evolution:
+    build:
+      context: .
+      dockerfile: services/evolution/Dockerfile
+    environment:
+      PORT: "8093"
+      EVOLUTION_DATA_DIR: /data/evolution
+      INCIDENT_DATA_DIR: /data/incidents
+    volumes:
+      - evolution-data:/data/evolution
+      - incident-data:/data/incidents
+    depends_on:
+      runtime-manager:
+        condition: service_healthy
+      governance:
+        condition: service_healthy
+    ports:
+      - "18093:8093"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8093/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  lineage-read:
+    build:
+      context: .
+      dockerfile: services/lineage-read/Dockerfile
+    environment:
+      PORT: "8094"
+      LINEAGE_DATA_DIR: /data/lineage
+    volumes:
+      - lineage-data:/data/lineage
+    ports:
+      - "18094:8094"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8094/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  reconciliation-drift-svc:
+    build:
+      context: .
+      dockerfile: services/reconciliation-drift/Dockerfile
+    environment:
+      PORT: "8102"
+      RECONCILIATION_DRIFT_DATA_DIR: /data/reconciliation-drift
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
+      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
+      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
+      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
+      # Dev rollback defaults to JSON; staging/prod select postgres via env.
+      RECONCILIATION_DRIFT_STORE_BACKEND: ${RECONCILIATION_DRIFT_STORE_BACKEND:-json}
+      RECONCILIATION_DRIFT_STORE_DSN: ${RECONCILIATION_DRIFT_STORE_DSN:-}
+      PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
+      PANTHEON_LINEAGE_READ_URL: http://lineage-read:8094
+      PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
+      PANTHEON_EVOLUTION_API_URL: http://evolution:8093
+    volumes:
+      - reconciliation-drift-data:/data/reconciliation-drift
+    depends_on:
+      telemetry:
+        condition: service_healthy
+      lineage-read:
+        condition: service_healthy
+      runtime-manager:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${RECONCILIATION_DRIFT_PORT:-18102}:8102"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8102'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  research-worker-gateway-svc:
+    build:
+      context: .
+      dockerfile: services/research-worker-gateway/Dockerfile
+    environment:
+      PORT: "8103"
+      RESEARCH_WORKER_GATEWAY_DATA_DIR: /data/research-worker-gateway
+      RESEARCH_WORKER_GATEWAY_MAX_ACTIVE_JOBS: ${RESEARCH_WORKER_GATEWAY_MAX_ACTIVE_JOBS:-4}
+      RESEARCH_WORKER_GATEWAY_ENABLE_PRODUCTION_ADAPTERS: "false"
+      RESEARCH_ORCHESTRATOR_URL: http://research-orchestrator-svc:8101
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
+      PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
+      PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
+      PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
+      RESEARCH_WORKER_GATEWAY_EVENT_STORE_BACKEND: ${RESEARCH_WORKER_GATEWAY_EVENT_STORE_BACKEND:-jsonl}
+      RESEARCH_WORKER_GATEWAY_EVENT_STORE_DSN: ${RESEARCH_WORKER_GATEWAY_EVENT_STORE_DSN:-}
+    volumes:
+      - research-worker-gateway-data:/data/research-worker-gateway
+    depends_on:
+      postgres:
+        condition: service_healthy
+      research-orchestrator-svc:
+        condition: service_healthy
+    ports:
+      - "${RESEARCH_WORKER_GATEWAY_PORT:-18103}:8103"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8103'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  smoke-stack:
+    profiles: ["smoke"]
+    build:
+      context: .
+      dockerfile: Dockerfile.smoke
+    environment:
+      GOVERNANCE_URL: http://governance:8082
+      RUNTIME_MANAGER_URL: http://runtime-manager:8081
+      TELEMETRY_URL: http://telemetry:8083
+      INCIDENTS_URL: http://incidents:8090
+      POSTMORTEMS_URL: http://postmortems:8091
+      CAPITAL_URL: http://capital:8092
+      DEPLOYMENT_URL: http://deployment:8095
+      EVOLUTION_URL: http://evolution:8093
+      LINEAGE_READ_URL: http://lineage-read:8094
+      BFF_URL: http://operator-bff:8001
+      PERSONA_URL: http://persona:8002
+      ROUTER_URL: http://router:8001
+      EVALUATION_URL: http://evaluation:8084
+      FEEDBACK_URL: http://feedback:8085
+      MEMORY_URL: http://memory:8086
+      REGISTRY_URL: http://registry:8087
+      OPTIMIZER_URL: http://optimizer-svc:8088
+      PROMOTION_URL: http://promotion:8089
+      CONSULTATION_URL: http://consultation-svc:8096
+      SOURCE_INGEST_URL: http://source-ingest:8097
+      SEARCH_URL: http://search-svc:8098
+      TRAINING_SESSION_URL: http://training-session-svc:8099
+      POLICY_LEARNING_URL: http://policy-learning-svc:8100
+      RESEARCH_ORCHESTRATOR_URL: http://research-orchestrator-svc:8101
+      RECONCILIATION_DRIFT_URL: http://reconciliation-drift-svc:8102
+      RESEARCH_WORKER_GATEWAY_URL: http://research-worker-gateway-svc:8103
+      OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
+      WEB_CHANNEL_URL: http://web-channel:8000
+    depends_on:
+      consultation-svc:
+        condition: service_healthy
+      source-ingest:
+        condition: service_healthy
+      search-svc:
+        condition: service_healthy
+      training-session-svc:
+        condition: service_healthy
+      policy-learning-svc:
+        condition: service_healthy
+      research-orchestrator-svc:
+        condition: service_healthy
+      reconciliation-drift-svc:
+        condition: service_healthy
+      research-worker-gateway-svc:
+        condition: service_healthy
+      openclaw-gateway-adapter:
+        condition: service_healthy
+      web-channel:
+        condition: service_healthy
+      governance:
+        condition: service_healthy
+      runtime-manager:
+        condition: service_healthy
+      telemetry:
+        condition: service_healthy
+      incidents:
+        condition: service_healthy
+      postmortems:
+        condition: service_healthy
+      capital:
+        condition: service_healthy
+      deployment:
+        condition: service_healthy
+      evolution:
+        condition: service_healthy
+      lineage-read:
+        condition: service_healthy
+      operator-bff:
+        condition: service_healthy
+      persona:
+        condition: service_healthy
+      router:
+        condition: service_healthy
+      evaluation:
+        condition: service_healthy
+      feedback:
+        condition: service_healthy
+      memory:
+        condition: service_healthy
+      registry:
+        condition: service_healthy
+      optimizer-svc:
+        condition: service_healthy
+      promotion:
+        condition: service_healthy
+    command: ["python", "scripts/smoke_honest_stack.py"]
+
+  # ===========================================================================
+  # Activation-ready OSS smoke matrix — disabled by default.
+  #
+  # Run:
+  #   docker compose --profile activation-ready-smoke run --rm oss-activation-ready-smoke-matrix
+  #
+  # This CI-friendly matrix proves default gates fail closed, explicit offline
+  # test gates can emit local artifacts, and registry/governance/broker/live
+  # writes remain absent.
+  # ===========================================================================
+
+  oss-activation-ready-smoke-matrix:
+    profiles: ["activation-ready-smoke"]
+    build:
+      context: .
+      dockerfile: Dockerfile.smoke
+    environment:
+      PANTHEON_OFFLINE_GATE_ENABLED: "false"
+      RESEARCH_WORKER_GATEWAY_ENABLE_PRODUCTION_ADAPTERS: "false"
+    command: ["python", "scripts/smoke_oss_activation_ready_matrix.py"]
+    restart: "no"
+
+  # ===========================================================================
+  # OpenClaw activation-ready E2E smoke — disabled by default.
+  #
+  # Run:
+  #   docker compose --profile openclaw-activation-ready-e2e run --rm openclaw-activation-ready-e2e
+  #
+  # The smoke starts local fake OpenClaw/runtime-manager/broker fixtures inside
+  # the container and proves facade, session lifecycle, tool bridge, gated paper
+  # simulation, and explicit live denial without publishing ports or enabling
+  # production broker paths.
+  # ===========================================================================
+
+  openclaw-activation-ready-e2e:
+    profiles: ["openclaw-activation-ready-e2e"]
+    image: pantheon-openclaw-activation-ready-e2e-adapter:latest
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: services/openclaw-gateway-adapter/Dockerfile
+    environment:
+      OPENCLAW_PRODUCTION_BROKER_ENABLED: "false"
+      OPENCLAW_CAPITAL_BINDING_ENABLED: "false"
+      OPENCLAW_LIVE_ADAPTER_ENABLED: "false"
+      OPENCLAW_CANARY_ADAPTER_ENABLED: "false"
+      PANTHEON_LIVE_BROKER_ENABLED: "false"
+    command: ["python", "scripts/smoke_openclaw_activation_ready_e2e.py"]
+    restart: "no"
+
+  # ===========================================================================
+  # Source/search bounded CI smoke — disabled by default.
+  #
+  # Run:
+  #   docker compose --profile source-search-bounded run --rm --use-aliases source-search-bounded-smoke
+  #
+  # The smoke verifies configured static_records and guarded external_feed
+  # connectors, DLQ/frontier/audit replay, incremental search refresh, and no
+  # unrestricted crawler mode.
+  # ===========================================================================
+
+  source-search-bounded-smoke:
+    profiles: ["source-search-bounded"]
+    build:
+      context: .
+      dockerfile: Dockerfile.smoke
+    environment:
+      SOURCE_INGEST_URL: http://source-ingest:8097
+      SEARCH_URL: http://search-svc:8098
+      SOURCE_INGEST_EXTERNAL_FEED_HOST: source-search-bounded-smoke
+    depends_on:
+      source-ingest:
+        condition: service_healthy
+      search-svc:
+        condition: service_healthy
+    command: ["python", "scripts/smoke_source_search_bounded.py"]
+    restart: "no"
+
+  # ===========================================================================
+  # Dormant OSS deferred-prep smoke profiles — activation-gated; not started by default
+  #
+  # Run a single service:
+  #   docker compose --profile dormant-smoke run --rm finrl-dormant-smoke
+  #   docker compose --profile dormant-smoke run --rm rllib-dormant-smoke
+  #   docker compose --profile dormant-smoke run --rm ray-tune-dormant-smoke
+  #   docker compose --profile dormant-smoke run --rm qlib-dormant-smoke
+  #   docker compose --profile dormant-smoke run --rm trl-dormant-smoke
+  #   docker compose --profile dormant-smoke run --rm experiments-dormant-smoke
+  #
+  # No ports, secrets, or live broker routes are exposed in this profile.
+  # Each service exits after the smoke run completes.
+  # ===========================================================================
+
+  finrl-dormant-smoke:
+    profiles: ["dormant-smoke"]
+    build:
+      context: .
+      dockerfile: services/research/finrl/Dockerfile
+      args:
+        PANTHEON_INSTALL_UPSTREAM_DEPS: "false"
+    environment:
+      PANTHEON_DEFERRED_PREP_GATE: "1"
+      FINRL_BACKEND: "stub"
+    command: ["python", "smoke_test.py", "--enable-deferred-prep", "--backend", "stub"]
+    restart: "no"
+
+  rllib-dormant-smoke:
+    profiles: ["dormant-smoke"]
+    build:
+      context: .
+      dockerfile: services/research/rllib/Dockerfile
+      args:
+        PANTHEON_INSTALL_UPSTREAM_DEPS: "false"
+    environment:
+      PANTHEON_DEFERRED_PREP_GATE: "1"
+      RLLIB_BACKEND: "stub"
+    command: ["python", "smoke_test.py", "--enable-deferred-prep", "--backend", "stub"]
+    restart: "no"
+
+  ray-tune-dormant-smoke:
+    profiles: ["dormant-smoke"]
+    build:
+      context: .
+      dockerfile: services/research/rllib/Dockerfile
+      args:
+        PANTHEON_INSTALL_UPSTREAM_DEPS: "false"
+    environment:
+      PANTHEON_DEFERRED_PREP_GATE: "1"
+      RAY_TUNE_BACKEND: "stub"
+    command: ["python", "ray_tune_smoke_test.py", "--enable-deferred-prep", "--backend", "stub"]
+    restart: "no"
+
+  qlib-dormant-smoke:
+    profiles: ["dormant-smoke"]
+    build:
+      context: .
+      dockerfile: services/research/qlib/Dockerfile
+      args:
+        PANTHEON_INSTALL_UPSTREAM_DEPS: "false"
+    environment:
+      PANTHEON_DEFERRED_PREP_GATE: "1"
+      QLIB_BACKEND: "stub"
+    command: ["python", "smoke_test.py", "--backend", "stub"]
+    restart: "no"
+
+  trl-dormant-smoke:
+    profiles: ["dormant-smoke"]
+    build:
+      context: .
+      dockerfile: services/learning/trl/Dockerfile
+    environment:
+      PANTHEON_DEFERRED_PREP_GATE: "1"
+      TRL_BACKEND: "stub"
+    command: ["python", "services/learning/trl/smoke_test.py", "--backend", "stub"]
+    restart: "no"
+
+  experiments-dormant-smoke:
+    profiles: ["dormant-smoke"]
+    build:
+      context: .
+      dockerfile: services/registry/experiments/Dockerfile
+    environment:
+      PANTHEON_DEFERRED_PREP_GATE: "1"
+      EXPERIMENT_BACKEND: "memory"
+    command: ["python", "smoke_test.py", "--backend", "memory"]
+    restart: "no"
+
+volumes:
+  broker-data:
+  bff-data:
+  capital-data:
+  consultation-data:
+  evolution-data:
+  feedback-data:
+  governance-data:
+  incident-data:
+  minio-data:
+  nats-data:
+  openclaw-data:
+  policy-learning-data:
+  postgres-data:
+  promotion-data:
+  reconciliation-drift-data:
+  research-orchestrator-data:
+  research-worker-gateway-data:
+  runtime-data:
+  search-data:
+  training-session-data:
+  source-ingest-data:
+  lineage-data:
+  telemetry-data:

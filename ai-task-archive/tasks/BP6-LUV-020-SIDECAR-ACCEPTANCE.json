@@ -1,0 +1,223 @@
+{
+  "version": 1,
+  "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-17T09:16:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+    "title": "Prepare BP6-LUV-020 acceptance packet and dependency map",
+    "summary_zh": "平行支援 BP6-LUV-020，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 6: Full Blueprint Completion",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/BP6-LUV-020/BP6-LUV-020-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the sidecar acceptance packet as archived support-only evidence for BP6-LUV-020; the packet reflects the parent task's 2026-04-17T08:21:04Z done state, mirrored PKT-009 closure artifacts, and replayable front transport commit without changing canonical truth.",
+    "last_update": "2026-04-17T09:16:00Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP6-LUV-020",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T09:16:00Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "d2ad94037e0e02863f05e66b0d888b10b15c2406",
+      "commit_subject": "BP6-LUV-020-SIDECAR-ACCEPTANCE: finalize acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 386,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T07:27:56Z",
+      "resolved_at": "2026-04-17T07:28:33Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T07:35:53Z",
+      "resolved_at": "2026-04-17T07:36:51Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T07:46:02Z",
+      "resolved_at": "2026-04-17T07:46:55Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T07:48:27Z",
+      "resolved_at": "2026-04-17T07:49:09Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T07:49:22Z",
+      "resolved_at": "2026-04-17T07:49:58Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T07:50:11Z",
+      "resolved_at": "2026-04-17T07:50:58Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T07:51:52Z",
+      "resolved_at": "2026-04-17T07:52:14Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:17:34Z",
+      "resolved_at": "2026-04-17T08:18:08Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:19:45Z",
+      "resolved_at": "2026-04-17T08:20:26Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:20:38Z",
+      "resolved_at": "2026-04-17T08:21:27Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:22:10Z",
+      "resolved_at": "2026-04-17T08:22:34Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:24:50Z",
+      "resolved_at": "2026-04-17T08:25:26Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:27:03Z",
+      "resolved_at": "2026-04-17T08:27:54Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:28:38Z",
+      "resolved_at": "2026-04-17T08:29:14Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T08:30:13Z",
+      "resolved_at": "2026-04-17T09:01:54Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T09:05:43Z",
+      "resolved_at": "2026-04-17T09:07:09Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Acceptance packet ready: parent BP6-LUV-020 is already archived done, and this sidecar now packages the PKT-009 loop-complete evidence, replayable transport commit trail, dependency chain, and residual runtime-only risk as a support-only reviewer packet.",
+      "status": "done",
+      "created_at": "2026-04-17T09:09:29Z",
+      "resolved_at": "2026-04-17T09:12:47Z"
+    },
+    {
+      "task_id": "BP6-LUV-020-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet approved; the support packet accurately reflects archived parent task BP6-LUV-020 as done at 2026-04-17T08:21:04Z, cites the mirrored PKT-009 closure artifacts and replayable front transport commit, and stays within the support-only sidecar boundary.",
+      "status": "done",
+      "created_at": "2026-04-17T09:12:47Z",
+      "resolved_at": "2026-04-17T09:16:00Z"
+    }
+  ],
+  "blockers": []
+}

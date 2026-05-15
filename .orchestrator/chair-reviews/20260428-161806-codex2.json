@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization persists with idle/waiting lanes and no global blocker; the only pending approval is low-risk compose validation.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260428T161648Z-e4453e96",
+      "decision": "allow",
+      "reason": "Read-only docker compose configuration validation scoped to SVC-RUNTIME-HARDENING; it does not start containers, mutate files, or stage changes.",
+      "remember": false
+    }
+  ],
+  "recommended_focus": [
+    "SVC-SURFACES",
+    "SVC-RUNTIME-HARDENING",
+    "SVC-COMPOSE"
+  ]
+}

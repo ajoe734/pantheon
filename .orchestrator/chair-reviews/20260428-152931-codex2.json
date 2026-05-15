@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "No global blocker exists, but SVC-GOVERNANCE-API needs redispatch because its in_progress board state has no live worker.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-RUNTIME-CONTROL-CLOSEOUT",
+    "SVC-RUNTIME-CONTROL"
+  ],
+  "approval_actions": [],
+  "recommended_focus": [
+    "SVC-GOVERNANCE-API",
+    "SVC-RUNTIME-CONTROL",
+    "SVC-SURFACES",
+    "SVC-COMPOSE"
+  ]
+}

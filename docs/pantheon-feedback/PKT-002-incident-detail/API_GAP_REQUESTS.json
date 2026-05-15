@@ -1,0 +1,23 @@
+{
+  "feature_id": "PKT-002-incident-detail",
+  "reviewed_source_commit": "faa1bc2d1bd02e0a3d9fc1e1e5c35bc510182ea7",
+  "status": "open_requests",
+  "requests": [
+    {
+      "kind": "write_contract",
+      "blocking": false,
+      "screen_id": "screen-operator-incident-detail",
+      "summary": "The embedded Incident Action Drawer cannot safely issue HardRollback from Incident Detail because the detail packet does not provide a rollback target artifact ID.",
+      "details": {
+        "required_command_field": "params.target_artifact_id",
+        "current_detail_fields": [
+          "data.incident.artifact_id",
+          "data.incident.artifact_version",
+          "data.incident.runtime_id"
+        ],
+        "reason_not_safe_to_guess": "The current artifact ID in the incident payload is not guaranteed to be the intended rollback target."
+      },
+      "requested_follow_up": "Publish the canonical rollback target source for HardRollback when launching the action drawer from Incident Detail, or extend the incident-detail packet with the required rollback target context."
+    }
+  ]
+}

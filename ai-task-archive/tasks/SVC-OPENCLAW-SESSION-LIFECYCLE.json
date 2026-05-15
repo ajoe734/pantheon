@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "task_id": "SVC-OPENCLAW-SESSION-LIFECYCLE",
+  "archived_at": "2026-04-30T06:34:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OPENCLAW-SESSION-LIFECYCLE",
+    "title": "Add Pantheon-owned OpenClaw session lifecycle",
+    "summary_zh": "新增 Pantheon-owned OpenClaw session state machine：idempotent create/get/cancel、operator ownership、audit trail、degraded recovery；不啟用 broker/live execution。",
+    "phase": "OpenClaw Activation-Ready Development",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-OPENCLAW-UPSTREAM-CLIENT"
+    ],
+    "artifacts": [
+      "services/openclaw-gateway-adapter",
+      "services/control-plane/bff",
+      "services/runtime-manager"
+    ],
+    "acceptance": [
+      "session create get list cancel have durable state and idempotency",
+      "operator ownership and audit metadata are recorded",
+      "degraded upstream recovery preserves known session state",
+      "broker paper live execution remains disabled by default",
+      "tests cover duplicate create cancel and upstream failure"
+    ],
+    "next": "Closeout complete. Review-approved follow-up fix committed (000a998): active->canceled transition allowed, cancel_requested guard added to get_session(), 2 regression tests added. Verification: python3.12 -m pytest services/openclaw-gateway-adapter -q -> 63 passed. Broker/paper/live remain deferred and fail-closed.",
+    "last_update": "2026-04-30T06:34:20Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-materialization-20260430",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過 — 前次 active->canceled 與 cancel_requested->active read refresh blocker 已修正",
+      "63 tests passed for services/openclaw-gateway-adapter; broker/paper/live 仍維持 deferred/fail-closed"
+    ],
+    "review_file": ".orchestrator/reviews/SVC-OPENCLAW-SESSION-LIFECYCLE-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T06:34:20Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "000a9983f47de7487107f653e8175ae1144fe725",
+      "commit_subject": "SVC-OPENCLAW-SESSION-LIFECYCLE closeout: fix read-time lifecycle transitions",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "- Add tests": "test_get_active_session_upstream_reports_canceled_transitions_to_canceled",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "SVC-OPENCLAW-SESSION-LIFECYCLE",
+        "Reviewer": "Codex",
+        "Verification": "PYTHONPATH=.:.../services/openclaw-gateway-adapter \\"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 52,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 17,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OPENCLAW-SESSION-LIFECYCLE",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Pantheon-owned OpenClaw session lifecycle implemented with durable file-backed store, idempotent create (X-Idempotency-Key), state machine pending/active/cancel_requested/canceled/failed/lost, operator-id audit trail on every transition, degraded upstream recovery (lost state preserves records), and lifecycle routes under /api/openclaw-adapter/lifecycle/. Broker/paper/live remain deferred. Verification: python3 -m pytest services/openclaw-gateway-adapter -q (61 passed). Commit: ab13ad0.",
+      "status": "done",
+      "created_at": "2026-04-30T06:06:05Z",
+      "resolved_at": "2026-04-30T06:06:17Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-SESSION-LIFECYCLE",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Session lifecycle implemented and ready for review. Durable file-backed store, idempotent create (X-Idempotency-Key), state machine pending/active/cancel_requested/canceled/failed/lost, operator-id audit trail on every transition, degraded upstream recovery (lost state preserves records). Broker/paper/live remain deferred. Verification: python3 -m pytest services/openclaw-gateway-adapter -q (61 passed). Commit: ab13ad0.",
+      "status": "done",
+      "created_at": "2026-04-30T06:06:17Z",
+      "resolved_at": "2026-04-30T06:06:27Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-SESSION-LIFECYCLE",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Session lifecycle ready for review (commit ab13ad0). 61 lifecycle tests pass.",
+      "status": "done",
+      "created_at": "2026-04-30T06:06:27Z",
+      "resolved_at": "2026-04-30T06:23:55Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-SESSION-LIFECYCLE",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review changes requested: get_session upstream refresh can raise LIFECYCLE_INVALID_TRANSITION for active->canceled and cancel_requested->active; see .orchestrator/reviews/SVC-OPENCLAW-SESSION-LIFECYCLE-review-codex.md.",
+      "status": "done",
+      "created_at": "2026-04-30T06:23:55Z",
+      "resolved_at": "2026-04-30T06:23:55Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-SESSION-LIFECYCLE",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Addressed both review findings. Fix 1: added 'canceled' to _ALLOWED_TRANSITIONS['active'] so upstream_reported_canceled no longer raises LIFECYCLE_INVALID_TRANSITION for active sessions. Fix 2: in get_session(), guarded the active refresh with record.state != 'cancel_requested' so a cancel-in-flight read does not attempt the invalid cancel_requested->active transition. Added tests: test_get_active_session_upstream_reports_canceled_transitions_to_canceled and test_get_cancel_requested_upstream_still_active_preserves_local_state. Verification: python3.12 (with local site-packages) pytest services/openclaw-gateway-adapter -q -> 63 passed (was 61).",
+      "status": "done",
+      "created_at": "2026-04-30T06:28:12Z",
+      "resolved_at": "2026-04-30T06:32:12Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-SESSION-LIFECYCLE",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review approved: owner follow-up fixed the read-time lifecycle transition blocker. python3.12 -m pytest services/openclaw-gateway-adapter -q -> 63 passed. Returning to Claude2 for closeout.",
+      "status": "done",
+      "created_at": "2026-04-30T06:32:12Z",
+      "resolved_at": "2026-04-30T06:34:21Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "task_id": "SVC-RUNTIME-CONTROL",
+  "archived_at": "2026-04-28T16:00:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-RUNTIME-CONTROL",
+    "title": "Package the runtime-control command plane as a deployable service",
+    "summary_zh": "把 runtime-control 指令面封裝成可部署 service，收斂 operator command plane，補上 evolution action 邊界。",
+    "phase": "Phase 4: Service Layer Completion",
+    "owner": "Claude",
+    "reviewer": "Gemini",
+    "depends_on": [
+      "SVC-BASELINE"
+    ],
+    "artifacts": [
+      "services/control_plane/internal_api.py",
+      "services/control-plane/bff/command_executor.py"
+    ],
+    "acceptance": [
+      "runtime-control is exposed as a deployable service with a stable port and health surface",
+      "evolution approval/action no longer terminate in local BFF placeholders",
+      "review closeout records auth/JWT validation, legacy idempotency convergence, and placeholder deployment approval as post-close hardening gaps rather than production-grade closure"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase4-2026-04-15-service-layer-completion",
+      "phase": "phase4",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion",
+      "session_file": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-28T09:09:29Z",
+      "session_id": "phase4-2026-04-15-service-layer-completion",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized approved task. runtime-manager exposes /api/internal/v1/* operator command paths (services/runtime-manager/internal_api_routes.py); evolution approve/reject/execute reaches the governance-owned evolution service via PANTHEON_GOVERNANCE_API_URL. Verified at handoff: 97 pytest passes across runtime-manager/control_plane/bff command_executor + cw01/cw03; 75 pytest passes across governance+evolution; 138/138 runtime-manager smoke; docker compose config --quiet exit 0. Review packet: docs/reviews/2026-04-28-svc-runtime-control-claude-handoff.md. Implementation committed as 87a8e23. Production hardening (JWT/RBAC/MFA, legacy idempotency convergence, deployment approval placeholder) tracked in SVC-RUNTIME-HARDENING.",
+    "last_update": "2026-04-28T16:00:48Z",
+    "review_notes_zh": [
+      "審查通過",
+      "相關測試已驗證",
+      "整合 legacy operator API 到 runtime-manager 符合 SVC-RUNTIME-CONTROL 需求"
+    ],
+    "review_file": "docs/reviews/2026-04-28-svc-runtime-control-claude-handoff.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T16:00:48Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "87a8e23a2d9d2ebb579c44f93b96c501a3d1aee7",
+      "commit_subject": "SVC-RUNTIME-CONTROL package runtime-control as deployable service",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "SVC-RUNTIME-CONTROL",
+        "Reviewer": "Gemini",
+        "- services/runtime-manager/internal_api_routes.py": "in-process adapter",
+        "- services/runtime-manager/main.py": "register the legacy operator routes",
+        "- services/runtime-manager/test_internal_api_routes.py": "covers"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 55,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 18,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-RUNTIME-CONTROL",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "runtime-manager now serves the /api/internal/v1/... operator command paths the BFF dispatches against (services/runtime-manager/internal_api_routes.py). Compose wires operator-bff to the evolution service via PANTHEON_GOVERNANCE_API_URL and to the runtime-manager via PANTHEON_RUNTIME_MANAGER_URL. Tests: pytest services/runtime-manager services/control_plane services/control-plane/bff/test_command_executor.py services/control-plane/bff/test_cw01_consult_request_contract.py services/control-plane/bff/test_cw03_committee_board_contract.py (97 passed); pytest services/governance services/evolution (75 passed); python3 services/runtime-manager/smoke_test.py (138/138 passed); docker compose config --quiet exit 0. Review packet: docs/reviews/2026-04-28-svc-runtime-control-claude-handoff.md.",
+      "status": "done",
+      "created_at": "2026-04-28T13:15:25Z",
+      "resolved_at": "2026-04-28T13:15:38Z"
+    },
+    {
+      "task_id": "SVC-RUNTIME-CONTROL",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "runtime-manager now serves /api/internal/v1/* operator command paths (services/runtime-manager/internal_api_routes.py); compose wires operator-bff to evolution (PANTHEON_GOVERNANCE_API_URL) and runtime-manager (PANTHEON_RUNTIME_MANAGER_URL). Tests: 97 pytest passes across runtime-manager/control_plane/bff command_executor + cw01/cw03; 75 pytest passes across governance+evolution; 138/138 runtime-manager smoke; docker compose config --quiet exit 0. Review packet: docs/reviews/2026-04-28-svc-runtime-control-claude-handoff.md.",
+      "status": "done",
+      "created_at": "2026-04-28T13:15:38Z",
+      "resolved_at": "2026-04-28T13:41:44Z"
+    },
+    {
+      "task_id": "SVC-RUNTIME-CONTROL",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Review approved and returned to the owner for finalization",
+      "status": "done",
+      "created_at": "2026-04-28T13:41:44Z",
+      "resolved_at": "2026-04-28T16:00:48Z"
+    }
+  ],
+  "blockers": []
+}

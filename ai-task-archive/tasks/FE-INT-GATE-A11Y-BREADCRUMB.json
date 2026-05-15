@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "FE-INT-GATE-A11Y-BREADCRUMB",
+  "archived_at": "2026-05-15T01:20:43Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "FE-INT-GATE-A11Y-BREADCRUMB",
+    "title": "Fix Breadcrumb list semantic violation",
+    "summary_zh": "F17 a11y axe serious 中 list + listitem 違規：Breadcrumb 元件用 <ol> 直接含 <li class=contents>，render 結果 ol 直接帶 span，違反 list 結構規則（cat.structure / wcag131）。實際 HTML：<ol class=\"flex flex-wrap items-center gap-1.5 break-words text-sm text-muted-foreground sm:gap-2.5\"> 內含 li.inline-flex 但 li 是 'display: contents'，造成 li 的 child span 變成 ol 的直接 child。修：(1) 不要用 li.contents（破壞 list 語意）；(2) 改 Breadcrumb 結構讓 <li> 真實是 ol 直接 child；(3) 或不用 ol/li，改用 <nav aria-label=\"breadcrumb\">+<ol>+<li> 但去掉 contents class。修完後 axe list/listitem 規則無 violation。Evidence: execute-plans/.lovable/audits/baseline/postfix/pantheon-integration-evidence/test-results/ 17-a11y-v5-*on-control-room*/error-context.md 內含 'List element has direct children that are not allowed: span'",
+    "phase": "Pantheon FE Integration Gate 2026-05-13",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "execute-plans/src/platform/components/Breadcrumb.tsx",
+      "execute-plans/src/components/ui/breadcrumb.tsx"
+    ],
+    "acceptance": [
+      "<ol> 不再直接 children span",
+      "Breadcrumb 在所有 v5 頁面 axe list/listitem 規則 0 violation",
+      "nav aria-label='breadcrumb' 保持"
+    ],
+    "next": "Closeout complete. Implementation committed in execute-plans at b0dc126 (Fragment-based BreadcrumbItem rendering, no contents class on li). F17 axe-v5 gate: 0 list/listitem violations across all control-room/loop/sentinel pages. TypeScript clean, build passing. Review by Codex2 approved 2026-05-15. Artifacts committed: review packet + sidecar acceptance packet.",
+    "last_update": "2026-05-15T01:20:43Z",
+    "review_notes_zh": [
+      "已核對 PageHeader 使用 Fragment 取代 span.contents，Breadcrumb nav aria-label 保持，BreadcrumbItem 仍為實體 li。F17 v5 axe 覆蓋六頁：full run 8 pass/1 timeout，execution-loop 以 180s timeout 重跑 pass；未見 list/listitem violation。build 與 tsc 皆 pass。"
+    ],
+    "review_file": "support/reviews/FE-INT-GATE-A11Y-BREADCRUMB-codex2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T01:20:43Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "1f530bbee8afa68de201a8a4e346f7c00aef7e2a",
+      "commit_subject": "FE-INT-GATE-A11Y-BREADCRUMB: add review and acceptance packet artifacts",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "- PageHeader.tsx": "uses Fragment wrapper so BreadcrumbItem/BreadcrumbSeparator",
+        "- breadcrumb.tsx": "BreadcrumbItem keeps inline-flex class, no contents class",
+        "Verification": "F17 a11y-v5 axe gate passes (0 list/listitem violations),",
+        "LLM-Agent": "Claude",
+        "Task-ID": "FE-INT-GATE-A11Y-BREADCRUMB",
+        "Reviewer": "Codex2",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 13,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 4,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "FE-INT-GATE-A11Y-BREADCRUMB",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by idle Claude; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T00:32:36Z",
+      "resolved_at": "2026-05-15T00:33:42Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-A11Y-BREADCRUMB",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Breadcrumb list semantic violation fixed. Root cause was PageHeader.tsx using <span className='contents'> as keyed map wrapper (commit 6feed7f), making span a direct child of <ol> and breaking list/listitem axe rules. Fix: dd411e2 replaced span.contents with <Fragment key={node.path}>, ensuring all <li> elements are direct children of <ol>. Task commit b0dc126 in execute-plans (bff-luv-fe-006-dev-deploy): fixes BreadcrumbEllipsis.displayName typo. Verification: tsc --noEmit exit 0, vite build exit 0. nav aria-label=breadcrumb preserved. Acceptance: ol has no direct span children; all li are direct ol children via transparent Fragment. Ready for review.",
+      "status": "done",
+      "created_at": "2026-05-15T00:53:16Z",
+      "resolved_at": "2026-05-15T01:15:23Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-A11Y-BREADCRUMB",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review approved. Evidence: support/reviews/FE-INT-GATE-A11Y-BREADCRUMB-codex2-review.md. Owner should finalize with task-scoped closeout commit and done transition.",
+      "status": "done",
+      "created_at": "2026-05-15T01:15:23Z",
+      "resolved_at": "2026-05-15T01:20:44Z"
+    }
+  ],
+  "blockers": []
+}

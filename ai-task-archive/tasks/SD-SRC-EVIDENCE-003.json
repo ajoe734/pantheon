@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "SD-SRC-EVIDENCE-003",
+  "archived_at": "2026-04-28T10:01:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SD-SRC-EVIDENCE-003",
+    "title": "Ingestion scheduler watermarks and index adapter",
+    "summary_zh": "在 durable source/evidence/search store 之上補 governed ingestion scheduling、watermarks、DLQ/retry 與 index adapter 邊界。",
+    "phase": "SD Residual / Source Evidence Search",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SD-SRC-EVIDENCE-002"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-28-foundation-source-consultation-execution-task-packet.md"
+    ],
+    "acceptance": [
+      "scheduled ingest resumes from persisted watermark",
+      "failed ingest uses shared DLQ audit path",
+      "search uses index adapter and preserves contract"
+    ],
+    "next": "Owner finalized approved task after review approval. Verification: targeted source/evidence/search suite passed 31 tests. Delivery commit 122076b adds governed ingestion scheduling, persisted watermarks, shared DLQ/audit handling, and index adapter boundary.",
+    "last_update": "2026-04-28T10:01:37Z",
+    "task_class": "sd_materialization",
+    "source_packet": "docs/reviews/2026-04-28-foundation-source-consultation-execution-task-packet.md",
+    "auto_dispatch_boundary": "respect_dependencies_and_human_gates",
+    "review_notes_zh": [
+      "Rejected SourceRecord batches now use the shared DLQ/audit path and all-rejected batches do not advance watermarks.",
+      "KeywordIndexAdapter preserves metadata.search_text behind the adapter boundary; targeted suite passed 31 tests."
+    ],
+    "review_file": "docs/reviews/2026-04-28-sd-src-evidence-003-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T10:01:37Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "122076b51b1b8b709810efafbb1bd3962751c83a",
+      "commit_subject": "SD-SRC-EVIDENCE-003 add ingestion scheduler and index adapter",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SD-SRC-EVIDENCE-003",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 15,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 5,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SD-SRC-EVIDENCE-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented governed ingestion scheduler with persisted watermarks/replayable run state, retry exhaustion through shared DLQ plus audit action, and keyword search index adapter boundary. Tests: source_ingestion/search/RW-02 and evidence/foundation targeted suites pass.",
+      "status": "done",
+      "created_at": "2026-04-28T09:42:40Z",
+      "resolved_at": "2026-04-28T09:48:17Z"
+    },
+    {
+      "task_id": "SD-SRC-EVIDENCE-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Changes requested by Codex: rejected SourceRecord batches complete without DLQ/audit, and KeywordIndexAdapter omits metadata.search_text so search_text-only queries no longer match. See docs/reviews/2026-04-28-sd-src-evidence-003-codex-review.md.",
+      "status": "done",
+      "created_at": "2026-04-28T09:48:17Z",
+      "resolved_at": "2026-04-28T09:48:17Z"
+    },
+    {
+      "task_id": "SD-SRC-EVIDENCE-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review blockers addressed: rejected SourceRecord batches now route through shared DLQ/audit and all-rejected batches do not advance watermarks; KeywordIndexAdapter includes metadata.search_text. Verification: targeted pytest suite 31 passed.",
+      "status": "done",
+      "created_at": "2026-04-28T09:51:28Z",
+      "resolved_at": "2026-04-28T09:57:00Z"
+    },
+    {
+      "task_id": "SD-SRC-EVIDENCE-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: prior blockers resolved and targeted pytest suite passed (31 tests). Owner should finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-28T09:57:00Z",
+      "resolved_at": "2026-04-28T10:01:37Z"
+    }
+  ],
+  "blockers": []
+}

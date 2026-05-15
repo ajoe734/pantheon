@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "task_id": "OSS-004A-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-18T22:48:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-004A-SIDECAR-ACCEPTANCE",
+    "title": "Prepare OSS-004A acceptance packet and dependency map",
+    "summary_zh": "平行支援 OSS-004A，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 7: EP4 Proof Raising",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/OSS-004A/OSS-004A-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved acceptance sidecar. Support packet is committed and ready for parent closeout reuse by Claude.",
+    "last_update": "2026-04-18T22:48:15Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OSS-004A",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Packet 正確履行 sidecar 範疇約束：未修改任何 canonical truth、L1 policy 或 runtime contract。",
+      "四個 OSS-004A 證明面（runtime-manager auth、VM-2 token isolation、bootstrap paper-runtime identity、telemetry authority refs）的現況評估準確，且誠實標記了 partial / met / not met。",
+      "Section 7 的 reviewer guardrails（不把 bearer presence 誤認為 final auth、維持 bootstrap 與 final execution package 的邊界、保持 EP3 與 EP4 evidence 分離）對 parent owner 有高實用價值。",
+      "Section 8 的 suggested closeout shape 具體且範圍正確，可直接給 parent owner 參考。",
+      "本 sidecar 可視為 OSS-004A 的 acceptance substrate 材料——但明確標明：parent 的 AC-1、AC-2、AC-3、AC-6 仍未滿足，parent 需自行完成 authority-path consolidation 才能進入 review。"
+    ],
+    "review_file": "support/sidecars/OSS-004A/OSS-004A-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-18T22:48:15Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "38913487c2d2a1ae97f132414a3ea4d74b0da1d9",
+      "commit_subject": "OSS-004A-SIDECAR-ACCEPTANCE: add EP4 authority-path support packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "OSS-004A-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 648,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-004A-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Review support packet at support/sidecars/OSS-004A/OSS-004A-SIDECAR-ACCEPTANCE.md. Key conclusion: OSS-004A already has explicit partial truth for runtime-manager bearer auth presence, VM-2 token isolation, bootstrap paper-runtime identity, telemetry authority refs, and the OpenClaw adapter boundary; the remaining parent work is to consolidate those into one explicit authority-path closeout without overclaiming beyond EP3 or absorbing OSS-004B/OSS-004C.",
+      "status": "done",
+      "created_at": "2026-04-18T15:46:44Z",
+      "resolved_at": "2026-04-18T22:42:43Z"
+    },
+    {
+      "task_id": "OSS-004A-SIDECAR-ACCEPTANCE",
+      "from": "Gemini",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Gemini to Qwen after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-18T22:42:43Z",
+      "resolved_at": "2026-04-18T22:44:19Z"
+    },
+    {
+      "task_id": "OSS-004A-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-18T22:44:19Z",
+      "resolved_at": "2026-04-18T22:46:09Z"
+    },
+    {
+      "task_id": "OSS-004A-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved. Packet is accurate, well-scoped, and provides actionable parent closeout guidance without mutating canonical truth. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-18T22:46:09Z",
+      "resolved_at": "2026-04-18T22:48:15Z"
+    }
+  ],
+  "blockers": []
+}

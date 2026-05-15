@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "task_id": "APP-003-CW02-IMPL-001",
+  "archived_at": "2026-04-22T06:17:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-CW02-IMPL-001",
+    "title": "Implement CW-02 Debate Transcript route family",
+    "summary_zh": "補上已 ratified 但尚未落地的 CW-02 transcript route family，讓 committee 與 memo downstream 不再卡在文字契約。",
+    "phase": "Execution / Consultation Workbench Completion",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md",
+      "docs/bff/CW-02-debate-transcript.md",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/read_store.py"
+    ],
+    "acceptance": [
+      "Transcript route family is implemented",
+      "Ordered TranscriptEvent payload matches the ratified contract",
+      "Tests cover actor identity ordering and degradation behavior"
+    ],
+    "next": "Owner finalized approved task. All 26 CW-01/CW-02/CW-03 contract tests pass. Both reviewer findings fixed: gap detection runs on full event stream before from_sequence_no filter, and meta.staleness.served_from derives from dataset_source('consult_transcripts'). CW-02 transcript route family is complete and contract-correct.",
+    "last_update": "2026-04-22T06:17:37Z",
+    "source_plane": "audit_followup",
+    "source_ref": {
+      "type": "execution_packet",
+      "path": "docs/reviews/2026-04-22-full-blueprint-gap-execution-packet.md"
+    },
+    "task_class": "execution_followup",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Rereview 通過：先前兩個 blocking findings 都已修正。`get_consult_transcript()` 會先對完整排序事件流做 gap detection，再套用 from_sequence_no 篩選；`meta.staleness.served_from` 也已正確反映 consult_transcripts 的實際資料來源。CW-01/CW-02/CW-03 合併契約測試重新驗證為 26 passed。"
+    ],
+    "review_file": "docs/reviews/2026-04-22-exec-bff-cw02-001-codex-rereview.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-22T06:17:37Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "aa37238c51d3f6284d607729510c321614cbf52e",
+      "commit_subject": "APP-003-CW02-IMPL-001 finalize owner checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "fixed": "gap detection runs on full event stream before from_sequence_no",
+        "LLM-Agent": "Claude",
+        "Task-ID": "APP-003-CW02-IMPL-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 991,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-CW02-IMPL-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "CW-02 Debate Transcript route family implemented. Changes: (1) read_store.py: consult_transcripts dataset in ServiceBackedReadAdapter._DATASETS + _LOCAL_DATA_KEYS, seed data for cs-20260419-081 with 3 ordered events in _default_read_data, _consult_transcript_records helper, get_consult_transcript method with sequence_no ordering/from_sequence_no filtering/pagination/gap-detection degradation semantics; (2) main.py: GET /api/v1/consultations/{session_id}/transcript route, workbench overview CW-02 and CW-03 promoted to ready; (3) test_cw02_debate_transcript_contract.py: 12 contract tests covering envelope shape, event ordering, actor identity, from_sequence_no filter, surface_state ok/degraded, 404 for unknown session, pagination, and auth. All 12 CW-02 tests pass; CW-01 and CW-03 (11 tests) unaffected.",
+      "status": "done",
+      "created_at": "2026-04-22T05:52:41Z",
+      "resolved_at": "2026-04-22T05:57:47Z"
+    },
+    {
+      "task_id": "APP-003-CW02-IMPL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested; see docs/reviews/2026-04-22-exec-bff-cw02-001-codex-review.md. Fix filtered-gap surface_state so transcript degradation is computed from the full stream, and derive meta.staleness.served_from from dataset_source('consult_transcripts') before resubmitting for review.",
+      "status": "done",
+      "created_at": "2026-04-22T05:57:47Z",
+      "resolved_at": "2026-04-22T05:57:47Z"
+    },
+    {
+      "task_id": "APP-003-CW02-IMPL-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Both review findings fixed and re-tested. (1) Filtered-gap bug: gap detection in get_consult_transcript() now runs on the full sorted event stream (full_seqs) before the from_sequence_no filter is applied, so a broken transcript cannot appear healthy when the client requests a later slice. (2) Provenance bug: meta.staleness.served_from now calls self.dataset_source('consult_transcripts') instead of hardcoding local_snapshot. Three new contract tests added: test_cw02_transcript_surface_state_degraded_when_gap_hidden_by_filter, test_cw02_transcript_served_from_local_snapshot, test_cw02_transcript_served_from_service_store. All 15 CW-02 tests + 11 CW-01/CW-03 tests pass (26 total, 0 failures).",
+      "status": "done",
+      "created_at": "2026-04-22T06:02:13Z",
+      "resolved_at": "2026-04-22T06:13:46Z"
+    },
+    {
+      "task_id": "APP-003-CW02-IMPL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Approved via docs/reviews/2026-04-22-exec-bff-cw02-001-codex-rereview.md. Filtered-gap degradation and consult_transcripts provenance now match the ratified CW-02 contract; owner can finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-22T06:13:46Z",
+      "resolved_at": "2026-04-22T06:17:37Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "task_id": "APP-003-DATASOURCE-TW-001",
+  "archived_at": "2026-04-24T16:36:50Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-DATASOURCE-TW-001",
+    "title": "Implement Shioaji, TWSE, TPEx, MOPS, and TEJ Taiwan integration",
+    "summary_zh": "完成台股 Shioaji 執行與 TWSE/TPEx/MOPS/TEJ 參考與研究資料串接。",
+    "phase": "Phase 5",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/execution/",
+      "services/data-plane/",
+      "services/research/",
+      "DATA_SOURCE_SCOPE_MATRIX.md"
+    ],
+    "acceptance": [
+      "Shioaji execution and quote boundary is implemented",
+      "TWSE TPEx and MOPS ingest paths are wired or contract-complete",
+      "TEJ API adapter lands as Taiwan research/reference integration without replacing official disclosure truth"
+    ],
+    "next": "Finalized approved Taiwan datasource slice after landing commit 244825c and rerunning targeted execution, data-plane, and research verification.",
+    "last_update": "2026-04-24T16:36:50Z",
+    "task_class": "execution",
+    "auto_created_by": "Codex",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "台灣 datasource slice 已完成 reviewer 驗證；Shioaji 邊界、TWSE/TPEx/MOPS/TEJ 治理分界與移除 Taiwan→Market.HKFE 偽映射皆已確認，無 blocking findings。"
+    ],
+    "review_file": "docs/reviews/2026-04-24-app-003-datasource-tw-001-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T16:36:50Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "244825cab2f33a938f913881dfc34649b0fd7ab0",
+      "commit_subject": "APP-003-DATASOURCE-TW-001 implement Taiwan datasource boundary",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-DATASOURCE-TW-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1151,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-DATASOURCE-TW-001",
+      "from": "Qwen",
+      "to": "Codex2",
+      "message": "Auto-reassigned APP-003-DATASOURCE-TW-001 away from sidecar-only lane Qwen; owner Qwen -> Codex2. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-04-24T16:07:42Z",
+      "resolved_at": "2026-04-24T16:10:06Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-TW-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented Taiwan datasource slice: added Shioaji execution/quote boundary, TWSE/TPEx/MOPS/TEJ governed adapters, Taiwan data-plane normalization helpers, and passing targeted tests (execution 6, research adapters 20, data-plane 40).",
+      "status": "done",
+      "created_at": "2026-04-24T16:16:20Z",
+      "resolved_at": "2026-04-24T16:22:30Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-TW-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review blocked: do not map TWSE/TPEX/TAIFEX to Market.HKFE in services/execution/lean_runtime/symbol_parser.py. The live LEAN executor resolves ParsedSymbol.lean_market into Symbol.Create(..., Market.<Y>) and will misclassify Taiwan instruments as Hong Kong. Remove the parser extension or add a real Taiwan/custom-market path, then rerun targeted verification.",
+      "status": "done",
+      "created_at": "2026-04-24T16:22:30Z",
+      "resolved_at": "2026-04-24T16:22:30Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-TW-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Removed the invalid Taiwan→Market.HKFE parser extension from services/execution/lean_runtime/symbol_parser.py, documented that Taiwan symbols stay on the Shioaji boundary, updated the Shioaji test to assert LEAN parser rejection for TWSE/TAIFEX, and reran targeted verification: services/execution/test_shioaji_adapter.py (6 passed), services/execution/test_ibkr_adapter.py plus services/execution/lean_runtime/test_signal_consumer.py (14 passed).",
+      "status": "done",
+      "created_at": "2026-04-24T16:25:30Z",
+      "resolved_at": "2026-04-24T16:32:51Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-TW-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved after rerunning Taiwan execution, data-plane, and research adapter verification. Owner should finalize this task from review_approved to done.",
+      "status": "done",
+      "created_at": "2026-04-24T16:32:51Z",
+      "resolved_at": "2026-04-24T16:36:50Z"
+    }
+  ],
+  "blockers": []
+}

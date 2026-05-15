@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "task_id": "FE-INT-GATE-ALIGN-F15-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-05-14T14:44:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "FE-INT-GATE-ALIGN-F15-SIDECAR-ACCEPTANCE",
+    "title": "Prepare FE-INT-GATE-ALIGN-F15 acceptance packet and dependency map",
+    "summary_zh": "平行支援 FE-INT-GATE-ALIGN-F15，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Pantheon FE Integration Gate 2026-05-13",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/FE-INT-GATE-ALIGN-F15/FE-INT-GATE-ALIGN-F15-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed support-only acceptance packet after Claude2 approval. Artifact committed in 43757e3c; verification: git diff --cached --check -- support/sidecars/FE-INT-GATE-ALIGN-F15/FE-INT-GATE-ALIGN-F15-SIDECAR-ACCEPTANCE.md passed. No canonical/runtime implementation files were edited.",
+    "last_update": "2026-05-14T14:44:56Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "FE-INT-GATE-ALIGN-F15",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：acceptance packet 正確限於 support-only scope，未修改 canonical truth",
+      "Parent 阻塞狀態（hosted Lovable strict-mode 部署缺口）準確反映 ai-status.json 記錄",
+      "Acceptance checklist 強制要求 strict fail-closed 行為（禁止 seed rows、FALLBACK DATA），無降級",
+      "依賴鏈正確路由至 FE-INT-GATE-FOLLOWUP-F15-STRICT-LOVABLE 作為必要 deploy/runtime-hook 前置條件",
+      "Read-only evidence 含實際 asset hash（index-CrXlErW2.js）與 dev BFF health check JSON，具體可驗證",
+      "重跑指令正確且完整"
+    ],
+    "review_file": "support/sidecars/FE-INT-GATE-ALIGN-F15/FE-INT-GATE-ALIGN-F15-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-14T14:44:56Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "43757e3c77a874df993c0e47811da7dc0d2a7930",
+      "commit_subject": "FE-INT-GATE-ALIGN-F15-SIDECAR-ACCEPTANCE closeout packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "FE-INT-GATE-ALIGN-F15-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude2",
+        "Verification": "git diff --cached --check -- support/sidecars/FE-INT-GATE-ALIGN-F15/FE-INT-GATE-ALIGN-F15-SIDECAR-ACCEPTANCE.md"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 14,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F15-SIDECAR-ACCEPTANCE",
+      "from": "Gemini2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Gemini2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-14T13:47:38Z",
+      "resolved_at": "2026-05-14T13:47:48Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F15-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Gemini2",
+      "message": "Acceptance packet ready: support artifact maps F15 parent acceptance, hosted strict Lovable deployment dependency, current hosted asset string gate at 2026-05-14T13:49Z, dev BFF health check, and two-run hosted rerun checklist. No canonical/runtime edits.",
+      "status": "done",
+      "created_at": "2026-05-14T13:51:03Z",
+      "resolved_at": "2026-05-14T14:36:32Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F15-SIDECAR-ACCEPTANCE",
+      "from": "Gemini2",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Gemini2 to Claude2: Gemini2 was dispatch-paused due to capacity/429; handoff has been pending since 21:51; Claude2 is idle and has execution/governance-review capability to review this acceptance packet.",
+      "status": "done",
+      "created_at": "2026-05-14T14:36:32Z",
+      "resolved_at": "2026-05-14T14:38:19Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F15-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Acceptance packet reviewed and approved: support-only scope confirmed, parent blocker correctly documented as hosted strict-mode deployment gap with asset gate evidence, checklist enforces strict fail-closed behavior without weakening, dependency chain correctly routes through FE-INT-GATE-FOLLOWUP-F15-STRICT-LOVABLE. Returned to Codex2 for done transition.",
+      "status": "done",
+      "created_at": "2026-05-14T14:38:19Z",
+      "resolved_at": "2026-05-14T14:44:56Z"
+    }
+  ],
+  "blockers": []
+}

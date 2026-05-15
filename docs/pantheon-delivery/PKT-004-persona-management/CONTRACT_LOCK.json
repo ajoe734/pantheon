@@ -1,0 +1,20 @@
+{
+  "feature_id": "PKT-004-persona-management",
+  "status": "followup-required",
+  "backend_commit": "2782e5021243cca958974059dbf2ceeaac16fdfb",
+  "bff_contract_version": "pantheon-bff@2782e5021243cca958974059dbf2ceeaac16fdfb",
+  "source_payload": ".coordination/requests/PKT-004-persona-management-frontend-feedback.yaml",
+  "endpoints": [
+    "GET /api/v1/operator/persona-management/{persona_id}",
+    "POST /api/v1/operator/commands"
+  ],
+  "contract_paths": [
+    "docs/bff/PKT-004-persona-management.md",
+    "docs/examples/PKT-004-persona-management.json"
+  ],
+  "followup_scope": [
+    "publish canonical operator-command payloads for canActivate, canPause, canDelete, and canPauseSession if PKT-004 should enable those CTAs",
+    "normalize data.allowedActions to always return all eight boolean keys across persona lifecycle states",
+    "republish contract-ready and lovable-ui-task only if Pantheon expands the PKT-004 write contract"
+  ]
+}

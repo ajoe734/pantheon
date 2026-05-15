@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+from datetime import datetime, timezone
 from enum import Enum
 
 import httpx
@@ -36,6 +37,44 @@ PERSONA_URL = os.getenv("PERSONA_URL", "http://localhost:8002")
 # ---------------------------------------------------------------------------
 
 SESSION_TTL_SECONDS = 86_400  # 24h idle timeout; refreshed on each successful /route call
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _standard_health_payload() -> dict[str, object]:
+    return {
+        "status": "ok",
+        "service": "router",
+        "timestamp": _utc_now(),
+        "live": True,
+        "ready": True,
+        "dependencies": {"persona": {"status": "ok" if PERSONA_URL else "degraded", "url": PERSONA_URL}},
+        "metrics": {"service_up": 1},
+        "details": {
+            "persona_url": PERSONA_URL,
+            "session_ttl_seconds": SESSION_TTL_SECONDS,
+            "classification_owner": "persona",
+            "fallback_classifier_mode": "degraded_only",
+        },
+    }
+
+
+@app.get("/healthz")
+@app.get("/livez")
+async def standard_health():
+    return _standard_health_payload()
+
+
+@app.get("/readyz")
+async def standard_ready():
+    return _standard_health_payload()
+
+
+@app.get("/metrics")
+async def standard_metrics():
+    return {"service": "router", "timestamp": _utc_now(), "metrics": {"service_up": 1}}
 
 # Max requests per minute per user (enforced by API gateway in production;
 # documented here as the canonical policy for all implementations)
@@ -185,6 +224,9 @@ class RouteResponse(BaseModel):
     intent: str | None = None
     skill: str | None = None
     permission: str | None = None   # "allow" | "allow_with_approval" (never "deny" — those 403)
+    intent_source: str | None = None
+    routing_mode: str | None = None
+    session_status: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +240,8 @@ async def health():
         "service": "router",
         "persona_url": PERSONA_URL,
         "session_ttl_seconds": SESSION_TTL_SECONDS,
+        "classification_owner": "persona",
+        "fallback_classifier_mode": "degraded_only",
     }
 
 
@@ -209,25 +253,48 @@ async def route(req: RouteRequest):
     session_id = req.session_id or str(uuid.uuid4())
 
     # ── Step 1: classify intent WITHOUT side effects ──
-    # We call Persona classify-only endpoint first so that permission evaluation
-    # happens before any tool dispatch.  If Persona doesn't expose a separate
-    # classify endpoint yet, we use a lightweight local keyword classifier as
-    # fallback to prevent permission check from being bypassed.
-    intent = _classify_intent_local(req.message)
-
-    # ── Step 2: evaluate permission BEFORE any side-effectful dispatch ──
-    role = _CHANNEL_ROLE.get(req.channel, "persona")
-    perm = _evaluate_permission(channel=req.channel, intent=intent, role=role)
-
-    if perm == PermissionResult.DENY:
-        log.warning(
-            "Permission DENY: channel=%s intent=%s user=%s",
-            req.channel, intent, req.user_id,
-        )
-        raise HTTPException(status_code=403, detail="Tool permission denied")
+    # Persona owns the canonical classification path. The router-local
+    # classifier remains only as a truthful degraded fallback.
+    intent_source = "persona"
+    routing_mode = "persona_authoritative"
+    intent = None
+    skill_hint = None
 
     # ── Step 3: dispatch to Persona Agent (now safe to produce side effects) ──
     async with httpx.AsyncClient() as client:
+        try:
+            classify_resp = await client.post(
+                f"{PERSONA_URL}/classify",
+                json={
+                    "session_id": session_id,
+                    "user_id": req.user_id,
+                    "channel": req.channel,
+                    "message": req.message,
+                },
+                timeout=15,
+            )
+            classify_resp.raise_for_status()
+            classify_body = classify_resp.json()
+            intent = classify_body.get("intent")
+            skill_hint = classify_body.get("skill")
+        except Exception as exc:
+            log.warning("Persona classify unavailable; using degraded local classifier: %s", exc)
+            intent = _classify_intent_local(req.message)
+            skill_hint = _intent_to_skill(intent)
+            intent_source = "router.degraded_fallback"
+            routing_mode = "degraded_surrogate"
+
+        # ── Step 2: evaluate permission BEFORE any side-effectful dispatch ──
+        role = _CHANNEL_ROLE.get(req.channel, "persona")
+        perm = _evaluate_permission(channel=req.channel, intent=intent, role=role)
+
+        if perm == PermissionResult.DENY:
+            log.warning(
+                "Permission DENY: channel=%s intent=%s user=%s",
+                req.channel, intent, req.user_id,
+            )
+            raise HTTPException(status_code=403, detail="Tool permission denied")
+
         try:
             resp = await client.post(
                 f"{PERSONA_URL}/invoke",
@@ -236,8 +303,9 @@ async def route(req: RouteRequest):
                     "user_id": req.user_id,
                     "channel": req.channel,
                     "message": req.message,
+                    "intent_hint": intent,
                 },
-                timeout=30,
+                timeout=60,
             )
             resp.raise_for_status()
             body = resp.json()
@@ -253,17 +321,19 @@ async def route(req: RouteRequest):
 
     return RouteResponse(
         session_id=session_id,
-        agent_id="persona-default",
+        agent_id=body.get("agent_id", "persona-default"),
         response=body.get("response", "[no response]"),
         intent=refined_intent,
-        skill=body.get("skill"),
+        skill=body.get("skill") or skill_hint,
         permission=perm.value,
+        intent_source=intent_source,
+        routing_mode=body.get("runtime", {}).get("mode") or routing_mode,
+        session_status=body.get("session_status"),
     )
 
 
 # ---------------------------------------------------------------------------
-# Local intent classifier (lightweight fallback)
-# Replaced by Persona Agent's intent_classify node once it is wired.
+# Local intent classifier (lightweight degraded fallback only)
 # ---------------------------------------------------------------------------
 
 _INTENT_KEYWORDS: list[tuple[str, list[str]]] = [
@@ -283,3 +353,17 @@ def _classify_intent_local(message: str) -> str:
         if any(kw in lower for kw in keywords):
             return intent
     return "unknown"
+
+
+def _intent_to_skill(intent: str | None) -> str | None:
+    if intent is None:
+        return None
+    return {
+        "execution.signal": "execution-signal",
+        "governance.approve": "governance-review",
+        "governance": "governance-review",
+        "deployment": "deployment-review",
+        "monitor": "monitoring-summary",
+        "research": "research-summary",
+        "status": "status-summary",
+    }.get(intent)

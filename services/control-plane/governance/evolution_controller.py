@@ -56,6 +56,10 @@ def _add_days(timestamp: str, days: int) -> str:
     return (moment + timedelta(days=days)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _enum_value(value: Any) -> Any:
+    return value.value if hasattr(value, "value") else value
+
+
 class EvolutionControllerError(ValueError):
     """Raised when controller routing or dispatch invariants are violated."""
 
@@ -479,8 +483,8 @@ class EvolutionController:
             command_id=f"dispatch-{decision.decision_id}",
             decision_id=decision.decision_id,
             execution_plane=boundary.execution_plane,
-            action_type=str(decision.action_type),
-            target_type=str(decision.target_type),
+            action_type=_enum_value(decision.action_type),
+            target_type=_enum_value(decision.target_type),
             target_id=decision.target_id,
             target_version=decision.target_version,
             target_stage=decision.target_stage,
@@ -511,7 +515,7 @@ class EvolutionController:
                         decision_id=decision.decision_id,
                         execution_plane=ExecutionPlane.DEPLOYMENT,
                         action_type="freeze_stage",
-                        target_type=str(decision.target_type),
+                        target_type=_enum_value(decision.target_type),
                         target_id=decision.target_id,
                         target_version=decision.target_version,
                         target_stage=DeploymentStage.FROZEN.value,
@@ -658,7 +662,7 @@ class EvolutionController:
 
         metadata = {
             "parent_decision_id": parent_decision.decision_id,
-            "parent_action_type": str(parent_decision.action_type),
+            "parent_action_type": _enum_value(parent_decision.action_type),
             "approval_decision_id": approval_decision_id,
             "sponsor_persona_id": sponsor_persona_id or parent_decision.persona_id,
             "reviewed_owner_roles": list(reviewed_owner_roles),
@@ -671,7 +675,7 @@ class EvolutionController:
             decision_id=parent_decision.decision_id,
             execution_plane=ExecutionPlane.DEPLOYMENT,
             action_type="redeploy_followthrough",
-            target_type=str(parent_decision.target_type),
+            target_type=_enum_value(parent_decision.target_type),
             target_id=artifact_id,
             target_version=artifact_version,
             target_stage=normalized_stage.value,

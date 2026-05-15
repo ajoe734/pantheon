@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "P1-BRACKET-001-SIDECAR-REVIEW",
+  "archived_at": "2026-05-01T09:57:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P1-BRACKET-001-SIDECAR-REVIEW",
+    "title": "Prepare P1-BRACKET-001 review packet and evidence summary",
+    "summary_zh": "平行支援 P1-BRACKET-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "P1 Wave 5",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "P0-LIVE-GUARD-001"
+    ],
+    "artifacts": [
+      "support/sidecars/P1-BRACKET-001/P1-BRACKET-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout: review_approved by Codex2. Artifact support/sidecars/P1-BRACKET-001/P1-BRACKET-001-SIDECAR-REVIEW.md committed in 112295e. Verification: python3 -m pytest services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_paper_runtime.py → 13 passed, 0 failures. Support-only scope confirmed; no L1 canonical truth modified.",
+    "last_update": "2026-05-01T09:57:18Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "P1-BRACKET-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "support artifact only; packet claims match executor/paper_runtime guard implementation, SA-20 R-EXE-003 wording, formal parent approval, and focused pytest result: 13 passed"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T09:57:18Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "112295ed2b33f2e92f61b680c7bb78b3675cf968",
+      "commit_subject": "P1-BRACKET-001-SIDECAR-REVIEW: add review packet and evidence summary",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "- Implementation summary": "two-layer bracket execution guard,",
+        "LLM-Agent": "Claude",
+        "Task-ID": "P1-BRACKET-001-SIDECAR-REVIEW",
+        "Reviewer": "Codex2",
+        "Verification": "support artifact created; 13 upstream tests referenced from"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 140,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P1-BRACKET-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review packet complete. Summarizes implementation, 13 passing tests, acceptance criteria verification, SA-20 R-EXE-003 alignment, and finalization checklist for Codex2 when closing P1-BRACKET-001.",
+      "status": "done",
+      "created_at": "2026-05-01T09:48:03Z",
+      "resolved_at": "2026-05-01T09:52:02Z"
+    },
+    {
+      "task_id": "P1-BRACKET-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Approved sidecar review packet. Verified support-only scope, formal parent approval reference, SA-20 R-EXE-003 alignment, and focused tests: python3 -m pytest services/execution/lean_runtime/test_executor.py services/execution/lean_runtime/test_paper_runtime.py -> 13 passed.",
+      "status": "done",
+      "created_at": "2026-05-01T09:52:02Z",
+      "resolved_at": "2026-05-01T09:57:18Z"
+    }
+  ],
+  "blockers": []
+}

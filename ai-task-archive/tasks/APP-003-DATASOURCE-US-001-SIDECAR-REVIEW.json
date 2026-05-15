@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "APP-003-DATASOURCE-US-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-24T19:35:50Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-DATASOURCE-US-001-SIDECAR-REVIEW",
+    "title": "Prepare APP-003-DATASOURCE-US-001 review packet and evidence summary",
+    "summary_zh": "平行支援 APP-003-DATASOURCE-US-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 5",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-DATASOURCE-US-001/APP-003-DATASOURCE-US-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar review packet and closed it. Support artifact remains a truthful, support-only wrapper around the archived US datasource review.",
+    "last_update": "2026-04-24T19:35:50Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-DATASOURCE-US-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar review packet 與封存父任務、原始 review 紀錄、引用 artifacts 一致，內容維持 support-only。",
+      "本次 approval 僅覆蓋 APP-003-DATASOURCE-US-001 sidecar review packet；共享測試中的 Taiwan helper 邊界仍由 APP-003-DATASOURCE-TW-001 追蹤。"
+    ],
+    "review_file": "docs/reviews/sidecars/2026-04-24-APP-003-DATASOURCE-US-001-SIDECAR-REVIEW-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T19:35:50Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "077e27489b56ae352f1be8ebbc99dfc07365a991",
+      "commit_subject": "APP-003-DATASOURCE-US-001-SIDECAR-REVIEW finalize sidecar review packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-DATASOURCE-US-001-SIDECAR-REVIEW",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1178,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-DATASOURCE-US-001-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T16:44:25Z",
+      "resolved_at": "2026-04-24T16:53:10Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-US-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T16:58:55Z",
+      "resolved_at": "2026-04-24T18:57:12Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-US-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Published support-only review packet at support/sidecars/APP-003-DATASOURCE-US-001/APP-003-DATASOURCE-US-001-SIDECAR-REVIEW.md. Packet summarizes the archived parent approval record, commit b9dd029 delivery metadata, reviewed US-slice evidence surfaces, and the explicit boundary that shared Taiwan helper coverage in schema/tests does not count as APP-003-DATASOURCE-TW-001 closure. Please review for truthfulness and sidecar-scope compliance only.",
+      "status": "done",
+      "created_at": "2026-04-24T19:03:21Z",
+      "resolved_at": "2026-04-24T19:21:16Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-US-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved sidecar review packet as a truthful, support-only wrapper around the archived US datasource review; returned to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-24T19:21:16Z",
+      "resolved_at": "2026-04-24T19:35:50Z"
+    }
+  ],
+  "blockers": []
+}

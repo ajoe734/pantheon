@@ -1,0 +1,232 @@
+# cloudbuild.yaml — Pantheon image build and publish pipeline
+#
+# Called by GitHub Actions via `gcloud builds submit` after OIDC/WIF authentication.
+# No long-lived GCP service-account keys are embedded in GitHub.
+#
+# ── Substitutions ─────────────────────────────────────────────────────────────
+# These can be overridden at submit time with --substitutions=KEY=value.
+#
+#   _REGISTRY   Artifact Registry region host
+#               default: asia-east1-docker.pkg.dev
+#
+#   _ENV_TAG    Mutable environment pointer tag applied alongside the immutable
+#               git-SHA tag.  Use "dev-candidate", "paper-candidate", etc.
+#               default: dev-candidate
+#
+#   _SERVICES   Comma-separated list of service IDs to build, or "all".
+#               Service IDs map 1-to-1 to the compose service names in docker-compose.yml.
+#               default: all
+#
+# ── Image naming ──────────────────────────────────────────────────────────────
+# Every image is published under:
+#   ${_REGISTRY}/${PROJECT_ID}/pantheon/<service-id>
+#
+# Two tags are always written for every built image:
+#   :<COMMIT_SHA>   immutable; the canonical artifact identity
+#   :<_ENV_TAG>     mutable; points to the latest build in this environment lane
+#
+# ── Provenance ────────────────────────────────────────────────────────────────
+# Cloud Build automatically records build provenance via Container Analysis when
+# images are pushed.  The provenance links each image digest back to this build,
+# the triggering commit, and the build config.
+#
+# ── Available service IDs ──────────────────────────────────────────────────────
+# Service IDs must match the `id` fields in .github/pantheon-stage0-matrix.json
+# so that changed-path detection in gcp-deploy.yml routes cleanly into this
+# build config.  Entries marked [manual] have no Stage 0 changed-path entry and
+# can only be triggered via an explicit --substitutions=_SERVICES=<id> override.
+#
+# core-vm profile (auto-detectable via Stage 0 changed-path gating):
+#   bff               services/control-plane/bff/Dockerfile
+#   router            services/control-plane/router/Dockerfile
+#   persona           services/control-plane/persona/Dockerfile
+#   governance-api    services/governance/Dockerfile
+#   telemetry-ingest  services/telemetry/Dockerfile
+#   runtime-manager   services/runtime-manager/Dockerfile
+#
+# research profile (auto-detectable via Stage 0 changed-path gating):
+#   mlflow-server     services/research/mlflow/Dockerfile
+#   dspy-worker       services/learning/dspy/Dockerfile
+#   imitation-worker  services/learning/imitation/Dockerfile
+#   research-base     services/research/Dockerfile
+#   research-dspy     services/research/dspy/Dockerfile
+#   research-finrl    services/research/finrl/Dockerfile
+#   research-imitation services/research/imitation/Dockerfile
+#   research-qlib     services/research/qlib/Dockerfile
+#
+# execution-lab profile (auto-detectable via Stage 0 changed-path gating):
+#   lean              lean/Dockerfile
+#
+# manual-only (no Stage 0 changed-path entry; trigger with explicit _SERVICES):
+#   incidents         services/incidents/Dockerfile
+#   postmortems       services/postmortems/Dockerfile
+
+substitutions:
+  _REGISTRY: asia-east1-docker.pkg.dev
+  _ENV_TAG: dev-candidate
+  _SERVICES: "all"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+  env:
+    - DOCKER_BUILDKIT=1
+
+steps:
+  # ── Step 1: build and push core-vm images ───────────────────────────────────
+  # A single bash step iterates over the service registry and only builds services
+  # that match the _SERVICES filter.  Running all builds in one step avoids the
+  # overhead of launching a new container per service while keeping the logic
+  # transparent and auditable.
+  - id: build-and-push-core
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        # ── service registry ────────────────────────────────────────────────
+        # Maps service ID -> Dockerfile path relative to repo root.
+        # All builds use the repo root as context so services can share base
+        # layers and common files.
+        declare -A DOCKERFILES
+        # ── core-vm profile ──────────────────────────────────────────────────
+        # IDs match .github/pantheon-stage0-matrix.json for changed-path gating.
+        DOCKERFILES[bff]="services/control-plane/bff/Dockerfile"
+        DOCKERFILES[router]="services/control-plane/router/Dockerfile"
+        DOCKERFILES[persona]="services/control-plane/persona/Dockerfile"
+        DOCKERFILES[governance-api]="services/governance/Dockerfile"
+        DOCKERFILES[telemetry-ingest]="services/telemetry/Dockerfile"
+        DOCKERFILES[runtime-manager]="services/runtime-manager/Dockerfile"
+        # ── research profile ─────────────────────────────────────────────────
+        DOCKERFILES[mlflow-server]="services/research/mlflow/Dockerfile"
+        DOCKERFILES[dspy-worker]="services/learning/dspy/Dockerfile"
+        DOCKERFILES[imitation-worker]="services/learning/imitation/Dockerfile"
+        DOCKERFILES[research-base]="services/research/Dockerfile"
+        DOCKERFILES[research-dspy]="services/research/dspy/Dockerfile"
+        DOCKERFILES[research-finrl]="services/research/finrl/Dockerfile"
+        DOCKERFILES[research-imitation]="services/research/imitation/Dockerfile"
+        DOCKERFILES[research-qlib]="services/research/qlib/Dockerfile"
+        # ── execution-lab profile ────────────────────────────────────────────
+        DOCKERFILES[lean]="lean/Dockerfile"
+        # ── manual-only (no Stage 0 changed-path entry) ──────────────────────
+        DOCKERFILES[incidents]="services/incidents/Dockerfile"
+        DOCKERFILES[postmortems]="services/postmortems/Dockerfile"
+
+        REGISTRY="${_REGISTRY}"
+        REPO="${PROJECT_ID}/pantheon"
+        SHA="${COMMIT_SHA}"
+        ENV_TAG="${_ENV_TAG}"
+        FILTER="${_SERVICES}"
+
+        BUILT=0
+        FAILED=0
+
+        for SERVICE in "${!DOCKERFILES[@]}"; do
+          # Apply service filter: build this service if filter is "all" or
+          # the service ID appears in the comma-separated list.
+          if [ "$FILTER" != "all" ]; then
+            if ! echo ",$FILTER," | grep -q ",$SERVICE,"; then
+              echo "[skip] $SERVICE not in filter: $FILTER"
+              continue
+            fi
+          fi
+
+          DOCKERFILE="${DOCKERFILES[$SERVICE]}"
+          IMAGE_BASE="${REGISTRY}/${REPO}/${SERVICE}"
+          SHA_TAG="${IMAGE_BASE}:${SHA}"
+          ENV_TAG_REF="${IMAGE_BASE}:${ENV_TAG}"
+
+          echo ""
+          echo "══ Building ${SERVICE} ══════════════════════════════════════"
+          echo "   Dockerfile : ${DOCKERFILE}"
+          echo "   SHA tag    : ${SHA_TAG}"
+          echo "   Env tag    : ${ENV_TAG_REF}"
+
+          # Pull the mutable env tag to seed the layer cache.  Failure is
+          # non-fatal: the first build of a service produces no cache to pull.
+          docker pull "${ENV_TAG_REF}" 2>/dev/null || true
+
+          if docker build \
+              --cache-from "${ENV_TAG_REF}" \
+              -t "${SHA_TAG}" \
+              -t "${ENV_TAG_REF}" \
+              -f "${DOCKERFILE}" \
+              .; then
+            echo "[ok] build succeeded: ${SERVICE}"
+          else
+            echo "[error] build failed: ${SERVICE}"
+            FAILED=$((FAILED + 1))
+            continue
+          fi
+
+          # Push both tags.  The SHA tag is the immutable artifact identity;
+          # the env tag is the mutable environment pointer.
+          docker push "${SHA_TAG}"
+          docker push "${ENV_TAG_REF}"
+          echo "[pushed] ${SERVICE} → ${SHA_TAG}"
+
+          BUILT=$((BUILT + 1))
+        done
+
+        echo ""
+        echo "══ Summary ══════════════════════════════════════════════════"
+        echo "   Built:  ${BUILT}"
+        echo "   Failed: ${FAILED}"
+
+        if [ "$FAILED" -gt 0 ]; then
+          echo "[error] ${FAILED} service(s) failed to build — marking step as failed"
+          exit 1
+        fi
+
+        if [ "$BUILT" -eq 0 ] && [ "$FILTER" != "all" ]; then
+          echo "[warn] no services matched filter '${FILTER}' — verify service IDs"
+        fi
+
+  # ── Step 1.5: run adapter CI checks ──────────────────────────────────────────
+  - id: run-adapter-checks
+    name: gcr.io/cloud-builders/python:3.9
+    entrypoint: python3
+    waitFor:
+      - build-and-push-core # Ensure images are built before running checks
+    args:
+      - scripts/ci/run_adapter_checks.py
+
+  # ── Step 2: emit build manifest ─────────────────────────────────────────────
+  # Write a JSON manifest of what was built into GCS so downstream stages
+  # (dev auto-deploy, acceptance checks) can discover the artifact set without
+  # re-querying Artifact Registry.  The manifest is keyed by COMMIT_SHA.
+  - id: emit-build-manifest
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    waitFor:
+      - run-adapter-checks # Ensure adapter checks are done before emitting manifest
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        MANIFEST_PATH="gs://${PROJECT_ID}-pantheon-builds/manifests/${COMMIT_SHA}.json"
+
+        # Build a minimal JSON manifest describing this build.
+        cat > /tmp/manifest.json <<EOF
+        {
+          "commit_sha": "${COMMIT_SHA}",
+          "env_tag": "${_ENV_TAG}",
+          "services_filter": "${_SERVICES}",
+          "registry": "${_REGISTRY}/${PROJECT_ID}/pantheon",
+          "build_id": "${BUILD_ID}",
+          "repo_name": "${REPO_NAME}",
+          "branch_name": "${BRANCH_NAME}",
+          "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        }
+        EOF
+
+        # Best-effort upload; non-fatal if the GCS bucket doesn't exist yet
+        # (will be provisioned in BP5-GCP-001).
+        if gsutil cp /tmp/manifest.json "${MANIFEST_PATH}" 2>/dev/null; then
+          echo "[ok] manifest written to ${MANIFEST_PATH}"
+        else
+          echo "[warn] could not write manifest — GCS bucket may not exist yet"
+        fi

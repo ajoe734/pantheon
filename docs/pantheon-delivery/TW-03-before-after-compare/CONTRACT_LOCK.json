@@ -1,0 +1,44 @@
+{
+  "feature_id": "TW-03-before-after-compare",
+  "status": "front-followup-required",
+  "backend_commit": "5968f391f36bbf56ede5695d72059009ae38117f",
+  "bff_contract_version": "pantheon-bff@5968f391f36bbf56ede5695d72059009ae38117f",
+  "source_payload": ".coordination/requests/TW-03-before-after-compare-ui-done.yaml",
+  "source_commit": "ed8db5db794202659c5a377d2939df580585ccbb",
+  "source_commit_note": "The reviewed TW-03 source commit is buildable, Git-visible on origin/pkt-004-detail-fix, and contains replayContract.ts plus the validator hardening, but it still stores older TW-03 request bodies pointing at d1fe9917deef22cfd0c656e1210eff06abd1cd83, so it is not yet the truthful replay target for the final request pair.",
+  "verified_front_workspace_head": "dbc4a16dc0e9f0b8d33e1576908341ea056c660d",
+  "verified_remote_publish_commit": "dbc4a16dc0e9f0b8d33e1576908341ea056c660d",
+  "review_file": ".coordination/reviews/TW-03-before-after-compare-review.md",
+  "feedback_request": ".coordination/requests/TW-03-before-after-compare-frontend-feedback.yaml",
+  "feedback_bundle": [
+    "docs/pantheon-feedback/TW-03-before-after-compare/LOVABLE_CHANGE_FEEDBACK.md",
+    "docs/pantheon-feedback/TW-03-before-after-compare/API_GAP_REQUESTS.json",
+    "docs/pantheon-feedback/TW-03-before-after-compare/UI_DECISIONS.md",
+    "docs/pantheon-feedback/TW-03-before-after-compare/QA_STATUS.md"
+  ],
+  "endpoints": [
+    "GET /api/v1/trainer/sessions/{session_id}/preview",
+    "POST /api/v1/trainer/sessions/{session_id}/preview"
+  ],
+  "contract_paths": [
+    "docs/bff/TW-03-before-after-compare.md",
+    "docs/examples/TW-03-before-after-compare.json",
+    "docs/screens/TW-03-before-after-compare.md",
+    "docs/pantheon-handoffs/TW-03-before-after-compare/FRONTEND_CHANGE_SPEC.md"
+  ],
+  "pantheon_api_gap": false,
+  "verification_evidence": [
+    "git -C ../front-ai-trading-system cat-file -e ed8db5db794202659c5a377d2939df580585ccbb:src/pages/trainer/replayContract.ts succeeded",
+    "git -C ../front-ai-trading-system show ed8db5db794202659c5a377d2939df580585ccbb:src/pages/trainer/TrainerBeforeAfterCompare.tsx confirmed validatePreviewResponse() now checks required TW-03 metric_delta, warnings, control_diff, and degraded_copy fields before compare content renders",
+    "git -C ../front-ai-trading-system branch -r --contains ed8db5db794202659c5a377d2939df580585ccbb returned origin/pkt-004-detail-fix, and git -C ../front-ai-trading-system ls-remote --heads origin pkt-004-detail-fix resolved to dbc4a16dc0e9f0b8d33e1576908341ea056c660d",
+    "git -C ../front-ai-trading-system show ed8db5db794202659c5a377d2939df580585ccbb:.coordination/requests/TW-03-before-after-compare-ui-done.yaml still embeds source_commit d1fe9917deef22cfd0c656e1210eff06abd1cd83",
+    "git -C ../front-ai-trading-system show dbc4a16dc0e9f0b8d33e1576908341ea056c660d --stat --oneline -- .coordination/requests/TW-03-before-after-compare-ui-done.yaml .coordination/requests/TW-03-before-after-compare-frontend-feedback.yaml shows the remote tip only repointed those two request files to ed8db5db794202659c5a377d2939df580585ccbb",
+    "Pantheon's TW-03 review record and frontend-feedback response already captured that a clean archive of ed8db5db794202659c5a377d2939df580585ccbb passes npm ci --legacy-peer-deps and npm run build with only the existing non-blocking Vite chunk-size warning"
+  ],
+  "followup_scope": [
+    "Publish one Git-visible front transport commit whose tree already contains the canonical TW-03 request pair, feedback bundle, compare route wiring, TrainerBeforeAfterCompare.tsx, and src/pages/trainer/replayContract.ts",
+    "Set both ui-done.source_commit and frontend-feedback.source_commit to that same truthful transport commit instead of repointing metadata from a later commit",
+    "Refresh the request-pair machine summary so changed_files includes src/pages/trainer/replayContract.ts and any other actually shipped paths",
+    "Redispatch Pantheon review on the unchanged TW-03 contract after the replay-clean front publication exists"
+  ]
+}

@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER-SIDECAR-REVIEW",
+  "archived_at": "2026-04-30T06:31:27Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER-SIDECAR-REVIEW",
+    "title": "Prepare SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER review packet and evidence summary",
+    "summary_zh": "平行支援 SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Source / Search Platform",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-SOURCE-CONNECTOR-FRAMEWORK"
+    ],
+    "artifacts": [
+      "support/sidecars/SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER/SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only review packet after Codex approval. Artifact committed in c4e5a4d; verification rerun: compileall source_ingestion plus scheduler script passed, focused pytest 11 passed, scoped/staged git diff --check passed. No canonical truth, runtime, registry, governance, or parent task state changes made by this sidecar.",
+    "last_update": "2026-04-30T06:31:27Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過 — sidecar artifact 僅支援 parent reviewer intake，未修改 L1 canonical、runtime、registry 或 governance truth。|Reviewer 修正 packet 中 sidecar lifecycle 狀態描述為目前的 review；focused verification 通過：compileall、11 個 focused pytest、兩組 git diff --check。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T06:31:27Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "c4e5a4db4d7af3160f0b5e6ae04b09df060adff4",
+      "commit_subject": "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER-SIDECAR-REVIEW closeout packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER-SIDECAR-REVIEW",
+        "Reviewer": "Codex",
+        "Verification": "python3 -m compileall -q services/source_ingestion scripts/source_ingest_scheduler_once.py; python3 -m pytest services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/test_compose_activation.py -q (11 passed); git diff --check scoped and staged."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 51,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 16,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: added support-only review packet for SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER. Artifact: support/sidecars/SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER/SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER-SIDECAR-REVIEW.md. Verification: python3 -m compileall -q services/source_ingestion scripts/source_ingest_scheduler_once.py; python3 -m pytest services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/test_compose_activation.py -q (11 passed); git diff --check -- services/source_ingestion scripts/source_ingest_scheduler_once.py docker-compose.yml; git diff --check -- support/sidecars/SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER/SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER-SIDECAR-REVIEW.md.",
+      "status": "done",
+      "created_at": "2026-04-30T06:06:02Z",
+      "resolved_at": "2026-04-30T06:28:44Z"
+    },
+    {
+      "task_id": "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: support-only packet is scoped correctly, evidence spot-checks match the parent implementation, and focused verification passed (compileall; 11 focused pytest; scoped git diff --check). Returned to Codex2 for owner closeout.",
+      "status": "done",
+      "created_at": "2026-04-30T06:28:44Z",
+      "resolved_at": "2026-04-30T06:31:27Z"
+    }
+  ],
+  "blockers": []
+}

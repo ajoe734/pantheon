@@ -1,130 +1,109 @@
 # OpenClaw Integration — Evidence Pack
 
-Last updated: 2026-04-10
-Owner: OSS-001A (Codex)
-Reviewer: Qwen
-Status: ready for handoff
-Supports: `OSS-001`
+Last updated: 2026-04-17
+Owner: BP5-OSS-001 (Codex)
+Reviewer: Claude
+Status: review approved; baseline finalized
+Supports: `BP5-OSS-001`
 
 ## 1. Purpose
 
-This document consolidates the repo-local evidence collected for the OpenClaw upstream pin, adapter boundary, and smoke-test readiness so the main `OSS-001` owner does not need to reconstruct it from multiple files.
+This file consolidates the evidence that `BP5-OSS-001` now locks one reproducible OpenClaw source pin and one governed adapter boundary.
 
-It is intentionally narrower than the integration contract itself:
+Canonical files:
 
-- `integration.md` is the canonical pin and adapter-boundary note
-- `governance.md` is the canonical governance overlay
-- `smoke_test.md` is the canonical smoke-test plan
-- this file is the supporting evidence summary and handoff pack
+- `integrations/openclaw/integration.md`
+- `integrations/openclaw/governance.md`
+- `integrations/openclaw/smoke_test.md`
 
-## 2. Collected Upstream Evidence
+Supporting files:
 
-### 2.1 Selected upstream identity
+- `integrations/openclaw/fixtures/raw_research_handoff.minimal.json`
+- `integrations/openclaw/adapter/README.md`
+- `scripts/openclaw-smoke-test.sh`
 
-| Evidence item | Value | Repo-local source |
-|---|---|---|
-| Upstream repository | `https://github.com/openclaw/openclaw` | `spikes/openclaw_upstream_selection.md`, `integrations/openclaw/integration.md` |
-| Official docs / landing page | `https://openclaw.im/` | `spikes/openclaw_upstream_selection.md`, `integrations/openclaw/integration.md` |
-| Selected integration mode | separate runtime/service dependency | `spikes/openclaw_upstream_selection.md`, `integrations/openclaw/integration.md` |
-| Rejected modes | vendoring/submodule, local rewrite in LEAN | `spikes/openclaw_upstream_selection.md`, `integrations/openclaw/integration.md` |
+## 2. Locked Upstream Identity
 
-### 2.2 Pinned release evidence
-
-| Evidence item | Value | Repo-local source |
-|---|---|---|
-| Release tag | `v2026.4.7` | `integrations/openclaw/integration.md` |
-| Commit SHA | `5050017` | `integrations/openclaw/integration.md` |
-| Release date | `2026-04-08` | `integrations/openclaw/integration.md` |
-| Image reference | `openclaw/openclaw:v2026.4.7` | `integrations/openclaw/integration.md`, `integrations/openclaw/smoke_test.md` |
-| Pinning rule | tag + commit SHA, never floating branch/image | `spikes/openclaw_upstream_selection.md`, `integrations/openclaw/integration.md` |
-
-### 2.3 Why this upstream is a match
-
-The selected upstream is documented in the spike as matching Pantheon's target architecture because it is treated as:
-
-- an external agent runtime / control-plane substrate
-- a self-hosted runtime
-- a workflow / plugin system
-- a Docker/Kubernetes-deployable service
-
-That aligns with `OPENCLAW_RUNTIME_CONTRACT.md`, which explicitly keeps Strategy Registry, Approval/Promotion, LEAN deployment, telemetry truth, and lineage authority inside Pantheon.
-
-## 3. Adapter-Boundary Evidence
-
-The adapter seam is now documented consistently across the repo:
-
-| Boundary area | Evidence |
+| Evidence item | Value |
 |---|---|
-| Runtime ownership split | `OPENCLAW_RUNTIME_CONTRACT.md` |
-| Pin + integration mode + facade surface | `integrations/openclaw/integration.md` |
-| Governance overlay and deny-first wrapping | `integrations/openclaw/governance.md` |
-| StrategySpec / WorkflowHandoff normalization path | `integrations/openclaw/governance.md` §5, `integrations/openclaw/smoke_test.md` Step 4-5 |
+| Upstream repository | `https://github.com/openclaw/openclaw` |
+| Selected tag | `v2026.4.7` |
+| Selected commit | `5050017543011b61df67744ebc6368d889c25a95` |
+| npm package | `openclaw@2026.4.7` |
+| Container image | `ghcr.io/openclaw/openclaw:2026.4.7` |
+| Container digest | `sha256:be45b5187cbec1ff0f4e2503393d66acfc121c2d97eadf03bb1ac75826bad77c` |
+| Website / docs | `https://openclaw.ai`, `https://docs.openclaw.ai` |
 
-Key handoff conclusion:
+## 3. Hold-Pin Rationale as of 2026-04-17
 
-- OpenClaw remains the execution substrate
-- Pantheon keeps governance authority
-- `openclaw-gateway-adapter` is the only approved mapping seam
-- normalization must emit canonical `StrategySpec` plus canonical `WorkflowHandoff`
+Current upstream release state at verification time:
 
-## 4. Smoke-Test Checklist Readiness
+- latest stable: `v2026.4.14`, published `2026-04-14`
+- latest prerelease: `v2026.4.15-beta.1`, published `2026-04-15`
 
-`integrations/openclaw/smoke_test.md` now provides a complete five-step checklist:
+Why the baseline still stays on `v2026.4.7`:
 
-| Step | Proof target | Current state |
-|---|---|---|
-| 1 | pinned runtime starts and becomes ready | plan defined |
-| 2 | minimal approved workflow can be invoked | plan defined |
-| 3 | raw governed handoff payload can be captured | plan defined |
-| 4 | payload normalizes into canonical `StrategySpec` + `WorkflowHandoff` | plan defined |
-| 5 | both artifacts validate against local schemas | plan defined |
+- the repo's 48-hour soak rule is not yet satisfied for `v2026.4.14`
+- the beta tag is not eligible for the governed baseline
+- the task goal is to pin one stable target before `BP5-OSS-002` implements the real adapter path
 
-Execution prerequisites already captured in the smoke plan:
+## 4. Boundary Evidence
 
-- Docker runtime
-- pinned image `openclaw/openclaw:v2026.4.7`
-- Python 3.10+
-- outbound network access for image pull
-- isolated local workspace under `/tmp`
+The adapter seam is now documented without claiming unsupported upstream behavior.
 
-## 5. Local Validation Performed for OSS-001A
+Locked conclusions:
 
-To make this evidence pack stronger than a pure documentation summary, an offline schema-level check was executed locally against the canonical schemas in `services/control-plane/specs/`.
+- OpenClaw is an external runtime dependency
+- Pantheon owns the `openclaw-gateway-adapter`
+- Pantheon may define internal `/control/*` facade endpoints later, but those are Pantheon endpoints, not native OpenClaw promises
+- governed normalization into `StrategySpec` + `WorkflowHandoff` remains Pantheon-owned
 
-Validation performed:
+Repo-local evidence:
 
-1. Constructed a minimal `raw_handoff.json` fixture
-2. Built a canonical `StrategySpec`
-3. Wrapped it in a canonical `WorkflowHandoff`
-4. Validated both artifacts against:
-   - `services/control-plane/specs/strategy_spec.schema.json`
-   - `services/control-plane/specs/workflow_handoff.schema.json`
+- runtime / boundary note: `integrations/openclaw/integration.md`
+- governance overlay: `integrations/openclaw/governance.md`
+- implementation home and guardrails: `integrations/openclaw/adapter/README.md`
 
-Result:
+## 5. Smoke-Test Evidence
 
-- `PASS strategy_spec schema`
-- `PASS workflow_handoff schema`
+The smoke path is now executable against real, verified surfaces.
 
-Generated local verification artifacts:
+Script:
 
-- `/tmp/openclaw-oss001a-check/strategy_spec.json`
-- `/tmp/openclaw-oss001a-check/workflow_handoff.json`
+- `scripts/openclaw-smoke-test.sh`
 
-This confirms the current smoke-test reference shape is aligned with the canonical OC-003 boundary even before Docker-based runtime execution.
+Fixture:
 
-## 6. Remaining Work After This Evidence Pack
+- `integrations/openclaw/fixtures/raw_research_handoff.minimal.json`
 
-This task does **not** claim full OpenClaw integration is complete. The following remain intentionally open:
+Normalization dependency:
 
-- implement the real `openclaw-gateway-adapter`
-- decide the concrete transport between Pantheon and OpenClaw
-- execute the Docker-backed smoke test against the pinned runtime
-- add the smoke path to CI once manual execution succeeds
+- `services/control-plane/specs/normalize_handoff.py`
 
-## 7. Handoff Summary
+## 6. Validation Performed
 
-`OSS-001A` acceptance is satisfied by this evidence pack plus the existing integration documents:
+The following checks were rerun locally for `OSS-NEXT-008` on `2026-04-17`:
 
-- upstream source candidates/identity and pin evidence are collected
-- smoke-test checklist is drafted and normalized to canonical object boundaries
-- the pack can be handed to the `OSS-001` owner without blocking adapter implementation
+1. `git ls-remote --tags https://github.com/openclaw/openclaw.git` confirmed `v2026.4.7^{}` resolves to `5050017543011b61df67744ebc6368d889c25a95`
+2. `docker manifest inspect ghcr.io/openclaw/openclaw:2026.4.7` confirmed the pinned image exists
+3. `docker pull ghcr.io/openclaw/openclaw:2026.4.7` resolved the pinned image digest `sha256:be45b5187cbec1ff0f4e2503393d66acfc121c2d97eadf03bb1ac75826bad77c`
+4. `docker run --rm --entrypoint node ghcr.io/openclaw/openclaw:2026.4.7 dist/index.js --help` succeeded
+5. `docker run --rm --entrypoint node ghcr.io/openclaw/openclaw:2026.4.7 dist/index.js gateway --help` succeeded
+6. the governed normalization flow succeeded using the repo-local fixture and canonical schemas
+7. `bash scripts/openclaw-gateway-adapter-smoke.sh` passed all four governed workflow checks and wrote `/tmp/openclaw-bp5-oss-002.OMDUTb/smoke-results.json`
+
+Artifact references captured during the refresh:
+
+- baseline smoke work dir: `/tmp/openclaw-bp5-oss-001.gMVtn9`
+- live smoke work dir: `/tmp/openclaw-bp5-oss-002.OMDUTb`
+
+## 7. Remaining Work After BP5-OSS-001
+
+This task does not claim full runtime integration.
+
+Still open for `BP5-OSS-002`:
+
+- pick and implement the actual adapter transport
+- start a configured OpenClaw gateway in a Pantheon-owned runtime path
+- invoke a real workflow through the adapter
+- capture live runtime output and prove end-to-end smoke execution

@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "BP5-LUV-004-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-16T15:34:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-LUV-004-SIDECAR-ACCEPTANCE",
+    "title": "Prepare BP5-LUV-004 acceptance packet and dependency map",
+    "summary_zh": "平行支援 BP5-LUV-004，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BP5-SVC-011",
+      "BP5-SVC-015"
+    ],
+    "artifacts": [
+      "support/sidecars/BP5-LUV-004/BP5-LUV-004-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalize approved sidecar acceptance packet; support artifact verified, dependency map confirmed, and review-approved packet archived as done.",
+    "last_update": "2026-04-16T15:34:56Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP5-LUV-004",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：兩項驗收標準均正確評估為 MET",
+      "相依任務 BP5-SVC-011 與 BP5-SVC-015 均確認為 done",
+      "全部 artifact 均已確認存在",
+      "bff-gap 阻斷內容與 .coordination/requests/PKT-002-incident-detail-bff-gap.yaml 一致",
+      "sidecar 範圍正確，未修改任何 canonical truth"
+    ],
+    "review_file": "support/sidecars/BP5-LUV-004/BP5-LUV-004-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T15:34:56Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "c24f46dc1e8b1614b1222f311be36e21c83990ad",
+      "commit_subject": "BP5-LUV-004-SIDECAR-ACCEPTANCE: finalize acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BP5-LUV-004-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 206,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-LUV-004-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Acceptance packet prepared and ready for reviewer validation. Sidecar documents the incident-detail loop outcome as an explicit BFF-gap follow-up with dependency map and artifact inventory.",
+      "status": "done",
+      "created_at": "2026-04-16T15:30:18Z",
+      "resolved_at": "2026-04-16T15:32:34Z"
+    },
+    {
+      "task_id": "BP5-LUV-004-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: both acceptance criteria correctly assessed as MET for Pantheon-side loop; all artifacts verified present; dependency statuses confirmed done; bff-gap blocker content matches filed request; sidecar scope respected. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-16T15:32:34Z",
+      "resolved_at": "2026-04-16T15:34:57Z"
+    }
+  ],
+  "blockers": []
+}

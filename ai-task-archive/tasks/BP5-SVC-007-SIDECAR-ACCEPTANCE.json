@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-007-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-15T19:57:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-007-SIDECAR-ACCEPTANCE",
+    "title": "Prepare BP5-SVC-007 acceptance packet and dependency map",
+    "summary_zh": "平行支援 BP5-SVC-007，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BP5-SVC-004",
+      "BP5-SVC-006"
+    ],
+    "artifacts": [
+      "support/sidecars/BP5-SVC-007/BP5-SVC-007-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: acceptance packet approved by Codex, dependency map corrected, smoke tests verified, legacy control-plane bypass documented. Sidecar packet closed.",
+    "last_update": "2026-04-15T19:57:28Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP5-SVC-007",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已校正 dependency map：直接依賴是 BP5-SVC-008、BP5-SVC-009、BP5-SVC-014，不是 BP5-SVC-011。",
+      "已重跑 services/runtime-manager/smoke_test.py；service layer 12/12 pass，HTTP layer 仍因缺少 Flask 無法執行。",
+      "已補記 services/control_plane/internal_api.py 仍直接 mutate RuntimeBinding 的 legacy bypass，避免 packet 誤稱 repo-wide exclusive write owner。"
+    ],
+    "review_file": "support/sidecars/BP5-SVC-007/BP5-SVC-007-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-15T19:57:28Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "4dc7f624d44825de85e61786abf90c7ad75f1289",
+      "commit_subject": "BP5-SVC-007-SIDECAR-ACCEPTANCE: close acceptance packet — review_approved by Codex, owner finalized",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BP5-SVC-007-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 57,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-007-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T19:20:27Z",
+      "resolved_at": "2026-04-15T19:21:36Z"
+    },
+    {
+      "task_id": "BP5-SVC-007-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T19:40:33Z",
+      "resolved_at": "2026-04-15T19:46:16Z"
+    },
+    {
+      "task_id": "BP5-SVC-007-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-15T19:46:36Z",
+      "resolved_at": "2026-04-15T19:46:52Z"
+    },
+    {
+      "task_id": "BP5-SVC-007-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet complete. Service layer 12/12 smoke tests pass (AC-1 and AC-2 MET). Packet documents all routes, pre-condition guards, authority boundary, and dependency map. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-04-15T19:51:22Z",
+      "resolved_at": "2026-04-15T19:56:21Z"
+    },
+    {
+      "task_id": "BP5-SVC-007-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Acceptance packet reviewed and corrected. Dependency map fixed, smoke test re-verified, and the legacy control-plane RuntimeBinding bypass is now documented. Ready for Claude closeout.",
+      "status": "done",
+      "created_at": "2026-04-15T19:56:21Z",
+      "resolved_at": "2026-04-15T19:57:28Z"
+    }
+  ],
+  "blockers": []
+}

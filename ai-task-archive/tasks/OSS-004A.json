@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "OSS-004A",
+  "archived_at": "2026-04-18T23:34:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-004A",
+    "title": "Stabilize the runtime auth/authority path for EP4",
+    "summary_zh": "穩定 EP4 所需的 runtime auth/authority path：補齊 runtime-manager token flow、paper runtime identity、telemetry authority refs 與 OpenClaw/Pantheon adapter 邊界。",
+    "phase": "Phase 7: EP4 Proof Raising",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [
+      "runtime auth and authority path is explicit||dual-VM paper proof no longer depends on ambiguous identity or token assumptions"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase7-2026-04-18-ep4-ep5-execution-proof",
+      "phase": "phase7",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof",
+      "session_file": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-18T23:34:28Z",
+      "session_id": "phase7-2026-04-18-ep4-ep5-execution-proof",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase7-2026-04-18-ep4-ep5-execution-proof/execution-materialization.md",
+      "initial_materialization_task_ids": "OSS-004A,OSS-004B,OSS-004C,OSS-004D"
+    },
+    "status": "done",
+    "next": "Owner finalized approved task. EP4 runtime auth/authority path closeout is complete: runtime-manager token flow, workspace_ref/auth_profile_ref propagation, telemetry authority_refs, and OpenClaw adapter boundary were reviewer-approved with passing runtime_identity, telemetry_capture, and cron/OpenClaw dispatch coverage.",
+    "last_update": "2026-04-18T23:34:34Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-18T23:34:34Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 667,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-004A",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-18T22:40:29Z",
+      "resolved_at": "2026-04-18T23:14:33Z"
+    },
+    {
+      "task_id": "OSS-004A",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Shared runtime-manager auth resolution is wired through runtime-manager client and telemetry; paper runtime health now exposes explicit runtime identity/isolation/auth status; telemetry schema+capture carry authority_refs; OpenClaw dispatch and dual-VM env/smoke now include explicit workspace/auth-profile adapter boundary refs. Verified with services/execution/lean_runtime/test_runtime_identity.py, services/telemetry/test_capture.py, services/control-plane/cron/test_cron.py, module import smoke, and bash -n scripts/smoke_test_dual_vm.sh.",
+      "status": "done",
+      "created_at": "2026-04-18T23:29:07Z",
+      "resolved_at": "2026-04-18T23:32:33Z"
+    },
+    {
+      "task_id": "OSS-004A",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: runtime auth/authority path is fully explicit for EP4. All tests pass — runtime_identity (2/2), telemetry_capture (34/34), cron/OpenClaw dispatch (12/12). workspace_ref and auth_profile_ref wired through runtime-manager client, health payload, telemetry authority_refs, and OpenClaw adapter boundary. Dual-VM smoke syntax-verified. No blockers.",
+      "status": "done",
+      "created_at": "2026-04-18T23:32:33Z",
+      "resolved_at": "2026-04-18T23:34:34Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "No idle eligible worker exists while review, approval, and stale in_progress work must drain first.",
+  "blocked_by": [
+    "no idle eligible auto worker is currently available for new sidecar work",
+    "SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE is marked in_progress but has no live worker",
+    "existing sidecars already occupy the available review/finalization lanes",
+    "provider:claude paused until 2026-04-29T12:20:00Z and auth_ready is false",
+    "provider:copilot paused until 2026-04-29T04:30:46Z after 402 no quota",
+    "provider:gemini paused until 2026-04-29T04:42:06Z after capacity/rate limit failure"
+  ],
+  "blocked_sidecar_parents": [
+    "SVC-RESEARCH-ORCHESTRATOR-SERVICE",
+    "SVC-RESEARCH-WORKER-GATEWAY",
+    "SVC-DOCS-CODE-TRUTH-SYNC"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260429T041215Z-53894e19",
+      "decision": "allow",
+      "reason": "The Bash command is read-only environment inspection of installed packages and executable paths for the scoped sidecar review.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE",
+    "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+    "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+    "SVC-DOCS-CODE-TRUTH-SYNC",
+    "SVC-DOCS-CODE-TRUTH-SYNC-SIDECAR-BFF-HANDOFF"
+  ]
+}

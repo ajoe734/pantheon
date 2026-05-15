@@ -47,10 +47,10 @@ Follow-up required. The UI behavior is now contract-aligned, but the returned
 - `git -C ../front-ai-trading-system show 8ec0315:src/App.tsx | nl -ba | sed -n '125,138p'`
 - `git -C ../front-ai-trading-system show 8ec0315:src/lib/bffClient.ts | nl -ba | sed -n '556,564p'`
 - `git -C ../front-ai-trading-system worktree add --detach -f /tmp/front-pkt003-rereview 08680fde32bf232043dd170619d172620e38e9f3`
-- `ln -s /home/edna/code/front-ai-trading-system/node_modules /tmp/front-pkt003-rereview/node_modules`
+- `ln -s /home/lupin/code/front-ai-trading-system/node_modules /tmp/front-pkt003-rereview/node_modules`
 - `(cd /tmp/front-pkt003-rereview && npx eslint src/pages/evolution/InspirationGraph.tsx src/pages/evolution/InspirationEdgeDetail.tsx src/pages/evolution/types.ts src/lib/bffClient.ts src/pages/inspiration/Graph.tsx)`
 - `git -C ../front-ai-trading-system worktree add --detach -f /tmp/front-pkt003-rereview-build 08680fde32bf232043dd170619d172620e38e9f3`
-- `ln -s /home/edna/code/front-ai-trading-system/node_modules /tmp/front-pkt003-rereview-build/node_modules`
+- `ln -s /home/lupin/code/front-ai-trading-system/node_modules /tmp/front-pkt003-rereview-build/node_modules`
 - `(cd /tmp/front-pkt003-rereview-build && npm run build)`
 - `python3 -m pytest services/control-plane/bff/test_ew04_inspiration_graph_contract.py -q`
 

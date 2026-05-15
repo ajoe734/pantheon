@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "task_id": "REG-004A",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "REG-004A",
+    "title": "Prepare REG-004 acceptance and compatibility audit",
+    "summary_zh": "平行支援 REG-004，先做 registry state-split 的 acceptance/alignment 檢查、schema drift 清單與 compatibility audit，讓主 owner 可以連續往下做而不被驗收細節卡住。",
+    "phase": "Phase 1: Registry and Governance Split",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "DOC-003"
+    ],
+    "artifacts": [
+      "services/registry/contract.md",
+      "services/registry/promotion/README.md",
+      "TARGET_ARCHITECTURE.md"
+    ],
+    "acceptance": [
+      "acceptance checklist for REG-004 is written",
+      "schema drift and compatibility risks are enumerated",
+      "review notes can be handed to REG-004 owner without blocking main implementation"
+    ],
+    "next": "Task finalized to done. No remaining work for Qwen on this task.",
+    "last_update": "2026-04-09T16:08:55Z",
+    "review_notes_zh": [
+      "audit v2 已正確反映 contract/schema/README 現況",
+      "follow-on migration 已和本輪 acceptance 清楚切開",
+      "deployment_stage ownership 與 derived deployment_summary 判準一致"
+    ],
+    "review_file": "services/registry/review_reg004a_codex_approved_zh.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "REG-004A",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "REG-004 acceptance/compatibility audit complete. Written to services/registry/review_reg004a_qwen_zh.md. Contains: (1) 33-item acceptance checklist across 7 categories, (2) 11-file schema drift mapping, (3) 8 compatibility risks, (4) recommended 6-phase migration sequence. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-09T15:57:23Z",
+      "resolved_at": "2026-04-09T16:00:53Z"
+    },
+    {
+      "task_id": "REG-004A",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review rejected: see services/registry/review_reg004a_codex_zh.md. Audit contains stale reads of the current registry contract/schema and mis-scopes deferred migration work as REG-004 blockers.",
+      "status": "done",
+      "created_at": "2026-04-09T16:00:53Z",
+      "resolved_at": "2026-04-09T16:00:53Z"
+    },
+    {
+      "task_id": "REG-004A",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "REG-004A revised audit complete. Corrected all three Codex review findings: (1) contract.md and registry_entry_schema.json now correctly assessed as already aligned to artifact_state/deployment_summary split, (2) follow-up migration work properly scoped as out-of-REG-004, (3) deployment_stage ownership consistently treated as derived/non-authoritative throughout. All 23 acceptance checks PASS, 0 FAIL, 6 N/A (out of scope). Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-09T16:04:41Z",
+      "resolved_at": "2026-04-09T16:05:16Z"
+    },
+    {
+      "task_id": "REG-004A",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Audit v2 rewritten. All 4 Codex review findings addressed: (1) registry_entry_schema.json correctly read as already having artifact_state + deployment_summary, (2) follow-on migration work separated from REG-004 acceptance scope, (3) deployment_stage ownership consistent throughout — derived in registry, canonical in DEP-001, (4) acceptance matrix now has consistent PASS/FAIL standards with 18 PASS, 0 FAIL within REG-004 contract scope. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-09T16:05:16Z",
+      "resolved_at": "2026-04-09T16:06:44Z"
+    },
+    {
+      "task_id": "REG-004A",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Codex review approved. Audit v2 now correctly reflects the current registry contract/schema/README, keeps deployment_summary derived-only, and scopes legacy migration as downstream compatibility work for GOV-001, DEP-001, and execution-side follow-up.",
+      "status": "done",
+      "created_at": "2026-04-09T16:06:44Z",
+      "resolved_at": "2026-04-09T16:08:26Z"
+    }
+  ],
+  "blockers": []
+}

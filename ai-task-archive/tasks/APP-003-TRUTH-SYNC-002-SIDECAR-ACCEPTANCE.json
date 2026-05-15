@@ -1,0 +1,516 @@
+{
+  "version": 1,
+  "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-23T05:27:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+    "title": "Prepare APP-003-TRUTH-SYNC-002 acceptance packet and dependency map",
+    "summary_zh": "平行支援 APP-003-TRUTH-SYNC-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / Secondary Truth Sync",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-TRUTH-SYNC-002/APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized the approved sidecar acceptance packet. The support artifact remains support-only, sidecar reviewer metadata now aligns to Claude, and the packet preserves the accepted active-vs-historical boundary for the archived APP-003-TRUTH-SYNC-002 truth-sync slice.",
+    "last_update": "2026-04-23T05:27:24Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-TRUTH-SYNC-002",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar support packet 經 Claude 重新審查通過：所有 Section 3/4 宣稱（KW-01 gate、EXEC-CLOSEOUT-FRONTEND-002 缺席、KW 與 CW overview 非 net-new BFF gap、Knowledge ui-done replay-clean 邊界）皆對照當前 repo 證據驗證通過，範圍限於 support artifact，未動到 canonical truth 或已 archive 的 parent 紀錄。",
+      "唯一附註：packet 內仍殘留 Claude2 作為 reviewer 名字（header、5.2、Section 8），為 2026-04-23T05:18:38Z 刷新後 orchestrator 因 Claude2 quota terminal 自動改派到 Claude 所造成的 metadata drift，屬 non-blocking，如日後吸收進 parent 時再順手更新即可。"
+    ],
+    "review_file": "docs/reviews/sidecars/2026-04-23-APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-23T05:27:24Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "74ff61863d3e5f10d4e1828b95149b3bd334c2e7",
+      "commit_subject": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE finalize acceptance packet metadata sync",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1166,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only acceptance packet added at support/sidecars/APP-003-TRUTH-SYNC-002/APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE.md. It maps the parent's active acceptance surfaces, distinguishes active truth from historical/archive-only hits for AUTO-HARDEN-KW01-001 and EXEC-CLOSEOUT-FRONTEND-002, and gives reviewer-ready dependency/scope guidance for the residual doc-and-coordination truth sync.",
+      "status": "done",
+      "created_at": "2026-04-22T10:16:03Z",
+      "resolved_at": "2026-04-22T11:21:30Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only acceptance packet ready for Claude review after repeated Codex2 quota pauses. Packet at support/sidecars/APP-003-TRUTH-SYNC-002/APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE.md maps the active acceptance surfaces and separates historical-only hits from current truth.",
+      "status": "done",
+      "created_at": "2026-04-22T11:21:30Z",
+      "resolved_at": "2026-04-22T11:26:51Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T11:26:51Z",
+      "resolved_at": "2026-04-22T14:42:28Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T14:42:28Z",
+      "resolved_at": "2026-04-23T01:17:11Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T01:17:11Z",
+      "resolved_at": "2026-04-23T01:52:14Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Requeued to Gemini review because Claude, Claude2, and Codex2 reviewer lanes are currently failing authentication or quota checks.",
+      "status": "done",
+      "created_at": "2026-04-23T01:52:14Z",
+      "resolved_at": "2026-04-23T02:02:00Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Requeued to Codex3 review so Gemini can stay focused on the critical RW-01 closure lane.",
+      "status": "done",
+      "created_at": "2026-04-23T02:02:00Z",
+      "resolved_at": "2026-04-23T02:27:44Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Refreshed support/sidecars/APP-003-TRUTH-SYNC-002/APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE.md against 2026-04-23 repo truth: aligned sidecar reviewer metadata to Codex3, corrected the packet to show the parent APP-003-TRUTH-SYNC-002 is already archived done, updated the consultation overview wording to current route-live/frontend-activation truth, and made the remaining PKT-knowledge-workbench-ui-done.yaml blocked line explicit as a non-blocking historical caveat already accepted in the archived parent review. Please review that this remains support-only and does not reopen the archived parent or any canonical/runtime truth surfaces.",
+      "status": "done",
+      "created_at": "2026-04-23T02:27:44Z",
+      "resolved_at": "2026-04-23T02:30:52Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Acceptance packet refreshed: the blueprint working source is now explicitly limited to the archived EXEC-CLOSEOUT-FRONTEND-002 absence check, while broader notes such as CW-04 remain outside this sidecar scope. Please review the support-only clarification.",
+      "status": "done",
+      "created_at": "2026-04-23T02:37:35Z",
+      "resolved_at": "2026-04-23T02:54:55Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Acceptance packet refreshed again: the Consultation evidence is now explicitly limited to the narrower no-net-new-BFF-gap framing, while any route-local CW-04 frontend handoff/publication completeness question stays outside this sidecar. The prior blueprint absence-check clarification and the Knowledge historical-caveat boundary remain intact. Please review the support-only packet.",
+      "status": "done",
+      "created_at": "2026-04-23T02:54:55Z",
+      "resolved_at": "2026-04-23T02:55:46Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex3",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Codex3 to Codex2 after repeated Codex3 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T02:55:46Z",
+      "resolved_at": "2026-04-23T02:56:55Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet refreshed for the auto-reassigned review: support/sidecars/APP-003-TRUTH-SYNC-002/APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE.md now aligns the sidecar reviewer/handoff metadata to Codex2 while preserving the existing support-only acceptance matrix, active-vs-historical boundary, and narrow Consultation no-net-new-BFF framing. Please review this packet as support-only material and do not reopen the archived parent or route-local CW-04 publication lane.",
+      "status": "done",
+      "created_at": "2026-04-23T02:56:55Z",
+      "resolved_at": "2026-04-23T02:59:55Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Codex2 to Codex3 after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-23T02:59:55Z",
+      "resolved_at": "2026-04-23T03:02:41Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Acceptance packet revalidated on 2026-04-23 UTC and refreshed for the current reviewer. support/sidecars/APP-003-TRUTH-SYNC-002/APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE.md now aligns reviewer/handoff metadata to Codex3 while preserving the same support-only acceptance matrix, active-vs-historical boundary, narrow blueprint absence check, and non-blocking Knowledge ui-done caveat. Please review this as a sidecar support artifact only and do not reopen the archived parent or route-local CW-04 publication lane.",
+      "status": "done",
+      "created_at": "2026-04-23T03:02:41Z",
+      "resolved_at": "2026-04-23T03:03:50Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex3",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Codex3 to Codex2 after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T03:03:50Z",
+      "resolved_at": "2026-04-23T03:04:47Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet refreshed for the current reviewer: support/sidecars/APP-003-TRUTH-SYNC-002/APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE.md now aligns reviewer/handoff metadata to Codex2 while preserving the same support-only acceptance matrix, active-vs-historical boundary, narrow blueprint absence check, and non-blocking Knowledge ui-done caveat. Please review this as a sidecar support artifact only and do not reopen the archived parent or route-local CW-04 publication lane.",
+      "status": "done",
+      "created_at": "2026-04-23T03:04:47Z",
+      "resolved_at": "2026-04-23T03:05:17Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T03:05:17Z",
+      "resolved_at": "2026-04-23T03:21:54Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Claude2 to Codex3 after repeated Claude2 auth: Authentication failure",
+      "status": "done",
+      "created_at": "2026-04-23T03:21:54Z",
+      "resolved_at": "2026-04-23T03:41:49Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Acceptance packet revalidated on 2026-04-23 UTC and refreshed for the current reviewer. support/sidecars/APP-003-TRUTH-SYNC-002/APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE.md now aligns reviewer/handoff metadata to Codex3 while preserving the same support-only acceptance matrix, active-vs-historical boundary, narrow blueprint absence check, and non-blocking Knowledge ui-done caveat. Please review this as a sidecar support artifact only and do not reopen the archived parent or route-local CW-04 publication lane.",
+      "status": "done",
+      "created_at": "2026-04-23T03:41:49Z",
+      "resolved_at": "2026-04-23T03:43:24Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex3",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Codex3 to Codex2 after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T03:43:24Z",
+      "resolved_at": "2026-04-23T03:44:55Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet refreshed for the current reviewer: support/sidecars/APP-003-TRUTH-SYNC-002/APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE.md now aligns sidecar reviewer/handoff metadata to Codex2 while preserving the same support-only acceptance matrix, active-vs-historical boundary, narrow blueprint absence check, and non-blocking Knowledge ui-done caveat. Please review this as a sidecar support artifact only and do not reopen the archived parent or route-local CW-04 publication lane.",
+      "status": "done",
+      "created_at": "2026-04-23T03:44:55Z",
+      "resolved_at": "2026-04-23T04:03:05Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Codex2 to Codex3 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T04:03:05Z",
+      "resolved_at": "2026-04-23T04:05:49Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Acceptance packet revalidated on 2026-04-23 UTC and refreshed for the current reviewer. support/sidecars/APP-003-TRUTH-SYNC-002/APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE.md now aligns sidecar reviewer/handoff metadata to Codex3 while preserving the same support-only acceptance matrix, active-vs-historical boundary, narrow blueprint absence check, and non-blocking Knowledge ui-done caveat. Please review this as a sidecar support artifact only and do not reopen the archived parent or the route-local CW-04 publication lane.",
+      "status": "done",
+      "created_at": "2026-04-23T04:05:49Z",
+      "resolved_at": "2026-04-23T04:07:19Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex3",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex3 to Claude after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T04:07:19Z",
+      "resolved_at": "2026-04-23T04:09:14Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Auto-reassigned review from Claude to Gemini after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:09:14Z",
+      "resolved_at": "2026-04-23T04:25:42Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Gemini",
+      "to": "Codex3",
+      "message": "Auto-reassigned review from Gemini to Codex3 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-23T04:25:42Z",
+      "resolved_at": "2026-04-23T04:44:48Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex3",
+      "message": "Acceptance packet revalidated on 2026-04-23 UTC after the Gemini-to-Codex3 review reroute. support/sidecars/APP-003-TRUTH-SYNC-002/APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE.md now makes that reroute explicit while preserving the same support-only acceptance matrix, active-vs-historical boundary, narrow blueprint absence check, and non-blocking Knowledge ui-done caveat. Please review this sidecar support artifact only and do not reopen the archived parent or the route-local CW-04 publication lane.",
+      "status": "done",
+      "created_at": "2026-04-23T04:44:48Z",
+      "resolved_at": "2026-04-23T04:45:55Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex3",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex3 to Claude2 after repeated Codex3 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T04:45:55Z",
+      "resolved_at": "2026-04-23T04:46:08Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:46:08Z",
+      "resolved_at": "2026-04-23T04:46:37Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:46:37Z",
+      "resolved_at": "2026-04-23T04:47:04Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:47:04Z",
+      "resolved_at": "2026-04-23T04:48:07Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:48:07Z",
+      "resolved_at": "2026-04-23T04:49:10Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:49:10Z",
+      "resolved_at": "2026-04-23T04:49:45Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:49:45Z",
+      "resolved_at": "2026-04-23T04:50:17Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:50:17Z",
+      "resolved_at": "2026-04-23T04:50:43Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:50:43Z",
+      "resolved_at": "2026-04-23T04:51:11Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:51:11Z",
+      "resolved_at": "2026-04-23T04:51:37Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:51:37Z",
+      "resolved_at": "2026-04-23T04:52:05Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:52:05Z",
+      "resolved_at": "2026-04-23T04:52:31Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:52:31Z",
+      "resolved_at": "2026-04-23T04:53:11Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:53:11Z",
+      "resolved_at": "2026-04-23T04:53:38Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:53:38Z",
+      "resolved_at": "2026-04-23T04:54:06Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:54:06Z",
+      "resolved_at": "2026-04-23T04:54:32Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:54:32Z",
+      "resolved_at": "2026-04-23T04:55:01Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude2 to Codex2 after repeated Claude2 terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-23T04:55:01Z",
+      "resolved_at": "2026-04-23T05:15:11Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet refreshed for the current reviewer. support/sidecars/APP-003-TRUTH-SYNC-002/APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE.md now aligns sidecar reviewer and handoff metadata to Codex2 while preserving the same support-only acceptance matrix, active-vs-historical boundary, narrow blueprint absence check, and non-blocking Knowledge ui-done caveat. Please review this as a sidecar support artifact only and do not reopen the archived parent or the route-local CW-04 publication lane.",
+      "status": "done",
+      "created_at": "2026-04-23T05:15:11Z",
+      "resolved_at": "2026-04-23T05:17:10Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T05:17:10Z",
+      "resolved_at": "2026-04-23T05:18:38Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Sidecar acceptance packet refreshed for the new reviewer. support/sidecars/APP-003-TRUTH-SYNC-002/APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE.md header, Section 5.2 downstream-consumer row, and Section 8 handoff heading now name Claude2 as the sidecar reviewer, while retaining the Codex2 -> Claude2 reroute context in the Refreshed line and executive summary as historical provenance. The support-only acceptance matrix, active-vs-historical boundary, narrow blueprint absence check, and non-blocking Knowledge ui-done caveat are unchanged. Please review this as a sidecar support artifact only and do not reopen the archived parent or the route-local CW-04 publication lane.",
+      "status": "done",
+      "created_at": "2026-04-23T05:18:38Z",
+      "resolved_at": "2026-04-23T05:19:14Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-23T05:19:14Z",
+      "resolved_at": "2026-04-23T05:22:25Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet approved; claims verified against current active surfaces, support-only scope respected. Claude2 reviewer names in the packet body are non-blocking cosmetic drift from the auto-reassignment and can be refreshed opportunistically.",
+      "status": "done",
+      "created_at": "2026-04-23T05:22:25Z",
+      "resolved_at": "2026-04-23T05:27:25Z"
+    }
+  ],
+  "blockers": []
+}

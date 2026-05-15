@@ -1,0 +1,341 @@
+{
+  "version": 1,
+  "task_id": "BP5-WB-007",
+  "archived_at": "2026-04-16T06:13:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-WB-007",
+    "title": "Packetize the Trainer Workbench family",
+    "summary_zh": "把 teaching session、before/after review 與 trainer shell 補成 Trainer Workbench packet family，並明確標出缺失的 BFF flow。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "BP5-SVC-014",
+      "BP5-SVC-009"
+    ],
+    "artifacts": [
+      "docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/pantheon-console-workbench-backlog.md",
+      "docs/pantheon-handoffs/"
+    ],
+    "acceptance": [
+      "Trainer Workbench surfaces have canonical packet language and explicit BFF prerequisites",
+      "teaching-history and trainer-specific flows are separated instead of hidden inside Persona screens"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized the Trainer Workbench packet family after Claude re-review approval; TW-01/TW-04 dependency scope is corrected, all four modules remain explicitly not ready for Lovable, and the canonical handoff packet is locked for downstream BFF work.",
+    "last_update": "2026-04-16T06:13:48Z",
+    "review_notes_zh": [
+      "審查通過。TW-04 dependency row 已正確修正：TW-01 依賴範圍限縮為 session identity 與 transcript events；full replay-grade TeachingEvent schema 明確保留為 TW-04 自身 scope（PACKET_FAMILY.md:211）。四模組 backend gap 覆蓋完整，Lovable readiness 維持 not ready，Persona 教學歷史與 Trainer 自有流程明確分離，packet header owner/reviewer 與任務一致。"
+    ],
+    "review_file": ".coordination/reviews/BP5-WB-007-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T06:13:48Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "23fac367cdd30d046728c3862b94664aa3df5a2a",
+      "commit_subject": "BP5-WB-007: finalize trainer workbench packet family",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BP5-WB-007",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 134,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T00:31:07Z",
+      "resolved_at": "2026-04-16T00:32:56Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T00:36:21Z",
+      "resolved_at": "2026-04-16T00:37:14Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T00:39:01Z",
+      "resolved_at": "2026-04-16T00:41:03Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T00:44:56Z",
+      "resolved_at": "2026-04-16T00:46:27Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-16T00:47:39Z",
+      "resolved_at": "2026-04-16T00:49:22Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T00:49:22Z",
+      "resolved_at": "2026-04-16T00:50:30Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Helper-claimed by Copilot while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:02:41Z",
+      "resolved_at": "2026-04-16T01:18:54Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:19:21Z",
+      "resolved_at": "2026-04-16T01:19:40Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:21:17Z",
+      "resolved_at": "2026-04-16T01:22:46Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:22:46Z",
+      "resolved_at": "2026-04-16T01:24:11Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:25:34Z",
+      "resolved_at": "2026-04-16T01:31:43Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:31:43Z",
+      "resolved_at": "2026-04-16T01:36:50Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:36:49Z",
+      "resolved_at": "2026-04-16T01:37:55Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T01:44:09Z",
+      "resolved_at": "2026-04-16T02:00:30Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:06:39Z",
+      "resolved_at": "2026-04-16T02:11:30Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:11:30Z",
+      "resolved_at": "2026-04-16T02:14:40Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:14:40Z",
+      "resolved_at": "2026-04-16T02:16:01Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:18:24Z",
+      "resolved_at": "2026-04-16T02:19:30Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:22:45Z",
+      "resolved_at": "2026-04-16T02:24:27Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:25:12Z",
+      "resolved_at": "2026-04-16T02:25:39Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:27:12Z",
+      "resolved_at": "2026-04-16T02:28:22Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:34:59Z",
+      "resolved_at": "2026-04-16T02:36:47Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:38:58Z",
+      "resolved_at": "2026-04-16T02:40:06Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T02:43:50Z",
+      "resolved_at": "2026-04-16T02:45:50Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "PACKET_FAMILY.md authored for TW-007 Trainer Workbench. Covers all 4 modules (TW-01 Teaching Dialog, TW-02 Parameter Controls, TW-03 Before/After Compare, TW-04 Teaching Replay) with surface scope, backend gap tables, internal dependency chain, promotion criteria, and cross-cutting rules. All 4 modules are marked not-ready for Lovable pending net-new BFF routes and contracts. Backend gap matrix enumerates 21 missing routes/contracts. Please review for completeness, correctness of backend gap identification, and alignment with the backlog in pantheon-console-workbench-backlog.md (Trainer Workbench section).",
+      "status": "done",
+      "created_at": "2026-04-16T03:04:22Z",
+      "resolved_at": "2026-04-16T03:19:42Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review requested changes: fix TW-04 dependency row so full TeachingEvent schema stays scoped to TW-04, not TW-01. See .coordination/reviews/BP5-WB-007-review.md",
+      "status": "done",
+      "created_at": "2026-04-16T03:19:42Z",
+      "resolved_at": "2026-04-16T03:19:42Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-16T03:19:43Z",
+      "resolved_at": "2026-04-16T03:19:43Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Re-review requested: updated TW-04 dependency chain so TW-01 is limited to session identity and transcript events, while the full replay-grade TeachingEvent schema remains explicitly scoped to TW-04. Also aligned the packet header owner/reviewer with current task truth.",
+      "status": "done",
+      "created_at": "2026-04-16T04:17:09Z",
+      "resolved_at": "2026-04-16T06:06:45Z"
+    },
+    {
+      "task_id": "BP5-WB-007",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Re-review passed: the only blocking finding is fully corrected. TW-01 dependency is now limited to session identity and transcript events; the full replay-grade TeachingEvent schema stays explicitly scoped to TW-04. Four-module inventory, Wave 3 ordering, backend-gap matrix, Lovable not-ready gates, and Persona/Trainer flow separation all satisfy the acceptance bar. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-16T06:06:45Z",
+      "resolved_at": "2026-04-16T06:13:49Z"
+    }
+  ],
+  "blockers": []
+}

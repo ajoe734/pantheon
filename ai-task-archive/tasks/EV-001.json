@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "task_id": "EV-001",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EV-001",
+    "title": "Define evaluator and critic contracts",
+    "phase": "Epic D",
+    "owner": "Copilot",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "FB-001",
+      "FB-003"
+    ],
+    "artifacts": [
+      "services/evaluation/contracts/"
+    ],
+    "acceptance": [
+      "evaluator output schema defined",
+      "critic rationale shape defined",
+      "registry handoff fields included"
+    ],
+    "next": "Finalized: EV-001 evaluator and critic contracts complete and validated. Both JSON schemas (evaluator_result.schema.json, critic_result.schema.json) pass validation with required fields aligned to REG-001. Contract specifies evaluator outputs (scores, recommendations, data snapshots) and critic outputs (findings, risks, decision guidance). Integration guide details registry handoff patterns, feedback store isolation, and linkage to FB-003/LP-004. All acceptance criteria met: (1) evaluator schema defined, (2) critic rationale shape defined, (3) registry handoff fields included. Ready for REG-002/REG-003 integration.",
+    "last_update": "2026-04-07T02:58:32Z",
+    "summary_zh": "定義 evaluator 與 critic 的輸出契約，讓評估結果能被 registry 與 optimizer 使用，而不是直接改 live。",
+    "review_notes_zh": [
+      "critic_result 最小範例已對齊 schema；REG-001 已補上 evaluation_result/critique_result artifact types，並明確標成 non-executable reference artifacts；integration guide 已改成對齊實際 FB-003 參數與 REG-001 storage_ref entry model。"
+    ],
+    "review_file": "services/evaluation/contracts/review_ev001_codex.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "EV-001",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "EV-001 complete and ready for review: (1) Evaluator output contract defined with score components, data snapshots, and audit fields. (2) Critic rationale contract defined with findings, risks, and decision guidance. (3) Registry handoff patterns and lineage documented. (4) JSON schemas created and validated. (5) Integration guide covers feedback store isolation, registry storage, and preference model consumption. (6) All acceptance criteria met.",
+      "status": "done",
+      "created_at": "2026-04-07T02:42:22Z",
+      "resolved_at": "2026-04-07T02:56:22Z"
+    },
+    {
+      "task_id": "EV-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Review approved. EV-001 contracts, schemas, and integration guide are aligned with FB-003 and REG-001. Fixed the critic example/schema drift, documented evaluation_result and critique_result as non-executable registry artifacts, and validated evaluator/critic examples plus registry entries against their schemas. Ready for owner finalization.",
+      "status": "done",
+      "created_at": "2026-04-07T02:56:22Z",
+      "resolved_at": "2026-04-07T02:58:32Z"
+    }
+  ],
+  "blockers": []
+}

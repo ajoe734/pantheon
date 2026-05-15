@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "task_id": "BP5-WB-008-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-16T17:11:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-WB-008-SIDECAR-ACCEPTANCE",
+    "title": "Fix: owner and reviewer were identical (both Codex2); restoring intended assignment Codex/Codex2.",
+    "summary_zh": "平行支援 BP5-WB-008，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BP5-SVC-003",
+      "BP5-SVC-012",
+      "BP5-SVC-014"
+    ],
+    "artifacts": [
+      "support/sidecars/BP5-WB-008/BP5-WB-008-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized the acceptance support packet after Claude review approval. Packet metadata now matches the actual reviewer path and preserves the approved checklist, dependency map, artifact inventory, and parent status-drift notes for BP5-WB-008 owner follow-up.",
+    "last_update": "2026-04-16T17:11:35Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP5-WB-008",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過；acceptance checklist 正確反映 CW-008 packet family 現況，dependency map 與 ai-status.json 一致，artifact inventory 完整，parent 狀態偏差已明確標記為 owner 追蹤項目，sidecar 範圍限制無違規。"
+    ],
+    "review_file": "support/sidecars/BP5-WB-008/BP5-WB-008-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T17:11:35Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "9260e8edb8fe2ad2841335a6467f13df1ec43cba",
+      "commit_subject": "BP5-WB-008-SIDECAR-ACCEPTANCE: finalize acceptance packet metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BP5-WB-008-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 240,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-WB-008-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T14:12:37Z",
+      "resolved_at": "2026-04-16T14:13:38Z"
+    },
+    {
+      "task_id": "BP5-WB-008-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T14:45:15Z",
+      "resolved_at": "2026-04-16T14:48:46Z"
+    },
+    {
+      "task_id": "BP5-WB-008-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T15:28:07Z",
+      "resolved_at": "2026-04-16T15:29:24Z"
+    },
+    {
+      "task_id": "BP5-WB-008-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance packet ready. support/sidecars/BP5-WB-008/BP5-WB-008-SIDECAR-ACCEPTANCE.md summarizes the CW-008 packet family, dependency map, artifact inventory, and parent status-drift notes for reviewer validation.",
+      "status": "done",
+      "created_at": "2026-04-16T17:00:33Z",
+      "resolved_at": "2026-04-16T17:04:14Z"
+    },
+    {
+      "task_id": "BP5-WB-008-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Codex2 to Qwen after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-16T17:04:14Z",
+      "resolved_at": "2026-04-16T17:06:09Z"
+    },
+    {
+      "task_id": "BP5-WB-008-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Qwen to Claude after repeated Qwen terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-16T17:06:09Z",
+      "resolved_at": "2026-04-16T17:07:53Z"
+    },
+    {
+      "task_id": "BP5-WB-008-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet is accurate and complete. CW-008 packet family satisfies both acceptance criteria (canonical packets with queue/approval semantics; no module marked Lovable-ready before BFF routes are explicit). Dependency map matches ai-status.json done-state for BP5-SVC-003/012/014. Artifact inventory verified. Parent status drift correctly framed as owner follow-up. Sidecar scope respected — no canonical truth modified. Codex may finalize this sidecar to done.",
+      "status": "done",
+      "created_at": "2026-04-16T17:07:53Z",
+      "resolved_at": "2026-04-16T17:11:35Z"
+    }
+  ],
+  "blockers": []
+}

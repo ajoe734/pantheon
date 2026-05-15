@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "task_id": "OSS-NEXT-008",
+  "archived_at": "2026-04-17T03:49:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OSS-NEXT-008",
+    "title": "Refresh governed-path smoke and no-regression evidence for OpenClaw, DSPy, imitation, and MLflow",
+    "summary_zh": "對已治理的 OSS 路徑做一次 regression refresh，確認 OpenClaw、DSPy、imitation、MLflow 在最近 repo 變更後仍維持可驗證狀態。",
+    "phase": "Phase 6: OSS Ecosystem Closure",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "depends_on": [],
+    "artifacts": [
+      "integrations/openclaw/",
+      "integrations/dspy/",
+      "integrations/imitation/",
+      "integrations/mlflow/",
+      "docs/reviews/2026-04-16-oss-ecosystem-gap-analysis.md"
+    ],
+    "acceptance": [
+      "governed OSS paths have refreshed smoke evidence after recent repo changes",
+      "the next OSS wave starts from a verified baseline rather than stale integration claims"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-17T02:20:54Z",
+      "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Finalized governed-path regression refresh: committed 2026-04-17 evidence checkpoint 9a333fb and closed the task after reviewer-approved rerun.",
+    "last_update": "2026-04-17T03:49:33Z",
+    "review_notes_zh": [
+      "已獨立重跑 OpenClaw baseline/live、DSPy、imitation、MLflow 的 smoke 與 unit/no-regression 檢查，全部通過。",
+      "注意：DSPy 與 imitation 的 checksum 會因 artifact 內含 run_id / created_at 而在每次 smoke 重跑時變動；目前文件中的 checksum 應視為當次 evidence snapshot，而不是跨次可重現的固定指紋。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T03:49:33Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "9a333fbb81ebb566936ede8b0a5e93f9163398db",
+      "commit_subject": "OSS-NEXT-008: refresh governed OSS regression evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "OSS-NEXT-008",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 333,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OSS-NEXT-008",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T03:24:45Z",
+      "resolved_at": "2026-04-17T03:25:16Z"
+    },
+    {
+      "task_id": "OSS-NEXT-008",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T03:31:14Z",
+      "resolved_at": "2026-04-17T03:32:27Z"
+    },
+    {
+      "task_id": "OSS-NEXT-008",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Governed-path regression refresh is ready for review. All four paths passed refreshed smoke/no-regression checks on 2026-04-17; canonical docs were updated and the review packet is at docs/reviews/2026-04-17-oss-next-008-governed-regression-refresh.md.",
+      "status": "done",
+      "created_at": "2026-04-17T03:40:57Z",
+      "resolved_at": "2026-04-17T03:47:35Z"
+    },
+    {
+      "task_id": "OSS-NEXT-008",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Independent rerun completed: all four governed paths passed refreshed smoke/no-regression verification on 2026-04-17; returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-17T03:47:35Z",
+      "resolved_at": "2026-04-17T03:49:33Z"
+    }
+  ],
+  "blockers": []
+}

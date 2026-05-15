@@ -1,0 +1,90 @@
+{
+  "_comment": "PKT-005 SSE substrate example event payloads. Each entry shows a complete SSE data JSON for a given event type.",
+
+  "events": {
+    "runtime_state_changed": {
+      "id": "evt-20260414T120000Z-rt001",
+      "type": "runtime_state_changed",
+      "timestamp": "2026-04-14T12:00:00Z",
+      "data": {
+        "runtime_id": "r-001",
+        "previous_state": "paper",
+        "current_state": "canary",
+        "surface_id": "RT-03"
+      }
+    },
+
+    "incident_created": {
+      "id": "evt-20260414T120500Z-inc002",
+      "type": "incident_created",
+      "timestamp": "2026-04-14T12:05:00Z",
+      "data": {
+        "incident_id": "inc-20260414-002",
+        "title": "Unexpected drawdown spike on r-002",
+        "severity": "high",
+        "artifact_id": "artifact-042"
+      }
+    },
+
+    "incident_updated": {
+      "id": "evt-20260414T121000Z-inc002",
+      "type": "incident_updated",
+      "timestamp": "2026-04-14T12:10:00Z",
+      "data": {
+        "incident_id": "inc-20260414-002",
+        "status": "investigating",
+        "updated_at": "2026-04-14T12:10:00Z"
+      }
+    },
+
+    "kill_switch_activated": {
+      "id": "evt-20260414T121500Z-ks001",
+      "type": "kill_switch_activated",
+      "timestamp": "2026-04-14T12:15:00Z",
+      "data": {
+        "scope": "persona:p-007",
+        "activated_by": "operator-edna",
+        "activated_at": "2026-04-14T12:15:00Z"
+      }
+    },
+
+    "kill_switch_deactivated": {
+      "id": "evt-20260414T122000Z-ks001",
+      "type": "kill_switch_deactivated",
+      "timestamp": "2026-04-14T12:20:00Z",
+      "data": {
+        "scope": "persona:p-007",
+        "deactivated_by": "operator-edna",
+        "deactivated_at": "2026-04-14T12:20:00Z"
+      }
+    }
+  },
+
+  "reconnect_example": {
+    "_comment": "When the client reconnects with last_event_id, the BFF replays events after that ID. This shows two replayed events the reconciler would receive.",
+    "last_event_id_sent": "evt-20260414T120000Z-rt001",
+    "replayed_events": [
+      {
+        "id": "evt-20260414T120500Z-inc002",
+        "type": "incident_created",
+        "timestamp": "2026-04-14T12:05:00Z",
+        "data": {
+          "incident_id": "inc-20260414-002",
+          "title": "Unexpected drawdown spike on r-002",
+          "severity": "high",
+          "artifact_id": "artifact-042"
+        }
+      },
+      {
+        "id": "evt-20260414T121000Z-inc002",
+        "type": "incident_updated",
+        "timestamp": "2026-04-14T12:10:00Z",
+        "data": {
+          "incident_id": "inc-20260414-002",
+          "status": "investigating",
+          "updated_at": "2026-04-14T12:10:00Z"
+        }
+      }
+    ]
+  }
+}

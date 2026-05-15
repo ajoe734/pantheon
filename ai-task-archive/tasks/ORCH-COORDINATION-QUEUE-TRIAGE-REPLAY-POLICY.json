@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "task_id": "ORCH-COORDINATION-QUEUE-TRIAGE-REPLAY-POLICY",
+  "archived_at": "2026-05-03T13:49:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ORCH-COORDINATION-QUEUE-TRIAGE-REPLAY-POLICY",
+    "title": "Triage isolated coordination queue before replay",
+    "summary_zh": "盤點被隔離的舊 coordination dispatch，不直接丟回 active queue；先分類為已完成/過期/仍需 replay，建立安全 replay policy 與 dry-run 檢查，避免舊 front-sync/runtime-worker 事件再次淹沒 blueprint execution。",
+    "phase": "Orchestrator runtime cleanup 2026-05-03",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".orchestrator/backups/event-queue.pre-blueprint-execution-20260503T130840Z.jsonl",
+      ".coordination/requests",
+      ".orchestrator/event-queue.jsonl",
+      "docs/operations/orchestrator-coordination-replay-policy.md"
+    ],
+    "acceptance": [
+      "能列出 backup queue 中 coordination events 的分類摘要",
+      "有 dry-run replay 指令或腳本",
+      "只會 replay 仍有效且未 terminal 的事件",
+      "active execution queue 不被舊事件覆蓋"
+    ],
+    "next": "Closed coordination queue triage and replay policy: isolated backup is classified, replay candidates file is empty, and future replay must be manual/fresh rather than bulk-appending old queue lines.",
+    "last_update": "2026-05-03T13:49:29Z",
+    "review_notes_zh": [
+      "依使用者指示不再派 auto worker；此為行政核准。已核對 scripts/orchestrator_queue_triage.py 可 dry-run 分類，備份 115 events 產出 0 replay candidates，policy 明確禁止 bulk append 並要求逐一 republish fresh event。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-03T13:49:29Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "244ded18bc0bdeadccce9152f0f1c781abdc9f0a",
+      "commit_subject": "ORCH-COORDINATION-QUEUE-TRIAGE-REPLAY-POLICY: close out replay policy",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "ORCH-COORDINATION-QUEUE-TRIAGE-REPLAY-POLICY",
+        "Reviewer": "Claude",
+        "Verification": "python3 .orchestrator/doctor.py --no-write"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 530,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 9,
+      "behind": 12,
+      "push_status": "diverged"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ORCH-COORDINATION-QUEUE-TRIAGE-REPLAY-POLICY",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Manual closeout ready: backup queue triage reports 115 old events, 0 auto replay candidates, and replay policy forbids bulk append while preserving manual review buckets.",
+      "status": "done",
+      "created_at": "2026-05-03T13:49:00Z",
+      "resolved_at": "2026-05-03T13:49:12Z"
+    },
+    {
+      "task_id": "ORCH-COORDINATION-QUEUE-TRIAGE-REPLAY-POLICY",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Administrative approval: triage and replay policy are sufficient for safe manual handling without redispatching the old coordination queue.",
+      "status": "done",
+      "created_at": "2026-05-03T13:49:12Z",
+      "resolved_at": "2026-05-03T13:49:29Z"
+    }
+  ],
+  "blockers": []
+}

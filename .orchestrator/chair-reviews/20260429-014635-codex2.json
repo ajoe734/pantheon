@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization remains low and safe support work exists, but new sidecars should avoid parents that already have acceptance reviews pending.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-RESEARCH-ORCHESTRATOR-SERVICE",
+    "SVC-RESEARCH-WORKER-GATEWAY"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260429T014318Z-0d42adfc",
+      "decision": "allow",
+      "reason": "The command is read-only Python environment inspection for the suspended Claude2 review worker; it does not mutate files, install packages, start services, or expose credentials.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-RESEARCH-ORCHESTRATOR-SERVICE-SIDECAR-ACCEPTANCE",
+    "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+    "SVC-HEALTH-OBSERVABILITY-UNIFICATION"
+  ]
+}

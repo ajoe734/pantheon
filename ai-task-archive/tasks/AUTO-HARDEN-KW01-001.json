@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "AUTO-HARDEN-KW01-001",
+  "archived_at": "2026-04-20T04:11:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AUTO-HARDEN-KW01-001",
+    "title": "Wire KW-01 institutional memory to service owned truth",
+    "summary_zh": "把 KW-01 institutional memory 從 example payload 推進到真正 read-store 或 service-backed truth。",
+    "phase": "Execution / Auto Worker - Truth Hardening",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/reviews/2026-04-20-auto-worker-implementation-task-list.md",
+      "docs/bff/KW-01-institutional-memory.md",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "KW-01 不再主要依賴 example payload",
+      "Read path 對齊 canonical truth",
+      "測試涵蓋 list 與 detail"
+    ],
+    "next": "KW-01 approved wiring finalized. Institutional memory now reads service-owned truth via canonical memory store path, with contract and memory tests already verified in review.",
+    "last_update": "2026-04-20T04:11:09Z",
+    "task_class": "auto_worker_implementation",
+    "auto_created_by": "auto-worker-implementation-materialization-20260420",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "KW-01 list/detail 已從 example payload 轉成 read_store institutional_memory_entries 讀取，且 service-backed store 會優先於 local snapshot。已重跑 KW-01 contract tests 與 memory service tests，結果通過。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-20T04:11:09Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "3b092c6e07fc1edc7122a58977c149fbd5e9a151",
+      "commit_subject": "AUTO-HARDEN-KW01-001 finalize owner checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "AUTO-HARDEN-KW01-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 800,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AUTO-HARDEN-KW01-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "KW-01 institutional memory now resolves service-owned truth via memory service data dir/store path; memory service uses canonical InstitutionalMemoryStore persistence/API; focused tests passed (pytest services/memory/test_main.py services/control-plane/bff/test_kw01_institutional_memory_contract.py; python3 -m unittest services.memory.test_institutional_memory_store).",
+      "status": "done",
+      "created_at": "2026-04-20T03:56:53Z",
+      "resolved_at": "2026-04-20T03:59:28Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-KW01-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review requested changes: services.memory.main imports institutional_memory_store as a top-level module, so canonical startup paths like 'import services.memory.main' and 'uvicorn services.memory.main:app' fail with ModuleNotFoundError. Fix the import to package-qualified/relative form and rerun the focused tests plus an import smoke.",
+      "status": "done",
+      "created_at": "2026-04-20T03:59:28Z",
+      "resolved_at": "2026-04-20T03:59:28Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-KW01-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Fixed services.memory.main to use package-relative institutional_memory_store import, updated test_main to import via services.memory.main, and verified with python3 -m unittest services/memory/test_institutional_memory_store.py services/memory/test_main.py plus import smoke: python3 -c 'import services.memory.main'.",
+      "status": "done",
+      "created_at": "2026-04-20T04:01:51Z",
+      "resolved_at": "2026-04-20T04:09:16Z"
+    },
+    {
+      "task_id": "AUTO-HARDEN-KW01-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "KW-01 review approved. Service-backed institutional memory wiring and contract coverage verified; owner can finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-20T04:09:16Z",
+      "resolved_at": "2026-04-20T04:11:11Z"
+    }
+  ],
+  "blockers": []
+}

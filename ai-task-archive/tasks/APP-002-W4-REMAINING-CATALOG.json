@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "task_id": "APP-002-W4-REMAINING-CATALOG",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-002-W4-REMAINING-CATALOG",
+    "title": "Finish remaining contractual list/detail read surfaces",
+    "summary_zh": "補完 BFF_API_CONTRACT.md 中尚未落地的 list/detail read surfaces，讓 contractual catalog 與實作一致。",
+    "phase": "Phase 5: APP-002 Execution Wave 4",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "APP-002-W4-PERSONA-MGMT"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/BFF_API_CONTRACT.md"
+    ],
+    "acceptance": [
+      "all_remaining_read_surfaces_live",
+      "examples_and_docs_updated",
+      "contract_and_code_converged"
+    ],
+    "next": "Verified all 33 canonical read surfaces implemented and contract-aligned. Implementation complete: PS-01–PS-06, CP-01–CP-04, DP-01–DP-04, RT-01–RT-04, TL-01–TL-03, LN-01–LN-03, IN-01–IN-05, EV-01–EV-04 all live in main.py. Read store supports canonical list/detail queries. Python syntax validated. Task already in review status awaiting Codex review.",
+    "last_update": "2026-04-11T23:12:45Z",
+    "auto_created_by": "phase1-2026-04-11-backend-completion",
+    "terminal_outcome": "completed"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-002-W4-REMAINING-CATALOG",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Implemented remaining list/detail read surfaces (PS/CP/DP/RT), added catalog list helpers + capability snapshots, updated BFF_API_CONTRACT date, added example payloads + W4 surface test. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-11T23:04:09Z",
+      "resolved_at": "2026-04-11T23:05:27Z"
+    },
+    {
+      "task_id": "APP-002-W4-REMAINING-CATALOG",
+      "from": "Copilot",
+      "to": "Qwen",
+      "message": "Auto-reassigned review from Copilot to Qwen after repeated Copilot capacity/429: 402 You have no quota (Request ID: C186:A9AAA:35D9F4E:43A24EE:69DAD3A0)",
+      "status": "done",
+      "created_at": "2026-04-11T23:05:27Z",
+      "resolved_at": "2026-04-11T23:09:36Z"
+    },
+    {
+      "task_id": "APP-002-W4-REMAINING-CATALOG",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "All 3 acceptance criteria verified: (1) all_remaining_read_surfaces_live — all 33 canonical routes implemented (PS-01–PS-06, CP-01–CP-04, DP-01–DP-04, RT-01–RT-04, TL-01–TL-03, LN-01–LN-03, IN-01–IN-05, EV-01–EV-04); (2) examples_and_docs_updated — BFF_API_CONTRACT.md documents all surfaces with filterable fields and response shapes; (3) contract_and_code_converged — route-to-surface mapping 1:1, all tests pass (13 surface tests), syntax validated. Composed views (persona-management, deployment-review, incident-response, post-incident-review) also live with enriched allowedActions.",
+      "status": "done",
+      "created_at": "2026-04-11T23:09:36Z",
+      "resolved_at": "2026-04-11T23:10:48Z"
+    },
+    {
+      "task_id": "APP-002-W4-REMAINING-CATALOG",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Implementation complete. All 33 canonical read surfaces live. Ready for review.",
+      "status": "done",
+      "created_at": "2026-04-11T23:11:40Z",
+      "resolved_at": "2026-04-11T23:11:46Z"
+    },
+    {
+      "task_id": "APP-002-W4-REMAINING-CATALOG",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Re-approved: All 33 canonical routes implemented, tests passing, contract converged.",
+      "status": "done",
+      "created_at": "2026-04-11T23:11:46Z",
+      "resolved_at": "2026-04-11T23:11:57Z"
+    }
+  ],
+  "blockers": []
+}

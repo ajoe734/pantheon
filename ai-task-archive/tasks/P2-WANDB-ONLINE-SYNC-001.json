@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "P2-WANDB-ONLINE-SYNC-001",
+  "archived_at": "2026-05-01T16:30:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P2-WANDB-ONLINE-SYNC-001",
+    "title": "W&B SDK-backed online sync activation smoke",
+    "summary_zh": "把 W&B 從 offline local-store 推進到 SDK-backed online sync：以 test project/API key 跑 metrics/artifact upload/readback smoke，預設仍不含任何 broker/order/capital path。",
+    "phase": "P2 Wave 8 External Activation",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "P2-OSS-ACTIVATE-001"
+    ],
+    "artifacts": [
+      "services/registry/experiments",
+      "services/research-worker-gateway",
+      "services/control-plane/bff",
+      "services/learning/DEFERRED_OSS_ACTIVATION_MAP.md",
+      "OSS_INTEGRATION_CHECKLIST.md",
+      "docs/deployment/external-data-integration-execution-task-inventory.md"
+    ],
+    "acceptance": [
+      "W&B SDK dependency and backend wiring land behind explicit online sync env gate with offline default preserved",
+      "W&B test project smoke uploads metrics and artifact then reads back run or artifact references without persisting raw secrets",
+      "BFF registry and evaluator can resolve W&B run refs while no source path can route to broker order execution"
+    ],
+    "next": "Closeout finalized after Claude review approval. Task commit 17282fb records explicit-gated WandbOnlineBackend, SDK pin, secret redaction/readback refs, offline default preservation, gateway fail-closed W&B dispatch boundary, and BFF/evaluator read-only W&B refs. Verification rerun: registry experiments 16 passed; gateway gate dispatch 10 passed; BFF RW05 7 passed; evaluator W&B ref preservation 1 passed; memory and offline W&B smokes passed; wandb-online smoke returned structured missing-config skip with secrets_persisted:false. Working tree still has unrelated pre-existing/cross-task dirty files outside the W&B task scope.",
+    "last_update": "2026-05-01T16:30:39Z",
+    "task_class": "execution",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：三項驗收標準全部達標；WandbOnlineBackend 正確實作 explicit gate 檢查、SDK import guard、secrets redaction、readback_refs 結構化輸出、run.finish() finally block；offline default 完整保留；gateway 的 wandb 在 PRODUCTION_WORKERS 中維持 fail-closed；BFF/evaluator W&B ref 可讀取但無寫入或下單路徑；wandb-online smoke 在無 env 時輸出結構化 skip 且 secrets_persisted: false；16+10+7 unit tests 全 pass",
+      "後續：Codex 需在 done closeout 前建立 task-scoped commit 並 push"
+    ],
+    "review_file": ".orchestrator/chair-reviews/20260501-wandb-online-sync-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T16:30:39Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "17282fbde6a4ef903b0aaf38ca8d60d69d4e7285",
+      "commit_subject": "P2-WANDB-ONLINE-SYNC-001 activate gated W&B sync",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "P2-WANDB-ONLINE-SYNC-001",
+        "Reviewer": "Claude",
+        "- python3 -m pytest services/evaluation/tests/test_evaluator.py": ":test_evaluate_artifact_preserves_experiment_refs_for_audit_lookup -v (1 passed)",
+        "- python3 services/registry/experiments/smoke_test.py --backend wandb-online (structured missing-config skip, secrets_persisted": "false)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 170,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P2-WANDB-ONLINE-SYNC-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation ready for review: added explicit-gated WandbOnlineBackend with SDK requirement and wandb-online smoke/readback harness; offline default preserved; BFF/evaluator preserve W&B experiment_refs/readback_refs; research-worker-gateway keeps W&B non-dispatchable/no broker-order-capital route. Verification: pytest targeted set 61 passed; BFF OSS preactivation 3 passed; memory and offline W&B smokes passed; wandb-online smoke returned structured missing-config skip because local PANTHEON_WANDB_ONLINE_SYNC_ENABLED/PANTHEON_WANDB_PROJECT/WANDB_API_KEY and SDK install are absent.",
+      "status": "done",
+      "created_at": "2026-05-01T16:14:56Z",
+      "resolved_at": "2026-05-01T16:15:47Z"
+    },
+    {
+      "task_id": "P2-WANDB-ONLINE-SYNC-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation ready for review: added explicit-gated WandbOnlineBackend with SDK requirement and wandb-online smoke/readback harness; offline default preserved; BFF/evaluator preserve W&B experiment_refs/readback_refs; research-worker-gateway keeps W&B non-dispatchable/no broker-order-capital route; deployment task inventory now marks this row review. Verification: pytest targeted set 61 passed; BFF OSS preactivation 3 passed; memory and offline W&B smokes passed; wandb-online smoke returned structured missing-config skip because local PANTHEON_WANDB_ONLINE_SYNC_ENABLED/PANTHEON_WANDB_PROJECT/WANDB_API_KEY and SDK install are absent.",
+      "status": "done",
+      "created_at": "2026-05-01T16:15:47Z",
+      "resolved_at": "2026-05-01T16:21:48Z"
+    },
+    {
+      "task_id": "P2-WANDB-ONLINE-SYNC-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all three acceptance criteria met. WandbOnlineBackend is explicit-gated with SDK guard, secret redaction, and structured readback_refs. Offline default preserved. Gateway keeps wandb fail-closed. BFF/evaluator expose W&B refs read-only with no order path. wandb-online smoke returns structured missing-config skip with secrets_persisted:false. 16+10+7 tests all pass. Returning to Codex for closeout commit and push.",
+      "status": "done",
+      "created_at": "2026-05-01T16:21:48Z",
+      "resolved_at": "2026-05-01T16:30:39Z"
+    }
+  ],
+  "blockers": []
+}

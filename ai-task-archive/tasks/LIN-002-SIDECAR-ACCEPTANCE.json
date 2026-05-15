@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "task_id": "LIN-002-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LIN-002-SIDECAR-ACCEPTANCE",
+    "title": "Prepare LIN-002 acceptance packet and dependency map",
+    "summary_zh": "平行支援 LIN-002，先整理 acceptance checklist、dependency map 與 reviewer packet，不改 canonical truth。",
+    "phase": "Phase 3: Telemetry, Lineage, and Incident Backbone",
+    "owner": "Codex",
+    "reviewer": "Qwen",
+    "status": "done",
+    "depends_on": [
+      "TEL-001"
+    ],
+    "artifacts": [
+      "support/sidecars/LIN-002/LIN-002-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar acceptance packet complete: all 3 acceptance criteria met (support artifacts created, no canonical truth modified, reviewer handoff delivered). Packet at support/sidecars/LIN-002/LIN-002-SIDECAR-ACCEPTANCE.md. Parent LIN-002 remains with Claude for formal review.",
+    "last_update": "2026-04-10T14:02:52Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "LIN-002",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization"
+  },
+  "handoffs": [
+    {
+      "task_id": "LIN-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:48:04Z",
+      "resolved_at": "2026-04-10T13:48:49Z"
+    },
+    {
+      "task_id": "LIN-002-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Qwen completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-10T13:54:29Z",
+      "resolved_at": "2026-04-10T13:55:20Z"
+    },
+    {
+      "task_id": "LIN-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Acceptance packet complete: dependency map, acceptance checklist, independent benchmark rerun, and reviewer handoff packet are ready in support/sidecars/LIN-002/LIN-002-SIDECAR-ACCEPTANCE.md. No sidecar-discovered blocker; parent LIN-002 remains with Claude for formal review.",
+      "status": "done",
+      "created_at": "2026-04-10T13:59:02Z",
+      "resolved_at": "2026-04-10T14:00:38Z"
+    },
+    {
+      "task_id": "LIN-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Acceptance packet complete: all 35 checks PASS, dependency map (3 upstream, 4 downstream), independent benchmark rerun evidence, and parent handoff fixes verified. No sidecar-discovered blockers. Ready for reviewer sign-off; parent LIN-002 remains with Claude for formal review.",
+      "status": "done",
+      "created_at": "2026-04-10T14:00:38Z",
+      "resolved_at": "2026-04-10T14:02:21Z"
+    },
+    {
+      "task_id": "LIN-002-SIDECAR-ACCEPTANCE",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet reviewed and approved: all 35 checks PASS, dependency map complete, benchmark evidence solid, no sidecar-discovered blockers. Parent LIN-002 remains with Claude for formal review.",
+      "status": "done",
+      "created_at": "2026-04-10T14:02:21Z",
+      "resolved_at": "2026-04-10T14:02:52Z"
+    }
+  ],
+  "blockers": []
+}

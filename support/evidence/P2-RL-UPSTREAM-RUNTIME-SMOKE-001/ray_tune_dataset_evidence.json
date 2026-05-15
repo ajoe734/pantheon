@@ -1,0 +1,26 @@
+{
+  "data_frequency": "daily",
+  "decision_focus": "portfolio_optimization",
+  "instruments": [
+    "EQ_AAA",
+    "EQ_BBB",
+    "EQ_CCC"
+  ],
+  "num_instruments": 3,
+  "ohlcv_fields_present": true,
+  "periods_per_instrument": 30,
+  "search_result": {
+    "activation_floor_check": {
+      "actual_trials": 8,
+      "min_trials_required": 3,
+      "passes": true
+    },
+    "backend": "stub_ray_tune",
+    "best_trial_id": "trial-003",
+    "best_trial_score": 1.03700316,
+    "num_trials": 8,
+    "run_id": "raytune-stub-91243138ecdb"
+  },
+  "source_ref": "synthetic-ohlcv://bounded-fixture/30-periods",
+  "total_records": 90
+}

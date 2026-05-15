@@ -1,0 +1,45 @@
+{
+  "audit_evidence": {
+    "internal_api_command_record_status": "executed",
+    "kill_switch_actions": [
+      "liquidate",
+      "replace"
+    ],
+    "kill_switch_audit_count": 2
+  },
+  "bff_modules_loaded": [],
+  "bff_surface_used": false,
+  "generated_at": "2026-05-04T02:27:19Z",
+  "production_bff_ha_changed": false,
+  "runtime_manager_surface": "http://127.0.0.1:40655",
+  "status": "passed",
+  "surfaces": {
+    "S-CLI": {
+      "actions": [
+        "pause",
+        "liquidate"
+      ],
+      "liquidate_audit_id": "audit-c46f01a5d008",
+      "liquidate_binding_status_after": "retired",
+      "liquidate_command_id": "ks-d5286af82b29",
+      "pause_binding_status_after": "paused",
+      "pause_command_id": "cmd-runtime-pause-rb-885dc69557644abf80102bc9431286c4-1777861639",
+      "pause_status_after": "paused"
+    },
+    "S-EMRG": {
+      "action": "replace",
+      "audit_id": "audit-5712ba3f43ee",
+      "command_id": "ks-36cebc5f23bb",
+      "old_binding_status_after": "retired",
+      "replacement_binding_status": "active",
+      "telemetry_ack_status": "acknowledged"
+    },
+    "S-IAPI": {
+      "action": "pause",
+      "audit_id": "audit-cmd-runtime-pause-rb-6303412ad7d94da989b2dc8bc6274d7f-1777861639",
+      "command_id": "cmd-runtime-pause-rb-6303412ad7d94da989b2dc8bc6274d7f-1777861639",
+      "status_after": "paused"
+    }
+  },
+  "task_id": "SVC-BLUEPRINT-OPERATOR-FALLBACK-DRILLS"
+}

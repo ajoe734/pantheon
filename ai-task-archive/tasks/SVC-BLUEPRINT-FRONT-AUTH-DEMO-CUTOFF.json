@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF",
+  "archived_at": "2026-05-04T01:52:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF",
+    "title": "Replace frontend demo auth and demo islands with BFF-backed staging paths",
+    "summary_zh": "front-ai-trading-system 移除或 dev-gate demo AuthProvider、demo token、@/demo dashboard islands；staging/prod UI 走 Pantheon BFF/OIDC/JWT-compatible contract。",
+    "phase": "Blueprint gap execution wave 2026-05-03",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-BLUEPRINT-BFF-READ-CUTOFF-WAVE4"
+    ],
+    "artifacts": [
+      "/home/lupin/code/front-ai-trading-system/src/auth",
+      "/home/lupin/code/front-ai-trading-system/src/pages",
+      "/home/lupin/code/front-ai-trading-system/src/lib"
+    ],
+    "acceptance": [
+      "staging/prod build 不含 demo quick-login production path；production routes 不直接 import @/demo；frontend build/lint 通過並有 BFF auth 設定文件"
+    ],
+    "next": "Owner closeout complete: front-ai-trading-system commit 68d8f38 and pantheon review-artifact commit b09e5d5b. Verified npm run check:prod-demo-routes; npm run build; npm run lint (0 errors, 10 existing warnings); dist rg for quick-login/dev-local/@/demo/demo/api/demo/zpb returned 0 matches. Unrelated dirty files remain outside task scope.",
+    "last_update": "2026-05-04T01:52:51Z",
+    "review_notes_zh": [
+      "審查通過：production route graph guard 從 src/main.tsx 走訪 160 modules，未發現 production-routed @/demo import 或 demo token coupling。",
+      "審查通過：staging/prod auth 走 BFF/OIDC/JWT-compatible path；quick-login UI 與 dev-local token prefix 只在 development build 可達，production bundle grep 無 quick-login、dev-local:、@/demo、demo/api、demo/zpb。",
+      "驗證通過：npm run check:prod-demo-routes；npm run build；npm run lint（0 errors，10 existing warnings）。BFF auth docs 已更新於 docs/bff/README.md。"
+    ],
+    "review_file": ".orchestrator/chair-reviews/SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-04T01:52:51Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "b09e5d5b9b8d27e60a00194ae5c6ebdd97b73c86",
+      "commit_subject": "SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF publish review artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF",
+        "Reviewer": "Codex",
+        "- npm run check": "prod-demo-routes"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 273,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 22,
+      "behind": 12,
+      "push_status": "diverged"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF",
+      "from": "Copilot",
+      "to": "Codex2",
+      "message": "Auto-reassigned SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF away from sidecar-only lane Copilot; owner Copilot -> Codex2. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-05-03T12:56:17Z",
+      "resolved_at": "2026-05-04T01:03:53Z"
+    },
+    {
+      "task_id": "SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF",
+      "from": "Codex",
+      "to": "Gemini2",
+      "message": "Helper-claimed by Gemini2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-04T01:05:30Z",
+      "resolved_at": "2026-05-04T01:06:16Z"
+    },
+    {
+      "task_id": "SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented frontend demo cutoff: production route graph now uses BFF-backed operator/evolution/trainer paths or fail-closed BFF placeholders; dev_local auth and quick-login are compile-time dev-gated; route guard now walks src/main.tsx import graph; BFF auth docs updated. Verified: npm run check:prod-demo-routes, npm run lint (0 errors, existing warnings), npm run build, and dist grep found no quick-login/dev-local/@/demo strings.",
+      "status": "done",
+      "created_at": "2026-05-04T01:43:24Z",
+      "resolved_at": "2026-05-04T01:48:51Z"
+    },
+    {
+      "task_id": "SVC-BLUEPRINT-FRONT-AUTH-DEMO-CUTOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: production route graph is demo-free, dev-local quick-login is compile-time development-gated, staging/prod auth falls back to BFF JWT/OIDC, BFF auth docs are present. Verified npm run check:prod-demo-routes, npm run build, npm run lint (0 errors, existing warnings), and targeted dist grep.",
+      "status": "done",
+      "created_at": "2026-05-04T01:48:51Z",
+      "resolved_at": "2026-05-04T01:52:51Z"
+    }
+  ],
+  "blockers": []
+}

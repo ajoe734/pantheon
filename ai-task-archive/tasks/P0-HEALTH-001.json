@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "P0-HEALTH-001",
+  "archived_at": "2026-05-01T07:04:23Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-HEALTH-001",
+    "title": "Add health endpoint cleanup scan",
+    "summary_zh": "掃描 control/exec compose legacy __health__，推進到 /healthz /livez /readyz /metrics 一致性。",
+    "phase": "Pantheon P0 Paper Loop",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "depends_on": [
+      "P0-CI-BRIDGE-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_p0_sd/SD-P0-06_Submodule_Compose_Health_CI_Verification.md"
+    ],
+    "acceptance": [
+      "legacy __health__ occurrences are reported",
+      "cleanup mode can fail CI after migration to /healthz, /livez, /readyz, and /metrics"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-05-01T03:58:17Z",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Health endpoint cleanup scan finalized: task commit 0f645c6 adds scripts/check_health_endpoints.py, unittest coverage, GitHub warn-mode CI, and SD-P0-06 evidence; closeout commit 16eb833 records Codex2/Codex metadata. Verified warn report exits 0, fail mode exits 1 while staged control/exec __health__ remains, unittest passes, py_compile passes.",
+    "last_update": "2026-05-01T07:04:23Z",
+    "review_notes_zh": [
+      "審查通過：scripts/check_health_endpoints.py 可在 warn mode 回報 control/exec compose legacy __health__，並在 fail mode 轉為 CI failure gate。",
+      "驗證通過：python3 -m unittest scripts/test_check_health_endpoints.py；python3 -m py_compile scripts/check_health_endpoints.py scripts/test_check_health_endpoints.py；python3 scripts/check_health_endpoints.py --mode warn；python3 scripts/check_health_endpoints.py --mode fail 預期 exit 1。",
+      "注意：目前 workflow 仍以 HEALTH_ENDPOINT_CLEANUP_MODE=warn 執行，後續 compose cleanup 完成後再切 fail。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T07:04:23Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "16eb833d1d239913b9dbfe791788f0aaec9d99a0",
+      "commit_subject": "P0-HEALTH-001 finalize health endpoint cleanup scan",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "P0-HEALTH-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 109,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 30,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-HEALTH-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-01T06:32:24Z",
+      "resolved_at": "2026-05-01T06:38:12Z"
+    },
+    {
+      "task_id": "P0-HEALTH-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented health endpoint cleanup scan: scripts/check_health_endpoints.py reports control/exec legacy __health__ in warn mode and can fail CI with --mode fail; workflow wired in warn mode; tests and SD-P0-06 evidence updated.",
+      "status": "done",
+      "created_at": "2026-05-01T06:40:34Z",
+      "resolved_at": "2026-05-01T06:45:07Z"
+    },
+    {
+      "task_id": "P0-HEALTH-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: health endpoint cleanup scan reports staged legacy __health__ and fail mode can enforce cleanup; owner should finalize with task-scoped closeout.",
+      "status": "done",
+      "created_at": "2026-05-01T06:45:07Z",
+      "resolved_at": "2026-05-01T07:04:23Z"
+    }
+  ],
+  "blockers": []
+}

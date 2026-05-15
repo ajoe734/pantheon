@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-FE-002-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-09T17:58:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-FE-002-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BFF-LUV-FE-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BFF-LUV-FE-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "BFF Execute-Plans Frontend Live Completion 2026-05-09",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-LUV-FE-001"
+    ],
+    "artifacts": [
+      "support/sidecars/BFF-LUV-FE-002/BFF-LUV-FE-002-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only sidecar handoff packet after Claude approval; task-scoped commit eb8f5638 includes the packet and review note. Verification: git diff --check on sidecar packet/review and git diff --cached --check passed. Generated state/archive files were already dirty with unrelated closeout material before finalization, so only task-owned artifacts were committed before this done transition.",
+    "last_update": "2026-05-09T17:58:47Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BFF-LUV-FE-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar packet 是 support-only，範圍限於 support/sidecars；未修改任何 canonical route truth、runtime 實作或 frontend 實作。",
+      "Management read surface 矩陣涵蓋所有 20 個 FE-002 批准家族，路徑與 OpenAPI final spec 一致；audit 正確標示為 list-only。",
+      "BFF query gap matrix 框架正確，為 advisory live-evidence 工作，不與 FE-002 批准實作矛盾。",
+      "Operator journey 明確排除所有 mutation/write-capital 路徑。",
+      "Parent owner 可將此 packet 作為建議性輸入，由其決定是否吸收至 FE-002 finalization record。"
+    ],
+    "review_file": ".orchestrator/reviews/BFF-LUV-FE-002-SIDECAR-BFF-HANDOFF-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-09T17:58:47Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "eb8f563819b8dc860ecdd3585cae6488c92c88cb",
+      "commit_subject": "BFF-LUV-FE-002-SIDECAR-BFF-HANDOFF closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-LUV-FE-002-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude",
+        "Verification": "git diff --check -- support/sidecars/BFF-LUV-FE-002/BFF-LUV-FE-002-SIDECAR-BFF-HANDOFF.md .orchestrator/reviews/BFF-LUV-FE-002-SIDECAR-BFF-HANDOFF-review-claude.md; git diff --cached --check."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 8,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 14,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-FE-002-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Support-only FE-002 BFF/frontend handoff packet is ready for review: support/sidecars/BFF-LUV-FE-002/BFF-LUV-FE-002-SIDECAR-BFF-HANDOFF.md. It summarizes approved Management read adapters, remaining live-query evidence gaps, read-only operator journey, and parent absorption checklist without canonical/runtime/frontend edits.",
+      "status": "done",
+      "created_at": "2026-05-09T17:54:45Z",
+      "resolved_at": "2026-05-09T17:56:15Z"
+    },
+    {
+      "task_id": "BFF-LUV-FE-002-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Support-only FE-002 BFF/frontend handoff packet approved; all 20 Management read families verified, gap matrix is advisory, operator journey is read-only. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-09T17:56:15Z",
+      "resolved_at": "2026-05-09T17:58:47Z"
+    }
+  ],
+  "blockers": []
+}

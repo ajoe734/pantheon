@@ -1,0 +1,186 @@
+# Full split-staging overlay for VM-1.
+#
+# Use with docker-compose.control.yml:
+#   docker compose -p pantheon-control \
+#     -f docker-compose.control.yml \
+#     -f docker-compose.staging-full.yml up -d
+#
+# VM-2 still runs docker-compose.exec.yml for the runtime/execution/broker
+# substrate. This overlay adds the non-execution services that VM-1 must host
+# so the combined staging topology covers the full backend surface without
+# moving broker sidecars, runtime-manager, or exchange secrets back to VM-1.
+
+x-pantheon-compose-contract:
+  topology: staging-vm1-full-control-plane-overlay
+  base_compose: docker-compose.control.yml
+  execution_boundary: vm2-only
+  broker_boundary: vm2-only
+
+services:
+  consultation-svc:
+    extends:
+      file: docker-compose.yml
+      service: consultation-svc
+    environment:
+      # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
+      CONSULTATION_STORE_BACKEND: ${CONSULTATION_STORE_BACKEND:-postgres}
+    ports: !override
+      - "${CONSULTATION_PORT:-38096}:8096"
+
+  source-ingest:
+    extends:
+      file: docker-compose.yml
+      service: source-ingest
+    environment:
+      # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
+      PANTHEON_SOURCE_SEARCH_POSTURE: ${PANTHEON_SOURCE_SEARCH_POSTURE:-production}
+      SOURCE_INGEST_EVIDENCE_BACKEND: ${SOURCE_INGEST_EVIDENCE_BACKEND:-postgres}
+    ports: !override
+      - "${SOURCE_INGEST_PORT:-38097}:8097"
+
+  search-svc:
+    extends:
+      file: docker-compose.yml
+      service: search-svc
+    environment:
+      # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
+      PANTHEON_SOURCE_SEARCH_POSTURE: ${PANTHEON_SOURCE_SEARCH_POSTURE:-production}
+      SEARCH_INDEX_STORE_BACKEND: ${SEARCH_INDEX_STORE_BACKEND:-postgres}
+      SEARCH_EVIDENCE_BACKEND: ${SEARCH_EVIDENCE_BACKEND:-postgres}
+      SEARCH_DURABLE_INDEX_ONLY: ${SEARCH_DURABLE_INDEX_ONLY:-true}
+    ports: !override
+      - "${SEARCH_PORT:-38098}:8098"
+
+  training-session-svc:
+    extends:
+      file: docker-compose.yml
+      service: training-session-svc
+    environment:
+      # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
+      TRAINING_SESSION_EVENT_STORE_BACKEND: ${TRAINING_SESSION_EVENT_STORE_BACKEND:-postgres}
+    ports: !override
+      - "${TRAINING_SESSION_PORT:-38099}:8099"
+
+  policy-learning-svc:
+    extends:
+      file: docker-compose.yml
+      service: policy-learning-svc
+    environment:
+      # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
+      POLICY_LEARNING_STORE_BACKEND: ${POLICY_LEARNING_STORE_BACKEND:-postgres}
+    ports: !override
+      - "${POLICY_LEARNING_PORT:-38100}:8100"
+
+  research-orchestrator-svc:
+    extends:
+      file: docker-compose.yml
+      service: research-orchestrator-svc
+    environment:
+      # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
+      RESEARCH_ORCHESTRATOR_EVENT_STORE_BACKEND: ${RESEARCH_ORCHESTRATOR_EVENT_STORE_BACKEND:-postgres}
+    ports: !override
+      - "${RESEARCH_ORCHESTRATOR_PORT:-38101}:8101"
+
+  research-worker-gateway-svc:
+    extends:
+      file: docker-compose.yml
+      service: research-worker-gateway-svc
+    environment:
+      # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
+      RESEARCH_WORKER_GATEWAY_EVENT_STORE_BACKEND: ${RESEARCH_WORKER_GATEWAY_EVENT_STORE_BACKEND:-postgres}
+    ports: !override
+      - "${RESEARCH_WORKER_GATEWAY_PORT:-38103}:8103"
+
+  openclaw-gateway-adapter:
+    extends:
+      file: docker-compose.yml
+      service: openclaw-gateway-adapter
+    environment:
+      OPENCLAW_BROKER_SIDECAR_URL: ${OPENCLAW_BROKER_SIDECAR_URL:-}
+      OPENCLAW_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://10.140.0.5:28081}
+      PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+    ports: !override
+      - "${OPENCLAW_GATEWAY_ADAPTER_PORT:-38104}:8104"
+
+  router:
+    extends:
+      file: docker-compose.yml
+      service: router
+    ports: !override
+      - "${ROUTER_PORT:-38003}:8001"
+
+  web-channel:
+    extends:
+      file: docker-compose.yml
+      service: web-channel
+    ports: !override
+      - "${WEB_CHANNEL_PORT:-38105}:8000"
+
+  reconciliation-drift-svc:
+    extends:
+      file: docker-compose.yml
+      service: reconciliation-drift-svc
+    environment:
+      PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://10.140.0.5:28081}
+      # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
+      RECONCILIATION_DRIFT_STORE_BACKEND: ${RECONCILIATION_DRIFT_STORE_BACKEND:-postgres}
+    depends_on: !override
+      telemetry:
+        condition: service_healthy
+      lineage-read:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      evolution:
+        condition: service_healthy
+    ports: !override
+      - "${RECONCILIATION_DRIFT_PORT:-38106}:8102"
+
+  operator-bff:
+    environment:
+      PANTHEON_INTERNAL_API_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://10.140.0.5:28081}
+      PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://10.140.0.5:28081}
+      PANTHEON_CONSULTATION_API_URL: http://consultation-svc:8096
+      PANTHEON_SOURCE_INGEST_API_URL: http://source-ingest:8097
+      PANTHEON_SEARCH_API_URL: http://search-svc:8098
+      PANTHEON_TRAINING_SESSION_API_URL: http://training-session-svc:8099
+      PANTHEON_POLICY_LEARNING_API_URL: http://policy-learning-svc:8100
+      PANTHEON_RESEARCH_ORCHESTRATOR_API_URL: http://research-orchestrator-svc:8101
+      PANTHEON_RECONCILIATION_DRIFT_API_URL: http://reconciliation-drift-svc:8102
+      PANTHEON_RESEARCH_WORKER_GATEWAY_API_URL: http://research-worker-gateway-svc:8103
+      PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
+    depends_on:
+      consultation-svc:
+        condition: service_healthy
+      source-ingest:
+        condition: service_healthy
+      search-svc:
+        condition: service_healthy
+      training-session-svc:
+        condition: service_healthy
+      policy-learning-svc:
+        condition: service_healthy
+      research-orchestrator-svc:
+        condition: service_healthy
+      reconciliation-drift-svc:
+        condition: service_healthy
+      research-worker-gateway-svc:
+        condition: service_healthy
+      openclaw-gateway-adapter:
+        condition: service_healthy
+
+volumes:
+  consultation-data:
+  policy-learning-data:
+  reconciliation-drift-data:
+  research-orchestrator-data:
+  research-worker-gateway-data:
+  search-data:
+  source-ingest-data:
+  training-session-data:

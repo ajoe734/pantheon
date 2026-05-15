@@ -1,0 +1,133 @@
+name: Pantheon Stage 0 CI
+
+on:
+  pull_request:
+    branches:
+      - backend-dev-publish-20260429
+      - master
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pantheon-stage0-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  discover:
+    name: Discover changed stage-0 targets
+    runs-on: ubuntu-latest
+    outputs:
+      target_ids: ${{ steps.detect.outputs.target_ids }}
+      verify_ids: ${{ steps.detect.outputs.verify_ids }}
+      build_ids: ${{ steps.detect.outputs.build_ids }}
+      target_count: ${{ steps.detect.outputs.target_count }}
+      verify_count: ${{ steps.detect.outputs.verify_count }}
+      build_count: ${{ steps.detect.outputs.build_count }}
+      global_changed: ${{ steps.detect.outputs.global_changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Validate stage-0 matrix and doc alignment
+        run: python3 scripts/ci_stage0.py validate
+
+      - name: Detect changed targets
+        id: detect
+        env:
+          STAGE0_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          STAGE0_HEAD_SHA: ${{ github.sha }}
+        run: python3 scripts/ci_stage0.py detect-changes --github-output "$GITHUB_OUTPUT"
+
+  baseline:
+    name: Run baseline stage-0 gate
+    runs-on: ubuntu-latest
+    needs:
+      - discover
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Execute baseline checks
+        run: python3 scripts/ci_stage0.py run-baseline
+
+  changed-verify:
+    name: Verify changed services
+    runs-on: ubuntu-latest
+    needs:
+      - discover
+      - baseline
+    if: needs.discover.outputs.verify_count != '0'
+    strategy:
+      fail-fast: false
+      matrix:
+        target_id: ${{ fromJson(needs.discover.outputs.verify_ids) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Run verify steps
+        run: python3 scripts/ci_stage0.py run-target --target-id "${{ matrix.target_id }}" --mode verify --tag-suffix "${{ github.sha }}"
+
+  changed-build-dry-run:
+    name: Docker build dry run
+    runs-on: ubuntu-latest
+    needs:
+      - discover
+      - baseline
+    if: needs.discover.outputs.build_count != '0'
+    strategy:
+      fail-fast: false
+      matrix:
+        target_id: ${{ fromJson(needs.discover.outputs.build_ids) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Build changed image target
+        run: python3 scripts/ci_stage0.py run-target --target-id "${{ matrix.target_id }}" --mode build --tag-suffix "${{ github.sha }}"
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    needs:
+      - discover
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high

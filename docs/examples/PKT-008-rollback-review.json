@@ -1,0 +1,77 @@
+{
+  "rollback_id": "rollback-rb-001",
+  "target_plan_id": "plan-dp-000",
+  "trigger_reason": "Automated risk trigger: max_drawdown threshold breached during paper trading window.",
+  "requested_at": "2026-04-16T09:30:00Z",
+  "requested_by": "risk-monitor",
+  "rollback_scope": "partial",
+  "affected_persona_count": 2,
+  "affected_binding_count": 3,
+  "target_stage": "paper",
+  "position_impact": [
+    {
+      "binding_id": "binding-001",
+      "persona_id": "persona-alpha",
+      "current_stage": "paper",
+      "target_stage": "paper",
+      "position_impact_summary": "Open long position of 4% portfolio weight will be closed before rollback. No live positions affected.",
+      "position_data_stale": false
+    },
+    {
+      "binding_id": "binding-002",
+      "persona_id": "persona-beta",
+      "current_stage": "paper",
+      "target_stage": "paper",
+      "position_impact_summary": "No open positions; rollback is position-neutral for this binding.",
+      "position_data_stale": false
+    },
+    {
+      "binding_id": "binding-003",
+      "persona_id": "persona-alpha",
+      "current_stage": "paper",
+      "target_stage": "paper",
+      "position_impact_summary": null,
+      "position_data_stale": true
+    }
+  ],
+  "affected_bindings": [
+    {
+      "binding_id": "binding-001",
+      "persona_id": "persona-alpha",
+      "capital_pool_id": "pool-002",
+      "current_stage": "paper"
+    },
+    {
+      "binding_id": "binding-002",
+      "persona_id": "persona-beta",
+      "capital_pool_id": "pool-001",
+      "current_stage": "paper"
+    },
+    {
+      "binding_id": "binding-003",
+      "persona_id": "persona-alpha",
+      "capital_pool_id": "pool-002",
+      "current_stage": "paper"
+    }
+  ],
+  "trigger_evidence": {
+    "trigger_reason": "Automated risk trigger: max_drawdown threshold breached during paper trading window.",
+    "evidence_refs": [
+      { "ref_id": "ev-rb-001", "type": "TelemetryAlert", "url": null },
+      { "ref_id": "ev-rb-002", "type": "RiskControlEvent", "url": null }
+    ],
+    "linked_incident_id": null
+  },
+  "allowedActions": {
+    "canApproveRollback": false,
+    "canRejectRollback": true
+  },
+  "meta": {
+    "snapshot_at": "2026-04-16T10:00:00Z",
+    "surfaces": {
+      "position_data": { "status": "degraded" },
+      "rollback_review": { "status": "ok" },
+      "allowedActions": { "status": "ok" }
+    }
+  }
+}

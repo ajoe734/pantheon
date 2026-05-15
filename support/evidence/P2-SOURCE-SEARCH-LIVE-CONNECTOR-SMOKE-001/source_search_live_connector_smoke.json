@@ -1,0 +1,16 @@
+{
+  "completed_at": "2026-05-02T13:41:00Z",
+  "optional_env": [
+    "SOURCE_SEARCH_LIVE_SECRET_REF_ID",
+    "BFF_URL",
+    "OPENCLAW_ADAPTER_URL"
+  ],
+  "reason": "SOURCE_SEARCH_LIVE_FEED_URL is required for live/test connector smoke",
+  "required_env": [
+    "SOURCE_SEARCH_LIVE_FEED_URL",
+    "SOURCE_SEARCH_LIVE_ALLOWED_URL_PREFIXES"
+  ],
+  "schema_version": "source_search_live_connector_smoke.v1",
+  "status": "dependency_missing",
+  "task_id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001"
+}

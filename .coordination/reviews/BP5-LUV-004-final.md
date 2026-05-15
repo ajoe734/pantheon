@@ -1,7 +1,7 @@
 # Final Review: BP5-LUV-004
 
-Reviewer: Codex  
-Date: 2026-04-16  
+Reviewer: Codex
+Date: 2026-04-16
 Status: sidecar packet approved; parent task not approved
 
 ## Scope
@@ -9,7 +9,7 @@ Status: sidecar packet approved; parent task not approved
 Validated `support/sidecars/BP5-LUV-004/BP5-LUV-004-SIDECAR-REVIEW.md`
 against current task state, the referenced Pantheon-side artifact chain, both
 prior review notes, and a fresh spot-check of the mirrored frontend checkout at
-`/home/edna/code/front-ai-trading-system`.
+`/home/lupin/code/front-ai-trading-system`.
 
 ## Sidecar Verdict
 
@@ -44,17 +44,17 @@ sufficient to move the parent task to `review_approved`.
    `No files matching the pattern "src/components/operator/AffectedBindings.tsx" were found.`
 3. The detail route in the mirrored app is still
    `/incidents/:incidentId` in
-   `/home/edna/code/front-ai-trading-system/src/App.tsx`, not the
+   `/home/lupin/code/front-ai-trading-system/src/App.tsx`, not the
    `/operator/incident/:incident_id` route stated in
    `.coordination/requests/PKT-002-incident-detail-ui-done.yaml`.
 4. `Open Action Drawer` is still rendered as a disabled/enabled button without
    drawer wiring in
-   `/home/edna/code/front-ai-trading-system/src/pages/operator/IncidentDetail.tsx`.
+   `/home/lupin/code/front-ai-trading-system/src/pages/operator/IncidentDetail.tsx`.
 5. The detail page kill-switch section still renders `status`,
    `last_confirmed_at`, and `last_triggered_at`, but does not render
    `active_commands[]`.
 6. The staleness banner logic in
-   `/home/edna/code/front-ai-trading-system/src/lib/degradationBanner.ts`
+   `/home/lupin/code/front-ai-trading-system/src/lib/degradationBanner.ts`
    still only emits the stale banner when a degraded surface is combined with
    `served_from=cache|reconstructed`; it does not satisfy the broader
    `meta.staleness` claim recorded in the handoff.

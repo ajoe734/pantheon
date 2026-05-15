@@ -1,0 +1,68 @@
+{
+  "schema_version": "source_search_activation_evidence_summary.v1",
+  "task_id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001",
+  "task_title": "Source/search live connector credentialed smoke",
+  "phase": "P2 Wave 8 External Activation",
+  "generated_at": "2026-05-02T14:00:00Z",
+  "smoke_mode": "bounded_local_file_and_in_process_http_feed",
+  "governance": {
+    "deployment_stage": "none",
+    "gate_state": "closed",
+    "direct_execution_allowed": false,
+    "broker_session": false,
+    "order_routing": false,
+    "paper_canary_live_promotion": false,
+    "capital_binding": false,
+    "lean_consumption": "research_only_not_direct_action",
+    "broker_consumption": "not_direct_action",
+    "canonical_sink": "SourceRecord/EvidenceBundle"
+  },
+  "acceptance_gates": [
+    {
+      "gate": "bounded_smoke_ingests_governed_external_source",
+      "status": "passed",
+      "evidence": "Local file:// feed smoke (source_search_live_connector_smoke.local.json) and in-process HTTP feed test (test_live_connector_smoke_path_enforces_governance_and_preserves_pit) both demonstrate SourceRecord with entitlement_tags, license_scope, available_time, PIT validated, and governance boundary enforced."
+    },
+    {
+      "gate": "search_index_and_gateway_readback_prove_durable_refs",
+      "status": "passed",
+      "evidence": "Local run shows search.index_refresh and search.gateway_query passed with evidence_bundle_id and citation_count=1. No caller-supplied document path used."
+    },
+    {
+      "gate": "no_direct_lean_broker_order_route",
+      "status": "passed",
+      "evidence": "test_live_connector_smoke_rejects_forbidden_execution_routes verifies broker, live_execution, order_router, and direct_lean_feed routes are all rejected by validate_external_source_record. validate_external_source_connector also enforces this at connector level."
+    }
+  ],
+  "test_results": {
+    "test_file": "services/source_ingestion/tests/test_external_source_connectors.py",
+    "total": 7,
+    "passed": 7,
+    "failed": 0,
+    "new_tests_added": [
+      "test_live_connector_smoke_path_enforces_governance_and_preserves_pit",
+      "test_live_connector_smoke_rejects_forbidden_execution_routes"
+    ]
+  },
+  "schema_fix": {
+    "file": "docs/contracts/evidence_bundle.schema.json",
+    "change": "Added available_time (string|null) and entitlement_tags (array) as optional properties to align schema with EvidenceBundle.to_dict() output from P1-SOURCE-001 external source governance fields.",
+    "contract_test": "services/search/tests/test_contracts.py::test_sd03_contract_schemas_accept_model_payloads now passes."
+  },
+  "smoke_runs": [
+    {
+      "mode": "file_url_local",
+      "evidence_file": "source_search_live_connector_smoke.local.json",
+      "status": "passed",
+      "checks_passed": 8,
+      "checks_skipped": 2,
+      "note": "BFF_URL and OPENCLAW_ADAPTER_URL skipped (not configured for local run)"
+    },
+    {
+      "mode": "in_process_http_feed",
+      "test": "test_live_connector_smoke_path_enforces_governance_and_preserves_pit",
+      "status": "passed",
+      "note": "Full path: external_feed connector config -> ingest job -> SourceRecord readback -> EvidenceBundle readback"
+    }
+  ]
+}

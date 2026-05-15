@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Idle capacity remains and no global blocker exists, but active sidecar parents should not receive duplicates.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-OPENCLAW-SESSION-LIFECYCLE",
+    "SVC-OPENCLAW-TOOL-WORKFLOW-BRIDGE"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-OPENCLAW-SESSION-LIFECYCLE",
+    "SVC-OSS-ACTIVATION-READY-BFF-OPS",
+    "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER"
+  ]
+}

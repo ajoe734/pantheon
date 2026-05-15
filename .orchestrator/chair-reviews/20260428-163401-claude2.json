@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "No fake in_progress, two review tasks have live workers, gemini is the only paused lane and self-clears at 16:48:53Z, queue and approvals are fresh; safe support work exists if it avoids the two in-flight review parents.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-SURFACES",
+    "SVC-RUNTIME-HARDENING"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260428T163214Z-706ef761",
+      "decision": "allow",
+      "reason": "docker compose config --quiet is a read-only YAML parse/validate, output bounded by head -20, no services started, scoped to SVC-SURFACES verification.",
+      "remember": false
+    }
+  ],
+  "recommended_focus": [
+    "SVC-SURFACES",
+    "SVC-RUNTIME-HARDENING"
+  ]
+}

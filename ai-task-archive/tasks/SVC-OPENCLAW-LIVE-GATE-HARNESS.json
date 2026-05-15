@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "SVC-OPENCLAW-LIVE-GATE-HARNESS",
+  "archived_at": "2026-04-30T09:33:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OPENCLAW-LIVE-GATE-HARNESS",
+    "title": "Add OpenClaw live gate harness without activation",
+    "summary_zh": "開發 live gate harness 但不啟用 live：human approval、capital binding、kill switch、rollback/error policy 都要在程式上完整，預設仍拒絕。",
+    "phase": "OpenClaw Activation-Ready Development",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-OPENCLAW-PAPER-BROKER-ADAPTER"
+    ],
+    "artifacts": [
+      "services/openclaw-gateway-adapter",
+      "services/runtime-manager",
+      "services/control-plane/bff",
+      "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md",
+      "ROLLBACK_AND_POSITION_SEMANTICS.md"
+    ],
+    "acceptance": [
+      "live path remains disabled without all gates",
+      "human approval capital binding kill switch and rollback checks are enforced before any live handoff",
+      "missing approval or unsafe capital state fails closed",
+      "tests cover denied live and mocked fully approved dry handoff",
+      "no real broker live execution occurs"
+    ],
+    "next": "Closeout finalized: live gate harness with 5 fail-closed gate checks (enabled, human approval, capital binding, kill switch safe-mode, rollback policy) delivered in 0c00888+27c4fe8. CAPITAL_BINDING_MISMATCH guard added after Codex review. Verification: 76 gateway tests passed, 4 BFF tests passed, capital_pool_id mismatch reproduction raises CAPITAL_BINDING_MISMATCH under active_live_runtime_binding gate (409). No real broker live execution occurs. Review artifact committed in d68cea1.",
+    "last_update": "2026-04-30T09:33:20Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-materialization-20260430",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "複審通過：capital_pool_id mismatch 已在 active_live_runtime_binding gate fail-closed，reproduction 回 CAPITAL_BINDING_MISMATCH；gateway focused tests 76 passed，BFF focused tests 4 passed。"
+    ],
+    "review_file": ".orchestrator/reviews/SVC-OPENCLAW-LIVE-GATE-HARNESS-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T09:33:20Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "d68cea1d9758452582d4aaf150f0bde81301d0db",
+      "commit_subject": "SVC-OPENCLAW-LIVE-GATE-HARNESS closeout finalization",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "SVC-OPENCLAW-LIVE-GATE-HARNESS",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 69,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 45,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OPENCLAW-LIVE-GATE-HARNESS",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Live gate harness implemented and committed (0c00888). Five fail-closed gate checks (enabled, human approval, live RuntimeBinding, kill switch safe mode, rollback policy), dry handoff with no real broker execution, audit log on all paths, BFF operator surface for status/audit. 40 unit tests (30 pass, 10 skip route tests require Docker httpx). Please review services/openclaw-gateway-adapter/live_gate_adapter.py and the new routes in main.py.",
+      "status": "done",
+      "created_at": "2026-04-30T08:45:56Z",
+      "resolved_at": "2026-04-30T09:06:40Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-LIVE-GATE-HARNESS",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Changes requested by Codex review. Blocking finding recorded in .orchestrator/reviews/SVC-OPENCLAW-LIVE-GATE-HARNESS-review-codex.md: live gate must reject RuntimeBinding capital_pool_id mismatches before allowing dry handoff; add focused wrong-pool binding test. Verification run: gateway focused pytest 75 passed, BFF OpenClaw ops pytest 4 passed.",
+      "status": "done",
+      "created_at": "2026-04-30T09:06:40Z",
+      "resolved_at": "2026-04-30T09:06:40Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-LIVE-GATE-HARNESS",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Blocking finding fixed (commit 27c4fe8): added capital_pool_id mismatch check in _binding_check raising CAPITAL_BINDING_MISMATCH before deployment_mode check, mirroring paper_broker_adapter pattern. Added test_wrong_pool_binding_fails_closed to TestCapitalBindingGate. Verification: 76 gateway tests passed, 4 BFF tests passed. Review reproduction from .orchestrator/reviews/SVC-OPENCLAW-LIVE-GATE-HARNESS-review-codex.md now correctly raises LiveGateError CAPITAL_BINDING_MISMATCH.",
+      "status": "done",
+      "created_at": "2026-04-30T09:26:09Z",
+      "resolved_at": "2026-04-30T09:30:14Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-LIVE-GATE-HARNESS",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review approved after 27c4fe8: capital_pool_id mismatch now fails closed with CAPITAL_BINDING_MISMATCH before deployment-mode/safe-mode checks. Verification: reproduction raised CAPITAL_BINDING_MISMATCH; gateway focused pytest 76 passed; BFF OpenClaw ops pytest 4 passed. Owner must finalize with task-scoped closeout.",
+      "status": "done",
+      "created_at": "2026-04-30T09:30:14Z",
+      "resolved_at": "2026-04-30T09:33:20Z"
+    }
+  ],
+  "blockers": []
+}

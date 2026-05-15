@@ -1,0 +1,30 @@
+{
+  "dataset_id": "dataset:finrl-smoke-001",
+  "strategy_id": "portfolio-exit-smoke",
+  "source_dataset_refs": [
+    "dataset:equity-daily-smoke-001"
+  ],
+  "source_strategy_spec_id": "strategy-spec:portfolio-exit-smoke-v1",
+  "decision_focus": "exit_timing",
+  "data_frequency": "daily",
+  "position_ratio": 0.35,
+  "cash_ratio": 0.65,
+  "records": [
+    {"instrument": "AAA", "date": "2024-01-01", "open": 100.0, "high": 101.5, "low": 99.5, "close": 101.0, "volume": 1000000},
+    {"instrument": "AAA", "date": "2024-01-02", "open": 101.0, "high": 102.5, "low": 100.5, "close": 102.2, "volume": 1010000},
+    {"instrument": "AAA", "date": "2024-01-03", "open": 102.2, "high": 103.0, "low": 101.0, "close": 101.8, "volume": 980000},
+    {"instrument": "AAA", "date": "2024-01-04", "open": 101.8, "high": 104.0, "low": 101.2, "close": 103.4, "volume": 1100000},
+    {"instrument": "AAA", "date": "2024-01-05", "open": 103.4, "high": 104.8, "low": 103.0, "close": 104.1, "volume": 1085000},
+    {"instrument": "AAA", "date": "2024-01-06", "open": 104.1, "high": 105.2, "low": 103.9, "close": 104.7, "volume": 1120000},
+    {"instrument": "AAA", "date": "2024-01-07", "open": 104.7, "high": 105.0, "low": 103.5, "close": 103.9, "volume": 1090000},
+    {"instrument": "AAA", "date": "2024-01-08", "open": 103.9, "high": 105.6, "low": 103.4, "close": 105.1, "volume": 1160000},
+    {"instrument": "BBB", "date": "2024-01-01", "open": 50.0, "high": 50.8, "low": 49.7, "close": 50.3, "volume": 600000},
+    {"instrument": "BBB", "date": "2024-01-02", "open": 50.3, "high": 50.9, "low": 49.9, "close": 50.7, "volume": 620000},
+    {"instrument": "BBB", "date": "2024-01-03", "open": 50.7, "high": 51.0, "low": 50.2, "close": 50.4, "volume": 615000},
+    {"instrument": "BBB", "date": "2024-01-04", "open": 50.4, "high": 51.4, "low": 50.0, "close": 51.1, "volume": 640000},
+    {"instrument": "BBB", "date": "2024-01-05", "open": 51.1, "high": 51.8, "low": 50.8, "close": 51.5, "volume": 650000},
+    {"instrument": "BBB", "date": "2024-01-06", "open": 51.5, "high": 52.1, "low": 51.2, "close": 51.8, "volume": 660000},
+    {"instrument": "BBB", "date": "2024-01-07", "open": 51.8, "high": 52.0, "low": 51.0, "close": 51.2, "volume": 645000},
+    {"instrument": "BBB", "date": "2024-01-08", "open": 51.2, "high": 52.4, "low": 50.9, "close": 52.0, "volume": 675000}
+  ]
+}

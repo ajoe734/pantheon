@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "task_id": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-27T14:13:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare APP-003-RLLIB-DEFERRED-PREP-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 APP-003-RLLIB-DEFERRED-PREP-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5 / Deferred Prep",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "APP-003-FINRL-DEFERRED-PREP-001"
+    ],
+    "artifacts": [
+      "support/sidecars/APP-003-RLLIB-DEFERRED-PREP-001/APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized Claude-approved support-only acceptance sidecar. Packet and review evidence are committed; parent/upstream/downstream truth remains archived/gate-closed/version-pinned, and no canonical/runtime surfaces were changed by this slice.",
+    "last_update": "2026-04-27T14:13:33Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-RLLIB-DEFERRED-PREP-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar acceptance packet 已驗證：parent/FinRL 皆 archived done、Ray Tune downstream 對應正確、引用文件實際存在、僅新增 support artifact 無 canonical 改動，version-pinned/gate-closed 邊界完整保留。"
+    ],
+    "review_file": "docs/reviews/2026-04-27-app-003-rllib-deferred-prep-001-sidecar-acceptance-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-27T14:13:33Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "1640e3e32032305b21f6efe3e54dc228b39e9dcd",
+      "commit_subject": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 141,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Acceptance packet added at support/sidecars/APP-003-RLLIB-DEFERRED-PREP-001/APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Packet captures the repo-current RLlib version-pinned stub baseline, archived FinRL prerequisite closure, Ray Tune downstream dependency, and reviewer guardrails that preserve the closed RL gate and non-activating deferred-prep boundary.",
+      "status": "done",
+      "created_at": "2026-04-25T05:11:14Z",
+      "resolved_at": "2026-04-25T05:19:58Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-25T05:19:58Z",
+      "resolved_at": "2026-04-25T05:43:07Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar refreshed for the current parent review state at support/sidecars/APP-003-RLLIB-DEFERRED-PREP-001/APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md. Packet now matches owner=Codex, reviewer=Codex2, parent status=review, and the landed RLlib deferred-prep scaffold; revalidation captures pytest (13 passed), smoke draft-only gate-closed evidence, and worker draft summary without changing canonical truth.",
+      "status": "done",
+      "created_at": "2026-04-25T05:43:07Z",
+      "resolved_at": "2026-04-25T05:53:38Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance/dependency packet revalidated 2026-04-25 UTC: parent remains in review, RLlib remains version-pinned, and the landed scaffold still proves only prep-only gate-closed behavior. Review support/sidecars/APP-003-RLLIB-DEFERRED-PREP-001/APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md alongside the parent handoff.",
+      "status": "done",
+      "created_at": "2026-04-25T05:53:38Z",
+      "resolved_at": "2026-04-27T13:34:23Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Sidecar acceptance packet refreshed 2026-04-27 UTC after parent archive check: parent APP-003-RLLIB-DEFERRED-PREP-001 is done, FinRL prerequisite is done, RLlib remains version-pinned and gate-closed. Revalidated pytest services/research/rllib/test_adapter.py -q => 13 passed; smoke and worker still emit draft-only stub_rllib evidence with deployment_stage=none and gate_state=closed. Review support/sidecars/APP-003-RLLIB-DEFERRED-PREP-001/APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md for sidecar closeout.",
+      "status": "done",
+      "created_at": "2026-04-27T13:34:23Z",
+      "resolved_at": "2026-04-27T13:35:09Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-27T13:35:09Z",
+      "resolved_at": "2026-04-27T13:50:18Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Claude CLI is not authenticated; inbox fallback is disabled for this provider.",
+      "status": "done",
+      "created_at": "2026-04-27T13:50:18Z",
+      "resolved_at": "2026-04-27T13:54:31Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Acceptance sidecar is ready for Codex2 closeout review. Packet at support/sidecars/APP-003-RLLIB-DEFERRED-PREP-001/APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE.md reflects the archived parent done state, archived FinRL prerequisite, prep-only RLlib scaffold evidence, Ray Tune downstream dependency, and explicit guardrails that preserve RLlib as version-pinned, gate-closed, and non-activating; no canonical/runtime files were changed by this sidecar.",
+      "status": "done",
+      "created_at": "2026-04-27T13:54:31Z",
+      "resolved_at": "2026-04-27T13:55:47Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-27T13:55:47Z",
+      "resolved_at": "2026-04-27T13:57:49Z"
+    },
+    {
+      "task_id": "APP-003-RLLIB-DEFERRED-PREP-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar acceptance packet approved: support-only artifact, parent/upstream/downstream task truth verified against archives, version-pinned and RL gate-closed boundary preserved. Returning to Codex for owner finalization.",
+      "status": "done",
+      "created_at": "2026-04-27T13:57:49Z",
+      "resolved_at": "2026-04-27T14:13:33Z"
+    }
+  ],
+  "blockers": []
+}

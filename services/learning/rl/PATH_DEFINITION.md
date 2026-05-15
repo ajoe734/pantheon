@@ -1,11 +1,11 @@
 # RL Integration Path Definition
 
-**Task**: LP-005  
-**Owner**: Copilot  
-**Reviewer**: Codex  
-**Scope**: Define FinRL/RLlib + Ray Tune integration when sequential RL is justified  
-**Status**: Accepted  
-**Last Updated**: 2026-04-10
+**Task**: LP-005
+**Owner**: Copilot
+**Reviewer**: Codex
+**Scope**: Define FinRL/RLlib + Ray Tune integration when sequential RL is justified
+**Status**: Accepted
+**Last Updated**: 2026-04-29
 
 ---
 
@@ -14,6 +14,43 @@
 This document defines the entry criteria, search/tuning workflow, and governance constraints for sequential RL (FinRL/RLlib + Ray Tune) in the Pantheon platform.
 
 **Key Principle**: Sequential RL should be an *optional path*, not the default. The platform first uses Qlib for supervised alpha and persona policy optimization. RL is added only when sequential decision-making (e.g., optimal exit timing, position sizing under uncertainty) becomes a primary constraint.
+
+## Current Activation Decision
+
+The accepted Phase 6 session on **2026-04-17** records an explicit **defer** decision for RL in the
+immediate next execution wave.
+
+- RL remains gated until Qlib reaches `artifact_state=approved` and shows at least **3 months** of
+  stable evaluation evidence for the target strategy family
+- The RL approval packet in `services/learning/rl/RL_PATH_APPROVAL_GATE.md` remains `closed` until
+  the full evidence package is complete
+- When the gate does reopen, the **first executable RL lane** is `FinRL`
+- `RLlib + Ray Tune` stays as the follow-on lane after a governed single-agent FinRL adapter and
+  smoke path prove the canonical `rl_policy` output path end-to-end
+
+This turns RL from an abstract future option into a concrete next decision:
+**not this wave; FinRL first when re-entry criteria are met**.
+
+This decision gates **activation**, not every repository-local development task. Dormant
+pre-activation work may proceed when it is fail-closed: contracts, artifact schema, feature flags
+defaulting off, offline/mock harnesses, and non-registry-writing smoke scaffolds. It must not
+start active RL training, production dispatch, registry/governance writes, paper/canary/live
+runtime paths, or capital-bound execution before the approval packet reopens.
+
+## Execution-Ready Re-entry Slice
+
+To make the deferred RL decision actionable without over-opening scope, the first future execution
+slice is fixed as:
+
+1. reopen the approval packet only after the Qlib plateau evidence exists
+2. open **FinRL** as the first governed implementation lane
+3. limit that first lane to single-agent policy-output mapping plus one smoke path that emits a
+   canonical `rl_policy` artifact envelope
+4. keep `RLlib + Ray Tune` deferred until the FinRL smoke path proves the artifact and consumer
+   contract end-to-end
+
+This means the next reviewable RL packet is not "start general RL implementation." It is "prove
+that FinRL can produce the first governed `rl_policy` artifact once the gate is reopened."
 
 ---
 
@@ -43,7 +80,7 @@ RL is justified when:
 
 ## 2. Search and Tuning Path
 
-### Workflow Overview
+### Workflow Overview After Re-entry
 
 ```
 Governance Layer
@@ -52,11 +89,15 @@ Research Intake → RS-001 (Ingestion) → RS-002 (Normalization)
     ↓
 Replication Gate (RS-003: validates research candidate)
     ↓
-RL Candidate Selection (this layer)
+RL Candidate Selection (this layer; gate reopened first)
     ↓
-RLlib Environment Setup + Policy Trainer
+FinRL single-agent adapter + smoke path
     ↓
-Ray Tune Hyperparameter Search
+Registry-ready rl_policy artifact proof
+    ↓
+RLlib Environment Setup + Policy Trainer (follow-on lane only)
+    ↓
+Ray Tune Hyperparameter Search (follow-on lane only)
     ↓
 Backtesting & Evaluation (LEAN)
     ↓
@@ -218,6 +259,10 @@ For each trial:
 
 ## 3. Registry and Promotion Constraints
 
+The registry / promotion model below describes the full future RL path. It does not authorize the
+broader path for the current wave; the current execution-ready slice remains the FinRL-first
+re-entry path described above.
+
 ### 3.1 Artifact Model for RL Policies
 
 Each RL policy artifact stored in the registry follows the governance contract (REG-001/REG-003/EX-001):
@@ -330,16 +375,19 @@ Before an RL policy reaches registry, it must pass:
 - **Next Step**: Approved strategy candidate enters registry as StrategySpec candidate.
 
 #### Gate 2: Entry Criteria Verification (LP-005)
-- **Input**: Training run of RL policy based on the approved strategy candidate.
-- **Requirement**: Trained policy explicitly demonstrates it satisfies §1 entry criteria.
+- **Input**: Governed smoke run or training run of an RL policy based on the approved strategy candidate.
+- **Requirement**: The produced policy artifact explicitly demonstrates it satisfies §1 entry criteria.
 - **Checksum**:
   ```
   ✓ Supervised alpha exhausted: validation Sharpe ≥ baseline + 0.2
   ✓ Sequential dependency: policy uses full state history, not just last bar
   ✓ Exploration benefit: policy discovers actions outside historical distribution
   ✓ Sufficient data: training set covers 2+ years, 3+ market regimes
-  ✓ Framework match: RLlib + Ray Tune configuration documented
+  ✓ Framework match: chosen framework packet documented (FinRL for the first re-entry lane; RLlib + Ray Tune only after the FinRL smoke proof)
   ```
+
+For the first reopened lane, this verification is satisfied by the governed FinRL single-agent
+smoke packet, not by pre-opening the broader RLlib + Ray Tune train/eval path.
 
 #### Gate 3: Out-of-Sample Robustness (REG-001)
 - **Train Period**: 2023–01 to 2025–06.
@@ -427,7 +475,11 @@ LEAN receives RL policy through governed registry channels:
    - `openclaw/registry/{strategy_id}/{version}/metadata.json`
    - `openclaw/registry/{strategy_id}/{version}/artifact.bin`
 3. **LEAN Loader** (EX-001): Validates metadata.json, verifies promotion state, loads artifact bytes.
-4. **Policy Executor**: RLlib policy inference.
+4. **Policy Executor**: framework-specific policy inference (FinRL for the first smoke lane; RLlib only for the broader follow-on lane).
+
+The example below uses an RLlib executor because LP-005 still documents the broader future
+train/eval lane. The first reopened FinRL smoke lane reuses the same artifact-loader boundary with
+a simpler single-agent adapter.
 
 ```python
 class RLPolicyExecutor:
@@ -436,16 +488,16 @@ class RLPolicyExecutor:
         self.registry_id = registry_metadata["registry_id"]
         self.strategy_id = registry_metadata["strategy_id"]
         self.promotion_state = registry_metadata["promotion_state"]  # 'paper' or 'live'
-        
+
         # Load RLlib policy from artifact bytes
         self.policy = load_rllib_policy(artifact_bytes)
         self.env_config = registry_metadata["metadata"]["environment"]
-    
+
     def get_action(self, state: np.ndarray) -> np.ndarray:
         # state: (batch_size, state_dim) from LEAN signal
         # returns: action indices or continuous values
         return self.policy.compute_single_action(state)
-    
+
     def get_metadata(self) -> dict:
         return {
             "registry_id": self.registry_id,
@@ -482,13 +534,12 @@ Is supervised alpha exhausted (Sharpe stable for 3+ months)?
   └─ YES → Is sequential decision-making essential (not just signal scoring)?
            └─ NO → Stay with Qlib + alpha policy (use TRL for preference learning if needed)
            └─ YES → Collect 2+ years intraday data on candidate tickers
-                    └─ COLLECTED → Train RL candidate with Ray Tune search (3–7 days)
                     └─ UNDER-COLLECTED → Extend data collection (backfill historical)
-                    └─ RL candidate passes entry criteria gate?
-                       └─ NO → Revise reward function or state space, retry
-                       └─ YES → Pass to replication gate (RS-003) → registry gate (REG-001)
-                                └─ PASSED → Staged deployment (0.5% allocation)
-                                └─ FAILED → Investigate, retry, or revert to Qlib
+                    └─ COLLECTED → Reopen RL approval packet with the full evidence package
+                                  └─ NOT APPROVED → Keep RL closed and continue the Qlib path
+                                  └─ APPROVED → Open FinRL single-agent smoke lane
+                                               └─ NO ARTIFACT PROOF → Revise env/reward/output mapping, retry
+                                               └─ ARTIFACT PROVED → Pass through RS-003 → REG-001 before any paper/live promotion, and only then consider the broader RLlib + Ray Tune lane if it is still justified
 ```
 
 ---
@@ -496,7 +547,7 @@ Is supervised alpha exhausted (Sharpe stable for 3+ months)?
 ## 5. Success Criteria (LP-005 Acceptance)
 
 - [x] Entry criteria documented (§1)
-- [x] Search and tuning path defined (§2: RLlib + Ray Tune workflow)
+- [x] Search and tuning path defined (§2: FinRL-first re-entry slice plus RLlib + Ray Tune follow-on workflow)
 - [x] Registry and promotion constraints specified (§3)
 - [x] Integration points with RS-003, REG-001, and LEAN execution documented
 - [x] Decision tree provided for when to use RL vs. Qlib (§4)
@@ -506,11 +557,11 @@ Is supervised alpha exhausted (Sharpe stable for 3+ months)?
 
 ## 6. Next Steps
 
-1. **RS-003 Integration** (Grok): RL-selected research strategies must pass RS-003 replication gate *before* RL training begins (upstream validation).
-2. **REG-001 Integration** (Codex + Grok): Registry gate must accept RL policy artifacts and validate against the constraints in §3.
-3. **RL Artifact Materialization** (Codex): Registry promotion tooling must materialize RL artifacts to Object Store with correct governance metadata (see §3.1).
-4. **LEAN RL Integration** (Claude): Execution engine must implement RLPolicyExecutor and use EX-001 loader to validate promotion state before policy load.
-5. **Smoke Test** (Grok + Codex): Train a single small RL candidate (e.g., 1 ticker, 1 year of data) to validate the full path end-to-end.
+1. **Qlib Plateau Evidence** (Copilot + Codex2): close the supervised path to `artifact_state=approved` and accumulate at least 3 months of stable evaluation evidence on the target strategy family.
+2. **Re-entry Packet** (Copilot): assemble the five-part reopen evidence packet in `RL_PATH_APPROVAL_GATE.md` before any active RL adapter, production training, registry write, or paper/live path opens.
+3. **FinRL First Lane** (Copilot + Codex): once the gate is reopened, implement the governed FinRL single-agent adapter, emit a canonical `rl_policy` artifact envelope, and prove the downstream registry-consumer path at `artifact_state=draft`.
+4. **Follow-on RLlib/Tune Lane** (Copilot + Claude): only after the FinRL smoke proof, decide whether broader train/eval plus search work is still justified and materialize that lane separately.
+5. **LEAN RL Execution** (Claude): implement the policy executor only after a governed artifact path exists for the approved framework lane.
 
 ---
 
@@ -523,10 +574,10 @@ Is supervised alpha exhausted (Sharpe stable for 3+ months)?
 
 ---
 
-**Document Status**: LP-005 accepted; reused by OSS-003 as the deferred RL activation gate  
+**Document Status**: LP-005 accepted; reused by EXEC-OSS-RL-001 as the deferred RL activation decision record
 **Review Outcome**:
 - [x] Entry criteria align with TARGET_ARCHITECTURE and keep RL behind the supervised-first path
-- [x] Ray Tune workflow is scoped as a realistic RLlib search path rather than an already-integrated runtime
+- [x] Re-entry scope fixes FinRL as the first executable lane and keeps RLlib + Ray Tune as follow-on only after smoke proof
 - [x] Registry integration is feasible within existing REG-001 / REG-003 / EX-001 boundaries
 - [x] LEAN execution contract is implementable through artifact-loader mediation rather than direct URI loading
 - [x] Success criteria are verifiable from the documented gate sequence and artifact envelope

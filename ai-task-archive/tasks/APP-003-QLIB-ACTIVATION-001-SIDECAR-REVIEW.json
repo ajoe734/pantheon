@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "task_id": "APP-003-QLIB-ACTIVATION-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-24T19:59:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-QLIB-ACTIVATION-001-SIDECAR-REVIEW",
+    "title": "Prepare APP-003-QLIB-ACTIVATION-001 review packet and evidence summary",
+    "summary_zh": "平行支援 APP-003-QLIB-ACTIVATION-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Phase 5",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-QLIB-ACTIVATION-001/APP-003-QLIB-ACTIVATION-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only Qlib review packet after reviewer approval. Sidecar artifact remains limited to support/sidecars/APP-003-QLIB-ACTIVATION-001/APP-003-QLIB-ACTIVATION-001-SIDECAR-REVIEW.md, preserves the archived parent done plus approved review truth, and leaves Qlib at smoke-tested/data-gated maturity for parent-owner absorption only.",
+    "last_update": "2026-04-24T19:59:05Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-QLIB-ACTIVATION-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "review packet 現在已對齊 sidecar 的 review 狀態，且內容忠實摘要 archived parent done、已核准 parent review、既有 acceptance sidecar 與 Qlib smoke-tested/data-gated evidence surfaces。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T19:59:05Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "b24c6ad2160773afe62bf961534faa12974963fa",
+      "commit_subject": "APP-003-QLIB-ACTIVATION-001-SIDECAR-REVIEW finalize review packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-QLIB-ACTIVATION-001-SIDECAR-REVIEW",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1185,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-QLIB-ACTIVATION-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T19:11:11Z",
+      "resolved_at": "2026-04-24T19:45:30Z"
+    },
+    {
+      "task_id": "APP-003-QLIB-ACTIVATION-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T19:45:29Z",
+      "resolved_at": "2026-04-24T19:46:11Z"
+    },
+    {
+      "task_id": "APP-003-QLIB-ACTIVATION-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T19:46:11Z",
+      "resolved_at": "2026-04-24T19:49:02Z"
+    },
+    {
+      "task_id": "APP-003-QLIB-ACTIVATION-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T19:49:02Z",
+      "resolved_at": "2026-04-24T19:49:29Z"
+    },
+    {
+      "task_id": "APP-003-QLIB-ACTIVATION-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T19:51:48Z",
+      "resolved_at": "2026-04-24T19:52:16Z"
+    },
+    {
+      "task_id": "APP-003-QLIB-ACTIVATION-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review packet added at support/sidecars/APP-003-QLIB-ACTIVATION-001/APP-003-QLIB-ACTIVATION-001-SIDECAR-REVIEW.md. It summarizes the archived parent done state (2026-04-24T19:34:17Z, commit 9ee259fe28a39c9ce3c354fdd0ed4ea264233c62), the approved parent review, the existing sidecar acceptance packet, and the current Qlib smoke-tested/data-gated evidence surfaces. Please review this as support-only archival and reviewer-handoff context; it does not reopen APP-003-QLIB-ACTIVATION-001.",
+      "status": "done",
+      "created_at": "2026-04-24T19:55:12Z",
+      "resolved_at": "2026-04-24T19:57:42Z"
+    },
+    {
+      "task_id": "APP-003-QLIB-ACTIVATION-001-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: support-only Qlib review packet is aligned with the live sidecar review state, faithfully summarizes the archived parent done record plus approved parent review, and preserves the smoke-tested / data-gated Qlib maturity truth. Returned to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-24T19:57:42Z",
+      "resolved_at": "2026-04-24T19:59:06Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-013",
+  "archived_at": "2026-05-13T05:35:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-013",
+    "title": "Cookie-session write gate (/bff/me driven)",
+    "summary_zh": "修改 execute-plans liveWriteGated() 從 /bff/me response 判斷 authenticated session (cookie or bearer) 不再只看 sessionStorage bearer token。cookie-only session 不應被誤判為 unauthenticated。後端 /bff/me 需回明確 session_kind: cookie|bearer|stub。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-004",
+      "BFF-CONSOL-006"
+    ],
+    "artifacts": [
+      "execute-plans/src/lib/bff/runAction.ts",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "/bff/me response 含 session_kind 欄位",
+      "liveWriteGated() 不再只看 sessionStorage",
+      "cookie-only session 寫入 gate 通過",
+      "Bearer session 寫入 gate 通過",
+      "stub session 在 production 模式被擋",
+      "unit test cover 三種 session 模式"
+    ],
+    "next": "Finalized BFF-CONSOL-013 after Claude approval. Pantheon closeout commit 44e779a9 records review artifacts; execute-plans commit e198b4e implements /bff/me session_kind write gate; backend session_kind support already durable in e092e753. Verification: py_compile main.py passed; pytest BFF-CONSOL-013 => 13 passed; execute-plans vitest runAction/writes => 39 passed; execute-plans tsc noEmit passed. Note: existing unrelated dirty generated/state files remain outside the task-scoped commits.",
+    "last_update": "2026-05-13T05:35:28Z",
+    "review_notes_zh": [
+      "審查通過",
+      "所有 6 項驗收標準滿足：/bff/me 回 session_kind；liveWriteGated() 改從 /bff/me 判斷；cookie/bearer session 通過寫入 gate；stub 在 production/strict 模式被擋；三種 session 模式均有 unit test 覆蓋（含 credentials:include 斷言）"
+    ],
+    "review_file": ".orchestrator/reviews/BFF-CONSOL-013-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T05:35:28Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "44e779a903242ddd4f6482ebc970f52c65425bd6",
+      "commit_subject": "BFF-CONSOL-013 finalize review records",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-CONSOL-013",
+        "Reviewer": "Claude",
+        "- /home/lupin/code/execute-plans": "npx tsc --noEmit --pretty false => passed",
+        "- execute-plans commit": "e198b4eb96abfeaa2edac746ca391014f7c236cd"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 41,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 8,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-013",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "BFF-CONSOL-013 implementation complete. Commit e092e753 adds: (1) services/control-plane/bff/main.py — Cookie import, pantheon_session cookie param on GET /bff/me, _extract_identity cookie fallback, _resolve_session_kind helper, session_kind field in _bff_me_session_payload; (2) execute-plans/src/lib/bff/runAction.ts — liveWriteGated() async (fetches /bff/me with credentials:include) and sessionKindAllowsWrite() sync helper; cookie+bearer pass write gate, stub blocked in production; (3) test_bff_consol_013_cookie_session_write_gate.py — 13 tests: stub/bearer/cookie session_kind, write-gate logic. Verification: 13/13 new tests pass; 79/79 existing session+auth tests pass with 0 regressions. All 6 acceptance criteria satisfied. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-05-13T04:22:16Z",
+      "resolved_at": "2026-05-13T04:26:54Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-013",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested: backend /bff/me session_kind path passes focused verification, but the actual /home/lupin/code/execute-plans liveWriteGated gates are still bearer-storage only (src/lib/bff/runAction.ts and src/lib/bff-v1/writes.ts). Update the real execute-plans repo to fetch /bff/me with credentials:include and cover exported frontend helper behavior. Review: .orchestrator/reviews/BFF-CONSOL-013-review-codex.md",
+      "status": "done",
+      "created_at": "2026-05-13T04:26:54Z",
+      "resolved_at": "2026-05-13T04:26:54Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-013",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-13T04:27:02Z",
+      "resolved_at": "2026-05-13T04:27:02Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-013",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Frontend fix applied in /home/lupin/code/execute-plans: added shared async /bff/me session_kind write gate, wired src/lib/bff/runAction.ts and src/lib/bff-v1/writes.ts to await it, and covered cookie/bearer/stub behavior. Verification: npx vitest run src/lib/bff/__tests__/runAction.test.ts src/lib/bff-v1/__tests__/writes.test.ts -> 39 passed; npx tsc --noEmit --pretty false -> passed. Ready for Claude review.",
+      "status": "done",
+      "created_at": "2026-05-13T04:34:16Z",
+      "resolved_at": "2026-05-13T05:26:49Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-013",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 6 acceptance criteria satisfied in real execute-plans repo — writeGate.ts fetches /bff/me with credentials:include, sessionKindAllowsWrite admits cookie/bearer and blocks stub in production/strict, unit tests cover all 3 session kinds",
+      "status": "done",
+      "created_at": "2026-05-13T05:26:49Z",
+      "resolved_at": "2026-05-13T05:35:28Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "SD-CONSULT-003",
+  "archived_at": "2026-04-28T11:24:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SD-CONSULT-003",
+    "title": "BFF and runtime consultation adoption",
+    "summary_zh": "讓 BFF/runtime consultation workflows 以 consultation service 為 authoritative boundary，移除或隔離 shadow lifecycle 假設。",
+    "phase": "SD Residual / Consultation",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "SD-CONSULT-002",
+      "SD-FND-002"
+    ],
+    "artifacts": [
+      "docs/reviews/2026-04-28-foundation-source-consultation-execution-task-packet.md"
+    ],
+    "acceptance": [
+      "BFF reads writes use consultation service records",
+      "runtime handoff refs use service handoff evidence audit ids",
+      "targeted tests prove response compatibility"
+    ],
+    "next": "Owner finalized approved SD-CONSULT-003. Implementation commit adopts consultation service-backed BFF/runtime workflows and review verified all targeted compatibility tests.",
+    "last_update": "2026-04-28T11:24:14Z",
+    "task_class": "sd_materialization",
+    "source_packet": "docs/reviews/2026-04-28-foundation-source-consultation-execution-task-packet.md",
+    "auto_dispatch_boundary": "respect_dependencies_and_human_gates",
+    "review_notes_zh": [
+      "Code review approved: BFF consult request create/cancel now persists through ConsultationStore; committee sponsor decisions create consultation-service gate handoff refs with evidence/audit ids; internal runtime sponsor-decision route uses the service boundary. Verified 28 targeted BFF/runtime tests, 22 adjacent CW02/CW04 compatibility tests, and consultation smoke."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T11:24:14Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "aba0cd0087f297dadfff5769d5a97f4bdc3215e8",
+      "commit_subject": "SD-CONSULT-003 adopt consultation service in BFF and runtime",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SD-CONSULT-003",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 18,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/2026-04-21-exec-sync",
+      "ahead": 8,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SD-CONSULT-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented consultation service-backed BFF/runtime adoption: CW01 create/cancel now write consultation service records; CW03 sponsor decisions create service gate handoffs with evidence/audit refs; internal runtime sponsor-decision route uses consultation service handoff. Tests passed: pytest -q services/control-plane/bff/test_cw01_consult_request_contract.py services/control-plane/bff/test_cw03_committee_board_contract.py services/control_plane/test_internal_api_incident.py; pytest -q services/control-plane/bff/test_cw02_debate_transcript_contract.py services/control-plane/bff/test_cw04_redteam_memo_contract.py; python3 -m unittest services.consultation.smoke_test.",
+      "status": "done",
+      "created_at": "2026-04-28T11:03:44Z",
+      "resolved_at": "2026-04-28T11:20:16Z"
+    },
+    {
+      "task_id": "SD-CONSULT-003",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1777389600,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"org_level_dis",
+      "status": "done",
+      "created_at": "2026-04-28T11:20:16Z",
+      "resolved_at": "2026-04-28T11:23:27Z"
+    },
+    {
+      "task_id": "SD-CONSULT-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved. BFF/runtime consultation adoption meets acceptance; owner may finalize to done. Verified targeted and adjacent tests.",
+      "status": "done",
+      "created_at": "2026-04-28T11:23:27Z",
+      "resolved_at": "2026-04-28T11:24:14Z"
+    }
+  ],
+  "blockers": []
+}

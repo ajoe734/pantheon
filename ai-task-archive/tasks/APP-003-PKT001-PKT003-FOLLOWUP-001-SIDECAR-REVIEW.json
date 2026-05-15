@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-REVIEW",
+  "archived_at": "2026-04-24T11:42:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-REVIEW",
+    "title": "Prepare APP-003-PKT001-PKT003-FOLLOWUP-001 review packet and evidence summary",
+    "summary_zh": "平行支援 APP-003-PKT001-PKT003-FOLLOWUP-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Execution / Frontend Feedback Follow-up",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-PKT001-PKT003-FOLLOWUP-001/APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support review packet absorbed into archived parent closeout APP-003-PKT001-PKT003-FOLLOWUP-001; no separate sidecar lifecycle remains.",
+    "last_update": "2026-04-24T11:42:26Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-PKT001-PKT003-FOLLOWUP-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "superseded",
+    "superseded_by": "APP-003-PKT001-PKT003-FOLLOWUP-001"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review packet ready at support/sidecars/APP-003-PKT001-PKT003-FOLLOWUP-001/APP-003-PKT001-PKT003-FOLLOWUP-001-SIDECAR-REVIEW.md: replay-clean PKT-001/PKT-003 evidence is summarized for reviewer validation, routing note now reflects the Qwen->Codex2 reassignment, and no new Pantheon BFF gap is warranted from the current checked-in bundle.",
+      "status": "done",
+      "created_at": "2026-04-24T10:34:21Z",
+      "resolved_at": "2026-04-24T11:42:26Z"
+    }
+  ],
+  "blockers": []
+}

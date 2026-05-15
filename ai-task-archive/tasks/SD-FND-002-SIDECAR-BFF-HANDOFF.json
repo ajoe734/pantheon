@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "task_id": "SD-FND-002-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-28T00:38:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SD-FND-002-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SD-FND-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SD-FND-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "SD Residual / Foundations",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SD-FND-001"
+    ],
+    "artifacts": [
+      "support/sidecars/SD-FND-002/SD-FND-002-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar BFF/frontend handoff packet for SD-FND-002. Reviewer Codex confirmed support-artifact-only scope, accurate pilot boundary (one BFF path + one runtime-manager path), foundation-shaped error envelope contract surface, and GAP-FND-002-01..05 residual gaps preserved for cross-repo verify and EP5 packet prep. Cited contract suite reran by reviewer (59 passed). No canonical truth modified.",
+    "last_update": "2026-04-28T00:38:28Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SD-FND-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar BFF/frontend handoff packet approved: support artifact only and no canonical/runtime implementation changes required.",
+      "Reviewer corrected stale reassignment metadata in the support packet from Claude2 to Codex after orchestrator reassigned review.",
+      "Verified packet claims against route/helper/test references and reran cited suite: pytest services/control-plane/bff/test_governance_command_submission.py services/runtime-manager/test_runtime_manager.py services/foundation/tests -q -> 59 passed in 3.18s.",
+      "Residual gaps GAP-FND-002-01..05 appropriately preserve pilot-only scope and do not over-claim EP5/live/cross-service readiness."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-28T00:38:28Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "3a118dce2e3d1be79f13e27cc68678cbcceeb6b2",
+      "commit_subject": "SD-FND-002-SIDECAR-BFF-HANDOFF finalize packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "SD-FND-002-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 157,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SD-FND-002-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-27T14:33:09Z",
+      "resolved_at": "2026-04-28T00:18:21Z"
+    },
+    {
+      "task_id": "SD-FND-002-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "BFF/frontend handoff packet ready for review at support/sidecars/SD-FND-002/SD-FND-002-SIDECAR-BFF-HANDOFF.md. Sections: (1) pilot scope vs. legacy surfaces; (3) request headers, success 202, idempotency replay, foundation-shaped error envelope; (4) GAP-FND-002-01..05 for cross-repo verify + EP5 packet prep follow-up; (8) explicit reject list to keep parent task boundary intact. Verification pointers reference 59-passing existing tests (no new tests added). Support artifact only; no canonical truth edited.",
+      "status": "done",
+      "created_at": "2026-04-28T00:22:27Z",
+      "resolved_at": "2026-04-28T00:32:38Z"
+    },
+    {
+      "task_id": "SD-FND-002-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Claude2 to Codex after repeated Claude2 capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-04-28T00:32:38Z",
+      "resolved_at": "2026-04-28T00:35:14Z"
+    },
+    {
+      "task_id": "SD-FND-002-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Sidecar BFF/frontend handoff packet approved after metadata correction and contract-suite verification. Returning to owner Claude for finalization.",
+      "status": "done",
+      "created_at": "2026-04-28T00:35:14Z",
+      "resolved_at": "2026-04-28T00:38:28Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-FE-002",
+  "archived_at": "2026-05-09T17:51:27Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-FE-002",
+    "title": "Wire execute-plans Management Console live read adapters",
+    "summary_zh": "把 execute-plans Management Console 主要 read surfaces 接到 Pantheon BFF，hybrid fallback 必須明確。",
+    "phase": "BFF Execute-Plans Frontend Live Completion 2026-05-09",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "BFF-LUV-FE-001"
+    ],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-09-execute-plans-frontend-live-completion/BFF-LUV-FE-002-management-read-adapters.md",
+      "/home/lupin/code/execute-plans/src/lib/bff/client.ts"
+    ],
+    "acceptance": [
+      "management route families have real adapters",
+      "real mode does not silently mock",
+      "hybrid fallback is explicit",
+      "npm run test passes",
+      "npm run build passes"
+    ],
+    "next": "Closeout complete: Rev2 rankingFormulas detail path fix confirmed; 16 focused tests pass; build clean; artifact doc and review file committed (1d4383b1). execute-plans commits 890712d+124aa17 are durable.",
+    "last_update": "2026-05-09T17:51:27Z",
+    "review_notes_zh": [
+      "審查通過：Rev2 修正 rankingFormulas detail path，live 模式會呼叫 /bff/ranking-formulas/{id}，並新增 focused URL 覆蓋。",
+      "驗證：cd /home/lupin/code/execute-plans && npm test -- --run src/lib/bff/__tests__/client.test.ts；npm run build。"
+    ],
+    "review_file": ".orchestrator/reviews/BFF-LUV-FE-002-review-codex2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-09T17:51:27Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "1d4383b17e5530892cbefd639e4e079ef671c133",
+      "commit_subject": "BFF-LUV-FE-002: closeout — artifact doc Rev2 + review file",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Focused verification": "npm test -- --run src/lib/bff/__tests__/client.test.ts",
+        "execute-plans commits": "890712d (Rev1), 124aa17 (Rev2).",
+        "LLM-Agent": "Claude",
+        "Task-ID": "BFF-LUV-FE-002",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 8,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 11,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-FE-002",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "BFF-LUV-FE-002 implementation complete. Delivered: src/lib/bff/client.ts — 20-family managementClient live/hybrid/real read surface; bff-v1/lists.ts extended for mcpTools/jobs/runtimes/alerts/incidents/approvals/audit; explicit mode taxonomy (mock/hybrid/real) with hybrid fallback through liveStatus.reportFallback. Verification: npm test -- --run src/lib/bff/__tests__/client.test.ts → 15 passed; npm run build → clean. execute-plans commit 890712d. Full suite: 46 passed + 1 pre-existing runAction.test.ts SyntaxError from FE-004 territory (out of scope). Pantheon artifact: 643e7644.",
+      "status": "done",
+      "created_at": "2026-05-09T17:27:03Z",
+      "resolved_at": "2026-05-09T17:35:56Z"
+    },
+    {
+      "task_id": "BFF-LUV-FE-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Codex2 review changes requested: .orchestrator/reviews/BFF-LUV-FE-002-review-codex2.md records blocking live detail path bug; managementClient.rankingFormulas.get(id) calls /bff/ranking-formulas instead of /bff/ranking-formulas/{id}. Focused client tests pass and build passes; please fix path and add live detail URL coverage, then hand back to Codex2.",
+      "status": "done",
+      "created_at": "2026-05-09T17:35:56Z",
+      "resolved_at": "2026-05-09T17:35:56Z"
+    },
+    {
+      "task_id": "BFF-LUV-FE-002",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Rev2 ready for re-review: fixed rankingFormulas.get detail path bug (paths.rankingFormulas zero-arg list builder → inline (id) => paths.rankingFormulas()/encodeURIComponent(id)), added live URL coverage test. 16 tests pass, build clean. execute-plans commit 124aa17. Artifact doc updated.",
+      "status": "done",
+      "created_at": "2026-05-09T17:44:54Z",
+      "resolved_at": "2026-05-09T17:49:35Z"
+    },
+    {
+      "task_id": "BFF-LUV-FE-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Codex2 re-review approved Rev2; owner should run closeout/finalization next.",
+      "status": "done",
+      "created_at": "2026-05-09T17:49:35Z",
+      "resolved_at": "2026-05-09T17:51:27Z"
+    }
+  ],
+  "blockers": []
+}

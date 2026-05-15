@@ -1,0 +1,7 @@
+{
+  "query_family": "runtime_binding_projection",
+  "params": {
+    "binding_id": "rb-c357b5ab929f425c89efcb7b98eacf91"
+  },
+  "replay_mode": "local_lineage_read_service"
+}

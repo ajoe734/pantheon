@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+codex_bin="$HOME/.npm-global/bin/codex"
+if [[ ! -x "${codex_bin}" ]]; then
+  # Fallback: search PATH in case codex is installed elsewhere.
+  alt="$(command -v codex 2>/dev/null || true)"
+  if [[ -n "${alt}" && "${alt}" != "$0" ]]; then
+    codex_bin="${alt}"
+  else
+    echo "Codex CLI binary not found at ${codex_bin} or on PATH." >&2
+    exit 1
+  fi
+fi
+
+exec "${codex_bin}" "$@"

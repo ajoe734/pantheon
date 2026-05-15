@@ -1,0 +1,74 @@
+{
+  "feature_id": "BFF-2026-05-07-final",
+  "status": "delivered",
+  "delivery_date": "2026-05-08",
+  "backend_commit": "325197f1dc9f21d724ae7cc7d9d4e1238350924f",
+  "runtime_code_commit": "d39496c4ee83af66a98e42bf5c8788814c370c09",
+  "working_tree_only": false,
+  "verified_runtime_ref": "pantheon-bff@d39496c4ee83af66a98e42bf5c8788814c370c09",
+  "bff_contract_version": "pantheon-bff@d39496c4ee83af66a98e42bf5c8788814c370c09",
+  "test_result": "457 passed, 0 failures, 36 warnings",
+  "test_command": "python3 -m pytest services/control-plane/bff -q --tb=no",
+  "delivery_note_path": "docs/pantheon-delivery/BFF-2026-05-07-final/DELIVERY_NOTE.md",
+  "contract_verification_path": "docs/bff/execution-tasks/2026-05-07-final/BFF-FINAL-010-contract-verification.md",
+  "coordination_response_path": ".coordination/responses/BFF-2026-05-07-final-backend-delivery.yaml",
+  "completed_tasks": [
+    "BFF-FINAL-001",
+    "BFF-FINAL-002",
+    "BFF-FINAL-003",
+    "BFF-FINAL-004",
+    "BFF-FINAL-005",
+    "BFF-FINAL-006",
+    "BFF-FINAL-007",
+    "BFF-FINAL-008",
+    "BFF-FINAL-009",
+    "BFF-FINAL-010"
+  ],
+  "endpoints": [
+    "POST /bff/v1/commands",
+    "POST /api/v1/operator/commands",
+    "GET /bff/actions",
+    "GET /api/v1/stream/{channel}",
+    "POST /bff/v1/mcp/servers/{server_id}/import-tools",
+    "POST /bff/mcp-servers/{server_id}/import-tools",
+    "POST /bff/v1/mcp/servers/{server_id}/tools/{tool_id}/actions/{action}",
+    "POST /bff/mcp-tools/{tool_id}/{action}",
+    "PATCH /bff/agora/journal/{entry_id}",
+    "GET /bff/v5/interventions",
+    "POST /bff/v5/interventions/{id}/remediate",
+    "GET /bff/approvals"
+  ],
+  "sse_channels": [
+    "approval", "ask", "artifact", "runtime", "mcp", "skill", "channel", "tool",
+    "ranking", "rebalance", "evolution", "research", "signal", "inbox",
+    "journal", "postmortem", "loop", "sentinel", "intervention", "audit", "system"
+  ],
+  "error_codes": [
+    "CONFIRM_TOKEN_REQUIRED",
+    "APPROVAL_REQUIRED",
+    "TWO_MAN_REQUIRED",
+    "IDEMPOTENCY_CONFLICT",
+    "SSE_REPLAY_UNAVAILABLE",
+    "INVALID_PARAMS",
+    "INVALID_REQUEST",
+    "AUTHZ_DENIED",
+    "OBJECT_NOT_FOUND",
+    "CONCURRENT_MODIFICATION",
+    "INVALID_STATE"
+  ],
+  "deferred_items": [
+    "POST /bff/v5/interventions/{id}/decision",
+    "POST /bff/v5/interventions/{id}/two-man-sign",
+    "SSE event emission from /remediate handler",
+    "MCP tool read projections",
+    "datetime.utcnow() deprecation in read_store.py",
+    "Multi-replica SSE replay store"
+  ],
+  "closure_evidence": [
+    "457 BFF tests passed with 0 failures at HEAD d39496c4 (runtime code commit); delivery metadata last updated at 325197f1 (prior delivery-metadata anchor; the git commit containing these artifacts is the final delivery commit)",
+    "All nine BFF-FINAL tasks are done per ai-status.json and ai-task-archive",
+    "Cleanup pass found no unresolved TODO/FIXME/STUB in production paths",
+    "Known stubs (auth stub, interventions store) are env-gated and appropriate for paper env",
+    "Coordination response emitted at .coordination/responses/BFF-2026-05-07-final-backend-delivery.yaml"
+  ]
+}

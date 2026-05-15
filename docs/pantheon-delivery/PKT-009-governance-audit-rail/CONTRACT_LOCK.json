@@ -1,0 +1,29 @@
+{
+  "feature_id": "PKT-009-governance-audit-rail",
+  "status": "loop-complete",
+  "backend_commit": "7044eb63e4585f141f4bd03b1d79094a9c514e41",
+  "working_tree_only": true,
+  "verified_runtime_ref": "pantheon-working-tree@7044eb63e4585f141f4bd03b1d79094a9c514e41",
+  "bff_contract_version": "pantheon-bff@7044eb63e4585f141f4bd03b1d79094a9c514e41+working-tree",
+  "source_payload": ".coordination/requests/PKT-009-governance-audit-rail-frontend-feedback.yaml",
+  "transport_commit": "5d419de6683f48fd2174cd5eac6bc50c73f78e13",
+  "metadata_commit": "b58e077159b6897f9ffa6418444c65e608646bec",
+  "review_file": ".coordination/reviews/BP6-LUV-020-review.md",
+  "needs_runtime_request": ".coordination/requests/PKT-009-governance-audit-rail-needs-runtime.yaml",
+  "endpoints": [
+    "GET /api/v1/operator/governance/audit"
+  ],
+  "contract_paths": [
+    "docs/bff/PKT-009-governance-audit-rail.md",
+    "docs/examples/PKT-009-governance-audit-rail.json",
+    "docs/screens/PKT-009-governance-audit-rail.md",
+    "docs/pantheon-handoffs/PKT-009-governance-audit-rail/FRONTEND_CHANGE_SPEC.md"
+  ],
+  "closure_evidence": [
+    "Pantheon BFF now wires the published governance audit read route in the current working tree",
+    "Read-store coverage now includes governance audit filtering, pagination, degraded retention, and honest-mode unavailable behavior",
+    "The mirrored frontend-feedback request now points to replayable transport commit 5d419de6683f48fd2174cd5eac6bc50c73f78e13",
+    "Metadata commit b58e077159b6897f9ffa6418444c65e608646bec truthfully points frontend-feedback.source_commit back to the transport commit",
+    "Targeted Pantheon tests, shared smoke verification, and sibling front production build passed"
+  ]
+}

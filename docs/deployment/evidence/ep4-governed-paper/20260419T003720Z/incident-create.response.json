@@ -1,0 +1,23 @@
+{
+  "status": 201,
+  "payload": {
+    "incident_id": "inc-ep4-c1c15d4c",
+    "title": "EP4 governed paper acceptance incident",
+    "status": "open",
+    "severity": "high",
+    "created_at": "2026-04-19T00:37:20Z",
+    "binding_id": "rb-8c00a26d1fee4fabb2afdd33c7e71ea7",
+    "deployment_stage": "paper",
+    "deployment_plan_id": "plan-ep4-1195b41a",
+    "capital_pool_id": "pool-ep4-92a5eb2c",
+    "persona_capital_binding_id": "pcb-ep4-9148cfec",
+    "artifact_id": "reg-ep4-0afb20b6",
+    "artifact_version": "1.2.0",
+    "runtime_id": "paper-runtime-001",
+    "trace_id": "85e7663f-10fc-4254-a118-20112abe5322",
+    "resolved_at": null,
+    "telemetry_event_ids": [],
+    "evidence_summary": "paper runtime produced a fill and the operator opened a governed incident before rollback",
+    "lineage_ref": null
+  }
+}

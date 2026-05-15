@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "APP-003-DATASOURCE-CRYPTO-002-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-24T19:18:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-DATASOURCE-CRYPTO-002-SIDECAR-ACCEPTANCE",
+    "title": "Prepare APP-003-DATASOURCE-CRYPTO-002 acceptance packet and dependency map",
+    "summary_zh": "平行支援 APP-003-DATASOURCE-CRYPTO-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Phase 5",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "APP-003-DATASOURCE-CRYPTO-001"
+    ],
+    "artifacts": [
+      "support/sidecars/APP-003-DATASOURCE-CRYPTO-002/APP-003-DATASOURCE-CRYPTO-002-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved sidecar acceptance packet and closed it. Support packet now reflects the landed Kraken websocket, REST/websocket execution-sync, and replay-metadata join evidence without changing canonical truth; parent owner may absorb it into the main closeout flow at discretion.",
+    "last_update": "2026-04-24T19:18:04Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-DATASOURCE-CRYPTO-002",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar 審查通過：refresh 後的 acceptance packet 準確對齊 repo 真實狀態（Kraken WebSocket/execution-sync/replay-metadata 都已 landed）",
+      "Scope 守住 support-only，未動 L1 canonical truth 或父任務 lifecycle",
+      "重新執行 services.execution.test_kraken_adapter（10 tests）與 services.data-plane.tests.test_data_plane_schemas（54 tests）皆通過，與 packet 中 Verification Snapshot 一致"
+    ],
+    "review_file": "docs/reviews/sidecars/2026-04-24-APP-003-DATASOURCE-CRYPTO-002-SIDECAR-ACCEPTANCE-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-24T19:18:04Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "6abc97bfd334127d896aa619606012c7f9d0208c",
+      "commit_subject": "APP-003-DATASOURCE-CRYPTO-002-SIDECAR-ACCEPTANCE finalize support packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "APP-003-DATASOURCE-CRYPTO-002-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1185,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-24T17:46:49Z",
+      "resolved_at": "2026-04-24T19:11:23Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Acceptance packet refreshed at support/sidecars/APP-003-DATASOURCE-CRYPTO-002/APP-003-DATASOURCE-CRYPTO-002-SIDECAR-ACCEPTANCE.md. Reconciled the stale pre-implementation baseline with current repo truth: Kraken websocket subscription, REST/websocket execution-sync, and replay-metadata join coverage are all landed and revalidated by current unittest runs (10 adapter tests, 54 data-plane schema tests). Please review the packet as a support-only handoff aligned with the already-approved parent review.",
+      "status": "done",
+      "created_at": "2026-04-24T19:13:57Z",
+      "resolved_at": "2026-04-24T19:16:12Z"
+    },
+    {
+      "task_id": "APP-003-DATASOURCE-CRYPTO-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Sidecar acceptance packet approved: refreshed packet truthfully reflects current repo state (Kraken websocket subscription, REST/websocket execution-sync reconciliation, and replay-metadata join are all landed and revalidated). Scope stays support-only; L1 canonical truth untouched. Revalidated 10 adapter tests and 54 data-plane schema tests pass. Review doc at docs/reviews/sidecars/2026-04-24-APP-003-DATASOURCE-CRYPTO-002-SIDECAR-ACCEPTANCE-review.md. Returned to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-04-24T19:16:12Z",
+      "resolved_at": "2026-04-24T19:18:04Z"
+    }
+  ],
+  "blockers": []
+}

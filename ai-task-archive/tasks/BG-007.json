@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "task_id": "BG-007",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BG-007",
+    "title": "Publish product-facing glossary and stage-status language pack",
+    "summary_zh": "整理 glossary、action→object map 與 stage/status wording 的對外語言包。",
+    "phase": "Blueprint Gap P2",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "PLAN-002"
+    ],
+    "artifacts": [
+      "docs/PRODUCT_FACING_GLOSSARY_AND_LANGUAGE_PACK.md",
+      "docs/review_bg007_codex.md"
+    ],
+    "acceptance": [
+      "published glossary translates canonical terms with concrete source citations",
+      "action-to-object map uses ArtifactRecord, ApprovalDecision, DeploymentPlan, RuntimeBinding, and EvolutionDecision semantics",
+      "stage/status wording separates deployment stage, persona lifecycle, binding governance truth vs read-model projection, evolution, and runtime status",
+      "document includes 20 action rows, 12 alert messages, and 8 tooltips"
+    ],
+    "status": "done",
+    "next": "Owner finalized the reviewer-approved glossary and language pack and closed BG-007.",
+    "last_update": "2026-04-13T14:17:04Z",
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+      "phase": "phase2",
+      "profile": "blueprint-gap-convergence",
+      "planning_dir": "docs/02-architecture/consensus/phase2",
+      "session_file": "docs/02-architecture/consensus/phase2/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/phase2/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-13T07:05:23Z",
+      "session_id": "phase2-2026-04-12-blueprint-gap-convergence",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/phase2/execution-materialization.md"
+    },
+    "review_notes_zh": [
+      "審查通過：所有 canonical source 均以實際文件名稱引用，無 task ID",
+      "Persona lifecycle 7 階梯（draft→research_only→consultable→paper_owner→live_owner→frozen/retired）與 PERSONA_RUNTIME_MODEL.md 完全一致",
+      "Binding governance truth（pending/active/suspended/revoked/expired）與 read-model projection（active/inactive）正確分離，來源標注 BINDING_AND_DEPLOYMENT_SEMANTICS.md 正確",
+      "Action→object map 已採用 ArtifactRecord/ApprovalDecision/DeploymentPlan/RuntimeBinding/EvolutionDecision 正確物件名稱，與 registry/runtime-manager contract 一致",
+      "RuntimeBinding 狀態列表（active/pending_pause/paused/retired/failed）與 services/execution/runtime-manager/contract.md 完全吻合",
+      "Kill switch action row 正確描述『繞過常規排隊，不繞過權限邊界』，符合 KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md",
+      "Freeze action row 正確標注 EvolutionDecision 加 optional DeploymentPlan，符合 EVOLUTION_REVIEW_AND_THRESHOLDS.md",
+      "所有引用文件路徑均確認存在於 repo",
+      "計數正確：20 action rows, 12 alert messages, 8 tooltips"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-13T14:17:04Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "738bee5657b1b5ee08442f797e8a67ac79f8db89",
+      "commit_subject": "BG-007 publish product-facing glossary and language pack",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BG-007",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 80,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BG-007",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-13T03:11:28Z",
+      "resolved_at": "2026-04-13T03:11:31Z"
+    },
+    {
+      "task_id": "BG-007",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "All artifacts created. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-04-13T03:17:23Z",
+      "resolved_at": "2026-04-13T03:26:00Z"
+    },
+    {
+      "task_id": "BG-007",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Reopened after review: replace task-ID/vague source citations with concrete canonical docs; restore real persona lifecycle wording; clarify governance-vs-DB binding statuses; fix non-canonical action/object mappings. See docs/review_bg007_codex.md.",
+      "status": "done",
+      "created_at": "2026-04-13T03:26:00Z",
+      "resolved_at": "2026-04-13T03:26:00Z"
+    },
+    {
+      "task_id": "BG-007",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Reworked docs/PRODUCT_FACING_GLOSSARY_AND_LANGUAGE_PACK.md with concrete canonical sources instead of task IDs, restored the real persona lifecycle wording, separated binding governance truth from read-model projection, and corrected the action-to-object map to ArtifactRecord/ApprovalDecision/DeploymentPlan/RuntimeBinding/EvolutionDecision semantics. The current artifact now contains 20 action rows, 12 alert messages, and 8 tooltips for review.",
+      "status": "done",
+      "created_at": "2026-04-13T14:02:11Z",
+      "resolved_at": "2026-04-13T14:12:12Z"
+    },
+    {
+      "task_id": "BG-007",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all canonical sources verified on disk, persona lifecycle and binding separation correct, action-to-object semantics match contracts. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-04-13T14:12:12Z",
+      "resolved_at": "2026-04-13T14:17:04Z"
+    }
+  ],
+  "blockers": []
+}

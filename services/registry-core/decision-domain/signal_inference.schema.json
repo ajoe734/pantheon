@@ -76,9 +76,17 @@
             "type": "string",
             "description": "The instrument symbol. Must be present in the referenced universe."
           },
+          "instrument_type": {
+            "type": "string",
+            "description": "BG-000 instrument_type vocabulary for this signal target (for example equity, future, option, or crypto_pair)."
+          },
           "security_master_ref": {
             "type": "string",
             "description": "Optional SecurityMaster ID for provenance linkage."
+          },
+          "contract_master_ref": {
+            "type": "string",
+            "description": "Optional ContractMaster ID for derivatives provenance linkage."
           },
           "direction": {
             "type": "string",
@@ -257,6 +265,42 @@
         },
         "min_magnitude": {
           "type": "number"
+        }
+      }
+    },
+    "market_scope": {
+      "type": "object",
+      "description": "Inherited BG-000 market_scope envelope for this signal batch, including the BG-001 master or dataset IDs that bound replay for these signals.",
+      "properties": {
+        "asset_classes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "markets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "security_master_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "contract_master_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dataset_version_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       }
     },

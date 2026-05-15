@@ -12,6 +12,10 @@ name: Coordination Dispatch Receiver
 #   event_type, feature_id, payload_path, source_repo, source_commit,
 #   source_ref, trigger_mode, origin_workflow
 #
+# Transport note:
+#   - envelope source_commit points to the commit that contains payload_path
+#   - payload.source_commit may point to the reviewed UI cycle commit
+#
 # See .coordination/responses/F-042-lovable-ui-task.yaml and
 # docs/02-architecture/consensus/sessions/phase3-2026-04-14-pantheon-console-loop/coordination-loop-spec.md
 # for the full protocol contract.
@@ -99,7 +103,7 @@ jobs:
           fi
 
       - name: Checkout source repo at source_commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ steps.envelope.outputs.source_repo }}
           ref: ${{ steps.envelope.outputs.source_commit }}
@@ -180,11 +184,16 @@ jobs:
                   f"payload='{payload_source_repo}'"
               )
 
+          # envelope source_commit is the transport commit that must contain
+          # the payload. payload.source_commit may instead pin the reviewed UI
+          # cycle commit that Pantheon should inspect.
           payload_source_commit = payload.get("source_commit", "")
-          if payload_source_commit and payload_source_commit != envelope_source_commit:
+          if payload_source_commit and not (
+              len(payload_source_commit) == 40 and
+              all(c in "0123456789abcdef" for c in payload_source_commit)
+          ):
               errors.append(
-                  f"source_commit mismatch: envelope='{envelope_source_commit}' "
-                  f"payload='{payload_source_commit}'"
+                  f"payload source_commit must be a full 40-character SHA, got '{payload_source_commit}'"
               )
 
           # Rule 4: repo-relative paths referenced in payload must not be absolute

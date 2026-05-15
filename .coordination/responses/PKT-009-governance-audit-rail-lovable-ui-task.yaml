@@ -1,8 +1,7 @@
 feature_id: PKT-009-governance-audit-rail
 type: lovable-ui-task
 project: ajoe734/front-ai-trading-system
-status: loop-complete
-cycle: 2
+status: ready
 pantheon_pr: null
 base_url: null
 workbench: governance-workbench
@@ -17,12 +16,6 @@ constraints:
 - do not add raw fetch in components
 - do not import demo providers
 - if any required field is missing, emit a bff-gap handoff instead of mocking
-- publish ui-done and frontend-feedback from a transport-replayable front-repo
-  commit that contains the returned PKT-009 request pair, feedback bundle, and
-  audit rail UI files
-- do not leave GovernanceAuditRail.tsx, AuditEntryDetail.tsx, or the PKT-009
-  request or feedback files only in the working tree when republishing this
-  cycle
 acceptance:
 - build the Governance Audit Rail list and entry detail drawer
 - use only the existing BFF client
@@ -35,9 +28,6 @@ acceptance:
   degraded
 - replace the list with unavailable-data message when meta.surfaces.audit_trail is
   unavailable
-- republished frontend-feedback and ui-done payloads truthfully reference the
-  same Git-visible front commit that contains the PKT-009 request pair,
-  feedback bundle, and governance audit rail UI files
 required_feedback:
 - docs/pantheon-feedback/PKT-009-governance-audit-rail/LOVABLE_CHANGE_FEEDBACK.md
 - docs/pantheon-feedback/PKT-009-governance-audit-rail/API_GAP_REQUESTS.json
@@ -57,5 +47,5 @@ gap_handoff_path: .coordination/requests/PKT-009-governance-audit-rail-bff-gap.y
 gap_handoff_template: .coordination/requests/PKT-009-governance-audit-rail-bff-gap.example.yaml
 completion_handoff_path: .coordination/requests/PKT-009-governance-audit-rail-ui-done.yaml
 completion_handoff_template: .coordination/requests/PKT-009-governance-audit-rail-ui-done.example.yaml
-frontend_feedback_handoff_path: .coordination/requests/PKT-009-governance-audit-rail-frontend-feedback.yaml
-review_findings_ref: .coordination/reviews/BP6-LUV-020-review.md
+feedback_handoff_path: .coordination/requests/PKT-009-governance-audit-rail-frontend-feedback.yaml
+feedback_handoff_template: .coordination/requests/PKT-009-governance-audit-rail-frontend-feedback.example.yaml

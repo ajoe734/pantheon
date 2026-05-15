@@ -1,0 +1,5 @@
+# OSS-NEXT-007 materialization baseline
+# Status: source-selected / version-pinned; no governed adapter implemented yet
+QuantLib-Python==1.18
+pandas>=2.2.2,<2.3.0
+numpy>=1.26.4,<2.0.0

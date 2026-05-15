@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-SEM-004",
+  "archived_at": "2026-05-09T11:11:38Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-SEM-004",
+    "title": "BFF semantic completion: v5 loop/sentinel/runtime semantics",
+    "summary_zh": "把 v5 loop-runs/persona-health/strategy-health/sentinel findings 從 derived/empty fallback 補成 runtime-backed semantics。",
+    "phase": "BFF Execute-Plans Semantic Completion 2026-05-09",
+    "owner": "Claude2",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-09-execute-plans-semantic-completion/BFF-LUV-SEM-004-v5-loop-sentinel-runtime.md"
+    ],
+    "acceptance": [
+      "v5 control room composes real child read models",
+      "seeded loop and sentinel records are visible",
+      "missing runtime source degrades without 500",
+      "focused v5 tests pass"
+    ],
+    "next": "Owner Claude2 finalized after Codex2 approval. Task-scoped commit 76bfcc8e bundles read_store/main wiring, contract regressions, and artifact closeout note. Verification re-run on closeout: read-store loop/sentinel suite 14 passed; v5 loop/sentinel contract 19 passed; final wiring/command/auth/capital regression group 55 passed with 14 pre-existing warnings (88 total, 0 failures).",
+    "last_update": "2026-05-09T11:11:38Z",
+    "task_class": "semantic_completion",
+    "auto_created_by": "Codex",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過。Codex2 補了一個 reviewer follow-up：control-room 的 loop/sentinel child surfaces 改為獨立計算，避免 incidents 缺失且只有單邊 dedicated fallback 可用時把另一邊誤報為可用；新增 sentinel-only fallback regression。驗證：py_compile main/read_store；test_read_store_loop_sentinel.py 14 passed；test_bff_v5_loop_sentinel_contract.py 19 passed；final wiring/command regression group 55 passed、14 pre-existing warnings。"
+    ],
+    "review_file": "docs/bff/execution-tasks/2026-05-09-execute-plans-semantic-completion/BFF-LUV-SEM-004-v5-loop-sentinel-runtime.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-09T11:11:38Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "76bfcc8ef3fd5c9b1e8e96e9538ab6ca0a35ab33",
+      "commit_subject": "BFF-LUV-SEM-004: wire v5 loop/sentinel runtime semantics with source-aware metadata",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "- read_store.py": "add loop_runs and sentinel_findings to ServiceBackedReadAdapter",
+        "- main.py": "_sem_final_generic_list_for_path / _sem_final_generic_detail_for_path",
+        "- Tests": "14 read-store regressions, 19 v5 loop/sentinel contract regressions,",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "BFF-LUV-SEM-004",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 26,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 16,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-SEM-004",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-09T09:58:15Z",
+      "resolved_at": "2026-05-09T09:58:15Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-004",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Implementation complete. read_store methods (list_loop_runs, get_loop_run, list_sentinel_findings, get_sentinel_finding) derive from incidents dataset with pattern-ID fallback. All v5 routes wired: loop-runs, sentinel/findings, control-room composition, persona-health, strategy-health. Degraded behavior when source absent. Commit 0a09905a. 56 tests passed (12 unit + 15 v5 contract + 29 regression, 0 failures).",
+      "status": "done",
+      "created_at": "2026-05-09T10:23:16Z",
+      "resolved_at": "2026-05-09T10:45:59Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-004",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Review not approved: fallback/runtime source metadata is inconsistent. When PANTHEON_BFF_LOOP_RUN_STORE is populated and incidents are absent, GET /bff/v5/loop-runs and /bff/v5/loop-runs/{id} return data but meta.surfaces reports status=unavailable source=missing because the BFF still asks dataset_source('incidents') instead of the actual loop_runs fallback source; apply the same fix for sentinel_findings. Also, when an incidents source exists but is empty, list_loop_runs/list_sentinel_findings return (False, []) while detail lookup returns (True, None), so healthy empty runtime sources are misreported as missing/degraded. Existing suites pass: 27 focused loop/sentinel tests and 53 regression tests. Please fix source-aware metadata/availability and add regressions for dedicated fallback store with data and empty incidents source.",
+      "status": "done",
+      "created_at": "2026-05-09T10:45:59Z",
+      "resolved_at": "2026-05-09T10:45:59Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-004",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Source-aware metadata fixes committed. (1) list_loop_runs/list_sentinel_findings: changed 'if avail_inc and incidents:' to 'if avail_inc:' — empty incidents source now returns (True, []) instead of misreporting (False, []). (2) All 5 loop-runs/sentinel paths in main.py (list, detail x2, control-room): now compute src_dataset='loop_runs'/'sentinel_findings' when incidents is missing but dedicated store provides data, so meta.surfaces correctly reflects the actual source. 5 regressions added: test_read_store_loop_sentinel.py 14 passed; test_bff_v5_loop_sentinel_contract.py 18 passed; regression suite 55 passed. 0 failures.",
+      "status": "done",
+      "created_at": "2026-05-09T10:59:04Z",
+      "resolved_at": "2026-05-09T11:04:32Z"
+    },
+    {
+      "task_id": "BFF-LUV-SEM-004",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Review approved after source-aware metadata follow-up. Reviewer patch keeps control-room loop/sentinel surfaces independent for partial dedicated fallback; verification: py_compile main/read_store, read-store suite 14 passed, v5 loop/sentinel contract 19 passed, final wiring regression group 55 passed with 14 pre-existing warnings. Owner Claude2 should create the task-scoped closeout commit and run done.",
+      "status": "done",
+      "created_at": "2026-05-09T11:04:32Z",
+      "resolved_at": "2026-05-09T11:11:38Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-GAP-005",
+  "archived_at": "2026-05-08T16:46:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-GAP-005",
+    "title": "Implement governance runtime risk incident and audit BFF compatibility",
+    "summary_zh": "補上 governance/runtime/risk/incident/audit/command confirmation 的 execute-plans /bff route aliases。",
+    "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/BFF-LUV-GAP-005-governance-runtime-risk-audit.md"
+    ],
+    "acceptance": [
+      "governance routes covered",
+      "runtime risk incident routes covered",
+      "audit and command confirmation covered"
+    ],
+    "next": "Closed after reviewer approval. Scoped implementation commit 2ef41289 plus closeout verification commit 6cf738b3 are durable with required metadata. Focused verification rerun: pytest -q services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -> 9 passed; python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/models.py services/control-plane/bff/read_store.py services/control-plane/bff/action_catalog.py -> passed. No additional isolated generated-state commit was created because ai-status/current-work/archive already contained unrelated cross-task orchestrator updates.",
+    "last_update": "2026-05-08T16:46:36Z",
+    "review_notes_zh": [
+      "Reviewed GAP-005 against task artifact and current BFF implementation; required governance/runtime/risk/incident/audit/command-confirmation /bff aliases are present.",
+      "Focused verification passed locally: pytest -q services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -> 9 passed; python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/models.py services/control-plane/bff/read_store.py services/control-plane/bff/action_catalog.py passed.",
+      "Known adjacent full action_catalog Agora CommandType gaps remain outside GAP-005 scope as documented in the task artifact."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-08T16:46:36Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "6cf738b395e0e2ee806e608ae49227747a137b36",
+      "commit_subject": "BFF-LUV-GAP-005: closeout verification",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-LUV-GAP-005",
+        "Reviewer": "Codex",
+        "Verification": "pytest -q services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py -> 9 passed; python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/models.py services/control-plane/bff/read_store.py services/control-plane/bff/action_catalog.py -> passed",
+        "Implementation-Commit": "2ef4128959fae9b27a95c51d57b72f0389bbf166"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 18,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 70,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-GAP-005",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implementation complete: governance/runtime/risk/incident/audit/command-confirmation /bff compatibility is covered. Commit: 2ef41289. Focused verification passed: pytest -q services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py; python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/models.py services/control-plane/bff/read_store.py services/control-plane/bff/action_catalog.py. Note: full action_catalog test still has pre-existing Agora CommandType catalog gaps outside BFF-LUV-GAP-005.",
+      "status": "done",
+      "created_at": "2026-05-08T16:37:56Z",
+      "resolved_at": "2026-05-08T16:43:39Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-005",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewer approved GAP-005. Focused BFF contract tests and py_compile passed; owner should run closeout finalization next.",
+      "status": "done",
+      "created_at": "2026-05-08T16:43:39Z",
+      "resolved_at": "2026-05-08T16:46:37Z"
+    }
+  ],
+  "blockers": []
+}

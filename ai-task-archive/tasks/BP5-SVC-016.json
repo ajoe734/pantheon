@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "task_id": "BP5-SVC-016",
+  "archived_at": "2026-04-16T15:24:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP5-SVC-016",
+    "title": "Package the honest service stack into Docker, compose, and smoke topology",
+    "summary_zh": "把 service stack 真實包成 Docker/compose/smoke topology，讓 runtime/governance/evidence/BFF/streaming 能以 single-VM baseline 啟動。",
+    "phase": "Phase 5: Full Blueprint Gap Closure",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "depends_on": [
+      "BP5-SVC-002",
+      "BP5-SVC-003",
+      "BP5-SVC-005",
+      "BP5-SVC-009",
+      "BP5-SVC-010",
+      "BP5-SVC-015"
+    ],
+    "artifacts": [
+      "docker-compose.yml",
+      "Dockerfile*",
+      "docs/remote-dev-gcp-vm.md"
+    ],
+    "acceptance": [
+      "runtime, governance, evidence, BFF, and streaming surfaces boot through one honest compose topology",
+      "smoke scripts prove the stack can start without hidden local-only fallbacks"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "phase": "phase5",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure",
+      "session_file": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-04-15T15:29:24Z",
+      "session_id": "phase5-2026-04-15-full-blueprint-gap-closure",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase5-2026-04-15-full-blueprint-gap-closure/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Checkpoint: finalized approved honest compose topology on commit b66fa07; delivery archived with compose, Dockerfiles, smoke script, and VM runbook.",
+    "last_update": "2026-04-16T15:24:12Z",
+    "review_notes_zh": [
+      "審查通過：compose topology 完整覆蓋 runtime/governance/telemetry/incidents/postmortems/BFF/streaming 六個 surface，smoke script 純 HTTP 路徑無本地 fallback，cross-process IncidentStore refresh 透過 shared volume 正確實現。兩項 acceptance criteria 均通過。"
+    ],
+    "review_file": "support/sidecars/BP5-SVC-016/BP5-SVC-016-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-16T15:24:12Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "commit": "b66fa0788d4afac935cf91cff3c90f15e8e1fadc",
+      "commit_subject": "BP5-SVC-016: package honest service stack topology",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BP5-SVC-016",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 189,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP5-SVC-016",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-16T14:53:20Z",
+      "resolved_at": "2026-04-16T14:54:35Z"
+    },
+    {
+      "task_id": "BP5-SVC-016",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Honest compose stack packaged. Added service Dockerfiles, compose-backed smoke profile, remote VM runbook updates, and cross-process IncidentStore refresh so incidents/postmortems share file-backed state. Verified with 'docker compose --profile smoke up --build --abort-on-container-exit smoke-stack' passing end to end.",
+      "status": "done",
+      "created_at": "2026-04-16T15:18:47Z",
+      "resolved_at": "2026-04-16T15:21:43Z"
+    },
+    {
+      "task_id": "BP5-SVC-016",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: honest compose stack meets both acceptance criteria. All six surfaces boot via one topology; smoke script proves no local-only fallbacks.",
+      "status": "done",
+      "created_at": "2026-04-16T15:21:43Z",
+      "resolved_at": "2026-04-16T15:24:12Z"
+    }
+  ],
+  "blockers": []
+}

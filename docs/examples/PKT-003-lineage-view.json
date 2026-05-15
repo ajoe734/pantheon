@@ -1,0 +1,63 @@
+{
+  "lineage_list": {
+    "items": [
+      {
+        "artifact_id": "artifact-042",
+        "edge_count": 2,
+        "last_edge_at": "2026-04-11T10:00:00Z"
+      }
+    ],
+    "page_info": {
+      "next_page_token": null
+    },
+    "meta": {
+      "snapshot_at": "2026-04-14T12:00:00Z"
+    }
+  },
+  "lineage_edge_detail": {
+    "id": "ln-edge-001",
+    "from_artifact_id": "artifact-041",
+    "to_artifact_id": "artifact-042",
+    "relationship": "derived_from",
+    "created_at": "2026-04-09T14:00:00Z",
+    "meta": {
+      "snapshot_at": "2026-04-14T12:00:00Z"
+    }
+  },
+  "lineage_graph": {
+    "nodes": [
+      {
+        "artifact_id": "artifact-041",
+        "artifact_version": "v2.0.0",
+        "artifact_type": "strategy"
+      },
+      {
+        "artifact_id": "artifact-042",
+        "artifact_version": "v2.1.0",
+        "artifact_type": "strategy"
+      },
+      {
+        "artifact_id": "artifact-043",
+        "artifact_version": "v2.2.0",
+        "artifact_type": "strategy"
+      }
+    ],
+    "edges": [
+      {
+        "id": "ln-edge-001",
+        "from_artifact_id": "artifact-041",
+        "to_artifact_id": "artifact-042",
+        "relationship": "derived_from"
+      },
+      {
+        "id": "ln-edge-002",
+        "from_artifact_id": "artifact-042",
+        "to_artifact_id": "artifact-043",
+        "relationship": "promoted_to"
+      }
+    ],
+    "meta": {
+      "snapshot_at": "2026-04-14T12:00:00Z"
+    }
+  }
+}

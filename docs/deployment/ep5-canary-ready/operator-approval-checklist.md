@@ -6,25 +6,18 @@ This checklist is the operator-facing runbook for the prerequisite-only
 ## 1. Prepare The VM-2 Env File
 
 ```bash
-python3 scripts/seed_ep5_execution_secrets.py \
-  --project pantheon-493602 \
-  --broker-api-key-file /secure-inputs/broker_api_key.txt \
-  --broker-api-secret-file /secure-inputs/broker_api_secret.txt \
-  --exchange-api-key-file /secure-inputs/exchange_api_key.txt \
-  --exchange-api-secret-file /secure-inputs/exchange_api_secret.txt
-
-python3 scripts/materialize_exec_env_from_secret_manager.py \
-  --template env/canary-exec.env.example \
-  --output env/canary-exec.env \
-  --project pantheon-493602 \
-  --generate-runtime-manager-token
+cp env/canary-exec.env.example env/canary-exec.env
+chmod 600 env/canary-exec.env
 ```
 
 Fill in the machine-local file with:
 
-- any remaining machine-local overrides after secret hydration
+- real broker / exchange secrets on VM-2 only
 - broker account ref and venue ref
+- governed provider refs for `IBKR`, `Shioaji`, `Kraken`, and `TEJ`
+- the chosen US market-data provider ref (`Massive / Polygon` when enabled, otherwise explicit `IBKR market data` fallback)
 - approval, pool, persona-binding, and fallback artifact refs
+- promotion gate refs: human-gate packet, broker sandbox smoke packet, risk-owner approval, and operator approval
 
 ## 2. Run The Readiness Checklist
 
@@ -42,9 +35,62 @@ Expected outcome:
 - canary capital gate passes
 - runtime-manager health passes
 - broker / exchange sidecar health passes when published
+- governed datasource provider matrix is recorded truthfully in the output bundle
 - output bundle contains `operator-checklist.json`
 
-## 3. Emit The Canary DeploymentPlan Artifact
+## 3. Run The Provider Smoke Validation
+
+```bash
+python3 scripts/run_ep5_canary_readiness.py \
+  run-datasource-smoke \
+  --env-file env/canary-exec.env \
+  --output-dir /tmp/pantheon/ep5-canary-ready/datasource-smoke
+```
+
+Expected artifacts:
+
+- `datasource-smoke.json`
+- `summary.json`
+
+Review before any later human gate:
+
+- `IBKR` order and market-data payloads are materialized from the env-backed boundary
+- `Shioaji` order and quote-subscription payloads are materialized from the env-backed boundary
+- `Kraken` order and venue quote payloads are materialized from the env-backed boundary
+- `TEJ` dataset normalization stays on the `research_grade` vendor boundary
+
+## 3A. Run The Read-Only Market-Data Credential Smoke
+
+Run this on VM-2, or another credentialed runtime, when provider credentials or
+quote readback files are available:
+
+```bash
+python3 scripts/run_marketdata_credential_smoke.py \
+  --env-file env/canary-exec.env \
+  --allow-network \
+  --output-dir /tmp/pantheon/ep5-canary-ready/marketdata-credential-smoke
+```
+
+Expected artifacts:
+
+- one JSON packet for each governed read-only provider:
+  `Massive / Polygon`, `TWSE`, `TPEx`, `MOPS`, `TEJ`, `CoinGecko`,
+  `Kraken`, `IBKR`, and `Shioaji`
+- `summary.json`
+
+Review before any later human gate:
+
+- credentialed providers show `read_ok` or explicit unavailable-credential
+  evidence without raw secret material
+- public official/reference providers show `read_ok` or explicit read-unavailable
+  evidence
+- every provider packet includes non-secret `rate_limit` / quota evidence and
+  `session_provenance`; absent headers, disabled network, or repo-local quote
+  readback files must record an explicit unavailable / not-observed reason
+- `IBKR`, `Shioaji`, and `Kraken` order paths remain disabled in this smoke;
+  broker order API evidence belongs to `P2-BROKER-SANDBOX-ORDER-001`
+
+## 4. Emit The Canary DeploymentPlan Artifact
 
 ```bash
 python3 scripts/run_ep5_canary_readiness.py \
@@ -67,7 +113,7 @@ Review before any later human gate:
 - `rollback.action_type = pause_then_replace` unless a stricter rule is approved
 - fallback artifact refs are present
 
-## 4. Rehearse The Rollback Drill
+## 5. Rehearse The Rollback Drill
 
 Dry-run first:
 
@@ -98,7 +144,7 @@ Expected real-drill outcomes:
 - replacement binding becomes `active`
 - archived drill output contains request/response JSON and `summary.json`
 
-## 5. Degraded-Path Fallback
+## 6. Degraded-Path Fallback
 
 If the BFF is unavailable, operators may still rehearse the same boundary via
 the admin CLI / internal API path already documented elsewhere.
@@ -121,7 +167,7 @@ python3 tools/pantheon_admin/cli.py --dry-run kill-switch activate \
   --force
 ```
 
-## 6. Scope Guardrail
+## 7. Scope Guardrail
 
 Closing this checklist does not mean `EP5` is achieved.
 

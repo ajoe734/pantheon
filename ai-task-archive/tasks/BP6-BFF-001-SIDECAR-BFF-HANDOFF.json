@@ -1,0 +1,244 @@
+{
+  "version": 1,
+  "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-17T04:25:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BP6-BFF-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BP6-BFF-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Phase 6: Full Blueprint Completion",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/BP6-BFF-001/BP6-BFF-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar BFF/frontend handoff packet is ready at support/sidecars/BP6-BFF-001/BP6-BFF-001-SIDECAR-BFF-HANDOFF.md. It consolidates the 5 resolved bff-gap handoffs into one reviewer map and preserves the two nuance cases: F-042 frontend prompt-level closure and PKT-002 incident-detail followup-required status.",
+    "last_update": "2026-04-17T04:25:15Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BP6-BFF-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已核對 sidecar packet 僅整理支援性 handoff material，未修改 canonical truth 或主線 runtime/registry/governance 實作。",
+      "五個 bff-gap request 與對應 lovable-ui-task 狀態摘要正確，F-042 prompt-level closure 與 PKT-002 incident-detail followup-required 兩個細節也有被正確標示。",
+      "Reviewer 同意此 sidecar task 進入 review_approved，待 owner 依流程正式收尾。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-17T04:25:15Z",
+      "branch": "master",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 341,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T02:25:22Z",
+      "resolved_at": "2026-04-17T02:27:27Z"
+    },
+    {
+      "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T02:32:40Z",
+      "resolved_at": "2026-04-17T02:33:37Z"
+    },
+    {
+      "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T02:34:19Z",
+      "resolved_at": "2026-04-17T02:35:15Z"
+    },
+    {
+      "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T02:39:24Z",
+      "resolved_at": "2026-04-17T02:39:48Z"
+    },
+    {
+      "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T02:41:18Z",
+      "resolved_at": "2026-04-17T02:42:33Z"
+    },
+    {
+      "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T02:44:55Z",
+      "resolved_at": "2026-04-17T02:45:22Z"
+    },
+    {
+      "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T02:47:43Z",
+      "resolved_at": "2026-04-17T02:48:22Z"
+    },
+    {
+      "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T02:53:52Z",
+      "resolved_at": "2026-04-17T02:55:24Z"
+    },
+    {
+      "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T02:56:06Z",
+      "resolved_at": "2026-04-17T02:57:05Z"
+    },
+    {
+      "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T02:59:01Z",
+      "resolved_at": "2026-04-17T03:00:13Z"
+    },
+    {
+      "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-04-17T03:09:32Z",
+      "resolved_at": "2026-04-17T03:10:33Z"
+    },
+    {
+      "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T03:23:10Z",
+      "resolved_at": "2026-04-17T03:23:32Z"
+    },
+    {
+      "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T03:31:25Z",
+      "resolved_at": "2026-04-17T03:32:34Z"
+    },
+    {
+      "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T03:43:16Z",
+      "resolved_at": "2026-04-17T03:43:49Z"
+    },
+    {
+      "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T03:44:44Z",
+      "resolved_at": "2026-04-17T03:46:00Z"
+    },
+    {
+      "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T03:59:53Z",
+      "resolved_at": "2026-04-17T04:00:27Z"
+    },
+    {
+      "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T04:01:10Z",
+      "resolved_at": "2026-04-17T04:01:58Z"
+    },
+    {
+      "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T04:05:21Z",
+      "resolved_at": "2026-04-17T04:06:00Z"
+    },
+    {
+      "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-17T04:06:43Z",
+      "resolved_at": "2026-04-17T04:07:41Z"
+    },
+    {
+      "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Sidecar BFF/frontend handoff packet is ready at support/sidecars/BP6-BFF-001/BP6-BFF-001-SIDECAR-BFF-HANDOFF.md. It collapses the 5 resolved bff-gap files into one reviewer map and flags the two nuance cases: F-042 prompt-level closure and PKT-002 incident-detail followup-required state.",
+      "status": "done",
+      "created_at": "2026-04-17T04:10:55Z",
+      "resolved_at": "2026-04-17T04:23:38Z"
+    },
+    {
+      "task_id": "BP6-BFF-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: sidecar handoff packet accurately consolidates the 5 resolved BFF gaps, preserves the non-canonical support-only boundary, and correctly flags the F-042 and PKT-002 incident-detail nuance cases. Owner can finalize to done.",
+      "status": "done",
+      "created_at": "2026-04-17T04:23:38Z",
+      "resolved_at": "2026-04-17T04:25:15Z"
+    }
+  ],
+  "blockers": []
+}

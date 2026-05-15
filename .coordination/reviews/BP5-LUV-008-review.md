@@ -34,10 +34,10 @@ to `review_approved`.
   - `docs/examples/PKT-003-post-incident-review-console.json`
   - `docs/pantheon-handoffs/PKT-003-post-incident-review/FRONTEND_CHANGE_SPEC.md`
 - Reviewed the mirrored frontend implementation in the sibling checkout:
-  - `/home/edna/code/front-ai-trading-system/src/pages/operator/PostIncidentReviewConsole.tsx`
-  - `/home/edna/code/front-ai-trading-system/src/pages/operator/types.ts`
-  - `/home/edna/code/front-ai-trading-system/src/lib/bffClient.ts`
-  - `/home/edna/code/front-ai-trading-system/src/App.tsx`
+  - `/home/lupin/code/front-ai-trading-system/src/pages/operator/PostIncidentReviewConsole.tsx`
+  - `/home/lupin/code/front-ai-trading-system/src/pages/operator/types.ts`
+  - `/home/lupin/code/front-ai-trading-system/src/lib/bffClient.ts`
+  - `/home/lupin/code/front-ai-trading-system/src/App.tsx`
 - Confirmed the shared BFF client is used for the resolved incident list and composed post-incident
   review endpoint, and that the detail screen reads `meta.surfaces.*.status` from the composed view.
 
@@ -54,11 +54,11 @@ No blocking findings remain.
   `docs/pantheon-feedback/PKT-003-post-incident-review/LOVABLE_CHANGE_FEEDBACK.md`, and
   `.coordination/requests/PKT-003-post-incident-review-ui-done.yaml` now consistently document the
   URL query key as `incident`, which matches the implementation in
-  `/home/edna/code/front-ai-trading-system/src/pages/operator/PostIncidentReviewConsole.tsx:324-325`
+  `/home/lupin/code/front-ai-trading-system/src/pages/operator/PostIncidentReviewConsole.tsx:324-325`
   and `:452-461`.
 - The same corrected artifacts now explicitly state that `GET /api/v1/postmortems` is allowed but
   not implemented in this delivery. That matches the mirrored frontend, where
-  `/home/edna/code/front-ai-trading-system/src/lib/bffClient.ts:504-603` exposes
+  `/home/lupin/code/front-ai-trading-system/src/lib/bffClient.ts:504-603` exposes
   `listIncidents()` and `getPostIncidentReview()` only.
 - The new `integration_boundary_notes` in the `ui-done` handoff and the Integration Boundary Notes
   section in `LOVABLE_CHANGE_FEEDBACK.md` make the deferred scope explicit instead of overstating

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Underutilization remains and unpaused workers can progress support work without a global blocker.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-OSS-ACTIVATION-READY-BFF-OPS",
+    "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260430T060100Z-a74444a5",
+      "decision": "allow",
+      "reason": "Stages explicit task-owned OpenClaw adapter files and runs scoped git status; no commit, push, delete, or broad path mutation.",
+      "remember": false
+    }
+  ],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SVC-OPENCLAW-SESSION-LIFECYCLE",
+    "SVC-OSS-ACTIVATION-READY-BFF-OPS",
+    "SVC-SOURCE-CRAWL-FRONTIER-SCHEDULER"
+  ]
+}

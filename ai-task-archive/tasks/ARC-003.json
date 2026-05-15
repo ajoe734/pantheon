@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "task_id": "ARC-003",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ARC-003",
+    "title": "Rebalance roadmap ownership to 40-40-20 across Codex, Gemini, and Claude",
+    "phase": "Architecture",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Rebalanced roadmap ownership so Codex and Gemini carry the larger share and Claude stays focused on review plus critical execution work",
+    "last_update": "2026-04-01T10:14:44Z",
+    "summary_zh": "重新分配工作量，讓 Codex 與 Gemini 扛比較多，Claude 專注在關鍵路徑與審查。"
+  },
+  "handoffs": [],
+  "blockers": []
+}

@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "EP5-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-04-22T15:25:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EP5-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare EP5-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 EP5-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Execution / Proof Follow-on",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/EP5-001/EP5-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized reviewer-approved sidecar acceptance packet at support/sidecars/EP5-001/EP5-001-SIDECAR-ACCEPTANCE.md. Support-only scope is preserved, canonical truth remains unchanged, and the packet is closed with the EP4/EP5 boundary verified.",
+    "last_update": "2026-04-22T15:25:37Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EP5-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar acceptance packet 為 support artifact，scope 合規，無 canonical 修改",
+      "引用的七份來源檔案與 L1 proof ladder 事實一致，EP4/EP5 邊界保留正確",
+      "Parent EP5-001 狀態在 packet 作成後已推進到 review，屬後續進展，不影響 sidecar 有效性"
+    ],
+    "review_file": ".coordination/reviews/EP5-001-SIDECAR-ACCEPTANCE-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-22T15:25:37Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "9021f1a46b5220901a56d607eeac5cd026c7df21",
+      "commit_subject": "EP5-001-SIDECAR-ACCEPTANCE finalize approved acceptance packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "EP5-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1152,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EP5-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Prepared support-only acceptance packet at support/sidecars/EP5-001/EP5-001-SIDECAR-ACCEPTANCE.md. Packet anchors EP5-001 to stable EP4 evidence, marks prerequisite-only acceptance items that are still pending, and keeps EP5-002 as later gated proof work without changing canonical truth.",
+      "status": "done",
+      "created_at": "2026-04-22T07:10:11Z",
+      "resolved_at": "2026-04-22T14:42:28Z"
+    },
+    {
+      "task_id": "EP5-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Ownership updated",
+      "status": "done",
+      "created_at": "2026-04-22T14:42:28Z",
+      "resolved_at": "2026-04-22T15:01:11Z"
+    },
+    {
+      "task_id": "EP5-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: sidecar packet scope-compliant, source refs verified, EP4/EP5 boundary preserved",
+      "status": "done",
+      "created_at": "2026-04-22T15:01:11Z",
+      "resolved_at": "2026-04-22T15:25:37Z"
+    }
+  ],
+  "blockers": []
+}

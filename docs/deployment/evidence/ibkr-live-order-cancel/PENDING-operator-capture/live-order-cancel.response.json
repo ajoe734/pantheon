@@ -1,0 +1,188 @@
+{
+  "order_id": "1",
+  "order_status": "PreSubmitted",
+  "captured_at": "2026-04-26T13:27:38Z",
+  "source": "scripts/run_ibkr_live_order_cancel.py",
+  "broker": "IBKR",
+  "filled": 0.0,
+  "remaining": 1.0,
+  "status_events": [
+    {
+      "captured_at": "2026-04-26T13:27:18Z",
+      "order_id": 1,
+      "status": "PreSubmitted",
+      "filled": 0.0,
+      "remaining": 1.0,
+      "avg_fill_price": 0.0,
+      "perm_id": 204599504,
+      "parent_id": 0,
+      "last_fill_price": 0.0,
+      "client_id": 79,
+      "why_held": "",
+      "mkt_cap_price": 0.0
+    },
+    {
+      "captured_at": "2026-04-26T13:27:18Z",
+      "order_id": 1,
+      "status": "PreSubmitted",
+      "filled": 0.0,
+      "remaining": 1.0,
+      "avg_fill_price": 0.0,
+      "perm_id": 204599504,
+      "parent_id": 0,
+      "last_fill_price": 0.0,
+      "client_id": 79,
+      "why_held": "",
+      "mkt_cap_price": 0.0
+    }
+  ],
+  "errors": [
+    {
+      "captured_at": "2026-04-26T13:27:01Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:cashfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:27:01Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usfuture",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:27:01Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usopt.nj",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:27:01Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usfarm.nj",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:27:01Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usopt",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:27:01Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:27:01Z",
+      "req_id": -1,
+      "error_code": 2106,
+      "error": "HMDS data farm connection is OK:euhmds",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:27:01Z",
+      "req_id": -1,
+      "error_code": 2106,
+      "error": "HMDS data farm connection is OK:fundfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:27:01Z",
+      "req_id": -1,
+      "error_code": 2106,
+      "error": "HMDS data farm connection is OK:ushmds",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:27:01Z",
+      "req_id": -1,
+      "error_code": 2158,
+      "error": "Sec-def data farm connection is OK:secdefil",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:27:01Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:cashfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:27:01Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usfuture",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:27:01Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usopt.nj",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:27:01Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usfarm.nj",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:27:01Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usopt",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:27:01Z",
+      "req_id": -1,
+      "error_code": 2104,
+      "error": "Market data farm connection is OK:usfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:27:01Z",
+      "req_id": -1,
+      "error_code": 2106,
+      "error": "HMDS data farm connection is OK:euhmds",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:27:01Z",
+      "req_id": -1,
+      "error_code": 2106,
+      "error": "HMDS data farm connection is OK:fundfarm",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:27:01Z",
+      "req_id": -1,
+      "error_code": 2106,
+      "error": "HMDS data farm connection is OK:ushmds",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:27:01Z",
+      "req_id": -1,
+      "error_code": 2158,
+      "error": "Sec-def data farm connection is OK:secdefil",
+      "advanced_reject_json": null
+    },
+    {
+      "captured_at": "2026-04-26T13:27:18Z",
+      "req_id": 1,
+      "error_code": 399,
+      "error": "Order Message: BUY 1 AAPL NASDAQ.NMS Warning: Your order will not be placed at the exchange until 2026-04-27 09:30:00 US/Eastern.",
+      "advanced_reject_json": null
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Two execution workers confirmed live; Claude2 lane paused ~15 h due to quota; Claude is idle with matching capability lane and can absorb the blocked BFF task today.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "SVC-BFF-INCIDENT-SMOKE-FIXTURE",
+      "role": "owner",
+      "from": "Claude2",
+      "to": "Claude",
+      "reason": "Claude2 dispatch lane is paused until 2026-05-01T04:30:00Z (quota_terminal). Claude is idle and shares the same capability lane (execution, control-plane, governance-review). Reassignment unblocks forward progress today; Claude2 can return as reviewer once the pause lifts."
+    }
+  ],
+  "recommended_focus": [
+    "SVC-BFF-INCIDENT-SMOKE-FIXTURE",
+    "SVC-SOURCE-SEARCH-TEST-CLOSURE"
+  ]
+}

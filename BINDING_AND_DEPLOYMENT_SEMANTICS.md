@@ -15,8 +15,8 @@ Conflict rule: this document overrides broader deployment wording in architectur
 - deployment 的 ownership / trigger / write authority
 - 多 persona 綁到同一 pool 時的處理原則
 
-> 核心決議：**binding 是治理關聯，不是部署動作。**  
-> 真正部署必須走：  
+> 核心決議：**binding 是治理關聯，不是部署動作。**
+> 真正部署必須走：
 > `ApprovalDecision -> DeploymentPlan -> RuntimeBinding`
 
 ---
@@ -119,6 +119,12 @@ status
 - `advisor`
 - `paper_owner`
 - `live_owner`
+
+role 也決定 deployment ceiling：
+
+- `advisor`：只允許 `allowed_deployment_scope = none`
+- `paper_owner`：最高只允許 `allowed_deployment_scope = paper`
+- `live_owner`：可允許 `paper` / `canary` / `live`
 
 ### 4.3 `allowed_deployment_scope` 語意
 - `none`
@@ -369,6 +375,16 @@ allowed_deployment_scope 約束 deployment_mode 的上限
 - `GET /api/bindings/{binding_id}`
 - `GET /api/bindings?capital_pool_id=...`
 - `GET /api/bindings?persona_id=...`
+- `GET /api/bindings/admissibility?persona_id=...&capital_pool_id=...&target_stage=...`
+
+### Capital Pool Plane canonical service boundary
+
+`CapitalPool` 與 `PersonaCapitalBinding` 的正式 service boundary 由
+`services/capital/` 提供。
+
+- pool / binding 的 write path 必須走此 service
+- Runtime Manager / Persona Plane / BFF 的治理 read path 應讀取此 service
+  提供的 admissibility / live-owner / snapshot surfaces，而不是各自直接改 store
 
 ### Deployment APIs
 - `POST /api/deployments/plans`
@@ -380,6 +396,67 @@ allowed_deployment_scope 約束 deployment_mode 的上限
 - `POST /api/runtimes/deploy`
 - `POST /api/runtimes/{runtime_id}/replace`
 - `GET /api/runtime-bindings/{binding_id}`
+
+### 14.1 Governance-API 家族 vs Runtime-Control 邊界（SVC-GOVERNANCE-API 正式決議）
+
+`ApprovalDecision`、`DeploymentPlan` / `DeploymentSaga`、`PersonaCapitalBinding` /
+`CapitalPool`、`EvolutionDecision` 由四個獨立的 deployable HTTP service 暴露，合稱
+**governance-api family**。這個家族與 **runtime-control plane**（`runtime-manager`）
+之間的 service boundary 是顯式的、不可越界。
+
+| Domain object | 正式 service | Container port | 對應 contract |
+|---|---|---:|---|
+| `ApprovalDecision` | `services/governance/` | `8082` | `services/governance/contract.md` |
+| `DeploymentPlan` / `DeploymentSaga` | `services/deployment/` | `8095` | `services/deployment/contract.md` |
+| `PersonaCapitalBinding` / `CapitalPool` | `services/capital/` | `8092` | `services/capital/contract.md` |
+| `EvolutionDecision` | `services/evolution/` | `8093` | `services/control-plane/governance/evolution_decision.contract.md` |
+| `RuntimeBinding` 寫入與 operator command 派遣 | `services/runtime-manager/` | `8081` | `services/execution/runtime-manager/contract.md` |
+
+家族契約的單一摘要文件：`services/control-plane/governance/service_family_contract.md`。
+任何 cross-service 邊界調整必須先更新該文件，再更新個別 service 的 contract.md。
+
+### 14.2 Write 邊界
+
+| 寫入動作 | 必須走的 service | 不可越界對象 |
+|---|---|---|
+| `ApprovalDecision` lifecycle (propose / review / decide / revoke) | `services/governance/` | runtime-manager、deployment、capital、evolution |
+| `DeploymentPlan` 建立、status 轉換、`DeploymentSaga` outbox/inbox | `services/deployment/` | runtime-manager、governance、capital |
+| `CapitalPool` / `PersonaCapitalBinding` lifecycle、`allowed_deployment_scope` | `services/capital/` | runtime-manager、deployment、evolution |
+| `EvolutionDecision` lifecycle (propose / review / approve / execute / followthrough) | `services/evolution/` | runtime-manager、deployment、capital |
+| `RuntimeBinding` lifecycle、`deployment_mode`、kill-switch / safe-mode、operator command 派遣 | `services/runtime-manager/` | governance、deployment、capital、evolution |
+
+**核心邊界規則：governance-api 家族 不寫 `RuntimeBinding`，runtime-control plane 不寫 governance objects。**
+跨界協作只能透過 outbox event（DEP-002）或 saga reference（`approval_decision_id` /
+`plan_id` / `binding_id`）做 read-side 連結。
+
+### 14.3 Read 邊界
+
+| 讀取需求 | 應呼叫的 service | 端點摘要 |
+|---|---|---|
+| 最近一筆 approved `ApprovalDecision` | `services/governance/` | `GET /api/governance/approvals/latest-approved` |
+| 某 plan 的 `DeploymentPlan` / saga / outbox / inbox | `services/deployment/` | `GET /api/deployment/plans/{plan_id}`、`GET /api/deployment/sagas/{saga_id}`、`GET /api/deployment/outbox` |
+| pool / binding admissibility | `services/capital/` | `GET /api/bindings/admissibility?persona_id=&capital_pool_id=&target_stage=` |
+| evolution decision、boundary、threshold 評估 | `services/evolution/` | `GET /api/evolution/proposals`、`GET /api/evolution/proposals/{decision_id}/boundary` |
+| 運行中的 `RuntimeBinding`、kill-switch 狀態、operator command audit | `services/runtime-manager/` | `GET /api/runtime-bindings/{binding_id}`、`GET /api/internal/v1/...` |
+
+BFF (`services/control-plane/bff/`) 的長期合法 read path 必須命中上面這五個 service，
+而非 `read_store.py` 的 snapshot/default fallback。Snapshot 路徑只保留作為
+`BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md` 定義的 degraded fallback，並由 SVC-SURFACES
+完成 BFF rewiring。
+
+### 14.4 Compose 端點與環境變數契約
+
+| 環境變數 | Container 內的 base URL | 對應 service |
+|---|---|---|
+| `PANTHEON_GOVERNANCE_APPROVAL_API_URL` | `http://governance:8082` | ApprovalDecision |
+| `PANTHEON_DEPLOYMENT_API_URL` | `http://deployment:8095` | DeploymentPlan / DeploymentSaga |
+| `PANTHEON_CAPITAL_API_URL` | `http://capital:8092` | CapitalPool / PersonaCapitalBinding |
+| `PANTHEON_EVOLUTION_API_URL` | `http://evolution:8093` | EvolutionDecision |
+| `PANTHEON_INTERNAL_API_URL` / `PANTHEON_RUNTIME_MANAGER_URL` | `http://runtime-manager:8081` | RuntimeBinding writes、operator command |
+| `PANTHEON_GOVERNANCE_API_URL` | legacy 別名（目前指向 evolution） | 由 BFF `command_executor.py` 在 evolution proposal 流程沿用，僅供向後相容 |
+
+新的整合工作必須使用 §14.4 的明確命名變數，並由家族 contract（§14.1 列出的單一摘要文件）統一審查；
+不要再新增別名以避免回到「single governance URL」的混合語意。
 
 ---
 
@@ -396,6 +473,8 @@ allowed_deployment_scope 約束 deployment_mode 的上限
 7. `RuntimeBinding.deployment_mode` 表達實際部署狀態，兩者語義獨立
 8. binding 可先於 artifact 存在；deploy 必須同時依賴 binding + approved artifact
 9. runtime binding 只在 deploy 執行成功後才建立
+10. `services/capital/` 是 `CapitalPool` / `PersonaCapitalBinding` 的 canonical service boundary
+11. binding admissibility read path 必須同時考慮 role ceiling、`allowed_deployment_scope`、binding status、與 pool governance status
 
 ---
 
@@ -449,7 +528,7 @@ allowed_deployment_scope 約束 deployment_mode 的上限
 
 ## 18. 結論
 
-把 binding 與 deployment 拆開，是 Pantheon 能保持清晰治理邊界的關鍵。  
+把 binding 與 deployment 拆開，是 Pantheon 能保持清晰治理邊界的關鍵。
 如果兩者混在一起，會導致：
 
 - persona 一綁定就像自動擁有 live 權限

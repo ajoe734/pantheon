@@ -128,6 +128,24 @@ class TestApprovalDecisionCreation(unittest.TestCase):
         self.assertEqual(d.rationale, "Looks good")
         self.assertIsNotNone(d.decided_at)
 
+    def test_decide_updates_approver_identity(self):
+        d = ApprovalDecision.create_proposed(
+            decision_id="approval-001",
+            target_type=TargetType.REGISTRY_ENTRY,
+            target_id="reg-001",
+            target_version="1.0.0",
+            risk_level=RiskLevel.MEDIUM,
+        )
+        d.accept_review(ActorRole.GOVERNANCE_REVIEWER, "reviewer-01")
+        d.decide(
+            DecisionOutcome.APPROVED,
+            "Escalated approval",
+            actor_role=ActorRole.RISK_OWNER,
+            actor_id="risk-owner-01",
+        )
+        self.assertEqual(d.actor_role, ActorRole.RISK_OWNER)
+        self.assertEqual(d.actor_id, "risk-owner-01")
+
     def test_decide_requires_under_review(self):
         d = ApprovalDecision.create_proposed(
             decision_id="approval-001",

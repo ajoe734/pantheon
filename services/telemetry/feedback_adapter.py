@@ -31,7 +31,17 @@ TELEMETRY_EVENT_TYPES = {
     "drawdown_snapshot",
     "slippage_observation",
     "fill_observation",
+    "fill_received",
+    "order_submitted",
+    "order_accepted",
+    "order_partially_filled",
+    "order_filled",
+    "order_canceled",
+    "order_cancelled",
     "order_rejection",
+    "position_snapshot",
+    "position_snapshot_received",
+    "broker_position_snapshot",
     "deploy_started",
     "deploy_completed",
     "rollback_started",
@@ -69,7 +79,7 @@ LINEAGE_TARGET_FIELDS = {
 class FeedbackStoreAdapter:
     """
     Adapts telemetry events to the feedback store interface.
-    
+
     This adapter enables telemetry events to be ingested into the shared feedback store
     so they can be:
     - Queried by the evolution plane evaluators with full append/query semantics
@@ -77,7 +87,7 @@ class FeedbackStoreAdapter:
     - Used as ground truth for strategy evaluation
     - Linked to promotion state changes
     - Recovered by new processes via TraderFeedbackStore.get()/list() methods
-    
+
     Uses TraderFeedbackStore.append() for idempotent, conflict-free event persistence
     and supports querying by registry_id, strategy_id, event_type, created_at via shared store.
     """
@@ -85,7 +95,7 @@ class FeedbackStoreAdapter:
     def __init__(self, feedback_store_path: Optional[str] = None):
         """
         Initialize adapter.
-        
+
         Parameters
         ----------
         feedback_store_path : str, optional
@@ -97,10 +107,10 @@ class FeedbackStoreAdapter:
         self.feedback_store_path = feedback_store_path
         if feedback_store_path:
             self.feedback_store = TraderFeedbackStore(feedback_store_path)
-        
+
         # In-memory buffer for events (populated from store on recovery if configured)
         self.telemetry_log = []
-        
+
         # Recover existing events from shared store if configured
         if self.feedback_store:
             self._recover_from_store()
@@ -108,17 +118,17 @@ class FeedbackStoreAdapter:
     def _recover_from_store(self) -> None:
         """
         Recover existing telemetry events from shared feedback store.
-        
+
         This ensures that new adapter instances can see all previously persisted
         telemetry events from the shared store, enabling proper cross-process queries
         and preventing duplicate event_id issues in query results.
-        
+
         Explicitly filters to telemetry event types only to maintain event family separation.
         Feedback events (approve, edit, reject, rationale) are excluded from recovery.
         """
         if not self.feedback_store:
             return
-        
+
         all_events = self.feedback_store.iter_events()
         # Filter to telemetry events only - exclude feedback events
         self.telemetry_log = [
@@ -135,7 +145,7 @@ class FeedbackStoreAdapter:
     ) -> dict[str, Any]:
         """
         Convert telemetry event to feedback store format and persist using shared store semantics.
-        
+
         Parameters
         ----------
         event : dict
@@ -144,7 +154,7 @@ class FeedbackStoreAdapter:
             Strategy ID for correlation
         promotion_state : str, optional
             Promotion state (candidate, paper, live, retired) at time of capture
-            
+
         Returns
         -------
         dict
@@ -152,17 +162,17 @@ class FeedbackStoreAdapter:
             No additional fields are added to maintain schema compliance.
         """
         enriched = event.copy()
-        
+
         # Deep copy target to avoid mutating original
         enriched["target"] = enriched.get("target", {}).copy()
-        
+
         # Ensure strategy_id is in target
         enriched["target"]["strategy_id"] = strategy_id
-        
+
         # Add promotion state to target if provided
         if promotion_state:
             enriched["target"]["promotion_state"] = promotion_state
-        
+
         # Persist to shared feedback store if configured
         # append() returns (success, event) tuple; if duplicate event_id, returns (False, existing)
         if self.feedback_store:
@@ -175,13 +185,13 @@ class FeedbackStoreAdapter:
         else:
             # Only add to telemetry_log if no store configured (process-local mode)
             self.telemetry_log.append(enriched)
-        
+
         # For shared store mode, add to buffer only on successful new append
         if self.feedback_store:
             self.telemetry_log.append(enriched)
-        
+
         log.debug(f"Ingested telemetry event: {event.get('event_id')}")
-        
+
         return enriched
 
     def _iter_telemetry_events(self):
@@ -432,14 +442,14 @@ class FeedbackStoreAdapter:
     ) -> list[dict[str, Any]]:
         """
         Retrieve telemetry events for a strategy via shared store semantics.
-        
+
         If a shared feedback store is configured, iterates through the store directly
         with proper telemetry family filtering applied BEFORE any limit. Otherwise, queries local buffer.
-        
+
         Maintains event family separation: only returns telemetry event types
         (pnl_snapshot, drawdown_snapshot, slippage_observation, fill_observation, order_rejection).
         Feedback events (approve, edit, reject, rationale) are explicitly excluded.
-        
+
         Parameters
         ----------
         strategy_id : str
@@ -450,7 +460,7 @@ class FeedbackStoreAdapter:
             Filter by promotion state (candidate, paper, live, retired)
         event_type : str, optional
             Filter by event type
-            
+
         Returns
         -------
         list[dict]
@@ -464,42 +474,42 @@ class FeedbackStoreAdapter:
                 # First filter: only telemetry event types
                 if event.get("event_type") not in TELEMETRY_EVENT_TYPES:
                     continue
-                
+
                 # Second filter: strategy_id
                 if event.get("target", {}).get("strategy_id") != strategy_id:
                     continue
-                
+
                 # Third filter: promotion_state if provided
                 if promotion_state and event.get("target", {}).get("promotion_state") != promotion_state:
                     continue
-                
+
                 # Fourth filter: event_type if provided
                 if event_type and event.get("event_type") != event_type:
                     continue
-                
+
                 # Fifth filter: mode if provided
                 if mode and event.get("execution_mode") != mode:
                     continue
-                
+
                 results.append(event)
-            
+
             return results
-        
+
         # Fall back to local buffer if no store
         results = [
             event for event in self.telemetry_log
             if event.get("target", {}).get("strategy_id") == strategy_id
         ]
-        
+
         if mode:
             results = [e for e in results if e.get("execution_mode") == mode]
-        
+
         if promotion_state:
             results = [e for e in results if e.get("target", {}).get("promotion_state") == promotion_state]
-        
+
         if event_type:
             results = [e for e in results if e.get("event_type") == event_type]
-        
+
         return results
 
     def get_telemetry_by_promotion_state(
@@ -508,18 +518,18 @@ class FeedbackStoreAdapter:
     ) -> list[dict[str, Any]]:
         """
         Retrieve telemetry events by promotion state via shared store semantics.
-        
+
         If a shared feedback store is configured, iterates through the store directly
         with proper telemetry family filtering applied BEFORE any limit. Otherwise, queries local buffer.
-        
+
         Maintains event family separation: only returns telemetry event types.
         Feedback events (approve, edit, reject, rationale) are explicitly excluded.
-        
+
         Parameters
         ----------
         promotion_state : str
             Promotion state to query (candidate, paper, live, retired)
-            
+
         Returns
         -------
         list[dict]
@@ -533,15 +543,15 @@ class FeedbackStoreAdapter:
                 # First filter: only telemetry event types
                 if event.get("event_type") not in TELEMETRY_EVENT_TYPES:
                     continue
-                
+
                 # Second filter: promotion_state
                 if event.get("target", {}).get("promotion_state") != promotion_state:
                     continue
-                
+
                 results.append(event)
-            
+
             return results
-        
+
         # Fall back to local buffer if no store
         return [
             event for event in self.telemetry_log
@@ -560,16 +570,16 @@ class FeedbackStoreAdapter:
     ) -> list[dict[str, Any]]:
         """
         Query telemetry events via shared store semantics with full contract support.
-        
+
         This method implements the full query contract with all filters:
         strategy_id, registry_id, promotion_state, event_type, created_at range.
-        
+
         Maintains event family separation: only returns telemetry event types.
         Feedback events (approve, edit, reject, rationale) are explicitly excluded.
-        
+
         The limit is applied AFTER filtering for telemetry event family to ensure
         that feedback events in the shared store do not consume the query limit.
-        
+
         Parameters
         ----------
         strategy_id : str, optional
@@ -586,7 +596,7 @@ class FeedbackStoreAdapter:
             RFC3339 timestamp filter (inclusive)
         limit : int
             Maximum number of results to return (applied after telemetry family filter)
-            
+
         Returns
         -------
         list[dict]
@@ -596,7 +606,7 @@ class FeedbackStoreAdapter:
             # Parse time filters once if provided
             parsed_after = parse_rfc3339(created_after) if created_after else None
             parsed_before = parse_rfc3339(created_before) if created_before else None
-            
+
             # Iterate through shared store directly with telemetry family boundary applied first
             # This ensures limit is applied after family filtering, not before
             results = []
@@ -604,23 +614,23 @@ class FeedbackStoreAdapter:
                 # First filter: only telemetry event types
                 if event.get("event_type") not in TELEMETRY_EVENT_TYPES:
                     continue
-                
+
                 # Second filter: strategy_id if provided
                 if strategy_id and event.get("target", {}).get("strategy_id") != strategy_id:
                     continue
-                
+
                 # Third filter: registry_id if provided
                 if registry_id and event.get("target", {}).get("registry_id") != registry_id:
                     continue
-                
+
                 # Fourth filter: promotion_state if provided
                 if promotion_state and event.get("target", {}).get("promotion_state") != promotion_state:
                     continue
-                
+
                 # Fifth filter: event_type if provided
                 if event_type and event.get("event_type") != event_type:
                     continue
-                
+
                 # Sixth filter: created_at range if provided
                 if parsed_after or parsed_before:
                     try:
@@ -633,18 +643,18 @@ class FeedbackStoreAdapter:
                             continue
                     except (ValueError, TypeError):
                         continue
-                
+
                 results.append(event)
-                
+
                 # Apply limit only after all family and filter conditions pass
                 if len(results) >= limit:
                     break
-            
+
             return results
-        
+
         # Fall back to local buffer filtering
         results = self.telemetry_log
-        
+
         if strategy_id:
             results = [e for e in results if e.get("target", {}).get("strategy_id") == strategy_id]
         if registry_id:
@@ -653,12 +663,12 @@ class FeedbackStoreAdapter:
             results = [e for e in results if e.get("target", {}).get("promotion_state") == promotion_state]
         if event_type:
             results = [e for e in results if e.get("event_type") == event_type]
-        
+
         # Time range filtering
         if created_after or created_before:
             parsed_after = parse_rfc3339(created_after) if created_after else None
             parsed_before = parse_rfc3339(created_before) if created_before else None
-            
+
             filtered = []
             for event in results:
                 try:
@@ -673,7 +683,7 @@ class FeedbackStoreAdapter:
                 except (ValueError, TypeError):
                     continue
             results = filtered
-        
+
         return results[:limit]
 
     def correlate_with_feedback(
@@ -683,14 +693,14 @@ class FeedbackStoreAdapter:
     ) -> dict[str, Any]:
         """
         Correlate telemetry with trader feedback.
-        
+
         Parameters
         ----------
         telemetry_event : dict
             Telemetry event to correlate
         feedback_events : list[dict], optional
             List of feedback events to correlate with
-            
+
         Returns
         -------
         dict
@@ -703,29 +713,29 @@ class FeedbackStoreAdapter:
             "strategy_id": telemetry_event.get("target", {}).get("strategy_id"),
             "execution_mode": telemetry_event.get("execution_mode"),
         }
-        
+
         if not feedback_events:
             feedback_events = []
-        
+
         # Find feedback events within time window (24 hours)
         from datetime import timedelta, datetime as dt
-        
+
         try:
             event_time = dt.fromisoformat(
                 telemetry_event["created_at"].replace("Z", "+00:00")
             )
         except (ValueError, KeyError):
             return correlation
-        
+
         window_start = event_time - timedelta(hours=24)
         window_end = event_time + timedelta(hours=24)
-        
+
         for feedback in feedback_events:
             try:
                 feedback_time = dt.fromisoformat(
                     feedback["created_at"].replace("Z", "+00:00")
                 )
-                
+
                 if window_start <= feedback_time <= window_end:
                     if (feedback.get("target", {}).get("strategy_id") ==
                         correlation["strategy_id"]):
@@ -738,7 +748,7 @@ class FeedbackStoreAdapter:
                         })
             except (ValueError, KeyError):
                 continue
-        
+
         return correlation
 
     def export_telemetry(
@@ -748,7 +758,7 @@ class FeedbackStoreAdapter:
     ) -> None:
         """
         Export telemetry log to file.
-        
+
         Parameters
         ----------
         output_path : str
@@ -757,7 +767,7 @@ class FeedbackStoreAdapter:
             Export format (jsonl or json)
         """
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        
+
         try:
             with open(output_path, "w") as f:
                 if format == "jsonl":

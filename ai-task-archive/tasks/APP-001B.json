@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "task_id": "APP-001B",
+  "archived_at": "2026-04-14T05:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-001B",
+    "title": "Prepare APP-001 query contract critique and owner packet",
+    "summary_zh": "平行支援 APP-001，先根據 APP-001A 產出的 BFF surface inventory 做 query contract critique、operator read-path 風險盤點與 owner handoff packet，讓後續 persona/runtime 依賴解開後可以直接進入正式 BFF 設計。",
+    "phase": "Phase 5: Persona and Application Surfaces",
+    "owner": "Qwen",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "APP-001A"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/BFF_SURFACE_INVENTORY.md",
+      "services/control-plane/bff/APP_001B_OWNER_PACKET.md"
+    ],
+    "acceptance": [
+      "owner packet written",
+      "query contract critique written",
+      "operator read-path risks enumerated"
+    ],
+    "next": "APP-001B finalized: owner packet with 7 query contract gaps, 4 journey-level + 6 systemic risks, and consolidated handoff for APP-001 owner. All acceptance criteria met. Ready for APP-001 formal BFF design.",
+    "last_update": "2026-04-10T02:03:01Z",
+    "review_notes_zh": [
+      "審查通過",
+      "7 個 contract gaps 已整理完成",
+      "4 條 operator journeys 與 6 個 systemic risks 已收斂",
+      "reviewer cleanup 已修正 §4.1 計數敘述"
+    ],
+    "review_file": "services/control-plane/bff/review_app001b_codex_approved_zh.md"
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-001B",
+      "from": "Qwen",
+      "to": "Codex",
+      "message": "Owner packet complete: query contract critique (7 gaps), operator read-path risk inventory (4 journey-level + 6 systemic risks), and consolidated handoff for APP-001 owner. Artifact: services/control-plane/bff/APP_001B_OWNER_PACKET.md",
+      "status": "done",
+      "created_at": "2026-04-10T01:55:22Z",
+      "resolved_at": "2026-04-10T02:01:32Z"
+    },
+    {
+      "task_id": "APP-001B",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Review approved and returned to owner Qwen for finalization. APP-001B now provides the critique/risk packet APP-001 can reuse directly, with one reviewer cleanup to align §4.1 risk-count wording.",
+      "status": "done",
+      "created_at": "2026-04-10T02:01:32Z",
+      "resolved_at": "2026-04-10T02:03:01Z"
+    }
+  ],
+  "blockers": []
+}

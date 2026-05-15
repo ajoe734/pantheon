@@ -60,7 +60,7 @@ None.
   history stale/degraded/unavailable behavior remains explicit in
   `../front-ai-trading-system/src/pages/research/ExperimentHistory.tsx:438-470`.
 - Static verification passed on the sibling front repo:
-  `npm run build` succeeded on 2026-04-21 in `/home/edna/code/front-ai-trading-system`.
+  `npm run build` succeeded on 2026-04-21 in `/home/lupin/code/front-ai-trading-system`.
 - Live runtime verification also passed on 2026-04-21:
   `GET http://127.0.0.1:18001/openapi.json` returned `200` and listed all four
   `/api/v1/experiments*` routes, and unauthenticated

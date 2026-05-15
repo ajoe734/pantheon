@@ -4,14 +4,16 @@ import {
   logicalAgents,
   planningHighSignalTypes,
   workerStatusIcon,
-} from "./dashboard-config.js?v=20260413-1745";
+} from "./dashboard-config.js?v=20260513-claim";
 import {
   buildTruthMismatches,
   actorLabel,
   agentLabel,
+  buildCodexSlotRoster,
   buildDependencySchedule,
   dependencyBatchState,
   deriveAgentState,
+  DISPLAY_TIME_ZONE_LABEL,
   formatTime,
   laneLabel,
   normalizeDispatchQueue,
@@ -27,7 +29,7 @@ import {
   titleCase,
   truncate,
   workerLifecycleBadge,
-} from "./dashboard-core.js?v=20260413-1745";
+} from "./dashboard-core.js?v=20260513-claim";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -42,11 +44,19 @@ function compactWhitespace(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
+function shortText(value, maxLength = 180) {
+  const compacted = compactWhitespace(value || "");
+  if (!compacted) return "-";
+  const clipped = compacted.length > maxLength ? `${compacted.slice(0, maxLength)}...` : compacted;
+  return escapeHtml(clipped);
+}
+
 function summarizePausedReason(reason, provider) {
   const raw = compactWhitespace(reason || "");
   const lower = raw.toLowerCase();
   const providerName = agentLabel(provider);
-  if (!raw) {
+  const looksLikeJsonDump = /^\s*[\{\[]/.test(raw) || raw.includes('"type":"assistant"') || raw.includes('"usage":{');
+  if (!raw || looksLikeJsonDump) {
     return {
       summary: `${providerName} provider guardrail 已暫停此 lane 的新 dispatch。`,
       detail: "",
@@ -86,7 +96,7 @@ function summarizePausedReason(reason, provider) {
   };
 }
 
-export function renderWorkload(status) {
+export function renderWorkload(status, orchState = null) {
   const container = qs("#workload-grid");
   if (!container) return;
   container.innerHTML = "";
@@ -96,20 +106,35 @@ export function renderWorkload(status) {
     container.innerHTML = '<p class="empty">尚無 lane workload 摘要。</p>';
     return;
   }
+  const pauseMap = new Map(
+    pausedProviderEntries(orchState).map((entry) => [normalizedProviderKey(entry.provider), entry])
+  );
+  const agentBlockedMap = new Map(
+    (status.agents || []).map((agent) => [normalizedProviderKey(agent.name), String(agent.status || "").toLowerCase()])
+  );
   for (const [name, summary] of entries) {
     const target = status.workload?.[name] ?? 0;
     const fill = Math.min(summary.total * 15, 100);
+    const providerKey = normalizedProviderKey(name);
+    const pauseEntry = pauseMap.get(providerKey);
+    const agentBlocked = agentBlockedMap.get(providerKey) === "blocked";
+    const paused = Boolean(pauseEntry) || agentBlocked;
+    const pauseReason = pauseEntry
+      ? summarizePausedReason(pauseEntry.summary || pauseEntry.reason, pauseEntry.provider)
+      : null;
+    const pauseLabel = pauseReason?.kind === "quota" ? "Quota 暫停" : (paused ? "暫停派工" : "");
+    const pauseHint = pauseEntry?.blocked_until ? ` (until ${formatTime(pauseEntry.blocked_until)})` : "";
     const card = document.createElement("article");
-    card.className = "workload-card";
+    card.className = `workload-card${paused ? " workload-card-paused" : ""}`;
     card.innerHTML = `
       <div class="lane-head">
         <strong>${name}</strong>
-        <span class="status-pill">目標 ${target}%</span>
+        <span class="status-pill ${paused ? "status-blocked" : ""}">${paused ? `${pauseLabel}${pauseHint}` : `目標 ${target}%`}</span>
       </div>
       <div class="workload-bar"><div class="workload-fill" style="width:${fill}%"></div></div>
       <div class="lane-meta">
         <span class="chip">總數 ${summary.total}</span>
-        <span class="chip">活躍 ${summary.active}</span>
+        <span class="chip">活躍 ${paused ? `${summary.active} (暫停)` : summary.active}</span>
         <span class="chip">阻塞 ${summary.blocked}</span>
         <span class="chip">完成 ${summary.done}</span>
       </div>
@@ -150,6 +175,7 @@ export function renderAgentLanes(status, agentStates) {
         <span class="chip">可開工 ${agent.ready_count || 0}</span>
         <span class="chip">等前置 ${agent.waiting_count || 0}</span>
         <span class="chip">已批准 ${agent.approved_count || 0}</span>
+        ${Number.isFinite(agent.target_workload) ? `<span class="chip">目標 ${agent.target_workload}%</span>` : ""}
       </div>
       ${focusTasks ? `<ul class="note-list compact">${focusTasks}</ul>` : ""}
       <p class="lane-copy">下一步：${truncate(agent.next, 120)}</p>
@@ -157,6 +183,76 @@ export function renderAgentLanes(status, agentStates) {
     `;
     container.appendChild(card);
   }
+}
+
+export function renderArchiveRecords(dashboardBundle = null) {
+  const container = qs("#archive-records");
+  if (!container) return;
+  container.innerHTML = "";
+
+  const archive = dashboardBundle?.archive_summary || {};
+  const counts = archive.counts || {};
+  const records = Array.isArray(archive.recent_terminal_tasks) ? archive.recent_terminal_tasks : [];
+  const total = Number.isFinite(counts.total) ? counts.total : 0;
+  const completed = Number.isFinite(counts.completed) ? counts.completed : 0;
+  const superseded = Number.isFinite(counts.superseded) ? counts.superseded : 0;
+
+  if (!total && !records.length) {
+    container.innerHTML = '<p class="empty">目前沒有封存紀錄。</p>';
+    return;
+  }
+
+  const summary = document.createElement("article");
+  summary.className = "archive-summary-card";
+  summary.innerHTML = `
+    <div class="stack-head">
+      <strong>Archive index</strong>
+      <span class="status-pill status-ready">${total} 筆</span>
+    </div>
+    <div class="lane-meta">
+      <span class="chip">Completed ${completed}</span>
+      <span class="chip">Superseded ${superseded}</span>
+      <span class="chip">最近更新 ${formatTime(archive.updated_at)}</span>
+    </div>
+  `;
+  container.appendChild(summary);
+
+  if (!records.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "Archive index 有統計，但目前的 dashboard bundle 沒帶最近封存任務摘要。";
+    container.appendChild(empty);
+    return;
+  }
+
+  const list = document.createElement("div");
+  list.className = "archive-record-grid";
+  for (const record of records) {
+    const outcome = String(record.terminal_outcome || record.status || "done").toLowerCase();
+    const card = document.createElement("article");
+    card.className = "archive-record-card";
+    card.innerHTML = `
+      <div class="task-head">
+        <strong>${escapeHtml(record.task_id || record.id || "-")}</strong>
+        <span class="status-pill status-${outcome}">${statusLabel(outcome)}</span>
+      </div>
+      <p>${shortText(record.title, 140)}</p>
+      <p class="task-summary">工作說明：${shortText(record.summary_zh, 180)}</p>
+      <div class="lane-meta">
+        <span class="chip">${escapeHtml(record.phase || "-")}</span>
+        <span class="chip">負責人 ${escapeHtml(record.owner || "-")}</span>
+        <span class="chip">審查者 ${escapeHtml(record.reviewer || "-")}</span>
+      </div>
+      <div class="lane-meta">
+        <span class="chip">更新 ${formatTime(record.last_update)}</span>
+        <span class="chip">封存 ${formatTime(record.archived_at)}</span>
+      </div>
+      <p class="card-copy">結案紀錄：${shortText(record.next, 220)}</p>
+      ${record.snapshot_path ? `<p class="card-copy">Snapshot：<code>${escapeHtml(record.snapshot_path)}</code></p>` : ""}
+    `;
+    list.appendChild(card);
+  }
+  container.appendChild(list);
 }
 
 export function renderDeliveryLayers(status, planningState) {
@@ -286,6 +382,49 @@ export function renderTaskBoard(status, orchState, dashboardBundle = null) {
   const board = qs("#task-board");
   if (!board) return;
   board.innerHTML = "";
+
+  const canonicalTasks = status.tasks || [];
+  const archiveCounts = dashboardBundle?.archive_summary?.counts || {};
+  const bridgeSummary = dashboardBundle?.bridge_summary || {};
+  const pendingProposals = Array.isArray(bridgeSummary.pending_proposals) ? bridgeSummary.pending_proposals : [];
+  const openTaskCount = canonicalTasks.filter((task) => !terminalTaskStatus(task.status)).length;
+  const archivedTotal = Number.isFinite(archiveCounts.total) ? archiveCounts.total : 0;
+  if (archivedTotal) {
+    const archivedDone = Number.isFinite(archiveCounts.completed) ? archiveCounts.completed : 0;
+    const archivedSuperseded = Number.isFinite(archiveCounts.superseded) ? archiveCounts.superseded : 0;
+    const contextCard = document.createElement("article");
+    contextCard.className = "stack-card board-context";
+    contextCard.innerHTML = `
+      <div class="stack-head">
+        <strong>舊紀錄在 archive，Active task board 只顯示目前任務</strong>
+        <span class="status-pill status-ready">archive intact</span>
+      </div>
+      <p class="card-copy">${
+        openTaskCount
+          ? `目前 active board 有 ${openTaskCount} 個 open task；以前完成或取代的工作已移到 <code>ai-task-archive</code>，不是被刪掉。`
+          : "目前 active board 沒有 open task；以前完成或取代的工作已移到 <code>ai-task-archive</code>，不是被刪掉。"
+      }</p>
+      <div class="lane-meta">
+        <span class="chip">Archived total ${archivedTotal}</span>
+        <span class="chip">Completed ${archivedDone}</span>
+        <span class="chip">Superseded ${archivedSuperseded}</span>
+        <span class="chip">Active open ${openTaskCount}</span>
+      </div>
+      ${
+        pendingProposals.length
+          ? `
+            <div class="review-block">
+              <p class="review-title">Pending planning bridge</p>
+              <ul class="note-list compact-list">
+                ${pendingProposals.slice(0, 4).map((task) => `<li><strong>${escapeHtml(task.id || "-")}</strong>：${escapeHtml(task.title || task.summary_zh || "尚未填寫")}</li>`).join("")}
+              </ul>
+            </div>
+          `
+          : ""
+      }
+    `;
+    board.appendChild(contextCard);
+  }
 
   const truth = buildTruthMismatches(status, orchState);
   const bundleLinks = Array.isArray(dashboardBundle?.worker_task_links) ? dashboardBundle.worker_task_links : [];
@@ -703,6 +842,94 @@ export function renderStackList(selector, items, emptyText, formatter) {
   }
 }
 
+function coordinationStageLabel(stage) {
+  const normalized = compactWhitespace(stage || "").toLowerCase();
+  if (!normalized) return "未知";
+  if (normalized === "loop_complete") return "loop-complete";
+  if (normalized === "frontend_feedback_reviewed_followup") return "feedback reviewed / follow-up";
+  if (normalized === "waiting_for_lovable") return "等待 Lovable / 前端";
+  if (normalized === "ui_done_received") return "已收 ui-done";
+  if (normalized === "frontend_feedback_received") return "已收 feedback";
+  if (normalized === "bff_gap_open") return "BFF gap 開啟";
+  if (normalized === "contract_ready") return "contract-ready";
+  return titleCase(normalized.replaceAll("_", " "));
+}
+
+export function renderLovableCoordinationSummary(dashboardBundle = null) {
+  const container = qs("#lovable-coordination");
+  if (!container) return;
+  container.innerHTML = "";
+
+  const summary = dashboardBundle?.coordination_summary || {};
+  const counts = summary.counts || {};
+  const features = Array.isArray(summary.features) ? summary.features : [];
+  const loopComplete = features.filter((feature) => feature.stage === "loop_complete").length;
+  const followUp = features.filter((feature) => feature.stage && feature.stage !== "loop_complete").length;
+  const runtimeVerified = Number.isFinite(counts.runtime_verified) ? counts.runtime_verified : 0;
+  const runtimePending = Math.max(features.length - runtimeVerified, 0);
+
+  const summaryCard = document.createElement("article");
+  summaryCard.className = "stack-card";
+  summaryCard.innerHTML = `
+    <div class="stack-head">
+      <strong>Coordination Records</strong>
+      <span class="status-pill">${formatTime(summary.last_scan_at)}</span>
+    </div>
+    <p class="card-copy">這裡是前端交付協調紀錄，不等於 remaining workbench backlog；剩餘模組真相以 <code>WORKBENCH_DELIVERY_BACKLOG.md</code> 和 <code>ai-status.json</code> 為準。</p>
+    <div class="lane-meta">
+      <span class="chip">追蹤 feature ${counts.tracked_features || 0}</span>
+      <span class="chip">loop-complete ${loopComplete}</span>
+      <span class="chip">follow-up ${followUp}</span>
+      <span class="chip">Lovable-ready ${counts.lovable_ready || 0}</span>
+      <span class="chip">等待執行 ${counts.waiting_for_lovable || 0}</span>
+      <span class="chip">ui-done ${counts.ui_done_received || 0}</span>
+      <span class="chip">feedback ${counts.frontend_feedback_received || 0}</span>
+      <span class="chip">open BFF gap ${counts.open_bff_gaps || 0}</span>
+      <span class="chip">runtime verified ${runtimeVerified}/${features.length}</span>
+      <span class="chip ${runtimePending ? "status-review" : "status-ready"}">runtime pending ${runtimePending}</span>
+    </div>
+  `;
+  container.appendChild(summaryCard);
+
+  if (!features.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "目前沒有 Lovable coordination feature。";
+    container.appendChild(empty);
+    return;
+  }
+
+  for (const feature of features) {
+    const card = document.createElement("article");
+    card.className = "stack-card";
+    const paths = Object.entries(feature.paths || {})
+      .filter(([, value]) => value)
+      .map(([label, value]) => `<code>${escapeHtml(label)}: ${escapeHtml(value)}</code>`)
+      .join("、");
+    card.innerHTML = `
+      <div class="stack-head">
+        <strong>${escapeHtml(feature.feature_id || "-")}</strong>
+        <span class="status-pill">${escapeHtml(coordinationStageLabel(feature.stage))}</span>
+      </div>
+      <p>${escapeHtml(feature.summary || feature.screen || "尚無摘要。")}</p>
+      <div class="lane-meta">
+        <span class="chip">畫面 ${escapeHtml(feature.screen || "-")}</span>
+        <span class="chip">來源 ${escapeHtml(feature.source_repo || feature.source_repo_id || "-")}</span>
+        <span class="chip">Agent ${escapeHtml(feature.target_agent || "-")}</span>
+      </div>
+      <div class="lane-meta">
+        <span class="chip">Lovable-ready ${feature.lovable_ready ? "yes" : "no"}</span>
+        <span class="chip">Mirrored ${feature.mirrored_to_target_repo ? "yes" : "no"}</span>
+        <span class="chip">ui-done ${feature.has_ui_done ? "yes" : "no"}</span>
+        <span class="chip">feedback ${feature.has_frontend_feedback ? "yes" : "no"}</span>
+      </div>
+      ${paths ? `<p class="card-copy">Artifacts：${paths}</p>` : ""}
+      <p class="card-copy">下一步：${escapeHtml(truncate(feature.next_action || "-", 180))}</p>
+    `;
+    container.appendChild(card);
+  }
+}
+
 export function renderSnapshot(snapshot) {
   const container = qs("#snapshot");
   container.innerHTML = "";
@@ -724,171 +951,88 @@ export function renderOverviewMetrics(status, orchState, approvalQueue, dashboar
   const container = qs("#overview-metrics");
   if (!container) return;
   const tasks = status.tasks || [];
-  const truth = buildTruthMismatches(status, orchState, approvalQueue);
-  const bundleRuntime = dashboardBundle?.runtime_summary || {};
-  const bundleExecution = dashboardBundle?.execution_summary || {};
-  const queueEvents = truth.queueEvents;
-  const approvalPending = (approvalQueue?.pending || []).length;
-  const activeWorkerRows = truth.liveWorkers.filter((w) => w.bucket === "running");
-  const activeWorkers = Number.isFinite(bundleRuntime.running_workers) ? bundleRuntime.running_workers : activeWorkerRows.length;
-  const supervisor = orchState?.supervisor || {};
-  const supervisorHeartbeat = supervisor?.last_heartbeat_at || orchState?.last_heartbeat_at || null;
-  const readyNow = tasks.filter((task) => {
-    if (String(task.status || "").toLowerCase() !== "todo") return false;
-    return (task.depends_on || []).every((depId) => String(tasks.find((candidate) => candidate.id === depId)?.status || "done").toLowerCase() === "done");
-  });
-  const activeTasks = tasks.filter((task) => ["in_progress", "review"].includes(String(task.status || "").toLowerCase()));
+  const archiveCounts = dashboardBundle?.archive_summary?.counts || {};
+  const bridgeSummary = dashboardBundle?.bridge_summary || {};
+  const coordinationCounts = dashboardBundle?.coordination_summary?.counts || {};
 
-  function renderTaskDetail(task) {
-    return `
-      <div class="metric-task-item">
-        <div class="metric-task-head">
-          <strong>${task.id}</strong>
-          <span class="status-pill status-${task.status}">${statusLabel(task.status)}</span>
-        </div>
-        <div class="metric-task-meta">
-          <span class="chip">Owner ${task.owner}</span>
-          <span class="chip">Reviewer ${task.reviewer}</span>
-        </div>
-        <p class="metric-task-copy">${truncate(task.summary_zh || task.title || "", 80)}</p>
-      </div>
-    `;
-  }
+  const todo          = tasks.filter((t) => String(t.status || "").toLowerCase() === "todo").length;
+  const inProgress    = tasks.filter((t) => String(t.status || "").toLowerCase() === "in_progress").length;
+  const review        = tasks.filter((t) => String(t.status || "").toLowerCase() === "review").length;
+  const reviewApproved= tasks.filter((t) => String(t.status || "").toLowerCase() === "review_approved").length;
+  const done          = tasks.filter((t) => String(t.status || "").toLowerCase() === "done").length;
+  const blocked       = tasks.filter((t) => String(t.status || "").toLowerCase() === "blocked").length;
+  const activeOpen = todo + inProgress + review + reviewApproved + blocked;
 
-  function renderQueueDetail(event) {
-    return `
-      <div class="metric-task-item">
-        <div class="metric-task-head">
-          <strong>${event.task_id || event.id || "-"}</strong>
-          <span class="status-pill status-${event.status || "pending"}">${statusLabel(event.status || "pending")}</span>
-        </div>
-        <div class="metric-task-meta">
-          <span class="chip">${actorLabel(event.logical_agent_id, event.provider)}</span>
-          <span class="chip">${event.reason || "-"}</span>
-          <span class="chip">${timeAgo(event.last_event_at || event.last_attempt_at || event.processed_at)}</span>
-        </div>
-      </div>
-    `;
-  }
+  const archivedTotal = Number.isFinite(archiveCounts.total) ? archiveCounts.total : 0;
+  const archivedDone = Number.isFinite(archiveCounts.completed) ? archiveCounts.completed : 0;
+  const archivedSuperseded = Number.isFinite(archiveCounts.superseded) ? archiveCounts.superseded : 0;
+  if (!activeOpen && archivedTotal) {
+    const pendingBridge = Number.isFinite(bridgeSummary.pending_materialization_count) ? bridgeSummary.pending_materialization_count : 0;
+    const trackedFeatures = Number.isFinite(coordinationCounts.tracked_features) ? coordinationCounts.tracked_features : 0;
+    const runtimeVerified = Number.isFinite(coordinationCounts.runtime_verified) ? coordinationCounts.runtime_verified : 0;
+    const items = [
+      { label: "Active Open", value: 0, tone: "card-done" },
+      { label: "Archived Done", value: archivedDone, tone: "card-done" },
+      { label: "Superseded", value: archivedSuperseded, tone: archivedSuperseded ? "card-review" : "" },
+      { label: "Frontend Loops", value: trackedFeatures, tone: trackedFeatures ? "card-active" : "" },
+      { label: "Runtime Proof", value: trackedFeatures ? `${runtimeVerified}/${trackedFeatures}` : "0/0", tone: runtimeVerified < trackedFeatures ? "card-review" : "card-done" },
+      { label: "Pending Bridge", value: pendingBridge, tone: pendingBridge ? "card-review" : "card-done" },
+    ];
 
-  function renderWorkerDetail(worker) {
-    const lifecycle = workerLifecycleBadge(worker);
-    return `
-      <div class="metric-task-item">
-        <div class="metric-task-head">
-          <strong>${worker.task_id || worker.run_id || "-"}</strong>
-          <span class="status-pill status-${worker.status || "running"}">${statusLabel(worker.status || "running")}</span>
-          ${lifecycle ? `<span class="chip ${lifecycle.className}">${lifecycle.label}</span>` : ""}
-        </div>
-        <div class="metric-task-meta">
-          <span class="chip">${worker.display_actor}</span>
-          <span class="chip">${worker.reason || worker.mode || "-"}</span>
-          <span class="chip">${timeAgo(worker.last_event_at || worker.started_at)}</span>
-        </div>
-      </div>
-    `;
-  }
-
-  const items = [
-    {
-      label: "Supervisor",
-      value: supervisorHeartbeat ? "Alive" : "No heartbeat",
-      note: supervisorHeartbeat
-        ? `Heartbeat ${timeAgo(supervisorHeartbeat)} · PID ${supervisor?.pid || "-"}`
-        : "runtime state 沒有 heartbeat，需先檢查 supervisor。",
-    },
-    {
-      label: "Running Workers",
-      value: activeWorkers,
-      note: activeWorkers ? "目前真的在跑的 live workers" : "目前沒有 live running worker",
-      details: activeWorkerRows,
-      emptyLabel: "目前沒有 active worker",
-      renderItem: renderWorkerDetail,
-    },
-    {
-      label: "Dispatch Queue",
-      value: Number.isFinite(bundleRuntime.queue_depth) ? bundleRuntime.queue_depth : queueEvents.length,
-      note: queueEvents.length ? "有事件待處理" : "目前清空",
-      details: queueEvents,
-      emptyLabel: "目前沒有 dispatch queue 項目",
-      renderItem: renderQueueDetail,
-    },
-    {
-      label: "Approval Queue",
-      value: Number.isFinite(bundleRuntime.pending_approvals) ? bundleRuntime.pending_approvals : approvalPending,
-      note: approvalPending ? "有待批准項目" : "目前清空",
-    },
-    {
-      label: "Execution Active",
-      value: Number.isFinite(bundleExecution.in_progress) ? bundleExecution.in_progress + (bundleExecution.in_review || 0) : activeTasks.length,
-      note: `Ready now ${Number.isFinite(bundleExecution.ready_now) ? bundleExecution.ready_now : readyNow.length} · Review ${Number.isFinite(bundleExecution.in_review) ? bundleExecution.in_review : tasks.filter((task) => String(task.status || "").toLowerCase() === "review").length}`,
-      tasks: activeTasks,
-      emptyLabel: "目前沒有 active execution task",
-    },
-    {
-      label: "Truth Mismatches",
-      value: truth.counts.total,
-      note: truth.counts.total
-        ? `High ${truth.counts.high} · Medium ${truth.counts.medium}`
-        : "runtime / execution / planning 目前沒有明顯不一致",
-      details: truth.mismatches,
-      emptyLabel: "目前沒有 mismatch",
-      renderItem: (item) => `
-        <div class="metric-task-item mismatch-${item.severity}">
-          <div class="metric-task-head">
-            <strong>${item.task_id || item.worker_run_id || item.queue_event_id || "-"}</strong>
-            <span class="status-pill status-${item.severity === "high" ? "blocked" : "pending"}">${item.severity}</span>
-          </div>
-          <p class="metric-task-copy">${item.title}</p>
-          <p class="metric-task-copy">${truncate(item.summary, 90)}</p>
-          ${item.resolution_hint ? `<p class="metric-task-copy">Hint: ${truncate(item.resolution_hint, 90)}</p>` : ""}
-        </div>
-      `,
-    },
-  ];
-
-  container.innerHTML = items.map((item) => {
-    const taskList = Array.isArray(item.tasks) ? item.tasks : [];
-    const detailList = Array.isArray(item.details) ? item.details : [];
-    const detailRender = item.renderItem || renderTaskDetail;
-    const detailRows = item.details ? detailList : taskList;
-    const detailHtml = detailRows.length
-      ? `
-        <details class="metric-details">
-          <summary>查看 ${detailRows.length} 個項目</summary>
-          <div class="metric-task-list">
-            ${detailRows.map((entry) => detailRender(entry)).join("")}
-          </div>
-        </details>
-      `
-      : (item.tasks || item.details)
-        ? `<div class="metric-empty">${item.emptyLabel || "目前沒有項目"}</div>`
-        : "";
-    return `
-      <article class="metric-card">
+    container.innerHTML = items.map((item) => `
+      <article class="metric-card ${item.tone}">
         <div class="metric-label">${item.label}</div>
         <div class="metric-value">${item.value}</div>
-        <div class="metric-note">${item.note}</div>
-        ${detailHtml}
       </article>
-    `;
-  }).join("");
+    `).join("");
+    return;
+  }
+
+  const completedInSprint = Number.isFinite(archiveCounts.completed_in_sprint) ? archiveCounts.completed_in_sprint : 0;
+  const items = [
+    { label: "待開始",    value: todo,           tone: "" },
+    { label: "進行中",    value: inProgress,     tone: inProgress  ? "card-active"   : "" },
+    { label: "待審查",    value: review,         tone: review      ? "card-review"   : "" },
+    { label: "待收尾",    value: reviewApproved, tone: reviewApproved ? "card-review" : "" },
+    { label: "本輪完成",  value: completedInSprint + done, tone: "card-done" },
+    ...(archivedTotal
+      ? [
+          { label: "歷史完成", value: archivedDone, tone: "card-done" },
+          { label: "封存總數", value: archivedTotal, tone: "card-done" },
+          { label: "已取代", value: archivedSuperseded, tone: archivedSuperseded ? "card-review" : "card-done" },
+        ]
+      : []),
+    { label: "阻塞",      value: blocked,        tone: blocked     ? "card-blocked"  : "" },
+  ];
+
+  container.innerHTML = items.map((item) => `
+    <article class="metric-card ${item.tone}">
+      <div class="metric-label">${item.label}</div>
+      <div class="metric-value">${item.value}</div>
+    </article>
+  `).join("");
 }
 
 function executionStatusCounts(status, dashboardBundle = null) {
   const tasks = status.tasks || [];
   const summary = dashboardBundle?.execution_summary || {};
+  const archive = dashboardBundle?.archive_summary?.counts || {};
   return {
     total: tasks.length,
-    done: Number.isFinite(summary.done) ? summary.done : tasks.filter((task) => String(task.status || "").toLowerCase() === "done").length,
-    reviewApproved: Number.isFinite(summary.review_approved) ? summary.review_approved : tasks.filter((task) => String(task.status || "").toLowerCase() === "review_approved").length,
-    inProgress: Number.isFinite(summary.in_progress) ? summary.in_progress : tasks.filter((task) => String(task.status || "").toLowerCase() === "in_progress").length,
-    review: Number.isFinite(summary.in_review) ? summary.in_review : tasks.filter((task) => String(task.status || "").toLowerCase() === "review").length,
-    blocked: Number.isFinite(summary.blocked) ? summary.blocked : tasks.filter((task) => String(task.status || "").toLowerCase() === "blocked").length,
+    done: tasks.filter((task) => String(task.status || "").toLowerCase() === "done").length,
+    reviewApproved: tasks.filter((task) => String(task.status || "").toLowerCase() === "review_approved").length,
+    inProgress: tasks.filter((task) => String(task.status || "").toLowerCase() === "in_progress").length,
+    review: tasks.filter((task) => String(task.status || "").toLowerCase() === "review").length,
+    blocked: tasks.filter((task) => String(task.status || "").toLowerCase() === "blocked").length,
     todo: tasks.filter((task) => String(task.status || "").toLowerCase() === "todo").length,
     readyNow: Number.isFinite(summary.ready_now) ? summary.ready_now : tasks.filter((task) => String(task.status || "").toLowerCase() === "todo").length,
+    dependencyReady: Number.isFinite(summary.dependency_ready)
+      ? summary.dependency_ready
+      : tasks.filter((task) => String(task.status || "").toLowerCase() === "todo").length,
     liveAttached: Number.isFinite(summary.live_attached) ? summary.live_attached : 0,
     mismatchCount: Number.isFinite(summary.mismatch_count) ? summary.mismatch_count : 0,
+    archivedDone: Number.isFinite(archive.completed) ? archive.completed : Number.isFinite(summary.done) ? summary.done : 0,
+    archivedSuperseded: Number.isFinite(archive.superseded) ? archive.superseded : Number.isFinite(summary.superseded) ? summary.superseded : 0,
   };
 }
 
@@ -898,6 +1042,81 @@ function pausedProviderEntries(orchState) {
   return Object.entries(pauses)
     .map(([provider, info]) => ({ provider, ...(info || {}) }))
     .sort((a, b) => String(b.blocked_until || b.paused_at || "").localeCompare(String(a.blocked_until || a.paused_at || "")));
+}
+
+function normalizedProviderKey(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "grok") return "copilot";
+  return normalized;
+}
+
+function pauseSeverity(entry) {
+  if (!entry) return null;
+  const raw = [
+    entry.pause_kind,
+    entry.failure_kind,
+    entry.summary,
+    entry.reason,
+    entry.detail,
+  ].filter(Boolean).join(" ").toLowerCase();
+  if (
+    raw.includes("quota")
+    || raw.includes("rate limit")
+    || raw.includes("capacity")
+    || raw.includes("402")
+    || raw.includes("429")
+  ) {
+    return "quota";
+  }
+  return "error";
+}
+
+function agentRuntimeAvailability(agentId, details) {
+  const { pause, running, failed, readyCount } = details;
+  const pauseKind = pauseSeverity(pause);
+  if (pauseKind === "quota") {
+    return {
+      icon: "⛔",
+      className: "agent-card-quota",
+      pillClass: "status-blocked",
+      label: "Quota 暫停",
+      canAccept: false,
+    };
+  }
+  if (pauseKind === "error" || failed > 0) {
+    return {
+      icon: "🔴",
+      className: "agent-card-error",
+      pillClass: "status-blocked",
+      label: pause ? "錯誤暫停" : "Worker 錯誤",
+      canAccept: false,
+    };
+  }
+  if (running > 0) {
+    return {
+      icon: "🟡",
+      className: "agent-card-busy",
+      pillClass: "status-working",
+      label: "執行中",
+      canAccept: false,
+    };
+  }
+  if (readyCount > 0) {
+    return {
+      icon: "🟢",
+      className: "agent-card-available",
+      pillClass: "status-ready",
+      label: "可接工",
+      canAccept: true,
+    };
+  }
+  return {
+    icon: "⚪",
+    className: "agent-card-idle",
+    pillClass: "status-idle",
+    label: "無可派工",
+    canAccept: false,
+  };
 }
 
 function planningGateProgress(planning) {
@@ -1320,6 +1539,10 @@ export function renderPlanningOverview(planningState, status, dashboardBundle = 
   const proposalStats = planningProposalStats(planning, status, dashboardBundle);
   const decision = planningDecisionSummary(planning, status);
   const highlights = planningHighlights(planning);
+  const activeSession = dashboardBundle?.planning_summary?.active_session || {};
+  const sessionUpdatedAt = planning.updated_at || activeSession.updated_at || null;
+  const sessionScope = planning.objective || planning.summary || "這輪 planning 尚未寫入 scope 摘要。";
+  const sessionRef = planning.planning_dir || activeSession.planning_dir || planning.session_file || activeSession.session_file || "-";
 
   container.innerHTML = `
     <div class="planning-hero">
@@ -1331,6 +1554,12 @@ export function renderPlanningOverview(planningState, status, dashboardBundle = 
           </div>
           <span class="status-pill ${decision.tone}">${statusLabel(planning.status)}</span>
         </div>
+        <div class="inline-summary">
+          <span class="chip">Phase ${planning.phase || "-"}</span>
+          <span class="chip">Updated ${formatTime(sessionUpdatedAt)}</span>
+          <span class="chip">Session ref ${escapeHtml(sessionRef)}</span>
+        </div>
+        <p class="card-copy">${sessionScope}</p>
         <p class="body-copy">${decision.body}</p>
         <div class="planning-kpis">
           <span class="chip">Consensus ${statusLabel(planning.consensus_status)}</span>
@@ -1742,7 +1971,15 @@ export function renderProgressBreakdown(status, planningState, dashboardBundle =
   const proposalStats = planningProposalStats(planning, status, dashboardBundle);
   const executionCounts = executionStatusCounts(status, dashboardBundle);
   const bridgePercent = proposalStats.total ? Math.round((proposalStats.materialized / proposalStats.total) * 100) : (planning.switch_gate?.ready_to_materialize ? 100 : 0);
-  const executionPercent = executionCounts.total ? Math.round((executionCounts.done / executionCounts.total) * 100) : 0;
+
+  const localTasks = status.tasks || [];
+  const localDone = localTasks.filter((t) => String(t.status || "").toLowerCase() === "done").length;
+  const currentWaveTotal = proposalStats.total > 0 ? proposalStats.total : localTasks.length;
+  const currentWaveDone = proposalStats.total > 0 ? proposalStats.done : localDone;
+  const executionPercent = currentWaveTotal ? Math.round((currentWaveDone / currentWaveTotal) * 100) : 0;
+  const executionNote = proposalStats.total > 0
+    ? `${currentWaveDone}/${currentWaveTotal} 本輪 planning 切片完成 · 當前看板 ${localDone}/${localTasks.length} done`
+    : `${currentWaveDone}/${currentWaveTotal} 當前看板正式完成`;
 
   const items = [
     {
@@ -1760,7 +1997,7 @@ export function renderProgressBreakdown(status, planningState, dashboardBundle =
     {
       label: "Execution 完成度",
       value: `${executionPercent}%`,
-      note: `${executionCounts.done}/${executionCounts.total} 正式完成`,
+      note: executionNote,
       tone: executionCounts.blocked ? "status-review" : "status-ready",
     },
   ];
@@ -2021,21 +2258,28 @@ export function renderExecutionSummary(status, orchState, dashboardBundle = null
     if (String(task.status || "").toLowerCase() !== "todo") return false;
     return (task.depends_on || []).every((depId) => String(taskMap.get(depId)?.status || "done").toLowerCase() === "done");
   }).length;
+  const dependencyReady = Number.isFinite(summary.dependency_ready) ? summary.dependency_ready : readyNow;
   const activeNow = tasks.filter((task) => String(task.status || "").toLowerCase() === "in_progress").length;
   const reviewNow = tasks.filter((task) => String(task.status || "").toLowerCase() === "review").length;
   const blockedNow = tasks.filter((task) => String(task.status || "").toLowerCase() === "blocked").length;
   const attachedNow = [...truth.liveWorkersByTask.values()].filter((workers) => workers.some((worker) => worker.bucket === "running")).length;
   const cards = [
-    { label: "Ready Now", value: Number.isFinite(summary.ready_now) ? summary.ready_now : readyNow, note: "前置都完成，隨時可以開工的 todo task" },
-    { label: "In Progress", value: Number.isFinite(summary.in_progress) ? summary.in_progress : activeNow, note: "task board 上已進入 in_progress 的任務" },
-    { label: "In Review", value: Number.isFinite(summary.in_review) ? summary.in_review : reviewNow, note: "正在 review lane 的任務" },
+    { label: "Ready Now", value: Number.isFinite(summary.ready_now) ? summary.ready_now : readyNow, note: "lane 健康且目前空閒，supervisor 這一輪真的能 dispatch 的 todo task" },
+    { label: "Deps Ready", value: dependencyReady, note: "依賴都完成，但可能仍在等 lane 恢復、空出，或避開 sidecar-only/guardrail 限制" },
+    { label: "In Progress", value: activeNow, note: "task board 上已進入 in_progress 的任務" },
+    { label: "In Review", value: reviewNow, note: "正在 review lane 的任務" },
     { label: "Live Attached", value: Number.isFinite(summary.live_attached) ? summary.live_attached : attachedNow, note: "目前有 live running worker 真的掛在 task 上" },
-    { label: "Blocked", value: Number.isFinite(summary.blocked) ? summary.blocked : blockedNow, note: "已標記 blocker 的任務" },
+    { label: "Blocked", value: blockedNow, note: "已標記 blocker 的任務" },
     {
       label: "Mismatches",
       value: truth.counts.total,
       note: truth.counts.total ? `High ${truth.counts.high} · Medium ${truth.counts.medium}` : "目前 execution/runtime 對齊",
       statusClass: truth.counts.total ? "status-blocked" : "status-ready",
+    },
+    {
+      label: "Archived Done",
+      value: executionStatusCounts(status, dashboardBundle).archivedDone,
+      note: "歷史封存完成數；不列入當前 sprint/open board 計算",
     },
   ];
 
@@ -2109,11 +2353,13 @@ export function renderBoardSummary(status, orchState, dashboardBundle = null) {
     if (String(task.status || "").toLowerCase() !== "todo") return false;
     return (task.depends_on || []).every((depId) => String(taskMap.get(depId)?.status || "done").toLowerCase() === "done");
   }).length;
+  const dependencyReady = Number.isFinite(summary.dependency_ready) ? summary.dependency_ready : readyCount;
   const reviewCount = tasks.filter((task) => String(task.status || "").toLowerCase() === "review").length;
   const attachedCount = [...truth.liveWorkersByTask.values()].filter((workers) => workers.some((worker) => worker.bucket === "running")).length;
   const chips = [
     `<span class="chip">Ready ${Number.isFinite(summary.ready_now) ? summary.ready_now : readyCount}</span>`,
-    `<span class="chip">Review ${Number.isFinite(summary.in_review) ? summary.in_review : reviewCount}</span>`,
+    `<span class="chip">Deps ${dependencyReady}</span>`,
+    `<span class="chip">Review ${reviewCount}</span>`,
     `<span class="chip">Live attached ${Number.isFinite(summary.live_attached) ? summary.live_attached : attachedCount}</span>`,
     `<span class="chip ${truth.counts.total ? "status-blocked" : ""}">Mismatch ${truth.counts.total}</span>`,
   ];
@@ -2151,6 +2397,7 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
   historyEl.innerHTML = "";
   const queueEvents = normalizeDispatchQueue(orchState, status);
   const runtimeSummary = dashboardBundle?.runtime_summary || {};
+  const chairSummary = dashboardBundle?.chair_summary || {};
   const supervisor = orchState?.supervisor || {};
   const supervisorPid = supervisor?.pid || "-";
   const supervisorStartedAt = supervisor?.started_at || orchState?.initialized_at || null;
@@ -2160,6 +2407,16 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
   const pausedProviders = pausedProviderEntries(orchState);
   const activeWorkerCount = Number.isFinite(runtimeSummary.running_workers) ? runtimeSummary.running_workers : workers.filter((w) => w.bucket === "running").length;
   const pending = Number.isFinite(runtimeSummary.pending_approvals) ? runtimeSummary.pending_approvals : (approvalQueue?.pending || []).length;
+  const dispatchPolicy = dashboardBundle?.dispatch_policy || {};
+  const recentHelperClaims = Array.isArray(dashboardBundle?.recent_helper_claims) ? dashboardBundle.recent_helper_claims : [];
+  const idleClaimEnabled = Boolean(dispatchPolicy.claim_idle_work && dispatchPolicy.helper_claim_enabled !== false);
+  const sidecarClaimEnabled = Boolean(dispatchPolicy.claim_sidecars_when_idle);
+  const maxDispatchesPerTick = Number.isFinite(Number(dispatchPolicy.max_dispatches_per_tick))
+    ? Number(dispatchPolicy.max_dispatches_per_tick)
+    : "-";
+  const maxTasksPerAgent = Number.isFinite(Number(dispatchPolicy.max_tasks_per_agent))
+    ? Number(dispatchPolicy.max_tasks_per_agent)
+    : "-";
 
   const supervisorCard = document.createElement("article");
   supervisorCard.className = "sys-card";
@@ -2169,12 +2426,56 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
         <span class="status-pill ${supervisorHeartbeat ? "status-working" : "status-blocked"}">${supervisorHeartbeat ? "運作中" : "無資料"}</span>
       <span class="chip">PID：${runtimeSummary.supervisor_pid || supervisorPid}</span>
         <span class="chip">啟動：${formatTime(supervisorStartedAt)}</span>
+      <span class="chip">絕對時間：${DISPLAY_TIME_ZONE_LABEL}</span>
       <span class="chip">Heartbeat：${timeAgo(runtimeSummary.heartbeat_at || supervisorHeartbeat)}</span>
         <span class="chip">上次掃描：${timeAgo(lastScan)}</span>
         <span class="chip">Active Workers：${activeWorkerCount}</span>
       </div>
   `;
   statusEl.appendChild(supervisorCard);
+
+  const workerClaimCard = document.createElement("article");
+  workerClaimCard.className = "sys-card";
+  workerClaimCard.innerHTML = `
+    <div class="sys-card-head"><span class="sys-icon">⇄</span><strong>Worker Claim Policy</strong></div>
+    <div class="sys-card-body">
+      <span class="status-pill ${idleClaimEnabled ? "status-working" : "status-review"}">${idleClaimEnabled ? "idle worker 可 claim" : "Supervisor 主導派工"}</span>
+      <span class="chip">own work first</span>
+      <span class="chip">idle claim ${idleClaimEnabled ? "on" : "off"}</span>
+      <span class="chip">sidecar claim ${sidecarClaimEnabled ? "on" : "off"}</span>
+      <span class="chip">per tick ${escapeHtml(maxDispatchesPerTick)}</span>
+      <span class="chip">per agent ${escapeHtml(maxTasksPerAgent)}</span>
+      <span class="chip">priority gate ${dispatchPolicy.require_owner_higher_priority_load ? "on" : "off"}</span>
+      ${recentHelperClaims.length ? recentHelperClaims.slice(0, 5).map((claim) => `
+        <div class="approval-item">
+          <span class="chip">${escapeHtml(claim.task_id || "-")}</span>
+          <span class="chip">${escapeHtml(actorLabel(claim.from_owner, null))} &rarr; ${escapeHtml(actorLabel(claim.to_owner, null))}</span>
+          ${claim.new_reviewer ? `<span class="chip">reviewer ${escapeHtml(actorLabel(claim.new_reviewer, null))}</span>` : ""}
+          <span class="chip">${escapeHtml(timeAgo(claim.ts))}</span>
+        </div>
+      `).join("") : '<div class="approval-item"><span class="chip">尚無 helper claim 紀錄</span></div>'}
+    </div>
+  `;
+  statusEl.appendChild(workerClaimCard);
+
+  const chairCard = document.createElement("article");
+  chairCard.className = "sys-card";
+  const chairReviewSummary = Array.isArray(chairSummary.last_review_summary) ? chairSummary.last_review_summary : [];
+  chairCard.innerHTML = `
+      <div class="sys-card-head"><span class="sys-icon">🪑</span><strong>Chair Review</strong></div>
+      <div class="sys-card-body">
+        <span class="status-pill ${chairSummary.pending_review_path ? "status-working" : chairSummary.last_chair_run_at ? "status-done" : "status-blocked"}">${
+          chairSummary.pending_review_path ? "巡檢進行中" : chairSummary.last_chair_run_at ? "最近有巡檢" : "尚未巡檢"
+        }</span>
+        <span class="chip">Last Chair：${escapeHtml(actorLabel(chairSummary.last_chair_agent, null))}</span>
+        <span class="chip">上次派出：${escapeHtml(timeAgo(chairSummary.last_chair_run_at))}</span>
+        ${chairSummary.pending_review_agent ? `<span class="chip">Pending：${escapeHtml(actorLabel(chairSummary.pending_review_agent, null))}</span>` : ""}
+        ${chairSummary.last_review_path ? `<span class="chip">${escapeHtml(chairSummary.last_review_path)}</span>` : ""}
+        ${chairSummary.sidecar_approved_until ? `<span class="chip">Sidecar until ${escapeHtml(formatTime(chairSummary.sidecar_approved_until))}</span>` : ""}
+        ${chairReviewSummary.map((line) => `<div class="approval-item">${escapeHtml(line)}</div>`).join("")}
+      </div>
+  `;
+  statusEl.appendChild(chairCard);
 
   const dispatchCard = document.createElement("article");
   dispatchCard.className = "sys-card";
@@ -2196,6 +2497,42 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
     </div>
   `;
   statusEl.appendChild(dispatchCard);
+
+  const codexSlots = buildCodexSlotRoster(orchState, status);
+  const codexActiveCount = codexSlots.filter((slot) => slot.status === "running").length;
+  const codexPendingCount = codexSlots.filter((slot) => slot.status === "pending").length;
+  const codexIdleCount = codexSlots.filter((slot) => slot.status === "idle").length;
+  const codexSlotCard = document.createElement("article");
+  codexSlotCard.className = "sys-card codex-slot-card";
+  codexSlotCard.innerHTML = `
+    <div class="sys-card-head">
+      <span class="sys-icon">▦</span>
+      <strong>Codex Autoworker Slots</strong>
+      <span class="chip">active ${codexActiveCount}</span>
+      <span class="chip">pending ${codexPendingCount}</span>
+      <span class="chip">idle ${codexIdleCount}</span>
+      <span class="chip">total ${codexSlots.length}</span>
+    </div>
+    <div class="codex-slot-grid">
+      ${codexSlots.map((slot) => `
+        <div class="codex-slot-row codex-slot-${slot.status}">
+          <div class="codex-slot-name">
+            <strong>${escapeHtml(slot.label)}</strong>
+            <span class="chip">${escapeHtml(slot.quota_group)}</span>
+          </div>
+          <div class="codex-slot-meta">
+            <span class="status-pill ${slot.status === "running" ? "status-working" : slot.status === "pending" ? "status-review" : "status-idle"}">${slot.status === "idle" ? "idle" : slot.worker_status || slot.status}</span>
+            <span class="chip">${escapeHtml(slot.id)}</span>
+            ${slot.worker?.provider ? `<span class="chip">${escapeHtml(slot.worker.provider)}</span>` : ""}
+            ${slot.task_id ? `<span class="chip">${escapeHtml(slot.task_id)}</span>` : `<span class="chip">空 slot</span>`}
+            ${slot.worker?.reason ? `<span class="chip">${escapeHtml(slot.worker.reason)}</span>` : ""}
+            ${slot.last_event_at ? `<span class="chip">${escapeHtml(timeAgo(slot.last_event_at))}</span>` : ""}
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+  statusEl.appendChild(codexSlotCard);
 
   const approvalCard = document.createElement("article");
   approvalCard.className = "sys-card";
@@ -2242,9 +2579,16 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
     statusEl.appendChild(pauseCard);
   }
 
-  const agentStateMap = new Map((agentStates || []).map((a) => [a.name.toLowerCase(), a]));
-  for (const agentId of logicalAgents) {
-    const pw = workers.filter((w) => w.logical_agent_id === agentId);
+  const agentStateMap = new Map((agentStates || []).map((a) => [normalizedProviderKey(a.name), a]));
+  const pauseMap = new Map(pausedProviders.map((entry) => [normalizedProviderKey(entry.provider), entry]));
+  const runtimeAgentIds = Array.from(new Set([
+    ...logicalAgents,
+    ...(agentStates || []).map((agent) => normalizedProviderKey(agent.name)),
+    ...workers.map((worker) => normalizedProviderKey(worker.logical_agent_id || worker.provider || worker.agent_id)),
+    ...pausedProviders.map((entry) => normalizedProviderKey(entry.provider)),
+  ].filter(Boolean)));
+  for (const agentId of runtimeAgentIds) {
+    const pw = workers.filter((w) => normalizedProviderKey(w.logical_agent_id || w.provider || w.agent_id) === agentId);
     const running = pw.filter((w) => w.bucket === "running").length;
     const waiting = pw.filter((w) => w.bucket === "pending").length;
     const transition = pw.filter((w) => w.bucket === "transition").length;
@@ -2252,18 +2596,31 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
     const completed = pw.filter((w) => w.bucket === "completed").length;
     const agent = agentStateMap.get(agentId);
     const runningTasks = pw.filter((w) => w.bucket === "running").map((w) => w.task_id).filter(Boolean);
+    const pause = pauseMap.get(agentId);
+    const readyCount = agent?.ready_count || 0;
+    const availability = agentRuntimeAvailability(agentId, { pause, running, failed, readyCount });
+    const pauseReason = pause ? summarizePausedReason(pause.summary || pause.reason || pause.detail, pause.provider) : null;
     const card = document.createElement("article");
-    card.className = "sys-card";
+    card.className = `sys-card agent-runtime-card ${availability.className}`;
     card.innerHTML = `
-      <div class="sys-card-head"><span class="sys-icon">${running > 0 ? "🟡" : failed > 0 ? "🔴" : "⚪"}</span><strong>${agentLabel(agentId)}</strong></div>
+      <div class="sys-card-head">
+        <span class="sys-icon">${availability.icon}</span>
+        <strong>${agentLabel(agentId)}</strong>
+        <span class="status-pill ${availability.pillClass}">${availability.label}</span>
+      </div>
       <div class="sys-card-body">
+        <span class="chip ${availability.canAccept ? "agent-can-accept" : "agent-cannot-accept"}">${availability.canAccept ? "可接新工作" : "不可接新工作"}</span>
         <span class="chip">執行中 ${running}</span>
         <span class="chip">等待 ${waiting}</span>
         ${transition ? `<span class="chip">改派 ${transition}</span>` : ""}
         <span class="chip">失敗 ${failed}</span>
         <span class="chip">完成 ${completed}</span>
         ${runningTasks.length ? `<span class="chip">任務 ${runningTasks.join(", ")}</span>` : ""}
-        ${agent ? `<span class="chip">可開工 ${agent.ready_count || 0}</span><span class="chip">等前置 ${agent.waiting_count || 0}</span>` : ""}
+        ${agent ? `<span class="chip">可開工 ${readyCount}</span><span class="chip">等前置 ${agent.waiting_count || 0}</span>` : ""}
+        ${pause ? `<span class="chip status-blocked">暫停到 ${formatTime(pause.blocked_until)}</span>` : ""}
+        ${pause?.task_id ? `<span class="chip status-blocked">卡在 ${pause.task_id}</span>` : ""}
+        ${pauseReason ? `<span class="chip status-blocked">${escapeHtml(pauseReason.summary)}</span>` : ""}
+        ${pause?.raw_ref ? `<span class="chip">evidence ${escapeHtml(pause.raw_ref)}</span>` : ""}
       </div>
     `;
     statusEl.appendChild(card);
@@ -2312,6 +2669,7 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
                   <span class="chip"><code>${w.mode || "-"}</code></span>
                   <span class="chip">${w.display_actor}</span>
                   ${w.task_status ? `<span class="chip">task=${statusLabel(w.task_status)}</span>` : ""}
+                  ${w.reason ? `<span class="chip">${escapeHtml(w.reason)}</span>` : ""}
                   <span class="chip">${timeAgo(w.last_event_at)}</span>
                 </div>
                 ${w.last_error ? `<p class="meta-line">${truncate(w.last_error, 120)}</p>` : ""}
@@ -2340,16 +2698,28 @@ export function renderSystemStatus(status, orchState, approvalQueue, agentStates
     .join("");
 }
 
-export function renderProgressBar(tasks) {
+export function renderProgressBar(tasks, dashboardBundle = null) {
   const total = (tasks || []).length;
   const done = (tasks || []).filter((t) => t.status === "done").length;
   const approved = (tasks || []).filter((t) => t.status === "review_approved").length;
   const open = (tasks || []).filter((t) => ["todo", "in_progress", "review", "blocked"].includes(String(t.status || "").toLowerCase())).length;
-  const pct = total ? Math.round((done / total) * 100) : 0;
+  const archiveCounts = dashboardBundle?.archive_summary?.counts || {};
+  const bridgeSummary = dashboardBundle?.bridge_summary || {};
+  const archivedTotal = Number.isFinite(archiveCounts.total) ? archiveCounts.total : 0;
+  const archivedDone = Number.isFinite(archiveCounts.completed) ? archiveCounts.completed : 0;
+  const completedInSprint = Number.isFinite(archiveCounts.completed_in_sprint) ? archiveCounts.completed_in_sprint : 0;
+  const pendingBridge = Number.isFinite(bridgeSummary.pending_materialization_count) ? bridgeSummary.pending_materialization_count : 0;
+  const sprintDone = completedInSprint + done;
+  const sprintTotal = sprintDone + open + approved;
+  const pct = sprintTotal ? Math.round((sprintDone / sprintTotal) * 100) : 0;
   const label = qs("#progress-label");
   const fill = qs("#progress-fill");
-  if (label) label.textContent = `Sprint 進度：正式完成 ${done} / ${total} (${pct}%) · 待收尾 ${approved} · 其他 open ${open}`;
-  if (fill) fill.style.width = `${pct}%`;
+  if (label) {
+    label.textContent = open === 0 && archivedTotal
+      ? `Active board 已清空 · Archive completed ${archivedDone} / ${archivedTotal} · Pending bridge ${pendingBridge}`
+      : `Sprint 進度：本輪完成 ${sprintDone} / ${sprintTotal} (${pct}%) · 待收尾 ${approved} · 其他 open ${open}`;
+  }
+  if (fill) fill.style.width = open === 0 && archivedTotal ? "100%" : `${pct}%`;
 }
 
 export function renderActivity(entries) {
@@ -2442,6 +2812,137 @@ function dashboardFocusMode(planning) {
   return "execution";
 }
 
+const LOVABLE_STAGE_LABEL = {
+  needs_ui: "等待 Lovable 實作",
+  contract_ready: "Contract Ready",
+  waiting_for_lovable: "等待 Lovable 回傳",
+  ui_done_received: "UI Done — 待整合",
+  bff_gap_open: "BFF Gap 待解",
+  frontend_feedback_received: "Feedback 收到",
+  frontend_feedback_reviewed_followup: "Feedback reviewed / follow-up",
+  loop_complete: "loop-complete",
+  done: "已完成",
+};
+const LOVABLE_STAGE_TONE = {
+  needs_ui: "",
+  contract_ready: "",
+  waiting_for_lovable: "",
+  ui_done_received: "card-review",
+  bff_gap_open: "card-blocked",
+  frontend_feedback_received: "card-active",
+  frontend_feedback_reviewed_followup: "card-review",
+  loop_complete: "card-done",
+  done: "card-done",
+};
+
+function deriveLovableStage(f) {
+  const latestReq = f.latest_request || {};
+  const reqType = String(latestReq.type || "").replace(/-/g, "_");
+  if (reqType === "frontend_feedback") return "frontend_feedback_received";
+  if (reqType === "ui_done") return "ui_done_received";
+  const bffGapType = String((f.latest_request || {}).type || "").replace(/-/g, "_");
+  if (bffGapType === "bff_gap" && !(f.latest_request || {}).resolved) return "bff_gap_open";
+  if (f.lovable_task || f.lovable_task_path) return "waiting_for_lovable";
+  const ct = String(f.current_payload_type || f.status || "").replace(/-/g, "_");
+  if (ct === "contract_ready") return "contract_ready";
+  return "needs_ui";
+}
+
+export function renderLovableCoordination(orchState, status, dashboardBundle = null) {
+  const overview = qs("#lovable-overview");
+  const featureList = qs("#lovable-features");
+  const panelSummary = qs("#lovable-panel-summary");
+  if (!overview || !featureList) return;
+
+  const coord = orchState?.coordination || {};
+  const rawFeatures = coord.features || {};
+  const bundledFeatures = dashboardBundle?.coordination_summary?.features;
+  const features = Array.isArray(bundledFeatures) && bundledFeatures.length
+    ? bundledFeatures
+    : Object.values(rawFeatures);
+
+  // Build summary counts
+  const counts = {
+    needs_ui: 0,
+    contract_ready: 0,
+    waiting_for_lovable: 0,
+    ui_done_received: 0,
+    bff_gap_open: 0,
+    frontend_feedback_received: 0,
+    frontend_feedback_reviewed_followup: 0,
+    loop_complete: 0,
+    done: 0,
+  };
+  for (const f of features) {
+    const stage = f.stage || deriveLovableStage(f);
+    const key = Object.prototype.hasOwnProperty.call(counts, stage) ? stage : "needs_ui";
+    counts[key]++;
+  }
+
+  // Map coordination tasks from status.tasks to features
+  const coordTasks = (status?.tasks || []).filter((t) => {
+    const meta = t.coordination || t.metadata?.coordination || {};
+    return meta.feature_id || String(t.task_class || "") === "coordination";
+  });
+
+  // Overview metrics
+  const metricItems = [
+    { label: "協調紀錄", value: features.length, tone: "" },
+    { label: "Loop Complete", value: counts.loop_complete + counts.done, tone: "card-done" },
+    { label: "Follow-up", value: counts.frontend_feedback_reviewed_followup, tone: counts.frontend_feedback_reviewed_followup ? "card-review" : "" },
+    { label: "BFF Gap", value: counts.bff_gap_open, tone: counts.bff_gap_open ? "card-blocked" : "" },
+    { label: "整合任務", value: coordTasks.length, tone: coordTasks.length ? "card-active" : "" },
+    { label: "等待前端", value: counts.needs_ui + counts.contract_ready + counts.waiting_for_lovable + counts.ui_done_received + counts.frontend_feedback_received, tone: "" },
+  ];
+  overview.innerHTML = metricItems.map((m) => `
+    <article class="metric-card ${m.tone}">
+      <div class="metric-label">${m.label}</div>
+      <div class="metric-value">${m.value}</div>
+    </article>
+  `).join("");
+
+  // Panel summary
+  if (panelSummary) {
+    const pending = counts.frontend_feedback_reviewed_followup + counts.bff_gap_open + counts.needs_ui + counts.contract_ready + counts.waiting_for_lovable;
+    panelSummary.textContent = pending ? `${pending} follow-up / pending` : features.length ? `${counts.loop_complete + counts.done}/${features.length} loop-complete` : "無追蹤項目";
+  }
+
+  if (!features.length) {
+    featureList.innerHTML = `<p class="empty">目前沒有追蹤中的 Lovable feature。</p>`;
+    return;
+  }
+
+  featureList.innerHTML = features.map((f) => {
+    const stage = f.stage || deriveLovableStage(f);
+    const tone = LOVABLE_STAGE_TONE[stage] || "";
+    const stageLabel = LOVABLE_STAGE_LABEL[stage] || coordinationStageLabel(stage);
+    const featureId = escapeHtml(f.feature_id || "-");
+    const screen = escapeHtml(f.screen || "-");
+    const nextAction = escapeHtml(f.next_action || "");
+
+    // Find linked execution task(s)
+    const linked = coordTasks.filter((t) => {
+      const meta = t.coordination || t.metadata?.coordination || {};
+      return meta.feature_id === f.feature_id;
+    });
+    const linkedHtml = linked.length
+      ? linked.map((t) => `<span class="chip">${escapeHtml(t.id)} · ${escapeHtml(t.status)}</span>`).join(" ")
+      : "";
+
+    return `
+      <article class="stack-card ${tone}">
+        <div class="stack-head">
+          <strong>${featureId}</strong>
+          <span class="status-pill">${stageLabel}</span>
+        </div>
+        <p class="card-copy">畫面：${screen}</p>
+        ${nextAction ? `<p class="card-copy">${nextAction}</p>` : ""}
+        ${linkedHtml ? `<div class="lane-meta">${linkedHtml}</div>` : ""}
+      </article>
+    `;
+  }).join("");
+}
+
 export function applyModeVisibility(status, planningState) {
   const planning = normalizePlanningState(planningState);
   const planningPanel = qs("#planning-panel");
@@ -2462,9 +2963,7 @@ export function applyModeVisibility(status, planningState) {
     ? true
     : focusMode === "planning"
       ? false
-      : storedPreference
-        ? storedPreference === "collapsed"
-        : defaultCollapsed;
+      : true; // execution mode: always start collapsed, ignore stored preference
 
   planningPanel.hidden = shouldHidePlanning;
   planningPanel.classList.toggle("mode-collapsed", collapsed);
@@ -2475,6 +2974,8 @@ export function applyModeVisibility(status, planningState) {
 
   const summaryChips = [
     `<span class="chip">${focusMode === "planning" ? "目前焦點" : "非目前焦點"}</span>`,
+    `<span class="chip">${planning.session_id || "no-session"}</span>`,
+    `<span class="chip">Phase ${planning.phase || "-"}</span>`,
     `<span class="chip">Session ${statusLabel(planning.status)}</span>`,
     `<span class="chip">Consensus ${statusLabel(planning.consensus_status)}</span>`,
     `<span class="chip">Can materialize ${planning.switch_gate?.ready_to_materialize ? "Yes" : "No"}</span>`,
@@ -2487,11 +2988,14 @@ export function applyModeVisibility(status, planningState) {
   }
   planningSummary.innerHTML = summaryChips.join("");
 
+  const hasOpenExecutionWork = (status.tasks || []).some((task) => !terminalTaskStatus(task.status));
   const executionPreferenceKey = "dashboard:panel:execution";
   const storedExecutionPreference = safeReadStorage(executionPreferenceKey);
   const executionCollapsed = focusMode === "planning"
     ? (storedExecutionPreference ? storedExecutionPreference === "collapsed" : true)
-    : (storedExecutionPreference ? storedExecutionPreference === "collapsed" : false);
+    : hasOpenExecutionWork
+      ? false
+      : (storedExecutionPreference ? storedExecutionPreference === "collapsed" : false);
 
   executionShell.classList.toggle("mode-collapsed", executionCollapsed);
   executionToggle.textContent = executionCollapsed ? "展開" : "收合";
@@ -2520,5 +3024,91 @@ export function applyModeVisibility(status, planningState) {
       executionToggle.setAttribute("aria-expanded", String(!nextCollapsed));
       safeWriteStorage(activePreferenceKey, nextCollapsed ? "collapsed" : "expanded");
     });
+  }
+}
+
+
+export function renderBffConsolidationTrack(status, dashboardBundle = null) {
+  const section = qs("#bff-consol-section");
+  const container = qs("#bff-consol-waves");
+  const summaryEl = qs("#bff-consol-summary");
+  if (!container) return;
+
+  const waves = [
+    { label: "Wave 1 — Ground truth & spec", range: [1, 7] },
+    { label: "Wave 2 — Read depth & realtime & auth", range: [8, 15] },
+    { label: "Wave 3 — Detail journey & command adapter", range: [16, 22] },
+    { label: "Wave 4 — Cutover & cleanup", range: [23, 27] },
+  ];
+
+  const activeMap = new Map();
+  for (const t of status?.tasks || []) {
+    if (String(t.id || "").startsWith("BFF-CONSOL-") && /^BFF-CONSOL-\d{3}$/.test(t.id)) {
+      activeMap.set(t.id, t);
+    }
+  }
+  const archivedIdsArr = dashboardBundle?.archive_summary?.bff_consol_archived_ids || [];
+  const archivedIds = new Set(archivedIdsArr);
+  const recentTerminal = dashboardBundle?.archive_summary?.recent_terminal_tasks || [];
+  const recentOutcome = new Map();
+  for (const rec of recentTerminal) {
+    if (rec.task_id) recentOutcome.set(rec.task_id, rec.terminal_outcome || "completed");
+  }
+
+  let anyKnown = false;
+  const totals = { done: 0, review: 0, review_approved: 0, in_progress: 0, todo: 0, blocked: 0, superseded: 0, unknown: 0 };
+  const html = waves.map((wave) => {
+    const ids = [];
+    for (let n = wave.range[0]; n <= wave.range[1]; n += 1) {
+      ids.push(`BFF-CONSOL-${String(n).padStart(3, "0")}`);
+    }
+    const states = ids.map((id) => {
+      const active = activeMap.get(id);
+      if (active) {
+        anyKnown = true;
+        return { id, status: String(active.status || "todo").toLowerCase(), title: active.title || active.summary_zh || "" };
+      }
+      if (archivedIds.has(id)) {
+        anyKnown = true;
+        const outcome = recentOutcome.get(id);
+        return { id, status: outcome === "superseded" ? "superseded" : "done", title: "" };
+      }
+      return { id, status: "unknown", title: "" };
+    });
+    const completed = states.filter((s) => s.status === "done" || s.status === "superseded").length;
+    const pct = states.length ? Math.round((completed / states.length) * 100) : 0;
+    for (const s of states) totals[s.status] = (totals[s.status] || 0) + 1;
+    const taskHtml = states.map((s) => {
+      const num = s.id.replace("BFF-CONSOL-", "");
+      const label = s.status === "unknown" ? "未排入" : statusLabel(s.status);
+      return `
+        <div class="bff-consol-task">
+          <span class="bff-consol-task-id">${num}</span>
+          <span class="bff-consol-task-pill ${s.status}">${escapeHtml(label)}</span>
+          <span class="bff-consol-task-title">${s.title ? escapeHtml(s.title.slice(0, 80)) : ""}</span>
+        </div>
+      `;
+    }).join("");
+    return `
+      <section class="bff-consol-wave">
+        <div class="bff-consol-wave-head">
+          <strong>${escapeHtml(wave.label)}</strong>
+          <span class="chip">${completed}/${states.length} (${pct}%)</span>
+        </div>
+        <div class="bff-consol-progress-bar"><div class="bff-consol-progress-fill" style="width:${pct}%"></div></div>
+        <div class="bff-consol-task-list">${taskHtml}</div>
+      </section>
+    `;
+  }).join("");
+
+  if (section) {
+    if (anyKnown) section.removeAttribute("hidden");
+    else section.setAttribute("hidden", "");
+  }
+  container.innerHTML = html;
+  if (summaryEl) {
+    const totalCompleted = totals.done + totals.superseded;
+    const totalAll = 27;
+    summaryEl.innerHTML = `<span class="chip">完成 ${totalCompleted}/${totalAll}</span><span class="chip">進行 ${totals.in_progress}</span><span class="chip">審查 ${totals.review + totals.review_approved}</span><span class="chip">待開始 ${totals.todo}</span>${totals.blocked ? `<span class="chip">阻塞 ${totals.blocked}</span>` : ""}`;
   }
 }

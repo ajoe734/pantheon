@@ -1,0 +1,180 @@
+{
+  "version": 1,
+  "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-08T03:04:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BFF-FINAL-010 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BFF-FINAL-010，先整理 final backend/frontend handoff skeleton，不修改 canonical code。",
+    "phase": "BFF Final Contract 2026-05-07",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-FINAL-001",
+      "BFF-FINAL-002",
+      "BFF-FINAL-003",
+      "BFF-FINAL-004",
+      "BFF-FINAL-005"
+    ],
+    "artifacts": [
+      "support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "handoff skeleton prepared",
+      "parent gaps explicit",
+      "no canonical code edits"
+    ],
+    "next": "Closeout complete: handoff packet finalized (pass 4 + closeout refresh). §2/§3b/§10/§12 updated to reflect BFF-FINAL-009 done/c0eb50cf. Task-scoped commit d39496c4. No canonical files modified. Sidecar support artifact complete; parent BFF-FINAL-010 gate cleared.",
+    "last_update": "2026-05-08T03:04:22Z",
+    "task_class": "sidecar",
+    "helper_parent": "BFF-FINAL-010",
+    "helper_kind": "bff_handoff_packet",
+    "auto_created_by": "Codex",
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "Pass 4 re-review 通過：support handoff packet 已反映 BFF-FINAL-009 為 review_approved / done-closeout gate，且 BFF-FINAL-010 final verification gate 不再誤寫成等待 Codex reviewer approval。|審閱範圍僅限 support artifact；確認未修改 canonical/runtime 檔。注意 pass 4 artifact 仍是未提交變更，owner Claude2 closeout 時需建立 task-scoped commit。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-08T03:04:22Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "d39496c4ee83af66a98e42bf5c8788814c370c09",
+      "commit_subject": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF: closeout — update handoff packet to reflect BFF-FINAL-009 done",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Verification": "confirmed BFF-FINAL-006 archive (done/08ac4543), BFF-FINAL-009 archive (done/c0eb50cf), R3 commit 11dd738f subject matches handoff record; no test run required for support-only artifact."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 20,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 54,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T02:22:58Z",
+      "resolved_at": "2026-05-08T02:23:50Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Helper-claimed by Claude2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T02:23:49Z",
+      "resolved_at": "2026-05-08T02:24:15Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T02:26:24Z",
+      "resolved_at": "2026-05-08T02:26:51Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Helper-claimed by Claude2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-08T02:28:14Z",
+      "resolved_at": "2026-05-08T02:28:41Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "BFF-FINAL-010 handoff packet ready at support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md (commit 5d21d6c7). Covers: full route catalog (001-009), pre-010 blockers (BFF-006 closeout pending, BFF-009 R1/R2 role-enforcement and fail-closed executor fixes), frontend integration checklist, parent acceptance evidence checklist, and 6 explicitly deferred items. No canonical code modified.",
+      "status": "done",
+      "created_at": "2026-05-08T02:32:53Z",
+      "resolved_at": "2026-05-08T02:43:26Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review changes requested: handoff packet blocker snapshot is stale. Update support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md to reflect current task truth: BFF-FINAL-006 is done/archived with closeout commit 08ac4543, and BFF-FINAL-009 is no longer blocked on original R1/R2 after 32574279; current blocker is the v1 two-man alias propagation issue recorded in ai-status. Also update parent acceptance checklist/deferred notes so BFF-FINAL-010 next steps are accurate.",
+      "status": "done",
+      "created_at": "2026-05-08T02:43:26Z",
+      "resolved_at": "2026-05-08T02:43:26Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Handoff packet updated (pass 2). BFF-FINAL-006 now shown as done/commit 08ac4543. BFF-FINAL-009 R1/R2 resolved per 32574279; new R3 (v1 two-man alias propagation) documented in §3b with concrete fix spec, §10 acceptance checklist checkboxes updated, §9f frontend checklist updated, §11 D3 note refreshed. No canonical code modified.",
+      "status": "done",
+      "created_at": "2026-05-08T02:46:09Z",
+      "resolved_at": "2026-05-08T02:48:12Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review changes requested: handoff packet is stale after BFF-FINAL-009 commit 11dd738f. Update support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md so §2/§3b/§4f/§10/§11 no longer say R3 is outstanding or that BFF-FINAL-010 is blocked on implementing the alias fix; current truth is R3 implemented in 11dd738f and BFF-FINAL-009 is pending Codex review/final approval. Also fix §9f: top-level twoManSignatureId/secondOperatorId aliases are now normalized into stored params per the new regression tests, so do not tell frontend consumers that top-level evidence is forbidden or that params-only is required. Keep this sidecar support-only and do not modify canonical/runtime files.",
+      "status": "done",
+      "created_at": "2026-05-08T02:48:12Z",
+      "resolved_at": "2026-05-08T02:48:12Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Pass 3 update committed (acfbeb65). §2/§3b/§4f/§6/§9f/§10/§11/§12 refreshed to reflect that BFF-FINAL-009 R3 (top-level two-man alias normalization) was implemented in commit 11dd738f. Removed all stale 'R3 outstanding' / 'BFF-FINAL-010 blocked on R3' wording. §9f frontend guidance now correctly says top-level twoManSignatureId/secondOperatorId are accepted and normalized into stored params; params form remains canonical. No canonical/runtime files modified. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-05-08T02:54:28Z",
+      "resolved_at": "2026-05-08T02:56:21Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review changes requested: handoff packet is stale after BFF-FINAL-009 moved to review_approved. Update support/sidecars/BFF-FINAL-010/BFF-FINAL-010-SIDECAR-BFF-HANDOFF.md §2 and §3b so BFF-FINAL-009 is no longer shown as in_progress or pending Codex review/final approval; current truth is review_approved with Codex approval recorded, pending owner Claude closeout to done. Also adjust §10/§12 if needed so BFF-FINAL-010 next steps say final verification remains gated on BFF-FINAL-009 done closeout, not reviewer approval. Keep support-only; do not modify canonical/runtime files.",
+      "status": "done",
+      "created_at": "2026-05-08T02:56:21Z",
+      "resolved_at": "2026-05-08T02:56:21Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Pass 4 update: §2, §3b, §10, §12 refreshed to reflect BFF-FINAL-009 is now review_approved (Codex approval recorded), not in_progress. BFF-FINAL-010 gate now explicitly says 'gated on BFF-FINAL-009 done closeout' rather than reviewer approval. All Codex reopen items addressed. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-05-08T02:58:47Z",
+      "resolved_at": "2026-05-08T03:01:58Z"
+    },
+    {
+      "task_id": "BFF-FINAL-010-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Pass 4 reviewed and approved on latest state. Handoff packet accurately reflects BFF-FINAL-009 approval/closeout gate for BFF-FINAL-010; no canonical/runtime changes. Owner Claude2 should finalize with a task-scoped commit for the pass 4 artifact.",
+      "status": "done",
+      "created_at": "2026-05-08T03:01:58Z",
+      "resolved_at": "2026-05-08T03:04:22Z"
+    }
+  ],
+  "blockers": []
+}

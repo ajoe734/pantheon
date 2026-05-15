@@ -1,0 +1,777 @@
+{
+  "artifact_family": "optimizer_result",
+  "artifact_schema": {
+    "candidate_checksum_required": true,
+    "candidate_output_count": 3,
+    "output_type": "optimizer_result",
+    "ranking_policy": [
+      "validation_sharpe_proxy",
+      "validation_max_drawdown_proxy",
+      "convergence_steps_proxy"
+    ]
+  },
+  "artifact_type": "optimizer_result",
+  "base_training_config": {
+    "algorithm": "ppo",
+    "clip_param": 0.2,
+    "entropy_coeff": 0.002,
+    "gae_lambda": 0.95,
+    "gamma": 0.99,
+    "learning_rate": 0.0003,
+    "lookback_window": 3,
+    "num_trials": 8,
+    "objective_metric": "validation_sharpe_proxy",
+    "search_strategy": "pbt",
+    "seed": 42,
+    "version": "2026.05.01"
+  },
+  "dataset_checksum": "sha256:f81a8c6f9bc6237ae911fc5aadf763c5415127d9e840482d159befc71b1c0855",
+  "dataset_schema": {
+    "joint_action_cardinality": 125,
+    "observation_shape": [
+      9,
+      8
+    ],
+    "required_ohlcv_fields": [
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume"
+    ],
+    "reward_spec": {
+      "cost_penalty": 0.1,
+      "dd_penalty": 0.5,
+      "sharpe_weight": 1.0
+    }
+  },
+  "dataset_summary": {
+    "action_labels": [
+      "sell_large",
+      "sell_small",
+      "hold",
+      "buy_small",
+      "buy_large"
+    ],
+    "data_frequency": "daily",
+    "dataset_id": "ray-tune-activation-smoke-20260501",
+    "decision_focus": "portfolio_optimization",
+    "eval_steps": 9,
+    "flattened_observation_dim": 72,
+    "instruments": [
+      "EQ_AAA",
+      "EQ_BBB",
+      "EQ_CCC"
+    ],
+    "joint_action_cardinality": 125,
+    "lookback_window": 3,
+    "max_position_size": 0.3,
+    "num_instruments": 3,
+    "observation_shape": [
+      9,
+      8
+    ],
+    "reward_spec": {
+      "cost_penalty": 0.1,
+      "dd_penalty": 0.5,
+      "sharpe_weight": 1.0
+    },
+    "slippage_bps": 5.0,
+    "source_dataset_refs": [
+      "synthetic-ohlcv://bounded-fixture/30-periods"
+    ],
+    "source_strategy_spec_id": "strategy-spec:rl-hparam-search-v1",
+    "strategy_id": "rl-exit-timing-ray-tune",
+    "train_steps": 18,
+    "transaction_cost_pct": 0.001
+  },
+  "framework": "ray_tune",
+  "framework_package": "ray[tune]",
+  "framework_version": ">=2.9.0,<3.0.0",
+  "governance": {
+    "allowed_scope": "offline_deferred_prep_only",
+    "direct_live_influence": false,
+    "gate_state": "closed",
+    "lean_consumption": "research_only_not_direct_action",
+    "non_default_backend": true,
+    "notes": [
+      "Stub backend is deterministic and offline-only for Ray Tune deferred prep.",
+      "RL gate remains closed; this output is draft-only and non-executable."
+    ],
+    "output_type": "optimizer_result"
+  },
+  "governance_inputs": {
+    "gate_state": "closed",
+    "non_default_backend": true,
+    "source_dataset_refs": [
+      "synthetic-ohlcv://bounded-fixture/30-periods"
+    ],
+    "source_strategy_spec_id": "strategy-spec:rl-hparam-search-v1"
+  },
+  "metrics": {
+    "best": {
+      "measured_at": "2026-05-02T12:00:31Z",
+      "trial_id": "trial-003",
+      "value": 1.03700316
+    },
+    "median": 0.97579425,
+    "objective": "validation_sharpe_proxy",
+    "secondary_metrics": {
+      "convergence_steps_proxy": 4521,
+      "validation_max_drawdown_proxy": 0.12499179,
+      "win_rate_proxy": 0.70041098
+    }
+  },
+  "optimization_objective": "validation_sharpe_proxy",
+  "optimization_run_config": {
+    "backend": "stub_ray_tune",
+    "cpu_per_trial": 2,
+    "extra_params": {
+      "action_labels": [
+        "sell_large",
+        "sell_small",
+        "hold",
+        "buy_small",
+        "buy_large"
+      ],
+      "joint_action_cardinality": 125,
+      "lookback_window": 3,
+      "search_strategy": "pbt"
+    },
+    "gpu_per_trial": 0.0,
+    "max_iterations": 12,
+    "metric": "validation_sharpe_proxy",
+    "num_trials": 8,
+    "seed": 42,
+    "top_k": 3,
+    "trainable": "rllib_ppo"
+  },
+  "optimization_timestamp": "2026-05-02T12:00:31Z",
+  "optimizer_id": "ray_tune_rllib_search_v1",
+  "optimizer_method": "rllib_ppo",
+  "optimizer_version": "2026.05.01",
+  "output_artifacts": [
+    {
+      "artifact_state": "draft",
+      "artifact_type": "model_artifact",
+      "candidate_registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-003",
+      "checksum": "sha256:de1ec1387d972b12c3098e042f806cb6b4a0543fde889c10c4ab231a6a86a6fe",
+      "metrics_snapshot": {
+        "convergence_steps_proxy": 4521,
+        "cost_penalty_proxy": 0.004,
+        "mean_episode_reward_proxy": 0.74645648,
+        "robustness_proxy": 0.93700973,
+        "validation_max_drawdown_proxy": 0.12499179,
+        "validation_sharpe_proxy": 1.03700316,
+        "win_rate_proxy": 0.70041098
+      },
+      "storage_ref": {
+        "backend": "object_store",
+        "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-003/artifact.json"
+      },
+      "version": "2026.05.01"
+    },
+    {
+      "artifact_state": "draft",
+      "artifact_type": "model_artifact",
+      "candidate_registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-004",
+      "checksum": "sha256:54e7430267949f989c0f32dadd7557e27f433b4ac5aed97b8aa7b943a3a828e0",
+      "metrics_snapshot": {
+        "convergence_steps_proxy": 4417,
+        "cost_penalty_proxy": 0.00315,
+        "mean_episode_reward_proxy": 0.76468968,
+        "robustness_proxy": 0.93493601,
+        "validation_max_drawdown_proxy": 0.12504926,
+        "validation_sharpe_proxy": 1.03497542,
+        "win_rate_proxy": 0.67337645
+      },
+      "storage_ref": {
+        "backend": "object_store",
+        "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-004/artifact.json"
+      },
+      "version": "2026.05.01"
+    },
+    {
+      "artifact_state": "draft",
+      "artifact_type": "model_artifact",
+      "candidate_registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-006",
+      "checksum": "sha256:f46b2f35d32b496c0d93b44d1a99d1434ead611595506a72ee736ca73144fe3f",
+      "metrics_snapshot": {
+        "convergence_steps_proxy": 4775,
+        "cost_penalty_proxy": 0.003075,
+        "mean_episode_reward_proxy": 0.72878042,
+        "robustness_proxy": 0.91146565,
+        "validation_max_drawdown_proxy": 0.1097619,
+        "validation_sharpe_proxy": 0.99927517,
+        "win_rate_proxy": 0.66771477
+      },
+      "storage_ref": {
+        "backend": "object_store",
+        "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-006/artifact.json"
+      },
+      "version": "2026.05.01"
+    }
+  ],
+  "registry_hints": {
+    "artifact_state": "draft",
+    "artifact_type": "optimizer_result",
+    "candidate_output_count": 3,
+    "deployment_stage": "none",
+    "optimizer_method": "rllib_ppo"
+  },
+  "run_id": "raytune-stub-91243138ecdb",
+  "schema_version": "1.0",
+  "search_space_schema": {
+    "framework": "ray_tune",
+    "framework_package": "ray[tune]",
+    "framework_version": ">=2.9.0,<3.0.0",
+    "input_shape": {
+      "action_vector_length": 3,
+      "joint_action_cardinality": 125,
+      "observation_shape": [
+        9,
+        8
+      ]
+    },
+    "num_trials": 8,
+    "objective_metric": "validation_sharpe_proxy",
+    "parameters": {
+      "clip_param": {
+        "baseline": 0.2,
+        "bounds": [
+          0.1,
+          0.3
+        ],
+        "distribution": "uniform",
+        "mutation": "perturb"
+      },
+      "entropy_coeff": {
+        "baseline": 0.002,
+        "bounds": [
+          0.0005,
+          0.01
+        ],
+        "distribution": "loguniform",
+        "mutation": "resample"
+      },
+      "gae_lambda": {
+        "baseline": 0.95,
+        "bounds": [
+          0.92,
+          0.99
+        ],
+        "distribution": "uniform",
+        "mutation": "perturb"
+      },
+      "gamma": {
+        "baseline": 0.99,
+        "bounds": [
+          0.97,
+          0.999
+        ],
+        "distribution": "uniform",
+        "mutation": "perturb"
+      },
+      "learning_rate": {
+        "baseline": 0.0003,
+        "bounds": [
+          1e-05,
+          0.001
+        ],
+        "distribution": "loguniform",
+        "mutation": "resample"
+      },
+      "train_batch_size": {
+        "baseline": 4000,
+        "distribution": "choice",
+        "mutation": "choice",
+        "values": [
+          2000,
+          4000,
+          6000,
+          8000
+        ]
+      }
+    },
+    "ranking_policy": [
+      "validation_sharpe_proxy",
+      "validation_max_drawdown_proxy",
+      "convergence_steps_proxy"
+    ],
+    "resource_plan": {
+      "cpu_per_trial": 2,
+      "gpu_per_trial": 0.0,
+      "max_iterations": 12,
+      "suggested_walltime": "4h_prep_placeholder"
+    },
+    "runtime_boundary": "ray_tune_search_output_prep_only",
+    "schema_version": "1.0",
+    "strategy": "pbt",
+    "trainable": "rllib_ppo"
+  },
+  "search_summary": {
+    "best_trial_id": "trial-003",
+    "best_trial_score": 1.03700316,
+    "median_trial_score": 0.97579425,
+    "num_trials": 8,
+    "objective_metric": "validation_sharpe_proxy",
+    "recommended_candidate_registry_ids": [
+      "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-003",
+      "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-004",
+      "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-006"
+    ],
+    "search_space_dimensions": 6,
+    "search_strategy": "pbt",
+    "top_k": 3
+  },
+  "source_artifact": {
+    "artifact_state": null,
+    "artifact_type": "model_artifact",
+    "checksum": null,
+    "registry_id": null,
+    "version": null
+  },
+  "trial_results": [
+    {
+      "candidate_artifact": {
+        "artifact_state": "draft",
+        "artifact_type": "model_artifact",
+        "deployment_summary": {
+          "current_stage": "none"
+        },
+        "hyperparameters": {
+          "clip_param": 0.3,
+          "entropy_coeff": 0.01,
+          "gae_lambda": 0.99,
+          "gamma": 0.999,
+          "learning_rate": 0.0001,
+          "train_batch_size": 4000
+        },
+        "metrics_snapshot": {
+          "convergence_steps_proxy": 4521,
+          "cost_penalty_proxy": 0.004,
+          "mean_episode_reward_proxy": 0.74645648,
+          "robustness_proxy": 0.93700973,
+          "validation_max_drawdown_proxy": 0.12499179,
+          "validation_sharpe_proxy": 1.03700316,
+          "win_rate_proxy": 0.70041098
+        },
+        "objective_metric": "validation_sharpe_proxy",
+        "optimizer_method": "rllib_ppo",
+        "rank": 1,
+        "registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-003",
+        "search_strategy": "pbt",
+        "storage_ref": {
+          "backend": "object_store",
+          "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-003/artifact.json"
+        },
+        "version": "2026.05.01"
+      },
+      "hyperparameters": {
+        "clip_param": 0.3,
+        "entropy_coeff": 0.01,
+        "gae_lambda": 0.99,
+        "gamma": 0.999,
+        "learning_rate": 0.0001,
+        "train_batch_size": 4000
+      },
+      "metrics": {
+        "convergence_steps_proxy": 4521,
+        "cost_penalty_proxy": 0.004,
+        "mean_episode_reward_proxy": 0.74645648,
+        "robustness_proxy": 0.93700973,
+        "validation_max_drawdown_proxy": 0.12499179,
+        "validation_sharpe_proxy": 1.03700316,
+        "win_rate_proxy": 0.70041098
+      },
+      "rank": 1,
+      "trial_id": "trial-003"
+    },
+    {
+      "candidate_artifact": {
+        "artifact_state": "draft",
+        "artifact_type": "model_artifact",
+        "deployment_summary": {
+          "current_stage": "none"
+        },
+        "hyperparameters": {
+          "clip_param": 0.25,
+          "entropy_coeff": 0.001,
+          "gae_lambda": 0.99,
+          "gamma": 0.99,
+          "learning_rate": 0.0003,
+          "train_batch_size": 2000
+        },
+        "metrics_snapshot": {
+          "convergence_steps_proxy": 4417,
+          "cost_penalty_proxy": 0.00315,
+          "mean_episode_reward_proxy": 0.76468968,
+          "robustness_proxy": 0.93493601,
+          "validation_max_drawdown_proxy": 0.12504926,
+          "validation_sharpe_proxy": 1.03497542,
+          "win_rate_proxy": 0.67337645
+        },
+        "objective_metric": "validation_sharpe_proxy",
+        "optimizer_method": "rllib_ppo",
+        "rank": 2,
+        "registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-004",
+        "search_strategy": "pbt",
+        "storage_ref": {
+          "backend": "object_store",
+          "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-004/artifact.json"
+        },
+        "version": "2026.05.01"
+      },
+      "hyperparameters": {
+        "clip_param": 0.25,
+        "entropy_coeff": 0.001,
+        "gae_lambda": 0.99,
+        "gamma": 0.99,
+        "learning_rate": 0.0003,
+        "train_batch_size": 2000
+      },
+      "metrics": {
+        "convergence_steps_proxy": 4417,
+        "cost_penalty_proxy": 0.00315,
+        "mean_episode_reward_proxy": 0.76468968,
+        "robustness_proxy": 0.93493601,
+        "validation_max_drawdown_proxy": 0.12504926,
+        "validation_sharpe_proxy": 1.03497542,
+        "win_rate_proxy": 0.67337645
+      },
+      "rank": 2,
+      "trial_id": "trial-004"
+    },
+    {
+      "candidate_artifact": {
+        "artifact_state": "draft",
+        "artifact_type": "model_artifact",
+        "deployment_summary": {
+          "current_stage": "none"
+        },
+        "hyperparameters": {
+          "clip_param": 0.15,
+          "entropy_coeff": 0.0005,
+          "gae_lambda": 0.99,
+          "gamma": 0.995,
+          "learning_rate": 0.001,
+          "train_batch_size": 6000
+        },
+        "metrics_snapshot": {
+          "convergence_steps_proxy": 4775,
+          "cost_penalty_proxy": 0.003075,
+          "mean_episode_reward_proxy": 0.72878042,
+          "robustness_proxy": 0.91146565,
+          "validation_max_drawdown_proxy": 0.1097619,
+          "validation_sharpe_proxy": 0.99927517,
+          "win_rate_proxy": 0.66771477
+        },
+        "objective_metric": "validation_sharpe_proxy",
+        "optimizer_method": "rllib_ppo",
+        "rank": 3,
+        "registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-006",
+        "search_strategy": "pbt",
+        "storage_ref": {
+          "backend": "object_store",
+          "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-006/artifact.json"
+        },
+        "version": "2026.05.01"
+      },
+      "hyperparameters": {
+        "clip_param": 0.15,
+        "entropy_coeff": 0.0005,
+        "gae_lambda": 0.99,
+        "gamma": 0.995,
+        "learning_rate": 0.001,
+        "train_batch_size": 6000
+      },
+      "metrics": {
+        "convergence_steps_proxy": 4775,
+        "cost_penalty_proxy": 0.003075,
+        "mean_episode_reward_proxy": 0.72878042,
+        "robustness_proxy": 0.91146565,
+        "validation_max_drawdown_proxy": 0.1097619,
+        "validation_sharpe_proxy": 0.99927517,
+        "win_rate_proxy": 0.66771477
+      },
+      "rank": 3,
+      "trial_id": "trial-006"
+    },
+    {
+      "candidate_artifact": {
+        "artifact_state": "draft",
+        "artifact_type": "model_artifact",
+        "deployment_summary": {
+          "current_stage": "none"
+        },
+        "hyperparameters": {
+          "clip_param": 0.2,
+          "entropy_coeff": 0.005,
+          "gae_lambda": 0.99,
+          "gamma": 0.97,
+          "learning_rate": 0.0005,
+          "train_batch_size": 8000
+        },
+        "metrics_snapshot": {
+          "convergence_steps_proxy": 4739,
+          "cost_penalty_proxy": 0.00425,
+          "mean_episode_reward_proxy": 0.73124539,
+          "robustness_proxy": 0.860849,
+          "validation_max_drawdown_proxy": 0.14453202,
+          "validation_sharpe_proxy": 0.97647462,
+          "win_rate_proxy": 0.6352055
+        },
+        "objective_metric": "validation_sharpe_proxy",
+        "optimizer_method": "rllib_ppo",
+        "rank": 4,
+        "registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-005",
+        "search_strategy": "pbt",
+        "storage_ref": {
+          "backend": "object_store",
+          "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-005/artifact.json"
+        },
+        "version": "2026.05.01"
+      },
+      "hyperparameters": {
+        "clip_param": 0.2,
+        "entropy_coeff": 0.005,
+        "gae_lambda": 0.99,
+        "gamma": 0.97,
+        "learning_rate": 0.0005,
+        "train_batch_size": 8000
+      },
+      "metrics": {
+        "convergence_steps_proxy": 4739,
+        "cost_penalty_proxy": 0.00425,
+        "mean_episode_reward_proxy": 0.73124539,
+        "robustness_proxy": 0.860849,
+        "validation_max_drawdown_proxy": 0.14453202,
+        "validation_sharpe_proxy": 0.97647462,
+        "win_rate_proxy": 0.6352055
+      },
+      "rank": 4,
+      "trial_id": "trial-005"
+    },
+    {
+      "candidate_artifact": {
+        "artifact_state": "draft",
+        "artifact_type": "model_artifact",
+        "deployment_summary": {
+          "current_stage": "none"
+        },
+        "hyperparameters": {
+          "clip_param": 0.1,
+          "entropy_coeff": 0.002,
+          "gae_lambda": 0.99,
+          "gamma": 0.985,
+          "learning_rate": 5e-05,
+          "train_batch_size": 6000
+        },
+        "metrics_snapshot": {
+          "convergence_steps_proxy": 4822,
+          "cost_penalty_proxy": 0.0033,
+          "mean_episode_reward_proxy": 0.70842178,
+          "robustness_proxy": 0.86951126,
+          "validation_max_drawdown_proxy": 0.13200328,
+          "validation_sharpe_proxy": 0.97511388,
+          "win_rate_proxy": 0.66225367
+        },
+        "objective_metric": "validation_sharpe_proxy",
+        "optimizer_method": "rllib_ppo",
+        "rank": 5,
+        "registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-002",
+        "search_strategy": "pbt",
+        "storage_ref": {
+          "backend": "object_store",
+          "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-002/artifact.json"
+        },
+        "version": "2026.05.01"
+      },
+      "hyperparameters": {
+        "clip_param": 0.1,
+        "entropy_coeff": 0.002,
+        "gae_lambda": 0.99,
+        "gamma": 0.985,
+        "learning_rate": 5e-05,
+        "train_batch_size": 6000
+      },
+      "metrics": {
+        "convergence_steps_proxy": 4822,
+        "cost_penalty_proxy": 0.0033,
+        "mean_episode_reward_proxy": 0.70842178,
+        "robustness_proxy": 0.86951126,
+        "validation_max_drawdown_proxy": 0.13200328,
+        "validation_sharpe_proxy": 0.97511388,
+        "win_rate_proxy": 0.66225367
+      },
+      "rank": 5,
+      "trial_id": "trial-002"
+    },
+    {
+      "candidate_artifact": {
+        "artifact_state": "draft",
+        "artifact_type": "model_artifact",
+        "deployment_summary": {
+          "current_stage": "none"
+        },
+        "hyperparameters": {
+          "clip_param": 0.1,
+          "entropy_coeff": 0.002,
+          "gae_lambda": 0.99,
+          "gamma": 0.985,
+          "learning_rate": 1e-05,
+          "train_batch_size": 4000
+        },
+        "metrics_snapshot": {
+          "convergence_steps_proxy": 5014,
+          "cost_penalty_proxy": 0.0028,
+          "mean_episode_reward_proxy": 0.67544894,
+          "robustness_proxy": 0.85490638,
+          "validation_max_drawdown_proxy": 0.13533662,
+          "validation_sharpe_proxy": 0.96317568,
+          "win_rate_proxy": 0.68660479
+        },
+        "objective_metric": "validation_sharpe_proxy",
+        "optimizer_method": "rllib_ppo",
+        "rank": 6,
+        "registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-007",
+        "search_strategy": "pbt",
+        "storage_ref": {
+          "backend": "object_store",
+          "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-007/artifact.json"
+        },
+        "version": "2026.05.01"
+      },
+      "hyperparameters": {
+        "clip_param": 0.1,
+        "entropy_coeff": 0.002,
+        "gae_lambda": 0.99,
+        "gamma": 0.985,
+        "learning_rate": 1e-05,
+        "train_batch_size": 4000
+      },
+      "metrics": {
+        "convergence_steps_proxy": 5014,
+        "cost_penalty_proxy": 0.0028,
+        "mean_episode_reward_proxy": 0.67544894,
+        "robustness_proxy": 0.85490638,
+        "validation_max_drawdown_proxy": 0.13533662,
+        "validation_sharpe_proxy": 0.96317568,
+        "win_rate_proxy": 0.68660479
+      },
+      "rank": 6,
+      "trial_id": "trial-007"
+    },
+    {
+      "candidate_artifact": {
+        "artifact_state": "draft",
+        "artifact_type": "model_artifact",
+        "deployment_summary": {
+          "current_stage": "none"
+        },
+        "hyperparameters": {
+          "clip_param": 0.3,
+          "entropy_coeff": 0.01,
+          "gae_lambda": 0.99,
+          "gamma": 0.999,
+          "learning_rate": 5e-05,
+          "train_batch_size": 2000
+        },
+        "metrics_snapshot": {
+          "convergence_steps_proxy": 5080,
+          "cost_penalty_proxy": 0.0045,
+          "mean_episode_reward_proxy": 0.69322932,
+          "robustness_proxy": 0.83628126,
+          "validation_max_drawdown_proxy": 0.12832512,
+          "validation_sharpe_proxy": 0.93894136,
+          "win_rate_proxy": 0.65592652
+        },
+        "objective_metric": "validation_sharpe_proxy",
+        "optimizer_method": "rllib_ppo",
+        "rank": 7,
+        "registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-008",
+        "search_strategy": "pbt",
+        "storage_ref": {
+          "backend": "object_store",
+          "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-008/artifact.json"
+        },
+        "version": "2026.05.01"
+      },
+      "hyperparameters": {
+        "clip_param": 0.3,
+        "entropy_coeff": 0.01,
+        "gae_lambda": 0.99,
+        "gamma": 0.999,
+        "learning_rate": 5e-05,
+        "train_batch_size": 2000
+      },
+      "metrics": {
+        "convergence_steps_proxy": 5080,
+        "cost_penalty_proxy": 0.0045,
+        "mean_episode_reward_proxy": 0.69322932,
+        "robustness_proxy": 0.83628126,
+        "validation_max_drawdown_proxy": 0.12832512,
+        "validation_sharpe_proxy": 0.93894136,
+        "win_rate_proxy": 0.65592652
+      },
+      "rank": 7,
+      "trial_id": "trial-008"
+    },
+    {
+      "candidate_artifact": {
+        "artifact_state": "draft",
+        "artifact_type": "model_artifact",
+        "deployment_summary": {
+          "current_stage": "none"
+        },
+        "hyperparameters": {
+          "clip_param": 0.15,
+          "entropy_coeff": 0.0005,
+          "gae_lambda": 0.99,
+          "gamma": 0.995,
+          "learning_rate": 1e-05,
+          "train_batch_size": 8000
+        },
+        "metrics_snapshot": {
+          "convergence_steps_proxy": 5410,
+          "cost_penalty_proxy": 0.003575,
+          "mean_episode_reward_proxy": 0.65396381,
+          "robustness_proxy": 0.82687776,
+          "validation_max_drawdown_proxy": 0.10642857,
+          "validation_sharpe_proxy": 0.91202062,
+          "win_rate_proxy": 0.62550895
+        },
+        "objective_metric": "validation_sharpe_proxy",
+        "optimizer_method": "rllib_ppo",
+        "rank": 8,
+        "registry_id": "rllib-policy-rl-exit-timing-ray-tune-2026.05.01-trial-001",
+        "search_strategy": "pbt",
+        "storage_ref": {
+          "backend": "object_store",
+          "path": "research/rllib/rl-exit-timing-ray-tune/2026.05.01/trials/trial-001/artifact.json"
+        },
+        "version": "2026.05.01"
+      },
+      "hyperparameters": {
+        "clip_param": 0.15,
+        "entropy_coeff": 0.0005,
+        "gae_lambda": 0.99,
+        "gamma": 0.995,
+        "learning_rate": 1e-05,
+        "train_batch_size": 8000
+      },
+      "metrics": {
+        "convergence_steps_proxy": 5410,
+        "cost_penalty_proxy": 0.003575,
+        "mean_episode_reward_proxy": 0.65396381,
+        "robustness_proxy": 0.82687776,
+        "validation_max_drawdown_proxy": 0.10642857,
+        "validation_sharpe_proxy": 0.91202062,
+        "win_rate_proxy": 0.62550895
+      },
+      "rank": 8,
+      "trial_id": "trial-001"
+    }
+  ],
+  "trigger": "manual"
+}

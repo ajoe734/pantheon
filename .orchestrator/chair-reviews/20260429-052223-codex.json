@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Queues and approvals are clear, underutilization is low, and non-paused capacity remains after blocking saturated review parents.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-RESEARCH-WORKER-GATEWAY",
+    "SVC-DOCS-CODE-TRUTH-SYNC",
+    "SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+      "role": "reviewer",
+      "from": "Copilot",
+      "to": "Codex2",
+      "reason": "Copilot has two quota-terminal failures on this review; Codex2 is no longer dispatch-paused and successfully finalized another task at 2026-04-29T05:18:04Z, while owner Codex remains separate from the reviewer role."
+    }
+  ],
+  "recommended_focus": [
+    "SVC-RESEARCH-WORKER-GATEWAY-SIDECAR-ACCEPTANCE",
+    "SVC-DOCS-CODE-TRUTH-SYNC",
+    "SVC-SOURCE-INGEST-AUTONOMOUS-PIPELINE",
+    "SVC-SEARCH-AUTONOMOUS-INDEX-PIPELINE"
+  ]
+}

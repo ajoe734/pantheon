@@ -1,0 +1,16 @@
+{
+  "body": {
+    "account": "U19859952",
+    "symbol": "AAPL",
+    "security_type": "STK",
+    "exchange": "SMART",
+    "currency": "USD",
+    "action": "BUY",
+    "quantity": 1,
+    "order_type": "LMT",
+    "limit_price": "120",
+    "time_in_force": "DAY",
+    "outside_rth": false
+  },
+  "capture_note": "Operator confirmed this limit did not cross the market before submission."
+}

@@ -1,0 +1,6 @@
+{
+  "_note": "TW-03 Before/After Compare — API gap requests from this implementation pass.",
+  "feature_id": "TW-03-before-after-compare",
+  "pass": "initial-implementation",
+  "gaps": []
+}

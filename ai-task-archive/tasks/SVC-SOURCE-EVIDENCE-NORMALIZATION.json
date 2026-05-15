@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "SVC-SOURCE-EVIDENCE-NORMALIZATION",
+  "archived_at": "2026-04-30T05:33:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-SOURCE-EVIDENCE-NORMALIZATION",
+    "title": "Normalize source evidence ownership",
+    "summary_zh": "補 canonical SourceRecord / EvidenceItem / KnowledgeObject normalization：hash、canonical URL/DOI/repo、license/access scope、dedupe 與 evidence ownership。",
+    "phase": "Source / Search Platform",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "SVC-SOURCE-CONNECTOR-FRAMEWORK"
+    ],
+    "artifacts": [
+      "services/source_ingestion",
+      "services/knowledge",
+      "services/consultation",
+      "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion"
+    ],
+    "acceptance": [
+      "canonical evidence schema covers source record evidence item and knowledge object",
+      "content hash canonical url doi and repo normalization are deterministic",
+      "license access scope and citation metadata are preserved",
+      "dedupe merges duplicates without losing provenance",
+      "tests cover source search consultation compatibility"
+    ],
+    "next": "Closeout finalized with task-scoped commit dcae6bb. Verified with python3 -m pytest services/knowledge/evidence services/source_ingestion services/consultation: 54 passed. Evidence note and Claude review packet committed.",
+    "last_update": "2026-04-30T05:33:04Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-materialization-20260430",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：五項 acceptance criteria 全部達標，54 測試通過。normalize_url/doi/repo/content_hash 皆確定性；dedupe 保留 provenance；license/access scope/citation metadata 完整；evidence note 已備妥。",
+      "後續：Codex2 執行 closeout finalization、task-scoped commit 後以 ai-status.sh done 收尾。"
+    ],
+    "review_file": ".orchestrator/chair-reviews/SVC-SOURCE-EVIDENCE-NORMALIZATION-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T05:33:04Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "dcae6bb2cede20deeb9e0fd9db610665368e0a33",
+      "commit_subject": "SVC-SOURCE-EVIDENCE-NORMALIZATION normalize source evidence ownership",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-SOURCE-EVIDENCE-NORMALIZATION",
+        "Reviewer": "Claude",
+        "Verification": "python3 -m pytest services/knowledge/evidence services/source_ingestion services/consultation (54 passed)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 32,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 11,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-SOURCE-EVIDENCE-NORMALIZATION",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implemented canonical SourceRecord/EvidenceItem/KnowledgeObject normalization, deterministic owner refs, JSONL/Postgres dedupe indexes, task evidence note, and focused verification: python3 -m pytest services/knowledge/evidence services/source_ingestion services/consultation (54 passed).",
+      "status": "done",
+      "created_at": "2026-04-30T05:26:39Z",
+      "resolved_at": "2026-04-30T05:30:34Z"
+    },
+    {
+      "task_id": "SVC-SOURCE-EVIDENCE-NORMALIZATION",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "審查通過：所有五項 acceptance criteria 達標，54 測試通過，實作範圍精確，task evidence note 完整。交回 Codex2 進行 closeout finalization。",
+      "status": "done",
+      "created_at": "2026-04-30T05:30:34Z",
+      "resolved_at": "2026-04-30T05:33:04Z"
+    }
+  ],
+  "blockers": []
+}

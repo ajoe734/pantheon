@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "task_id": "P0-LOOP-001",
+  "archived_at": "2026-05-01T08:52:03Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-LOOP-001",
+    "title": "Add minimum paper operating loop smoke",
+    "summary_zh": "以 seed/approved artifact 跑通 DeploymentPlan -> RuntimeBinding -> paper heartbeat -> BFF runtime status。",
+    "phase": "Pantheon P0 Paper Loop",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "depends_on": [
+      "P0-TEL-PROJ-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_sa/SA-11_operating_loop_gap_analysis.md"
+    ],
+    "acceptance": [
+      "smoke uses pantheon/lean, not lean-platform",
+      "no live broker action or preview mock is used"
+    ],
+    "source_plane": "planning",
+    "source_ref": {
+      "type": "discussion_planning",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "phase": "phase6",
+      "profile": "generic",
+      "planning_dir": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop",
+      "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/planning-session.json",
+      "consensus_packet": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/consensus-packet.md",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "materialization_ref": {
+      "materialized_at": "2026-05-01T03:58:17Z",
+      "session_id": "phase6-2026-05-01-pantheon-p0-paper-loop",
+      "consensus_status": "accepted",
+      "human_gate_status": "approved",
+      "execution_materialization": "docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/execution-materialization.md"
+    },
+    "status": "done",
+    "next": "Owner finalized reviewed P0-LOOP-001 with task commit dbee6fe; verification: 29-test paper loop packet passed; scope remains paper-only with pantheon/lean identity and no live broker action.",
+    "last_update": "2026-05-01T08:52:03Z",
+    "review_notes_zh": [
+      "審查通過：29 tests passed，acceptance criteria 全部達標 (pantheon/lean confirmed; live_broker_enabled=False; broker=not_applicable)",
+      "全 loop 覆蓋：DeploymentPlan→RuntimeBinding→bootstrap→heartbeat→projection→BFF",
+      "交還 Codex 進行 closeout finalization"
+    ],
+    "review_file": ".orchestrator/chair-reviews/p0-loop-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-01T08:52:03Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "dbee6fe31ea03e6e439937a110bd45370aed4790",
+      "commit_subject": "P0-LOOP-001 add paper operating loop smoke",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "P0-LOOP-001",
+        "Reviewer": "Claude",
+        "Verification": "pytest -q services/control-plane/bff/test_p0_paper_operating_loop_smoke.py services/telemetry/test_runtime_summary_projection.py services/telemetry/test_paper_runtime_ingest_contract.py services/execution/lean_runtime/test_bootstrap_contract.py services/execution/lean_runtime/test_runtime_context.py (29 passed)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 118,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-LOOP-001",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Auto-reassigned P0-LOOP-001 away from sidecar-only lane Gemini; reviewer Gemini -> Claude. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-05-01T03:58:57Z",
+      "resolved_at": "2026-05-01T08:03:30Z"
+    },
+    {
+      "task_id": "P0-LOOP-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented minimum paper operating loop smoke: DeploymentPlan -> RuntimeBinding -> RuntimeBootstrapRequest/context -> paper heartbeat -> telemetry projection -> BFF runtime-state. Verification: pytest -q services/control-plane/bff/test_p0_paper_operating_loop_smoke.py; pytest -q services/control-plane/bff/test_p0_paper_operating_loop_smoke.py services/telemetry/test_runtime_summary_projection.py services/telemetry/test_paper_runtime_ingest_contract.py services/execution/lean_runtime/test_bootstrap_contract.py services/execution/lean_runtime/test_runtime_context.py (29 passed).",
+      "status": "done",
+      "created_at": "2026-05-01T08:40:25Z",
+      "resolved_at": "2026-05-01T08:45:00Z"
+    },
+    {
+      "task_id": "P0-LOOP-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: 29 tests passed, both acceptance criteria verified, minimum paper operating loop smoke fully traced end-to-end. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-01T08:45:00Z",
+      "resolved_at": "2026-05-01T08:52:04Z"
+    }
+  ],
+  "blockers": []
+}

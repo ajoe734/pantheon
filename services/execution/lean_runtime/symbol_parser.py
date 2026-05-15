@@ -1,35 +1,34 @@
 """
 Symbol Parser
-Converts the schema.json flat symbol string ("AAPL.US", "BTCUSDT", "2330.TW")
+Converts the schema.json flat symbol string ("AAPL.US", "BTCUSDT")
 into a LEAN Symbol object via Symbol.Create().
 
 Format contract (from signal_schema_v1.md §3.3, pending P2-002 full doc):
     "{TICKER}.{MARKET_CODE}"   — equities, forex, options
     "{TICKER}{QUOTE}"          — crypto (no dot separator, e.g. BTCUSDT on Binance)
 
-Market code → (LEAN Market, LEAN SecurityType) table must be kept in sync with
-schema.json allowed market values.
+Taiwan venue symbols are intentionally excluded because they execute through
+the Shioaji adapter boundary, not LEAN Symbol.Create().
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
 # ---------------------------------------------------------------------------
 # Market code mapping
-# Aligns with schema.json symbol description: "AAPL.US, BTCUSDT, 2330.TW"
+# Aligns with the LEAN-backed subset of schema.json symbol descriptions.
 # Keys are uppercase suffixes after the last dot (or heuristic for crypto).
 # ---------------------------------------------------------------------------
 _MARKET_MAP: dict[str, tuple[str, str]] = {
     # code          : (LEAN Market constant,  LEAN SecurityType constant)
     "US":           ("Market.USA",            "SecurityType.Equity"),
     "USA":          ("Market.USA",            "SecurityType.Equity"),
-    "TW":           ("Market.HKFE",           "SecurityType.Equity"),   # Taiwan — proxy; confirm with Codex
     "FOREX":        ("Market.Oanda",          "SecurityType.Forex"),
     "FX":           ("Market.Oanda",          "SecurityType.Forex"),
     "COINBASE":     ("Market.Coinbase",       "SecurityType.Crypto"),
     "BINANCE":      ("Market.Binance",        "SecurityType.Crypto"),
-    "CRYPTO":       ("Market.Coinbase",       "SecurityType.Crypto"),   # default crypto exchange
+    "KRAKEN":       ("Market.Kraken",         "SecurityType.Crypto"),
+    "CRYPTO":       ("Market.Kraken",         "SecurityType.Crypto"),   # canonical crypto venue default
 }
 
 # Crypto pairs that lack a dot separator — identified by known quote currencies
@@ -58,8 +57,10 @@ def parse(symbol_str: str) -> ParsedSymbol:
     Examples:
         "AAPL.US"       → ticker=AAPL, Market.USA, SecurityType.Equity
         "EURUSD.FX"     → ticker=EURUSD, Market.Oanda, SecurityType.Forex
-        "BTCUSDT"       → ticker=BTCUSDT, Market.Coinbase, SecurityType.Crypto
-        "2330.TW"       → ticker=2330, Market.HKFE, SecurityType.Equity (TW proxy)
+        "BTCUSD.KRAKEN" → ticker=BTCUSD, Market.Kraken, SecurityType.Crypto
+        "BTCUSDT"       → ticker=BTCUSDT, Market.Kraken, SecurityType.Crypto
+        Taiwan venue codes are intentionally excluded here. Taiwan execution
+        uses the Shioaji adapter boundary rather than LEAN Symbol.Create().
     """
     s = symbol_str.strip().upper()
 
@@ -82,7 +83,7 @@ def parse(symbol_str: str) -> ParsedSymbol:
             # Preserve original casing for LEAN (e.g. "BTCUSDT" not "BTCUSD T")
             return ParsedSymbol(
                 ticker=s,
-                lean_market="Market.Binance",
+                lean_market="Market.Kraken",
                 lean_security_type="SecurityType.Crypto",
                 raw=symbol_str,
             )

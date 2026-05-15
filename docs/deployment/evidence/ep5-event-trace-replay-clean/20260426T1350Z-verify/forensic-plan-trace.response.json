@@ -1,0 +1,94 @@
+{
+  "target_type": "deployment_plan",
+  "target_id": "plan-ep5-canary-20260424-003-rollback",
+  "derived_only": true,
+  "projection_updated_at": null,
+  "upstream_chain": [
+    {
+      "type": "deployment_plan",
+      "id": "plan-ep5-canary-20260424-003-rollback"
+    },
+    {
+      "type": "capital_pool",
+      "id": "pool-ep5-canary-3"
+    },
+    {
+      "type": "persona_capital_binding",
+      "id": "pcb-ep5-canary-3"
+    },
+    {
+      "type": "artifact_ref",
+      "id": "artifact-ep4-paper-baseline@0.9.1"
+    }
+  ],
+  "downstream_chain": [
+    {
+      "type": "runtime_binding",
+      "id": "rb-c357b5ab929f425c89efcb7b98eacf91",
+      "status": "active"
+    },
+    {
+      "type": "telemetry_event",
+      "id": "evt-ep5-rollback-rb-c357b5ab929f425c89efcb7b98eacf91",
+      "event_type": "rollback_completed"
+    },
+    {
+      "type": "runtime_binding",
+      "id": "rb-a596b4bf24a34eef82bef0e936ba6cb4",
+      "status": "retired"
+    },
+    {
+      "type": "runtime_ref",
+      "id": "paper-runtime-rollback-002"
+    }
+  ],
+  "conflict_markers": [
+    {
+      "code": "rollback_action_type",
+      "id": "pause_then_replace"
+    },
+    {
+      "code": "rollback_target_artifact",
+      "id": "artifact-ep4-paper-baseline@0.9.1"
+    },
+    {
+      "code": "rollback_parent",
+      "id": "rb-a596b4bf24a34eef82bef0e936ba6cb4"
+    }
+  ],
+  "refs": {
+    "strategy_ids": [
+      "strategy-ep5-canary"
+    ],
+    "registry_ids": [
+      "artifact-ep4-paper-baseline"
+    ],
+    "runtime_binding_ids": [
+      "rb-a596b4bf24a34eef82bef0e936ba6cb4",
+      "rb-c357b5ab929f425c89efcb7b98eacf91"
+    ],
+    "deployment_plan_ids": [
+      "plan-ep5-canary-20260424-003",
+      "plan-ep5-canary-20260424-003-rollback"
+    ],
+    "capital_pool_ids": [
+      "pool-ep5-canary-3"
+    ],
+    "persona_capital_binding_ids": [
+      "pcb-ep5-canary-3"
+    ],
+    "artifact_refs": [
+      "artifact-ep4-paper-baseline@0.9.1",
+      "artifact-ep5-canary@1.0.2"
+    ],
+    "trace_ids": [
+      "trace-ep5-rollback-rb-c357b5ab929f425c89efcb7b98eacf91"
+    ]
+  },
+  "runtime_binding_count": 2,
+  "telemetry_event_count": 1,
+  "_meta": {
+    "visited_node_count": 0,
+    "visited_edge_count": 0
+  }
+}

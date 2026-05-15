@@ -1,0 +1,142 @@
+{
+  "version": 1,
+  "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
+  "archived_at": "2026-05-02T13:17:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
+    "title": "FinRL RLlib Ray Tune governed runtime activation smoke",
+    "summary_zh": "把 FinRL/RLlib/Ray Tune 從 dormant/deferred prep 推進到 governed runtime smoke：真實 backend 可用時跑 bounded train/search，否則留下明確 dependency/config error；仍禁止 broker/order/live 路由。",
+    "phase": "P2 Wave 8 External Activation",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "P2-OSS-ACTIVATE-001"
+    ],
+    "artifacts": [
+      "services/research/finrl",
+      "services/research/rllib",
+      "services/learning/rl",
+      "services/research-worker-gateway",
+      "services/evaluation",
+      "OSS_INTEGRATION_CHECKLIST.md",
+      "docs/deployment/external-data-integration-execution-task-inventory.md"
+    ],
+    "acceptance": [
+      "FinRL RLlib and Ray Tune enabled paths run bounded governed train/search smoke or produce explicit upstream dependency/config evidence",
+      "Reward environment dataset and artifact schemas are enforced with persisted checksums and evaluator packet",
+      "Outputs remain research artifacts only with no broker session order routing paper canary live promotion or capital binding"
+    ],
+    "next": "Closeout complete: lifecycle wording in OSS_INTEGRATION_CHECKLIST changed to 'task done' per reviewer note; OSS_ACTIVATION_NOTES and DEFERRED_OSS_ACTIVATION_MAP RL rows updated to smoke-tested/task-done; closeout commit 8d9a1fe; FinRL 16 OK, RLlib 33 OK, manifest 21/21 OK, all acceptance gates true; deployment_stage=none; no broker session, order routing, paper/canary/live promotion, or capital binding.",
+    "last_update": "2026-05-02T13:17:00Z",
+    "task_class": "execution",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Codex2 三項 review 發現皆已在 commit 2be92ea 修正：adapter schema/checksum 已隨 task commit；每個 framework manifest 已含 evaluator_packet checksum；OSS_INTEGRATION_CHECKLIST 已改為 evidence produced 措辭",
+      "21/21 evidence checksum 驗證通過、FinRL 16 tests OK、RLlib 33 tests OK、所有 acceptance gate=true、每個 framework deployment_stage=none / artifact_state=draft、real_backend 皆以 silent_stub_fallback=false 記錄 ModuleNotFoundError",
+      "由 Claude 接手 review (Codex2 quota 用盡自動轉派)，批准回交 owner Claude2 進行 closeout"
+    ],
+    "review_file": "support/reviews/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-02T13:17:00Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "8d9a1fe1da082bd3e91b78b685686a211d46d053",
+      "commit_subject": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001: closeout — update lifecycle wording and activation records",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "- OSS_INTEGRATION_CHECKLIST.md": "FinRL/RLlib/Ray Tune rows changed from",
+        "- services/learning/OSS_ACTIVATION_NOTES.md": "FinRL status updated from",
+        "- services/learning/DEFERRED_OSS_ACTIVATION_MAP.md": "FinRL/RLlib rows",
+        "- EXECUTION_PROOF_AND_MATURITY_LEVELS.md": "added governance note that broker",
+        "- Manifest checksum verification": "21/21 OK (sha256 prefix-corrected check)",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
+        "Reviewer": "Claude",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 197,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Auto-reassigned P2-RL-UPSTREAM-RUNTIME-SMOKE-001 away from sidecar-only lane Copilot; owner Copilot -> Codex. Reserved sidecar-only agents no longer hold mainline tasks.",
+      "status": "done",
+      "created_at": "2026-05-01T15:42:34Z",
+      "resolved_at": "2026-05-01T16:18:55Z"
+    },
+    {
+      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Implementation ready for review: created activation_smoke.py for FinRL, RLlib, and Ray Tune; all three ran with --enable-activation-ready --backend real and recorded explicit dependency/config errors (ModuleNotFoundError: finrl / ray) with silent_stub_fallback=false; stub-backed handoff artifacts (artifact_bundle, registry_entry, candidate_packet, evaluator_packet) produced and persisted at support/evidence/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/; all acceptance gates pass (bounded smoke or explicit error, checksums, evaluator packet, no broker/order/promotion/capital); OSS_INTEGRATION_CHECKLIST.md updated: FinRL/RLlib/Ray Tune smoke-tested; tests: finrl 16 passed, rllib 33 passed; commit: 2a6a705",
+      "status": "done",
+      "created_at": "2026-05-01T16:55:37Z",
+      "resolved_at": "2026-05-01T17:08:59Z"
+    },
+    {
+      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Changes requested by Codex2: support/reviews/P2-RL-UPSTREAM-RUNTIME-SMOKE-001-codex2-review.md. Main blocker: schema/checksum adapter support behind the evidence is still uncommitted and absent from task commit 2a6a705; also fix per-framework evaluator_packet checksum omission and remove premature 'closed' wording from OSS_INTEGRATION_CHECKLIST.md before re-handoff.",
+      "status": "done",
+      "created_at": "2026-05-01T17:08:59Z",
+      "resolved_at": "2026-05-01T17:08:59Z"
+    },
+    {
+      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Chair reassigned owner from Claude to Claude2: Claude is occupied in finalize mode for P2-MARKETDATA-CREDENTIAL-SMOKE-001; Claude2 is idle and shares the same capability lane (execution, control-plane, governance-review). Dependency P2-OSS-ACTIVATE-001 is done; task is immediately runnable.. Task returned to todo for a fresh run.",
+      "status": "done",
+      "created_at": "2026-05-01T17:41:18Z",
+      "resolved_at": "2026-05-01T17:41:41Z"
+    },
+    {
+      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "All three Codex2 review findings addressed in commit 2be92ea: (1) adapter schema/checksum support (finrl_adapter, rllib_adapter, ray_tune_adapter, both __init__.py files) committed alongside evidence; (2) _persist_artifacts() now writes evaluator_packet.json before computing checksums so per-framework manifest carries evaluator_packet checksum; duplicate top-level write removed from main(); (3) OSS_INTEGRATION_CHECKLIST.md FinRL/RLlib/Ray Tune row wording changed from 'task closed' to 'evidence produced'. Evidence regenerated from each smoke run via per-framework temp dirs to avoid cross-framework overwrites; aggregate activation_evidence_summary.json and manifest.json regenerated with 21 framework-prefixed artifact checksums (21 OK, 0 BAD). Tests: finrl 16 OK, rllib 33 OK. Governance: deployment_stage=none, gate_state=closed across all frameworks; no broker session, no order routing, no paper/canary/live promotion, no capital binding.",
+      "status": "done",
+      "created_at": "2026-05-02T12:28:47Z",
+      "resolved_at": "2026-05-02T12:38:58Z"
+    },
+    {
+      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-05-02T12:38:58Z",
+      "resolved_at": "2026-05-02T12:53:23Z"
+    },
+    {
+      "task_id": "P2-RL-UPSTREAM-RUNTIME-SMOKE-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Claude review approved post-Codex2 reassignment: all three Codex2 findings closed in 2be92ea (adapter schema/checksum committed, per-framework manifest carries evaluator_packet checksum, checklist wording corrected); manifest 21/21 OK, FinRL 16 + RLlib 33 tests OK, all acceptance gates true, governance boundary intact (deployment_stage=none, no broker/order/promotion/capital). Returning to Claude2 for closeout.",
+      "status": "done",
+      "created_at": "2026-05-02T12:53:23Z",
+      "resolved_at": "2026-05-02T13:17:00Z"
+    }
+  ],
+  "blockers": []
+}

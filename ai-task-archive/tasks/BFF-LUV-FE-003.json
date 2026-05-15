@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-FE-003",
+  "archived_at": "2026-05-09T17:43:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-FE-003",
+    "title": "Wire execute-plans Agora v5 and realtime live BFF",
+    "summary_zh": "把 execute-plans Agora/v5/realtime 接 live BFF/SSE，保留 mock mode 但 real mode 不可 silent fallback。",
+    "phase": "BFF Execute-Plans Frontend Live Completion 2026-05-09",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "BFF-LUV-FE-001"
+    ],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-09-execute-plans-frontend-live-completion/BFF-LUV-FE-003-agora-v5-realtime.md",
+      "/home/lupin/code/execute-plans/src/lib/bff/v5.ts",
+      "/home/lupin/code/execute-plans/src/lib/bff/realtime.ts"
+    ],
+    "acceptance": [
+      "Agora/v5 delivered routes use live adapters",
+      "EventSource/SSE support exists",
+      "mock simulator limited to mock mode",
+      "npm run test passes",
+      "npm run build passes"
+    ],
+    "next": "Done: FE-003 closeout finalized. execute-plans commit 8517b23 wires strict live Agora/v5 reads and EventSource SSE bridge; Pantheon artifact commit 6882843d records review, implementation notes, and verification. Verification: focused FE-003 tests pass (14 tests), npm run build passes with existing Vite warnings, full npm run test passes (47 files / 409 tests).",
+    "last_update": "2026-05-09T17:43:25Z",
+    "review_notes_zh": [
+      "Codex review approved FE-003: strict live Agora/v5 reads and EventSource SSE bridge are wired; focused tests, build, and full npm run test pass.",
+      "Review note: Pantheon /bff/events/stream is currently liveness-only for browser EventSource until cookie-backed privileged SSE auth exists; this matches backend comments and is non-blocking for FE wiring."
+    ],
+    "review_file": ".orchestrator/reviews/BFF-LUV-FE-003-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-09T17:43:25Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "6882843d6774bacb23fc640879d9ebd18dcd49c0",
+      "commit_subject": "BFF-LUV-FE-003 record frontend live closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-LUV-FE-003",
+        "Reviewer": "Codex",
+        "Implementation-Commit": "execute-plans 8517b23b1102765955294ea5e681e0d541825d56"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 7,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 9,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-FE-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "FE-003 implementation ready for review: strict live Agora/v5 reads and live SSE bridge are wired; focused tests pass; build passes; full npm run test now only blocked by unrelated dirty FE-004 runAction.test.ts SyntaxError: Identifier readConfirmToken has already been declared.",
+      "status": "done",
+      "created_at": "2026-05-09T17:17:25Z",
+      "resolved_at": "2026-05-09T17:30:44Z"
+    },
+    {
+      "task_id": "BFF-LUV-FE-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Codex review approved. Verified focused FE-003 tests, build, and full execute-plans test suite pass; return to Codex2 for owner closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-09T17:30:44Z",
+      "resolved_at": "2026-05-09T17:43:25Z"
+    }
+  ],
+  "blockers": []
+}

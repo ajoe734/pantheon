@@ -1,0 +1,189 @@
+{
+  "version": 1,
+  "task_id": "EXEC-FRONT-RW04-001",
+  "archived_at": "2026-04-21T18:21:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXEC-FRONT-RW04-001",
+    "title": "Implement RW-04 experiment launch front-end flow against live Pantheon APIs",
+    "summary_zh": "在 front-end lane 實作 RW-04 experiment launch / history / detail flow，依 live route family 與已補齊的前端 handoff bundle 接線。",
+    "phase": "Execution / Frontend Lane Implementation",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "EXEC-REBASE-RW04-001"
+    ],
+    "artifacts": [
+      ".coordination/responses/RW-04-experiment-launch-contract-ready.yaml",
+      ".coordination/responses/RW-04-experiment-launch-lovable-ui-task.yaml",
+      "docs/pantheon-handoffs/RW-04-experiment-launch/FRONTEND_CHANGE_SPEC.md"
+    ],
+    "acceptance": [
+      "experiment launch / history / detail UI 對齊四條 live routes 與 async state machine",
+      "前端不得假造 progress / run history，也不得覆寫 allowedActions.canCancel truth",
+      "完成後提交 ui-done handoff 並附前端變更摘要"
+    ],
+    "next": "Owner finalized approved task: RW-04 frontend flow fully implemented against live Pantheon BFF routes. All four experiment endpoints wired, lifecycle/cancel authority backend-owned, degradation handling complete, ESLint/TypeScript/build pass, full commit chain replayable from origin/pkt-004-detail-fix (f672af2c..f00791b). All acceptance criteria met.",
+    "last_update": "2026-04-21T18:21:24Z",
+    "task_class": "execution_candidate",
+    "auto_created_by": "2026-04-20-gap-audit-execution-materialization",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過",
+      "front request pair 已改指向 immutable wiring commit f672af2c，ui-done/frontend-feedback 的 source_commit 與 changed_files truth 一致",
+      "App routes、Research navigation、breadcrumb mapping 與 rw04ExperimentApi 均已存在於 Git 歷史，可從 origin/pkt-004-detail-fix replay",
+      "先前三個 frontend findings 仍維持修正，front repo npm run build 通過，live runtime 也列出四條 /api/v1/experiments* 路由"
+    ],
+    "review_file": ".coordination/reviews/RW-04-experiment-launch-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-21T18:21:24Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "57df37c28d4deb007dc84ca8db90c925f63ed7e3",
+      "commit_subject": "EXEC-FRONT-RW04-001 finalize approved RW-04 experiment launch frontend closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owner finalization checkpoint": "RW-04 frontend publication is replayable from",
+        "LLM-Agent": "Claude",
+        "Task-ID": "EXEC-FRONT-RW04-001",
+        "Reviewer": "Codex2",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 985,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXEC-FRONT-RW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T02:33:43Z",
+      "resolved_at": "2026-04-21T02:36:34Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Helper-claimed by Gemini while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T04:02:01Z",
+      "resolved_at": "2026-04-21T04:19:00Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "RW-04 front-end implementation complete: mounted /research/experiments launch/history/detail, added durable polling and backend-owned cancel gating, validated with targeted eslint, npx tsc --noEmit, and npm run build, and wrote .coordination/requests/RW-04-experiment-launch-ui-done.yaml.",
+      "status": "done",
+      "created_at": "2026-04-21T04:37:03Z",
+      "resolved_at": "2026-04-21T04:39:31Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001",
+      "from": "Claude",
+      "to": "Copilot",
+      "message": "Auto-reassigned review from Claude to Copilot after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-21T04:39:31Z",
+      "resolved_at": "2026-04-21T16:17:43Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T16:17:43Z",
+      "resolved_at": "2026-04-21T16:20:54Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review complete (Claude). Three frontend bugs confirmed plus replay-clean commit and runtime refresh still required. See .coordination/reviews/RW-04-experiment-launch-claude-review.md for all five required changes before re-submission.",
+      "status": "done",
+      "created_at": "2026-04-21T16:20:54Z",
+      "resolved_at": "2026-04-21T16:20:54Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-21T16:29:32Z",
+      "resolved_at": "2026-04-21T16:33:47Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "RW-04 experiment launch UI pages published at immutable front commit 6e17dd8f233dad31d20b64781f23063e00ddde54 (branch pkt-004-detail-fix). Coordination ui-done is now status: published, pantheon_disposition: unblocked. Please review the six experiment files and coordination artifacts against the published RW-04 contract.",
+      "status": "done",
+      "created_at": "2026-04-21T17:22:32Z",
+      "resolved_at": "2026-04-21T17:22:56Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "RW-04 experiment launch UI pages published at immutable front commit 6e17dd8f233dad31d20b64781f23063e00ddde54 (branch pkt-004-detail-fix). Coordination ui-done is now status: published, pantheon_disposition: unblocked. Please review the six experiment files and coordination artifacts against the published RW-04 contract.",
+      "status": "done",
+      "created_at": "2026-04-21T17:22:56Z",
+      "resolved_at": "2026-04-21T17:57:11Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Codex to Codex2 after repeated Codex quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-04-21T17:57:11Z",
+      "resolved_at": "2026-04-21T18:01:32Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Re-review complete: runtime now publishes /api/v1/experiments* and the three frontend logic fixes are present in the sibling front worktree, but the request pair still points at immutable commit 6e17dd8 which omits App/AppSidebar/WorkbenchBreadcrumb/bffClient wiring; publish a truthful RW-04 UI commit, repoint the handoffs if needed, and push pkt-004-detail-fix before resubmitting. See .coordination/reviews/RW-04-experiment-launch-review.md.",
+      "status": "done",
+      "created_at": "2026-04-21T18:01:32Z",
+      "resolved_at": "2026-04-21T18:01:32Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "RW-04 wiring commit f672af2c is committed and pushed to origin/pkt-004-detail-fix (HEAD f00791b). App.tsx routes, AppSidebar.tsx navigation, WorkbenchBreadcrumb.tsx mappings, and rw04ExperimentApi in bffClient.ts are now immutable in Git. Request pair source_commit updated to f672af2c. Runtime blocker resolved. All three review findings are addressed. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-04-21T18:11:46Z",
+      "resolved_at": "2026-04-21T18:14:56Z"
+    },
+    {
+      "task_id": "EXEC-FRONT-RW04-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review approved — RW-04 frontend publication is now replayable from immutable Git history, live experiment routes are present, and all acceptance criteria are met. Returning to owner Claude for finalization.",
+      "status": "done",
+      "created_at": "2026-04-21T18:14:56Z",
+      "resolved_at": "2026-04-21T18:21:24Z"
+    }
+  ],
+  "blockers": []
+}

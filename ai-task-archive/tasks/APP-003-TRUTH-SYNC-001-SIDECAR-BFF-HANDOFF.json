@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "task_id": "APP-003-TRUTH-SYNC-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-04-22T15:21:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "APP-003-TRUTH-SYNC-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare APP-003-TRUTH-SYNC-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 APP-003-TRUTH-SYNC-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Execution / State Rebaseline",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/APP-003-TRUTH-SYNC-001/APP-003-TRUTH-SYNC-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Checkpoint: sidecar BFF/frontend handoff packet closed. Support artifact and Claude review note are committed; the packet now records CW-04 as still missing a module-local handoff bundle and TW-02 as route-live with a worktree-local spec present but still review-pending for formal frontend dispatch truth.",
+    "last_update": "2026-04-22T15:21:51Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "APP-003-TRUTH-SYNC-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Sidecar 通過：route 與測試/檔案引用驗證一致，scope 維持 support-only",
+      "提醒：第 3.2 節「TW-02-parameter-controls/FRONTEND_CHANGE_SPEC.md 尚未 publish」已過時——該檔案目前已存在於 worktree（untracked）。父任務 owner 在後續 absorb 時請改為「worktree 已存在，待 commit 並待 APP-003-TW02-IMPL-001 review 收尾」",
+      "CW-04 module-local handoff bundle 仍不存在，packet 該段判讀正確"
+    ],
+    "review_file": "support/sidecars/APP-003-TRUTH-SYNC-001/reviews/2026-04-22-claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-22T15:21:51Z",
+      "branch": "codex/2026-04-21-exec-sync",
+      "git_clean_required": false,
+      "commit": "a49aaf9a1a53beac24d087c03e2dfa58920c6435",
+      "commit_subject": "APP-003-TRUTH-SYNC-001-SIDECAR-BFF-HANDOFF finalize support handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "APP-003-TRUTH-SYNC-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1150,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Claude completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T07:35:31Z",
+      "resolved_at": "2026-04-22T07:39:17Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T07:42:32Z",
+      "resolved_at": "2026-04-22T07:46:03Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Qwen",
+      "message": "Helper-claimed by Qwen while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-22T07:46:03Z",
+      "resolved_at": "2026-04-22T07:47:32Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only packet added at support/sidecars/APP-003-TRUTH-SYNC-001/APP-003-TRUTH-SYNC-001-SIDECAR-BFF-HANDOFF.md. It captures the current truth boundary: CW-04 consultation surfaces are already route-live in the worktree, TW-02 controls routes/tests are live but the implementation task is still in review and no module-local frontend handoff bundle exists yet, and high-level frontend summaries (PANTHEON_FRONTEND_SA, TW-007, LOVABLE_MASTER_SA, execution packet) still lag current route truth.",
+      "status": "done",
+      "created_at": "2026-04-22T09:04:29Z",
+      "resolved_at": "2026-04-22T11:20:29Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only packet ready for Claude review after repeated Codex2 quota pauses. Packet at support/sidecars/APP-003-TRUTH-SYNC-001/APP-003-TRUTH-SYNC-001-SIDECAR-BFF-HANDOFF.md captures the current CW-04/TW-02 truth boundary and the remaining frontend summary drift.",
+      "status": "done",
+      "created_at": "2026-04-22T11:20:29Z",
+      "resolved_at": "2026-04-22T11:26:03Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T11:26:03Z",
+      "resolved_at": "2026-04-22T14:42:28Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-04-22T14:42:28Z",
+      "resolved_at": "2026-04-22T15:17:41Z"
+    },
+    {
+      "task_id": "APP-003-TRUTH-SYNC-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar BFF handoff packet approved with one stale-claim note for parent owner; review file at support/sidecars/APP-003-TRUTH-SYNC-001/reviews/2026-04-22-claude-review.md",
+      "status": "done",
+      "created_at": "2026-04-22T15:17:41Z",
+      "resolved_at": "2026-04-22T15:21:51Z"
+    }
+  ],
+  "blockers": []
+}

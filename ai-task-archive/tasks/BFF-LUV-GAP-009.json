@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "task_id": "BFF-LUV-GAP-009",
+  "archived_at": "2026-05-08T16:13:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-LUV-GAP-009",
+    "title": "Implement session auth tenant and bff me contract",
+    "summary_zh": "補上 Pack D session/auth/tenant 所需的 /bff/me current-user DTO。",
+    "phase": "BFF Execute-Plans Contract Gap 2026-05-08",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-05-08-execute-plans-gap/BFF-LUV-GAP-009-session-auth-me.md"
+    ],
+    "acceptance": [
+      "/bff/me route covered",
+      "tenant and locale included",
+      "strict auth behavior tested"
+    ],
+    "next": "Finalized /bff/me current-user/session DTO after Claude approval. Task-scoped commit 0087b74f; verification passed: session-auth+registry 10/10, auth facade 66/66, clean staged-patch session-auth+auth facade 71/71.",
+    "last_update": "2026-05-08T16:13:51Z",
+    "review_notes_zh": [
+      "審查通過：/bff/me 路由完整實作；tenant、locale、environment、feature_flags、session 等欄位齊備；strict auth 模式測試覆蓋 401/403 case；5 tests passed。",
+      "後續追蹤：無額外追蹤事項"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-08T16:13:51Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "0087b74f2bc91391fc46b13d089be9c28e3238aa",
+      "commit_subject": "BFF-LUV-GAP-009 implement session auth me contract",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-LUV-GAP-009",
+        "Reviewer": "Claude",
+        "- clean staged-patch worktree": "pytest services/control-plane/bff/test_bff_session_auth_me_contract.py services/control-plane/bff/test_bff_auth_facade.py (71 passed)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 24,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/codex/backend-dev-publish-20260429-closeout-20260504",
+      "ahead": 62,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-LUV-GAP-009",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implemented /bff/me current-user/session DTO with tenant, locale, environment, feature flags, capabilities, session freshness, strict auth envelopes, and focused tests. Verification: pytest services/control-plane/bff/test_bff_session_auth_me_contract.py services/control-plane/bff/test_execute_plans_contract_registry.py; pytest services/control-plane/bff/test_bff_auth_facade.py.",
+      "status": "done",
+      "created_at": "2026-05-08T16:03:20Z",
+      "resolved_at": "2026-05-08T16:06:33Z"
+    },
+    {
+      "task_id": "BFF-LUV-GAP-009",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: /bff/me implementation complete; all acceptance criteria met; 76 tests pass (5 contract, 5 registry, 66 auth facade). Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-08T16:06:33Z",
+      "resolved_at": "2026-05-08T16:13:52Z"
+    }
+  ],
+  "blockers": []
+}

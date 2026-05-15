@@ -36,6 +36,10 @@ log = logging.getLogger(__name__)
 
 # Maximum confidence-scaled position floor (avoid sub-penny orders)
 _CONFIDENCE_FLOOR = 0.5
+BRACKET_ORDER_STATUS_LOGGED_ONLY = "logged_only"
+BRACKET_ORDER_STATUS_SUBMITTED_TO_BROKER = "submitted_to_broker"
+_BRACKET_EXECUTION_STAGES = {"paper", "sim", "simulation"}
+_BRACKET_ENTRY_COMBINATIONS = {("BUY", "LONG"), ("SELL", "SHORT")}
 
 
 class ExecutionError(RuntimeError):
@@ -83,6 +87,7 @@ def execute(signal: dict[str, Any], algo: Any) -> None:
 
     # Build LEAN Symbol object by calling algo helper
     lean_symbol = _resolve_symbol(algo, parsed)
+    holdings_before = _get_holdings_quantity(algo, lean_symbol)
 
     # --- Confidence floor: avoid near-zero orders ---
     effective_confidence = max(confidence, _CONFIDENCE_FLOOR)
@@ -150,15 +155,344 @@ def execute(signal: dict[str, Any], algo: Any) -> None:
     # --- Risk: stop-loss / take-profit bracket ---
     risk = (signal.get("metadata") or {}).get("risk_parameters") or {}
     if risk.get("stop_loss_pct") or risk.get("take_profit_pct"):
-        log.info(
-            "[%s] Risk parameters present (stop=%.2f%%, tp=%.2f%%) — "
-            "bracket order not yet implemented; log only",
-            signal_id,
-            risk.get("stop_loss_pct", 0) * 100,
-            risk.get("take_profit_pct", 0) * 100,
+        _handle_bracket_order(
+            algo=algo,
+            lean_symbol=lean_symbol,
+            signal_id=signal_id,
+            risk=risk,
+            action=action,
+            direction=direction,
+            holdings_before=holdings_before,
         )
-        # TODO (P3-001 follow-up): implement StopMarketOrder + LimitOrder bracket
-        # after verifying broker support via algo.BrokerageModel
+
+
+def _handle_bracket_order(
+    *,
+    algo: Any,
+    lean_symbol: Any,
+    signal_id: str,
+    risk: dict[str, Any],
+    action: str,
+    direction: str,
+    holdings_before: float,
+) -> None:
+    stop_loss_pct = float(risk.get("stop_loss_pct") or 0)
+    take_profit_pct = float(risk.get("take_profit_pct") or 0)
+    guard = _bracket_execution_guard(algo)
+    common_metadata = {
+        "guard_stage": guard["stage"],
+        "guard_reason": guard["reason"],
+    }
+
+    if not guard["allowed"]:
+        log.info(
+            "[%s] Bracket risk parameters present but guard blocked execution; "
+            "status=%s reason=%s",
+            signal_id,
+            BRACKET_ORDER_STATUS_LOGGED_ONLY,
+            guard["reason"],
+        )
+        _record_bracket_order_logged(
+            algo,
+            lean_symbol,
+            signal_id,
+            risk,
+            broker_submission_status=BRACKET_ORDER_STATUS_LOGGED_ONLY,
+            submitted_to_broker=False,
+            metadata=common_metadata,
+        )
+        return
+
+    if (action, direction) not in _BRACKET_ENTRY_COMBINATIONS:
+        log.info(
+            "[%s] Bracket risk parameters ignored for non-entry signal action=%s direction=%s; "
+            "status=%s",
+            signal_id,
+            action,
+            direction,
+            BRACKET_ORDER_STATUS_LOGGED_ONLY,
+        )
+        _record_bracket_order_logged(
+            algo,
+            lean_symbol,
+            signal_id,
+            risk,
+            broker_submission_status=BRACKET_ORDER_STATUS_LOGGED_ONLY,
+            submitted_to_broker=False,
+            metadata={**common_metadata, "reason": "not_entry_signal"},
+        )
+        return
+
+    entry_quantity = _entry_fill_quantity(
+        algo=algo,
+        lean_symbol=lean_symbol,
+        holdings_before=holdings_before,
+        action=action,
+        direction=direction,
+    )
+    entry_price = _get_price(algo, lean_symbol)
+    legs = _build_bracket_legs(
+        action=action,
+        direction=direction,
+        entry_quantity=entry_quantity,
+        entry_price=entry_price,
+        stop_loss_pct=stop_loss_pct,
+        take_profit_pct=take_profit_pct,
+    )
+    if not legs:
+        log.warning(
+            "[%s] Bracket guard passed but no valid child legs could be built; "
+            "status=%s",
+            signal_id,
+            BRACKET_ORDER_STATUS_LOGGED_ONLY,
+        )
+        _record_bracket_order_logged(
+            algo,
+            lean_symbol,
+            signal_id,
+            risk,
+            broker_submission_status=BRACKET_ORDER_STATUS_LOGGED_ONLY,
+            submitted_to_broker=False,
+            metadata={
+                **common_metadata,
+                "reason": "invalid_bracket_quantity_or_price",
+                "entry_quantity": entry_quantity,
+                "entry_price": entry_price,
+            },
+        )
+        return
+
+    try:
+        submission = _submit_bracket_order(
+            algo=algo,
+            lean_symbol=lean_symbol,
+            signal_id=signal_id,
+            legs=legs,
+            guard=guard,
+        )
+    except ExecutionError as exc:
+        log.warning("[%s] Bracket submission unavailable: %s", signal_id, exc)
+        _record_bracket_order_logged(
+            algo,
+            lean_symbol,
+            signal_id,
+            risk,
+            broker_submission_status=BRACKET_ORDER_STATUS_LOGGED_ONLY,
+            submitted_to_broker=False,
+            metadata={
+                **common_metadata,
+                "reason": "bracket_submission_unavailable",
+                "error": str(exc),
+                "entry_quantity": entry_quantity,
+                "entry_price": entry_price,
+                "legs": legs,
+            },
+        )
+        return
+    _record_bracket_order_logged(
+        algo,
+        lean_symbol,
+        signal_id,
+        risk,
+        broker_submission_status=BRACKET_ORDER_STATUS_SUBMITTED_TO_BROKER,
+        submitted_to_broker=True,
+        metadata={
+            **common_metadata,
+            "entry_quantity": entry_quantity,
+            "entry_price": entry_price,
+            "legs": legs,
+            "submission": submission,
+        },
+    )
+
+
+def _bracket_execution_guard(algo: Any) -> dict[str, Any]:
+    stage = _runtime_stage(algo)
+    enabled = _truthy_attr(
+        algo,
+        "BracketOrderExecutionEnabled",
+        "bracket_order_execution_enabled",
+        "bracket_orders_enabled",
+    )
+    if stage not in _BRACKET_EXECUTION_STAGES:
+        return {
+            "allowed": False,
+            "stage": stage or "unknown",
+            "reason": "bracket execution is limited to paper/sim stages",
+        }
+    if not enabled:
+        return {
+            "allowed": False,
+            "stage": stage,
+            "reason": "paper/sim bracket execution guard is disabled",
+        }
+    return {
+        "allowed": True,
+        "stage": stage,
+        "reason": "paper/sim bracket execution guard passed",
+    }
+
+
+def _runtime_stage(algo: Any) -> str:
+    for name in (
+        "DeploymentStage",
+        "deployment_stage",
+        "RuntimeMode",
+        "runtime_mode",
+        "Environment",
+        "environment",
+    ):
+        value = getattr(algo, name, None)
+        if value is not None:
+            return str(value).strip().lower()
+    return ""
+
+
+def _truthy_attr(algo: Any, *names: str) -> bool:
+    for name in names:
+        value = getattr(algo, name, None)
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        if value is not None:
+            return bool(value)
+    return False
+
+
+def _entry_fill_quantity(
+    *,
+    algo: Any,
+    lean_symbol: Any,
+    holdings_before: float,
+    action: str,
+    direction: str,
+) -> float:
+    holdings_after = _get_holdings_quantity(algo, lean_symbol)
+    delta = holdings_after - holdings_before
+    if action == "BUY" and direction == "LONG" and delta > 0:
+        return abs(delta)
+    if action == "SELL" and direction == "SHORT" and delta < 0:
+        return abs(delta)
+    return 0.0
+
+
+def _build_bracket_legs(
+    *,
+    action: str,
+    direction: str,
+    entry_quantity: float,
+    entry_price: float,
+    stop_loss_pct: float,
+    take_profit_pct: float,
+) -> list[dict[str, Any]]:
+    if entry_quantity <= 0 or entry_price <= 0:
+        return []
+    if action == "BUY" and direction == "LONG":
+        exit_quantity = -abs(entry_quantity)
+        stop_multiplier = 1 - stop_loss_pct
+        take_profit_multiplier = 1 + take_profit_pct
+    elif action == "SELL" and direction == "SHORT":
+        exit_quantity = abs(entry_quantity)
+        stop_multiplier = 1 + stop_loss_pct
+        take_profit_multiplier = 1 - take_profit_pct
+    else:
+        return []
+
+    legs: list[dict[str, Any]] = []
+    if stop_loss_pct > 0 and stop_multiplier > 0:
+        legs.append(
+            {
+                "leg_type": "stop_loss",
+                "order_type": "STOP_MARKET",
+                "quantity": exit_quantity,
+                "stop_price": round(entry_price * stop_multiplier, 6),
+            }
+        )
+    if take_profit_pct > 0 and take_profit_multiplier > 0:
+        legs.append(
+            {
+                "leg_type": "take_profit",
+                "order_type": "LIMIT",
+                "quantity": exit_quantity,
+                "limit_price": round(entry_price * take_profit_multiplier, 6),
+            }
+        )
+    return legs
+
+
+def _submit_bracket_order(
+    *,
+    algo: Any,
+    lean_symbol: Any,
+    signal_id: str,
+    legs: list[dict[str, Any]],
+    guard: dict[str, Any],
+) -> dict[str, Any]:
+    bracket_submitter = getattr(algo, "SubmitBracketOrder", None)
+    if callable(bracket_submitter):
+        result = bracket_submitter(
+            lean_symbol,
+            signal_id=signal_id,
+            legs=legs,
+            guard_stage=guard["stage"],
+            broker_submission_status=BRACKET_ORDER_STATUS_SUBMITTED_TO_BROKER,
+            submitted_to_broker=True,
+        )
+        return result if isinstance(result, dict) else {"result": result}
+
+    submitted_legs: list[dict[str, Any]] = []
+    missing_methods = _missing_bracket_order_methods(algo, legs)
+    if missing_methods:
+        missing = ", ".join(sorted(missing_methods))
+        raise ExecutionError(f"[{signal_id}] missing bracket order method(s): {missing}")
+    for leg in legs:
+        if leg["order_type"] == "STOP_MARKET":
+            stop_market = getattr(algo, "StopMarketOrder", None)
+            ticket = stop_market(lean_symbol, leg["quantity"], leg["stop_price"])
+            submitted_legs.append({**leg, "ticket": str(ticket) if ticket is not None else None})
+        elif leg["order_type"] == "LIMIT":
+            limit_order = getattr(algo, "LimitOrder", None)
+            ticket = limit_order(lean_symbol, leg["quantity"], leg["limit_price"])
+            submitted_legs.append({**leg, "ticket": str(ticket) if ticket is not None else None})
+    return {"legs": submitted_legs}
+
+
+def _missing_bracket_order_methods(algo: Any, legs: list[dict[str, Any]]) -> set[str]:
+    missing: set[str] = set()
+    for leg in legs:
+        if leg["order_type"] == "STOP_MARKET" and not callable(getattr(algo, "StopMarketOrder", None)):
+            missing.add("StopMarketOrder")
+        elif leg["order_type"] == "LIMIT" and not callable(getattr(algo, "LimitOrder", None)):
+            missing.add("LimitOrder")
+    return missing
+
+
+def _record_bracket_order_logged(
+    algo: Any,
+    lean_symbol: Any,
+    signal_id: str,
+    risk: dict[str, Any],
+    *,
+    broker_submission_status: str = BRACKET_ORDER_STATUS_LOGGED_ONLY,
+    submitted_to_broker: bool = False,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    recorder = getattr(algo, "RecordBracketOrderLogged", None)
+    if not callable(recorder):
+        return
+    kwargs = {
+        "signal_id": signal_id,
+        "stop_loss_pct": float(risk.get("stop_loss_pct") or 0),
+        "take_profit_pct": float(risk.get("take_profit_pct") or 0),
+        "broker_submission_status": broker_submission_status,
+        "submitted_to_broker": submitted_to_broker,
+    }
+    if metadata:
+        kwargs["metadata"] = metadata
+    try:
+        recorder(lean_symbol, **kwargs)
+    except TypeError:
+        kwargs.pop("metadata", None)
+        recorder(lean_symbol, **kwargs)
 
 
 def _place_order(

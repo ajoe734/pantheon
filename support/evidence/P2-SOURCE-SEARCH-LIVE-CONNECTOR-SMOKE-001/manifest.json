@@ -1,0 +1,15 @@
+{
+  "artifact_count": 6,
+  "checksum_status": "OK",
+  "checksums": {
+    "activation_evidence_summary.json": "sha256:d325ea18301a2d19c1d3576ee3bddd52360f0761791372f5db50ae9edc5039ce",
+    "artifact_bundle.json": "sha256:a9467d50ffcc22be3862cb86495f9039db66abdb7c1020e1e2b179df94fb3957",
+    "candidate_packet.json": "sha256:81a5b60e4747b289e3a964d924eea217cb9ed0981df5fead1c8c80e714119876",
+    "evaluator_packet.json": "sha256:b3e607ce2614e8bd80b8e31f14c146e98a18ef6b52ed50c904e63adc7283ff74",
+    "registry_entry.json": "sha256:0588792046c785c69a5339e740bb38c808c3ceee6a359fb2f7f3019be04639a2",
+    "source_search_live_connector_smoke.local.json": "sha256:04f39bd148a66e0d1017bbc74e46b73d1a8569f98ffb3bc82cddf5e77465697e"
+  },
+  "generated_at": "2026-05-02T14:00:00Z",
+  "schema_version": "source_search_evidence_manifest.v1",
+  "task_id": "P2-SOURCE-SEARCH-LIVE-CONNECTOR-SMOKE-001"
+}

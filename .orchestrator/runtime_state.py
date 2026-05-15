@@ -23,6 +23,7 @@ def default_state() -> dict[str, Any]:
         "initialized_at": None,
         "last_scan_at": None,
         "tasks": {},
+        "recent_terminal_tasks": [],
         "pending_handoff_keys": [],
         "seen_event_keys": {},
         "queue": {
@@ -37,6 +38,17 @@ def default_state() -> dict[str, Any]:
             "last_sidecar_wave_at": None,
             "last_sidecar_wave_reason": None,
             "last_ratio": None,
+        },
+        "chair_rotation": {
+            "current_index": 0,
+            "last_chair_run_at": None,
+            "last_chair_agent": None,
+            "last_chair_reason": None,
+            "last_review_path": None,
+            "last_review_summary": None,
+            "pending_review_path": None,
+            "pending_review_agent": None,
+            "sidecar_approved_until": None,
         },
         "provider_guardrails": {
             "dispatch_pauses": {},
@@ -65,6 +77,7 @@ def default_state() -> dict[str, Any]:
                 "planning": {"running": 0, "pending": 0, "queued": 0},
                 "execution": {"running": 0, "pending": 0, "queued": 0},
                 "coordination": {"running": 0, "pending": 0, "queued": 0},
+                "chair_review": {"running": 0, "pending": 0, "queued": 0},
             },
         },
     }
@@ -76,6 +89,8 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
         return state
     state.update({k: v for k, v in raw.items() if k in state or k in {"queue", "workers", "approvals", "supervisor", "coordination"}})
     state.setdefault("tasks", {})
+    recent_terminal_tasks = state.get("recent_terminal_tasks")
+    state["recent_terminal_tasks"] = recent_terminal_tasks if isinstance(recent_terminal_tasks, list) else []
     state.setdefault("pending_handoff_keys", [])
     state.setdefault("seen_event_keys", {})
     state.setdefault("queue", {})
@@ -88,6 +103,16 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state["underutilization"].setdefault("last_sidecar_wave_at", None)
     state["underutilization"].setdefault("last_sidecar_wave_reason", None)
     state["underutilization"].setdefault("last_ratio", None)
+    state.setdefault("chair_rotation", {})
+    state["chair_rotation"].setdefault("current_index", 0)
+    state["chair_rotation"].setdefault("last_chair_run_at", None)
+    state["chair_rotation"].setdefault("last_chair_agent", None)
+    state["chair_rotation"].setdefault("last_chair_reason", None)
+    state["chair_rotation"].setdefault("last_review_path", None)
+    state["chair_rotation"].setdefault("last_review_summary", None)
+    state["chair_rotation"].setdefault("pending_review_path", None)
+    state["chair_rotation"].setdefault("pending_review_agent", None)
+    state["chair_rotation"].setdefault("sidecar_approved_until", None)
     state.setdefault("provider_guardrails", {})
     state["provider_guardrails"].setdefault("dispatch_pauses", {})
     state["provider_guardrails"].setdefault("task_failure_streaks", {})
@@ -110,7 +135,7 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state["supervisor"].setdefault("mode_switch_requested", None)
     state["supervisor"].setdefault("last_mode_switch_at", None)
     state["supervisor"].setdefault("mode_occupancy", {})
-    for mode_name in ("planning", "execution", "coordination"):
+    for mode_name in ("planning", "execution", "coordination", "chair_review"):
         bucket = state["supervisor"]["mode_occupancy"].setdefault(mode_name, {})
         bucket.setdefault("running", 0)
         bucket.setdefault("pending", 0)
@@ -203,6 +228,28 @@ def load_runtime_state(config: dict[str, Any]) -> dict[str, Any]:
         if worker.get("status") == "manual_pending" and worker.get("queue_event_id") not in valid_pending_event_ids
     ]
     for run_id in stale_manual_workers:
+        workers.pop(run_id, None)
+
+    try:
+        pending_approval_runs = {
+            str(item.get("worker_run_id") or "")
+            for item in load_approval_state(config).get("pending", [])
+            if item.get("worker_run_id")
+        }
+    except KeyError:
+        pending_approval_runs = set()
+    # Approval-gated workers without a surviving queue event or pending approval
+    # are stale runtime leftovers. Once both coordination anchors are gone,
+    # keeping them around only causes dashboards and health checks to report
+    # ghost workers.
+    stale_approval_workers = [
+        run_id
+        for run_id, worker in workers.items()
+        if worker.get("status") in {"waiting_approval", "suspended_approval"}
+        and worker.get("queue_event_id") not in valid_pending_event_ids
+        and str(run_id) not in pending_approval_runs
+    ]
+    for run_id in stale_approval_workers:
         workers.pop(run_id, None)
 
     prune_worker_records(state)

@@ -1,5 +1,8 @@
 # Discussion Planning Mode
 
+Historical note: this directory records the `phase2-2026-04-12-blueprint-gap-convergence` planning session.
+It is a working record, not canonical blueprint truth, and it is not the active planning authority unless `.orchestrator/planning-state.json` explicitly points back to it.
+
 This directory is the canonical workspace for `discussion_planning`.
 
 ## Session

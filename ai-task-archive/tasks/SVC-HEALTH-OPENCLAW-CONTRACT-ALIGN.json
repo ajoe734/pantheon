@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN",
+  "archived_at": "2026-04-30T13:11:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN",
+    "title": "OpenClaw health and compose contract alignment",
+    "summary_zh": "Foundation health test is stale around OpenClaw readiness URLs and adapter semantics. Align compose healthchecks tests and docs with current /livez /readyz contract while keeping typo detection.",
+    "phase": "Service Contract Hardening",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/foundation/tests/test_health.py",
+      "docker-compose.yml",
+      "services/openclaw-gateway-adapter",
+      "docs"
+    ],
+    "acceptance": [
+      "health test still rejects misspelled readiness paths",
+      "OpenClaw adapter health assertions reflect current livez readyz and degraded facade semantics",
+      "python3 -m pytest -q services/foundation/tests/test_health.py passes",
+      "docker compose -f docker-compose.yml config -q passes"
+    ],
+    "next": "Finalized OpenClaw health contract alignment in commit 1db2168 after reviewer approval. Verification: docker compose -f docker-compose.yml config -q; python3 -m pytest -q --confcutdir=services/foundation/tests --import-mode=importlib services/foundation/tests/test_health.py (5 passed); PYTHONPATH=/home/lupin/code/pantheon python3 -m pytest -q --confcutdir=services/openclaw-gateway-adapter services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_compose_activation.py (39 passed); python3 -m py_compile services/openclaw-gateway-adapter/main.py; git diff --check scoped files.",
+    "last_update": "2026-04-30T13:11:57Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-fulltest-materialization-20260430",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "No blocking findings.",
+      "Verified upstream OpenClaw compose healthcheck uses /readyz, adapter compose health remains /livez, adapter probes /readyz before legacy /healthz fallback, and docs/tests capture liveness versus readiness semantics."
+    ],
+    "review_file": ".orchestrator/reviews/SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-30T13:11:57Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "1db21681b9c8361871e74ec82f16a77fb4eac7e5",
+      "commit_subject": "SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN align OpenClaw health contract",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN",
+        "Reviewer": "Codex",
+        "Verification": "docker compose -f docker-compose.yml config -q; python3 -m pytest -q --confcutdir=services/foundation/tests --import-mode=importlib services/foundation/tests/test_health.py; PYTHONPATH=/home/lupin/code/pantheon python3 -m pytest -q --confcutdir=services/openclaw-gateway-adapter services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_compose_activation.py; python3 -m py_compile services/openclaw-gateway-adapter/main.py; git diff --check scoped files."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 106,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 53,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-04-30T12:46:33Z",
+      "resolved_at": "2026-04-30T12:49:23Z"
+    },
+    {
+      "task_id": "SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: upstream OpenClaw compose healthcheck now uses /readyz, adapter probes /readyz before legacy /healthz fallback, adapter compose health remains /livez, and docs/tests capture the contract. Verified: docker compose -f docker-compose.yml config -q; python3 -m pytest -q --confcutdir=services/foundation/tests --import-mode=importlib services/foundation/tests/test_health.py (5 passed); PYTHONPATH=/home/lupin/code/pantheon python3 -m pytest -q --confcutdir=services/openclaw-gateway-adapter services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_compose_activation.py (39 passed); python3 -m py_compile services/openclaw-gateway-adapter/main.py; git diff --check scoped files. Note: literal non-isolated python3 -m pytest -q services/foundation/tests/test_health.py currently hits unrelated root harness secrets shadowing from TEST-FULLSUITE-HARNESS-ISOLATION.",
+      "status": "done",
+      "created_at": "2026-04-30T13:06:28Z",
+      "resolved_at": "2026-04-30T13:10:12Z"
+    },
+    {
+      "task_id": "SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved: no blocking findings. Verified compose config, focused foundation/adapter tests, py_compile, and scoped diff check; review artifact recorded at .orchestrator/reviews/SVC-HEALTH-OPENCLAW-CONTRACT-ALIGN-review-codex.md.",
+      "status": "done",
+      "created_at": "2026-04-30T13:10:12Z",
+      "resolved_at": "2026-04-30T13:11:58Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "task_id": "SVC-OPENCLAW-GATEWAY-ADAPTER-BOUNDARY",
+  "archived_at": "2026-04-29T12:27:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SVC-OPENCLAW-GATEWAY-ADAPTER-BOUNDARY",
+    "title": "Materialize Pantheon OpenClaw gateway adapter boundary",
+    "summary_zh": "把 OpenClaw 從 compose optional gateway image 補成 Pantheon-owned adapter boundary：提供受控 health/capability/session metadata facade 與 degraded semantics，但不打開 broker/live execution。",
+    "phase": "Service Boundary / OpenClaw Adapter",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SVC-COMPOSE",
+      "SVC-RUNTIME-HARDENING"
+    ],
+    "artifacts": [
+      "services/openclaw-gateway-adapter",
+      "docker-compose.yml",
+      "scripts/smoke_honest_stack.py",
+      "OPENCLAW_RUNTIME_CONTRACT.md",
+      "docs/02-architecture/consensus/sessions/phase4-2026-04-15-service-layer-completion/phase2-phase6-gap-inventory.md"
+    ],
+    "acceptance": [
+      "Adds a Pantheon-owned openclaw-gateway-adapter service boundary or records a code-backed explicit deferral if implementation is blocked",
+      "Adapter exposes /healthz /livez /readyz and capability or session metadata routes",
+      "Adapter degrades cleanly when optional OpenClaw gateway is absent or unhealthy",
+      "No live broker execution paper or production adapter path is enabled",
+      "Compose and smoke tests cover the optional profile or clearly documented defer disposition"
+    ],
+    "next": "Owner finalized approved OpenClaw gateway adapter boundary. Accepted reviewer documentation consistency fix; adapter boundary, default compose wiring, degraded semantics, session deferral, review packet, and verification evidence are closed under commit 7300648.",
+    "last_update": "2026-04-29T12:27:36Z",
+    "review_notes_zh": [
+      "審查通過：openclaw-gateway-adapter 已落成 Pantheon-owned default boundary，health/capability/session deferral routes 與 upstream absence degraded semantics 符合 task acceptance。",
+      "未發現阻擋項；reviewer 已補 gap inventory default profile 清單，讓文件列出 openclaw-gateway-adapter。驗證包含 adapter tests、compose config/profile config、py_compile、diff check 與 docker compose build。"
+    ],
+    "review_file": "docs/reviews/2026-04-29-svc-openclaw-gateway-adapter-boundary-codex-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-04-29T12:27:36Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "7300648624a386011638db7dc5e05b1774dd7c75",
+      "commit_subject": "SVC-OPENCLAW-GATEWAY-ADAPTER-BOUNDARY materialize adapter boundary",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SVC-OPENCLAW-GATEWAY-ADAPTER-BOUNDARY",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 102,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SVC-OPENCLAW-GATEWAY-ADAPTER-BOUNDARY",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented Pantheon openclaw-gateway-adapter boundary: facade health/capability/session deferral routes, default compose service with /livez healthcheck, smoke degraded-path coverage, docs disposition. Verification: python3 -m pytest services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_compose_activation.py -q; python3 -m pytest services/research-worker-gateway/tests/test_research_worker_gateway_compose_activation.py -q; docker compose config --quiet; python3 -m py_compile scripts/smoke_honest_stack.py services/openclaw-gateway-adapter/main.py; docker compose build openclaw-gateway-adapter.",
+      "status": "done",
+      "created_at": "2026-04-29T12:02:16Z",
+      "resolved_at": "2026-04-29T12:07:54Z"
+    },
+    {
+      "task_id": "SVC-OPENCLAW-GATEWAY-ADAPTER-BOUNDARY",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. OpenClaw gateway adapter boundary matches acceptance; owner can finalize to done after accepting reviewer doc consistency fix.",
+      "status": "done",
+      "created_at": "2026-04-29T12:07:54Z",
+      "resolved_at": "2026-04-29T12:27:36Z"
+    }
+  ],
+  "blockers": []
+}

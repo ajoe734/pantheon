@@ -1,0 +1,7 @@
+{
+  "feature_id": "RW-03-analyze",
+  "reviewed_source_commit": "ef9b4d7b4f69ac829ea097fff0bef889d42e46dc",
+  "status": "no_open_gaps",
+  "note": "No contract-shape API gaps were found in the RW-03 source implementation. On 2026-04-21 the active operator-bff began advertising GET /api/v1/research/analysis and GET /api/v1/research/analysis/{analysis_id} in live OpenAPI, and authenticated probes returned the published degraded list/detail field shapes plus 404 OBJECT_NOT_FOUND for a missing analysis id. No new API-gap request is required in this cycle.",
+  "requests": []
+}

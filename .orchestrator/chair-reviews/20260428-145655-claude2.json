@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": 2,
+  "reason": "Board is clean (one in_progress with live worker), Claude/Codex lanes still have parallelizable support work, and the only blocker is one routine pending approval which can be allowed.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "SVC-RUNTIME-CONTROL",
+    "SVC-RUNTIME-CONTROL-CLOSEOUT"
+  ],
+  "approval_actions": [
+    {
+      "approval_id": "apr-20260428T144515Z-9f874261",
+      "decision": "allow",
+      "reason": "pip3 install --user of standard Python test deps (pytest, pyyaml, fastapi, httpx, pydantic) for the suspended Claude reviewer on SVC-GOVERNANCE-API; --user scoped, no destructive flags, output piped to tail -10. Routine and low risk.",
+      "remember": false
+    }
+  ],
+  "recommended_focus": [
+    "SVC-GOVERNANCE-API",
+    "SVC-RUNTIME-CONTROL",
+    "SVC-RUNTIME-CONTROL-CLOSEOUT-SIDECAR-ACCEPTANCE"
+  ]
+}
