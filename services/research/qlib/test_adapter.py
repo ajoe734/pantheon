@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 import subprocess
 import sys
@@ -238,6 +239,37 @@ class TestRunQlibWorkflow(unittest.TestCase):
         self.assertEqual(packet["candidate_registry_projection"]["artifact_state"], "candidate")
         self.assertEqual(packet["evaluator_handoff"]["minimum_artifact_state_for_scoring"], "approved")
 
+    def test_model_eval_artifact_refs_target_review_only_outputs(self) -> None:
+        result = run_qlib_workflow(MINIMAL_DATASET)
+        refs = result.artifact_refs
+        model_ref = refs["model_artifact_ref"]
+        evaluation_ref = refs["evaluation_report_ref"]
+
+        self.assertEqual(
+            model_ref["artifact_ref"],
+            f"{result.registry_entry['registry_id']}@{result.registry_entry['version']}",
+        )
+        self.assertEqual(model_ref["artifact_state"], "draft")
+        self.assertEqual(model_ref["deployment_stage"], "none")
+        self.assertEqual(evaluation_ref["artifact_type"], "evaluation_result")
+        self.assertEqual(evaluation_ref["artifact_state"], "draft")
+        self.assertEqual(evaluation_ref["deployment_stage"], "none")
+        self.assertEqual(evaluation_ref["target_artifact_ref"], model_ref["artifact_ref"])
+        self.assertEqual(evaluation_ref["target_artifact_checksum"], result.registry_entry["checksum"])
+        self.assertEqual(refs["registry_write_authority"], "registry_service_only")
+        self.assertTrue(refs["safety_assertions"]["no_registry_write"])
+        self.assertTrue(refs["safety_assertions"]["scoring_only_not_direct_action"])
+        self.assertEqual(
+            {ref["artifact_name"] for ref in refs["refs"]},
+            {
+                "model_artifact",
+                "evaluation_report",
+                "artifact_bundle",
+                "registry_entry",
+                "candidate_packet",
+            },
+        )
+
     def test_activation_ready_data_floors_reject_small_dataset(self) -> None:
         result = run_qlib_workflow(MINIMAL_DATASET)
         with self.assertRaisesRegex(QlibWorkflowError, "Activation-ready Qlib data gates failed"):
@@ -262,9 +294,16 @@ class TestRunQlibWorkflow(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             manifest = persist_qlib_run_artifacts(result, tmp)
             self.assertIn("candidate_packet", manifest["files"])
+            self.assertIn("artifact_refs", manifest["files"])
             self.assertEqual(manifest["checksum"], result.registry_entry["checksum"])
             for path in manifest["files"].values():
                 self.assertTrue(os.path.exists(path))
+            artifact_refs = json.loads(Path(manifest["files"]["artifact_refs"]).read_text())
+            self.assertEqual(
+                artifact_refs["model_artifact_ref"]["registry_id"],
+                result.registry_entry["registry_id"],
+            )
+            self.assertEqual(len(manifest["artifact_refs"]), 5)
 
 
 class TestActivationReadyGate(unittest.TestCase):

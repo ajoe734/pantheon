@@ -83,6 +83,9 @@ def main(argv: list[str] | None = None) -> int:
             "pit": packet["production_dataset_proof"]["pit"]["point_in_time"],
             "storage_ref": packet["production_dataset_proof"]["storage"]["dataset_ref"],
         },
+        "model_artifact_ref": packet["model_eval_artifact_refs"]["model_artifact_ref"],
+        "evaluation_report_ref": packet["model_eval_artifact_refs"]["evaluation_report_ref"],
+        "artifact_refs": packet["model_eval_artifact_refs"]["refs"],
         "artifact_manifest": manifest,
         "production_activation_packet_path": packet_path,
     }

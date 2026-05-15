@@ -81,6 +81,7 @@ def main() -> int:
         "checksum": result.registry_entry["checksum"],
         "backend": result.training_result.backend,
         "metrics": result.training_result.metrics,
+        "artifact_refs": result.artifact_refs["refs"],
         "artifact_manifest": manifest,
     }
     print(json.dumps(output, indent=2))
