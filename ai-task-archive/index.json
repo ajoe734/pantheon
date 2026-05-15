@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-15T01:20:43Z",
+  "updated_at": "2026-05-15T01:30:30Z",
   "counts": {
-    "total": 1034,
-    "completed": 1016,
+    "total": 1035,
+    "completed": 1017,
     "superseded": 18
   },
   "recent_terminal_ids": [
+    "FE-INT-GATE-A11Y-CONTRAST",
     "FE-INT-GATE-A11Y-BREADCRUMB",
     "FE-INT-GATE-A11Y-OVERLAY",
     "FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF",
@@ -25,7 +26,6 @@
     "FE-INT-GATE-ALIGN-F03",
     "FE-INT-GATE-ALIGN-F02-SIDECAR-ACCEPTANCE",
     "FE-INT-GATE-ALIGN-F02",
-    "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
-    "BFF-CONSOL-024-SIDECAR-BFF-HANDOFF"
+    "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF"
   ]
 }
