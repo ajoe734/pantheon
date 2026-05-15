@@ -810,7 +810,7 @@
         "todo",
         "in_progress"
       ],
-      "require_owner_higher_priority_load": false,
+      "require_owner_higher_priority_load": true,
       "claim_idle_work": true,
       "claim_sidecars_when_idle": true
     },
