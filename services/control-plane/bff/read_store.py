@@ -492,6 +492,121 @@ def _project_ooda_packet_store_payload(payload: Any) -> Any:
     return projected
 
 
+def _project_synthesis_conflict_log_record(record: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(record, dict):
+        return None
+
+    payload = record.get("payload") if isinstance(record.get("payload"), dict) else record
+    log_payload = (
+        payload.get("conflict_resolution_log")
+        or payload.get("conflictResolutionLog")
+        or payload.get("log")
+        if isinstance(payload, dict)
+        else None
+    )
+    if log_payload is None and isinstance(payload, dict):
+        log_payload = payload
+    if not isinstance(log_payload, dict):
+        return None
+
+    log_id = _record_key(log_payload, ["log_id", "id", "conflict_resolution_log_id"])
+    if not log_id:
+        return None
+
+    projected = json.loads(json.dumps(log_payload))
+    projected.setdefault("log_id", str(log_id))
+    projected.setdefault("id", str(log_id))
+
+    artifact = None
+    if isinstance(payload, dict):
+        artifact = (
+            payload.get("allocation_policy_artifact")
+            or payload.get("allocationPolicyArtifact")
+            or payload.get("artifact")
+        )
+    if isinstance(artifact, dict):
+        artifact_id = artifact.get("artifact_id") or artifact.get("id")
+        if artifact_id:
+            projected.setdefault("allocation_policy_artifact_id", str(artifact_id))
+        for field in (
+            "target_weights",
+            "constraints_bundle",
+            "risk_budget",
+            "provenance_refs",
+            "sponsor_persona_id",
+            "synthesis_method",
+        ):
+            if field in artifact and field not in projected:
+                projected[field] = json.loads(json.dumps(artifact[field]))
+
+    approval = None
+    if isinstance(payload, dict):
+        approval = (
+            payload.get("governance_approval_packet")
+            or payload.get("governanceApprovalPacket")
+            or payload.get("approval_decision")
+        )
+    if isinstance(approval, dict):
+        approval_id = approval.get("approval_decision_id") or approval.get("decision_id") or approval.get("id")
+        if approval_id:
+            projected.setdefault("governance_approval_id", str(approval_id))
+        for source, target in (
+            ("decision", "governance_decision"),
+            ("decision_state", "governance_decision_state"),
+            ("can_proceed", "governance_can_proceed"),
+            ("rationale", "governance_rationale"),
+            ("risk_level", "governance_risk_level"),
+        ):
+            if source in approval and target not in projected:
+                projected[target] = json.loads(json.dumps(approval[source]))
+        if "evidence_refs" in approval and "evidence_refs" not in projected:
+            projected["evidence_refs"] = json.loads(json.dumps(approval["evidence_refs"]))
+
+    return projected
+
+
+def _project_synthesis_conflict_log_store_payload(payload: Any) -> Any:
+    if isinstance(payload, dict):
+        for key in ("items", "logs", "conflict_resolution_logs", "data", "records"):
+            nested = payload.get(key)
+            if isinstance(nested, list):
+                return _project_synthesis_conflict_log_store_payload(nested)
+
+        single = _project_synthesis_conflict_log_record(payload)
+        if single is not None:
+            return {str(single["log_id"]): single}
+
+        projected: Dict[str, Dict[str, Any]] = {}
+        for item in payload.values():
+            single = _project_synthesis_conflict_log_record(item)
+            if single is not None:
+                projected[str(single["log_id"])] = single
+        if projected:
+            return projected
+        return payload
+
+    if not isinstance(payload, list):
+        return payload
+
+    projected: Dict[str, Dict[str, Any]] = {}
+    passthrough: List[Dict[str, Any]] = []
+    for item in payload:
+        single = _project_synthesis_conflict_log_record(item)
+        if single is None:
+            if isinstance(item, dict):
+                log_id = _record_key(item, ["log_id", "id", "conflict_resolution_log_id"])
+                if log_id:
+                    projected[str(log_id)] = item
+                else:
+                    passthrough.append(item)
+            continue
+        projected[str(single["log_id"])] = single
+
+    if passthrough:
+        return [*projected.values(), *passthrough]
+    return projected
+
+
 def _base_url_from_env(env_names: tuple[str, ...]) -> Optional[str]:
     for env_name in env_names:
         raw = os.getenv(env_name, "").strip()
@@ -1110,6 +1225,19 @@ class ServiceBackedReadAdapter:
             "keys": ["packet_id", "id"],
             "snapshot_key": "ooda_packets",
         },
+        "synthesis_conflict_logs": {
+            "env": "PANTHEON_BFF_SYNTHESIS_CONFLICT_LOG_STORE",
+            "dirs": ("PANTHEON_SYNTHESIS_DATA_DIR", "PANTHEON_OPTIMIZER_DATA_DIR"),
+            "filenames": (
+                "synthesis_conflict_logs.jsonl",
+                "conflict_resolution_logs.jsonl",
+                "conflict_logs.jsonl",
+                "synthesis_conflict_logs.json",
+                "conflict_resolution_logs.json",
+            ),
+            "keys": ["log_id", "id", "conflict_resolution_log_id"],
+            "snapshot_key": "synthesis_conflict_logs",
+        },
     }
 
     _HTTP_DATASETS = {
@@ -1243,6 +1371,8 @@ class ServiceBackedReadAdapter:
             payload = _load_record_store_payload(path)
             if dataset == "ooda_packets":
                 payload = _project_ooda_packet_store_payload(payload)
+            if dataset == "synthesis_conflict_logs":
+                payload = _project_synthesis_conflict_log_store_payload(payload)
             nested_key = self._DATASETS[dataset].get("nested_key")
             if nested_key and isinstance(payload, dict):
                 payload = payload.get(str(nested_key), {})
@@ -5194,6 +5324,7 @@ class ReadSurfaceStore:
         "agora_audit_events": "agora_audit_events",
         "v5_interventions": "v5_interventions",
         "ooda_packets": "ooda_packets",
+        "synthesis_conflict_logs": "synthesis_conflict_logs",
         "ranking_formulas": "ranking_formulas",
         "rebalances": "rebalances",
         "rankings": "rankings",
@@ -8891,6 +9022,94 @@ class ReadSurfaceStore:
         return self.list_ooda_packets(evolution_program_id=program_id)
 
     # ------------------------------------------------------------------ #
+    # Synthesis conflict log read surface (MGMT-SYN-006)
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _synthesis_conflict_log_id(log: Dict[str, Any]) -> str:
+        return str(log.get("log_id") or log.get("id") or log.get("conflict_resolution_log_id") or "").strip()
+
+    @staticmethod
+    def _synthesis_log_text_matches(value: Any, requested: set[str]) -> bool:
+        if value in (None, ""):
+            return False
+        if isinstance(value, list):
+            return any(ReadSurfaceStore._synthesis_log_text_matches(item, requested) for item in value)
+        return str(value).strip() in requested
+
+    @classmethod
+    def _synthesis_conflict_log_matches_proposal(cls, log: Dict[str, Any], proposal_id: str) -> bool:
+        clean_id = str(proposal_id or "").strip()
+        if not clean_id:
+            return True
+        requested = {clean_id}
+        if cls._synthesis_log_text_matches(log.get("proposal_ids"), requested):
+            return True
+        if clean_id in {str(key) for key in (log.get("weighting_inputs") or {}).keys()}:
+            return True
+        if clean_id in {str(key) for key in (log.get("weighting_outputs") or {}).keys()}:
+            return True
+        for veto in log.get("vetoed_proposals") or []:
+            if isinstance(veto, dict) and str(veto.get("proposal_id") or "").strip() == clean_id:
+                return True
+        return False
+
+    def list_synthesis_conflict_logs(
+        self,
+        *,
+        capital_pool_id: Optional[str] = None,
+        scope_ref: Optional[str] = None,
+        proposal_id: Optional[str] = None,
+        sponsor_persona_id: Optional[str] = None,
+        synthesis_method: Optional[str] = None,
+        committee_ref: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        items = [
+            json.loads(json.dumps(log))
+            for log in self._read_dataset_records("synthesis_conflict_logs")
+            if self._synthesis_conflict_log_id(log)
+        ]
+        if capital_pool_id:
+            requested = {item.strip() for item in capital_pool_id.split(",") if item.strip()}
+            items = [log for log in items if str(log.get("capital_pool_id") or "").strip() in requested]
+        if scope_ref:
+            requested = {item.strip() for item in scope_ref.split(",") if item.strip()}
+            items = [log for log in items if str(log.get("scope_ref") or "").strip() in requested]
+        if sponsor_persona_id:
+            requested = {item.strip() for item in sponsor_persona_id.split(",") if item.strip()}
+            items = [log for log in items if str(log.get("sponsor_persona_id") or "").strip() in requested]
+        if synthesis_method:
+            requested = {item.strip() for item in synthesis_method.split(",") if item.strip()}
+            items = [log for log in items if str(log.get("synthesis_method") or "").strip() in requested]
+        if committee_ref:
+            requested = {item.strip() for item in committee_ref.split(",") if item.strip()}
+            items = [log for log in items if str(log.get("committee_ref") or "").strip() in requested]
+        if proposal_id:
+            items = [log for log in items if self._synthesis_conflict_log_matches_proposal(log, proposal_id)]
+        items.sort(
+            key=lambda log: (
+                _parse_rfc3339(
+                    log.get("timestamp")
+                    or log.get("created_at")
+                    or log.get("recorded_at")
+                    or log.get("updated_at")
+                )
+                or datetime.min
+            ),
+            reverse=True,
+        )
+        return items
+
+    def get_synthesis_conflict_log(self, log_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        clean_id = str(log_id or "").strip()
+        if not clean_id:
+            return None
+        for log in self.list_synthesis_conflict_logs():
+            if self._synthesis_conflict_log_id(log) == clean_id:
+                return json.loads(json.dumps(log))
+        return None
+
+    # ------------------------------------------------------------------ #
     # v5 intervention fixture read surface (BFF-CONSOL-009)
     # ------------------------------------------------------------------ #
 
@@ -11398,6 +11617,8 @@ class ReadSurfaceStore:
                         "example_id",
                         "analysis_id",
                         "artifact_id",
+                        "log_id",
+                        "conflict_resolution_log_id",
                         "intervention_id",
                         "program_id",
                         "runtime_id",
