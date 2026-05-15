@@ -1,0 +1,296 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ooda_loop_packet",
+  "title": "OodaLoopPacket",
+  "description": "Replayable evidence packet for one complete Observe-Orient-Decide-Act-Learn/Evolve loop in the Pantheon Management Console.",
+  "type": "object",
+  "required": ["packet_id", "loop_type", "status", "environment", "created_at", "updated_at"],
+  "additionalProperties": false,
+  "properties": {
+    "packet_id": {
+      "type": "string",
+      "pattern": "^ooda-",
+      "description": "Unique stable identifier for this OODA loop packet."
+    },
+    "loop_type": {
+      "type": "string",
+      "enum": [
+        "paper_strategy",
+        "rebalance",
+        "evolution",
+        "incident_response",
+        "persona_synthesis"
+      ],
+      "description": "Category of OODA loop this packet records."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "open",
+        "observing",
+        "oriented",
+        "decided",
+        "acted",
+        "evolving",
+        "closed",
+        "failed"
+      ],
+      "description": "Current lifecycle stage of the OODA loop."
+    },
+    "environment": {
+      "type": "string",
+      "enum": ["dev", "paper", "sandbox", "canary", "live"],
+      "description": "Deployment environment this loop operates in."
+    },
+    "capital_pool_id": {
+      "type": ["string", "null"],
+      "description": "Capital pool scoped to this loop, if applicable."
+    },
+    "strategy_id": {
+      "type": ["string", "null"],
+      "description": "Strategy associated with this loop, if applicable."
+    },
+    "persona_ids": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Personas participating in this loop."
+    },
+    "observe": {
+      "$ref": "#/definitions/ObserveBundle"
+    },
+    "orient": {
+      "$ref": "#/definitions/OrientBundle"
+    },
+    "decide": {
+      "$ref": "#/definitions/DecideBundle"
+    },
+    "act": {
+      "$ref": "#/definitions/ActBundle"
+    },
+    "learn": {
+      "$ref": "#/definitions/LearnBundle"
+    },
+    "audit_refs": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Audit log references spanning the full loop lifecycle."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp when this packet was created."
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp of the last update."
+    },
+    "closed_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp when the loop was closed or failed."
+    }
+  },
+  "definitions": {
+    "ObserveBundle": {
+      "type": "object",
+      "description": "Evidence gathered during the Observe stage.",
+      "additionalProperties": false,
+      "properties": {
+        "source_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Source/search ingest references."
+        },
+        "telemetry_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Telemetry event references."
+        },
+        "signal_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Signal or market signal references."
+        },
+        "market_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Market dataset or snapshot references."
+        },
+        "incident_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Incident case references that triggered observation."
+        },
+        "human_feedback_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Human feedback or annotation references."
+        }
+      }
+    },
+    "OrientBundle": {
+      "type": "object",
+      "description": "Interpretation artifacts produced during the Orient stage.",
+      "additionalProperties": false,
+      "properties": {
+        "regime_state_ref": {
+          "type": ["string", "null"],
+          "description": "Reference to the inferred RegimeState."
+        },
+        "universe_selection_ref": {
+          "type": ["string", "null"],
+          "description": "Reference to the UniverseSelection result."
+        },
+        "signal_inference_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "SignalInference result references."
+        },
+        "allocation_proposal_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "AllocationDecision proposal references."
+        },
+        "risk_adjudication_ref": {
+          "type": ["string", "null"],
+          "description": "Reference to the RiskAdjudication result."
+        },
+        "persona_proposal_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "PersonaAllocationProposal references."
+        },
+        "evidence_bundle_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Additional orientation evidence bundle references."
+        }
+      }
+    },
+    "DecideBundle": {
+      "type": "object",
+      "description": "Decisions and approvals produced during the Decide stage.",
+      "additionalProperties": false,
+      "properties": {
+        "approval_decision_id": {
+          "type": ["string", "null"],
+          "description": "ApprovalDecision identifier."
+        },
+        "deployment_plan_id": {
+          "type": ["string", "null"],
+          "description": "DeploymentPlan identifier."
+        },
+        "evolution_decision_id": {
+          "type": ["string", "null"],
+          "description": "EvolutionDecision identifier."
+        },
+        "sponsor_persona_id": {
+          "type": ["string", "null"],
+          "description": "Sponsor persona selected for multi-persona resolution."
+        },
+        "decision_rationale_ref": {
+          "type": ["string", "null"],
+          "description": "Reference to decision rationale document or record."
+        },
+        "policy_decision_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Policy evaluation or RBAC decision references."
+        }
+      }
+    },
+    "ActBundle": {
+      "type": "object",
+      "description": "Actions taken during the Act stage.",
+      "additionalProperties": false,
+      "properties": {
+        "runtime_binding_id": {
+          "type": ["string", "null"],
+          "description": "RuntimeBinding identifier created or updated during this loop."
+        },
+        "command_receipt_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "BFF command receipt references."
+        },
+        "broker_evidence_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Broker sandbox or paper trade evidence references."
+        },
+        "rollback_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Rollback action references, if any."
+        },
+        "safe_mode_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Safe-mode transition references, if any."
+        },
+        "live_capital_side_effects": {
+          "type": "boolean",
+          "description": "Must be false in dev/paper/sandbox environments.",
+          "default": false
+        }
+      },
+      "allOf": [
+        {
+          "description": "live_capital_side_effects must be false for non-live environments",
+          "if": {
+            "properties": {"live_capital_side_effects": {"const": true}}
+          },
+          "then": {
+            "properties": {
+              "runtime_binding_id": {"type": "string"}
+            },
+            "required": ["runtime_binding_id"]
+          }
+        }
+      ]
+    },
+    "LearnBundle": {
+      "type": "object",
+      "description": "Learning and evolution artifacts produced after the Act stage.",
+      "additionalProperties": false,
+      "properties": {
+        "telemetry_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Post-action telemetry event references."
+        },
+        "postmortem_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Postmortem record references."
+        },
+        "evolution_followthrough_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "EvolutionDecision follow-through action references."
+        },
+        "trainer_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Persona trainer session references."
+        },
+        "retrain_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Retrain or revalidate job references."
+        },
+        "observation_window": {
+          "type": ["object", "null"],
+          "description": "Observation window metadata after action.",
+          "additionalProperties": false,
+          "properties": {
+            "start_at": {"type": "string", "format": "date-time"},
+            "end_at": {"type": ["string", "null"], "format": "date-time"},
+            "duration_hours": {"type": ["number", "null"]}
+          }
+        }
+      }
+    }
+  }
+}
