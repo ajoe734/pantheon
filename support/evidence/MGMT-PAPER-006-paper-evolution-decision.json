@@ -1,0 +1,396 @@
+{
+  "task_id": "MGMT-PAPER-006",
+  "epic": "EPIC-02 Management Paper Loop Proof",
+  "environment": "paper",
+  "generated_at": "2026-05-15T16:49:57Z",
+  "live_capital_side_effects": false,
+  "source_packets": {
+    "telemetry_packet": "support/evidence/MGMT-PAPER-005-paper-telemetry-packet.json"
+  },
+  "telemetry_review_input": {
+    "packet_id": "telemetry-packet-paper-mgmt-001",
+    "event_count": 4,
+    "event_ids": [
+      "631f17dc-bbba-4593-9ad3-9ed24c5b3001",
+      "631f17dc-bbba-4593-9ad3-9ed24c5b3002",
+      "631f17dc-bbba-4593-9ad3-9ed24c5b3003",
+      "631f17dc-bbba-4593-9ad3-9ed24c5b3004"
+    ],
+    "runtime_binding_id": "8d706784-2678-4c49-9b70-e05d89f7b001",
+    "deployment_stage": "paper",
+    "ingest_validation": {
+      "accepted_event_ids": [
+        "631f17dc-bbba-4593-9ad3-9ed24c5b3001",
+        "631f17dc-bbba-4593-9ad3-9ed24c5b3002",
+        "631f17dc-bbba-4593-9ad3-9ed24c5b3003",
+        "631f17dc-bbba-4593-9ad3-9ed24c5b3004"
+      ],
+      "heartbeat_first_accepted": true,
+      "heartbeat_duplicate_accepted": true,
+      "stage_mismatch_rejected": true,
+      "missing_binding_rejected": true,
+      "stats": {
+        "service": {
+          "started": false,
+          "uptime_seconds": 0.17,
+          "total_ingested": 4,
+          "total_rejected": 2,
+          "total_duplicates": 1,
+          "dedup_tracked_ids": 4
+        },
+        "buffer": {
+          "type": "in_memory",
+          "size": 0,
+          "capacity": 100000,
+          "total_enqueued": 4,
+          "total_dequeued": 4,
+          "total_rejected": 0,
+          "is_closed": true,
+          "utilization_pct": 0.0
+        },
+        "writer": {
+          "running": false,
+          "total_written": 4,
+          "total_failed": 0,
+          "total_retried": 0,
+          "total_dlq": 0,
+          "batches_flushed": 1,
+          "batch_size": 10,
+          "batch_interval": 0.01,
+          "max_retries": 5
+        },
+        "dead_letter_queue": {
+          "memory_entries": 2,
+          "total_rejected": 2,
+          "incident_threshold": 100,
+          "incident_fired": false,
+          "spill_path": null,
+          "tag_counts": {
+            "binding_mismatch": 1,
+            "schema_violation": 1
+          }
+        },
+        "backpressure": {
+          "pressure_level": "normal",
+          "current_concurrency": 4,
+          "min_concurrency": 1,
+          "max_concurrency": 8,
+          "buffer_utilization_high": 0.7,
+          "buffer_utilization_critical": 0.9,
+          "error_rate_high": 0.1,
+          "error_rate_critical": 0.3,
+          "recent_writes": 1,
+          "recent_errors": 0,
+          "last_evaluated_at": 0.0
+        },
+        "runtime_summary_projection": {
+          "summary_count": 1,
+          "path": null,
+          "heartbeat_stale_after_seconds": 60
+        }
+      },
+      "runtime_summary": {
+        "id": "rt-paper-mgmt-001",
+        "runtime_id": "rt-paper-mgmt-001",
+        "runtime_binding_id": "8d706784-2678-4c49-9b70-e05d89f7b001",
+        "binding_id": "8d706784-2678-4c49-9b70-e05d89f7b001",
+        "deployment_stage": "paper",
+        "capital_pool_id": "capital-pool-paper-001",
+        "artifact_id": "artifact-paper-qlib-lgbm-001",
+        "artifact_version": "1.0.0",
+        "plan_id": "deployment-plan-paper-001",
+        "deployment_plan_id": "deployment-plan-paper-001",
+        "persona_capital_binding_id": "pcb-paper-quant-001",
+        "last_event_id": "631f17dc-bbba-4593-9ad3-9ed24c5b3004",
+        "last_event_type": "bracket_order_logged",
+        "last_event_at": "2026-05-15T15:05:15Z",
+        "collected_at": "2026-05-15T15:05:15Z",
+        "window": "latest",
+        "projection_source": "telemetry_ingest",
+        "projection_updated_at": "2026-05-15T15:21:44Z",
+        "last_heartbeat_at": "2026-05-15T15:05:00Z",
+        "state": "degraded",
+        "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+        "engine_bridge_commit": "paper-loop-bridge-commit-001",
+        "engine_bridge_path": "pantheon/lean",
+        "runtime_adapter_version": "0.1.0",
+        "health_summary": {
+          "paper_runtime": "ok",
+          "bridge": "ok",
+          "telemetry": "degraded",
+          "broker": "not_applicable"
+        },
+        "pnl": 125.5,
+        "staleness": {
+          "last_known_at": "2026-05-15T15:05:00Z",
+          "age_seconds": 1004,
+          "threshold_seconds": 60
+        }
+      },
+      "dlq_reasons": [
+        "Evidence contract violation: deployment_stage 'live' does not match binding deployment_mode 'paper' (Evidence E-2)",
+        "Schema validation failed: 'binding_id' is a required property"
+      ]
+    },
+    "runtime_summary_projection": {
+      "id": "rt-paper-mgmt-001",
+      "runtime_id": "rt-paper-mgmt-001",
+      "runtime_binding_id": "8d706784-2678-4c49-9b70-e05d89f7b001",
+      "binding_id": "8d706784-2678-4c49-9b70-e05d89f7b001",
+      "deployment_stage": "paper",
+      "capital_pool_id": "capital-pool-paper-001",
+      "artifact_id": "artifact-paper-qlib-lgbm-001",
+      "artifact_version": "1.0.0",
+      "plan_id": "deployment-plan-paper-001",
+      "deployment_plan_id": "deployment-plan-paper-001",
+      "persona_capital_binding_id": "pcb-paper-quant-001",
+      "last_event_id": "631f17dc-bbba-4593-9ad3-9ed24c5b3004",
+      "last_event_type": "bracket_order_logged",
+      "last_event_at": "2026-05-15T15:05:15Z",
+      "collected_at": "2026-05-15T15:05:15Z",
+      "window": "latest",
+      "projection_source": "telemetry_ingest",
+      "projection_updated_at": "2026-05-15T15:21:44Z",
+      "last_heartbeat_at": "2026-05-15T15:05:00Z",
+      "state": "degraded",
+      "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+      "engine_bridge_commit": "paper-loop-bridge-commit-001",
+      "engine_bridge_path": "pantheon/lean",
+      "runtime_adapter_version": "0.1.0",
+      "health_summary": {
+        "paper_runtime": "ok",
+        "bridge": "ok",
+        "telemetry": "degraded",
+        "broker": "not_applicable"
+      },
+      "pnl": 125.5,
+      "staleness": {
+        "last_known_at": "2026-05-15T15:05:00Z",
+        "age_seconds": 1004,
+        "threshold_seconds": 60
+      }
+    },
+    "safety_assertions": {
+      "paper_stage_only": true,
+      "live_broker_telemetry_disabled": true,
+      "capital_binding_live_disabled": true,
+      "bracket_logged_only": true,
+      "no_real_order": true,
+      "no_real_capital": true
+    }
+  },
+  "approval_decision": {
+    "decision_id": "approval-paper-evolution-revalidate-001",
+    "target_type": "evolution_proposal",
+    "target_id": "evolution-paper-revalidate-001",
+    "target_version": "1.0.0",
+    "decision": "approved",
+    "decision_state": "decided",
+    "actor_role": "governance_reviewer",
+    "actor_id": "evolution-reviewer-paper-01",
+    "rationale": "Low-risk paper revalidation approved from accepted paper telemetry. The approval authorizes a research work item only; runtime, broker, and live-capital mutation remain disabled.",
+    "created_at": "2026-05-15T15:05:30Z",
+    "decided_at": "2026-05-15T15:06:05Z",
+    "conditions": [],
+    "risk_level": "low",
+    "evidence_refs": [
+      {
+        "ref_type": "telemetry_summary",
+        "ref_id": "telemetry-packet-paper-mgmt-001",
+        "storage_ref": {
+          "backend": "support/evidence",
+          "path": "support/evidence/MGMT-PAPER-005-paper-telemetry-packet.json",
+          "packet_id": "telemetry-packet-paper-mgmt-001"
+        },
+        "note": "Paper telemetry summary accepted by ingest; no live capital exposure."
+      },
+      {
+        "ref_type": "manual_review_ticket",
+        "ref_id": "paper-evolution-review-ticket-001",
+        "storage_ref": {
+          "backend": "governance",
+          "path": "evolution-decision://evolution-paper-revalidate-001/review"
+        },
+        "note": "Reviewer-on-duty approval for low-risk paper revalidation."
+      }
+    ],
+    "superseded_by": null,
+    "expires_at": null,
+    "capital_pool_id": "capital-pool-paper-001",
+    "persona_id": "persona-quant-paper-01",
+    "metadata": null
+  },
+  "evolution_decision": {
+    "decision_id": "evolution-paper-revalidate-001",
+    "target_type": "strategy_spec",
+    "target_id": "strategy-spec-paper-qlib-lgbm-001",
+    "target_version": "1.0.0",
+    "action_type": "revalidate",
+    "decision_state": "executed",
+    "risk_level": "low",
+    "created_at": "2026-05-15T15:05:30Z",
+    "created_by_role": "evolution_controller",
+    "created_by_id": "evolution-controller-paper-01",
+    "rationale": "Revalidate the paper StrategySpec after paper telemetry confirms accepted ingest, paper-stage runtime context, and logged-only broker evidence.",
+    "approval_decision_id": "approval-paper-evolution-revalidate-001",
+    "evidence_refs": [
+      {
+        "ref_type": "telemetry_summary",
+        "ref_id": "telemetry-packet-paper-mgmt-001",
+        "storage_ref": {
+          "backend": "support/evidence",
+          "path": "support/evidence/MGMT-PAPER-005-paper-telemetry-packet.json",
+          "packet_id": "telemetry-packet-paper-mgmt-001"
+        },
+        "note": "Paper telemetry summary accepted by ingest; no live capital exposure."
+      },
+      {
+        "ref_type": "manual_review_ticket",
+        "ref_id": "paper-evolution-review-ticket-001",
+        "storage_ref": {
+          "backend": "governance",
+          "path": "evolution-decision://evolution-paper-revalidate-001/review"
+        },
+        "note": "Reviewer-on-duty approval for low-risk paper revalidation."
+      }
+    ],
+    "threshold_snapshots": [
+      {
+        "policy_source": "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md#5.2",
+        "signal_type": "manual_review",
+        "metric_name": "paper_telemetry_ready_for_revalidation",
+        "comparator": "gte",
+        "observed_value": 1,
+        "threshold_value": 1,
+        "window": "paper-loop",
+        "breached": true,
+        "note": "Paper telemetry completed and is ready for governed revalidation before any canary consideration."
+      }
+    ],
+    "review_chain": [
+      {
+        "step_type": "reviewed",
+        "actor_role": "reviewer_on_duty",
+        "actor_id": "evolution-reviewer-paper-01",
+        "timestamp": "2026-05-15T15:06:00Z",
+        "note": "Reviewer-on-duty accepted low-risk paper revalidation review."
+      },
+      {
+        "step_type": "approved",
+        "actor_role": "reviewer_on_duty",
+        "actor_id": "evolution-reviewer-paper-01",
+        "timestamp": "2026-05-15T15:06:05Z",
+        "note": "Approved for research-plane revalidation only; no live mutation."
+      },
+      {
+        "step_type": "executed",
+        "actor_role": "evolution_controller",
+        "actor_id": "evolution-controller-paper-01",
+        "timestamp": "2026-05-15T15:06:10Z",
+        "note": "Paper loop learn/evolve follow-through recorded."
+      }
+    ],
+    "linked_postmortem_id": null,
+    "linked_incident_id": null,
+    "capital_pool_id": "capital-pool-paper-001",
+    "persona_id": "persona-quant-paper-01",
+    "target_stage": null,
+    "cooldown_started_at": "2026-05-15T15:06:10Z",
+    "cooldown_ends_at": "2026-05-18T15:06:10Z",
+    "observation_window_started_at": "2026-05-15T15:06:10Z",
+    "observation_window_ends_at": "2026-05-22T15:06:10Z",
+    "execution_result": {
+      "status": "succeeded",
+      "plane": "research",
+      "executed_at": "2026-05-15T15:06:10Z",
+      "execution_ref_id": "revalidate-job-paper-001",
+      "outcome_summary": "Paper revalidation work item recorded without runtime, broker, or capital mutation."
+    },
+    "superseded_by": null,
+    "supersedes_decision_id": null,
+    "metadata": {
+      "task_id": "MGMT-PAPER-006",
+      "source_telemetry_packet_id": "telemetry-packet-paper-mgmt-001",
+      "source_event_ids": [
+        "631f17dc-bbba-4593-9ad3-9ed24c5b3001",
+        "631f17dc-bbba-4593-9ad3-9ed24c5b3002",
+        "631f17dc-bbba-4593-9ad3-9ed24c5b3003",
+        "631f17dc-bbba-4593-9ad3-9ed24c5b3004"
+      ],
+      "source_runtime_binding_id": "8d706784-2678-4c49-9b70-e05d89f7b001",
+      "source_ooda_packet_id": "ooda-paper-mgmt-loop-001",
+      "review_packet": true,
+      "live_mutation_allowed": false,
+      "runtime_binding_mutation_allowed": false,
+      "broker_order_allowed": false,
+      "execution_plane_authority": "research",
+      "cooldown_days": 3,
+      "observation_window_days": 7
+    }
+  },
+  "review_packet": {
+    "approval_decision_id": "approval-paper-evolution-revalidate-001",
+    "approval_target_type": "evolution_proposal",
+    "approval_target_id": "evolution-paper-revalidate-001",
+    "risk_level": "low",
+    "review_owner": "reviewer_on_duty",
+    "approval_owner": "reviewer_on_duty",
+    "review_chain_steps": [
+      "reviewed",
+      "approved",
+      "executed"
+    ],
+    "authorized_by_policy": true,
+    "policy_refs": [
+      "EVOLUTION_REVIEW_AND_THRESHOLDS.md#6.1",
+      "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md#5.2",
+      "services/control-plane/governance/evolution_decision.contract.md#8"
+    ]
+  },
+  "audit_event": {
+    "event_type": "paper_evolution_decision_executed",
+    "decision_id": "evolution-paper-revalidate-001",
+    "target_type": "strategy_spec",
+    "target_id": "strategy-spec-paper-qlib-lgbm-001",
+    "action_type": "revalidate",
+    "decision_state": "executed",
+    "approval_decision_id": "approval-paper-evolution-revalidate-001",
+    "actor_id": "evolution-controller-paper-01",
+    "actor_role": "evolution_controller",
+    "timestamp": "2026-05-15T16:49:57Z"
+  },
+  "ooda_decide_ref": {
+    "approval_decision_id": "approval-paper-evolution-revalidate-001",
+    "evolution_decision_id": "evolution-paper-revalidate-001"
+  },
+  "ooda_learn_ref": {
+    "evolution_followthrough_refs": [
+      "evolution-decision://evolution-paper-revalidate-001/revalidate-job-paper-001"
+    ],
+    "observation_window": {
+      "start_at": "2026-05-15T15:06:10Z",
+      "end_at": "2026-05-22T15:06:10Z"
+    }
+  },
+  "safety_assertions": {
+    "paper_environment": true,
+    "low_risk_revalidate": true,
+    "research_execution_plane": true,
+    "no_live_capital_side_effects": true,
+    "no_runtime_binding_mutation": true,
+    "no_broker_order": true,
+    "live_mutation_allowed_false": true,
+    "approval_decision_targets_evolution_proposal": true,
+    "cooldown_observation_recorded": true
+  },
+  "paper_loop_chain": [
+    "MGMT-PAPER-001: candidate StrategySpec",
+    "MGMT-PAPER-002: ApprovalDecision packet",
+    "MGMT-PAPER-003: DeploymentPlan packet",
+    "MGMT-PAPER-004: paper RuntimeBinding packet",
+    "MGMT-PAPER-005: telemetry packet",
+    "MGMT-PAPER-006: EvolutionDecision review packet  <- this artifact",
+    "MGMT-PAPER-007: complete OODA packet"
+  ],
+  "validation_errors": []
+}
