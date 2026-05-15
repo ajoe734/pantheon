@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -296,6 +297,167 @@ _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 #   PANTHEON_BFF_MFA_VALUES    - accepted MFA proof values (e.g. mfa,totp,webauthn)
 #   When JWKS_URI is set, RS256/ES256 JWKS path is used instead of HS256.
 #   Strict default still applies: stub tokens are not accepted in strict mode.
+
+
+def _dev_login_client_id() -> str:
+    return _first_nonblank(
+        os.getenv("PANTHEON_BFF_DEV_LOGIN_CLIENT_ID"),
+        os.getenv("PANTHEON_BFF_OIDC_CLIENT_ID"),
+    )
+
+
+def _dev_login_client_secret() -> str:
+    return _first_nonblank(
+        os.getenv("PANTHEON_BFF_DEV_LOGIN_CLIENT_SECRET"),
+        os.getenv("PANTHEON_BFF_OIDC_CLIENT_SECRET"),
+    )
+
+
+def _dev_login_forbidden_environment() -> bool:
+    env_name = os.getenv("PANTHEON_ENV", "").strip().lower()
+    deployment_stage = os.getenv("PANTHEON_DEPLOYMENT_STAGE", "").strip().lower()
+    return env_name in _PRODUCTION_STRICT_ENVIRONMENTS or deployment_stage in _PRODUCTION_STRICT_ENVIRONMENTS
+
+
+def _dev_login_enabled() -> bool:
+    if _dev_login_forbidden_environment():
+        return False
+    return bool(_dev_login_client_id() and _dev_login_client_secret())
+
+
+def _dev_login_ttl_seconds() -> int:
+    raw = os.getenv("PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS", "900").strip()
+    try:
+        ttl = int(raw)
+    except ValueError:
+        ttl = 900
+    return max(300, min(ttl, 3600))
+
+
+def _dev_login_roles() -> List[str]:
+    roles = _env_csv("PANTHEON_BFF_DEV_LOGIN_ROLES") or ["operator", "reviewer"]
+    return sorted(set(role for role in roles if role in _READ_ROLES or role in _WRITE_ROLES))
+
+
+def _dev_login_bool_env(name: str, *, default: bool) -> bool:
+    return _bool_from_env(name, default=default)
+
+
+def _issue_dev_login_jwt(client_id: str) -> Dict[str, Any]:
+    try:
+        from services.runtime_auth_inbound import encode_jwt_hs256
+    except ImportError:
+        from runtime_auth_inbound import encode_jwt_hs256  # type: ignore[no-redef]
+
+    secret = os.getenv("PANTHEON_BFF_DEV_LOGIN_JWT_SECRET") or os.getenv("PANTHEON_BFF_JWT_SECRET", "")
+    if not secret:
+        raise _bff_error(
+            500,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Dev login JWT signing secret is not configured",
+            "PANTHEON_BFF_JWT_SECRET is required to issue dev-login JWTs",
+            precondition_failed="jwt_secret",
+            suggestion="Configure the dev BFF JWT secret before enabling /bff/auth/dev-login",
+        )
+
+    now = int(time.time())
+    ttl = _dev_login_ttl_seconds()
+    expires_at = now + ttl
+    roles = _dev_login_roles() or ["operator", "reviewer"]
+    subject = _first_nonblank(
+        os.getenv("PANTHEON_BFF_DEV_LOGIN_SUBJECT"),
+        f"pantheon-dev-{client_id}",
+    )
+    issuer = _first_nonblank(
+        os.getenv("PANTHEON_BFF_JWT_ISSUER"),
+        "pantheon-dev",
+    )
+    audience = _first_nonblank(
+        os.getenv("PANTHEON_BFF_JWT_AUDIENCE"),
+        "bff-operators",
+    )
+    tenant_id = _first_nonblank(
+        os.getenv("PANTHEON_BFF_TENANT_ID"),
+        os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
+        os.getenv("PANTHEON_TENANT_ID"),
+        "pantheon-dev",
+    )
+    allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [tenant_id]
+    mfa_verified = _dev_login_bool_env("PANTHEON_BFF_DEV_LOGIN_MFA_VERIFIED", default=False)
+    claims: Dict[str, Any] = {
+        "sub": subject,
+        "roles": roles,
+        "iss": issuer,
+        "aud": audience,
+        "iat": now,
+        "nbf": now,
+        "exp": expires_at,
+        "jti": f"dev-login-{uuid.uuid4().hex}",
+        "client_id": client_id,
+        "token_use": "pantheon-bff-dev-login",
+        "tenant_id": tenant_id,
+        "allowed_tenants": allowed_tenants,
+    }
+    if mfa_verified:
+        claims["mfa_verified"] = True
+
+    token = encode_jwt_hs256(claims, secret=secret)
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": ttl,
+        "issued_at": datetime.fromtimestamp(now, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
+        "expires_at": datetime.fromtimestamp(expires_at, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
+        "scope": " ".join(roles),
+    }
+
+
+@app.post("/bff/auth/dev-login")
+async def bff_auth_dev_login(payload: Dict[str, Any] = Body(default_factory=dict)):
+    """Dev-only client-credentials exchange for short-lived BFF JWTs."""
+    if not _dev_login_enabled():
+        raise _bff_error(
+            403,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Dev login is disabled for this BFF",
+            "dev_login_disabled",
+            precondition_failed="dev_login",
+            suggestion="Use the dev BFF with configured client credentials; staging-live must use IdP OIDC/JWKS auth",
+        )
+    if str(payload.get("grant_type") or "client_credentials").strip() != "client_credentials":
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_PARAMS,
+            "Unsupported grant_type for dev login",
+            "grant_type must be client_credentials",
+            precondition_failed="grant_type",
+        )
+
+    client_id = str(payload.get("client_id") or payload.get("clientId") or "").strip()
+    client_secret = str(payload.get("client_secret") or payload.get("clientSecret") or "").strip()
+    expected_id = _dev_login_client_id()
+    expected_secret = _dev_login_client_secret()
+    if not (
+        hmac.compare_digest(client_id, expected_id)
+        and hmac.compare_digest(client_secret, expected_secret)
+    ):
+        raise _bff_error(
+            401,
+            ErrorCode.INVALID_TOKEN,
+            "Invalid dev login client credentials",
+            "AUTH_DEV_LOGIN_CLIENT_CREDENTIALS",
+            suggestion="Use the configured PANTHEON_BFF_OIDC_CLIENT_ID and CLIENT_SECRET",
+        )
+
+    token_payload = _issue_dev_login_jwt(client_id)
+    return {
+        **token_payload,
+        "meta": {
+            "route": "POST /bff/auth/dev-login",
+            "contract": "FE-INT-GATE-OIDC-DEV-LOGIN",
+            "ttl_seconds": token_payload["expires_in"],
+        },
+    }
 
 
 def _extract_identity(

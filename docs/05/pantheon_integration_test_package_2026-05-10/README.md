@@ -63,13 +63,18 @@ PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io \
 node scripts/probe-bff-routes.mjs --anonymous
 ```
 
-6. 跑 authenticated smoke，需 token：
+6. 跑 authenticated smoke，CI/local 以 dev client credentials 先換短期 JWT：
 
 ```bash
 PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io \
-PANTHEON_BFF_SMOKE_BEARER_TOKEN=... \
+PANTHEON_BFF_OIDC_CLIENT_ID=... \
+PANTHEON_BFF_OIDC_CLIENT_SECRET=... \
 node scripts/probe-bff-authenticated-live.mjs
 ```
+
+已取得 token 時也可用 `PANTHEON_BFF_ACCESS_TOKEN=...` 覆蓋；舊的
+`PANTHEON_BFF_SMOKE_BEARER_TOKEN` 只保留為相容輸入，不再作為 GitHub
+repo secret。
 
 7. 跑 hosted browser probe：
 

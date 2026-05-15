@@ -78,7 +78,9 @@ Dev Lovable project:
 VITE_PANTHEON_ENV=dev
 VITE_BFF_MODE=live
 VITE_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io
-VITE_BFF_DEV_BEARER_TOKEN=pantheon-dev-browser:reviewer
+VITE_BFF_DEV_LOGIN_PATH=/bff/auth/dev-login
+VITE_BFF_OIDC_CLIENT_ID=<dev-client-id>
+VITE_BFF_OIDC_CLIENT_SECRET=<dev-client-secret>
 VITE_PANTHEON_LIVE_BROKER_ENABLED=false
 ```
 
@@ -93,8 +95,13 @@ VITE_PANTHEON_LIVE_BROKER_ENABLED=true
 Rules:
 
 - `VITE_` values are public browser build values, not secrets.
-- `VITE_BFF_DEV_BEARER_TOKEN` is accepted only by the dev BFF when
-  `PANTHEON_BFF_AUTH_STUB=true`; do not set it for staging-live.
+- The dev project uses `POST /bff/auth/dev-login` to exchange the dev-only
+  client id/secret for a short-lived JWT. The BFF clamps token TTL to 5 minutes
+  minimum and 1 hour maximum; the default is 15 minutes.
+- `VITE_BFF_OIDC_CLIENT_SECRET` is acceptable only for this dev-only browser
+  login path because `VITE_` values are public. Rotate or revoke the dev
+  client secret if a build is exposed outside dev. Do not set these variables
+  for staging-live.
 - Never place broker credentials, TWS credentials, API tokens, or private keys
   in Lovable frontend env vars.
 - `VITE_PANTHEON_LIVE_BROKER_ENABLED` is a UI hint only. The BFF/backend owns
@@ -125,7 +132,14 @@ BFF CORS must be one-to-one:
 ```env
 # dev BFF on pantheon-dev-vm1
 PANTHEON_BFF_CORS_ORIGINS=https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app
-PANTHEON_BFF_AUTH_STUB=true
+PANTHEON_BFF_AUTH_STUB=false
+PANTHEON_BFF_AUTH_MODE=strict
+PANTHEON_BFF_JWT_SECRET=<dev-jwt-signing-secret>
+PANTHEON_BFF_JWT_ISSUER=pantheon-dev
+PANTHEON_BFF_JWT_AUDIENCE=bff-operators
+PANTHEON_BFF_OIDC_CLIENT_ID=<dev-client-id>
+PANTHEON_BFF_OIDC_CLIENT_SECRET=<dev-client-secret>
+PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS=900
 
 # staging BFF on pantheon-taiwan
 PANTHEON_BFF_CORS_ORIGINS=https://pantheon-ai-system-front-staging-live.lovable.app
@@ -138,6 +152,11 @@ uses it.
 
 Do not allow both dev and staging Lovable origins on the same BFF unless the
 operator has explicitly approved a temporary migration window.
+
+The `/bff/auth/dev-login` route is disabled when `PANTHEON_ENV` or
+`PANTHEON_DEPLOYMENT_STAGE` is `staging-live`, `live`, `prod`, `production`, or
+`canary`. A dev JWT must be rejected by staging-live because staging-live uses
+its own OIDC/JWKS issuer and audience instead of the dev HS256 signing path.
 
 ## Promotion Rules
 
