@@ -243,3 +243,11 @@ Evidence:
 - `support/evidence/BFF-CONSOL-022-staging-strict-soak.md`
 - `support/evidence/BFF-CONSOL-022-day1-authenticated-live.json`
 - `support/evidence/BFF-CONSOL-022-day1-browser/hosted-browser-bff-probe-2026-05-15.md`
+
+## Closeout
+
+OPS-GEM-REDEPLOY-001 is complete. It unblocked the stale Lovable deployment,
+verified the refreshed hosted asset, supplied usable dev BFF authenticated read
+evidence, reverified F05/F15/ME-STARTUP, and then closed the BFF-CONSOL-022
+preview/auth blocker by switching the strict Day 1 runner to the reachable
+public dev deployment with browser runtime strict override.
