@@ -27,6 +27,7 @@ class ShioajiSandboxSmokeTest(unittest.TestCase):
             "cancel_delay_seconds": 0.0,
             "capital_pool_id": "pool-test",
             "strategy_id": "strategy-test",
+            "task_id": sandbox_smoke.TASK_ID,
             "mock_api": True,
             "output_dir": "/tmp/not-used",
             "output_file": None,
@@ -40,7 +41,7 @@ class ShioajiSandboxSmokeTest(unittest.TestCase):
 
         self.assertEqual(payload["status"], "passed")
         self.assertEqual(payload["provider"], "Shioaji")
-        self.assertEqual(payload["task_id"], "EP5-BROKER-TW-002-RERUN-REAL-FIX")
+        self.assertEqual(payload["task_id"], "MGMT-BROKER-003")
         self.assertEqual(payload["account_kind"], "stock")
         self.assertEqual(payload["run_mode"], "mock_api_replay")
         self.assertEqual(payload["place"]["response"]["status"], "submitted")
@@ -124,8 +125,15 @@ class ShioajiSandboxSmokeTest(unittest.TestCase):
             }
             self.assertEqual({path.name for path in output_dir.iterdir()}, expected)
             summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
-            self.assertEqual(summary["task_id"], "EP5-BROKER-TW-002-RERUN-REAL-FIX")
+            self.assertEqual(summary["task_id"], "MGMT-BROKER-003")
             self.assertEqual(summary["status_transitions"][-1]["status"], "cancelled")
+
+    def test_task_id_can_be_overridden_for_task_scoped_evidence(self) -> None:
+        with patch.dict(os.environ, {"BROKER_SHIOAJI_SANDBOX_ENABLED": "true"}, clear=False):
+            payload = sandbox_smoke.run_smoke(self.args(task_id="MGMT-BROKER-003-review-rerun"))
+
+        self.assertEqual(payload["status"], "passed")
+        self.assertEqual(payload["task_id"], "MGMT-BROKER-003-review-rerun")
 
     def test_output_file_writes_single_payload(self) -> None:
         with patch.dict(os.environ, {"BROKER_SHIOAJI_SANDBOX_ENABLED": "true"}, clear=False):

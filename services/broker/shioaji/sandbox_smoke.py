@@ -35,7 +35,7 @@ from services.broker.shioaji.adapter import (  # noqa: E402
 )
 
 
-TASK_ID = "EP5-BROKER-TW-002-RERUN-REAL-FIX"
+TASK_ID = "MGMT-BROKER-003"
 PROOF_BOUNDARY = "broker_adapter_sandbox_smoke; not canary/live/capital proof"
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 SANDBOX_WINDOW_START_HOUR = 8
@@ -365,7 +365,7 @@ def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
     window_end = taipei_window_payload(label=f"{args.account_kind}_smoke_end")
 
     return {
-        "task_id": TASK_ID,
+        "task_id": str(getattr(args, "task_id", TASK_ID) or TASK_ID),
         "generated_at": generated_at,
         "completed_at": iso_now(),
         "provider": "Shioaji",
@@ -492,6 +492,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cancel-delay-seconds", type=float, default=1.0)
     parser.add_argument("--capital-pool-id", default="pool-ep5-broker-tw-sandbox")
     parser.add_argument("--strategy-id", default="strategy-ep5-broker-tw-smoke")
+    parser.add_argument("--task-id", default=TASK_ID, help="Task id to stamp into generated evidence.")
     parser.add_argument("--mock-api", action="store_true", help="Use an explicit mock Shioaji API replay.")
     parser.add_argument("--output-dir")
     parser.add_argument("--output-file")
