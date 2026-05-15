@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-15 09:30:30
+Last updated: 2026-05-15 09:42:19
 
 ## Objective
 
@@ -43,7 +43,7 @@ Last updated: 2026-05-15 09:30:30
 - `Codex2`: integration, status-system, schema, acceptance; next: Source fix pushed in execute-plans commits b09d22e/df73c3d and evidence committed in pantheon 0bec9136. Local focused 401 passes and build passes, but hosted https://pantheon-dev.lovable.app still serves old bundle index-DmMAo3dQ.js with local admin role; hosted focused 401 fails with interceptedMeRequests=0. Waiting for Lovable deployment refresh or correct preview URL tracking df73c3d.
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: Assignment created
 - `Claude2`: execution, control-plane, governance-review; next: No active assignment
-- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Acceptance packet created at support/sidecars/FE-INT-GATE-A11Y-CONTRAST/FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE.md and committed. Ready for review and incorporation into parent closeout.
+- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Task is blocked waiting for Gemini to provide credentials for BFF-CONSOL-022.
 
 ## Delivery Layers
 
@@ -60,8 +60,6 @@ Last updated: 2026-05-15 09:30:30
 | `FE-INT-GATE-FOLLOWUP-ME-STARTUP` | Pantheon FE Integration Gate 2026-05-13 | Wire hosted startup session to /bff/me before local role fallback | Codex2 | blocked | - | Hosted Lovable startup 會打 live BFF list/v5/SSE routes，但目前未在 startup 請求 /bff/me；TopBar 仍由 local platform role control 顯示 admin。需要接上 /bff/me 作為 current-user/session source，401 時顯示 auth/error state，且不得 fallback 到 mock current-user。F01 已在 test annotation 與 startup-bff-network attachment 記錄此 gap。 |
 | `FE-INT-GATE-FOLLOWUP-F15-STRICT-LOVABLE` | Pantheon FE Integration Gate 2026-05-13 | Enable strict fallback selection on hosted Lovable dev build | Codex | blocked | - | Hosted Lovable dev build currently ignores Playwright strict selection: PANTHEON_E2E_STRICT only selects the test branch, while the deployed bundle lacks VITE_BFF_FALLBACK=strict and compiles process.env to a closed-over object. Injected /bff/strategies 503 still renders live BFF unavailable / serving mock data plus seed rows. Deploy a strict-capable build or runtime config hook before F15 can pass without masking acceptance. |
 | `FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE` | Pantheon FE Integration Gate 2026-05-13 | Restore hosted Lovable dev real-write gate for F05 | Codex | blocked | - | F05 hosted Lovable DOM selector 已確認正確，但 pantheon-dev.lovable.app bundle 缺 VITE_BFF_REAL_WRITES/VITE_BFF_FALLBACK；remediation action 只走 overlay，不會 POST /bff/v5/interventions/{id}/remediate。需更新 dev Lovable deploy/write-gate 設定後重跑 F05 hosted 兩次。 |
-| `FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE` | Pantheon FE Integration Gate 2026-05-13 | [Sidecar] [Auto] [Parent FE-INT-GATE-A11Y-BREADCRUMB] Prepare FE-INT-GATE-A11Y-BREADCRUMB acceptance packet and dependency map | Codex | review_approved | - | 平行支援 FE-INT-GATE-A11Y-BREADCRUMB，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
-| `FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE` | Pantheon FE Integration Gate 2026-05-13 | [Sidecar] [Auto] [Parent FE-INT-GATE-A11Y-CONTRAST] Prepare FE-INT-GATE-A11Y-CONTRAST acceptance packet and dependency map | Gemini2 | review | - | 平行支援 FE-INT-GATE-A11Y-CONTRAST，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 |
 | `FE-INT-GATE-OIDC-DEV-LOGIN` | Pantheon FE Integration Gate 2026-05-13 | Dev BFF OIDC short-lived JWT for CI + hosted Lovable | Codex2 | todo | `BFF-CONSOL-022` | lupin dev BFF (https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io) 已切到 strict JWT auth。當前狀態：(1) curl -H "Authorization: Bearer pantheon-dev-browser:reviewer" /bff/me 回 401 INVALID_TOKEN/AUTH_TOKEN_FORMAT；(2) openapi 只暴露 /bff/auth/refresh，沒有 /login 或 /token endpoint；(3) hosted Lovable bundle 用 VITE_BFF_DEV_BEARER_TOKEN=pantheon-dev-browser:reviewer 也全 401；(4) CI 的 PANTHEON_BFF_SMOKE_BEARER_TOKEN 失效，auth_smoke step 全 fail。需求：設計 CI-friendly dev OIDC login flow 讓 hard-gate auth_smoke 重新綠。實作方案請 backend owner 在以下 3 條路徑選或混合：(A) BFF 新增 /bff/auth/dev-login endpoint，接 client_id+secret 換短期 JWT (5min~1hr)，CI 之前 step 先 fetch 一次塞到 env；(B) OIDC issuer (Keycloak/Auth0) staging instance 跑 client_credentials grant，CI 拿 issuer URL + dev client secret 自己換 token；(C) BFF 提供 pre-minted long-lived test JWT (例：90 天)，當 GitHub repo secret，CI 直接用。優先順序 A > B > C（A 最安全 + 短 TTL + 可 revoke）。同時要更新：(i) execute-plans/.github/workflows/pantheon-integration-gate.yml 加 'Acquire BFF JWT' step (在 auth_smoke / e2e 前)；(ii) Lovable dev project 環境變數從 VITE_BFF_DEV_BEARER_TOKEN=stub 改成 VITE_BFF_OIDC_CLIENT_ID+CLIENT_SECRET 或 runtime fetch；(iii) GitHub repo secret 新增 PANTHEON_BFF_OIDC_CLIENT_ID / CLIENT_SECRET (替換 PANTHEON_BFF_SMOKE_BEARER_TOKEN)；(iv) execute-plans/scripts/probe-bff-authenticated-live.mjs 讀新 env var；(v) docs/deployment/lovable-dev-staging-operating-rules.md 更新 dev auth 方案說明。Verification: 重跑 PR CI auth_smoke + browser_probe step outcome=success；hosted bundle 對 /bff/me 不再 401；chair Claude 收 JWT 在 staging-live 環境驗證不可用 (security boundary)。 |
 
 ### External / Upstream Integration Work
@@ -72,11 +70,13 @@ Last updated: 2026-05-15 09:30:30
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-15 09:30:30
-- Terminal tasks archived: `1035` total, `1017` completed, `18` superseded
+- Archive updated: 2026-05-15 09:42:19
+- Terminal tasks archived: `1037` total, `1019` completed, `18` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE` | Pantheon FE Integration Gate 2026-05-13 | Prepare FE-INT-GATE-A11Y-CONTRAST acceptance packet and dependency map | Gemini2 | completed | 2026-05-15 09:42:19 | `ai-task-archive/tasks/FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE.json` |
+| `FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE` | Pantheon FE Integration Gate 2026-05-13 | Prepare FE-INT-GATE-A11Y-BREADCRUMB acceptance packet and dependency map | Codex | completed | 2026-05-15 09:37:59 | `ai-task-archive/tasks/FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE.json` |
 | `FE-INT-GATE-A11Y-CONTRAST` | Pantheon FE Integration Gate 2026-05-13 | Fix v5 design token color-contrast to 4.5:1 | Codex | completed | 2026-05-15 09:30:30 | `ai-task-archive/tasks/FE-INT-GATE-A11Y-CONTRAST.json` |
 | `FE-INT-GATE-A11Y-BREADCRUMB` | Pantheon FE Integration Gate 2026-05-13 | Fix Breadcrumb list semantic violation | Claude | completed | 2026-05-15 09:20:43 | `ai-task-archive/tasks/FE-INT-GATE-A11Y-BREADCRUMB.json` |
 | `FE-INT-GATE-A11Y-OVERLAY` | Pantheon FE Integration Gate 2026-05-13 | Fix drawer focus return and overlay stack ESC handling | Claude2 | completed | 2026-05-15 09:07:45 | `ai-task-archive/tasks/FE-INT-GATE-A11Y-OVERLAY.json` |
@@ -95,8 +95,6 @@ Last updated: 2026-05-15 09:30:30
 | `FE-INT-GATE-ALIGN-F04` | Pantheon FE Integration Gate 2026-05-13 | Align 04b-optimization-loop.spec.ts to hosted Lovable DOM | Codex | completed | 2026-05-14 20:40:42 | `ai-task-archive/tasks/FE-INT-GATE-ALIGN-F04.json` |
 | `FE-INT-GATE-ALIGN-F03` | Pantheon FE Integration Gate 2026-05-13 | Align 03-execution-loop.spec.ts to hosted Lovable DOM | Claude2 | completed | 2026-05-14 20:24:26 | `ai-task-archive/tasks/FE-INT-GATE-ALIGN-F03.json` |
 | `FE-INT-GATE-ALIGN-F02-SIDECAR-ACCEPTANCE` | Pantheon FE Integration Gate 2026-05-13 | Prepare FE-INT-GATE-ALIGN-F02 acceptance packet and dependency map | Claude | completed | 2026-05-14 20:22:44 | `ai-task-archive/tasks/FE-INT-GATE-ALIGN-F02-SIDECAR-ACCEPTANCE.json` |
-| `FE-INT-GATE-ALIGN-F02` | Pantheon FE Integration Gate 2026-05-13 | Align 02-control-room.spec.ts to hosted Lovable DOM | Claude | completed | 2026-05-14 20:19:34 | `ai-task-archive/tasks/FE-INT-GATE-ALIGN-F02.json` |
-| `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | Prepare BFF-CONSOL-027 BFF and frontend handoff packet | Codex2 | completed | 2026-05-14 16:19:32 | `ai-task-archive/tasks/BFF-CONSOL-027-SIDECAR-BFF-HANDOFF.json` |
 
 ## Task Board
 
@@ -111,8 +109,6 @@ Last updated: 2026-05-15 09:30:30
 | `FE-INT-GATE-FOLLOWUP-ME-STARTUP` | Pantheon FE Integration Gate 2026-05-13 | Wire hosted startup session to /bff/me before local role fallback | Hosted Lovable startup 會打 live BFF list/v5/SSE routes，但目前未在 startup 請求 /bff/me；TopBar 仍由 local platform role control 顯示 admin。需要接上 /bff/me 作為 current-user/session source，401 時顯示 auth/error state，且不得 fallback 到 mock current-user。F01 已在 test annotation 與 startup-bff-network attachment 記錄此 gap。 | Codex2 | Claude2 | blocked | - | 2026-05-14 20:48:20 | Source fix pushed in execute-plans commits b09d22e/df73c3d and evidence committed in pantheon 0bec9136. Local focused 401 passes and build passes, but hosted https://pantheon-dev.lovable.app still serves old bundle index-DmMAo3dQ.js with local admin role; hosted focused 401 fails with interceptedMeRequests=0. Waiting for Lovable deployment refresh or correct preview URL tracking df73c3d. |
 | `FE-INT-GATE-FOLLOWUP-F15-STRICT-LOVABLE` | Pantheon FE Integration Gate 2026-05-13 | Enable strict fallback selection on hosted Lovable dev build | Hosted Lovable dev build currently ignores Playwright strict selection: PANTHEON_E2E_STRICT only selects the test branch, while the deployed bundle lacks VITE_BFF_FALLBACK=strict and compiles process.env to a closed-over object. Injected /bff/strategies 503 still renders live BFF unavailable / serving mock data plus seed rows. Deploy a strict-capable build or runtime config hook before F15 can pass without masking acceptance. | Codex | Codex2 | blocked | - | 2026-05-14 20:37:28 | Code remediation committed and pushed in execute-plans (7dff8fa; runtime hook from 104f06b). Local live-mode F15 strict passed twice, but pantheon-dev.lovable.app still serves old /assets/index-BYfBkno5.js and hosted strict still renders hybrid seed fallback. Lovable trigger attempt failed because stored auth state is expired; waiting on Lovable dev redeploy/refresh before hosted acceptance can pass. |
 | `FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE` | Pantheon FE Integration Gate 2026-05-13 | Restore hosted Lovable dev real-write gate for F05 | F05 hosted Lovable DOM selector 已確認正確，但 pantheon-dev.lovable.app bundle 缺 VITE_BFF_REAL_WRITES/VITE_BFF_FALLBACK；remediation action 只走 overlay，不會 POST /bff/v5/interventions/{id}/remediate。需更新 dev Lovable deploy/write-gate 設定後重跑 F05 hosted 兩次。 | Codex | Gemini | blocked | - | 2026-05-14 20:33:18 | Code remediation committed and pushed in execute-plans (104f06b, artifact update 49899d0). Production-preview F05 passed twice, but pantheon-dev.lovable.app still serves old asset /assets/index-BYfBkno5.js as of 2026-05-14 20:32:26; hosted F05 rerun is waiting on Lovable dev redeploy/refresh. |
-| `FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE` | Pantheon FE Integration Gate 2026-05-13 | [Sidecar] [Auto] [Parent FE-INT-GATE-A11Y-BREADCRUMB] Prepare FE-INT-GATE-A11Y-BREADCRUMB acceptance packet and dependency map | 平行支援 FE-INT-GATE-A11Y-BREADCRUMB，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Codex | Claude | review_approved | - | 2026-05-15 09:30:20 | Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure |
-| `FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE` | Pantheon FE Integration Gate 2026-05-13 | [Sidecar] [Auto] [Parent FE-INT-GATE-A11Y-CONTRAST] Prepare FE-INT-GATE-A11Y-CONTRAST acceptance packet and dependency map | 平行支援 FE-INT-GATE-A11Y-CONTRAST，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Gemini2 | Codex | review | - | 2026-05-15 08:35:55 | Acceptance packet created at support/sidecars/FE-INT-GATE-A11Y-CONTRAST/FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE.md and committed. Ready for review and incorporation into parent closeout. |
 | `FE-INT-GATE-OIDC-DEV-LOGIN` | Pantheon FE Integration Gate 2026-05-13 | Dev BFF OIDC short-lived JWT for CI + hosted Lovable | lupin dev BFF (https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io) 已切到 strict JWT auth。當前狀態：(1) curl -H "Authorization: Bearer pantheon-dev-browser:reviewer" /bff/me 回 401 INVALID_TOKEN/AUTH_TOKEN_FORMAT；(2) openapi 只暴露 /bff/auth/refresh，沒有 /login 或 /token endpoint；(3) hosted Lovable bundle 用 VITE_BFF_DEV_BEARER_TOKEN=pantheon-dev-browser:reviewer 也全 401；(4) CI 的 PANTHEON_BFF_SMOKE_BEARER_TOKEN 失效，auth_smoke step 全 fail。需求：設計 CI-friendly dev OIDC login flow 讓 hard-gate auth_smoke 重新綠。實作方案請 backend owner 在以下 3 條路徑選或混合：(A) BFF 新增 /bff/auth/dev-login endpoint，接 client_id+secret 換短期 JWT (5min~1hr)，CI 之前 step 先 fetch 一次塞到 env；(B) OIDC issuer (Keycloak/Auth0) staging instance 跑 client_credentials grant，CI 拿 issuer URL + dev client secret 自己換 token；(C) BFF 提供 pre-minted long-lived test JWT (例：90 天)，當 GitHub repo secret，CI 直接用。優先順序 A > B > C（A 最安全 + 短 TTL + 可 revoke）。同時要更新：(i) execute-plans/.github/workflows/pantheon-integration-gate.yml 加 'Acquire BFF JWT' step (在 auth_smoke / e2e 前)；(ii) Lovable dev project 環境變數從 VITE_BFF_DEV_BEARER_TOKEN=stub 改成 VITE_BFF_OIDC_CLIENT_ID+CLIENT_SECRET 或 runtime fetch；(iii) GitHub repo secret 新增 PANTHEON_BFF_OIDC_CLIENT_ID / CLIENT_SECRET (替換 PANTHEON_BFF_SMOKE_BEARER_TOKEN)；(iv) execute-plans/scripts/probe-bff-authenticated-live.mjs 讀新 env var；(v) docs/deployment/lovable-dev-staging-operating-rules.md 更新 dev auth 方案說明。Verification: 重跑 PR CI auth_smoke + browser_probe step outcome=success；hosted bundle 對 /bff/me 不再 401；chair Claude 收 JWT 在 staging-live 環境驗證不可用 (security boundary)。 | Codex2 | Claude | todo | `BFF-CONSOL-022` | 2026-05-15 08:58:56 | Assignment created |
 
 ## Handoff Queue
@@ -120,8 +116,6 @@ Last updated: 2026-05-15 09:30:30
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
 | `EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE` | Gemini | Codex2 | Acceptance packet and dependency map for EP5-BROKER-TW-002 prepared at support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout. | pending | 2026-05-12 22:50:00 |
-| `FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE` | Gemini2 | Codex | Acceptance packet created at support/sidecars/FE-INT-GATE-A11Y-CONTRAST/FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE.md and committed. Ready for review and incorporation into parent closeout. | pending | 2026-05-15 08:35:55 |
-| `FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE` | Claude | Codex | Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure | pending | 2026-05-15 09:30:21 |
 
 ## Blockers
 
@@ -142,7 +136,6 @@ Last updated: 2026-05-15 09:30:30
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
 | `FE-INT-GATE-ALIGN-F01` | Codex2 | Reviewed execute-plans commit a685175 on branch bff-luv-fe-006-dev-deploy; F01 change is scoped to e2e/01-startup-session.spec.ts and the file has no local diff.<br>Verified hosted Lovable strict target twice as reviewer: PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io VITE_BFF_FALLBACK=strict npx playwright test e2e/01-startup-session.spec.ts --trace=on --output=.lovable/audits/current-run/f01-review-test-results --reporter=list,json; both runs passed 4/4.<br>Confirmed the /bff/me startup product gap is not hidden: test annotation records interceptedMeRequests=0 while live /bff/* routes and SSE are exercised, and follow-up FE-INT-GATE-FOLLOWUP-ME-STARTUP exists/in_progress to tighten the 401 path. | - |
-| `FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE` | Claude | 驗收包正確涵蓋 WCAG 1.3.1 list 語意問題、6 項 acceptance checklist 與 verification 指令；不觸及 canonical truth；父任務已於 2026-05-15 done，所有標準均達成。 | support/reviews/FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE-claude-review.md |
 
 ## Lovable Coordination
 
@@ -213,23 +206,23 @@ Last updated: 2026-05-15 09:30:30
 
 ## Latest Checkpoints
 
-- 2026-05-15 09:27:13 Orchestrator: PreToolUse: Bash
-- 2026-05-15 09:27:15 Orchestrator: PostToolUse: Bash
-- 2026-05-15 09:27:23 Orchestrator: Stop: Stop
-- 2026-05-15 09:27:24 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-15 09:28:11 Orchestrator: PreToolUse: Bash
-- 2026-05-15 09:28:12 Orchestrator: PostToolUse: Bash
-- 2026-05-15 09:28:19 Orchestrator: PreToolUse: Bash
-- 2026-05-15 09:28:22 Orchestrator: PostToolUse: Bash
-- 2026-05-15 09:28:28 Orchestrator: PreToolUse: Bash
-- 2026-05-15 09:28:28 Orchestrator: PostToolUse: Bash
-- 2026-05-15 09:29:13 Orchestrator: Stop: Stop
-- 2026-05-15 09:30:03 Orchestrator: `FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE` Worker superseded after task responsibility moved to another agent.
-- 2026-05-15 09:30:03 Orchestrator: `FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE` Wake-up queued for supervisor: owned_finalize_dispatch
-- 2026-05-15 09:30:04 Orchestrator: `OPS-CHAIR-REVIEW` Chair review queued for Codex2: chair_review:approval_triage
-- 2026-05-15 09:30:04 Orchestrator: `FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE` Worker started via gemini: owned_finalize_dispatch
-- 2026-05-15 09:30:04 Gemini: `FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE` Supervisor resumed FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE for finalize after successful dispatch.
-- 2026-05-15 09:30:20 Orchestrator: `FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE` Supervisor resumed FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE for finalize after successful dispatch.
-- 2026-05-15 09:30:20 Orchestrator: Worker started via codex: chair_review:approval_triage
-- 2026-05-15 09:30:20 Orchestrator: `FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE` Paused new dispatches for gemini until 2026-05-15 09:45:20 after terminal quota failure: Capacity / rate limit failure
-- 2026-05-15 09:30:30 Codex: `FE-INT-GATE-A11Y-CONTRAST` Closeout complete: execute-plans implementation commit e3452cfd hardens env/status/sidebar token contrast; review approved by Codex2; Pantheon artifact commit c3013142 records review and acceptance packet; owner verification reran contrast check (all >=4.5, lowest 5.11:1) and PANTHEON_FE_BASE_URL=http://127.0.0.1:5173 npx playwright test e2e/17-a11y-v5.spec.ts (9 passed).
+- 2026-05-15 09:36:03 Orchestrator: `OPS-CHAIR-REVIEW` Idle non-Gemini capacity exists for support cleanup, while the only active blocker is lane-scoped.
+- 2026-05-15 09:36:03 Orchestrator: Approval deny for WebFetch (apr-20260515T012352Z-635c4057)
+- 2026-05-15 09:36:03 Orchestrator: `FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE` Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-15 09:36:03 Orchestrator: `FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE` Wake-up queued for supervisor: owned_finalize_dispatch
+- 2026-05-15 09:36:03 Orchestrator: `FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE` Worker started via codex: review_ready_dispatch
+- 2026-05-15 09:36:03 Orchestrator: `FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE` Worker started via codex: owned_finalize_dispatch
+- 2026-05-15 09:36:04 Codex: `FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE` Supervisor resumed FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE for finalize after successful dispatch.
+- 2026-05-15 09:36:23 Orchestrator: `FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE` Supervisor resumed FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE for finalize after successful dispatch.
+- 2026-05-15 09:37:30 Codex: `FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE` Review approved: acceptance packet is present, support-scoped, and already incorporated into parent closeout; owner may finalize the sidecar.
+- 2026-05-15 09:37:59 Codex: `FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE` Closeout complete: sidecar acceptance packet finalized in ba9c796e after Claude approval; support-only scope preserved, parent FE-INT-GATE-A11Y-BREADCRUMB already done, verification reran jq task status, Claude review readback, and git diff --check on the packet.
+- 2026-05-15 09:41:37 Orchestrator: `FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE` Worker superseded after task responsibility moved to another agent.
+- 2026-05-15 09:41:37 Orchestrator: `FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE` Worker superseded after task responsibility moved to another agent.
+- 2026-05-15 09:41:37 Orchestrator: `FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE` Wake-up queued for supervisor: owned_finalize_dispatch
+- 2026-05-15 09:41:37 Orchestrator: `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` Failed to create sidecar for BFF-CONSOL-027: Task BFF-CONSOL-027-SIDECAR-BFF-HANDOFF is archived. Create a new follow-up task instead of reusing the archived task id.
+- 2026-05-15 09:41:37 Orchestrator: `FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE` Failed to create sidecar for FE-INT-GATE-ALIGN-F01: Task FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE is archived. Create a new follow-up task instead of reusing the archived task id.
+- 2026-05-15 09:41:37 Orchestrator: underutilized but no sidecar candidate could be assigned safely
+- 2026-05-15 09:41:37 Orchestrator: `FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE` Worker started via gemini: owned_finalize_dispatch
+- 2026-05-15 09:41:38 Gemini2: `FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE` Supervisor resumed FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE for finalize after successful dispatch.
+- 2026-05-15 09:41:53 Orchestrator: `FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE` Supervisor resumed FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE for finalize after successful dispatch.
+- 2026-05-15 09:42:19 Gemini2: `FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE` Finalized sidecar acceptance packet for FE-INT-GATE-A11Y-CONTRAST.
