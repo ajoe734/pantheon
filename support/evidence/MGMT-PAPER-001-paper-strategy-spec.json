@@ -1,0 +1,239 @@
+{
+  "approval_target_ref": {
+    "approval_decision_id_expected": "approval-paper-strategy-001",
+    "target_id": "strategy-spec-paper-qlib-lgbm-001",
+    "target_type": "strategy_spec",
+    "target_version": "1.0.0"
+  },
+  "downstream_contract": {
+    "MGMT-PAPER-002": {
+      "expected_decision_id": "approval-paper-strategy-001",
+      "uses": "approval_target_ref"
+    },
+    "MGMT-PAPER-003": {
+      "target_stage": "paper",
+      "uses": "approval_decision_id and registry_entry.registry_id"
+    },
+    "MGMT-PAPER-004": {
+      "runtime_side_effects": "paper_only",
+      "uses": "DeploymentPlan artifact_id to create paper RuntimeBinding"
+    },
+    "MGMT-PAPER-007": {
+      "uses": "ooda_observe_orient_refs for complete OODA packet"
+    }
+  },
+  "environment": "paper",
+  "epic": "EPIC-02 Management Paper Loop Proof",
+  "generated_at": "2026-05-15T15:19:47Z",
+  "live_capital_side_effects": false,
+  "ooda_observe_orient_refs": {
+    "dataset_ref": "dataset:tw-equity-paper-fixture-v1",
+    "evaluator_result_ref": "eval-strategy-spec-paper-qlib-lgbm-001-paper",
+    "registry_entry_ref": "registry:strategy-spec-paper-qlib-lgbm-001",
+    "strategy_spec_ref": "strategy-spec:strategy-spec-paper-qlib-lgbm-001"
+  },
+  "paper_evaluator_result": {
+    "checks": {
+      "artifact_state_candidate": true,
+      "deployment_stage_none": true,
+      "execution_mode_paper": true,
+      "live_capital_side_effects": false,
+      "registry_entry_schema_valid": true,
+      "strategy_spec_schema_valid": true
+    },
+    "evaluation_kind": "paper_fixture_schema_and_gate_check",
+    "note": "Paper StrategySpec candidate is admissible for paper approval only.",
+    "ref_id": "eval-strategy-spec-paper-qlib-lgbm-001-paper",
+    "ref_type": "evaluator_result",
+    "status": "pass",
+    "storage_ref": {
+      "backend": "inline",
+      "path": "$.paper_evaluator_result"
+    },
+    "target_id": "strategy-spec-paper-qlib-lgbm-001",
+    "target_type": "strategy_spec",
+    "target_version": "1.0.0"
+  },
+  "paper_loop_chain": [
+    "MGMT-PAPER-001: candidate StrategySpec  <- this artifact",
+    "MGMT-PAPER-002: ApprovalDecision packet",
+    "MGMT-PAPER-003: DeploymentPlan packet",
+    "MGMT-PAPER-004: paper RuntimeBinding packet",
+    "MGMT-PAPER-005: telemetry packet",
+    "MGMT-PAPER-006: EvolutionDecision review packet",
+    "MGMT-PAPER-007: complete OODA packet"
+  ],
+  "registry_entry": {
+    "artifact_state": "candidate",
+    "artifact_type": "strategy_spec",
+    "checksum": "e0fa5c651ea3c04629d2f4965198e46d80608edde8de2ed7e922bf3b5a37cc7a",
+    "created_at": "2026-05-15T15:00:00Z",
+    "deployment_summary": {
+      "current_stage": "none"
+    },
+    "evaluation_summary": {
+      "evaluation_kind": "paper_fixture_schema_and_gate_check",
+      "evaluator_result_ref": "eval-strategy-spec-paper-qlib-lgbm-001-paper",
+      "live_capital_side_effects": false,
+      "status": "pass"
+    },
+    "lineage": {
+      "parent_registry_ids": [
+        "qlib-tw-cross-sectional-alpha-spec-v1"
+      ],
+      "source_dataset_refs": [
+        "dataset:tw-equity-paper-fixture-v1"
+      ],
+      "source_run_ids": [
+        "MGMT-PAPER-001"
+      ],
+      "source_strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1"
+    },
+    "metadata": {
+      "approval_decision_id_expected": "approval-paper-strategy-001",
+      "environment": "paper",
+      "framework": "qlib",
+      "live_capital_side_effects": false,
+      "market": "TW",
+      "model_family": "lightgbm",
+      "paper_loop_candidate": true,
+      "universe": "TWSE + TPEx paper fixture"
+    },
+    "producer_run_id": "MGMT-PAPER-001",
+    "registry_id": "strategy-spec-paper-qlib-lgbm-001",
+    "storage_ref": {
+      "backend": "inline",
+      "path": "$.strategy_spec"
+    },
+    "strategy_id": "paper-qlib-lgbm-tw-equity-alpha",
+    "version": "1.0.0"
+  },
+  "strategy_spec": {
+    "data_dependencies": [
+      {
+        "kind": "dataset",
+        "ref": "dataset:tw-equity-paper-fixture-v1"
+      },
+      {
+        "kind": "repo",
+        "ref": "services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md"
+      },
+      {
+        "kind": "note",
+        "ref": "docs/04/pantheon_sa_supplemental_2026-05-15/SD_management_console_multi_persona_ooda.md#epic-02"
+      }
+    ],
+    "evaluation_plan": {
+      "candidate_gate": "StrategySpec validates against services/control-plane/specs/strategy_spec.schema.json and carries a candidate registry entry.",
+      "live_gate": "Live and capital-binding activation remain fail-closed until a separate canary/live activation gate is approved.",
+      "metrics": [
+        "information_coefficient",
+        "information_ratio",
+        "paper_sharpe_ratio",
+        "max_drawdown",
+        "turnover_rate",
+        "no_live_capital_side_effects"
+      ],
+      "paper_gate": "ApprovalDecision may approve this target only for paper-stage deployment with live_capital_side_effects=false."
+    },
+    "execution_profile": {
+      "execution_mode_hint": "paper",
+      "quantity_type": "PERCENT_PORTFOLIO",
+      "rebalance_cadence": "daily close, paper replay only",
+      "signal_schema_version": "paper-alpha-score-v1"
+    },
+    "governance": {
+      "approval_required": true,
+      "policy_id": "paper-canary-live-policy",
+      "risk_profile": "medium: paper-only candidate, no live capital side effects"
+    },
+    "hypothesis": "A supervised LightGBM ranker over point-in-time daily TWSE and TPEx OHLCV features can produce a paper-stage cross-sectional alpha score without broker, order, or live capital side effects.",
+    "market_scope": {
+      "asset_classes": [
+        "equity"
+      ],
+      "frequency": "1d",
+      "symbols": [
+        "TWSE:1101",
+        "TWSE:1216",
+        "TWSE:1301",
+        "TWSE:1303",
+        "TWSE:1326",
+        "TWSE:1402",
+        "TWSE:2002",
+        "TWSE:2105",
+        "TWSE:2207",
+        "TWSE:2301",
+        "TWSE:2303",
+        "TWSE:2308",
+        "TWSE:2317",
+        "TWSE:2327",
+        "TWSE:2330",
+        "TWSE:2345",
+        "TWSE:2357",
+        "TWSE:2379",
+        "TWSE:2382",
+        "TWSE:2395",
+        "TWSE:2408",
+        "TWSE:2412",
+        "TWSE:2454",
+        "TWSE:2603",
+        "TWSE:2609",
+        "TWSE:2615",
+        "TWSE:2801",
+        "TWSE:2880",
+        "TWSE:2881",
+        "TWSE:2882",
+        "TWSE:2883",
+        "TWSE:2884",
+        "TWSE:2885",
+        "TWSE:2886",
+        "TWSE:2887",
+        "TWSE:2890",
+        "TWSE:2891",
+        "TWSE:2892",
+        "TWSE:2912",
+        "TWSE:3008",
+        "TWSE:3034",
+        "TWSE:3045",
+        "TWSE:3711",
+        "TWSE:4904",
+        "TWSE:4938",
+        "TWSE:5871",
+        "TWSE:5876",
+        "TWSE:5880",
+        "TPEx:3105",
+        "TPEx:3227",
+        "TPEx:3264",
+        "TPEx:3293",
+        "TPEx:4123",
+        "TPEx:5483",
+        "TPEx:6488"
+      ],
+      "venues": [
+        "TWSE",
+        "TPEx"
+      ]
+    },
+    "objective": "Provide the Management paper-loop proof with a governed StrategySpec target that can be approved, planned for paper deployment, bound by runtime-manager, observed by telemetry, and replayed in OODA evidence.",
+    "provenance": {
+      "created_at": "2026-05-15T15:00:00Z",
+      "created_by": "Codex2",
+      "source_kind": "workflow",
+      "source_refs": [
+        "strategy-spec:qlib-tw-cross-sectional-alpha-spec-v1",
+        "MGMT-PAPER-001",
+        "MGMT-PAPER-002"
+      ]
+    },
+    "spec_version": "1.0",
+    "strategy_id": "paper-qlib-lgbm-tw-equity-alpha",
+    "title": "Paper Qlib LightGBM TW equity alpha candidate"
+  },
+  "task_id": "MGMT-PAPER-001",
+  "validation": {
+    "registry_entry_errors": [],
+    "semantic_errors": [],
+    "strategy_spec_errors": []
+  }
+}
