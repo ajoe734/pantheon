@@ -65,6 +65,7 @@ Each day must record:
 |---:|---|---|---|---|---|---:|---|
 | 0 | 2026-05-13 | pending | local Pack A/B/C prereq passed | not run | local Pack A/B detail prereq passed | n/a | Initial env artifact pointed at a fabricated staging hostname; `/health` and `/openapi.json` timed out because that hostname does not exist. |
 | 0b | 2026-05-14 | pending | local prereq passed; remote preview pending | pending | local prereq passed; remote preview pending | n/a | Rebased: preview env targets dev BFF (`https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io`). Dev BFF `/health` and `/openapi.json` returned 200 unauthenticated. Auth credentials and Lovable preview URL are absent in this worker, so Day 1 cannot start. |
+| 0c | 2026-05-15 | `https://id-preview-a7067bd5--140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovable.app/management` auth-bridged | dev BFF authenticated read smoke passed 32/32 using dev-only bearer; remote strict preview smoke pending | pending | pending | n/a | OPS-GEM-REDEPLOY-001 verified `pantheon-dev.lovable.app` refresh to `/assets/index-vlevju41.js` and authenticated dev BFF smoke with `PANTHEON_BFF_SMOKE_BEARER_TOKEN=pantheon-dev-browser:reviewer`. The candidate Lovable preview URL redirects through Lovable auth bridge for this unattended worker, so Day 1 strict preview soak still needs an authenticated Lovable browser context or public preview URL. |
 | 1 | pending | pending | pending | pending | pending | pending | Requires deployed Lovable preview branch and dev BFF JWT secret. |
 | 2 | pending | pending | pending | pending | pending | pending |  |
 | 3 | pending | pending | pending | pending | pending | pending |  |
@@ -105,13 +106,31 @@ PANTHEON_BFF_SMOKE_JWT_SECRET=<redacted> \
   --output support/evidence/BFF-CONSOL-022-day1-authenticated-live.json
 ```
 
+OPS-GEM-REDEPLOY-001 authenticated dev BFF read smoke passed:
+
+```bash
+PANTHEON_BFF_SMOKE_BEARER_TOKEN='pantheon-dev-browser:reviewer' \
+  python3 scripts/probe_bff_authenticated_live.py \
+  --base-url https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io \
+  --output support/evidence/OPS-GEM-REDEPLOY-001/authenticated-live-dev-bff.json
+```
+
+Observed result: `32` total probes, `32` passed, `0` failed, `30` read probes,
+`0` write probes, no live capital side effects.
+
 ## Open Blockers
 
-1. Lovable preview branch URL is not available in this worker context.
-2. Authenticated dev BFF smoke credentials are not available in this worker context.
-3. Credential-gated Day 1 `probe_bff_authenticated_live.py` smoke has not run.
-4. The required seven elapsed soak days have not completed.
+1. The candidate Lovable preview branch URL redirects through Lovable auth
+   bridge in this unattended worker context; Day 1 needs an authenticated
+   Lovable browser context or a public preview URL.
+2. Credential-gated dev BFF read smoke has passed, but the remote strict
+   preview browser soak has not started.
+3. The required seven elapsed soak days have not completed.
 
 ## Next Action
 
-Runtime ops should deploy the isolated Lovable preview branch using `execute-plans/.lovable/preview-strict.env`, provide the preview URL and authenticated dev BFF smoke credentials, then append Day 1 through Day 7 results here. Codex can hand off to Codex2 for review only after this file records seven clean daily checks with zero strict fallback regression.
+Runtime ops should open or publish the isolated Lovable preview branch using
+`execute-plans/.lovable/preview-strict.env`, make the preview reachable to the
+soak runner, then append Day 1 through Day 7 results here. Codex can hand off to
+Codex2 for review only after this file records seven clean daily checks with
+zero strict fallback regression.
