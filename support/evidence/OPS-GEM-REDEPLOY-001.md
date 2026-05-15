@@ -196,3 +196,30 @@ Result:
 2. `FE-INT-GATE-FOLLOWUP-ME-STARTUP` still fails its hosted 401 path because
    the page renders hybrid seed-fallback status even though `/bff/me` is now
    requested.
+
+## 2026-05-15 Follow-up Blocker Recheck
+
+`FE-INT-GATE-FOLLOWUP-ME-STARTUP` commit `3ddb5e6` fixed the false strict
+runtime setup in `e2e/01-startup-session.spec.ts`. The test now installs the
+same browser runtime strict override used by F15 before page bootstrap.
+
+Hosted focused rerun:
+
+```bash
+PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app \
+PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io \
+VITE_BFF_FALLBACK=strict \
+npx playwright test e2e/01-startup-session.spec.ts \
+  -g "strict startup|does not fall back" \
+  --reporter=list \
+  --output=/tmp/fe-int-me-startup-fix
+```
+
+Result: `2 passed`.
+
+Updated blocker state:
+
+- Cleared: hosted `/bff/me` 401 startup path no longer renders the hybrid
+  seed-fallback banner under strict runtime override.
+- Still open: BFF-CONSOL-022 strict preview Day 1 requires a public strict
+  preview URL or an authenticated Lovable preview context for the soak runner.

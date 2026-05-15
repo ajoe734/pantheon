@@ -79,3 +79,55 @@ The source fix is committed and pushed, but the hosted Lovable deployment at
 task should remain blocked until Lovable/runtime deployment refreshes the hosted
 bundle to include `df73c3d` or provides the correct preview URL that tracks this
 branch.
+
+## 2026-05-15 Hosted Blocker Fix
+
+Commit:
+
+- `3ddb5e6` - `FE-INT-GATE-FOLLOWUP-ME-STARTUP: force runtime strict startup checks`
+
+Root cause:
+
+- The hosted bundle can be built with auto fallback while the Playwright process
+  is launched with `VITE_BFF_FALLBACK=strict`.
+- F15 already installs a browser runtime override before navigation; F01 did
+  not. The result was a false strict run where the browser still rendered
+  `HYBRID` / `資料來源：live / seed fallback armed`.
+
+Change:
+
+- `e2e/01-startup-session.spec.ts` now installs the same runtime strict override
+  before the strict startup banner assertion and before the injected `/bff/me`
+  401 assertion.
+- The override writes both runtime globals and the sessionStorage fallback keys
+  before app bootstrap.
+
+Verification:
+
+```bash
+npm test -- --run \
+  src/lib/bff-v1/__tests__/me.test.ts \
+  src/components/layout/LiveStatusBanner.test.tsx \
+  src/lib/bff/__tests__/liveTransportSnapshot.test.ts
+```
+
+Result: `3 passed`, `15 passed`.
+
+Hosted focused rerun:
+
+```bash
+PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app \
+PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io \
+VITE_BFF_FALLBACK=strict \
+npx playwright test e2e/01-startup-session.spec.ts \
+  -g "strict startup|does not fall back" \
+  --reporter=list \
+  --output=/tmp/fe-int-me-startup-fix
+```
+
+Result: `2 passed`.
+
+Status:
+
+- The previous hosted blocker is cleared: `/bff/me` is intercepted and the
+  strict 401 path no longer renders the hybrid seed-fallback banner.
