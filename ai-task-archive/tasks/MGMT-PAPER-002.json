@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PAPER-002",
+  "archived_at": "2026-05-15T17:37:46Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PAPER-002",
+    "title": "paper ApprovalDecision packet",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-02 Management Paper Loop Proof",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout: paper_approval_decision.py + 30 tests + evidence artifact committed at 3676ddfd; review note at support/reviews/MGMT-PAPER-002-review-codex2.md. Verification: py_compile PASS; pytest 7 tests PASS (30 assertions total); live_capital_side_effects=False; ooda_decide_ref.approval_decision_id set.",
+    "last_update": "2026-05-15T17:37:46Z",
+    "review_notes_zh": [
+      "無阻塞發現：commit 3676ddfd 的 paper ApprovalDecision factory、test、evidence artifact 符合 MGMT-PAPER-002 scope。",
+      "查核重點：ApprovalDecision 為 strategy_spec target、medium risk、risk_owner actor、lifecycle proposed→under_review→decided(approved)，validation_errors 為空，evidence artifact 保留 live_capital_side_effects=false 與 ooda_decide_ref.approval_decision_id。",
+      "驗證命令：python3 services/control-plane/governance/test_paper_approval_decision.py；python3 services/control-plane/governance/paper_approval_decision.py；python3 -m pytest services/control-plane/governance/test_paper_approval_decision.py -q；python3 -m py_compile services/control-plane/governance/paper_approval_decision.py services/control-plane/governance/test_paper_approval_decision.py。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T17:37:46Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "84cbc2d71761b169a728019e43a1ad9329b7d517",
+      "commit_subject": "MGMT-PAPER-002 closeout review note",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "MGMT-PAPER-002",
+        "Reviewer": "Codex2",
+        "Verification": "py_compile PASS; pytest 7 tests PASS (30 assertions); live_capital_side_effects=False; ooda_decide_ref.approval_decision_id set."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 61,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PAPER-002",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Paper ApprovalDecision packet complete. Deliverables: paper_approval_decision.py (factory + evidence writer), test_paper_approval_decision.py (30 PASS 0 FAIL), MGMT-PAPER-002-paper-approval-decision.json (evidence artifact with ooda_decide_ref). Full lifecycle proposed→under_review→decided(approved) exercised. No live capital side effects. Commit: 3676ddfd. Ready for review.",
+      "status": "done",
+      "created_at": "2026-05-15T15:02:23Z",
+      "resolved_at": "2026-05-15T15:11:02Z"
+    },
+    {
+      "task_id": "MGMT-PAPER-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review approved by Codex2: MGMT-PAPER-002 paper ApprovalDecision packet passes scoped review and focused verification. Owner Claude should complete closeout per task-closeout-finalization.",
+      "status": "done",
+      "created_at": "2026-05-15T15:11:02Z",
+      "resolved_at": "2026-05-15T17:37:46Z"
+    }
+  ],
+  "blockers": []
+}

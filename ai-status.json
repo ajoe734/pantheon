@@ -3,7 +3,7 @@
   "sprint": "2026-05-13-ep5-qlib-bff-consolidation",
   "sprint_started_at": "2026-05-13T02:00:00Z",
   "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec，從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV，跑 production_activation_smoke.py --backend real，submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal，registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff，command envelope unification，non-empty fixture & detail journey，SSE real stream replay，strict env cutover，seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write 驗證通過後即可 deprecate 舊 receipt，後續 regression 追蹤不再以固定天數阻塞派工。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。(E) Management Console OODA layer + paper-loop proof — 依 2026-05-15 supplemental SA/SD (docs/04/pantheon_sa_supplemental_2026-05-15/) 疊一層 OODA packet schema + Management control-room/strategy/runtime 上的 OODA 可視化 + multi-persona synthesis 證明 + Qlib admission + Shioaji sandbox evidence + evolution follow-through + fail-closed regression。共 7 EPIC 46 task (MGMT-OODA / PAPER / SYN / QLIB / BROKER / EVO / SAFE)。EPIC-04 與 Track B、EPIC-05 與 Track A 共用 TW dataset 與 broker sandbox 證據；EPIC-07 強制驗證 broker production live 與 capital binding 持續 fail-closed；M1 OODA packet 是首個收斂點。",
-  "updated_at": "2026-05-15T15:52:59Z",
+  "updated_at": "2026-05-15T17:38:14Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -94,13 +94,15 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "finalize",
+      "status": "ready",
       "current_task_ids": [
-        "MGMT-PAPER-002"
+        "MGMT-EVO-005",
+        "MGMT-EVO-007",
+        "MGMT-SAFE-006"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Supervisor paused finalize on MGMT-PAPER-002 to free Claude for higher-priority review work; task remains review_approved.",
-      "last_update": "2026-05-15T15:50:12Z"
+      "next": "Assignment created",
+      "last_update": "2026-05-15T14:56:58Z"
     },
     {
       "name": "Gemini",
@@ -124,14 +126,15 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
+      "status": "reviewing",
       "current_task_ids": [
-        "MGMT-SYN-001",
-        "MGMT-QLIB-004"
+        "MGMT-EVO-002",
+        "MGMT-SAFE-003",
+        "MGMT-SAFE-005"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Supervisor auto-started MGMT-QLIB-004 after successful dispatch.",
-      "last_update": "2026-05-15T15:51:20Z"
+      "next": "Ready for review: added repo-local no-live-side-effects assertion smoke that scans Track E paper/sandbox/safety evidence, validates non-live OODA packets, and proves the OODA guard rejects forced live_capital_side_effects=true. Task-owned files: scripts/run_no_live_side_effects_assertion.py, scripts/test_run_no_live_side_effects_assertion.py, support/evidence/MGMT-SAFE-005/README.md, support/evidence/MGMT-SAFE-005/no-live-side-effects-assertion.json. Evidence summary: 8 required artifacts loaded, 5 optional artifacts loaded, 13 side-effect flag names checked, 3 non-live OODA packets validated, 0 violations, synthetic model/schema guard rejected live side effects. Verification: PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_no_live_side_effects_assertion.py --json-out support/evidence/MGMT-SAFE-005/no-live-side-effects-assertion.json => 4/4 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_run_no_live_side_effects_assertion.py -q => 3 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/run_no_live_side_effects_assertion.py scripts/test_run_no_live_side_effects_assertion.py => passed.",
+      "last_update": "2026-05-15T16:43:53Z"
     },
     {
       "name": "Codex2",
@@ -143,14 +146,13 @@
       ],
       "status": "working",
       "current_task_ids": [
-        "MGMT-BROKER-005",
-        "MGMT-EVO-006",
-        "MGMT-SAFE-003",
-        "MGMT-SAFE-004"
+        "MGMT-OODA-006",
+        "MGMT-BROKER-006",
+        "MGMT-EVO-003"
       ],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Started OpenClaw broker tool denial smoke implementation; scoping to adapter HTTP bridge and evidence artifact.",
-      "last_update": "2026-05-15T15:52:59Z"
+      "next": "Integrated MGMT-BROKER-004 Shioaji sandbox evidence into EP5 human-gate readiness: readiness CLI now requires --shioaji-evidence-packet-json for ready packets, SAFE-004 smoke covers missing evidence, and support/evidence/MGMT-BROKER-006 human-gate summary is ready_for_review with broker/evidence statuses passed.",
+      "last_update": "2026-05-15T17:38:14Z"
     },
     {
       "name": "Copilot",
@@ -160,17 +162,11 @@
         "spec-review",
         "critique"
       ],
-      "status": "ready",
-      "current_task_ids": [
-        "MGMT-SYN-003",
-        "MGMT-QLIB-001",
-        "MGMT-QLIB-002",
-        "MGMT-EVO-002",
-        "MGMT-SAFE-005"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/grok-research-critique",
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:53:25Z"
+      "next": "",
+      "last_update": "2026-05-15T14:58:35Z"
     },
     {
       "name": "Claude2",
@@ -179,18 +175,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "ready",
+      "status": "reviewing",
       "current_task_ids": [
-        "MGMT-OODA-005",
-        "MGMT-OODA-006",
-        "MGMT-PAPER-006",
-        "MGMT-SYN-006",
-        "MGMT-QLIB-006",
-        "MGMT-EVO-003"
+        "MGMT-OODA-005"
       ],
       "branch": "feat/claude2-execution-control",
-      "next": "Supervisor preempted MGMT-OODA-005 to free Claude2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
-      "last_update": "2026-05-15T15:06:52Z"
+      "next": "Ready for review: added Control Room OODA status card for MGMT-OODA-005. Task-owned changes: services/control-plane/bff/main.py (added _OODA_STAGE_DEFS, _OODA_STAGE_STATUSES, _build_ooda_control_room_status_card() helper, and ooda_status + ooda_control_room_status surface meta in /bff/v5/control-room response); services/control-plane/bff/test_mgmt_ooda_005_control_room_card.py (7 contract tests). The card exposes five stage cards (observe/orient/decide/act/learn) with active_count, detail_link, and description; aggregate open/closed/failed/total loop counts; live_capital_side_effects safety assertion; fail-closed gate (PANTHEON_OODA_PACKET_ENABLED=false -> all stages fail_closed); source/unavailable degraded state when no store; and ooda_control_room_status surface meta entry in control-room meta.surfaces. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/test_mgmt_ooda_005_control_room_card.py => PASS; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_mgmt_ooda_005_control_room_card.py -q => 7 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py -q => 6 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_contract_paths_are_registered services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_openapi_json_is_route_discoverable -q => 2 passed; git diff --check task files => clean. Note: main.py contains unrelated dirty hunks from other tasks; review only the _OODA_STAGE_DEFS/_OODA_STAGE_STATUSES/_build_ooda_control_room_status_card additions and the control-room response block change.",
+      "last_update": "2026-05-15T17:34:57Z"
     },
     {
       "name": "Gemini2",
@@ -202,13 +193,11 @@
       ],
       "status": "blocked",
       "current_task_ids": [
-        "MGMT-BROKER-002",
-        "MGMT-BROKER-003",
-        "MGMT-SAFE-002"
+        "MGMT-BROKER-002"
       ],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Review blocked: direct smoke passes with python3 tests/run_capital_binding_smoke.py, but python3 -m pytest tests/run_capital_binding_smoke.py -q fails with SystemExit: 0 because test_capital_binding_disabled() calls sys.exit() inside a pytest-collected test. Convert the check to assertions/unittest or move CLI exit handling under __main__ so the smoke remains directly runnable and pytest-targetable; prefer a canonical non-active binding status such as suspended or revoked for the disabled-binding case.",
-      "last_update": "2026-05-15T15:48:00Z"
+      "next": "Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check.",
+      "last_update": "2026-05-15T15:15:06Z"
     }
   ],
   "tasks": [
@@ -218,263 +207,97 @@
       "summary_zh": null,
       "phase": "Track E / EPIC-01 OODA Packet Foundation",
       "owner": "Claude2",
-      "reviewer": "Claude",
-      "status": "todo",
+      "reviewer": "Codex",
+      "status": "review",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Supervisor preempted MGMT-OODA-005 to free Claude2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
-      "last_update": "2026-05-15T15:06:52Z"
+      "next": "Ready for review: added Control Room OODA status card for MGMT-OODA-005. Task-owned changes: services/control-plane/bff/main.py (added _OODA_STAGE_DEFS, _OODA_STAGE_STATUSES, _build_ooda_control_room_status_card() helper, and ooda_status + ooda_control_room_status surface meta in /bff/v5/control-room response); services/control-plane/bff/test_mgmt_ooda_005_control_room_card.py (7 contract tests). The card exposes five stage cards (observe/orient/decide/act/learn) with active_count, detail_link, and description; aggregate open/closed/failed/total loop counts; live_capital_side_effects safety assertion; fail-closed gate (PANTHEON_OODA_PACKET_ENABLED=false -> all stages fail_closed); source/unavailable degraded state when no store; and ooda_control_room_status surface meta entry in control-room meta.surfaces. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/test_mgmt_ooda_005_control_room_card.py => PASS; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_mgmt_ooda_005_control_room_card.py -q => 7 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py -q => 6 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_contract_paths_are_registered services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_openapi_json_is_route_discoverable -q => 2 passed; git diff --check task files => clean. Note: main.py contains unrelated dirty hunks from other tasks; review only the _OODA_STAGE_DEFS/_OODA_STAGE_STATUSES/_build_ooda_control_room_status_card additions and the control-room response block change.",
+      "last_update": "2026-05-15T17:34:57Z"
     },
     {
       "id": "MGMT-OODA-006",
       "title": "OODA packet drawer component",
-      "summary_zh": null,
+      "summary_zh": "完成 execute-plans OODA packet drawer、OODA packet DTO/derivation helpers，以及 Management BFF OODA read adapter。",
       "phase": "Track E / EPIC-01 OODA Packet Foundation",
-      "owner": "Claude2",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:51:14Z"
-    },
-    {
-      "id": "MGMT-PAPER-002",
-      "title": "paper ApprovalDecision packet",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-02 Management Paper Loop Proof",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "review_approved",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Supervisor paused finalize on MGMT-PAPER-002 to free Claude for higher-priority review work; task remains review_approved.",
-      "last_update": "2026-05-15T15:50:12Z",
-      "review_notes_zh": [
-        "無阻塞發現：commit 3676ddfd 的 paper ApprovalDecision factory、test、evidence artifact 符合 MGMT-PAPER-002 scope。",
-        "查核重點：ApprovalDecision 為 strategy_spec target、medium risk、risk_owner actor、lifecycle proposed→under_review→decided(approved)，validation_errors 為空，evidence artifact 保留 live_capital_side_effects=false 與 ooda_decide_ref.approval_decision_id。",
-        "驗證命令：python3 services/control-plane/governance/test_paper_approval_decision.py；python3 services/control-plane/governance/paper_approval_decision.py；python3 -m pytest services/control-plane/governance/test_paper_approval_decision.py -q；python3 -m py_compile services/control-plane/governance/paper_approval_decision.py services/control-plane/governance/test_paper_approval_decision.py。"
-      ]
-    },
-    {
-      "id": "MGMT-PAPER-003",
-      "title": "paper DeploymentPlan packet",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-02 Management Paper Loop Proof",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:51:51Z"
-    },
-    {
-      "id": "MGMT-PAPER-004",
-      "title": "paper RuntimeBinding packet",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-02 Management Paper Loop Proof",
-      "owner": "Claude",
-      "reviewer": "Gemini",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:52:08Z"
-    },
-    {
-      "id": "MGMT-PAPER-006",
-      "title": "paper EvolutionDecision review packet",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-02 Management Paper Loop Proof",
-      "owner": "Claude2",
-      "reviewer": "Copilot",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:52:38Z"
-    },
-    {
-      "id": "MGMT-SYN-001",
-      "title": "PersonaAllocationProposal schema",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-03 Multi-Persona Synthesis",
-      "owner": "Codex",
-      "reviewer": "Codex2",
+      "owner": "Codex2",
+      "reviewer": "Codex",
       "status": "in_progress",
       "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Supervisor re-dispatched MGMT-SYN-001; task remains in progress.",
-      "last_update": "2026-05-15T15:50:53Z"
-    },
-    {
-      "id": "MGMT-SYN-003",
-      "title": "allocation conflict classifier",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-03 Multi-Persona Synthesis",
-      "owner": "Copilot",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:53:25Z"
-    },
-    {
-      "id": "MGMT-SYN-004",
-      "title": "allocation synthesis method v1",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-03 Multi-Persona Synthesis",
-      "owner": "Claude",
-      "reviewer": "Copilot",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:53:35Z"
-    },
-    {
-      "id": "MGMT-SYN-005",
-      "title": "AllocationPolicyArtifact output",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-03 Multi-Persona Synthesis",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:53:45Z"
+      "artifacts": [
+        "execute-plans/src/lib/ooda/packets.ts",
+        "execute-plans/src/management/components/ooda/OodaPacketDrawer.tsx",
+        "execute-plans/src/management/components/ooda/OodaPacketDrawer.test.tsx",
+        "execute-plans/src/management/components/ooda/index.ts",
+        "execute-plans/src/lib/bff/client.ts",
+        "execute-plans/src/lib/bff-v1/paths.ts",
+        "execute-plans/src/lib/bff/__tests__/client.test.ts"
+      ],
+      "acceptance": [
+        "Drawer renders packet header, source state, OODA replay stages, linked objects, audit/evidence refs, and non-live capital side-effect safety badge.",
+        "Drawer can fetch packet detail through managementClient.oodaPackets.get when opened with packetId only.",
+        "Management client exposes OODA list/detail/related route adapters without inventing seed packets in mock mode.",
+        "Focused Vitest, frontend contract test, lint, and production build pass with only existing repo warnings/build warnings."
+      ],
+      "next": "Review changes requested by Codex; see support/reviews/MGMT-OODA-006-review-codex.md. Blocking safety-display issue: live packets with act.live_capital_side_effects=true currently render the green 'no live capital side effects' badge because isOodaNonLiveCapitalSafe returns true for environment=live. Please make the badge factually distinguish no side effects, live-environment side effects asserted, and non-live side effects asserted as unsafe, then add focused tests for live/asserted and non-live/asserted cases. Reviewer verification before reopen: focused Vitest 22 passed; contract Vitest 5 passed; lint 0 errors with 52 existing warnings; build passed with existing warnings.",
+      "last_update": "2026-05-15T17:35:32Z"
     },
     {
       "id": "MGMT-SYN-006",
       "title": "Management UI conflict log view",
       "summary_zh": null,
       "phase": "Track E / EPIC-03 Multi-Persona Synthesis",
-      "owner": "Claude2",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:53:53Z"
-    },
-    {
-      "id": "MGMT-SYN-007",
-      "title": "multi-persona synthesis proof evidence",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-03 Multi-Persona Synthesis",
       "owner": "Codex2",
-      "reviewer": "Claude",
+      "reviewer": "Codex",
       "status": "review_approved",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Supervisor resumed MGMT-SYN-007 for finalize after successful dispatch.",
-      "last_update": "2026-05-15T15:50:25Z",
+      "next": "Approved MGMT-SYN-006 review. No blocking findings; see support/reviews/MGMT-SYN-006-review-codex.md for scope and verification. Owner Codex2 should finalize review_approved -> done with task-scoped closeout.",
+      "last_update": "2026-05-15T17:33:29Z",
       "review_notes_zh": [
-        "審查通過：commit 92be6f04 的三份 PersonaAllocationProposal 快照正確回放至 optimizer-svc proposal store，PoolRiskPolicy 封殺 leveraged_short 策略（persona-leverage-skeptic），剩餘兩份 proposal 產生 AllocationPolicyArtifact alloc-policy-mgmt-syn-007-001，sponsor=persona-tw-momentum，synthesis_method=weighted_fusion。",
-        "驗證命令：python3 -m py_compile scripts/generate_mgmt_syn_007_evidence.py → OK；python3 scripts/generate_mgmt_syn_007_evidence.py → 成功輸出目標 artifact/log ID；python3 -m pytest services/optimizer-svc/test_portfolio_synthesis.py services/optimizer-svc/test_persona_allocation_proposal_store.py -q → 13 passed。",
-        "OODA packet (ooda-mgmt-syn-007-persona-synthesis) loop_type=persona_synthesis、status=closed、live_capital_side_effects=false、validate_packet() 通過。7 項 M5 proof assertion 全部為 true。",
-        "非阻塞追蹤：proof_assertions.optimizer_solver_not_arbitrator 為靜態 literal true，可在後續迭代改為計算式驗證；本 task acceptance 不依賴此邊界。"
+        "無阻塞發現：MGMT-SYN-006 的 BFF synthesis conflict log list/detail routes、read-store JSON/JSONL/proof-bundle projection、filters、degraded detail 與 feature-flag disabled path 均符合 scope。",
+        "驗證通過：py_compile；MGMT-SYN-006 focused pytest 4 passed；MGMT-OODA-004 BFF routes 6 passed；execute-plans final route contract 2 passed；optimizer synthesis tests 10 passed；task files git diff --check passed；MGMT-SYN-007 proof bundle projection smoke passed。"
       ],
-      "review_file": "support/reviews/MGMT-SYN-007-review-claude.md"
-    },
-    {
-      "id": "MGMT-QLIB-001",
-      "title": "Qlib dataset manifest",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-04 Qlib Admission",
-      "owner": "Copilot",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:54:15Z"
+      "review_file": "support/reviews/MGMT-SYN-006-review-codex.md"
     },
     {
       "id": "MGMT-QLIB-002",
       "title": "Qlib StrategySpec builder",
       "summary_zh": null,
       "phase": "Track E / EPIC-04 Qlib Admission",
-      "owner": "Copilot",
-      "reviewer": "Codex2",
-      "status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:54:29Z"
-    },
-    {
-      "id": "MGMT-QLIB-004",
-      "title": "Qlib model / eval artifact refs",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-04 Qlib Admission",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "in_progress",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Supervisor auto-started MGMT-QLIB-004 after successful dispatch.",
-      "last_update": "2026-05-15T15:51:20Z"
+      "next": "Review approved: Qlib StrategySpec builder evidence is schema-valid, reproducible, and non-writing; owner Codex2 should finalize closeout.",
+      "last_update": "2026-05-15T17:32:08Z",
+      "review_notes_zh": [
+        "Review approved: StrategySpec builder/evidence are schema-valid, reproducible from MGMT-QLIB-001 dataset manifest, and preflight opens required Qlib gates while preserving no registry write, no training, no broker session, order_route=none, deployment_stage=none."
+      ],
+      "review_file": "support/reviews/MGMT-QLIB-002-review-codex.md"
     },
     {
       "id": "MGMT-QLIB-005",
       "title": "Qlib registry admission packet",
       "summary_zh": null,
       "phase": "Track E / EPIC-04 Qlib Admission",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:54:57Z"
-    },
-    {
-      "id": "MGMT-QLIB-006",
-      "title": "Management artifact / research linkage",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-04 Qlib Admission",
-      "owner": "Claude2",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:55:07Z"
-    },
-    {
-      "id": "MGMT-BROKER-001",
-      "title": "Shioaji sandbox adapter facade",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-05 Shioaji Sandbox",
       "owner": "Codex",
-      "reviewer": "Gemini2",
-      "status": "todo",
+      "reviewer": "Claude",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-05-15T15:00:10Z"
+      "next": "Supervisor resumed MGMT-QLIB-005 for finalize after successful dispatch.",
+      "last_update": "2026-05-15T17:35:20Z",
+      "review_notes_zh": [
+        "無阻塞發現：registry admission packet 正確限定 draft->candidate 僅審查範圍，所有安全邊界通過。",
+        "查核重點：registry_write_performed=false、deployment_stage=none、order_route=none、candidate_artifact.artifact_state=draft、safety_assertions 全 true。入口驗證 (_validate_inputs) + 輸出驗證 (validate_registry_admission_packet) 雙層防禦正確。",
+        "驗證命令：pytest 3 files 31 passed；py_compile PASS；jq admission safety assertion -> true。stub_lgbm backend 使用已在 README 明確聲明，非阻塞。"
+      ],
+      "review_file": "support/reviews/MGMT-QLIB-005-review-claude.md"
     },
     {
       "id": "MGMT-BROKER-002",
@@ -492,116 +315,66 @@
       "waiting_for": "Gemini"
     },
     {
-      "id": "MGMT-BROKER-003",
-      "title": "Claiming MGMT-BROKER-003 to advance broker sandbox smoke",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-05 Shioaji Sandbox",
-      "owner": "Gemini2",
-      "reviewer": "Codex",
-      "status": "in_progress",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Review blocked: support/evidence/MGMT-BROKER-003/summary.json and the sandbox_smoke regression still identify the packet as EP5-BROKER-TW-002-RERUN-REAL-FIX instead of MGMT-BROKER-003. Regenerate task-scoped evidence, ideally via explicit --task-id metadata, then return for review. Review file: support/reviews/MGMT-BROKER-003-review-codex.md",
-      "last_update": "2026-05-15T15:38:15Z"
-    },
-    {
       "id": "MGMT-BROKER-004",
       "title": "Shioaji evidence packet",
       "summary_zh": null,
       "phase": "Track E / EPIC-05 Shioaji Sandbox",
       "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "todo",
+      "reviewer": "Claude",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:55:43Z"
-    },
-    {
-      "id": "MGMT-BROKER-005",
-      "title": "Shioaji fail-closed tests",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-05 Shioaji Sandbox",
-      "owner": "Codex2",
-      "reviewer": "Codex",
-      "status": "review",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Ready for review. Commit ddcb0d76 adds Shioaji fail-closed regressions for closed sandbox gate no-SDK side effects, unconditional live-disabled no side effects, and closed-gate smoke artifact boundaries. Evidence note: support/evidence/MGMT-BROKER-005/README.md. Verification passed: shioaji adapter tests, shioaji sandbox smoke tests, ep5 canary readiness tests with PYTHONPATH=scripts, broker sandbox order smoke tests with PYTHONPATH=scripts, and py_compile.",
-      "last_update": "2026-05-15T15:47:57Z"
+      "next": "Review approved and returned to owner Codex for finalization. Evidence packet passes all 9 acceptance checks. Safety boundary confirmed: no live broker, no real capital, no deployment. 59 tests pass.",
+      "last_update": "2026-05-15T17:30:17Z",
+      "review_notes_zh": [
+        "無阻塞發現：9 項 acceptance check 全部通過，live_broker_fail_closed 以 SHIOAJI_LIVE_DISABLED 拒絕，production_live_enabled=false，capital_binding_enabled=false，human_gate_required=true，OODA packet live_capital_side_effects=false，ooda_packet_validation_errors 空。",
+        "查核重點：portable_ref 正確將絕對路徑正規化為 repo-relative ref；account_status=ready 在 mock_api_replay 模式下透明標註於 account_status_detail.basis；safety assertions 全 true；59 tests pass。",
+        "安全邊界確認：無 registry write、無 live broker session、無 real capital、無 deployment，canary 仍需 risk-owner + operator approval gate。"
+      ],
+      "review_file": "support/reviews/MGMT-BROKER-004-review-claude.md"
     },
     {
       "id": "MGMT-BROKER-006",
       "title": "Shioaji canary readiness packet integration",
       "summary_zh": null,
       "phase": "Track E / EPIC-05 Shioaji Sandbox",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "in_progress",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:56:03Z"
-    },
-    {
-      "id": "MGMT-EVO-001",
-      "title": "telemetry-to-evolution packet link",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-06 Evolution Follow-Through",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:56:13Z"
+      "next": "Integrated MGMT-BROKER-004 Shioaji sandbox evidence into EP5 human-gate readiness: readiness CLI now requires --shioaji-evidence-packet-json for ready packets, SAFE-004 smoke covers missing evidence, and support/evidence/MGMT-BROKER-006 human-gate summary is ready_for_review with broker/evidence statuses passed.",
+      "last_update": "2026-05-15T17:38:14Z"
     },
     {
       "id": "MGMT-EVO-002",
       "title": "EvolutionDecision proposal from incident / postmortem",
       "summary_zh": null,
       "phase": "Track E / EPIC-06 Evolution Follow-Through",
-      "owner": "Copilot",
-      "reviewer": "Claude",
-      "status": "todo",
+      "owner": "Codex",
+      "reviewer": "Copilot",
+      "status": "review",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:56:23Z"
+      "next": "Ready for review: added POST /api/evolution/proposals/from-incident to derive a proposed EvolutionDecision from canonical IncidentCase/Postmortem evidence, including lineage links, postmortem back-link reuse, safety metadata, and no runtime/broker/capital mutation. Task-owned files: services/evolution/models.py, services/evolution/main.py, services/evolution/test_evolution_service.py. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/evolution/models.py services/evolution/main.py services/evolution/test_evolution_service.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/evolution/test_evolution_service.py -q -> 57 passed.",
+      "last_update": "2026-05-15T16:42:48Z"
     },
     {
       "id": "MGMT-EVO-003",
       "title": "evolution review / approval UI linkage",
       "summary_zh": null,
       "phase": "Track E / EPIC-06 Evolution Follow-Through",
-      "owner": "Claude2",
-      "reviewer": "Codex2",
-      "status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "in_progress",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:56:34Z"
-    },
-    {
-      "id": "MGMT-EVO-004",
-      "title": "retrain / revalidate dispatch",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-06 Evolution Follow-Through",
-      "owner": "Codex",
-      "reviewer": "Copilot",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Auto-reassigned ownership from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-05-15T15:44:19Z"
+      "next": "Implementing Management frontend mutation-review read adapter plus evolution review/approval linkage component; avoiding unrelated dirty BFF changes.",
+      "last_update": "2026-05-15T17:33:28Z"
     },
     {
       "id": "MGMT-EVO-005",
@@ -618,20 +391,6 @@
       "last_update": "2026-05-15T14:56:58Z"
     },
     {
-      "id": "MGMT-EVO-006",
-      "title": "evolution observation window report",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-06 Evolution Follow-Through",
-      "owner": "Codex2",
-      "reviewer": "Claude",
-      "status": "review",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Implemented read-only observation window report endpoint GET /api/evolution/proposals/{decision_id}/observation-report. Artifacts: services/evolution/main.py, services/evolution/models.py, services/evolution/test_evolution_service.py, support/evidence/MGMT-EVO-006/summary.md. Verification: python3 -m pytest services/evolution/test_evolution_service.py -q (53 passed).",
-      "last_update": "2026-05-15T15:49:58Z"
-    },
-    {
       "id": "MGMT-EVO-007",
       "title": "evolution OODA loop closure",
       "summary_zh": null,
@@ -646,93 +405,46 @@
       "last_update": "2026-05-15T14:57:23Z"
     },
     {
-      "id": "MGMT-SAFE-001",
-      "title": "live broker disabled smoke",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-07 Safety / Fail-Closed Regression",
-      "owner": "Gemini2",
-      "reviewer": "Codex",
-      "status": "review_approved",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Review approved: live broker disabled smoke passes focused verification. Owner should finalize with a SAFE-001-scoped closeout and note that commit 67c94c8c also contains unrelated MGMT-PAPER-005 files.",
-      "last_update": "2026-05-15T15:39:22Z",
-      "review_notes_zh": [
-        "審查通過：scripts/run_live_broker_disabled_smoke.py 驗證 live runtime_config.live_broker_enabled=True 會被 BootstrapContractError 拒絕，且 live 預設 request.runtime_config.live_broker_enabled=false。",
-        "Reviewer verification: PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_live_broker_disabled_smoke.py -> 1 passed；PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.execution.lean_runtime.test_bootstrap_contract -q -> 8 passed；PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.execution.lean_runtime.test_paper_runtime_smoke.PaperRuntimeSmokeTest.test_live_broker_enabled_flag_is_rejected_by_p0_contract services.execution.lean_runtime.test_paper_runtime_smoke.PaperRuntimeSmokeTest.test_live_bootstrap_is_health_only -q -> 2 passed；py_compile passed。",
-        "Closeout note: commit 67c94c8c contains the SAFE-001 smoke script but also unrelated MGMT-PAPER-005 telemetry files; finalization should scope its delivery summary to the live-broker smoke and avoid treating those paper telemetry files as SAFE-001 artifacts."
-      ]
-    },
-    {
-      "id": "MGMT-SAFE-002",
-      "title": "capital binding disabled smoke",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-07 Safety / Fail-Closed Regression",
-      "owner": "Gemini2",
-      "reviewer": "Codex",
-      "status": "in_progress",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Review blocked: direct smoke passes with python3 tests/run_capital_binding_smoke.py, but python3 -m pytest tests/run_capital_binding_smoke.py -q fails with SystemExit: 0 because test_capital_binding_disabled() calls sys.exit() inside a pytest-collected test. Convert the check to assertions/unittest or move CLI exit handling under __main__ so the smoke remains directly runnable and pytest-targetable; prefer a canonical non-active binding status such as suspended or revoked for the disabled-binding case.",
-      "last_update": "2026-05-15T15:48:00Z"
-    },
-    {
       "id": "MGMT-SAFE-003",
       "title": "OpenClaw broker tool denial smoke",
       "summary_zh": null,
       "phase": "Track E / EPIC-07 Safety / Fail-Closed Regression",
-      "owner": "Codex2",
+      "owner": "Codex",
       "reviewer": "Copilot",
-      "status": "in_progress",
+      "status": "review",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Started OpenClaw broker tool denial smoke implementation; scoping to adapter HTTP bridge and evidence artifact.",
-      "last_update": "2026-05-15T15:52:59Z"
-    },
-    {
-      "id": "MGMT-SAFE-004",
-      "title": "canary human gate smoke",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-07 Safety / Fail-Closed Regression",
-      "owner": "Codex2",
-      "reviewer": "Claude",
-      "status": "in_progress",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Supervisor auto-started MGMT-SAFE-004 after successful dispatch.",
-      "last_update": "2026-05-15T15:51:39Z"
+      "next": "Ready for review: added OpenClaw broker tool denial smoke and tightened effective tool filtering so always-blocked broker/live/paper/canary/capital/Lean tool refs are excluded even if allowlisted and upstream-reported. Task-owned files: services/openclaw-gateway-adapter/tool_workflow_bridge.py, services/openclaw-gateway-adapter/test_tool_workflow_bridge.py, scripts/run_openclaw_broker_tool_denial_smoke.py, scripts/test_run_openclaw_broker_tool_denial_smoke.py, support/evidence/MGMT-SAFE-003/openclaw-broker-tool-denial-smoke.json. Verification: PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_openclaw_broker_tool_denial_smoke.py --json-out support/evidence/MGMT-SAFE-003/openclaw-broker-tool-denial-smoke.json => 19/19 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/openclaw-gateway-adapter scripts/test_run_openclaw_broker_tool_denial_smoke.py -q => 223 passed; PYTHONDONTWRITEBYTECODE=1 python3 services/openclaw-gateway-adapter/test_tool_workflow_bridge.py -q => 58 passed; py_compile on smoke/test/bridge files => passed; git diff --check on tracked bridge files => passed.",
+      "last_update": "2026-05-15T16:20:44Z"
     },
     {
       "id": "MGMT-SAFE-005",
       "title": "no live side effects assertion",
       "summary_zh": null,
       "phase": "Track E / EPIC-07 Safety / Fail-Closed Regression",
-      "owner": "Copilot",
-      "reviewer": "Codex2",
-      "status": "todo",
+      "owner": "Codex",
+      "reviewer": "Copilot",
+      "status": "review",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:58:35Z"
+      "next": "Ready for review: added repo-local no-live-side-effects assertion smoke that scans Track E paper/sandbox/safety evidence, validates non-live OODA packets, and proves the OODA guard rejects forced live_capital_side_effects=true. Task-owned files: scripts/run_no_live_side_effects_assertion.py, scripts/test_run_no_live_side_effects_assertion.py, support/evidence/MGMT-SAFE-005/README.md, support/evidence/MGMT-SAFE-005/no-live-side-effects-assertion.json. Evidence summary: 8 required artifacts loaded, 5 optional artifacts loaded, 13 side-effect flag names checked, 3 non-live OODA packets validated, 0 violations, synthetic model/schema guard rejected live side effects. Verification: PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_no_live_side_effects_assertion.py --json-out support/evidence/MGMT-SAFE-005/no-live-side-effects-assertion.json => 4/4 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_run_no_live_side_effects_assertion.py -q => 3 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/run_no_live_side_effects_assertion.py scripts/test_run_no_live_side_effects_assertion.py => passed.",
+      "last_update": "2026-05-15T16:43:53Z"
     },
     {
       "id": "MGMT-SAFE-006",
       "title": "command idempotency regression",
       "summary_zh": null,
       "phase": "Track E / EPIC-07 Safety / Fail-Closed Regression",
-      "owner": "Codex",
+      "owner": "Claude",
       "reviewer": "Codex2",
       "status": "todo",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T14:58:52Z"
+      "next": "Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: ERROR: test_run_command_idempotency_regression (unittest.loader._FailedTest.test_run_command_idempotency_regression). Task returned to todo until Claude starts a fresh run.",
+      "last_update": "2026-05-15T16:22:24Z"
     }
   ],
   "handoffs": [
@@ -754,134 +466,284 @@
       "resolved_at": "2026-04-17T12:39:53Z"
     },
     {
-      "task_id": "MGMT-PAPER-002",
+      "task_id": "MGMT-SAFE-003",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Ready for review: added OpenClaw broker tool denial smoke and tightened effective tool filtering so always-blocked broker/live/paper/canary/capital/Lean tool refs are excluded even if allowlisted and upstream-reported. Task-owned files: services/openclaw-gateway-adapter/tool_workflow_bridge.py, services/openclaw-gateway-adapter/test_tool_workflow_bridge.py, scripts/run_openclaw_broker_tool_denial_smoke.py, scripts/test_run_openclaw_broker_tool_denial_smoke.py, support/evidence/MGMT-SAFE-003/openclaw-broker-tool-denial-smoke.json. Verification: PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_openclaw_broker_tool_denial_smoke.py --json-out support/evidence/MGMT-SAFE-003/openclaw-broker-tool-denial-smoke.json => 19/19 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/openclaw-gateway-adapter scripts/test_run_openclaw_broker_tool_denial_smoke.py -q => 223 passed; PYTHONDONTWRITEBYTECODE=1 python3 services/openclaw-gateway-adapter/test_tool_workflow_bridge.py -q => 58 passed; py_compile on smoke/test/bridge files => passed; git diff --check on tracked bridge files => passed.",
+      "status": "pending",
+      "created_at": "2026-05-15T16:20:44Z"
+    },
+    {
+      "task_id": "MGMT-QLIB-002",
+      "from": "Copilot",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-15T16:21:16Z",
+      "resolved_at": "2026-05-15T16:22:08Z"
+    },
+    {
+      "task_id": "MGMT-OODA-006",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T16:27:48Z",
+      "resolved_at": "2026-05-15T16:28:36Z"
+    },
+    {
+      "task_id": "MGMT-QLIB-002",
+      "from": "Codex2",
+      "to": "Copilot",
+      "message": "Ready for review: added non-writing Qlib StrategySpec builder and task evidence. Task-owned files: services/learning/qlib/activation/strategy_spec_builder.py, services/learning/qlib/test_strategy_spec_builder.py, support/evidence/MGMT-QLIB-002/. The builder consumes the governed dataset manifest and emits a schema-valid StrategySpec, candidate registry projection, RS-003 candidate probe, StrategySpec binding probe, and preflight packet while keeping registry_write_performed=false, training_performed=false, broker_session_opened=false, order_route=none, deployment_stage=none. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/learning/qlib/test_strategy_spec_builder.py services/research/qlib/test_preflight.py -q -> 9 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/learning/qlib/activation/strategy_spec_builder.py services/learning/qlib/test_strategy_spec_builder.py -> passed; evidence preflight assertion on support/evidence/MGMT-QLIB-002/strategy_spec_packet.json -> All required Qlib pre-activation gates open.",
+      "status": "done",
+      "created_at": "2026-05-15T16:31:30Z",
+      "resolved_at": "2026-05-15T17:21:24Z"
+    },
+    {
+      "task_id": "MGMT-EVO-002",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-15T16:35:20Z",
+      "resolved_at": "2026-05-15T16:35:52Z"
+    },
+    {
+      "task_id": "MGMT-SAFE-005",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-15T16:35:31Z",
+      "resolved_at": "2026-05-15T16:36:03Z"
+    },
+    {
+      "task_id": "MGMT-OODA-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T16:42:47Z",
+      "resolved_at": "2026-05-15T16:43:15Z"
+    },
+    {
+      "task_id": "MGMT-EVO-002",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Ready for review: added POST /api/evolution/proposals/from-incident to derive a proposed EvolutionDecision from canonical IncidentCase/Postmortem evidence, including lineage links, postmortem back-link reuse, safety metadata, and no runtime/broker/capital mutation. Task-owned files: services/evolution/models.py, services/evolution/main.py, services/evolution/test_evolution_service.py. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/evolution/models.py services/evolution/main.py services/evolution/test_evolution_service.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/evolution/test_evolution_service.py -q -> 57 passed.",
+      "status": "pending",
+      "created_at": "2026-05-15T16:42:48Z"
+    },
+    {
+      "task_id": "MGMT-SAFE-005",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Ready for review: added repo-local no-live-side-effects assertion smoke that scans Track E paper/sandbox/safety evidence, validates non-live OODA packets, and proves the OODA guard rejects forced live_capital_side_effects=true. Task-owned files: scripts/run_no_live_side_effects_assertion.py, scripts/test_run_no_live_side_effects_assertion.py, support/evidence/MGMT-SAFE-005/README.md, support/evidence/MGMT-SAFE-005/no-live-side-effects-assertion.json. Evidence summary: 8 required artifacts loaded, 5 optional artifacts loaded, 13 side-effect flag names checked, 3 non-live OODA packets validated, 0 violations, synthetic model/schema guard rejected live side effects. Verification: PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_no_live_side_effects_assertion.py --json-out support/evidence/MGMT-SAFE-005/no-live-side-effects-assertion.json => 4/4 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_run_no_live_side_effects_assertion.py -q => 3 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/run_no_live_side_effects_assertion.py scripts/test_run_no_live_side_effects_assertion.py => passed.",
+      "status": "pending",
+      "created_at": "2026-05-15T16:43:53Z"
+    },
+    {
+      "task_id": "MGMT-OODA-006",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: added execute-plans OODA packet DTO/derivation helpers, reusable OodaPacketDrawer component, drawer tests, and managementClient.oodaPackets adapters for /bff/ooda/packets plus strategy/runtime/evolution related routes. Task-owned files: execute-plans/src/lib/ooda/packets.ts; execute-plans/src/management/components/ooda/OodaPacketDrawer.tsx; execute-plans/src/management/components/ooda/OodaPacketDrawer.test.tsx; execute-plans/src/management/components/ooda/index.ts; execute-plans/src/lib/bff/client.ts; execute-plans/src/lib/bff-v1/paths.ts; execute-plans/src/lib/bff/__tests__/client.test.ts. Verification: npm test -- --run src/management/components/ooda/OodaPacketDrawer.test.tsx src/lib/bff/__tests__/client.test.ts -> 22 passed; npm run test:contract -> 5 passed; npm run lint -- task files -> 0 errors, existing 52 warnings; npm run build -> passed with existing Browserslist/chunk warnings.",
+      "status": "done",
+      "created_at": "2026-05-15T16:59:04Z",
+      "resolved_at": "2026-05-15T17:06:17Z"
+    },
+    {
+      "task_id": "MGMT-SYN-006",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:03:19Z",
+      "resolved_at": "2026-05-15T17:04:03Z"
+    },
+    {
+      "task_id": "MGMT-QLIB-005",
       "from": "Claude",
-      "to": "Codex2",
-      "message": "Paper ApprovalDecision packet complete. Deliverables: paper_approval_decision.py (factory + evidence writer), test_paper_approval_decision.py (30 PASS 0 FAIL), MGMT-PAPER-002-paper-approval-decision.json (evidence artifact with ooda_decide_ref). Full lifecycle proposed→under_review→decided(approved) exercised. No live capital side effects. Commit: 3676ddfd. Ready for review.",
-      "status": "done",
-      "created_at": "2026-05-15T15:02:23Z",
-      "resolved_at": "2026-05-15T15:11:02Z"
-    },
-    {
-      "task_id": "MGMT-PAPER-002",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Review approved by Codex2: MGMT-PAPER-002 paper ApprovalDecision packet passes scoped review and focused verification. Owner Claude should complete closeout per task-closeout-finalization.",
-      "status": "pending",
-      "created_at": "2026-05-15T15:11:02Z"
-    },
-    {
-      "task_id": "MGMT-BROKER-003",
-      "from": "Gemini2",
-      "to": "Gemini",
-      "message": "Smoke test completed with mock-api (real credentials pending; readiness needs operator check).",
-      "status": "done",
-      "created_at": "2026-05-15T15:16:43Z",
-      "resolved_at": "2026-05-15T15:21:04Z"
-    },
-    {
-      "task_id": "MGMT-SYN-001",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Ready for review: added PersonaAllocationProposal JSON Schema plus dataclass/API validation alignment. Task-owned files: services/optimizer-svc/portfolio_synthesis/persona_allocation_proposal.schema.json, services/optimizer-svc/test_persona_allocation_proposal_schema.py, services/optimizer-svc/portfolio_synthesis/models.py, services/optimizer-svc/portfolio_synthesis/__init__.py, services/optimizer-svc/main.py. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services/optimizer-svc/test_persona_allocation_proposal_schema.py -> 6 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s services/optimizer-svc -p 'test_*.py' -> 13 passed; PYTHONDONTWRITEBYTECODE=1 python3 services/optimizer-svc/smoke_test_portfolio_synthesis.py -> 3/3 smoke groups passed; py_compile optimizer-svc files passed. Note: due concurrent workspace staging, these schema files landed in commit abe1da51 alongside an OODA fix rather than an isolated MGMT-SYN-001 commit; no history rewrite attempted.",
-      "status": "done",
-      "created_at": "2026-05-15T15:18:00Z",
-      "resolved_at": "2026-05-15T15:31:14Z"
-    },
-    {
-      "task_id": "MGMT-BROKER-003",
-      "from": "Gemini",
       "to": "Codex",
-      "message": "Auto-reassigned review from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
       "status": "done",
-      "created_at": "2026-05-15T15:21:04Z",
-      "resolved_at": "2026-05-15T15:38:15Z"
+      "created_at": "2026-05-15T17:03:31Z",
+      "resolved_at": "2026-05-15T17:04:33Z"
     },
     {
-      "task_id": "MGMT-SAFE-001",
-      "from": "Gemini2",
-      "to": "Codex",
-      "message": "Implemented smoke test for live broker disabled verification. Ready for review.",
-      "status": "done",
-      "created_at": "2026-05-15T15:22:39Z",
-      "resolved_at": "2026-05-15T15:39:22Z"
-    },
-    {
-      "task_id": "MGMT-SYN-001",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Review blocked: PersonaAllocationProposal schema/dataclass/API validation are not aligned. Required changes: (1) API/dataclass path must enforce schema-required fields instead of accepting omitted fields through defaults; omitted created_at is currently accepted and auto-created via ProposalIn.model_dump(exclude_none=True) -> PersonaAllocationProposal. (2) dataclass validation must either enforce schema constraints for directions uniqueItems and target_weights key pattern ^[A-Za-z0-9._:/-]+$, or intentionally relax the schema with matching tests. (3) add regression tests for omitted created_at through the API/model path, duplicate directions, and invalid target_weight keys. Reviewer verification passed existing tests: schema unittest 6 passed; optimizer-svc unittest discover 13 passed; portfolio smoke 3/3; py_compile passed.",
-      "status": "done",
-      "created_at": "2026-05-15T15:31:14Z",
-      "resolved_at": "2026-05-15T15:31:14Z"
-    },
-    {
-      "task_id": "MGMT-SAFE-002",
-      "from": "Gemini2",
-      "to": "Codex",
-      "message": "Smoke test ready for review.",
-      "status": "done",
-      "created_at": "2026-05-15T15:35:43Z",
-      "resolved_at": "2026-05-15T15:48:00Z"
-    },
-    {
-      "task_id": "MGMT-BROKER-003",
-      "from": "Codex",
-      "to": "Gemini2",
-      "message": "Review blocked: support/evidence/MGMT-BROKER-003/summary.json and the sandbox_smoke regression still identify the packet as EP5-BROKER-TW-002-RERUN-REAL-FIX instead of MGMT-BROKER-003. Regenerate task-scoped evidence, ideally via explicit --task-id metadata, then return for review. Review file: support/reviews/MGMT-BROKER-003-review-codex.md",
-      "status": "done",
-      "created_at": "2026-05-15T15:38:15Z",
-      "resolved_at": "2026-05-15T15:38:15Z"
-    },
-    {
-      "task_id": "MGMT-SAFE-001",
-      "from": "Codex",
-      "to": "Gemini2",
-      "message": "Review approved: live broker disabled smoke passes focused verification. Owner should finalize with a SAFE-001-scoped closeout and note that commit 67c94c8c also contains unrelated MGMT-PAPER-005 files.",
-      "status": "pending",
-      "created_at": "2026-05-15T15:39:22Z"
-    },
-    {
-      "task_id": "MGMT-SYN-007",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Ready for review: added deterministic MGMT-SYN-007 M5 synthesis proof evidence in commit 92be6f04. Artifacts: scripts/generate_mgmt_syn_007_evidence.py, support/evidence/MGMT-SYN-007/proposals.jsonl, support/evidence/MGMT-SYN-007/synthesis-proof.json, support/evidence/MGMT-SYN-007/README.md. Evidence records three PersonaAllocationProposal snapshots, replays them through the optimizer-svc proposal store, emits conflict-log-mgmt-syn-007-001 with one risk-policy veto, produces single AllocationPolicyArtifact alloc-policy-mgmt-syn-007-001 with sponsor persona-tw-momentum, includes governance approval packet and persona_synthesis OODA packet, and records no live capital side effects. Verification: python3 scripts/generate_mgmt_syn_007_evidence.py; python3 -m py_compile scripts/generate_mgmt_syn_007_evidence.py; python3 -m pytest services/optimizer-svc/test_portfolio_synthesis.py services/optimizer-svc/test_persona_allocation_proposal_store.py -q -> 13 passed.",
-      "status": "done",
-      "created_at": "2026-05-15T15:42:16Z",
-      "resolved_at": "2026-05-15T15:45:24Z"
-    },
-    {
-      "task_id": "MGMT-SYN-007",
+      "task_id": "MGMT-BROKER-004",
       "from": "Claude",
-      "to": "Codex2",
-      "message": "Review approved: all M5 proof assertions pass; synthesis evidence deterministic and self-asserting; 13 optimizer-svc tests pass. Returned to Codex2 for closeout finalization.",
-      "status": "pending",
-      "created_at": "2026-05-15T15:45:24Z"
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:03:51Z",
+      "resolved_at": "2026-05-15T17:05:08Z"
     },
     {
-      "task_id": "MGMT-BROKER-005",
+      "task_id": "MGMT-OODA-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review cannot proceed in this checkout: after git fetch origin, expected task artifacts are absent (execute-plans/src/lib/ooda/packets.ts; execute-plans/src/management/components/ooda/OodaPacketDrawer.tsx; execute-plans/src/management/components/ooda/OodaPacketDrawer.test.tsx; execute-plans/src/management/components/ooda/index.ts; execute-plans/src/lib/bff/client.ts; execute-plans/src/lib/bff-v1/paths.ts; execute-plans/src/lib/bff/__tests__/client.test.ts). execute-plans/src currently contains only lib/bff/runAction.ts, and branch bff-luv-fe-006-dev-deploy is not present locally or on origin after fetch. Please publish/apply the task-owned files on a reviewable branch or update the task artifacts/branch, then hand off back for review.",
+      "status": "done",
+      "created_at": "2026-05-15T17:06:17Z",
+      "resolved_at": "2026-05-15T17:06:17Z"
+    },
+    {
+      "task_id": "MGMT-BROKER-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: added Shioaji evidence packet builder/tests and generated support/evidence/MGMT-BROKER-004 plus MGMT-OODA-M3 packet. Verification: PYTHONPATH=. python3 -m pytest services/broker/shioaji -q (59 passed).",
+      "status": "done",
+      "created_at": "2026-05-15T17:10:13Z",
+      "resolved_at": "2026-05-15T17:30:17Z"
+    },
+    {
+      "task_id": "MGMT-SYN-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:11:10Z",
+      "resolved_at": "2026-05-15T17:12:01Z"
+    },
+    {
+      "task_id": "MGMT-QLIB-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: added Qlib registry admission packet helper/test and support/evidence/MGMT-QLIB-005. Packet combines dataset manifest, StrategySpec packet, activation-run artifacts, model/eval refs, production dataset proof, and requests only draft -> candidate with deployment_stage=none, registry_write_performed=false, order_route=none. Also removed null optional approval fields from Qlib draft registry_entry so admission schema validation passes. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/learning/qlib/test_registry_admission.py services/research/qlib/test_production_activation.py services/research/qlib/test_adapter.py -q -> 31 passed; py_compile registry_admission/test/qlib_adapter -> passed; jq admission safety assertion -> true.",
+      "status": "done",
+      "created_at": "2026-05-15T17:15:54Z",
+      "resolved_at": "2026-05-15T17:21:48Z"
+    },
+    {
+      "task_id": "MGMT-OODA-005",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:17:33Z",
+      "resolved_at": "2026-05-15T17:18:38Z"
+    },
+    {
+      "task_id": "MGMT-BROKER-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:17:57Z",
+      "resolved_at": "2026-05-15T17:18:57Z"
+    },
+    {
+      "task_id": "MGMT-EVO-003",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:18:11Z",
+      "resolved_at": "2026-05-15T17:19:18Z"
+    },
+    {
+      "task_id": "MGMT-OODA-006",
       "from": "Codex2",
       "to": "Codex",
-      "message": "Ready for review. Commit ddcb0d76 adds Shioaji fail-closed regressions for closed sandbox gate no-SDK side effects, unconditional live-disabled no side effects, and closed-gate smoke artifact boundaries. Evidence note: support/evidence/MGMT-BROKER-005/README.md. Verification passed: shioaji adapter tests, shioaji sandbox smoke tests, ep5 canary readiness tests with PYTHONPATH=scripts, broker sandbox order smoke tests with PYTHONPATH=scripts, and py_compile.",
-      "status": "pending",
-      "created_at": "2026-05-15T15:47:57Z"
-    },
-    {
-      "task_id": "MGMT-SAFE-002",
-      "from": "Codex",
-      "to": "Gemini2",
-      "message": "Review blocked: direct smoke passes with python3 tests/run_capital_binding_smoke.py, but python3 -m pytest tests/run_capital_binding_smoke.py -q fails with SystemExit: 0 because test_capital_binding_disabled() calls sys.exit() inside a pytest-collected test. Convert the check to assertions/unittest or move CLI exit handling under __main__ so the smoke remains directly runnable and pytest-targetable; prefer a canonical non-active binding status such as suspended or revoked for the disabled-binding case.",
+      "message": "Ready for review: restored and published MGMT-OODA-006 task-owned execute-plans artifacts on branch bff-luv-fe-006-dev-deploy at commit 73ecfe46. Copied only the 7 expected files from the frontend worktree into pantheon/execute-plans despite execute-plans/ being gitignored, force-staged them narrowly, and pushed origin/bff-luv-fe-006-dev-deploy. Verification run in /home/lupin/code/execute-plans: npm test -- --run src/management/components/ooda/OodaPacketDrawer.test.tsx src/lib/bff/__tests__/client.test.ts -> 22 passed; npm run test:contract -> 5 passed; npm run lint -- task files -> 0 errors, existing 52 warnings; npm run build -> passed with existing Browserslist/chunk warnings. Note: pantheon/execute-plans still does not contain the full npm package scaffold, so executable frontend verification lives in sibling /home/lupin/code/execute-plans.",
       "status": "done",
-      "created_at": "2026-05-15T15:48:00Z",
-      "resolved_at": "2026-05-15T15:48:00Z"
+      "created_at": "2026-05-15T17:19:40Z",
+      "resolved_at": "2026-05-15T17:35:32Z"
     },
     {
-      "task_id": "MGMT-EVO-006",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Implemented read-only observation window report endpoint GET /api/evolution/proposals/{decision_id}/observation-report. Artifacts: services/evolution/main.py, services/evolution/models.py, services/evolution/test_evolution_service.py, support/evidence/MGMT-EVO-006/summary.md. Verification: python3 -m pytest services/evolution/test_evolution_service.py -q (53 passed).",
+      "task_id": "MGMT-QLIB-002",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Copilot to Codex after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-05-15T17:21:24Z",
+      "resolved_at": "2026-05-15T17:32:08Z"
+    },
+    {
+      "task_id": "MGMT-QLIB-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved and returned to owner Codex for finalization. Admission packet passes all safety and scope checks. 31 tests pass.",
       "status": "pending",
-      "created_at": "2026-05-15T15:49:58Z"
+      "created_at": "2026-05-15T17:21:48Z"
+    },
+    {
+      "task_id": "MGMT-SYN-006",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: added BFF-backed Management synthesis conflict log view for MGMT-SYN-006. Task-owned files: services/control-plane/bff/main.py, services/control-plane/bff/read_store.py, services/control-plane/bff/test_mgmt_syn_006_conflict_log_view.py. Routes: GET /bff/synthesis/conflict-logs and GET /bff/synthesis/conflict-logs/{log_id}; supports PANTHEON_BFF_SYNTHESIS_CONFLICT_LOG_STORE JSON/JSONL sources, MGMT-SYN-007 proof-bundle projection, filters, detail degraded mode, feature flag fail-closed, and OpenAPI discoverability. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/bff/read_store.py services/control-plane/bff/main.py services/control-plane/bff/test_mgmt_syn_006_conflict_log_view.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_mgmt_syn_006_conflict_log_view.py -q => 4 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py -q => 6 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_contract_paths_are_registered services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_openapi_json_is_route_discoverable -q => 2 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/optimizer-svc/test_allocation_policy_artifact_output.py services/optimizer-svc/test_portfolio_synthesis.py -q => 10 passed; git diff --check task files passed. Note: services/control-plane/bff/read_store.py already has unrelated research_linkage hunks from another task; review the MGMT-SYN-006 synthesis_conflict_logs hunks only.",
+      "status": "done",
+      "created_at": "2026-05-15T17:23:30Z",
+      "resolved_at": "2026-05-15T17:33:29Z"
+    },
+    {
+      "task_id": "MGMT-OODA-005",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Helper-claimed by idle Claude2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:27:21Z",
+      "resolved_at": "2026-05-15T17:28:05Z"
+    },
+    {
+      "task_id": "MGMT-BROKER-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:27:31Z",
+      "resolved_at": "2026-05-15T17:28:23Z"
+    },
+    {
+      "task_id": "MGMT-EVO-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:27:40Z",
+      "resolved_at": "2026-05-15T17:28:45Z"
+    },
+    {
+      "task_id": "MGMT-BROKER-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved and returned to owner Codex for finalization. Evidence packet passes all 9 acceptance checks. Safety boundary confirmed: no live broker, no real capital, no deployment. 59 tests pass.",
+      "status": "pending",
+      "created_at": "2026-05-15T17:30:17Z"
+    },
+    {
+      "task_id": "MGMT-QLIB-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: Qlib StrategySpec builder evidence is schema-valid, reproducible, and non-writing; owner Codex2 should finalize closeout.",
+      "status": "pending",
+      "created_at": "2026-05-15T17:32:08Z"
+    },
+    {
+      "task_id": "MGMT-SYN-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved MGMT-SYN-006 review. No blocking findings; see support/reviews/MGMT-SYN-006-review-codex.md for scope and verification. Owner Codex2 should finalize review_approved -> done with task-scoped closeout.",
+      "status": "pending",
+      "created_at": "2026-05-15T17:33:29Z"
+    },
+    {
+      "task_id": "MGMT-OODA-005",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Ready for review: added Control Room OODA status card for MGMT-OODA-005. Task-owned changes: services/control-plane/bff/main.py (added _OODA_STAGE_DEFS, _OODA_STAGE_STATUSES, _build_ooda_control_room_status_card() helper, and ooda_status + ooda_control_room_status surface meta in /bff/v5/control-room response); services/control-plane/bff/test_mgmt_ooda_005_control_room_card.py (7 contract tests). The card exposes five stage cards (observe/orient/decide/act/learn) with active_count, detail_link, and description; aggregate open/closed/failed/total loop counts; live_capital_side_effects safety assertion; fail-closed gate (PANTHEON_OODA_PACKET_ENABLED=false -> all stages fail_closed); source/unavailable degraded state when no store; and ooda_control_room_status surface meta entry in control-room meta.surfaces. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/test_mgmt_ooda_005_control_room_card.py => PASS; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_mgmt_ooda_005_control_room_card.py -q => 7 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py -q => 6 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_contract_paths_are_registered services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_openapi_json_is_route_discoverable -q => 2 passed; git diff --check task files => clean. Note: main.py contains unrelated dirty hunks from other tasks; review only the _OODA_STAGE_DEFS/_OODA_STAGE_STATUSES/_build_ooda_control_room_status_card additions and the control-room response block change.",
+      "status": "pending",
+      "created_at": "2026-05-15T17:34:57Z"
+    },
+    {
+      "task_id": "MGMT-OODA-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review changes requested by Codex; see support/reviews/MGMT-OODA-006-review-codex.md. Blocking safety-display issue: live packets with act.live_capital_side_effects=true currently render the green 'no live capital side effects' badge because isOodaNonLiveCapitalSafe returns true for environment=live. Please make the badge factually distinguish no side effects, live-environment side effects asserted, and non-live side effects asserted as unsafe, then add focused tests for live/asserted and non-live/asserted cases. Reviewer verification before reopen: focused Vitest 22 passed; contract Vitest 5 passed; lint 0 errors with 52 existing warnings; build passed with existing warnings.",
+      "status": "done",
+      "created_at": "2026-05-15T17:35:32Z",
+      "resolved_at": "2026-05-15T17:35:32Z"
     }
   ],
   "blockers": [
@@ -905,22 +767,22 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 9,
-      "active": 0,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 1,
-      "todo": 8
-    },
-    "Claude2": {
-      "total": 6,
+      "total": 3,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 6
+      "todo": 3
+    },
+    "Claude2": {
+      "total": 1,
+      "active": 1,
+      "blocked": 0,
+      "done": 0,
+      "review": 1,
+      "review_approved": 0,
+      "todo": 0
     },
     "Gemini": {
       "total": 0,
@@ -932,40 +794,40 @@
       "todo": 0
     },
     "Gemini2": {
-      "total": 4,
-      "active": 3,
+      "total": 1,
+      "active": 1,
       "blocked": 1,
       "done": 0,
       "review": 0,
-      "review_approved": 1,
-      "todo": 2
+      "review_approved": 0,
+      "todo": 0
     },
     "Codex": {
-      "total": 7,
-      "active": 2,
+      "total": 5,
+      "active": 3,
       "blocked": 0,
       "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 7
+      "review": 3,
+      "review_approved": 2,
+      "todo": 0
     },
     "Codex2": {
       "total": 5,
-      "active": 4,
+      "active": 3,
       "blocked": 0,
       "done": 0,
-      "review": 2,
-      "review_approved": 1,
-      "todo": 2
+      "review": 0,
+      "review_approved": 2,
+      "todo": 3
     },
     "Copilot": {
-      "total": 5,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 5
+      "todo": 0
     }
   }
 }
