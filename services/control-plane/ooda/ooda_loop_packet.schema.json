@@ -121,6 +121,57 @@
       "then": {
         "required": ["observe", "orient", "decide", "act"]
       }
+    },
+    {
+      "description": "closed OODA packets must have at least one evidence ref in each stage bundle; live_capital_side_effects alone does not count as act evidence",
+      "if": {
+        "properties": {"status": {"const": "closed"}},
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "observe": {
+            "anyOf": [
+              {"required": ["source_refs"], "properties": {"source_refs": {"minItems": 1}}},
+              {"required": ["telemetry_refs"], "properties": {"telemetry_refs": {"minItems": 1}}},
+              {"required": ["signal_refs"], "properties": {"signal_refs": {"minItems": 1}}},
+              {"required": ["market_refs"], "properties": {"market_refs": {"minItems": 1}}},
+              {"required": ["incident_refs"], "properties": {"incident_refs": {"minItems": 1}}},
+              {"required": ["human_feedback_refs"], "properties": {"human_feedback_refs": {"minItems": 1}}}
+            ]
+          },
+          "orient": {
+            "anyOf": [
+              {"required": ["regime_state_ref"], "properties": {"regime_state_ref": {"type": "string"}}},
+              {"required": ["universe_selection_ref"], "properties": {"universe_selection_ref": {"type": "string"}}},
+              {"required": ["signal_inference_refs"], "properties": {"signal_inference_refs": {"minItems": 1}}},
+              {"required": ["allocation_proposal_refs"], "properties": {"allocation_proposal_refs": {"minItems": 1}}},
+              {"required": ["risk_adjudication_ref"], "properties": {"risk_adjudication_ref": {"type": "string"}}},
+              {"required": ["persona_proposal_refs"], "properties": {"persona_proposal_refs": {"minItems": 1}}},
+              {"required": ["evidence_bundle_refs"], "properties": {"evidence_bundle_refs": {"minItems": 1}}}
+            ]
+          },
+          "decide": {
+            "anyOf": [
+              {"required": ["approval_decision_id"], "properties": {"approval_decision_id": {"type": "string"}}},
+              {"required": ["deployment_plan_id"], "properties": {"deployment_plan_id": {"type": "string"}}},
+              {"required": ["evolution_decision_id"], "properties": {"evolution_decision_id": {"type": "string"}}},
+              {"required": ["sponsor_persona_id"], "properties": {"sponsor_persona_id": {"type": "string"}}},
+              {"required": ["decision_rationale_ref"], "properties": {"decision_rationale_ref": {"type": "string"}}},
+              {"required": ["policy_decision_refs"], "properties": {"policy_decision_refs": {"minItems": 1}}}
+            ]
+          },
+          "act": {
+            "anyOf": [
+              {"required": ["runtime_binding_id"], "properties": {"runtime_binding_id": {"type": "string"}}},
+              {"required": ["command_receipt_refs"], "properties": {"command_receipt_refs": {"minItems": 1}}},
+              {"required": ["broker_evidence_refs"], "properties": {"broker_evidence_refs": {"minItems": 1}}},
+              {"required": ["rollback_refs"], "properties": {"rollback_refs": {"minItems": 1}}},
+              {"required": ["safe_mode_refs"], "properties": {"safe_mode_refs": {"minItems": 1}}}
+            ]
+          }
+        }
+      }
     }
   ],
   "definitions": {

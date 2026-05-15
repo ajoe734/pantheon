@@ -210,9 +210,14 @@ def validate_packet_stage_invariants(packet: Mapping[str, Any]) -> list[str]:
             if not isinstance(bundle, Mapping):
                 errors.append(f"closed OODA packets must include {bundle_key} bundle")
                 continue
+            # live_capital_side_effects is a safety flag, not an evidence ref
+            check_values = {
+                k: v for k, v in bundle.items()
+                if bundle_key != "act" or k != "live_capital_side_effects"
+            }
             has_evidence = any(
                 v not in (None, False, [], "", {})
-                for v in bundle.values()
+                for v in check_values.values()
             )
             if not has_evidence:
                 errors.append(

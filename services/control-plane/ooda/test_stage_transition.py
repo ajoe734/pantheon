@@ -297,6 +297,153 @@ class TestOodaLoopPacketIntegration(unittest.TestCase):
 
         jsonschema.validate(valid_packet, schema)
 
+    def test_json_schema_rejects_closed_packet_with_empty_bundle_evidence(self):
+        """Regression: closed packet with all empty bundles must be rejected by JSON Schema."""
+        try:
+            import jsonschema
+        except ImportError:
+            self.skipTest("jsonschema not installed")
+
+        import json
+        from pathlib import Path
+
+        schema_path = Path(__file__).resolve().parent / "ooda_loop_packet.schema.json"
+        schema = json.loads(schema_path.read_text())
+
+        closed_empty_packet = {
+            "packet_id": "ooda-schema-test-closed-empty",
+            "loop_type": "paper_strategy",
+            "status": "closed",
+            "environment": "paper",
+            "created_at": "2026-05-15T00:00:00Z",
+            "updated_at": "2026-05-15T01:00:00Z",
+            "closed_at": "2026-05-15T01:00:00Z",
+            "observe": {
+                "source_refs": [],
+                "telemetry_refs": [],
+                "signal_refs": [],
+                "market_refs": [],
+                "incident_refs": [],
+                "human_feedback_refs": [],
+            },
+            "orient": {
+                "regime_state_ref": None,
+                "universe_selection_ref": None,
+                "signal_inference_refs": [],
+                "allocation_proposal_refs": [],
+                "risk_adjudication_ref": None,
+                "persona_proposal_refs": [],
+                "evidence_bundle_refs": [],
+            },
+            "decide": {
+                "approval_decision_id": None,
+                "deployment_plan_id": None,
+                "evolution_decision_id": None,
+                "sponsor_persona_id": None,
+                "decision_rationale_ref": None,
+                "policy_decision_refs": [],
+            },
+            "act": {
+                "runtime_binding_id": None,
+                "command_receipt_refs": [],
+                "broker_evidence_refs": [],
+                "rollback_refs": [],
+                "safe_mode_refs": [],
+                "live_capital_side_effects": False,
+            },
+        }
+
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate(closed_empty_packet, schema)
+
+    def test_json_schema_rejects_closed_act_bundle_with_live_capital_side_effects_only(self):
+        """Regression: live_capital_side_effects alone must not count as act bundle evidence."""
+        try:
+            import jsonschema
+        except ImportError:
+            self.skipTest("jsonschema not installed")
+
+        import json
+        from pathlib import Path
+
+        schema_path = Path(__file__).resolve().parent / "ooda_loop_packet.schema.json"
+        schema = json.loads(schema_path.read_text())
+
+        packet = {
+            "packet_id": "ooda-schema-test-lcs-only",
+            "loop_type": "paper_strategy",
+            "status": "closed",
+            "environment": "live",
+            "created_at": "2026-05-15T00:00:00Z",
+            "updated_at": "2026-05-15T01:00:00Z",
+            "closed_at": "2026-05-15T01:00:00Z",
+            "observe": {"source_refs": ["obs-ref-001"]},
+            "orient": {"regime_state_ref": "regime-bull-001"},
+            "decide": {"approval_decision_id": "approval-001"},
+            "act": {
+                "runtime_binding_id": None,
+                "command_receipt_refs": [],
+                "broker_evidence_refs": [],
+                "rollback_refs": [],
+                "safe_mode_refs": [],
+                "live_capital_side_effects": True,
+            },
+        }
+
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate(packet, schema)
+
+    def test_json_schema_accepts_closed_packet_with_valid_bundle_evidence(self):
+        """Closed packet with proper evidence in all four bundles must pass JSON Schema."""
+        try:
+            import jsonschema
+        except ImportError:
+            self.skipTest("jsonschema not installed")
+
+        import json
+        from pathlib import Path
+
+        schema_path = Path(__file__).resolve().parent / "ooda_loop_packet.schema.json"
+        schema = json.loads(schema_path.read_text())
+
+        valid_closed_packet = {
+            "packet_id": "ooda-schema-test-closed-valid",
+            "loop_type": "paper_strategy",
+            "status": "closed",
+            "environment": "paper",
+            "created_at": "2026-05-15T00:00:00Z",
+            "updated_at": "2026-05-15T01:00:00Z",
+            "closed_at": "2026-05-15T01:00:00Z",
+            "observe": {"source_refs": ["strategy-spec://test-001@1.0.0"]},
+            "orient": {"regime_state_ref": "regime-neutral-001"},
+            "decide": {"approval_decision_id": "approval-test-001"},
+            "act": {"runtime_binding_id": "runtime-paper-test-001"},
+        }
+
+        jsonschema.validate(valid_closed_packet, schema)
+
+    def test_python_validation_rejects_act_bundle_with_live_capital_side_effects_only(self):
+        """Python validate() must reject closed act bundle where only live_capital_side_effects is set."""
+        packet = OodaLoopPacket.create(
+            loop_type=LoopType.PAPER_STRATEGY,
+            environment=LoopEnvironment.LIVE,
+        )
+        for status in [LoopStatus.OBSERVING, LoopStatus.ORIENTED, LoopStatus.DECIDED, LoopStatus.ACTED]:
+            packet.advance(status)
+
+        packet.observe.source_refs.append("obs-ref-001")
+        packet.orient.regime_state_ref = "regime-bull-001"
+        packet.decide.approval_decision_id = "approval-001"
+        packet.act.live_capital_side_effects = True
+
+        packet.advance(LoopStatus.CLOSED)
+
+        errors = packet.validate()
+        self.assertTrue(
+            any("act bundle" in e for e in errors),
+            f"expected act bundle evidence error, got: {errors}",
+        )
+
 
 class TestOodaLoopStore(unittest.TestCase):
     def test_list_string_filter_matches_enum_created_packets(self):
