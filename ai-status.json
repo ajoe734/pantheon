@@ -3,7 +3,7 @@
   "sprint": "2026-05-13-ep5-qlib-bff-consolidation",
   "sprint_started_at": "2026-05-13T02:00:00Z",
   "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec，從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV，跑 production_activation_smoke.py --backend real，submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal，registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff，command envelope unification，non-empty fixture & detail journey，SSE real stream replay，strict env cutover，seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write 驗證通過後即可 deprecate 舊 receipt，後續 regression 追蹤不再以固定天數阻塞派工。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。",
-  "updated_at": "2026-05-15T00:50:06Z",
+  "updated_at": "2026-05-15T01:07:46Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -94,13 +94,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
+      "status": "reviewing",
       "current_task_ids": [
         "FE-INT-GATE-A11Y-BREADCRUMB"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Investigating axe list/listitem violations: root cause is span.contents wrapper in PageHeader.tsx map. Current source already has Fragment fix in dd411e2. Verifying and completing.",
-      "last_update": "2026-05-15T00:42:33Z"
+      "next": "Review started: checking handed-off breadcrumb semantics, sidecar acceptance packet, and focused build/a11y evidence before approval decision.",
+      "last_update": "2026-05-15T01:00:40Z"
     },
     {
       "name": "Gemini",
@@ -110,13 +110,13 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "working",
+      "status": "reviewing",
       "current_task_ids": [
         "FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE"
       ],
       "branch": "feat/gemini-research-runtime",
-      "next": "Supervisor auto-started FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE after successful dispatch.",
-      "last_update": "2026-05-15T00:34:28Z"
+      "next": "Acceptance packet and dependency map for FE-INT-GATE-A11Y-BREADCRUMB prepared at support/sidecars/FE-INT-GATE-A11Y-BREADCRUMB/FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout.",
+      "last_update": "2026-05-15T01:10:00Z"
     },
     {
       "name": "Codex",
@@ -179,13 +179,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "reviewing",
-      "current_task_ids": [
-        "FE-INT-GATE-A11Y-OVERLAY"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude2-execution-control",
-      "next": "Implementation complete. Replaced requestAnimationFrame focus restoration with Radix onCloseAutoFocus in LoopRunDrawer (triggerRef prop + onCloseAutoFocus on SheetContent) and FindingDrawer in Sentinel (same pattern). execute-plans commit 2432970 on bff-luv-fe-006-dev-deploy. Verification: npx playwright test e2e/17-a11y-v5.spec.ts — 9 passed (4.6m). Both previously-failing focus tests now pass: (1) drawer focus returns to the trigger after keyboard close, (2) ESC closes only the top overlay before closing the underlying drawer. All 6 axe-clean tests also still pass.",
-      "last_update": "2026-05-15T00:50:06Z"
+      "next": "",
+      "last_update": "2026-05-15T01:06:02Z"
     },
     {
       "name": "Gemini2",
@@ -491,7 +489,7 @@
       "phase": "Pantheon FE Integration Gate 2026-05-13",
       "owner": "Claude",
       "reviewer": "Codex2",
-      "status": "in_progress",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
         "execute-plans/src/platform/components/Breadcrumb.tsx",
@@ -502,31 +500,8 @@
         "Breadcrumb 在所有 v5 頁面 axe list/listitem 規則 0 violation",
         "nav aria-label='breadcrumb' 保持"
       ],
-      "next": "Investigating axe list/listitem violations: root cause is span.contents wrapper in PageHeader.tsx map. Current source already has Fragment fix in dd411e2. Verifying and completing.",
-      "last_update": "2026-05-15T00:42:33Z"
-    },
-    {
-      "id": "FE-INT-GATE-A11Y-OVERLAY",
-      "title": "Fix drawer focus return and overlay stack ESC handling",
-      "summary_zh": "F17 a11y axe 中 2 個 focus / overlay-stack 行為違規：(1) drawer focus returns to the trigger after keyboard close — 按 ESC 關 RightDrawer 後 focus 沒回到 open 按鈕；(2) ESC closes only the top overlay before closing the underlying drawer — 多層 overlay (Drawer + nested Dialog) 按一次 ESC 兩個一起關，應該只關最上層。修：(1) RightDrawer / 任何 overlay 用 ref 記住 trigger element，close 時 trigger.focus()；(2) overlay manager（可能在 src/platform/overlays/ 或 src/lib/overlayStack.ts）改成 stack-based ESC：只把最上層的 close 拿掉、不冒泡。Evidence: execute-plans/.lovable/audits/baseline/postfix/pantheon-integration-evidence/test-results/ 17-a11y-v5-*focus*/error-context.md 與 17-a11y-v5-*top-overlay*/error-context.md",
-      "phase": "Pantheon FE Integration Gate 2026-05-13",
-      "owner": "Claude2",
-      "reviewer": "Codex2",
-      "status": "review",
-      "depends_on": [],
-      "artifacts": [
-        "execute-plans/src/platform/components/RightDrawer.tsx",
-        "execute-plans/src/platform/components/HighRiskConfirm.tsx",
-        "execute-plans/src/platform/overlays"
-      ],
-      "acceptance": [
-        "drawer ESC close 後 trigger 取回 focus",
-        "多層 overlay ESC 只關最上層",
-        "axe focus 規則 0 violation",
-        "本地 npx playwright test e2e/17-a11y-v5.spec.ts 對 focus + ESC 2 個 case 全綠"
-      ],
-      "next": "Implementation complete. Replaced requestAnimationFrame focus restoration with Radix onCloseAutoFocus in LoopRunDrawer (triggerRef prop + onCloseAutoFocus on SheetContent) and FindingDrawer in Sentinel (same pattern). execute-plans commit 2432970 on bff-luv-fe-006-dev-deploy. Verification: npx playwright test e2e/17-a11y-v5.spec.ts — 9 passed (4.6m). Both previously-failing focus tests now pass: (1) drawer focus returns to the trigger after keyboard close, (2) ESC closes only the top overlay before closing the underlying drawer. All 6 axe-clean tests also still pass.",
-      "last_update": "2026-05-15T00:50:06Z"
+      "next": "Review started: checking handed-off breadcrumb semantics, sidecar acceptance packet, and focused build/a11y evidence before approval decision.",
+      "last_update": "2026-05-15T01:00:40Z"
     },
     {
       "id": "FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE",
@@ -535,7 +510,7 @@
       "phase": "Pantheon FE Integration Gate 2026-05-13",
       "owner": "Gemini",
       "reviewer": "Claude",
-      "status": "in_progress",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
         "support/sidecars/FE-INT-GATE-A11Y-BREADCRUMB/FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE.md"
@@ -545,8 +520,8 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Supervisor auto-started FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE after successful dispatch.",
-      "last_update": "2026-05-15T00:34:28Z",
+      "next": "Acceptance packet and dependency map for FE-INT-GATE-A11Y-BREADCRUMB prepared at support/sidecars/FE-INT-GATE-A11Y-BREADCRUMB/FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout.",
+      "last_update": "2026-05-15T01:10:00Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "FE-INT-GATE-A11Y-BREADCRUMB",
@@ -579,6 +554,41 @@
       "helper_kind": "acceptance_packet",
       "mutates_canonical": false,
       "auto_created_by": "supervisor-underutilization"
+    },
+    {
+      "id": "FE-INT-GATE-OIDC-DEV-LOGIN",
+      "title": "Dev BFF OIDC short-lived JWT for CI + hosted Lovable",
+      "summary_zh": "lupin dev BFF (https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io) 已切到 strict JWT auth。當前狀態：(1) curl -H \"Authorization: Bearer pantheon-dev-browser:reviewer\" /bff/me 回 401 INVALID_TOKEN/AUTH_TOKEN_FORMAT；(2) openapi 只暴露 /bff/auth/refresh，沒有 /login 或 /token endpoint；(3) hosted Lovable bundle 用 VITE_BFF_DEV_BEARER_TOKEN=pantheon-dev-browser:reviewer 也全 401；(4) CI 的 PANTHEON_BFF_SMOKE_BEARER_TOKEN 失效，auth_smoke step 全 fail。需求：設計 CI-friendly dev OIDC login flow 讓 hard-gate auth_smoke 重新綠。實作方案請 backend owner 在以下 3 條路徑選或混合：(A) BFF 新增 /bff/auth/dev-login endpoint，接 client_id+secret 換短期 JWT (5min~1hr)，CI 之前 step 先 fetch 一次塞到 env；(B) OIDC issuer (Keycloak/Auth0) staging instance 跑 client_credentials grant，CI 拿 issuer URL + dev client secret 自己換 token；(C) BFF 提供 pre-minted long-lived test JWT (例：90 天)，當 GitHub repo secret，CI 直接用。優先順序 A > B > C（A 最安全 + 短 TTL + 可 revoke）。同時要更新：(i) execute-plans/.github/workflows/pantheon-integration-gate.yml 加 'Acquire BFF JWT' step (在 auth_smoke / e2e 前)；(ii) Lovable dev project 環境變數從 VITE_BFF_DEV_BEARER_TOKEN=stub 改成 VITE_BFF_OIDC_CLIENT_ID+CLIENT_SECRET 或 runtime fetch；(iii) GitHub repo secret 新增 PANTHEON_BFF_OIDC_CLIENT_ID / CLIENT_SECRET (替換 PANTHEON_BFF_SMOKE_BEARER_TOKEN)；(iv) execute-plans/scripts/probe-bff-authenticated-live.mjs 讀新 env var；(v) docs/deployment/lovable-dev-staging-operating-rules.md 更新 dev auth 方案說明。Verification: 重跑 PR CI auth_smoke + browser_probe step outcome=success；hosted bundle 對 /bff/me 不再 401；chair Claude 收 JWT 在 staging-live 環境驗證不可用 (security boundary)。",
+      "phase": "Pantheon FE Integration Gate 2026-05-13",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "BFF-CONSOL-022"
+      ],
+      "artifacts": [
+        "services/control-plane/bff/auth.py",
+        "services/control-plane/bff/main.py",
+        "execute-plans/.github/workflows/pantheon-integration-gate.yml",
+        "execute-plans/scripts/probe-bff-authenticated-live.mjs",
+        "execute-plans/.env.integration.example",
+        "docs/deployment/lovable-dev-staging-operating-rules.md",
+        "docs/deployment/bff-oidc-staging-auth.md"
+      ],
+      "acceptance": [
+        "dev BFF 提供 client_credentials 或等效 dev-login flow",
+        "CI workflow 在 auth_smoke 前自動取得 JWT 並注入 env",
+        "GitHub secret 改用 client_id/client_secret 而非 long-lived bearer",
+        "Lovable hosted bundle 能取得 valid JWT (build-time secret 或 runtime fetch)",
+        "auth_smoke step CI outcome=success",
+        "browser_probe step CI outcome=success",
+        "e2e F01 MeResponse assertion 可拿到 valid MeResponse",
+        "security: JWT TTL <=1hr 並可 revoke",
+        "security: dev JWT 在 staging-live BFF 拒絕 (環境隔離)",
+        "docs 更新 dev auth 方案"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-05-15T00:58:56Z"
     }
   ],
   "handoffs": [
@@ -717,15 +727,6 @@
       "resolved_at": "2026-05-15T00:33:42Z"
     },
     {
-      "task_id": "FE-INT-GATE-A11Y-OVERLAY",
-      "from": "Codex2",
-      "to": "Claude2",
-      "message": "Helper-claimed by idle Claude2; previous owner Codex2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-15T00:32:49Z",
-      "resolved_at": "2026-05-15T00:34:04Z"
-    },
-    {
       "task_id": "FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE",
       "from": "Gemini2",
       "to": "Codex",
@@ -734,12 +735,20 @@
       "created_at": "2026-05-15T00:35:55Z"
     },
     {
-      "task_id": "FE-INT-GATE-A11Y-OVERLAY",
-      "from": "Claude2",
+      "task_id": "FE-INT-GATE-A11Y-BREADCRUMB",
+      "from": "Claude",
       "to": "Codex2",
-      "message": "Implementation complete. Replaced requestAnimationFrame focus restoration with Radix onCloseAutoFocus in LoopRunDrawer (triggerRef prop + onCloseAutoFocus on SheetContent) and FindingDrawer in Sentinel (same pattern). execute-plans commit 2432970 on bff-luv-fe-006-dev-deploy. Verification: npx playwright test e2e/17-a11y-v5.spec.ts — 9 passed (4.6m). Both previously-failing focus tests now pass: (1) drawer focus returns to the trigger after keyboard close, (2) ESC closes only the top overlay before closing the underlying drawer. All 6 axe-clean tests also still pass.",
+      "message": "Breadcrumb list semantic violation fixed. Root cause was PageHeader.tsx using <span className='contents'> as keyed map wrapper (commit 6feed7f), making span a direct child of <ol> and breaking list/listitem axe rules. Fix: dd411e2 replaced span.contents with <Fragment key={node.path}>, ensuring all <li> elements are direct children of <ol>. Task commit b0dc126 in execute-plans (bff-luv-fe-006-dev-deploy): fixes BreadcrumbEllipsis.displayName typo. Verification: tsc --noEmit exit 0, vite build exit 0. nav aria-label=breadcrumb preserved. Acceptance: ol has no direct span children; all li are direct ol children via transparent Fragment. Ready for review.",
       "status": "pending",
-      "created_at": "2026-05-15T00:50:06Z"
+      "created_at": "2026-05-15T00:53:16Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Acceptance packet and dependency map for FE-INT-GATE-A11Y-BREADCRUMB prepared at support/sidecars/FE-INT-GATE-A11Y-BREADCRUMB/FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout.",
+      "status": "pending",
+      "created_at": "2026-05-15T01:10:00Z"
     }
   ],
   "blockers": [
@@ -780,7 +789,7 @@
       "task_id": "BFF-CONSOL-022",
       "owner": "Codex",
       "waiting_for": "Gemini",
-      "message": "Dev BFF strict preview prerequisites reverified: preview-strict.env targets lupin dev BFF with REAL_WRITES=false, dev /health and /openapi.json return 200, and focused Pack A/B/C + detail pytest passed. Blocked until Lovable preview branch URL and dev BFF smoke JWT/bearer credential are provided for Day 1 probe_bff_authenticated_live.py.",
+      "message": "Dev BFF strict preview prerequisites reverified: preview-strict.env targets lupin dev BFF with REAL_WRITES=false, dev /health and /openapi.json return 200, and focused Pack A/B/C + detail pytest passed. Blocked until Lovable preview branch URL and dev BFF smoke JWT/bearer credential are provided for Day 1_probe_bff_authenticated_live.py.",
       "status": "open",
       "created_at": "2026-05-14T12:26:30Z"
     },
@@ -840,16 +849,16 @@
       "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Claude2": {
-      "total": 1,
-      "active": 1,
+      "total": 0,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 1,
+      "review": 0,
       "review_approved": 0,
       "todo": 0
     },
@@ -858,9 +867,9 @@
       "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Gemini2": {
       "total": 2,
@@ -881,13 +890,13 @@
       "todo": 1
     },
     "Codex2": {
-      "total": 2,
+      "total": 3,
       "active": 2,
       "blocked": 2,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Copilot": {
       "total": 1,

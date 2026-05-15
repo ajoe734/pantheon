@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "FE-INT-GATE-A11Y-OVERLAY",
+  "archived_at": "2026-05-15T01:07:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "FE-INT-GATE-A11Y-OVERLAY",
+    "title": "Fix drawer focus return and overlay stack ESC handling",
+    "summary_zh": "F17 a11y axe 中 2 個 focus / overlay-stack 行為違規：(1) drawer focus returns to the trigger after keyboard close — 按 ESC 關 RightDrawer 後 focus 沒回到 open 按鈕；(2) ESC closes only the top overlay before closing the underlying drawer — 多層 overlay (Drawer + nested Dialog) 按一次 ESC 兩個一起關，應該只關最上層。修：(1) RightDrawer / 任何 overlay 用 ref 記住 trigger element，close 時 trigger.focus()；(2) overlay manager（可能在 src/platform/overlays/ 或 src/lib/overlayStack.ts）改成 stack-based ESC：只把最上層的 close 拿掉、不冒泡。Evidence: execute-plans/.lovable/audits/baseline/postfix/pantheon-integration-evidence/test-results/ 17-a11y-v5-*focus*/error-context.md 與 17-a11y-v5-*top-overlay*/error-context.md",
+    "phase": "Pantheon FE Integration Gate 2026-05-13",
+    "owner": "Claude2",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "execute-plans/src/platform/components/RightDrawer.tsx",
+      "execute-plans/src/platform/components/HighRiskConfirm.tsx",
+      "execute-plans/src/platform/overlays"
+    ],
+    "acceptance": [
+      "drawer ESC close 後 trigger 取回 focus",
+      "多層 overlay ESC 只關最上層",
+      "axe focus 規則 0 violation",
+      "本地 npx playwright test e2e/17-a11y-v5.spec.ts 對 focus + ESC 2 個 case 全綠"
+    ],
+    "next": "Closeout complete. Deliverable: execute-plans commit 2432970 (bff-luv-fe-006-dev-deploy) — RightDrawer/LoopRunDrawer/FindingDrawer focus return via Radix SheetContent onCloseAutoFocus + triggerRef; overlay-stack ESC handles only the top layer. Verification: npx playwright test e2e/17-a11y-v5.spec.ts — 9 passed (4.6m); both focus/ESC cases green. No task-owned pantheon-repo files changed; isolated commit lives in execute-plans 2432970.",
+    "last_update": "2026-05-15T01:07:45Z",
+    "review_notes_zh": [
+      "Reviewed execute-plans commit 2432970 diff: LoopRunDrawer and Sentinel FindingDrawer now restore focus through Radix SheetContent onCloseAutoFocus using the captured triggerRef; page-level requestAnimationFrame focus restoration was removed.",
+      "Verified acceptance cases in npx playwright test e2e/17-a11y-v5.spec.ts: drawer focus returns to the trigger after keyboard close passed; ESC closes only the top overlay before the underlying drawer passed.",
+      "Full spec run in this Codex2 session ended 8 passed / 1 failed because the unrelated optimization-loop axe case timed out while closing the browser context under concurrent Playwright runs from another worker; no target acceptance case failed and no axe violation was reported for the failure."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T01:07:45Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "90374af0ac55f7d33325e01d36e7297ac4582d69",
+      "commit_subject": "FE-INT-GATE-A11Y-OVERLAY state update: handoff to Codex2 for review",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "FE-INT-GATE-A11Y-OVERLAY",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 13,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "FE-INT-GATE-A11Y-OVERLAY",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Helper-claimed by idle Claude2; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T00:32:49Z",
+      "resolved_at": "2026-05-15T00:34:04Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-A11Y-OVERLAY",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Implementation complete. Replaced requestAnimationFrame focus restoration with Radix onCloseAutoFocus in LoopRunDrawer (triggerRef prop + onCloseAutoFocus on SheetContent) and FindingDrawer in Sentinel (same pattern). execute-plans commit 2432970 on bff-luv-fe-006-dev-deploy. Verification: npx playwright test e2e/17-a11y-v5.spec.ts — 9 passed (4.6m). Both previously-failing focus tests now pass: (1) drawer focus returns to the trigger after keyboard close, (2) ESC closes only the top overlay before closing the underlying drawer. All 6 axe-clean tests also still pass.",
+      "status": "done",
+      "created_at": "2026-05-15T00:50:06Z",
+      "resolved_at": "2026-05-15T01:05:32Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-A11Y-OVERLAY",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Approved: commit 2432970 satisfies drawer focus-return and nested overlay ESC acceptance; owner Claude2 should finalize review_approved -> done after closeout.",
+      "status": "done",
+      "created_at": "2026-05-15T01:05:32Z",
+      "resolved_at": "2026-05-15T01:07:46Z"
+    }
+  ],
+  "blockers": []
+}
