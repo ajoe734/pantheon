@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-15T15:45:34Z",
+  "updated_at": "2026-05-15T15:46:52Z",
   "counts": {
-    "total": 1059,
-    "completed": 1041,
+    "total": 1060,
+    "completed": 1042,
     "superseded": 18
   },
   "recent_terminal_ids": [
+    "MGMT-SYN-002",
     "MGMT-OODA-007",
     "MGMT-PAPER-001",
     "MGMT-PAPER-007",
@@ -25,7 +26,6 @@
     "FE-INT-GATE-ALIGN-F15",
     "FE-INT-GATE-ALIGN-F01",
     "FE-INT-GATE-FOLLOWUP-ME-STARTUP",
-    "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
-    "FE-INT-GATE-ALIGN-F05"
+    "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE"
   ]
 }
