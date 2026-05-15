@@ -3,7 +3,7 @@
   "sprint": "2026-05-13-ep5-qlib-bff-consolidation",
   "sprint_started_at": "2026-05-13T02:00:00Z",
   "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec，從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV，跑 production_activation_smoke.py --backend real，submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal，registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff，command envelope unification，non-empty fixture & detail journey，SSE real stream replay，strict env cutover，seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write 驗證通過後即可 deprecate 舊 receipt，後續 regression 追蹤不再以固定天數阻塞派工。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。(E) Management Console OODA layer + paper-loop proof — 依 2026-05-15 supplemental SA/SD (docs/04/pantheon_sa_supplemental_2026-05-15/) 疊一層 OODA packet schema + Management control-room/strategy/runtime 上的 OODA 可視化 + multi-persona synthesis 證明 + Qlib admission + Shioaji sandbox evidence + evolution follow-through + fail-closed regression。共 7 EPIC 46 task (MGMT-OODA / PAPER / SYN / QLIB / BROKER / EVO / SAFE)。EPIC-04 與 Track B、EPIC-05 與 Track A 共用 TW dataset 與 broker sandbox 證據；EPIC-07 強制驗證 broker production live 與 capital binding 持續 fail-closed；M1 OODA packet 是首個收斂點。",
-  "updated_at": "2026-05-15T17:54:18Z",
+  "updated_at": "2026-05-15T18:07:31Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -94,13 +94,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "working",
+      "status": "finalize",
       "current_task_ids": [
         "MGMT-EVO-007"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Implementing evolution OODA loop closure: building complete evolution-type OodaLoopPacket that closes the EPIC-06 follow-through chain (observe->orient->decide->act->learn->closed), with script, tests, and evidence packet.",
-      "last_update": "2026-05-15T17:51:38Z"
+      "next": "Review approved by Codex2. No blocking findings. Verified py_compile, focused pytest (45 passed), temp-output closure script PASS, committed evidence invariants PASS, and git diff --check clean for task-owned files. Owner Claude should run closeout finalization for review_approved -> done.",
+      "last_update": "2026-05-15T18:00:19Z"
     },
     {
       "name": "Gemini",
@@ -124,18 +124,14 @@
         "schema",
         "acceptance"
       ],
-      "status": "working",
+      "status": "reviewing",
       "current_task_ids": [
-        "MGMT-OODA-006",
-        "MGMT-BROKER-006",
-        "MGMT-EVO-002",
-        "MGMT-EVO-005",
         "MGMT-SAFE-003",
         "MGMT-SAFE-005"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Ready for review: added local rollback/freeze follow-through evidence packet for MGMT-EVO-005. Task-owned files: scripts/run_evolution_followthrough_packet.py, scripts/test_run_evolution_followthrough_packet.py, support/evidence/MGMT-EVO-005/README.md, support/evidence/MGMT-EVO-005/rollback-freeze-followthrough.json. The packet traces approved high-risk freeze to deployment freeze_stage and runtime pause_then_replace rollback companion, then replays RuntimeManagerService.evolution_freeze() and rollback() against in-memory stores only. Safety assertions: no broker session, no live execution, no capital-binding mutation, runtime-manager remains binding writer. Verification: PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_evolution_followthrough_packet.py --json-out support/evidence/MGMT-EVO-005/rollback-freeze-followthrough.json -> PASS; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_run_evolution_followthrough_packet.py -q -> 3 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/run_evolution_followthrough_packet.py scripts/test_run_evolution_followthrough_packet.py -> PASS; git diff --check task files -> clean. Worktree has unrelated dirty files from other tasks; review only listed task-owned files.",
-      "last_update": "2026-05-15T17:51:25Z"
+      "next": "Ready for review: added repo-local no-live-side-effects assertion smoke that scans Track E paper/sandbox/safety evidence, validates non-live OODA packets, and proves the OODA guard rejects forced live_capital_side_effects=true. Task-owned files: scripts/run_no_live_side_effects_assertion.py, scripts/test_run_no_live_side_effects_assertion.py, support/evidence/MGMT-SAFE-005/README.md, support/evidence/MGMT-SAFE-005/no-live-side-effects-assertion.json. Evidence summary: 8 required artifacts loaded, 5 optional artifacts loaded, 13 side-effect flag names checked, 3 non-live OODA packets validated, 0 violations, synthetic model/schema guard rejected live side effects. Verification: PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_no_live_side_effects_assertion.py --json-out support/evidence/MGMT-SAFE-005/no-live-side-effects-assertion.json => 4/4 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_run_no_live_side_effects_assertion.py -q => 3 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/run_no_live_side_effects_assertion.py scripts/test_run_no_live_side_effects_assertion.py => passed.",
+      "last_update": "2026-05-15T16:43:53Z"
     },
     {
       "name": "Codex2",
@@ -145,13 +141,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "reviewing",
+      "status": "finalize",
       "current_task_ids": [
         "MGMT-EVO-003"
       ],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Ready for review: wired Management evolution review/approval linkage. Updated BFF path/client adapters for GET /api/v1/operator/mutation-review/{decision_id}, added OODA drawer links from evolution_decision_id to mutation review and approval_decision_id to /management/approvals, and covered both client adapter and drawer links in focused tests. Task-owned Pantheon mirror files: execute-plans/src/lib/bff-v1/paths.ts, execute-plans/src/lib/bff/client.ts, execute-plans/src/lib/bff/__tests__/client.test.ts, execute-plans/src/management/components/ooda/OodaPacketDrawer.tsx, execute-plans/src/management/components/ooda/OodaPacketDrawer.test.tsx. Actual execute-plans repo verified with npm test -- src/lib/bff/__tests__/client.test.ts src/management/components/ooda/OodaPacketDrawer.test.tsx (23 passed) and npm run build (passed; existing Browserslist/chunk warnings only).",
-      "last_update": "2026-05-15T17:48:50Z"
+      "next": "Review approved: mutation-review read adapter and OODA review/approval links verified; focused Vitest 25 passed and npm run build passed with existing warnings only. Owner Codex2 should finalize closeout.",
+      "last_update": "2026-05-15T18:03:18Z"
     },
     {
       "name": "Copilot",
@@ -174,11 +170,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "finalize",
+      "current_task_ids": [
+        "MGMT-SAFE-006"
+      ],
       "branch": "feat/claude2-execution-control",
-      "next": "",
-      "last_update": "2026-05-15T17:49:43Z"
+      "next": "Review approved: command idempotency regression smoke passes all 5 checks. Returning to Claude2 for closeout finalization.",
+      "last_update": "2026-05-15T18:04:49Z"
     },
     {
       "name": "Gemini2",
@@ -205,7 +203,7 @@
       "phase": "Track E / EPIC-01 OODA Packet Foundation",
       "owner": "Codex",
       "reviewer": "Claude2",
-      "status": "in_progress",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [
         "execute-plans/src/lib/ooda/packets.ts",
@@ -222,8 +220,16 @@
         "Management client exposes OODA list/detail/related route adapters without inventing seed packets in mock mode.",
         "Focused Vitest, frontend contract test, lint, and production build pass with only existing repo warnings/build warnings."
       ],
-      "next": "Resumed MGMT-OODA-006; continuing three-state OODA capital safety badge fix and focused drawer/client verification.",
-      "last_update": "2026-05-15T17:50:50Z"
+      "next": "Review approved: three-state capital safety model (no_side_effects/live_asserted/non_live_unsafe) is correctly implemented and tested. Badge rendering, evolution links, OODA BFF adapter, and mock-mode safety all pass review. Returning to owner Codex for closeout finalization.",
+      "last_update": "2026-05-15T18:04:22Z",
+      "review_notes_zh": [
+        "審查通過：三態 capital safety 正確實作 — no_side_effects/live_asserted/non_live_unsafe，邏輯清晰無誤。",
+        "審查通過：OodaPacketDrawer badge tones、labels、icons 三態均正確對應；data-safety 屬性可供測試識別；evolution review / approval links 使用 encodeURIComponent 正確。",
+        "審查通過：三個 safety-state 測試均含正向斷言與負向排除（queryByText）確保狀態互斥；packet fetch by ID、missing evidence、linked objects、BFF adapter 測試完整。",
+        "審查通過：oodaPackets mock 模式返回空 list（不捏造 seed）；forStrategy/forRuntime/forEvolutionProgram 路由正確；evolutionReviews.get 型別守衛完整。",
+        "審查通過：paths.ts 新增 OODA 路由均使用 enc() 編碼；evolutionMutationReview 指向 /api/v1/operator/mutation-review/{id} 正確。",
+        "Verification: owner reported 25 Vitest passed, 5 contract tests passed, 0 lint errors, build passed with existing warnings; acceptance criteria all met."
+      ]
     },
     {
       "id": "MGMT-BROKER-002",
@@ -241,46 +247,23 @@
       "waiting_for": "Gemini"
     },
     {
-      "id": "MGMT-BROKER-006",
-      "title": "Shioaji canary readiness packet integration",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-05 Shioaji Sandbox",
-      "owner": "Codex",
-      "reviewer": "Codex2",
-      "status": "in_progress",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Rework in progress: addressing review blockers for closed OODA packet enforcement and non-empty Shioaji acceptance checks in readiness validator/tests.",
-      "last_update": "2026-05-15T17:49:54Z"
-    },
-    {
-      "id": "MGMT-EVO-002",
-      "title": "EvolutionDecision proposal from incident / postmortem",
-      "summary_zh": null,
-      "phase": "Track E / EPIC-06 Evolution Follow-Through",
-      "owner": "Codex",
-      "reviewer": "Copilot",
-      "status": "review",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Ready for review: added POST /api/evolution/proposals/from-incident to derive a proposed EvolutionDecision from canonical IncidentCase/Postmortem evidence, including lineage links, postmortem back-link reuse, safety metadata, and no runtime/broker/capital mutation. Task-owned files: services/evolution/models.py, services/evolution/main.py, services/evolution/test_evolution_service.py. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/evolution/models.py services/evolution/main.py services/evolution/test_evolution_service.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/evolution/test_evolution_service.py -q -> 57 passed.",
-      "last_update": "2026-05-15T16:42:48Z"
-    },
-    {
       "id": "MGMT-EVO-003",
       "title": "evolution review / approval UI linkage",
       "summary_zh": null,
       "phase": "Track E / EPIC-06 Evolution Follow-Through",
       "owner": "Codex2",
       "reviewer": "Codex",
-      "status": "review",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Ready for review: wired Management evolution review/approval linkage. Updated BFF path/client adapters for GET /api/v1/operator/mutation-review/{decision_id}, added OODA drawer links from evolution_decision_id to mutation review and approval_decision_id to /management/approvals, and covered both client adapter and drawer links in focused tests. Task-owned Pantheon mirror files: execute-plans/src/lib/bff-v1/paths.ts, execute-plans/src/lib/bff/client.ts, execute-plans/src/lib/bff/__tests__/client.test.ts, execute-plans/src/management/components/ooda/OodaPacketDrawer.tsx, execute-plans/src/management/components/ooda/OodaPacketDrawer.test.tsx. Actual execute-plans repo verified with npm test -- src/lib/bff/__tests__/client.test.ts src/management/components/ooda/OodaPacketDrawer.test.tsx (23 passed) and npm run build (passed; existing Browserslist/chunk warnings only).",
-      "last_update": "2026-05-15T17:48:50Z"
+      "next": "Review approved: mutation-review read adapter and OODA review/approval links verified; focused Vitest 25 passed and npm run build passed with existing warnings only. Owner Codex2 should finalize closeout.",
+      "last_update": "2026-05-15T18:03:18Z",
+      "review_notes_zh": [
+        "審查通過：mutation-review live read adapter 與 OODA drawer review/approval links 已覆蓋並驗證。",
+        "驗證：在 /home/lupin/code/execute-plans 執行 focused Vitest 25 passed，npm run build 通過；僅既有 Browserslist/chunk warnings。"
+      ],
+      "review_file": "support/reviews/MGMT-EVO-003-review-codex.md"
     },
     {
       "id": "MGMT-EVO-005",
@@ -289,12 +272,15 @@
       "phase": "Track E / EPIC-06 Evolution Follow-Through",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "review",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Ready for review: added local rollback/freeze follow-through evidence packet for MGMT-EVO-005. Task-owned files: scripts/run_evolution_followthrough_packet.py, scripts/test_run_evolution_followthrough_packet.py, support/evidence/MGMT-EVO-005/README.md, support/evidence/MGMT-EVO-005/rollback-freeze-followthrough.json. The packet traces approved high-risk freeze to deployment freeze_stage and runtime pause_then_replace rollback companion, then replays RuntimeManagerService.evolution_freeze() and rollback() against in-memory stores only. Safety assertions: no broker session, no live execution, no capital-binding mutation, runtime-manager remains binding writer. Verification: PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_evolution_followthrough_packet.py --json-out support/evidence/MGMT-EVO-005/rollback-freeze-followthrough.json -> PASS; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_run_evolution_followthrough_packet.py -q -> 3 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/run_evolution_followthrough_packet.py scripts/test_run_evolution_followthrough_packet.py -> PASS; git diff --check task files -> clean. Worktree has unrelated dirty files from other tasks; review only listed task-owned files.",
-      "last_update": "2026-05-15T17:51:25Z"
+      "next": "Review approved: rollback/freeze follow-through packet is correct and complete. Freeze and rollback companion paths are cleanly separated, RuntimeManagerService in-memory replay passes all assertions, safety assertions complete. Returning to Codex for finalization.",
+      "last_update": "2026-05-15T17:58:09Z",
+      "review_notes_zh": [
+        "審查通過：freeze/rollback follow-through 路徑分離清晰，freeze_stage 與 pause_then_replace rollback companion 各自正確走不同 follow-through 分支。RuntimeManagerService in-memory replay 全部 assertions 為 true。安全斷言完整，無 broker session、無 live execution、無 capital binding mutation。3 tests passed，py_compile PASS，evidence JSON 一致。"
+      ]
     },
     {
       "id": "MGMT-EVO-007",
@@ -303,12 +289,17 @@
       "phase": "Track E / EPIC-06 Evolution Follow-Through",
       "owner": "Claude",
       "reviewer": "Codex2",
-      "status": "in_progress",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Implementing evolution OODA loop closure: building complete evolution-type OodaLoopPacket that closes the EPIC-06 follow-through chain (observe->orient->decide->act->learn->closed), with script, tests, and evidence packet.",
-      "last_update": "2026-05-15T17:51:38Z"
+      "next": "Review approved by Codex2. No blocking findings. Verified py_compile, focused pytest (45 passed), temp-output closure script PASS, committed evidence invariants PASS, and git diff --check clean for task-owned files. Owner Claude should run closeout finalization for review_approved -> done.",
+      "last_update": "2026-05-15T18:00:19Z",
+      "review_notes_zh": [
+        "Reviewed task-owned commit 5a05ef95 for scripts/run_evolution_ooda_loop_closure.py, scripts/test_run_evolution_ooda_loop_closure.py, and the two evidence JSONs.",
+        "No blocking findings: packet closes open->observing->oriented->decided->acted->evolving->closed, loop_type=evolution, environment=paper, live_capital_side_effects=false, replay record count=7, and task/milestone evidence copies match.",
+        "Verification passed: py_compile on script/test; pytest scripts/test_run_evolution_ooda_loop_closure.py -q -> 45 passed; closure script run with temp json/milestone outputs -> PASS no validation errors; jq invariants on committed evidence -> PASS; git diff --check on task files -> PASS."
+      ]
     },
     {
       "id": "MGMT-SAFE-003",
@@ -343,14 +334,20 @@
       "title": "command idempotency regression",
       "summary_zh": null,
       "phase": "Track E / EPIC-07 Safety / Fail-Closed Regression",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "todo",
+      "owner": "Claude2",
+      "reviewer": "Claude",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: ERROR: test_run_command_idempotency_regression (unittest.loader._FailedTest.test_run_command_idempotency_regression). Task returned to todo until Claude starts a fresh run.",
-      "last_update": "2026-05-15T16:22:24Z"
+      "next": "Review approved: command idempotency regression smoke passes all 5 checks. Returning to Claude2 for closeout finalization.",
+      "last_update": "2026-05-15T18:04:49Z",
+      "review_notes_zh": [
+        "審查通過：5/5 smoke checks passed — first-command-accepted(202), same-key-same-payload-replays(同一 receipt), same-key-different-payload-conflicts(409 IDEMPOTENCY_CONFLICT, 含 foundation_error 與 audit_action), body-idempotency-key-rejected(400 INVALID_REQUEST), single-durable-command-record(1 筆，idempotency status=succeeded，trace/audit 完整)。",
+        "無 live broker、runtime mutation、capital binding、deployment side effects；context manager 隔離確保 idempotency ledger 在每次測試後清除。",
+        "Verification: py_compile PASS；pytest 2 passed；smoke 5/5 passed；git diff --check PASS。返回 Claude2 進行 closeout finalization。"
+      ],
+      "review_file": "support/reviews/MGMT-SAFE-006-review-claude.md"
     }
   ],
   "handoffs": [
@@ -389,15 +386,6 @@
       "resolved_at": "2026-05-15T16:28:36Z"
     },
     {
-      "task_id": "MGMT-EVO-002",
-      "from": "Copilot",
-      "to": "Codex",
-      "message": "Helper-claimed by Codex while Copilot is dispatch-paused.",
-      "status": "done",
-      "created_at": "2026-05-15T16:35:20Z",
-      "resolved_at": "2026-05-15T16:35:52Z"
-    },
-    {
       "task_id": "MGMT-SAFE-005",
       "from": "Copilot",
       "to": "Codex",
@@ -414,14 +402,6 @@
       "status": "done",
       "created_at": "2026-05-15T16:42:47Z",
       "resolved_at": "2026-05-15T16:43:15Z"
-    },
-    {
-      "task_id": "MGMT-EVO-002",
-      "from": "Codex",
-      "to": "Copilot",
-      "message": "Ready for review: added POST /api/evolution/proposals/from-incident to derive a proposed EvolutionDecision from canonical IncidentCase/Postmortem evidence, including lineage links, postmortem back-link reuse, safety metadata, and no runtime/broker/capital mutation. Task-owned files: services/evolution/models.py, services/evolution/main.py, services/evolution/test_evolution_service.py. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/evolution/models.py services/evolution/main.py services/evolution/test_evolution_service.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/evolution/test_evolution_service.py -q -> 57 passed.",
-      "status": "pending",
-      "created_at": "2026-05-15T16:42:48Z"
     },
     {
       "task_id": "MGMT-SAFE-005",
@@ -450,15 +430,6 @@
       "resolved_at": "2026-05-15T17:06:17Z"
     },
     {
-      "task_id": "MGMT-BROKER-006",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-15T17:17:57Z",
-      "resolved_at": "2026-05-15T17:18:57Z"
-    },
-    {
       "task_id": "MGMT-EVO-003",
       "from": "Claude2",
       "to": "Codex",
@@ -475,15 +446,6 @@
       "status": "done",
       "created_at": "2026-05-15T17:19:40Z",
       "resolved_at": "2026-05-15T17:35:32Z"
-    },
-    {
-      "task_id": "MGMT-BROKER-006",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-15T17:27:31Z",
-      "resolved_at": "2026-05-15T17:28:23Z"
     },
     {
       "task_id": "MGMT-EVO-003",
@@ -504,15 +466,6 @@
       "resolved_at": "2026-05-15T17:35:32Z"
     },
     {
-      "task_id": "MGMT-BROKER-006",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Ready for review: integrated MGMT-BROKER-004 Shioaji sandbox evidence into EP5 canary human-gate readiness. Readiness CLI now accepts --task-id and requires --shioaji-evidence-packet-json for ready packets; packet acceptance validates shioaji_sandbox_evidence_packet.v1, broker/evidence path consistency, passed acceptance checks, closed OODA packet, live-disabled gate, and no real-capital proof. Updated SAFE-004 human-gate smoke to cover missing Shioaji evidence. Generated support/evidence/MGMT-BROKER-006 with checklist, datasource smoke, canary plan, and human-gate packet; summary is ready_for_review with broker_sandbox_smoke_status=passed and shioaji_sandbox_evidence_packet_status=passed. Task-owned files: scripts/run_ep5_canary_readiness.py, scripts/test_run_ep5_canary_readiness.py, scripts/run_canary_human_gate_smoke.py, scripts/test_run_canary_human_gate_smoke.py, docs/deployment/ep5-canary-ready/README.md, docs/deployment/ep5-canary-ready/operator-approval-checklist.md, support/evidence/MGMT-BROKER-006/, refreshed support/evidence/MGMT-SAFE-004/. Verification: PYTHONPATH=scripts PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_run_ep5_canary_readiness.py scripts/test_run_canary_human_gate_smoke.py -q -> 11 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile readiness/smoke scripts and tests -> passed; PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/broker/shioaji/test_evidence_packet.py -q -> 4 passed; git diff --check task files -> passed; jq checks confirmed MGMT-BROKER-006 human-gate summary ready_for_review/passed/passed. No live broker, runtime rollback, deployment, or capital-binding side effects were executed.",
-      "status": "done",
-      "created_at": "2026-05-15T17:39:01Z",
-      "resolved_at": "2026-05-15T17:46:31Z"
-    },
-    {
       "task_id": "MGMT-OODA-006",
       "from": "Codex2",
       "to": "Claude2",
@@ -531,24 +484,6 @@
       "resolved_at": "2026-05-15T17:42:38Z"
     },
     {
-      "task_id": "MGMT-BROKER-006",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Review changes requested: see support/reviews/MGMT-BROKER-006-review-codex.md. Validator must reject non-closed OODA packet status and empty/missing Shioaji acceptance checks before readiness packet can be approved. Focused tests pass, but negative gate coverage is missing.",
-      "status": "done",
-      "created_at": "2026-05-15T17:46:31Z",
-      "resolved_at": "2026-05-15T17:46:31Z"
-    },
-    {
-      "task_id": "MGMT-BROKER-006",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-15T17:48:32Z",
-      "resolved_at": "2026-05-15T17:48:32Z"
-    },
-    {
       "task_id": "MGMT-OODA-006",
       "from": "Claude2",
       "to": "Codex",
@@ -562,16 +497,94 @@
       "from": "Codex2",
       "to": "Codex",
       "message": "Ready for review: wired Management evolution review/approval linkage. Updated BFF path/client adapters for GET /api/v1/operator/mutation-review/{decision_id}, added OODA drawer links from evolution_decision_id to mutation review and approval_decision_id to /management/approvals, and covered both client adapter and drawer links in focused tests. Task-owned Pantheon mirror files: execute-plans/src/lib/bff-v1/paths.ts, execute-plans/src/lib/bff/client.ts, execute-plans/src/lib/bff/__tests__/client.test.ts, execute-plans/src/management/components/ooda/OodaPacketDrawer.tsx, execute-plans/src/management/components/ooda/OodaPacketDrawer.test.tsx. Actual execute-plans repo verified with npm test -- src/lib/bff/__tests__/client.test.ts src/management/components/ooda/OodaPacketDrawer.test.tsx (23 passed) and npm run build (passed; existing Browserslist/chunk warnings only).",
-      "status": "pending",
-      "created_at": "2026-05-15T17:48:50Z"
+      "status": "done",
+      "created_at": "2026-05-15T17:48:50Z",
+      "resolved_at": "2026-05-15T18:03:18Z"
     },
     {
       "task_id": "MGMT-EVO-005",
       "from": "Codex",
       "to": "Claude",
       "message": "Ready for review: added local rollback/freeze follow-through evidence packet for MGMT-EVO-005. Task-owned files: scripts/run_evolution_followthrough_packet.py, scripts/test_run_evolution_followthrough_packet.py, support/evidence/MGMT-EVO-005/README.md, support/evidence/MGMT-EVO-005/rollback-freeze-followthrough.json. The packet traces approved high-risk freeze to deployment freeze_stage and runtime pause_then_replace rollback companion, then replays RuntimeManagerService.evolution_freeze() and rollback() against in-memory stores only. Safety assertions: no broker session, no live execution, no capital-binding mutation, runtime-manager remains binding writer. Verification: PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_evolution_followthrough_packet.py --json-out support/evidence/MGMT-EVO-005/rollback-freeze-followthrough.json -> PASS; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_run_evolution_followthrough_packet.py -q -> 3 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/run_evolution_followthrough_packet.py scripts/test_run_evolution_followthrough_packet.py -> PASS; git diff --check task files -> clean. Worktree has unrelated dirty files from other tasks; review only listed task-owned files.",
+      "status": "done",
+      "created_at": "2026-05-15T17:51:25Z",
+      "resolved_at": "2026-05-15T17:58:09Z"
+    },
+    {
+      "task_id": "MGMT-EVO-007",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Ready for review: implemented evolution OODA loop closure for MGMT-EVO-007. Built complete evolution-type OodaLoopPacket traversing all stages (observe->orient->decide->act->learn->closed) closing the EPIC-06 follow-through chain. Task-owned files: scripts/run_evolution_ooda_loop_closure.py, scripts/test_run_evolution_ooda_loop_closure.py, support/evidence/MGMT-EVO-007/evolution-ooda-loop-closure.json, support/evidence/MGMT-OODA-M6-evolution-followthrough.json. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile => PASS; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_run_evolution_ooda_loop_closure.py -q => 45 passed; PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_evolution_ooda_loop_closure.py => PASS (no validation errors, status=closed, loop_type=evolution, 7 replay records); git diff --check task files => PASS. No live broker, runtime mutation, capital binding, or deployment side effects.",
+      "status": "done",
+      "created_at": "2026-05-15T17:56:08Z",
+      "resolved_at": "2026-05-15T18:00:19Z"
+    },
+    {
+      "task_id": "MGMT-SAFE-006",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Helper-claimed by idle Claude2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:56:33Z",
+      "resolved_at": "2026-05-15T17:56:47Z"
+    },
+    {
+      "task_id": "MGMT-OODA-006",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Ready for review: completed MGMT-OODA-006 OODA drawer safety-display rework. Pantheon mirror and /home/lupin/code/execute-plans now agree on the three-state capital safety helper oodaCapitalSafetyState: no_side_effects, live_asserted, and non_live_unsafe. OodaPacketDrawer now renders distinct badge tone/label/data-safety for each state, so live packets with live_capital_side_effects=true no longer show the green no-side-effects badge, while non-live packets asserting live side effects render unsafe. Added focused drawer regression coverage for live/asserted and non-live/asserted cases while preserving packet fetch, stage replay, evidence refs, linked objects, and BFF OODA adapters. Task-owned files touched: execute-plans/src/lib/ooda/packets.ts, execute-plans/src/management/components/ooda/OodaPacketDrawer.tsx, execute-plans/src/management/components/ooda/OodaPacketDrawer.test.tsx, plus existing MGMT-OODA-006 BFF adapter artifacts. Verification in /home/lupin/code/execute-plans: npm test -- --run src/management/components/ooda/OodaPacketDrawer.test.tsx src/lib/bff/__tests__/client.test.ts -> 25 passed; npm run test:contract -> 5 passed; npm run lint -- task files -> 0 errors, existing 52 warnings; npm run build -> passed with existing Browserslist/chunk warnings; pantheon task files git diff --check passed.",
+      "status": "done",
+      "created_at": "2026-05-15T17:57:28Z",
+      "resolved_at": "2026-05-15T18:04:22Z"
+    },
+    {
+      "task_id": "MGMT-EVO-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: rollback/freeze follow-through packet is correct and complete. Freeze and rollback companion paths are cleanly separated, RuntimeManagerService in-memory replay passes all assertions, safety assertions complete. Returning to Codex for finalization.",
       "status": "pending",
-      "created_at": "2026-05-15T17:51:25Z"
+      "created_at": "2026-05-15T17:58:09Z"
+    },
+    {
+      "task_id": "MGMT-SAFE-006",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Ready for review: command idempotency regression smoke. Proves BFF final-contract route enforces Idempotency-Key header: (1) first command accepted 202, (2) same-key same-payload replays original receipt, (3) same-key changed-payload returns 409 IDEMPOTENCY_CONFLICT, (4) body-level idempotencyKey rejected 400, (5) single durable record with complete trace/audit/idempotency metadata. Task-owned files: scripts/run_command_idempotency_regression.py, scripts/test_run_command_idempotency_regression.py, support/evidence/MGMT-SAFE-006/command-idempotency-regression.json. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_run_command_idempotency_regression.py -v => 2 passed; PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_command_idempotency_regression.py --json-out evidence => 5/5 passed; git diff --check task files => clean. No live broker, runtime mutation, capital binding, or deployment side effects.",
+      "status": "done",
+      "created_at": "2026-05-15T17:59:08Z",
+      "resolved_at": "2026-05-15T18:04:49Z"
+    },
+    {
+      "task_id": "MGMT-EVO-007",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review approved by Codex2. No blocking findings. Verified py_compile, focused pytest (45 passed), temp-output closure script PASS, committed evidence invariants PASS, and git diff --check clean for task-owned files. Owner Claude should run closeout finalization for review_approved -> done.",
+      "status": "pending",
+      "created_at": "2026-05-15T18:00:19Z"
+    },
+    {
+      "task_id": "MGMT-EVO-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: mutation-review read adapter and OODA review/approval links verified; focused Vitest 25 passed and npm run build passed with existing warnings only. Owner Codex2 should finalize closeout.",
+      "status": "pending",
+      "created_at": "2026-05-15T18:03:18Z"
+    },
+    {
+      "task_id": "MGMT-OODA-006",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: three-state capital safety model (no_side_effects/live_asserted/non_live_unsafe) is correctly implemented and tested. Badge rendering, evolution links, OODA BFF adapter, and mock-mode safety all pass review. Returning to owner Codex for closeout finalization.",
+      "status": "pending",
+      "created_at": "2026-05-15T18:04:22Z"
+    },
+    {
+      "task_id": "MGMT-SAFE-006",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: command idempotency regression smoke passes all 5 checks. Returning to Claude2 for closeout finalization.",
+      "status": "pending",
+      "created_at": "2026-05-15T18:04:49Z"
     }
   ],
   "blockers": [
@@ -595,21 +608,21 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 2,
-      "active": 1,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 2
-    },
-    "Claude2": {
-      "total": 0,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
-      "review_approved": 0,
+      "review_approved": 1,
+      "todo": 0
+    },
+    "Claude2": {
+      "total": 1,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 1,
       "todo": 0
     },
     "Gemini": {
@@ -631,21 +644,21 @@
       "todo": 0
     },
     "Codex": {
-      "total": 6,
-      "active": 6,
+      "total": 4,
+      "active": 2,
       "blocked": 0,
       "done": 0,
-      "review": 4,
-      "review_approved": 0,
-      "todo": 2
+      "review": 2,
+      "review_approved": 2,
+      "todo": 0
     },
     "Codex2": {
       "total": 1,
-      "active": 1,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 1,
-      "review_approved": 0,
+      "review": 0,
+      "review_approved": 1,
       "todo": 0
     },
     "Copilot": {
