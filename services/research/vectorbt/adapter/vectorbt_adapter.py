@@ -74,8 +74,7 @@ class PreparedVectorbtDataset:
 class BacktestConfig:
     version: str = "1.0.0"
     requested_by: str = "Claude"
-    short_window: int = 5
-    long_window: int = 20
+    strategy_params: dict[str, Any] = field(default_factory=dict)
     init_cash: float = 100_000.0
     fees: float = 0.001
     storage_backend: str = "object_store"
@@ -234,11 +233,13 @@ def _sma(closes: list[float], window: int) -> list[float | None]:
 def _compute_instrument_metrics(
     bars: tuple[tuple[float, float, float, float, float], ...],
     config: BacktestConfig,
+    short_window: int,
+    long_window: int,
 ) -> dict[str, Any]:
     """MA-crossover backtest on a single instrument's OHLCV bars."""
     closes = [b[3] for b in bars]
-    short_ma = _sma(closes, config.short_window)
-    long_ma = _sma(closes, config.long_window)
+    short_ma = _sma(closes, short_window)
+    long_ma = _sma(closes, long_window)
 
     cash = config.init_cash
     shares = 0.0
@@ -318,11 +319,13 @@ class StubVectorbtBackend:
     """
 
     def run(self, dataset: PreparedVectorbtDataset, config: BacktestConfig) -> BacktestRunResult:
+        short_window = config.strategy_params.get("short_window", 5)
+        long_window = config.strategy_params.get("long_window", 20)
         run_id = f"vbt-stub-{uuid.uuid4().hex[:12]}"
         per_instrument: dict[str, dict[str, Any]] = {}
         for inst in dataset.instruments:
             bars = dataset.ohlcv_by_instrument[inst]
-            per_instrument[inst] = _compute_instrument_metrics(bars, config)
+            per_instrument[inst] = _compute_instrument_metrics(bars, config, short_window, long_window)
 
         # Aggregate: mean of per-instrument metrics
         returns = [m["total_return"] for m in per_instrument.values()]
@@ -371,14 +374,17 @@ class VectorbtBackend:
                 "vectorbt backend unavailable. Install services/research/vectorbt/requirements.txt."
             ) from exc
 
+        short_window = config.strategy_params.get("short_window", 5)
+        long_window = config.strategy_params.get("long_window", 20)
+
         run_id = f"vbt-real-{uuid.uuid4().hex[:12]}"
         per_instrument: dict[str, dict[str, Any]] = {}
 
         for inst in dataset.instruments:
             bars = dataset.ohlcv_by_instrument[inst]
             closes = pd.Series([b[3] for b in bars])
-            short_ma = closes.rolling(config.short_window).mean()
-            long_ma = closes.rolling(config.long_window).mean()
+            short_ma = closes.rolling(short_window).mean()
+            long_ma = closes.rolling(long_window).mean()
             entries = (short_ma > long_ma) & (short_ma.shift(1) <= long_ma.shift(1))
             exits = (short_ma < long_ma) & (short_ma.shift(1) >= long_ma.shift(1))
             pf = vbt.Portfolio.from_signals(
@@ -452,8 +458,7 @@ def _build_artifact_bundle(
         "dataset_summary": dataset.dataset_summary(),
         "backtest_config": {
             "version": config.version,
-            "short_window": config.short_window,
-            "long_window": config.long_window,
+            "strategy_params": config.strategy_params,
             "init_cash": config.init_cash,
             "fees": config.fees,
             "requested_by": config.requested_by,
@@ -514,8 +519,7 @@ def _build_registry_entry(
             "framework_version": VECTORBT_VERSION_PIN,
             "backtest_backend": result.backend,
             "strategy": "ma_crossover",
-            "short_window": config.short_window,
-            "long_window": config.long_window,
+            "strategy_params": config.strategy_params,
             "num_instruments": dataset.num_instruments,
             "total_bars": dataset.total_bars,
             "data_frequency": dataset.data_frequency,

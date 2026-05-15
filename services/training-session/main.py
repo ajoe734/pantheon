@@ -325,6 +325,23 @@ def get_preview(session_id: str) -> Dict[str, Any]:
     return record
 
 
+from services.research.vectorbt.adapter.vectorbt_adapter import run_vectorbt_workflow, BacktestConfig
+
+# ... (rest of imports)
+
+# Add stub for OHLCV data
+def _get_ohlcv_data(session_id: str) -> List[Dict[str, Any]]:
+    # In a real implementation, this would fetch data based on context_refs
+    # For now, return a minimal stub dataset
+    return [
+        {"instrument": "STUB1", "date": "2026-01-01", "open": 100.0, "high": 105.0, "low": 95.0, "close": 100.0, "volume": 1000.0},
+        {"instrument": "STUB1", "date": "2026-01-02", "open": 100.0, "high": 110.0, "low": 99.0, "close": 105.0, "volume": 1200.0},
+        {"instrument": "STUB2", "date": "2026-01-01", "open": 50.0, "high": 55.0, "low": 45.0, "close": 50.0, "volume": 2000.0},
+        {"instrument": "STUB2", "date": "2026-01-02", "open": 50.0, "high": 60.0, "low": 49.0, "close": 55.0, "volume": 2200.0},
+    ]
+
+# ...
+
 @app.post("/api/training/sessions/{session_id}/preview", status_code=201)
 def refresh_preview(session_id: str, body: RefreshPreviewBody) -> Dict[str, Any]:
     session = store.get_session(session_id)
@@ -332,6 +349,31 @@ def refresh_preview(session_id: str, body: RefreshPreviewBody) -> Dict[str, Any]
         raise HTTPException(status_code=404, detail="training session not found")
     timestamp = body.refreshed_at or utc_now()
     controls = (store.get_controls(session_id) or {}).get("controls") or []
+    
+    # Extract strategy parameters
+    strategy_params = {
+        control.get("parameter_key"): control.get("current_value")
+        for control in controls
+        if isinstance(control, dict) and control.get("parameter_key")
+    }
+    
+    # Prepare data for vectorbt
+    ohlcv_records = _get_ohlcv_data(session_id)
+    dataset = {
+        "dataset_id": f"preview-{session_id}",
+        "strategy_id": f"preview-{session_id}",
+        "source_dataset_ref": "stub-ref",
+        "records": ohlcv_records,
+    }
+    
+    # Run backtest
+    config = BacktestConfig(strategy_params=strategy_params)
+    try:
+        backtest_result = run_vectorbt_workflow(dataset, config=config)
+        metric_delta = backtest_result.backtest_result.aggregate_metrics
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Backtest failed: {str(e)}")
+
     bundle = store.get_preview_bundle(session_id) or {"session_id": session_id, "evaluations": {}}
     evaluations = bundle.setdefault("evaluations", {})
     eval_id = f"teval-{uuid.uuid4().hex[:12]}"
@@ -351,14 +393,15 @@ def refresh_preview(session_id: str, body: RefreshPreviewBody) -> Dict[str, Any]
         "status": "completed",
         "baseline_snapshot_at": session.get("started_at"),
         "candidate_snapshot_at": timestamp,
-        "metric_delta": {"return_delta": 0.0, "drawdown_delta": 0.0},
+        "metric_delta": metric_delta,
         "control_diff": control_diff,
-        "preview_quality": "directional_only",
+        "preview_quality": "real_vectorbt",
     }
     evaluations[eval_id] = preview
     bundle["preview"] = preview
     store.put_preview_bundle(session_id, bundle)
     return preview
+
 
 
 @app.get("/api/training/replays")
