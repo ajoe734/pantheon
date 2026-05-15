@@ -1,0 +1,438 @@
+{
+  "generatedAt": "2026-05-13T18:54:37.186Z",
+  "overall": "fail",
+  "auditDir": ".lovable/audits",
+  "runUrl": "",
+  "checklistOut": "/tmp/test-checklist2.md",
+  "gates": {
+    "0": [
+      {
+        "label": "`execute-plans` branch is clean and points to release candidate SHA.",
+        "status": "fail",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans",
+        "note": "tracked worktree changes present"
+      },
+      {
+        "label": "`pantheon` backend/BFF SHA is recorded.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans",
+        "note": "set PANTHEON_BFF_SHA or PANTHEON_BACKEND_SHA"
+      },
+      {
+        "label": "`PANTHEON_FE_BASE_URL` points to intended Lovable deployment.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans",
+        "note": "missing"
+      },
+      {
+        "label": "`PANTHEON_BFF_BASE_URL` points to intended BFF.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans",
+        "note": "missing"
+      },
+      {
+        "label": "No obsolete BFF URL appears in hosted JS bundle.",
+        "status": "missing",
+        "owner": "Gemini",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/hosted-browser-bff-probe.log",
+        "note": "hosted browser probe markdown evidence missing"
+      },
+      {
+        "label": "Auth token or test OIDC path available for authenticated smoke.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans",
+        "note": "PANTHEON_BFF_SMOKE_BEARER_TOKEN or test OIDC path missing"
+      }
+    ],
+    "1": [
+      {
+        "label": "`npm ci` completed.",
+        "status": "missing",
+        "owner": "Gemini",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/npm-ci.log",
+        "note": "step outcome missing"
+      },
+      {
+        "label": "`npm run lint` passes.",
+        "status": "missing",
+        "owner": "Gemini",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/npm-run-lint.log",
+        "note": "step outcome missing"
+      },
+      {
+        "label": "`npm run test` passes.",
+        "status": "missing",
+        "owner": "Gemini",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/npm-run-test.log",
+        "note": "step outcome missing"
+      },
+      {
+        "label": "`npm run build` passes.",
+        "status": "missing",
+        "owner": "Gemini",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/npm-run-build.log",
+        "note": "step outcome missing"
+      },
+      {
+        "label": "`npm run test:contract` passes.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/contract-drift.log",
+        "note": "step outcome missing"
+      }
+    ],
+    "2": [
+      {
+        "label": "`paths.ts` canonical paths exist in OpenAPI.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/contract-drift.log",
+        "note": "contract drift outcome missing"
+      },
+      {
+        "label": "`ActionCommandStatus` is named schema.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/contract-drift.log",
+        "note": "contract drift outcome missing"
+      },
+      {
+        "label": "ErrorCode list matches 26-code master.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/contract-drift.log",
+        "note": "contract drift outcome missing"
+      },
+      {
+        "label": "SSE channels match AsyncAPI.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/contract-drift.log",
+        "note": "contract drift outcome missing"
+      },
+      {
+        "label": "EvidenceKind capability map matches DTO catalog.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/contract-drift.log",
+        "note": "contract drift outcome missing"
+      },
+      {
+        "label": "`correlationId` required in backend-facing AsyncAPI.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/contract-drift.log",
+        "note": "contract drift outcome missing"
+      }
+    ],
+    "3": [
+      {
+        "label": "Anonymous: `/health` or `/healthz` returns 200.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/bff-route-probe-anonymous.log",
+        "note": "anonymous route probe markdown evidence missing"
+      },
+      {
+        "label": "Anonymous: `/openapi.json` returns 200.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/bff-route-probe-anonymous.log",
+        "note": "anonymous route probe markdown evidence missing"
+      },
+      {
+        "label": "Anonymous: `/bff/events/stream` returns 200 or proper stream open.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/bff-route-probe-anonymous.log",
+        "note": "anonymous route probe markdown evidence missing"
+      },
+      {
+        "label": "Anonymous: canonical protected routes return 401/403, not 404.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/bff-route-probe-anonymous.log",
+        "note": "anonymous route probe markdown evidence missing"
+      },
+      {
+        "label": "Anonymous: no canonical route returns 404.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/bff-route-probe-anonymous.log",
+        "note": "anonymous route probe markdown evidence missing"
+      },
+      {
+        "label": "Authenticated: `/bff/me` returns MeResponse.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/bff-authenticated-live-smoke.log",
+        "note": "authenticated smoke markdown evidence missing"
+      },
+      {
+        "label": "Authenticated: entity list endpoints return ListResponse.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/bff-authenticated-live-smoke.log",
+        "note": "authenticated smoke markdown evidence missing"
+      },
+      {
+        "label": "Authenticated: v5 endpoints return expected DTO envelope.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/bff-authenticated-live-smoke.log",
+        "note": "authenticated smoke markdown evidence missing"
+      },
+      {
+        "label": "Authenticated: write/precondition tests return expected BffErrorEnvelope.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/bff-authenticated-live-smoke.log",
+        "note": "authenticated smoke markdown evidence missing"
+      },
+      {
+        "label": "Authenticated: safe write / dry-run endpoints do not create live capital side effects.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/bff-authenticated-live-smoke.log",
+        "note": "authenticated smoke markdown evidence missing"
+      }
+    ],
+    "4": [
+      {
+        "label": "Hosted page loads.",
+        "status": "missing",
+        "owner": "Gemini",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/hosted-browser-bff-probe.log",
+        "note": "hosted browser probe markdown evidence missing"
+      },
+      {
+        "label": "Hosted JS bundle contains intended BFF URL.",
+        "status": "missing",
+        "owner": "Gemini",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/hosted-browser-bff-probe.log",
+        "note": "hosted browser probe markdown evidence missing"
+      },
+      {
+        "label": "Hosted JS bundle does not contain obsolete BFF URL.",
+        "status": "missing",
+        "owner": "Gemini",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/hosted-browser-bff-probe.log",
+        "note": "hosted browser probe markdown evidence missing"
+      },
+      {
+        "label": "CORS preflight passes.",
+        "status": "missing",
+        "owner": "Gemini",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/hosted-browser-bff-probe.log",
+        "note": "hosted browser probe markdown evidence missing"
+      },
+      {
+        "label": "Browser receives responses for all BFF requests.",
+        "status": "missing",
+        "owner": "Gemini",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/hosted-browser-bff-probe.log",
+        "note": "hosted browser probe markdown evidence missing"
+      },
+      {
+        "label": "No failed BFF requests.",
+        "status": "missing",
+        "owner": "Gemini",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/hosted-browser-bff-probe.log",
+        "note": "hosted browser probe markdown evidence missing"
+      },
+      {
+        "label": "No CORS console errors.",
+        "status": "missing",
+        "owner": "Gemini",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/hosted-browser-bff-probe.log",
+        "note": "hosted browser probe markdown evidence missing"
+      }
+    ],
+    "5": [
+      {
+        "label": "F01 Startup / Session Bootstrap.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "",
+        "note": "F01 not found in Playwright JSON report"
+      },
+      {
+        "label": "F02 Control Room.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "",
+        "note": "F02 not found in Playwright JSON report"
+      },
+      {
+        "label": "F03 Execution Loop.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "",
+        "note": "F03 not found in Playwright JSON report"
+      },
+      {
+        "label": "F04 Optimization Loop.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "",
+        "note": "F04 not found in Playwright JSON report"
+      },
+      {
+        "label": "F05 Sentinel.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "",
+        "note": "F05 not found in Playwright JSON report"
+      },
+      {
+        "label": "F06 HIQ.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "",
+        "note": "F06 not found in Playwright JSON report"
+      },
+      {
+        "label": "F07 Entity Registry.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "",
+        "note": "F07 not found in Playwright JSON report"
+      },
+      {
+        "label": "F08 Create Write Intent.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "",
+        "note": "F08 not found in Playwright JSON report"
+      },
+      {
+        "label": "F09 High-Risk Confirm.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "",
+        "note": "F09 not found in Playwright JSON report"
+      },
+      {
+        "label": "F10 Rollback Saga, or marked backend-not-ready.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "",
+        "note": "F10 not found in Playwright JSON report"
+      },
+      {
+        "label": "F11 Handoff SLA, or marked backend-not-ready.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "",
+        "note": "F11 not found in Playwright JSON report"
+      },
+      {
+        "label": "F12 Approval Governance.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "",
+        "note": "F12 not found in Playwright JSON report"
+      },
+      {
+        "label": "F13 Agora.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "",
+        "note": "F13 not found in Playwright JSON report"
+      },
+      {
+        "label": "F14 SSE reconnect.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "",
+        "note": "F14 not found in Playwright JSON report"
+      },
+      {
+        "label": "F15 strict/hybrid fallback.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "",
+        "note": "F15 not found in Playwright JSON report"
+      },
+      {
+        "label": "F16 audit/correlation.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "",
+        "note": "F16 not found in Playwright JSON report"
+      }
+    ],
+    "6": [
+      {
+        "label": "v5 axe smoke critical/serious = 0.",
+        "status": "missing",
+        "owner": "Codex2",
+        "evidence": "",
+        "note": "axe/a11y report missing or last run failed"
+      },
+      {
+        "label": "overlay focus handling works.",
+        "status": "missing",
+        "owner": "Codex2",
+        "evidence": "",
+        "note": "focus evidence missing"
+      },
+      {
+        "label": "reduced motion respected.",
+        "status": "missing",
+        "owner": "Codex2",
+        "evidence": "",
+        "note": "reduced-motion evidence missing"
+      },
+      {
+        "label": "Control Room and entity list are within performance budget.",
+        "status": "missing",
+        "owner": "Codex2",
+        "evidence": "",
+        "note": "performance evidence missing"
+      },
+      {
+        "label": "SSE stream does not trigger unbounded rerender.",
+        "status": "missing",
+        "owner": "Codex2",
+        "evidence": "",
+        "note": "SSE rerender evidence missing"
+      }
+    ],
+    "7": [
+      {
+        "label": "All critical gates pass.",
+        "status": "fail",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/release-gate-summary.json",
+        "note": "55 failing or missing check(s)"
+      },
+      {
+        "label": "Exceptions documented with owner and expiry.",
+        "status": "fail",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits/release-gate-summary.json",
+        "note": "exceptions missing"
+      },
+      {
+        "label": "Evidence written to `.lovable/audits/`.",
+        "status": "pass",
+        "owner": "",
+        "evidence": "/home/lupin/code/pantheon/execute-plans/.lovable/audits",
+        "note": "2 audit file(s) found"
+      },
+      {
+        "label": "Backend SHA + frontend SHA + BFF URL recorded.",
+        "status": "missing",
+        "owner": "Codex",
+        "evidence": "/home/lupin/code/pantheon/execute-plans",
+        "note": "one or more release identifiers missing"
+      }
+    ]
+  }
+}

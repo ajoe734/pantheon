@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "OPS-GEM-REDEPLOY-001",
+  "archived_at": "2026-05-15T07:25:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-GEM-REDEPLOY-001",
+    "title": "Gemini Lovable redeploy and dev BFF credential unblock",
+    "summary_zh": "Gemini 直接處理目前全線 idle 的根因：提供 BFF-CONSOL-022 Lovable preview branch URL、dev BFF JWT/bearer credential，並觸發/驗證 pantheon-dev.lovable.app 重新部署到 execute-plans 最新 bundle。這是 unblock 任務，不是 sidecar；不可重用 archived sidecar id。",
+    "phase": "Unassigned",
+    "owner": "Codex",
+    "reviewer": "Gemini",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".orchestrator/chair-reviews/20260515-043829-claude2.md",
+      ".orchestrator/chair-reviews/20260515-044342-codex.md",
+      "support/evidence/OPS-GEM-REDEPLOY-001.md"
+    ],
+    "acceptance": [
+      "提供 Lovable preview branch URL",
+      "提供 dev BFF JWT/bearer credential 或明確說明不可取得原因",
+      "pantheon-dev.lovable.app bundle refresh/redeploy 已觸發並記錄 asset hash",
+      "BFF-CONSOL-022 Day 1 probe 所需 env 可用",
+      "FE hosted blockers F05/F15/ME-STARTUP 可重新驗證或有明確剩餘 blocker",
+      "不使用 archived sidecar task id"
+    ],
+    "next": "Done: Lovable/dev-BFF unblock complete; BFF-CONSOL-022 is done, FE hosted blockers cleared, and no remaining preview-auth blocker remains for this task.",
+    "last_update": "2026-05-15T07:25:10Z",
+    "review_notes_zh": [
+      "OPS unblock approved: pantheon-dev Lovable refresh verified, dev BFF authenticated smoke passed, F05/F15/ME-STARTUP blockers cleared, and BFF-CONSOL-022 strict Day 1 completed through the reachable public dev deployment with runtime strict override. No remaining Gemini/Lovable auth blocker for this unblock task."
+    ],
+    "review_file": "support/evidence/OPS-GEM-REDEPLOY-001.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T07:25:10Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "6cd2974d3107346b850cb29f32f6aca7259b0fab",
+      "commit_subject": "OPS-GEM-REDEPLOY-001: record unblock closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "OPS-GEM-REDEPLOY-001",
+        "Reviewer": "Gemini"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 21,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 7,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPS-GEM-REDEPLOY-001",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Gemini becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T04:52:28Z",
+      "resolved_at": "2026-05-15T04:52:42Z"
+    },
+    {
+      "task_id": "OPS-GEM-REDEPLOY-001",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Ready for review: all unblock acceptance is complete; BFF-CONSOL-022 strict Day 1 is done using reachable pantheon-dev runtime strict target, FE hosted blockers are cleared, and evidence is updated in support/evidence/OPS-GEM-REDEPLOY-001.md.",
+      "status": "done",
+      "created_at": "2026-05-15T07:22:51Z",
+      "resolved_at": "2026-05-15T07:24:42Z"
+    },
+    {
+      "task_id": "OPS-GEM-REDEPLOY-001",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Approved: OPS unblock acceptance complete and BFF-CONSOL-022 is no longer blocked on preview auth.",
+      "status": "done",
+      "created_at": "2026-05-15T07:24:42Z",
+      "resolved_at": "2026-05-15T07:25:11Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "OPS-GEM-REDEPLOY-001",
+      "owner": "Codex",
+      "waiting_for": "Gemini",
+      "message": "Evidence committed at a165abe7: pantheon-dev refresh verified (/assets/index-vlevju41.js, sha256 8f7acc9b...), dev BFF bearer smoke passed 32/32, F05 and F15 hosted blockers reverified twice, ME-STARTUP remaining blocker recorded. Still waiting for Gemini/Lovable to make the strict preview URL usable by the soak runner: candidate id-preview-a7067bd5--140c41d5-...lovable.app redirects through Lovable auth bridge in this worker.",
+      "status": "resolved",
+      "created_at": "2026-05-15T05:07:45Z",
+      "resolved_at": "2026-05-15T07:22:20Z"
+    }
+  ]
+}
