@@ -3,7 +3,7 @@
   "sprint": "2026-05-13-ep5-qlib-bff-consolidation",
   "sprint_started_at": "2026-05-13T02:00:00Z",
   "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec，從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV，跑 production_activation_smoke.py --backend real，submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal，registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff，command envelope unification，non-empty fixture & detail journey，SSE real stream replay，strict env cutover，seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write 驗證通過後即可 deprecate 舊 receipt，後續 regression 追蹤不再以固定天數阻塞派工。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。",
-  "updated_at": "2026-05-14T13:32:49Z",
+  "updated_at": "2026-05-15T00:50:06Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -96,11 +96,11 @@
       ],
       "status": "working",
       "current_task_ids": [
-        "FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF"
+        "FE-INT-GATE-A11Y-BREADCRUMB"
       ],
       "branch": "feat/claude-execution-control",
-      "next": "Updated handoff packet with concrete BFF query gap details: live /bff/v5/loop-runs fields, approval evidence waterfall, operator row journey for approval/HIQ control, nextAction.href resolution chain, F04 spec verified contract shape, and confirmed parent facts (commit 8c7606cf, F04 3/3 passed, parent done). Ready for Gemini2 review.",
-      "last_update": "2026-05-14T13:32:49Z"
+      "next": "Investigating axe list/listitem violations: root cause is span.contents wrapper in PageHeader.tsx map. Current source already has Fragment fix in dd411e2. Verifying and completing.",
+      "last_update": "2026-05-15T00:42:33Z"
     },
     {
       "name": "Gemini",
@@ -110,11 +110,13 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "working",
+      "current_task_ids": [
+        "FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE"
+      ],
       "branch": "feat/gemini-research-runtime",
-      "next": "",
-      "last_update": "2026-05-14T11:58:08Z"
+      "next": "Supervisor auto-started FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE after successful dispatch.",
+      "last_update": "2026-05-15T00:34:28Z"
     },
     {
       "name": "Codex",
@@ -131,11 +133,11 @@
         "FE-INT-GATE-ALIGN-F05",
         "FE-INT-GATE-FOLLOWUP-F15-STRICT-LOVABLE",
         "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
-        "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE-SIDECAR-ACCEPTANCE"
+        "FE-INT-GATE-A11Y-CONTRAST"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Supervisor re-dispatched FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE-SIDECAR-ACCEPTANCE; task remains in progress.",
-      "last_update": "2026-05-14T13:30:05Z"
+      "next": "Located frontend worktree at /home/lupin/code/execute-plans; checking current token state and running focused F17 axe test before edits.",
+      "last_update": "2026-05-15T00:38:04Z"
     },
     {
       "name": "Codex2",
@@ -168,7 +170,7 @@
       ],
       "branch": "feat/grok-research-critique",
       "next": "Assignment created",
-      "last_update": "2026-05-14T13:23:53Z"
+      "last_update": "2026-05-14T13:59:20Z"
     },
     {
       "name": "Claude2",
@@ -177,13 +179,13 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "finalize",
+      "status": "reviewing",
       "current_task_ids": [
-        "FE-INT-GATE-ALIGN-F07-SIDECAR-REVIEW"
+        "FE-INT-GATE-A11Y-OVERLAY"
       ],
       "branch": "feat/claude2-execution-control",
-      "next": "Sidecar review packet complete and accurate.",
-      "last_update": "2026-05-14T13:01:59Z"
+      "next": "Implementation complete. Replaced requestAnimationFrame focus restoration with Radix onCloseAutoFocus in LoopRunDrawer (triggerRef prop + onCloseAutoFocus on SheetContent) and FindingDrawer in Sentinel (same pattern). execute-plans commit 2432970 on bff-luv-fe-006-dev-deploy. Verification: npx playwright test e2e/17-a11y-v5.spec.ts — 9 passed (4.6m). Both previously-failing focus tests now pass: (1) drawer focus returns to the trigger after keyboard close, (2) ESC closes only the top overlay before closing the underlying drawer. All 6 axe-clean tests also still pass.",
+      "last_update": "2026-05-15T00:50:06Z"
     },
     {
       "name": "Gemini2",
@@ -195,11 +197,12 @@
       ],
       "status": "blocked",
       "current_task_ids": [
-        "BFF-CONSOL-023"
+        "BFF-CONSOL-023",
+        "FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE"
       ],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Task is blocked waiting for Gemini to provide credentials for BFF-CONSOL-022.",
-      "last_update": "2026-05-14T13:08:35Z"
+      "next": "Acceptance packet created at support/sidecars/FE-INT-GATE-A11Y-CONTRAST/FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE.md and committed. Ready for review and incorporation into parent closeout.",
+      "last_update": "2026-05-15T00:35:55Z"
     }
   ],
   "tasks": [
@@ -458,107 +461,121 @@
       "waiting_for": "Gemini"
     },
     {
-      "id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE-SIDECAR-ACCEPTANCE",
-      "title": "Prepare FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE acceptance packet and dependency map",
-      "summary_zh": "平行支援 FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "id": "FE-INT-GATE-A11Y-CONTRAST",
+      "title": "Fix v5 design token color-contrast to 4.5:1",
+      "summary_zh": "F17 a11y axe 8 case 中 6 個是 design token 帶 serious color-contrast 違規（共 6 個 v5 頁面同樣破）。具體 token / element：(1) bg-env-research-bg 上 text-env-research ratio=3.17（需 ≥4.5），出現在 button#radix env switcher；(2) bg-status-warning/10 上 text-status-warning ratio=1.97，出現在 UNVERIFIED BFF badge；(3) bg-sidebar (#0f1729) 上 text-sidebar-foreground/50 ratio=3.63，出現在 SideNav 7 個 category header（閉環 OS / 核心管理 / 研究與治理 / 營運 / 能力管理 / 系統 / Legacy（舊版））；(4) bg-status-warning/15 上 text-status-warning ratio=1.91，出現在「受監控 · 觀察」status badge。修：(a) tailwind.config.ts / index.css token 調暗或調亮對比達 4.5:1；(b) sidebar category header 改用 /70 或更高的 foreground 透明度；(c) status badge 加深 text 顏色或改 background；(d) env switcher color pair 重選。修完後 axe 對 6 個 v5 頁面（control-room、research/execution/optimization loop、sentinel、interventions）critical+serious=0。Evidence path: execute-plans/.lovable/audits/baseline/postfix/pantheon-integration-evidence/test-results/ 17-a11y-v5-*color-contrast*/error-context.md",
       "phase": "Pantheon FE Integration Gate 2026-05-13",
       "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "in_progress",
+      "depends_on": [],
+      "artifacts": [
+        "execute-plans/tailwind.config.ts",
+        "execute-plans/src/index.css",
+        "execute-plans/src/platform/components/SideNav.tsx",
+        "execute-plans/src/platform/components/StatusBadge.tsx"
+      ],
+      "acceptance": [
+        "6 個 v5 頁面 axe critical+serious=0",
+        "color-contrast ratio 全部 ≥4.5",
+        "design token 改動有 commit 訊息 reference token name",
+        "本地 npx playwright test e2e/17-a11y-v5.spec.ts 全綠"
+      ],
+      "next": "Located frontend worktree at /home/lupin/code/execute-plans; checking current token state and running focused F17 axe test before edits.",
+      "last_update": "2026-05-15T00:38:04Z"
+    },
+    {
+      "id": "FE-INT-GATE-A11Y-BREADCRUMB",
+      "title": "Fix Breadcrumb list semantic violation",
+      "summary_zh": "F17 a11y axe serious 中 list + listitem 違規：Breadcrumb 元件用 <ol> 直接含 <li class=contents>，render 結果 ol 直接帶 span，違反 list 結構規則（cat.structure / wcag131）。實際 HTML：<ol class=\"flex flex-wrap items-center gap-1.5 break-words text-sm text-muted-foreground sm:gap-2.5\"> 內含 li.inline-flex 但 li 是 'display: contents'，造成 li 的 child span 變成 ol 的直接 child。修：(1) 不要用 li.contents（破壞 list 語意）；(2) 改 Breadcrumb 結構讓 <li> 真實是 ol 直接 child；(3) 或不用 ol/li，改用 <nav aria-label=\"breadcrumb\">+<ol>+<li> 但去掉 contents class。修完後 axe list/listitem 規則無 violation。Evidence: execute-plans/.lovable/audits/baseline/postfix/pantheon-integration-evidence/test-results/ 17-a11y-v5-*on-control-room*/error-context.md 內含 'List element has direct children that are not allowed: span'",
+      "phase": "Pantheon FE Integration Gate 2026-05-13",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "status": "in_progress",
+      "depends_on": [],
+      "artifacts": [
+        "execute-plans/src/platform/components/Breadcrumb.tsx",
+        "execute-plans/src/components/ui/breadcrumb.tsx"
+      ],
+      "acceptance": [
+        "<ol> 不再直接 children span",
+        "Breadcrumb 在所有 v5 頁面 axe list/listitem 規則 0 violation",
+        "nav aria-label='breadcrumb' 保持"
+      ],
+      "next": "Investigating axe list/listitem violations: root cause is span.contents wrapper in PageHeader.tsx map. Current source already has Fragment fix in dd411e2. Verifying and completing.",
+      "last_update": "2026-05-15T00:42:33Z"
+    },
+    {
+      "id": "FE-INT-GATE-A11Y-OVERLAY",
+      "title": "Fix drawer focus return and overlay stack ESC handling",
+      "summary_zh": "F17 a11y axe 中 2 個 focus / overlay-stack 行為違規：(1) drawer focus returns to the trigger after keyboard close — 按 ESC 關 RightDrawer 後 focus 沒回到 open 按鈕；(2) ESC closes only the top overlay before closing the underlying drawer — 多層 overlay (Drawer + nested Dialog) 按一次 ESC 兩個一起關，應該只關最上層。修：(1) RightDrawer / 任何 overlay 用 ref 記住 trigger element，close 時 trigger.focus()；(2) overlay manager（可能在 src/platform/overlays/ 或 src/lib/overlayStack.ts）改成 stack-based ESC：只把最上層的 close 拿掉、不冒泡。Evidence: execute-plans/.lovable/audits/baseline/postfix/pantheon-integration-evidence/test-results/ 17-a11y-v5-*focus*/error-context.md 與 17-a11y-v5-*top-overlay*/error-context.md",
+      "phase": "Pantheon FE Integration Gate 2026-05-13",
+      "owner": "Claude2",
+      "reviewer": "Codex2",
+      "status": "review",
+      "depends_on": [],
+      "artifacts": [
+        "execute-plans/src/platform/components/RightDrawer.tsx",
+        "execute-plans/src/platform/components/HighRiskConfirm.tsx",
+        "execute-plans/src/platform/overlays"
+      ],
+      "acceptance": [
+        "drawer ESC close 後 trigger 取回 focus",
+        "多層 overlay ESC 只關最上層",
+        "axe focus 規則 0 violation",
+        "本地 npx playwright test e2e/17-a11y-v5.spec.ts 對 focus + ESC 2 個 case 全綠"
+      ],
+      "next": "Implementation complete. Replaced requestAnimationFrame focus restoration with Radix onCloseAutoFocus in LoopRunDrawer (triggerRef prop + onCloseAutoFocus on SheetContent) and FindingDrawer in Sentinel (same pattern). execute-plans commit 2432970 on bff-luv-fe-006-dev-deploy. Verification: npx playwright test e2e/17-a11y-v5.spec.ts — 9 passed (4.6m). Both previously-failing focus tests now pass: (1) drawer focus returns to the trigger after keyboard close, (2) ESC closes only the top overlay before closing the underlying drawer. All 6 axe-clean tests also still pass.",
+      "last_update": "2026-05-15T00:50:06Z"
+    },
+    {
+      "id": "FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE",
+      "title": "Prepare FE-INT-GATE-A11Y-BREADCRUMB acceptance packet and dependency map",
+      "summary_zh": "平行支援 FE-INT-GATE-A11Y-BREADCRUMB，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+      "phase": "Pantheon FE Integration Gate 2026-05-13",
+      "owner": "Gemini",
       "reviewer": "Claude",
       "status": "in_progress",
       "depends_on": [],
       "artifacts": [
-        "support/sidecars/FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE/FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE-SIDECAR-ACCEPTANCE.md"
+        "support/sidecars/FE-INT-GATE-A11Y-BREADCRUMB/FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE.md"
       ],
       "acceptance": [
         "Create support artifacts only",
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Supervisor re-dispatched FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE-SIDECAR-ACCEPTANCE; task remains in progress.",
-      "last_update": "2026-05-14T13:30:05Z",
+      "next": "Supervisor auto-started FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE after successful dispatch.",
+      "last_update": "2026-05-15T00:34:28Z",
       "task_class": "sidecar",
       "auto_generated": true,
-      "helper_parent": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
+      "helper_parent": "FE-INT-GATE-A11Y-BREADCRUMB",
       "helper_kind": "acceptance_packet",
       "mutates_canonical": false,
       "auto_created_by": "supervisor-underutilization"
     },
     {
-      "id": "FE-INT-GATE-ALIGN-F07-SIDECAR-REVIEW",
-      "title": "Prepare FE-INT-GATE-ALIGN-F07 review packet and evidence summary",
-      "summary_zh": "平行支援 FE-INT-GATE-ALIGN-F07，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+      "id": "FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE",
+      "title": "Prepare FE-INT-GATE-A11Y-CONTRAST acceptance packet and dependency map",
+      "summary_zh": "平行支援 FE-INT-GATE-A11Y-CONTRAST，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
       "phase": "Pantheon FE Integration Gate 2026-05-13",
-      "owner": "Claude2",
-      "reviewer": "Gemini2",
-      "status": "review_approved",
+      "owner": "Gemini2",
+      "reviewer": "Codex",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
-        "support/sidecars/FE-INT-GATE-ALIGN-F07/FE-INT-GATE-ALIGN-F07-SIDECAR-REVIEW.md"
+        "support/sidecars/FE-INT-GATE-A11Y-CONTRAST/FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE.md"
       ],
       "acceptance": [
         "Create support artifacts only",
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Sidecar review packet complete and accurate.",
-      "last_update": "2026-05-14T13:01:59Z",
+      "next": "Acceptance packet created at support/sidecars/FE-INT-GATE-A11Y-CONTRAST/FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE.md and committed. Ready for review and incorporation into parent closeout.",
+      "last_update": "2026-05-15T00:35:55Z",
       "task_class": "sidecar",
       "auto_generated": true,
-      "helper_parent": "FE-INT-GATE-ALIGN-F07",
-      "helper_kind": "review_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
-    },
-    {
-      "id": "FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF",
-      "title": "Prepare FE-INT-GATE-ALIGN-F04-FOLLOWUP BFF and frontend handoff packet",
-      "summary_zh": "平行支援 FE-INT-GATE-ALIGN-F04-FOLLOWUP，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-      "phase": "Pantheon FE Integration Gate 2026-05-13",
-      "owner": "Claude",
-      "reviewer": "Gemini2",
-      "status": "in_progress",
-      "depends_on": [
-        "FE-INT-GATE-ALIGN-F04"
-      ],
-      "artifacts": [
-        "support/sidecars/FE-INT-GATE-ALIGN-F04-FOLLOWUP/FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Updated handoff packet with concrete BFF query gap details: live /bff/v5/loop-runs fields, approval evidence waterfall, operator row journey for approval/HIQ control, nextAction.href resolution chain, F04 spec verified contract shape, and confirmed parent facts (commit 8c7606cf, F04 3/3 passed, parent done). Ready for Gemini2 review.",
-      "last_update": "2026-05-14T13:32:49Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "FE-INT-GATE-ALIGN-F04-FOLLOWUP",
-      "helper_kind": "bff_handoff_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
-    },
-    {
-      "id": "FE-INT-GATE-ALIGN-F05-SIDECAR-ACCEPTANCE",
-      "title": "Prepare FE-INT-GATE-ALIGN-F05 acceptance packet and dependency map",
-      "summary_zh": "平行支援 FE-INT-GATE-ALIGN-F05，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
-      "phase": "Pantheon FE Integration Gate 2026-05-13",
-      "owner": "Claude2",
-      "reviewer": "Codex2",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        "support/sidecars/FE-INT-GATE-ALIGN-F05/FE-INT-GATE-ALIGN-F05-SIDECAR-ACCEPTANCE.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Supervisor preempted FE-INT-GATE-ALIGN-F05-SIDECAR-ACCEPTANCE to free Claude2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
-      "last_update": "2026-05-14T13:30:40Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "FE-INT-GATE-ALIGN-F05",
+      "helper_parent": "FE-INT-GATE-A11Y-CONTRAST",
       "helper_kind": "acceptance_packet",
       "mutates_canonical": false,
       "auto_created_by": "supervisor-underutilization"
@@ -682,102 +699,47 @@
       "resolved_at": "2026-05-14T12:27:31Z"
     },
     {
-      "task_id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE-SIDECAR-ACCEPTANCE",
+      "task_id": "FE-INT-GATE-A11Y-CONTRAST",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T00:32:24Z",
+      "resolved_at": "2026-05-15T00:33:26Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-A11Y-BREADCRUMB",
       "from": "Codex2",
       "to": "Claude",
       "message": "Helper-claimed by idle Claude; previous owner Codex2 becomes reviewer.",
       "status": "done",
-      "created_at": "2026-05-14T12:34:47Z",
-      "resolved_at": "2026-05-14T12:35:52Z"
+      "created_at": "2026-05-15T00:32:36Z",
+      "resolved_at": "2026-05-15T00:33:42Z"
     },
     {
-      "task_id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE-SIDECAR-ACCEPTANCE",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Acceptance packet prepared at support/sidecars/FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE/FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE-SIDECAR-ACCEPTANCE.md (committed in 6b454f85). Documents: (1) root cause — hosted bundle missing VITE_BFF_REAL_WRITES/VITE_BFF_FALLBACK; (2) fix — sessionStorage runtime gate scoped to localhost/pantheon-dev.lovable.app (commits 104f06b, 49899d0 in execute-plans on bff-luv-fe-006-dev-deploy); (3) 2/3 acceptance criteria satisfied via production-preview two-pass (run1+run2 both 2 passed); (4) hosted acceptance criteria 2+3 pending Lovable dev redeploy (asset check 2026-05-14T12:32:26Z still shows old bundle); (5) test coverage map for both F05 tests with POST assertion evidence; (6) BFF contract surface; (7) dependency map; (8) handoff notes for Gemini (parent reviewer). Support-only; no canonical truth modified.",
-      "status": "done",
-      "created_at": "2026-05-14T12:40:16Z",
-      "resolved_at": "2026-05-14T13:24:10Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-ALIGN-F07-SIDECAR-REVIEW",
-      "from": "Gemini2",
-      "to": "Claude2",
-      "message": "Helper-claimed by idle Claude2; previous owner Gemini2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-14T12:54:55Z",
-      "resolved_at": "2026-05-14T12:55:00Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-ALIGN-F07-SIDECAR-REVIEW",
-      "from": "Claude2",
-      "to": "Gemini2",
-      "message": "Review packet prepared at support/sidecars/FE-INT-GATE-ALIGN-F07/FE-INT-GATE-ALIGN-F07-SIDECAR-REVIEW.md. Covers: parent task F07 scope and status (review_approved), spec alignment evidence (4 passed/1 skipped twice), Claude reviewer approval notes, acceptance criteria check, runtime surface gap and follow-up FE-INT-GATE-F07-RUNTIME-LIVE-WIRING, dependency map, closeout instructions for Codex2, and handoff notes for Gemini2. Support-only — no canonical truth modified. Please review and approve or raise any gaps.",
-      "status": "done",
-      "created_at": "2026-05-14T12:58:37Z",
-      "resolved_at": "2026-05-14T13:01:59Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-ALIGN-F07-SIDECAR-REVIEW",
-      "from": "Gemini2",
-      "to": "Claude2",
-      "message": "Sidecar review packet complete and accurate.",
-      "status": "pending",
-      "created_at": "2026-05-14T13:01:59Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF",
-      "from": "Gemini2",
-      "to": "Codex",
-      "message": "BFF handoff packet prepared and ready for review.",
-      "status": "done",
-      "created_at": "2026-05-14T13:07:55Z",
-      "resolved_at": "2026-05-14T13:25:28Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE-SIDECAR-ACCEPTANCE",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Review update required: current hosted https://pantheon-dev.lovable.app now serves /assets/index-CrXlErW2.js, not the packet's old /assets/index-BYfBkno5.js, but Codex2 hosted F05 check still failed 2/2 with waitForResponse timeouts and bundle string check did not show pantheon.integration.realWrites/fallback. Update the acceptance packet/dependency map to record this newer evidence and clarify that the remaining gate is correct Lovable branch/artifact deploy, not only any redeploy refresh.",
-      "status": "done",
-      "created_at": "2026-05-14T13:24:10Z",
-      "resolved_at": "2026-05-14T13:24:10Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF",
-      "from": "Codex",
-      "to": "Gemini2",
-      "message": "Review changes requested: handoff packet is support-only and scoped correctly, but it is too generic to approve. Please update the packet with concrete BFF query gap details for live /bff/v5/loop/stages data, operator row journey for approval/HIQ control, frontend adapter handoff fields (nextAction.href plus loop/timeline approval evidence), and the verified parent facts: FE commit 8c7606cf6904e63eb265427cef25f8d226e10cbf, hosted Lovable/dev BFF F04 passed 3/3, parent task is done. Also remove or correct the stale 'In Progress / Blocked by Lovable redeploy' note and avoid placeholder endpoint language.",
-      "status": "done",
-      "created_at": "2026-05-14T13:25:28Z",
-      "resolved_at": "2026-05-14T13:25:28Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE-SIDECAR-ACCEPTANCE",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-14T13:29:35Z",
-      "resolved_at": "2026-05-14T13:29:35Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF",
-      "from": "Gemini2",
-      "to": "Claude",
-      "message": "Helper-claimed by idle Claude; previous owner Gemini2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-14T13:29:44Z",
-      "resolved_at": "2026-05-14T13:29:44Z"
-    },
-    {
-      "task_id": "FE-INT-GATE-ALIGN-F05-SIDECAR-ACCEPTANCE",
+      "task_id": "FE-INT-GATE-A11Y-OVERLAY",
       "from": "Codex2",
       "to": "Claude2",
       "message": "Helper-claimed by idle Claude2; previous owner Codex2 becomes reviewer.",
       "status": "done",
-      "created_at": "2026-05-14T13:29:54Z",
-      "resolved_at": "2026-05-14T13:30:28Z"
+      "created_at": "2026-05-15T00:32:49Z",
+      "resolved_at": "2026-05-15T00:34:04Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE",
+      "from": "Gemini2",
+      "to": "Codex",
+      "message": "Acceptance packet created at support/sidecars/FE-INT-GATE-A11Y-CONTRAST/FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE.md and committed. Ready for review and incorporation into parent closeout.",
+      "status": "pending",
+      "created_at": "2026-05-15T00:35:55Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-A11Y-OVERLAY",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Implementation complete. Replaced requestAnimationFrame focus restoration with Radix onCloseAutoFocus in LoopRunDrawer (triggerRef prop + onCloseAutoFocus on SheetContent) and FindingDrawer in Sentinel (same pattern). execute-plans commit 2432970 on bff-luv-fe-006-dev-deploy. Verification: npx playwright test e2e/17-a11y-v5.spec.ts — 9 passed (4.6m). Both previously-failing focus tests now pass: (1) drawer focus returns to the trigger after keyboard close, (2) ESC closes only the top overlay before closing the underlying drawer. All 6 axe-clean tests also still pass.",
+      "status": "pending",
+      "created_at": "2026-05-15T00:50:06Z"
     }
   ],
   "blockers": [
@@ -883,29 +845,29 @@
       "todo": 1
     },
     "Claude2": {
-      "total": 2,
-      "active": 0,
+      "total": 1,
+      "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 0,
-      "review_approved": 1,
-      "todo": 1
+      "review": 1,
+      "review_approved": 0,
+      "todo": 0
     },
     "Gemini": {
-      "total": 0,
-      "active": 0,
+      "total": 1,
+      "active": 1,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Gemini2": {
-      "total": 1,
-      "active": 1,
+      "total": 2,
+      "active": 2,
       "blocked": 1,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
       "todo": 0
     },
