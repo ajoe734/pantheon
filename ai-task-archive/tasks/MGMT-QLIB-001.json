@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "MGMT-QLIB-001",
+  "archived_at": "2026-05-15T17:14:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-QLIB-001",
+    "title": "Qlib dataset manifest",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-04 Qlib Admission",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Done: committed Qlib dataset manifest/evidence/review packet in 83ce1cba. Verification passed: dataset tests 4 passed; preflight plus dataset tests 9 passed; py_compile passed; CLI-regenerated manifest matched support/evidence/MGMT-QLIB-001/dataset_manifest.json. Scope remains dataset gate only: no training, registry write, broker session, deployment, order route, or capital binding.",
+    "last_update": "2026-05-15T17:14:47Z",
+    "review_notes_zh": [
+      "無 blocking findings；dataset manifest 符合 Qlib dataset gate，並維持 no-order-route、no training、no registry write、no broker/capital binding 邊界。",
+      "Reviewer verification: dataset tests 4 passed; preflight plus dataset tests 9 passed; py_compile passed; CLI regenerated manifest matched evidence."
+    ],
+    "review_file": "support/reviews/MGMT-QLIB-001-review-codex2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T17:14:47Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "merge/backend-dev-into-master",
+      "git_clean_required": false,
+      "commit": "83ce1cba9575c41bf4bdd6f8b2fc1bfe7008d1c5",
+      "commit_subject": "MGMT-QLIB-001 add Qlib dataset manifest",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-QLIB-001",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 53,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-QLIB-001",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-15T16:14:32Z",
+      "resolved_at": "2026-05-15T16:15:35Z"
+    },
+    {
+      "task_id": "MGMT-QLIB-001",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Ready for review: added services/learning/qlib/activation/dataset_manifest.py with CLI/validator, tests in services/learning/qlib/test_dataset_manifest.py, and support/evidence/MGMT-QLIB-001/dataset_manifest.json + README. Dataset gate only: 50 TWSE/TPEx instruments, 2024-01-02..2026-01-05 daily OHLCV, 504 min periods cited to QLIB-ACT-002 acceptance, governed proof/no-order-route controls; no Qlib training, registry write, broker session, deployment, or capital binding. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/learning/qlib/test_dataset_manifest.py -q => 4 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/research/qlib/test_preflight.py services/learning/qlib/test_dataset_manifest.py -q => 9 passed; py_compile for new module/test => passed.",
+      "status": "done",
+      "created_at": "2026-05-15T16:22:46Z",
+      "resolved_at": "2026-05-15T17:03:09Z"
+    },
+    {
+      "task_id": "MGMT-QLIB-001",
+      "from": "Copilot",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Copilot to Codex2 after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-05-15T17:03:09Z",
+      "resolved_at": "2026-05-15T17:07:12Z"
+    },
+    {
+      "task_id": "MGMT-QLIB-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: dataset manifest/evidence opens only the Qlib dataset gate for 50 TWSE/TPEx instruments, 2024-01-02..2026-01-05 daily OHLCV, 504 periods, governed proof, and no-order-route controls. Review file: support/reviews/MGMT-QLIB-001-review-codex2.md. Verification: dataset tests 4 passed; preflight plus dataset tests 9 passed; py_compile passed; CLI regenerated manifest matched evidence.",
+      "status": "done",
+      "created_at": "2026-05-15T17:07:12Z",
+      "resolved_at": "2026-05-15T17:14:48Z"
+    }
+  ],
+  "blockers": []
+}
