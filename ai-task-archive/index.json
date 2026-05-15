@@ -1,12 +1,17 @@
 {
   "version": 1,
-  "updated_at": "2026-05-15T17:37:46Z",
+  "updated_at": "2026-05-15T17:52:07Z",
   "counts": {
-    "total": 1082,
-    "completed": 1064,
+    "total": 1087,
+    "completed": 1069,
     "superseded": 18
   },
   "recent_terminal_ids": [
+    "MGMT-OODA-005",
+    "MGMT-SYN-006",
+    "MGMT-BROKER-004",
+    "MGMT-QLIB-002",
+    "MGMT-QLIB-005",
     "MGMT-PAPER-002",
     "MGMT-SYN-005",
     "MGMT-QLIB-006",
@@ -21,11 +26,6 @@
     "MGMT-SAFE-002",
     "MGMT-EVO-001",
     "MGMT-EVO-004",
-    "MGMT-BROKER-003",
-    "MGMT-EVO-006",
-    "MGMT-QLIB-004",
-    "MGMT-SYN-001",
-    "MGMT-BROKER-005",
-    "MGMT-SAFE-001"
+    "MGMT-BROKER-003"
   ]
 }

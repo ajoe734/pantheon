@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "task_id": "MGMT-SYN-006",
+  "archived_at": "2026-05-15T17:50:58Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-SYN-006",
+    "title": "Management UI conflict log view",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-03 Multi-Persona Synthesis",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Owner finalized approved MGMT-SYN-006. Closeout commit 5d447b25 records read-store, focused test, and reviewer artifact; parent HEAD e95c370f already contains the main.py route/capability hunk from a concurrent closeout index collision. Verification rerun: py_compile passed; MGMT-SYN-006 pytest 4 passed; adjacent BFF/optimizer pytest 18 passed; MGMT-SYN-007 projection smoke passed.",
+    "last_update": "2026-05-15T17:50:58Z",
+    "review_notes_zh": [
+      "無阻塞發現：MGMT-SYN-006 的 BFF synthesis conflict log list/detail routes、read-store JSON/JSONL/proof-bundle projection、filters、degraded detail 與 feature-flag disabled path 均符合 scope。",
+      "驗證通過：py_compile；MGMT-SYN-006 focused pytest 4 passed；MGMT-OODA-004 BFF routes 6 passed；execute-plans final route contract 2 passed；optimizer synthesis tests 10 passed；task files git diff --check passed；MGMT-SYN-007 proof bundle projection smoke passed。"
+    ],
+    "review_file": "support/reviews/MGMT-SYN-006-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T17:50:58Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "5d447b2577bb21b17c22d301db268e51856208f6",
+      "commit_subject": "MGMT-SYN-006 add synthesis conflict log read store",
+      "commit_author": {
+        "name": "Codex2",
+        "email": "codex2@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-SYN-006",
+        "Reviewer": "Codex",
+        "- PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py": ":test_execute_plans_final_contract_paths_are_registered services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_openapi_json_is_route_discoverable services/optimizer-svc/test_allocation_policy_artifact_output.py services/optimizer-svc/test_portfolio_synthesis.py -q -> 18 passed, 1 existing FastAPI duplicate operation-id warning"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 57,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-SYN-006",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:03:19Z",
+      "resolved_at": "2026-05-15T17:04:03Z"
+    },
+    {
+      "task_id": "MGMT-SYN-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:11:10Z",
+      "resolved_at": "2026-05-15T17:12:01Z"
+    },
+    {
+      "task_id": "MGMT-SYN-006",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: added BFF-backed Management synthesis conflict log view for MGMT-SYN-006. Task-owned files: services/control-plane/bff/main.py, services/control-plane/bff/read_store.py, services/control-plane/bff/test_mgmt_syn_006_conflict_log_view.py. Routes: GET /bff/synthesis/conflict-logs and GET /bff/synthesis/conflict-logs/{log_id}; supports PANTHEON_BFF_SYNTHESIS_CONFLICT_LOG_STORE JSON/JSONL sources, MGMT-SYN-007 proof-bundle projection, filters, detail degraded mode, feature flag fail-closed, and OpenAPI discoverability. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/bff/read_store.py services/control-plane/bff/main.py services/control-plane/bff/test_mgmt_syn_006_conflict_log_view.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_mgmt_syn_006_conflict_log_view.py -q => 4 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py -q => 6 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_contract_paths_are_registered services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_openapi_json_is_route_discoverable -q => 2 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/optimizer-svc/test_allocation_policy_artifact_output.py services/optimizer-svc/test_portfolio_synthesis.py -q => 10 passed; git diff --check task files passed. Note: services/control-plane/bff/read_store.py already has unrelated research_linkage hunks from another task; review the MGMT-SYN-006 synthesis_conflict_logs hunks only.",
+      "status": "done",
+      "created_at": "2026-05-15T17:23:30Z",
+      "resolved_at": "2026-05-15T17:33:29Z"
+    },
+    {
+      "task_id": "MGMT-SYN-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved MGMT-SYN-006 review. No blocking findings; see support/reviews/MGMT-SYN-006-review-codex.md for scope and verification. Owner Codex2 should finalize review_approved -> done with task-scoped closeout.",
+      "status": "done",
+      "created_at": "2026-05-15T17:33:29Z",
+      "resolved_at": "2026-05-15T17:41:58Z"
+    },
+    {
+      "task_id": "MGMT-SYN-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Restored MGMT-SYN-006 to review_approved after owner closeout progress update downgraded the approved task; prior Codex review notes remain attached.",
+      "status": "done",
+      "created_at": "2026-05-15T17:50:19Z",
+      "resolved_at": "2026-05-15T17:51:00Z"
+    }
+  ],
+  "blockers": []
+}
