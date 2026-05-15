@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "OPS-GEM-REDEPLOY-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-15T05:15:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-GEM-REDEPLOY-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare OPS-GEM-REDEPLOY-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 OPS-GEM-REDEPLOY-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Unassigned",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/OPS-GEM-REDEPLOY-001/OPS-GEM-REDEPLOY-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout: handoff packet durable at support/sidecars/OPS-GEM-REDEPLOY-001/OPS-GEM-REDEPLOY-001-SIDECAR-BFF-HANDOFF.md, committed in 5b4be55d. Verified: artifact present, scope confirmed support-only, no canonical truth mutated. Reviewer Codex approved. No new task-owned changes since delivery commit.",
+    "last_update": "2026-05-15T05:15:49Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OPS-GEM-REDEPLOY-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Artifact is support-only and commit 5b4be55d changes only support/sidecars/OPS-GEM-REDEPLOY-001/OPS-GEM-REDEPLOY-001-SIDECAR-BFF-HANDOFF.md.",
+      "Evidence refs resolve under support/evidence/OPS-GEM-REDEPLOY-001 and match probe/test status: authenticated BFF smoke 32/32, F05 hosted passed twice, F15 hosted strict passed twice, ME-STARTUP remains failed with narrowed 401 hybrid-text blocker.",
+      "No L1 canonical truth, core runtime, registry, or governance implementation was mutated by the sidecar commit; preview auth-bridge and ME-STARTUP gaps remain clearly called out for parent owner absorption."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T05:15:49Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "5b4be55d7345beb5de7b6039db81e86fb1efde55",
+      "commit_subject": "OPS-GEM-REDEPLOY-001-SIDECAR-BFF-HANDOFF: Prepare BFF and frontend handoff packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "- Remaining open items": "preview URL auth-bridge gap, ME-STARTUP 401 hybrid text",
+        "LLM-Agent": "Claude",
+        "Task-ID": "OPS-GEM-REDEPLOY-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Verification": "artifact authored from support/evidence/OPS-GEM-REDEPLOY-001/ probe output; no canonical truth mutated."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 17,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPS-GEM-REDEPLOY-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Handoff packet ready for review. Artifact: support/sidecars/OPS-GEM-REDEPLOY-001/OPS-GEM-REDEPLOY-001-SIDECAR-BFF-HANDOFF.md. Covers BFF query gap (30/30 routes pass), operator journeys (F05/F15 unblocked with commands, Day 1 soak operator path, preview URL gap), frontend handoff map, and remaining open items (ME-STARTUP 401 hybrid text, Lovable preview URL without auth-bridge). No canonical truth mutated. Commit: 5b4be55d.",
+      "status": "done",
+      "created_at": "2026-05-15T05:07:37Z",
+      "resolved_at": "2026-05-15T05:10:58Z"
+    },
+    {
+      "task_id": "OPS-GEM-REDEPLOY-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: support-only BFF/front-end handoff packet is scoped, evidence-backed, and ready for owner closeout. Claude should finalize with task-scoped closeout and done transition.",
+      "status": "done",
+      "created_at": "2026-05-15T05:10:58Z",
+      "resolved_at": "2026-05-15T05:15:49Z"
+    }
+  ],
+  "blockers": []
+}

@@ -3,7 +3,7 @@
   "sprint": "2026-05-13-ep5-qlib-bff-consolidation",
   "sprint_started_at": "2026-05-13T02:00:00Z",
   "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec，從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV，跑 production_activation_smoke.py --backend real，submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal，registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff，command envelope unification，non-empty fixture & detail journey，SSE real stream replay，strict env cutover，seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write 驗證通過後即可 deprecate 舊 receipt，後續 regression 追蹤不再以固定天數阻塞派工。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。",
-  "updated_at": "2026-05-15T01:42:19Z",
+  "updated_at": "2026-05-15T05:15:49Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -98,7 +98,7 @@
       "current_task_ids": [],
       "branch": "feat/claude-execution-control",
       "next": "",
-      "last_update": "2026-05-15T01:18:44Z"
+      "last_update": "2026-05-15T05:15:03Z"
     },
     {
       "name": "Gemini",
@@ -112,7 +112,7 @@
       "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
       "next": "",
-      "last_update": "2026-05-15T01:30:04Z"
+      "last_update": "2026-05-15T04:52:07Z"
     },
     {
       "name": "Codex",
@@ -126,13 +126,12 @@
       "current_task_ids": [
         "BFF-CONSOL-022",
         "FE-INT-GATE-ALIGN-F01",
-        "FE-INT-GATE-ALIGN-F05",
-        "FE-INT-GATE-FOLLOWUP-F15-STRICT-LOVABLE",
-        "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE"
+        "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
+        "OPS-GEM-REDEPLOY-001"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Code remediation committed and pushed in execute-plans (7dff8fa; runtime hook from 104f06b). Local live-mode F15 strict passed twice, but pantheon-dev.lovable.app still serves old /assets/index-BYfBkno5.js and hosted strict still renders hybrid seed fallback. Lovable trigger attempt failed because stored auth state is expired; waiting on Lovable dev redeploy/refresh before hosted acceptance can pass.",
-      "last_update": "2026-05-14T12:37:28Z"
+      "next": "Auto-reassigned review from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "last_update": "2026-05-15T05:14:26Z"
     },
     {
       "name": "Codex2",
@@ -148,8 +147,8 @@
         "FE-INT-GATE-FOLLOWUP-ME-STARTUP"
       ],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Source fix pushed in execute-plans commits b09d22e/df73c3d and evidence committed in pantheon 0bec9136. Local focused 401 passes and build passes, but hosted https://pantheon-dev.lovable.app still serves old bundle index-DmMAo3dQ.js with local admin role; hosted focused 401 fails with interceptedMeRequests=0. Waiting for Lovable deployment refresh or correct preview URL tracking df73c3d.",
-      "last_update": "2026-05-14T12:48:20Z"
+      "next": "OPS-GEM-REDEPLOY-001 rechecked hosted after Lovable refresh: pantheon-dev now serves /assets/index-vlevju41.js and the focused 401 test no longer has interceptedMeRequests=0, but still fails because the page renders HYBRID / live seed fallback armed under injected /bff/me 401. Evidence: support/evidence/OPS-GEM-REDEPLOY-001.md and commit a165abe7.",
+      "last_update": "2026-05-15T05:08:41Z"
     },
     {
       "name": "Copilot",
@@ -225,8 +224,8 @@
         "SSE replay/read smoke 都 pass against dev BFF",
         "evidence 紀錄 strict 下無 fallback regression"
       ],
-      "next": "Dev BFF strict preview prerequisites reverified: preview-strict.env targets lupin dev BFF with REAL_WRITES=false, dev /health and /openapi.json return 200, and focused Pack A/B/C + detail pytest passed. Blocked until Lovable preview branch URL and dev BFF smoke JWT/bearer credential are provided for Day 1 probe_bff_authenticated_live.py.",
-      "last_update": "2026-05-14T12:26:30Z",
+      "next": "OPS-GEM-REDEPLOY-001 verified dev BFF bearer smoke with PANTHEON_BFF_SMOKE_BEARER_TOKEN=pantheon-dev-browser:reviewer (32/32 read probes passed) and pantheon-dev refresh to /assets/index-vlevju41.js. Still blocked on Gemini/Lovable for a strict preview URL reachable by the soak runner: candidate id-preview-a7067bd5--140c41d5-...lovable.app redirects through Lovable auth bridge in this worker.",
+      "last_update": "2026-05-15T05:07:08Z",
       "waiting_for": "Gemini"
     },
     {
@@ -344,7 +343,7 @@
       "phase": "Pantheon FE Integration Gate 2026-05-13",
       "owner": "Codex",
       "reviewer": "Codex2",
-      "status": "blocked",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [
         "execute-plans/e2e/04-sentinel-remediation.spec.ts",
@@ -357,9 +356,12 @@
         "若 hosted Lovable 真有 product gap 改 file follow-up task 而非 mask spec",
         "closeout commit 在 execute-plans repo bff-luv-fe-006-dev-deploy branch"
       ],
-      "next": "Blocked by hosted Lovable deploy product gap, not selector drift: hosted pantheon-dev bundle index-BYfBkno5.js lacks VITE_BFF_REAL_WRITES/VITE_BFF_FALLBACK so actions render but do not POST /remediate. Evidence committed in execute-plans 55ca952; local Vite with VITE_BFF_REAL_WRITES=true passed e2e/04-sentinel-remediation.spec.ts twice. Follow-up filed as FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE and F05 remains waiting_for Gemini.",
-      "last_update": "2026-05-14T11:59:20Z",
-      "waiting_for": "Gemini"
+      "next": "Supervisor resumed FE-INT-GATE-ALIGN-F05 for finalize after successful dispatch.",
+      "last_update": "2026-05-15T05:14:45Z",
+      "review_notes_zh": [
+        "Codex2 review approved: hosted F05 reran twice against pantheon-dev Lovable + dev BFF with strict fallback and real writes enabled; both runs passed 2/2 with traces under support/evidence/FE-INT-GATE-ALIGN-F05-codex2-review. No acceptance downgrade or selector-only masking found."
+      ],
+      "review_file": "support/reviews/FE-INT-GATE-ALIGN-F05-codex2-review.md"
     },
     {
       "id": "FE-INT-GATE-ALIGN-F15",
@@ -404,8 +406,8 @@
         "/bff/me 401 renders auth or error state and never falls back to mock current-user",
         "F01 startup session 401 coverage can require at least one intercepted /bff/me request"
       ],
-      "next": "Source fix pushed in execute-plans commits b09d22e/df73c3d and evidence committed in pantheon 0bec9136. Local focused 401 passes and build passes, but hosted https://pantheon-dev.lovable.app still serves old bundle index-DmMAo3dQ.js with local admin role; hosted focused 401 fails with interceptedMeRequests=0. Waiting for Lovable deployment refresh or correct preview URL tracking df73c3d.",
-      "last_update": "2026-05-14T12:48:20Z",
+      "next": "OPS-GEM-REDEPLOY-001 rechecked hosted after Lovable refresh: pantheon-dev now serves /assets/index-vlevju41.js and the focused 401 test no longer has interceptedMeRequests=0, but still fails because the page renders HYBRID / live seed fallback armed under injected /bff/me 401. Evidence: support/evidence/OPS-GEM-REDEPLOY-001.md and commit a165abe7.",
+      "last_update": "2026-05-15T05:08:41Z",
       "waiting_for": "Gemini2"
     },
     {
@@ -415,7 +417,7 @@
       "phase": "Pantheon FE Integration Gate 2026-05-13",
       "owner": "Codex",
       "reviewer": "Codex2",
-      "status": "blocked",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [
         "execute-plans/.lovable/audits/current-run/f15-strict-product-gap.md",
@@ -426,9 +428,14 @@
         "FE-INT-GATE-ALIGN-F15 passes twice with PANTHEON_E2E_STRICT=1",
         "Do not change F15 to accept seed fallback in strict mode"
       ],
-      "next": "Code remediation committed and pushed in execute-plans (7dff8fa; runtime hook from 104f06b). Local live-mode F15 strict passed twice, but pantheon-dev.lovable.app still serves old /assets/index-BYfBkno5.js and hosted strict still renders hybrid seed fallback. Lovable trigger attempt failed because stored auth state is expired; waiting on Lovable dev redeploy/refresh before hosted acceptance can pass.",
-      "last_update": "2026-05-14T12:37:28Z",
-      "waiting_for": "Gemini"
+      "next": "Supervisor resumed FE-INT-GATE-FOLLOWUP-F15-STRICT-LOVABLE for finalize after successful dispatch.",
+      "last_update": "2026-05-15T05:15:27Z",
+      "review_notes_zh": [
+        "無阻塞發現。",
+        "Hosted Lovable dev 目前仍服務 /assets/index-vlevju41.js，F15 strict hosted gate 由 reviewer 重跑兩次皆為 1 skipped, 2 passed。",
+        "Strict 5xx 驗收未被放寬：仍要求 typed error 且不得顯示 seed row。"
+      ],
+      "review_file": "support/reviews/FE-INT-GATE-FOLLOWUP-F15-STRICT-LOVABLE-codex2-review.md"
     },
     {
       "id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
@@ -436,8 +443,8 @@
       "summary_zh": "F05 hosted Lovable DOM selector 已確認正確，但 pantheon-dev.lovable.app bundle 缺 VITE_BFF_REAL_WRITES/VITE_BFF_FALLBACK；remediation action 只走 overlay，不會 POST /bff/v5/interventions/{id}/remediate。需更新 dev Lovable deploy/write-gate 設定後重跑 F05 hosted 兩次。",
       "phase": "Pantheon FE Integration Gate 2026-05-13",
       "owner": "Codex",
-      "reviewer": "Gemini",
-      "status": "blocked",
+      "reviewer": "Codex2",
+      "status": "review",
       "depends_on": [],
       "artifacts": [
         "execute-plans/.lovable/audits/current-run/fe-int-gate-align-f05-hosted-write-gate-gap.md",
@@ -448,8 +455,8 @@
         "F05 hosted headed run observes remediation POST",
         "F05 hosted npx playwright test passes twice"
       ],
-      "next": "Code remediation committed and pushed in execute-plans (104f06b, artifact update 49899d0). Production-preview F05 passed twice, but pantheon-dev.lovable.app still serves old asset /assets/index-BYfBkno5.js as of 2026-05-14T12:32:26Z; hosted F05 rerun is waiting on Lovable dev redeploy/refresh.",
-      "last_update": "2026-05-14T12:33:18Z",
+      "next": "Auto-reassigned review from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "last_update": "2026-05-15T05:14:26Z",
       "waiting_for": "Gemini"
     },
     {
@@ -486,6 +493,32 @@
       ],
       "next": "Assignment created",
       "last_update": "2026-05-15T00:58:56Z"
+    },
+    {
+      "id": "OPS-GEM-REDEPLOY-001",
+      "title": "Gemini Lovable redeploy and dev BFF credential unblock",
+      "summary_zh": "Gemini 直接處理目前全線 idle 的根因：提供 BFF-CONSOL-022 Lovable preview branch URL、dev BFF JWT/bearer credential，並觸發/驗證 pantheon-dev.lovable.app 重新部署到 execute-plans 最新 bundle。這是 unblock 任務，不是 sidecar；不可重用 archived sidecar id。",
+      "phase": "Unassigned",
+      "owner": "Codex",
+      "reviewer": "Gemini",
+      "status": "blocked",
+      "depends_on": [],
+      "artifacts": [
+        ".orchestrator/chair-reviews/20260515-043829-claude2.md",
+        ".orchestrator/chair-reviews/20260515-044342-codex.md",
+        "support/evidence/OPS-GEM-REDEPLOY-001.md"
+      ],
+      "acceptance": [
+        "提供 Lovable preview branch URL",
+        "提供 dev BFF JWT/bearer credential 或明確說明不可取得原因",
+        "pantheon-dev.lovable.app bundle refresh/redeploy 已觸發並記錄 asset hash",
+        "BFF-CONSOL-022 Day 1 probe 所需 env 可用",
+        "FE hosted blockers F05/F15/ME-STARTUP 可重新驗證或有明確剩餘 blocker",
+        "不使用 archived sidecar task id"
+      ],
+      "next": "Evidence committed at a165abe7: pantheon-dev refresh verified (/assets/index-vlevju41.js, sha256 8f7acc9b...), dev BFF bearer smoke passed 32/32, F05 and F15 hosted blockers reverified twice, ME-STARTUP remaining blocker recorded. Still waiting for Gemini/Lovable to make the strict preview URL usable by the soak runner: candidate id-preview-a7067bd5--140c41d5-...lovable.app redirects through Lovable auth bridge in this worker.",
+      "last_update": "2026-05-15T05:07:45Z",
+      "waiting_for": "Gemini"
     }
   ],
   "handoffs": [
@@ -604,6 +637,66 @@
       "status": "done",
       "created_at": "2026-05-14T12:27:30Z",
       "resolved_at": "2026-05-14T12:27:31Z"
+    },
+    {
+      "task_id": "OPS-GEM-REDEPLOY-001",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Gemini becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T04:52:28Z",
+      "resolved_at": "2026-05-15T04:52:42Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F05",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Hosted Lovable deploy blocker cleared by OPS-GEM-REDEPLOY-001: pantheon-dev now serves /assets/index-vlevju41.js, F05 hosted e2e/04-sentinel-remediation.spec.ts passed twice with VITE_BFF_REAL_WRITES=true and strict fallback. Evidence: support/evidence/OPS-GEM-REDEPLOY-001.md and commit a165abe7.",
+      "status": "done",
+      "created_at": "2026-05-15T05:06:05Z",
+      "resolved_at": "2026-05-15T05:13:26Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
+      "from": "Codex",
+      "to": "Gemini",
+      "message": "Hosted write-gate redeploy verification complete: pantheon-dev now serves /assets/index-vlevju41.js, F05 hosted e2e/04-sentinel-remediation.spec.ts passed twice with VITE_BFF_REAL_WRITES=true and strict fallback. Evidence: support/evidence/OPS-GEM-REDEPLOY-001.md and commit a165abe7.",
+      "status": "done",
+      "created_at": "2026-05-15T05:06:23Z",
+      "resolved_at": "2026-05-15T05:14:26Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-FOLLOWUP-F15-STRICT-LOVABLE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Hosted strict fallback verification complete after Lovable refresh: pantheon-dev now serves /assets/index-vlevju41.js and e2e/09-strict-vs-hybrid.spec.ts strict branch passed twice (1 skipped, 2 passed each run) with PANTHEON_E2E_STRICT=1. Evidence: support/evidence/OPS-GEM-REDEPLOY-001.md and commit a165abe7.",
+      "status": "done",
+      "created_at": "2026-05-15T05:06:44Z",
+      "resolved_at": "2026-05-15T05:13:31Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F05",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Codex2 approved FE-INT-GATE-ALIGN-F05. Reviewer reran hosted e2e/04-sentinel-remediation.spec.ts twice against pantheon-dev + dev BFF with VITE_BFF_FALLBACK=strict and VITE_BFF_REAL_WRITES=true; both runs passed 2/2. Review file: support/reviews/FE-INT-GATE-ALIGN-F05-codex2-review.md. Evidence: support/evidence/FE-INT-GATE-ALIGN-F05-codex2-review/. Owner Codex should finalize to done with task-scoped closeout.",
+      "status": "pending",
+      "created_at": "2026-05-15T05:13:26Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-FOLLOWUP-F15-STRICT-LOVABLE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Approved: hosted Lovable dev strict fallback verified on /assets/index-vlevju41.js; reviewer reran F15 strict twice with PANTHEON_E2E_STRICT=1 and both runs passed (1 skipped, 2 passed). Owner should finalize with task closeout.",
+      "status": "pending",
+      "created_at": "2026-05-15T05:13:31Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Gemini to Codex2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "pending",
+      "created_at": "2026-05-15T05:14:26Z"
     }
   ],
   "blockers": [
@@ -629,8 +722,9 @@
       "owner": "Codex",
       "waiting_for": "Gemini",
       "message": "Blocked by hosted Lovable deploy product gap, not selector drift: hosted pantheon-dev bundle index-BYfBkno5.js lacks VITE_BFF_REAL_WRITES/VITE_BFF_FALLBACK so actions render but do not POST /remediate. Evidence committed in execute-plans 7801cff; local Vite with VITE_BFF_REAL_WRITES=true passed e2e/04-sentinel-remediation.spec.ts twice. Follow-up filed as FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE.",
-      "status": "open",
-      "created_at": "2026-05-14T11:58:27Z"
+      "status": "resolved",
+      "created_at": "2026-05-14T11:58:27Z",
+      "resolved_at": "2026-05-15T05:06:05Z"
     },
     {
       "task_id": "FE-INT-GATE-ALIGN-F01",
@@ -653,16 +747,18 @@
       "owner": "Codex",
       "waiting_for": "Gemini",
       "message": "Code remediation committed and pushed in execute-plans (104f06b, artifact update 49899d0). Production-preview F05 passed twice, but pantheon-dev.lovable.app still serves old asset /assets/index-BYfBkno5.js as of 2026-05-14T12:32:26Z; hosted F05 rerun is waiting on Lovable dev redeploy/refresh.",
-      "status": "open",
-      "created_at": "2026-05-14T12:33:18Z"
+      "status": "resolved",
+      "created_at": "2026-05-14T12:33:18Z",
+      "resolved_at": "2026-05-15T05:06:23Z"
     },
     {
       "task_id": "FE-INT-GATE-FOLLOWUP-F15-STRICT-LOVABLE",
       "owner": "Codex",
       "waiting_for": "Gemini",
       "message": "Code remediation committed and pushed in execute-plans (7dff8fa; runtime hook from 104f06b). Local live-mode F15 strict passed twice, but pantheon-dev.lovable.app still serves old /assets/index-BYfBkno5.js and hosted strict still renders hybrid seed fallback. Lovable trigger attempt failed because stored auth state is expired; waiting on Lovable dev redeploy/refresh before hosted acceptance can pass.",
-      "status": "open",
-      "created_at": "2026-05-14T12:37:28Z"
+      "status": "resolved",
+      "created_at": "2026-05-14T12:37:28Z",
+      "resolved_at": "2026-05-15T05:06:44Z"
     },
     {
       "task_id": "BFF-CONSOL-023",
@@ -687,6 +783,14 @@
       "message": "Task is blocked waiting for Gemini to provide credentials for BFF-CONSOL-022.",
       "status": "open",
       "created_at": "2026-05-14T13:08:35Z"
+    },
+    {
+      "task_id": "OPS-GEM-REDEPLOY-001",
+      "owner": "Codex",
+      "waiting_for": "Gemini",
+      "message": "Evidence committed at a165abe7: pantheon-dev refresh verified (/assets/index-vlevju41.js, sha256 8f7acc9b...), dev BFF bearer smoke passed 32/32, F05 and F15 hosted blockers reverified twice, ME-STARTUP remaining blocker recorded. Still waiting for Gemini/Lovable to make the strict preview URL usable by the soak runner: candidate id-preview-a7067bd5--140c41d5-...lovable.app redirects through Lovable auth bridge in this worker.",
+      "status": "open",
+      "created_at": "2026-05-15T05:07:45Z"
     }
   ],
   "workload": {
@@ -736,12 +840,12 @@
       "todo": 0
     },
     "Codex": {
-      "total": 5,
-      "active": 5,
-      "blocked": 5,
+      "total": 6,
+      "active": 4,
+      "blocked": 3,
       "done": 0,
-      "review": 0,
-      "review_approved": 0,
+      "review": 1,
+      "review_approved": 2,
       "todo": 0
     },
     "Codex2": {
