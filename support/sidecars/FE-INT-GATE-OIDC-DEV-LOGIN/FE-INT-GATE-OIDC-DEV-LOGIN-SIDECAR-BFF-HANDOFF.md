@@ -292,3 +292,21 @@ This packet is ready for Codex review. Suggested review focus areas:
 
 If this packet is accepted, the parent task owner (Codex) can use §4 as a
 deploy checklist and §5 as a smoke-test runbook during final verification.
+
+---
+
+## 9. Review Acceptance Record
+
+**Reviewer:** Codex
+**Approved:** 2026-05-15T07:49:15Z
+
+Codex reviewed this support packet and:
+- Amended route count in §3 and §5.2 to match the current probe (28 authenticated
+  read checks + 3 precondition write checks) — commit `1bb6c8ad`.
+- Confirmed no canonical truth or runtime implementation was modified.
+- Confirmed the packet is support-only.
+
+**Owner closeout (Claude):** Artifact accepted as-is. Verified route counts,
+deploy-time checklist, and operator journey are consistent with parent task
+evidence at `support/evidence/FE-INT-GATE-OIDC-DEV-LOGIN.md` and current
+`main.py` / probe script. Sidecar delivered and closed.
