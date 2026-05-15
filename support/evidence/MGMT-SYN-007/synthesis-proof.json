@@ -1,0 +1,399 @@
+{
+  "allocation_policy_artifact": {
+    "artifact_id": "alloc-policy-mgmt-syn-007-001",
+    "capital_pool_id": "capital-pool-paper-001",
+    "conflict_resolution_log_id": "conflict-log-mgmt-syn-007-001",
+    "constraints_bundle": {
+      "environment": "paper",
+      "forbidden_strategy_families": [
+        "leveraged_short"
+      ],
+      "max_single_weight": 0.5
+    },
+    "created_at": "2026-05-15T15:45:00Z",
+    "metadata": {},
+    "provenance_refs": [
+      "pap-mgmt-syn-007-alpha",
+      "pap-mgmt-syn-007-beta",
+      "pap-mgmt-syn-007-gamma"
+    ],
+    "risk_budget": 0.35,
+    "scope_ref": "paper",
+    "sponsor_persona_id": "persona-tw-momentum",
+    "synthesis_method": "weighted_fusion",
+    "target_weights": {
+      "0050.TW": 0.19416546905347468,
+      "2330.TW": 0.37152877578877114,
+      "2454.TW": 0.1715287757887711,
+      "CASH": 0.06277697936898312
+    }
+  },
+  "conflict_resolution_log": {
+    "capital_pool_id": "capital-pool-paper-001",
+    "committee_ref": null,
+    "log_id": "conflict-log-mgmt-syn-007-001",
+    "proposal_ids": [
+      "pap-mgmt-syn-007-alpha",
+      "pap-mgmt-syn-007-beta",
+      "pap-mgmt-syn-007-gamma"
+    ],
+    "rejected_reason": null,
+    "scope_ref": "paper",
+    "sponsor_persona_id": "persona-tw-momentum",
+    "synthesis_method": "weighted_fusion",
+    "timestamp": "2026-05-15T15:45:00Z",
+    "vetoed_proposals": [
+      {
+        "detail": "",
+        "persona_id": "persona-leverage-skeptic",
+        "proposal_id": "pap-mgmt-syn-007-gamma",
+        "reason": "forbidden_strategy_family"
+      }
+    ],
+    "weighting_inputs": {
+      "pap-mgmt-syn-007-alpha": 0.58420736,
+      "pap-mgmt-syn-007-beta": 0.26726399999999995
+    },
+    "weighting_outputs": {
+      "pap-mgmt-syn-007-alpha": 0.6861151031550844,
+      "pap-mgmt-syn-007-beta": 0.3138848968449156
+    }
+  },
+  "environment": "paper",
+  "epic": "EPIC-03 Multi-Persona Synthesis",
+  "generated_at": "2026-05-15T15:45:00Z",
+  "governance_approval_packet": {
+    "actor_id": "mgmt-syn-007-proof-reviewer",
+    "actor_role": "governance_reviewer",
+    "approval_decision_id": "approval-mgmt-syn-007-paper-synthesis-001",
+    "can_proceed": true,
+    "capital_pool_id": "capital-pool-paper-001",
+    "conditions": [
+      "paper environment only",
+      "live broker remains disabled",
+      "capital binding live activation remains fail-closed"
+    ],
+    "created_at": "2026-05-15T15:45:00Z",
+    "decided_at": "2026-05-15T15:45:00Z",
+    "decision": "approved_for_paper_evidence",
+    "decision_state": "decided",
+    "environment": "paper",
+    "evidence_refs": [
+      {
+        "path": "support/evidence/MGMT-SYN-007/proposals.jsonl",
+        "ref_id": "mgmt-syn-007-proposals",
+        "ref_type": "proposal_store_jsonl"
+      },
+      {
+        "path": "support/evidence/MGMT-SYN-007/synthesis-proof.json#/conflict_resolution_log",
+        "ref_id": "conflict-log-mgmt-syn-007-001",
+        "ref_type": "conflict_resolution_log"
+      },
+      {
+        "path": "support/evidence/MGMT-SYN-007/synthesis-proof.json#/allocation_policy_artifact",
+        "ref_id": "alloc-policy-mgmt-syn-007-001",
+        "ref_type": "allocation_policy_artifact"
+      }
+    ],
+    "live_capital_side_effects": false,
+    "override_path": {
+      "committee_override_supported": true,
+      "current_override_ref": null,
+      "policy_ref": "MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md#6.3",
+      "review_gate": "ApprovalDecision"
+    },
+    "rationale": "Approved paper-only synthesis proof: proposal records replay through the optimizer-svc allocation_aggregation store, pool risk policy vetoes the forbidden leveraged-short input, and the remaining proposals produce one AllocationPolicyArtifact with an explicit sponsor.",
+    "risk_level": "medium",
+    "sponsor_persona_id": "persona-tw-momentum",
+    "target_id": "alloc-policy-mgmt-syn-007-001",
+    "target_type": "allocation_policy_artifact",
+    "target_version": "proof.v1"
+  },
+  "live_capital_side_effects": false,
+  "milestone_id": "MGMT-OODA-M5",
+  "ooda_packet": {
+    "act": {
+      "broker_evidence_refs": [],
+      "command_receipt_refs": [
+        "command-receipt://mgmt-syn-007/paper-proof-no-live-action"
+      ],
+      "live_capital_side_effects": false,
+      "rollback_refs": [],
+      "runtime_binding_id": null,
+      "safe_mode_refs": [
+        "fail-closed://broker-production-live-disabled"
+      ]
+    },
+    "audit_refs": [
+      "support/evidence/MGMT-SYN-007/proposals.jsonl",
+      "support/evidence/MGMT-SYN-007/synthesis-proof.json"
+    ],
+    "capital_pool_id": "capital-pool-paper-001",
+    "closed_at": "2026-05-15T15:45:00Z",
+    "created_at": "2026-05-15T15:45:00Z",
+    "decide": {
+      "approval_decision_id": "approval-mgmt-syn-007-paper-synthesis-001",
+      "decision_rationale_ref": "support/evidence/MGMT-SYN-007/synthesis-proof.json#/conflict_resolution_log",
+      "deployment_plan_id": null,
+      "evolution_decision_id": null,
+      "policy_decision_refs": [
+        "MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md",
+        "PAPER_CANARY_LIVE_POLICY.md"
+      ],
+      "sponsor_persona_id": "persona-tw-momentum"
+    },
+    "environment": "paper",
+    "learn": {
+      "evolution_followthrough_refs": [
+        "not-applicable://mgmt-syn-007/proof-only"
+      ],
+      "observation_window": null,
+      "postmortem_refs": [],
+      "retrain_refs": [],
+      "telemetry_refs": [
+        "support/evidence/MGMT-PAPER-005-paper-telemetry-packet.json"
+      ],
+      "trainer_refs": []
+    },
+    "loop_type": "persona_synthesis",
+    "observe": {
+      "human_feedback_refs": [],
+      "incident_refs": [],
+      "market_refs": [],
+      "signal_refs": [
+        "support/evidence/MGMT-PAPER-001-paper-strategy-spec.json"
+      ],
+      "source_refs": [
+        "docs/04/pantheon_sa_supplemental_2026-05-15/SA_management_console_multi_persona_ooda.md",
+        "docs/04/pantheon_sa_supplemental_2026-05-15/SD_management_console_multi_persona_ooda.md"
+      ],
+      "telemetry_refs": [
+        "support/evidence/MGMT-PAPER-005-paper-telemetry-packet.json"
+      ]
+    },
+    "orient": {
+      "allocation_proposal_refs": [
+        "pap-mgmt-syn-007-alpha",
+        "pap-mgmt-syn-007-beta",
+        "pap-mgmt-syn-007-gamma"
+      ],
+      "evidence_bundle_refs": [
+        "support/evidence/MGMT-SYN-007/synthesis-proof.json"
+      ],
+      "persona_proposal_refs": [
+        "persona://persona-tw-momentum/proposals/pap-mgmt-syn-007-alpha",
+        "persona://persona-risk-balanced/proposals/pap-mgmt-syn-007-beta",
+        "persona://persona-leverage-skeptic/proposals/pap-mgmt-syn-007-gamma"
+      ],
+      "regime_state_ref": "regime://tw-market/range-breakout-watch",
+      "risk_adjudication_ref": "risk-policy://capital-pool-paper-001/no-leveraged-short/max-single-weight-50pct",
+      "signal_inference_refs": [],
+      "universe_selection_ref": "universe://twse-tpex-paper-smoke-v1"
+    },
+    "packet_id": "ooda-mgmt-syn-007-persona-synthesis",
+    "persona_ids": [
+      "persona-tw-momentum",
+      "persona-risk-balanced",
+      "persona-leverage-skeptic"
+    ],
+    "status": "closed",
+    "strategy_id": "strategy-spec-paper-qlib-lgbm-001",
+    "updated_at": "2026-05-15T15:45:00Z"
+  },
+  "proof_assertions": {
+    "conflict_resolution_log_visible": true,
+    "governance_override_path_recorded": true,
+    "one_allocation_policy_artifact_produced": true,
+    "optimizer_solver_not_arbitrator": true,
+    "paper_only_no_live_side_effects": true,
+    "sponsor_persona_explicit": true,
+    "two_or_more_proposals_recorded": true
+  },
+  "proposal_records": [
+    {
+      "capital_pool_id": "capital-pool-paper-001",
+      "payload": {
+        "proposal": {
+          "capital_pool_id": "capital-pool-paper-001",
+          "conviction": 0.82,
+          "created_at": "2026-05-15T15:45:00Z",
+          "directions": [
+            "long",
+            "risk_on"
+          ],
+          "evidence_refs": [
+            "support/evidence/MGMT-PAPER-001-paper-strategy-spec.json",
+            "docs/04/pantheon_sa_supplemental_2026-05-15/SA_management_console_multi_persona_ooda.md"
+          ],
+          "governance_multiplier": 1.0,
+          "metadata": {
+            "asset_classes": [
+              "tw_equity"
+            ],
+            "proposal_role": "advisor",
+            "strategy_family": "tw_equity_momentum"
+          },
+          "persona_id": "persona-tw-momentum",
+          "proposal_id": "pap-mgmt-syn-007-alpha",
+          "rationale_ref": "memo://mgmt-syn-007/tw-momentum",
+          "regime_fit_score": 0.88,
+          "regime_ref": "regime://tw-market/range-breakout-watch",
+          "reliability_score": 0.92,
+          "scope_ref": "paper",
+          "target_type": "asset",
+          "target_weights": {
+            "0050.TW": 0.1,
+            "2330.TW": 0.45,
+            "2454.TW": 0.25
+          },
+          "uncertainty": 0.12,
+          "valid_from": "2026-05-15T15:45:00Z",
+          "valid_to": "2026-05-22T15:45:00Z"
+        }
+      },
+      "persona_id": "persona-tw-momentum",
+      "proposal_id": "pap-mgmt-syn-007-alpha",
+      "record_id": "pap-rec-mgmt-syn-007-001",
+      "record_type": "proposal_snapshot",
+      "recorded_at": "2026-05-15T15:45:00Z",
+      "schema_version": "persona_allocation_proposal_record.v1",
+      "scope_ref": "paper"
+    },
+    {
+      "capital_pool_id": "capital-pool-paper-001",
+      "payload": {
+        "proposal": {
+          "capital_pool_id": "capital-pool-paper-001",
+          "conviction": 0.58,
+          "created_at": "2026-05-15T15:45:00Z",
+          "directions": [
+            "long",
+            "de_risk"
+          ],
+          "evidence_refs": [
+            "support/evidence/MGMT-PAPER-007-complete-paper-ooda-packet.json",
+            "MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md"
+          ],
+          "governance_multiplier": 1.0,
+          "metadata": {
+            "asset_classes": [
+              "tw_equity",
+              "cash"
+            ],
+            "proposal_role": "advisor",
+            "strategy_family": "risk_balanced_tw_equity",
+            "wants_de_risk": true
+          },
+          "persona_id": "persona-risk-balanced",
+          "proposal_id": "pap-mgmt-syn-007-beta",
+          "rationale_ref": "memo://mgmt-syn-007/risk-balanced",
+          "regime_fit_score": 0.8,
+          "regime_ref": "regime://tw-market/range-breakout-watch",
+          "reliability_score": 0.72,
+          "scope_ref": "paper",
+          "target_type": "asset",
+          "target_weights": {
+            "0050.TW": 0.4,
+            "2330.TW": 0.2,
+            "CASH": 0.2
+          },
+          "uncertainty": 0.2,
+          "valid_from": "2026-05-15T15:45:00Z",
+          "valid_to": "2026-05-22T15:45:00Z"
+        }
+      },
+      "persona_id": "persona-risk-balanced",
+      "proposal_id": "pap-mgmt-syn-007-beta",
+      "record_id": "pap-rec-mgmt-syn-007-002",
+      "record_type": "proposal_snapshot",
+      "recorded_at": "2026-05-15T15:45:00Z",
+      "schema_version": "persona_allocation_proposal_record.v1",
+      "scope_ref": "paper"
+    },
+    {
+      "capital_pool_id": "capital-pool-paper-001",
+      "payload": {
+        "proposal": {
+          "capital_pool_id": "capital-pool-paper-001",
+          "conviction": 0.64,
+          "created_at": "2026-05-15T15:45:00Z",
+          "directions": [
+            "short",
+            "risk_off"
+          ],
+          "evidence_refs": [
+            "support/evidence/MGMT-PAPER-005-paper-telemetry-packet.json",
+            "MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md"
+          ],
+          "governance_multiplier": 1.0,
+          "metadata": {
+            "asset_classes": [
+              "tw_equity_inverse"
+            ],
+            "proposal_role": "advisor",
+            "strategy_family": "leveraged_short"
+          },
+          "persona_id": "persona-leverage-skeptic",
+          "proposal_id": "pap-mgmt-syn-007-gamma",
+          "rationale_ref": "memo://mgmt-syn-007/leverage-skeptic",
+          "regime_fit_score": 0.7,
+          "regime_ref": "regime://tw-market/range-breakout-watch",
+          "reliability_score": 0.66,
+          "scope_ref": "paper",
+          "target_type": "asset",
+          "target_weights": {
+            "00632R.TW": 0.35,
+            "CASH": 0.2
+          },
+          "uncertainty": 0.18,
+          "valid_from": "2026-05-15T15:45:00Z",
+          "valid_to": "2026-05-22T15:45:00Z"
+        }
+      },
+      "persona_id": "persona-leverage-skeptic",
+      "proposal_id": "pap-mgmt-syn-007-gamma",
+      "record_id": "pap-rec-mgmt-syn-007-003",
+      "record_type": "proposal_snapshot",
+      "recorded_at": "2026-05-15T15:45:00Z",
+      "schema_version": "persona_allocation_proposal_record.v1",
+      "scope_ref": "paper"
+    }
+  ],
+  "proposal_store": {
+    "path": "support/evidence/MGMT-SYN-007/proposals.jsonl",
+    "proposal_ids": [
+      "pap-mgmt-syn-007-alpha",
+      "pap-mgmt-syn-007-beta",
+      "pap-mgmt-syn-007-gamma"
+    ],
+    "record_count": 3,
+    "schema_version": "persona_allocation_proposal_record.v1"
+  },
+  "source_refs": [
+    "docs/04/pantheon_sa_supplemental_2026-05-15/SA_management_console_multi_persona_ooda.md#M5",
+    "docs/04/pantheon_sa_supplemental_2026-05-15/SD_management_console_multi_persona_ooda.md#EPIC-03",
+    "MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md"
+  ],
+  "synthesis_request": {
+    "allocation_aggregator_module": "services/optimizer-svc/portfolio_synthesis",
+    "capital_pool_id": "capital-pool-paper-001",
+    "optimizer_solver_invoked": false,
+    "proposal_ids": [
+      "pap-mgmt-syn-007-alpha",
+      "pap-mgmt-syn-007-beta",
+      "pap-mgmt-syn-007-gamma"
+    ],
+    "risk_policy": {
+      "forbidden_strategy_families": [
+        "leveraged_short"
+      ],
+      "max_single_weight": 0.5
+    },
+    "scope_ref": "paper"
+  },
+  "task_id": "MGMT-SYN-007",
+  "verification_commands": [
+    "python3 scripts/generate_mgmt_syn_007_evidence.py",
+    "python3 -m pytest services/optimizer-svc/test_portfolio_synthesis.py services/optimizer-svc/test_persona_allocation_proposal_store.py -q"
+  ]
+}
