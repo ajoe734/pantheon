@@ -77,16 +77,32 @@ This is a hard contract constraint, not a soft check. Environments:
 
 ## Storage
 
-v1: JSONL append-only store via `OodaLoopStore`.
+v1 model-local helper: JSONL snapshot persistence via `OodaLoopStore`.
 
 - Each call to `add()` or `update()` appends a snapshot line to the store file.
 - The in-memory index holds the latest snapshot per `packet_id`.
-- v2 migration target: `ooda.loop_packet` Postgres table.
+
+v1 durable append/replay store: `OodaJsonlAppendStore` in `jsonl_store.py`.
+
+- Every durable write is an envelope with `schema_version`, `record_type`,
+  `record_id`, `packet_id`, `recorded_at`, and `payload`.
+- Supported record types:
+  - `packet_snapshot`: complete OODA packet snapshot.
+  - `stage_transition`: append-only status transition, optionally carrying the
+    resulting packet snapshot.
+- Replay fails fast on malformed JSONL or unsupported record envelopes.
+- Query supports Management/BFF linkage fields: `loop_type`, `status`,
+  `environment`, `capital_pool_id`, `strategy_id`, `persona_id`,
+  `runtime_binding_id`, `deployment_plan_id`, and `evolution_decision_id`.
+- The in-memory projection holds the latest packet snapshot per `packet_id`,
+  while preserving all raw envelopes for replay/audit.
+- v2 migration target: `ooda.loop_packet` Postgres table plus an event/audit
+  table for packet stage-transition envelopes.
 
 Default store path:
 
 ```text
-services/control-plane/ooda/store/ooda_packets.jsonl
+.orchestrator/ooda/ooda_loop_packets.jsonl
 ```
 
 ---
