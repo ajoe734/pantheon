@@ -131,3 +131,29 @@ Status:
 
 - The previous hosted blocker is cleared: `/bff/me` is intercepted and the
   strict 401 path no longer renders the hybrid seed-fallback banner.
+
+## 2026-05-15 Closeout Reverification
+
+Closeout owner reran the focused verification before finalizing `review_approved`
+to `done`.
+
+```bash
+npm test -- --run \
+  src/lib/bff-v1/__tests__/me.test.ts \
+  src/components/layout/LiveStatusBanner.test.tsx \
+  src/lib/bff/__tests__/liveTransportSnapshot.test.ts
+```
+
+Result: `3 passed`, `15 passed`.
+
+```bash
+PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app \
+PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io \
+VITE_BFF_FALLBACK=strict \
+npx playwright test e2e/01-startup-session.spec.ts \
+  -g "strict startup|does not fall back" \
+  --reporter=list \
+  --output=/tmp/fe-int-me-startup-closeout-codex2
+```
+
+Result: `2 passed`.
