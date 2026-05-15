@@ -24024,6 +24024,120 @@ def _sem_final_alert_detail(alert_id: str) -> Dict[str, Any]:
     )
 
 
+# MGMT-OODA-005: stage definitions for control-room OODA status card
+_OODA_STAGE_DEFS = [
+    ("observe", "Observe", "telemetry/source/search health"),
+    ("orient", "Orient", "active signal/persona proposal count"),
+    ("decide", "Decide", "pending approvals/interventions"),
+    ("act", "Act", "paper runtime / sandbox broker state"),
+    ("learn", "Learn", "evolution/postmortem/retrain state"),
+]
+
+# Stage-to-status mapping: which packet status values map to each stage card
+_OODA_STAGE_STATUSES: Dict[str, List[str]] = {
+    "observe": ["open", "observing"],
+    "orient": ["oriented"],
+    "decide": ["decided"],
+    "act": ["acted"],
+    "learn": ["evolving"],
+}
+
+
+def _build_ooda_control_room_status_card(snapshot_at: str) -> Dict[str, Any]:
+    """Return the OODA stage summary card for the Control Room.
+
+    Gated by PANTHEON_OODA_PACKET_ENABLED. Returns a fail-closed card when
+    disabled. Each stage card carries an active_count (open loops at that
+    stage) and a direct link to the filtered packet list.
+    """
+    if not _ooda_packet_routes_enabled():
+        return {
+            "enabled": False,
+            "gate_state": "fail_closed",
+            "open_loop_count": 0,
+            "closed_loop_count": 0,
+            "failed_loop_count": 0,
+            "total_packet_count": 0,
+            "stages": {
+                stage: {
+                    "label": label,
+                    "description": desc,
+                    "status": "fail_closed",
+                    "active_count": 0,
+                    "detail_link": f"/bff/ooda/packets?stage={stage}",
+                }
+                for stage, label, desc in _OODA_STAGE_DEFS
+            },
+            "live_capital_side_effects": False,
+            "fail_closed_gate_posture": "fail_closed",
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "source": "fail_closed",
+                "status": "fail_closed",
+                "surface_key": "ooda_control_room_status",
+            },
+        }
+
+    packets = read_store.list_ooda_packets()
+    ooda_src = read_store.dataset_source("ooda_packets")
+
+    open_statuses = {"open", "observing", "oriented", "decided", "acted", "evolving"}
+    open_count = sum(
+        1 for p in packets if str(p.get("status") or "").lower() in open_statuses
+    )
+    closed_count = sum(
+        1 for p in packets if str(p.get("status") or "").lower() == "closed"
+    )
+    failed_count = sum(
+        1 for p in packets if str(p.get("status") or "").lower() == "failed"
+    )
+
+    stage_counts: Dict[str, int] = {
+        stage: sum(
+            1
+            for p in packets
+            if str(p.get("status") or "").lower() in status_vals
+        )
+        for stage, status_vals in _OODA_STAGE_STATUSES.items()
+    }
+
+    # Safety assertion: no pre-activation packet should carry live capital side effects
+    live_side_effects_detected = any(
+        p.get("act", {}).get("live_capital_side_effects", False) is True
+        for p in packets
+        if str(p.get("environment") or "").lower() != "live"
+    )
+
+    surface_status = "ok" if ooda_src not in (None, "missing") else "unavailable"
+
+    return {
+        "enabled": True,
+        "gate_state": "enabled",
+        "open_loop_count": open_count,
+        "closed_loop_count": closed_count,
+        "failed_loop_count": failed_count,
+        "total_packet_count": len(packets),
+        "stages": {
+            stage: {
+                "label": label,
+                "description": desc,
+                "status": "ok",
+                "active_count": stage_counts[stage],
+                "detail_link": f"/bff/ooda/packets?stage={stage}",
+            }
+            for stage, label, desc in _OODA_STAGE_DEFS
+        },
+        "live_capital_side_effects": live_side_effects_detected,
+        "fail_closed_gate_posture": "fail_closed",
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "source": ooda_src if ooda_src else "missing",
+            "status": surface_status,
+            "surface_key": "ooda_control_room_status",
+        },
+    }
+
+
 def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
     if path == "/bff/audit":
         return _sem_final_list_response(
@@ -24123,6 +24237,7 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
                 "source": "composed_read_models",
                 "staleness": {"served_from": "mixed", "last_known_at": snapshot_at},
             }
+        ooda_card = _build_ooda_control_room_status_card(snapshot_at)
         return {
             "loops": {
                 "items": loop_runs,
@@ -24136,12 +24251,14 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
                 "items": sentinel_findings,
                 "meta": {"snapshot_at": snapshot_at, "surfaces": {"sentinel_findings": sentinel_surface}},
             },
+            "ooda_status": ooda_card,
             "meta": {
                 "snapshot_at": snapshot_at,
                 "surfaces": {
                     "control_room": control_surface,
                     "loop_runs": loop_surface,
                     "sentinel_findings": sentinel_surface,
+                    "ooda_control_room_status": ooda_card["meta"],
                 },
             },
         }
