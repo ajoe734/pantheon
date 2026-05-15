@@ -1,0 +1,953 @@
+{
+  "auth_source": {
+    "kind": "provided_bearer",
+    "sha256_12": "008288ce7ac0"
+  },
+  "commands": [
+    "PANTHEON_BFF_SMOKE_JWT_SECRET=<redacted> scripts/probe_bff_authenticated_live.py --include-writes"
+  ],
+  "failed_routes": [],
+  "generated_at": "2026-05-15T07:32:52Z",
+  "health": {
+    "body_prefix": null,
+    "body_summary": {
+      "keys": [
+        "service",
+        "status",
+        "timestamp",
+        "version"
+      ],
+      "type": "object"
+    },
+    "duration_ms": 218,
+    "expected_status": [
+      200
+    ],
+    "family": "health",
+    "method": "GET",
+    "missing_required_paths": [],
+    "ok": true,
+    "path": "/health",
+    "response_headers": {},
+    "status": 200
+  },
+  "include_writes": false,
+  "openapi": {
+    "body_prefix": null,
+    "body_summary": {
+      "keys": [
+        "components",
+        "info",
+        "openapi",
+        "paths"
+      ],
+      "type": "object"
+    },
+    "duration_ms": 109,
+    "expected_status": [
+      200
+    ],
+    "family": "openapi",
+    "method": "GET",
+    "missing_required_paths": [],
+    "ok": true,
+    "path": "/openapi.json",
+    "response_headers": {},
+    "status": 200
+  },
+  "routes": [
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "data_keys": [
+          "capabilities",
+          "currentUser",
+          "current_user",
+          "environment",
+          "feature_flags",
+          "locale",
+          "roles",
+          "session",
+          "tenant",
+          "tenant_id",
+          "user"
+        ],
+        "data_type": "object",
+        "keys": [
+          "data",
+          "meta"
+        ],
+        "meta_keys": [
+          "contract",
+          "route",
+          "snapshot_at"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 35,
+      "expected_status": [
+        200
+      ],
+      "family": "session",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/me",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "data_count": 0,
+        "data_type": "list",
+        "keys": [
+          "data",
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "degradation",
+          "snapshot_at",
+          "surfaces",
+          "total"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 32,
+      "expected_status": [
+        200
+      ],
+      "family": "strategy",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/strategies",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "data_count": 2,
+        "data_type": "list",
+        "first_data_keys": [
+          "archetype",
+          "id",
+          "labelKey",
+          "lifecycleStatus",
+          "name",
+          "owner",
+          "risk",
+          "routedStrategies",
+          "state",
+          "successRate",
+          "updatedAt"
+        ],
+        "keys": [
+          "data",
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "snapshot_at",
+          "surfaces",
+          "total"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 58,
+      "expected_status": [
+        200
+      ],
+      "family": "persona",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/personas",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "data_count": 0,
+        "data_type": "list",
+        "keys": [
+          "data",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "snapshot_at",
+          "surfaces",
+          "total"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 40,
+      "expected_status": [
+        200
+      ],
+      "family": "capital",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/capital-pools",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "data_count": 0,
+        "data_type": "list",
+        "keys": [
+          "data",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "degradation",
+          "snapshot_at",
+          "surfaces",
+          "total"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 19,
+      "expected_status": [
+        200
+      ],
+      "family": "rebalance",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/rebalances",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "keys": [
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "snapshot_at",
+          "surfaces"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 30,
+      "expected_status": [
+        200
+      ],
+      "family": "deployment",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/deployments",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "keys": [
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "snapshot_at",
+          "surfaces"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 25,
+      "expected_status": [
+        200
+      ],
+      "family": "evolution",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/evolution-programs",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "keys": [
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "snapshot_at",
+          "surfaces"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 19,
+      "expected_status": [
+        200
+      ],
+      "family": "jobs",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/jobs",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "keys": [
+          "count",
+          "generated_at",
+          "items"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 32,
+      "expected_status": [
+        200
+      ],
+      "family": "approval",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/approvals",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "keys": [
+          "count",
+          "generated_at",
+          "items"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 64,
+      "expected_status": [
+        200
+      ],
+      "family": "v5-intervention",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/v5/interventions",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "keys": [
+          "alerts",
+          "meta",
+          "summary"
+        ],
+        "meta_keys": [
+          "acknowledgement_supported",
+          "snapshot_at",
+          "surfaces"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 88,
+      "expected_status": [
+        200
+      ],
+      "family": "alerts",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/alerts",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "keys": [
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "snapshot_at",
+          "surfaces"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 35,
+      "expected_status": [
+        200
+      ],
+      "family": "incidents",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/incidents",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "keys": [
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "snapshot_at",
+          "surfaces"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 24,
+      "expected_status": [
+        200
+      ],
+      "family": "audit",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/audit",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "data_count": 0,
+        "data_type": "list",
+        "keys": [
+          "data",
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "degradation",
+          "snapshot_at",
+          "surfaces",
+          "total"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 28,
+      "expected_status": [
+        200
+      ],
+      "family": "artifacts",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/artifacts",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "keys": [
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "snapshot_at",
+          "surfaces"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 59,
+      "expected_status": [
+        200
+      ],
+      "family": "runtimes",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/runtimes",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "data_count": 0,
+        "data_type": "list",
+        "keys": [
+          "data",
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "snapshot_at",
+          "surfaces",
+          "total"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 29,
+      "expected_status": [
+        200
+      ],
+      "family": "mcp-servers",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/mcp-servers",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "data_count": 0,
+        "data_type": "list",
+        "keys": [
+          "data",
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "snapshot_at",
+          "surfaces",
+          "total"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 39,
+      "expected_status": [
+        200
+      ],
+      "family": "mcp-tools",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/mcp-tools",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "data_count": 0,
+        "data_type": "list",
+        "keys": [
+          "data",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "degradation",
+          "snapshot_at",
+          "surfaces",
+          "total"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 27,
+      "expected_status": [
+        200
+      ],
+      "family": "skills",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/skills",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "data_count": 21,
+        "data_type": "list",
+        "first_data_keys": [
+          "channel_id",
+          "id",
+          "name",
+          "replay_supported",
+          "resync_routes",
+          "status"
+        ],
+        "keys": [
+          "data",
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "snapshot_at",
+          "surfaces",
+          "total"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 173,
+      "expected_status": [
+        200
+      ],
+      "family": "channels",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/channels",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "data_count": 0,
+        "data_type": "list",
+        "keys": [
+          "data",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "degradation",
+          "snapshot_at",
+          "surfaces",
+          "total"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 180,
+      "expected_status": [
+        200
+      ],
+      "family": "tools",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/tools",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "data_count": 0,
+        "data_type": "list",
+        "keys": [
+          "data",
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "degradation",
+          "snapshot_at",
+          "surfaces",
+          "total"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 36,
+      "expected_status": [
+        200
+      ],
+      "family": "ranking-formulas",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/ranking-formulas",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "data_count": 0,
+        "data_type": "list",
+        "keys": [
+          "data",
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "degradation",
+          "snapshot_at",
+          "surfaces",
+          "total"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 340,
+      "expected_status": [
+        200
+      ],
+      "family": "research",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/research-experiments",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "data_count": 0,
+        "data_type": "list",
+        "keys": [
+          "data",
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "degradation",
+          "snapshot_at",
+          "surfaces",
+          "total"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 15,
+      "expected_status": [
+        200
+      ],
+      "family": "agora-signals",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/agora/signals",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "keys": [
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "degradation",
+          "snapshot_at",
+          "surfaces",
+          "total"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 100,
+      "expected_status": [
+        200
+      ],
+      "family": "agora-inbox",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/agora/inbox",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "data_count": 0,
+        "data_type": "list",
+        "keys": [
+          "data",
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "degradation",
+          "snapshot_at",
+          "surfaces",
+          "total"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 15,
+      "expected_status": [
+        200
+      ],
+      "family": "agora-journal",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/agora/journal",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "keys": [
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "snapshot_at",
+          "surfaces",
+          "total"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 171,
+      "expected_status": [
+        200
+      ],
+      "family": "agora-postmortems",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/agora/postmortems",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "keys": [
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "degradation",
+          "snapshot_at",
+          "surfaces",
+          "total"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 19,
+      "expected_status": [
+        200
+      ],
+      "family": "agora-ask",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/agora/ask/sessions",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "data_count": 0,
+        "data_type": "list",
+        "keys": [
+          "data",
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "snapshot_at",
+          "surfaces",
+          "total"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 104,
+      "expected_status": [
+        200
+      ],
+      "family": "v5-loop-runs",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/v5/loop-runs",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "data_count": 0,
+        "data_type": "list",
+        "keys": [
+          "data",
+          "items",
+          "meta",
+          "page_info"
+        ],
+        "meta_keys": [
+          "snapshot_at",
+          "surfaces",
+          "total"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 63,
+      "expected_status": [
+        200
+      ],
+      "family": "v5-sentinel",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/v5/sentinel/findings",
+      "response_headers": {},
+      "status": 200
+    },
+    {
+      "body_prefix": null,
+      "body_summary": {
+        "keys": [
+          "items",
+          "meta"
+        ],
+        "meta_keys": [
+          "snapshot_at",
+          "surfaces"
+        ],
+        "type": "object"
+      },
+      "duration_ms": 29,
+      "expected_status": [
+        200
+      ],
+      "family": "v5-persona-health",
+      "method": "GET",
+      "missing_required_paths": [],
+      "ok": true,
+      "path": "/bff/v5/execution/persona-health",
+      "response_headers": {},
+      "status": 200
+    }
+  ],
+  "summary": {
+    "VITE_BFF_MODE_live_allowed": true,
+    "VITE_BFF_REAL_WRITES_true_allowed": false,
+    "failed": 0,
+    "live_capital_side_effects": false,
+    "passed": 32,
+    "read_probes": 30,
+    "total": 32,
+    "write_probes": 0
+  },
+  "target_url": "https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io",
+  "task_id": "BFF-LUV-AUTHED-LIVE-001"
+}
