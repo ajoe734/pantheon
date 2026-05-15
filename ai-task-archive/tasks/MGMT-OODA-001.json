@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OODA-001",
+  "archived_at": "2026-05-15T15:52:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OODA-001",
+    "title": "OodaLoopPacket schema",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-01 OODA Packet Foundation",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete. Implementation commit 25cd92a8 enforces non-empty stage evidence for closed OODA packets in JSON Schema and Python. act.live_capital_side_effects excluded from act evidence. Verification: pytest 42 passed, unittest 34 passed, py_compile OK. Review artifact committed in bc2b3321.",
+    "last_update": "2026-05-15T15:52:30Z",
+    "review_notes_zh": [
+      "re-review 通過：commit 25cd92a8 已修正 closed packet empty evidence bundle 的 JSON Schema 漏洞，act.live_capital_side_effects 不再被當成 act evidence；驗證 python3 -m pytest services/control-plane/ooda/ -q -> 42 passed；python3 -m unittest discover -s services/control-plane/ooda -p test_*.py -> 34 passed；py_compile passed。"
+    ],
+    "review_file": "support/reviews/MGMT-OODA-001-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T15:52:30Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "merge/backend-dev-into-master",
+      "git_clean_required": false,
+      "commit": "bc2b332172aaacb77fa8cff0323d6025c121c641",
+      "commit_subject": "MGMT-OODA-001 closeout: add Codex review artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "MGMT-OODA-001",
+        "Reviewer": "Codex",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 15,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OODA-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Helper-claimed by idle Claude2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T14:51:02Z",
+      "resolved_at": "2026-05-15T14:51:36Z"
+    },
+    {
+      "task_id": "MGMT-OODA-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "OodaLoopPacket schema delivered. Created: schema.json (JSON Schema with 5 stage bundles), ooda_loop_packet.py (Python dataclasses + OodaLoopStore JSONL + validate_packet()), __init__.py, contract.md. Stage transitions enforced by _ALLOWED_TRANSITIONS table; live_capital_side_effects safety invariant validated. All round-trip and guard checks pass. Commit: b58fdbb2. Ready for review.",
+      "status": "done",
+      "created_at": "2026-05-15T14:57:02Z",
+      "resolved_at": "2026-05-15T15:02:30Z"
+    },
+    {
+      "task_id": "MGMT-OODA-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review blocked: JSON Schema currently accepts paper/canary packets with act.live_capital_side_effects=true despite contract hard invariant; closed/OODA-complete packets can validate with empty stage evidence/top-level bundles optional, so missing evidence is not prevented; OodaLoopStore.list compares str(Enum) with raw strings, so HTTP-style string filters return zero for enum-created packets. Verification: python3 -m pytest services/control-plane/ooda/test_stage_transition.py services/control-plane/ooda/test_jsonl_store.py passed; jsonschema repro accepted invalid non-live live_capital_side_effects packet; store filter repro returned string filters=0.",
+      "status": "done",
+      "created_at": "2026-05-15T15:02:30Z",
+      "resolved_at": "2026-05-15T15:02:30Z"
+    },
+    {
+      "task_id": "MGMT-OODA-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "All 3 review-blocking bugs fixed. (1) JSON Schema now enforces act.live_capital_side_effects=false for non-live envs via top-level allOf if/then constraint. (2) Closed packets now require observe/orient/decide/act bundles with at least one non-empty evidence field: enforce in validate_packet_stage_invariants() and schema allOf; also pass all 5 bundles from OodaLoopPacket.validate() to fix routing. (3) OodaLoopStore.list() now normalises both sides through Enum.value before comparison. Verification: python3 -m pytest services/control-plane/ooda/test_stage_transition.py services/control-plane/ooda/test_jsonl_store.py -v -> 30 passed 0 failed. Commit: abe1da51. Note: commit also captured pre-staged optimizer-svc files from another agent; OODA scope is correct.",
+      "status": "done",
+      "created_at": "2026-05-15T15:16:24Z",
+      "resolved_at": "2026-05-15T15:23:14Z"
+    },
+    {
+      "task_id": "MGMT-OODA-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review not approved: schema still accepts a closed packet with observe/orient/decide/act bundles present but all evidence fields empty. Focused repro: jsonschema.validate(closed_empty_packet, services/control-plane/ooda/ooda_loop_packet.schema.json) returned ACCEPTED. Pytest still passes (30 passed), so add JSON Schema constraints and a regression test that closed empty bundles are rejected; for act, do not let live_capital_side_effects alone count as evidence.",
+      "status": "done",
+      "created_at": "2026-05-15T15:23:14Z",
+      "resolved_at": "2026-05-15T15:23:14Z"
+    },
+    {
+      "task_id": "MGMT-OODA-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Reviewer repro fixed. JSON Schema now rejects closed packets with empty evidence bundles via anyOf constraints in allOf. Python stage_transition.py updated to exclude live_capital_side_effects from act bundle evidence check. Added 4 regression tests: test_json_schema_rejects_closed_packet_with_empty_bundle_evidence (the reviewer's exact repro), test_json_schema_rejects_closed_act_bundle_with_live_capital_side_effects_only, test_json_schema_accepts_closed_packet_with_valid_bundle_evidence (happy path), test_python_validation_rejects_act_bundle_with_live_capital_side_effects_only. 42 tests pass. Commit: 25cd92a8.",
+      "status": "done",
+      "created_at": "2026-05-15T15:34:40Z",
+      "resolved_at": "2026-05-15T15:45:53Z"
+    },
+    {
+      "task_id": "MGMT-OODA-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review approved: closed OODA packets now require stage evidence in JSON Schema and Python validation; verification passed (pytest 42, unittest 34, py_compile). Owner Claude2 should finalize closeout.",
+      "status": "done",
+      "created_at": "2026-05-15T15:45:53Z",
+      "resolved_at": "2026-05-15T15:52:30Z"
+    }
+  ],
+  "blockers": []
+}
