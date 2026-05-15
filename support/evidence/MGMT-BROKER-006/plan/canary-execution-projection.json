@@ -1,0 +1,28 @@
+{
+  "metadata_key": "openclaw/registry/strategy-canary/2.0.0/metadata.json",
+  "artifact_key": "openclaw/registry/strategy-canary/2.0.0/artifact.bin",
+  "metadata": {
+    "registry_id": "reg-canary-001",
+    "strategy_id": "strategy-canary",
+    "version": "2.0.0",
+    "artifact_type": "model_artifact",
+    "artifact_state": "approved",
+    "deployment_stage": "canary",
+    "approval_decision_id": "apv-canary-001",
+    "deployment_plan_id": "plan-canary-001",
+    "capital_pool_id": "pool-canary-001",
+    "runtime_action": "replace_binding",
+    "checksum": "sha256-canary-artifact-checksum",
+    "lineage": {},
+    "created_at": "2026-05-15T17:34:44Z",
+    "approved_at": "2026-05-15T17:34:44Z",
+    "sponsor_persona_id": "persona-live-ops",
+    "capital_scale_pct": 5.0,
+    "gross_scale_pct": 25.0,
+    "rollback": {
+      "target_registry_id": "reg-paper-baseline-001",
+      "target_version": "1.1.9",
+      "action_type": "pause_then_replace"
+    }
+  }
+}

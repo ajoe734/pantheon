@@ -3,7 +3,8 @@
     "canary_packet_ready_only_with_human_gate_refs": true,
     "live_target_rejected": true,
     "production_live_boundary_must_be_fail_closed": true,
-    "shioaji_broker_sandbox_smoke_required": true
+    "shioaji_broker_sandbox_smoke_required": true,
+    "shioaji_sandbox_evidence_packet_required": true
   },
   "rows": [
     {
@@ -13,9 +14,11 @@
         "canary_gate_check": "pass",
         "live_gate_status": "rejected",
         "packet_status": "ready_for_review",
+        "shioaji_evidence_check": "pass",
+        "shioaji_evidence_status": "passed",
         "target_stage": "canary"
       },
-      "row": "ready-with-explicit-human-gate-and-broker-smoke",
+      "row": "ready-with-explicit-human-gate-broker-smoke-and-shioaji-evidence",
       "status": "passed"
     },
     {
@@ -34,6 +37,15 @@
         "packet_status": "incomplete"
       },
       "row": "missing-broker-smoke-keeps-packet-incomplete",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "detail": "Shioaji sandbox evidence packet is required before a canary human gate packet can be ready.",
+        "packet_status": "incomplete"
+      },
+      "row": "missing-shioaji-evidence-keeps-packet-incomplete",
       "status": "passed"
     },
     {
@@ -59,11 +71,12 @@
     "broker_sandbox_smoke_required": true,
     "canary_target_required": true,
     "operator_approval_required": true,
-    "passed": 5,
+    "passed": 6,
     "production_live_order_submitted": false,
     "real_capital_used": false,
     "risk_owner_approval_required": true,
-    "rows": 5,
+    "rows": 6,
+    "shioaji_sandbox_evidence_required": true,
     "smoke_passed": true
   },
   "task_id": "MGMT-SAFE-004"

@@ -25,17 +25,22 @@ class CanaryHumanGateSmokeTest(unittest.TestCase):
         self.assertFalse(report["summary"]["real_capital_used"])
         self.assertTrue(report["summary"]["operator_approval_required"])
         self.assertTrue(report["summary"]["broker_sandbox_smoke_required"])
+        self.assertTrue(report["summary"]["shioaji_sandbox_evidence_required"])
         self.assertTrue(report["assertions"]["live_target_rejected"])
+        self.assertTrue(report["assertions"]["shioaji_sandbox_evidence_packet_required"])
         self.assertTrue(report["assertions"]["production_live_boundary_must_be_fail_closed"])
 
         rows = {row["row"]: row for row in report["rows"]}
-        self.assertEqual(rows["ready-with-explicit-human-gate-and-broker-smoke"]["status"], "passed")
         self.assertEqual(
-            rows["ready-with-explicit-human-gate-and-broker-smoke"]["evidence"]["target_stage"],
+            rows["ready-with-explicit-human-gate-broker-smoke-and-shioaji-evidence"]["status"],
+            "passed",
+        )
+        self.assertEqual(
+            rows["ready-with-explicit-human-gate-broker-smoke-and-shioaji-evidence"]["evidence"]["target_stage"],
             "canary",
         )
         self.assertEqual(
-            rows["ready-with-explicit-human-gate-and-broker-smoke"]["evidence"]["live_gate_status"],
+            rows["ready-with-explicit-human-gate-broker-smoke-and-shioaji-evidence"]["evidence"]["live_gate_status"],
             "rejected",
         )
         self.assertIn(
@@ -43,6 +48,7 @@ class CanaryHumanGateSmokeTest(unittest.TestCase):
             rows["missing-operator-approval-keeps-packet-incomplete"]["evidence"]["detail"],
         )
         self.assertEqual(rows["missing-broker-smoke-keeps-packet-incomplete"]["status"], "passed")
+        self.assertEqual(rows["missing-shioaji-evidence-keeps-packet-incomplete"]["status"], "passed")
 
     def test_cli_writes_json_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

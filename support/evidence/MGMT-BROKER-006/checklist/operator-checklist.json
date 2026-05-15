@@ -1,0 +1,81 @@
+{
+  "task_id": "EP5-001",
+  "generated_at": "2026-05-15T17:34:43Z",
+  "mode": "operator_checklist",
+  "env_file": "env/canary-exec.env.example",
+  "status": "pass",
+  "allow_empty_secrets": true,
+  "check_health": false,
+  "items": [
+    {
+      "name": "execution_mode",
+      "status": "pass",
+      "detail": "PANTHEON_EXECUTION_MODE=canary"
+    },
+    {
+      "name": "real_broker_and_exchange_modes",
+      "status": "pass",
+      "detail": "BROKER_ADAPTER_MODE=real, EXCHANGE_ADAPTER_MODE=real"
+    },
+    {
+      "name": "secrets_boundary_enforced",
+      "status": "pass",
+      "detail": "PANTHEON_SECRETS_OPTIONAL=false"
+    },
+    {
+      "name": "ibkr_provider_declared",
+      "status": "pass",
+      "detail": "US broker execution: EXECUTION_BROKER_PROVIDER=IBKR"
+    },
+    {
+      "name": "shioaji_provider_declared",
+      "status": "pass",
+      "detail": "Taiwan broker execution: TW_EXECUTION_PROVIDER=Shioaji"
+    },
+    {
+      "name": "kraken_provider_declared",
+      "status": "pass",
+      "detail": "Crypto venue execution: CRYPTO_EXECUTION_PROVIDER=Kraken"
+    },
+    {
+      "name": "tej_provider_declared",
+      "status": "pass",
+      "detail": "Taiwan research-grade vendor: TW_RESEARCH_PROVIDER=TEJ"
+    },
+    {
+      "name": "governed_provider_matrix_declared",
+      "status": "pass",
+      "detail": "governed provider refs declared for IBKR, Shioaji, Kraken, and TEJ"
+    },
+    {
+      "name": "governed_provider_secret_refs_present",
+      "status": "pass",
+      "detail": "tracked secret-name refs exist for IBKR, Shioaji, Kraken, and TEJ"
+    },
+    {
+      "name": "operator_owned_refs_present",
+      "status": "pass",
+      "detail": "all required ids and refs are present"
+    },
+    {
+      "name": "canary_scale_within_policy",
+      "status": "pass",
+      "detail": "capital_scale_pct=5.0, gross_scale_pct=25.0"
+    },
+    {
+      "name": "rollback_action_type_valid",
+      "status": "pass",
+      "detail": "CANARY_ROLLBACK_ACTION_TYPE=pause_then_replace"
+    },
+    {
+      "name": "vm2_secret_name_refs_present",
+      "status": "pass",
+      "detail": "tracked example uses secret-name refs instead of raw values"
+    },
+    {
+      "name": "runtime_manager_access_configured",
+      "status": "pass",
+      "detail": "url=http://127.0.0.1:28081, token=set"
+    }
+  ]
+}

@@ -95,6 +95,67 @@ def broker_smoke_summary_fixture() -> dict[str, object]:
     }
 
 
+def shioaji_acceptance_checks_fixture() -> list[dict[str, object]]:
+    details = {
+        "broker_is_shioaji": "source smoke provider is Shioaji",
+        "environment_is_sandbox": "order response stays in sandbox",
+        "place_result_recorded": "place response status is submitted",
+        "cancel_result_recorded": "cancel response status is cancelled",
+        "readback_after_cancel_recorded": "readback after cancel confirms cancelled status",
+        "reconcile_passed": "reconciliation status is passed",
+        "live_broker_fail_closed": "live broker request is rejected with SHIOAJI_LIVE_DISABLED",
+        "capital_binding_not_enabled": "real capital is neither used nor reserved",
+        "no_secret_material_persisted": "raw Shioaji secret material is not persisted",
+    }
+    return [
+        {"name": name, "status": "pass", "detail": details[name]}
+        for name in readiness.SHIOAJI_SANDBOX_REQUIRED_ACCEPTANCE_CHECK_NAMES
+    ]
+
+
+def shioaji_evidence_packet_fixture(
+    *,
+    broker_smoke_ref: str = "broker-smoke-summary.json",
+    evidence_packet_ref: str = "shioaji-sandbox-evidence-packet.json",
+    status: str = "passed",
+) -> dict[str, object]:
+    return {
+        "schema_version": "shioaji_sandbox_evidence_packet.v1",
+        "task_id": "MGMT-BROKER-004",
+        "milestone_id": "MGMT-OODA-M3",
+        "provider": "Shioaji",
+        "broker": "shioaji",
+        "environment": "sandbox",
+        "status": status,
+        "account_status": "ready",
+        "production_live_enabled": False,
+        "capital_binding_enabled": False,
+        "human_gate_required": True,
+        "proof_boundary": "broker_sandbox_evidence_packet; not canary/live/capital proof",
+        "fail_closed_posture": {
+            "live_gate": {
+                "status": "rejected",
+                "response": {"error_code": "SHIOAJI_LIVE_DISABLED"},
+            },
+            "no_real_capital": {
+                "real_capital_used": False,
+                "real_capital_reserved": False,
+                "production_live_order_submitted": False,
+            },
+        },
+        "canary_readiness_inputs": {
+            "broker_sandbox_smoke_ref": broker_smoke_ref,
+            "broker_sandbox_evidence_packet_ref": evidence_packet_ref,
+            "human_gate_required": True,
+            "risk_owner_approval_required": True,
+            "operator_approval_required": True,
+        },
+        "acceptance_checks": shioaji_acceptance_checks_fixture(),
+        "ooda_packet": {"status": "closed"},
+        "ooda_packet_validation_errors": [],
+    }
+
+
 class RunEp5CanaryReadinessTest(unittest.TestCase):
     def test_evaluate_provider_matrix_requires_all_secret_refs(self) -> None:
         env = base_env()
@@ -164,6 +225,7 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
             plan_path = tmp / "canary-deployment-plan.json"
             drill_summary_path = tmp / "rollback-drill-summary.json"
             broker_smoke_summary_path = tmp / "broker-smoke-summary.json"
+            shioaji_evidence_packet_path = tmp / "shioaji-sandbox-evidence-packet.json"
             output_dir = tmp / "packet"
 
             checklist_path.write_text(
@@ -186,6 +248,15 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
                 encoding="utf-8",
             )
             broker_smoke_summary_path.write_text(json.dumps(broker_smoke_summary_fixture()), encoding="utf-8")
+            shioaji_evidence_packet_path.write_text(
+                json.dumps(
+                    shioaji_evidence_packet_fixture(
+                        broker_smoke_ref=str(broker_smoke_summary_path),
+                        evidence_packet_ref=str(shioaji_evidence_packet_path),
+                    )
+                ),
+                encoding="utf-8",
+            )
 
             args = type(
                 "Args",
@@ -196,6 +267,7 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
                     "plan_json": str(plan_path),
                     "drill_summary_json": str(drill_summary_path),
                     "broker_smoke_summary_json": str(broker_smoke_summary_path),
+                    "shioaji_evidence_packet_json": str(shioaji_evidence_packet_path),
                     "dual_vm_evidence_dir": str(tmp),
                     "event_trace_status": "packetized",
                     "event_trace_note": "Trace query evidence remains packetized pending a replay-clean projection capture.",
@@ -224,6 +296,7 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
             plan_path = tmp / "canary-deployment-plan.json"
             drill_summary_path = tmp / "rollback-drill-summary.json"
             broker_smoke_summary_path = tmp / "broker-smoke-summary.json"
+            shioaji_evidence_packet_path = tmp / "shioaji-sandbox-evidence-packet.json"
             output_dir = tmp / "packet"
 
             checklist_path.write_text(json.dumps({"status": "pass", "check_health": True}), encoding="utf-8")
@@ -243,6 +316,15 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
                 encoding="utf-8",
             )
             broker_smoke_summary_path.write_text(json.dumps(broker_smoke_summary_fixture()), encoding="utf-8")
+            shioaji_evidence_packet_path.write_text(
+                json.dumps(
+                    shioaji_evidence_packet_fixture(
+                        broker_smoke_ref=str(broker_smoke_summary_path),
+                        evidence_packet_ref=str(shioaji_evidence_packet_path),
+                    )
+                ),
+                encoding="utf-8",
+            )
 
             args = type(
                 "Args",
@@ -253,6 +335,7 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
                     "plan_json": str(plan_path),
                     "drill_summary_json": str(drill_summary_path),
                     "broker_smoke_summary_json": str(broker_smoke_summary_path),
+                    "shioaji_evidence_packet_json": str(shioaji_evidence_packet_path),
                     "dual_vm_evidence_dir": str(tmp),
                     "event_trace_status": "packetized",
                     "event_trace_note": "Trace query evidence remains packetized pending a replay-clean projection capture.",
@@ -269,8 +352,13 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
                 str(broker_smoke_summary_path),
             )
             self.assertEqual(packet["bundle"]["broker_sandbox_smoke"]["provider"], "Shioaji")
+            self.assertEqual(
+                packet["bundle"]["shioaji_sandbox_evidence_packet"]["path"],
+                str(shioaji_evidence_packet_path),
+            )
             checks = {item["name"]: item for item in packet["acceptance_checks"]}
             self.assertEqual(checks["broker_sandbox_smoke_consumed"]["status"], "pass")
+            self.assertEqual(checks["shioaji_sandbox_evidence_packet_consumed"]["status"], "pass")
 
     def test_emit_human_gate_packet_requires_operator_approval_ref(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -280,6 +368,7 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
             plan_path = tmp / "canary-deployment-plan.json"
             drill_summary_path = tmp / "rollback-drill-summary.json"
             broker_smoke_summary_path = tmp / "broker-smoke-summary.json"
+            shioaji_evidence_packet_path = tmp / "shioaji-sandbox-evidence-packet.json"
 
             checklist_path.write_text(json.dumps({"status": "pass", "check_health": True}), encoding="utf-8")
             datasource_summary_path.write_text(
@@ -298,6 +387,15 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
                 encoding="utf-8",
             )
             broker_smoke_summary_path.write_text(json.dumps(broker_smoke_summary_fixture()), encoding="utf-8")
+            shioaji_evidence_packet_path.write_text(
+                json.dumps(
+                    shioaji_evidence_packet_fixture(
+                        broker_smoke_ref=str(broker_smoke_summary_path),
+                        evidence_packet_ref=str(shioaji_evidence_packet_path),
+                    )
+                ),
+                encoding="utf-8",
+            )
 
             packet = readiness.build_human_gate_packet(
                 checklist_path=checklist_path,
@@ -305,6 +403,7 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
                 plan_path=plan_path,
                 drill_summary_path=drill_summary_path,
                 broker_smoke_summary_path=broker_smoke_summary_path,
+                shioaji_evidence_packet_path=shioaji_evidence_packet_path,
                 dual_vm_evidence_dir=tmp,
                 event_trace_status="packetized",
                 event_trace_note="Trace query evidence remains packetized.",
@@ -346,6 +445,7 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
                 plan_path=plan_path,
                 drill_summary_path=drill_summary_path,
                 broker_smoke_summary_path=None,
+                shioaji_evidence_packet_path=None,
                 dual_vm_evidence_dir=tmp,
                 event_trace_status="packetized",
                 event_trace_note="Trace query evidence remains packetized.",
@@ -354,6 +454,93 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
             self.assertEqual(packet["status"], "incomplete")
             checks = {item["name"]: item for item in packet["acceptance_checks"]}
             self.assertEqual(checks["broker_sandbox_smoke_consumed"]["status"], "fail")
+
+    def test_emit_human_gate_packet_requires_shioaji_evidence_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            checklist_path = tmp / "operator-checklist.json"
+            datasource_summary_path = tmp / "datasource-summary.json"
+            plan_path = tmp / "canary-deployment-plan.json"
+            drill_summary_path = tmp / "rollback-drill-summary.json"
+            broker_smoke_summary_path = tmp / "broker-smoke-summary.json"
+
+            checklist_path.write_text(json.dumps({"status": "pass", "check_health": True}), encoding="utf-8")
+            datasource_summary_path.write_text(
+                json.dumps({"status": "pass", "providers": ["ibkr", "kraken", "shioaji", "tej"]}),
+                encoding="utf-8",
+            )
+            plan_path.write_text(json.dumps(canary_plan_fixture()), encoding="utf-8")
+            drill_summary_path.write_text(
+                json.dumps(
+                    {
+                        "status": "executed",
+                        "replacement_binding_id": "rb-replacement-001",
+                        "kill_switch_safe_mode": "paused",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            broker_smoke_summary_path.write_text(json.dumps(broker_smoke_summary_fixture()), encoding="utf-8")
+
+            packet = readiness.build_human_gate_packet(
+                checklist_path=checklist_path,
+                datasource_summary_path=datasource_summary_path,
+                plan_path=plan_path,
+                drill_summary_path=drill_summary_path,
+                broker_smoke_summary_path=broker_smoke_summary_path,
+                shioaji_evidence_packet_path=None,
+                dual_vm_evidence_dir=tmp,
+                event_trace_status="packetized",
+                event_trace_note="Trace query evidence remains packetized.",
+            )
+
+            self.assertEqual(packet["status"], "incomplete")
+            checks = {item["name"]: item for item in packet["acceptance_checks"]}
+            self.assertEqual(checks["broker_sandbox_smoke_consumed"]["status"], "pass")
+            self.assertEqual(checks["shioaji_sandbox_evidence_packet_consumed"]["status"], "fail")
+
+    def test_shioaji_evidence_packet_requires_closed_ooda_packet(self) -> None:
+        evidence_packet = shioaji_evidence_packet_fixture()
+        evidence_packet["ooda_packet"] = {"status": "open"}
+
+        accepted, detail, projection = readiness.evaluate_shioaji_sandbox_evidence_packet(
+            evidence_packet,
+            evidence_packet_path=None,
+            broker_smoke_summary_path=None,
+        )
+
+        self.assertFalse(accepted)
+        self.assertIn("OODA packet status must be closed", detail)
+        self.assertEqual(projection["ooda_packet_status"], "open")
+
+    def test_shioaji_evidence_packet_requires_non_empty_acceptance_checks(self) -> None:
+        evidence_packet = shioaji_evidence_packet_fixture()
+        evidence_packet["acceptance_checks"] = []
+
+        accepted, detail, _projection = readiness.evaluate_shioaji_sandbox_evidence_packet(
+            evidence_packet,
+            evidence_packet_path=None,
+            broker_smoke_summary_path=None,
+        )
+
+        self.assertFalse(accepted)
+        self.assertIn("acceptance_checks must not be empty", detail)
+
+    def test_shioaji_evidence_packet_requires_expected_acceptance_checks(self) -> None:
+        evidence_packet = shioaji_evidence_packet_fixture()
+        evidence_packet["acceptance_checks"] = [
+            {"name": "broker_is_shioaji", "status": "pass", "detail": "source smoke provider is Shioaji"}
+        ]
+
+        accepted, detail, _projection = readiness.evaluate_shioaji_sandbox_evidence_packet(
+            evidence_packet,
+            evidence_packet_path=None,
+            broker_smoke_summary_path=None,
+        )
+
+        self.assertFalse(accepted)
+        self.assertIn("missing Shioaji evidence acceptance checks", detail)
+        self.assertIn("live_broker_fail_closed", detail)
 
 
 if __name__ == "__main__":
