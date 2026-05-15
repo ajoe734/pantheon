@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "task_id": "MGMT-SAFE-004",
+  "archived_at": "2026-05-15T17:01:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-SAFE-004",
+    "title": "canary human gate smoke",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-07 Safety / Fail-Closed Regression",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete: task implementation commit 74e3b817bbff6f0e7cb76f12d19ae787e7fa54fb plus closeout marker d641b3f0 record reviewer approval, refreshed evidence, and focused verification (smoke 5/5 passed; pytest 10 passed; py_compile passed). State/archive commit is not isolated because generated state files already contained unrelated dirty changes from concurrent task closeouts before this done transition.",
+    "last_update": "2026-05-15T17:01:07Z",
+    "review_notes_zh": [
+      "審查通過：canary human-gate smoke 5/5 通過，9 個 promotion gate ref 缺一不可，broker sandbox smoke 消費 Shioaji fail-closed live boundary 驗證正確，packet_ready 需 broker_smoke_ok 作為硬性 gate。",
+      "查核重點：CANARY_HUMAN_GATE_REQUIRED_FIELDS 含 human_gate_packet_ref、broker_sandbox_smoke_ref、risk_owner_approval_ref、operator_approval_ref、persona_capital_binding_id、capital_scale_pct、gross_scale_pct 等 9 項；broker_smoke_ok 要求 status passed、provider Shioaji、reconciliation passed、no_real_capital 雙 False、live_gate SHIOAJI_LIVE_DISABLED；live target plan 被拒絕；smoke fixture-only 無 real capital 副作用。",
+      "驗證命令：py_compile 4 檔案 passed；run_canary_human_gate_smoke.py => 5/5 passed；pytest -q => 10 passed in 2.34s。"
+    ],
+    "review_file": "support/reviews/MGMT-SAFE-004-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T17:01:07Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "merge/backend-dev-into-master",
+      "git_clean_required": false,
+      "commit": "d641b3f076694404a45dd3b1a63579c7df38ab6b",
+      "commit_subject": "MGMT-SAFE-004 closeout marker",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-SAFE-004",
+        "Reviewer": "Claude",
+        "Verification": "Implementation commit 74e3b817bbff6f0e7cb76f12d19ae787e7fa54fb contains the task-owned files and refreshed evidence. Closeout verification: smoke 5/5 passed; focused pytest 10 passed; py_compile passed."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 47,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-SAFE-004",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: strengthened canary human-gate readiness so packets are ready only with explicit promotion gate refs (human gate, risk-owner, operator, persona-capital binding, policy scale) plus Shioaji broker sandbox smoke proving passed reconciliation, no real capital, and fail-closed live boundary. Added MGMT-SAFE-004 smoke CLI/test/evidence. Task-owned files: scripts/run_ep5_canary_readiness.py, scripts/test_run_ep5_canary_readiness.py, scripts/run_canary_human_gate_smoke.py, scripts/test_run_canary_human_gate_smoke.py, support/evidence/MGMT-SAFE-004/README.md, support/evidence/MGMT-SAFE-004/canary-human-gate-smoke.json. Verification: PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_canary_human_gate_smoke.py --json-out support/evidence/MGMT-SAFE-004/canary-human-gate-smoke.json => 5/5 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_run_ep5_canary_readiness.py scripts/test_run_canary_human_gate_smoke.py -q => 10 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/run_ep5_canary_readiness.py scripts/run_canary_human_gate_smoke.py scripts/test_run_ep5_canary_readiness.py scripts/test_run_canary_human_gate_smoke.py => passed.",
+      "status": "done",
+      "created_at": "2026-05-15T16:28:24Z",
+      "resolved_at": "2026-05-15T16:45:10Z"
+    },
+    {
+      "task_id": "MGMT-SAFE-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: canary human-gate smoke 5/5 passed with correct broker sandbox smoke enforcement and fail-closed live boundary. Returning to Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-05-15T16:45:10Z",
+      "resolved_at": "2026-05-15T17:01:08Z"
+    }
+  ],
+  "blockers": []
+}
