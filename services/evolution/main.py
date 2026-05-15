@@ -12,6 +12,7 @@ enforced by the platform objects imported from
 Routes
 ------
   POST   /api/evolution/proposals                         propose
+  POST   /api/evolution/proposals/from-incident           propose from incident/postmortem
   GET    /api/evolution/proposals                         list / filter
   GET    /api/evolution/proposals/{decision_id}           get single
   POST   /api/evolution/proposals/{decision_id}/review    mark reviewed
@@ -82,6 +83,7 @@ from models import (  # type: ignore
     DispatchCommandResponse,
     ExecuteRequest,
     ObservationWindowReportResponse,
+    ProposeFromIncidentRequest,
     ProposeRequest,
     RejectRequest,
     RedeployFollowthroughRequest,
@@ -101,7 +103,7 @@ _INCIDENT_SVC = Path(__file__).resolve().parent.parent / "incident"
 if str(_INCIDENT_SVC) not in sys.path:
     sys.path.insert(0, str(_INCIDENT_SVC))
 
-from incident import IncidentError, IncidentStore  # type: ignore
+from incident import IncidentCase, IncidentError, IncidentStore, Postmortem  # type: ignore
 
 # ---------------------------------------------------------------------------
 # App + storage
@@ -272,6 +274,159 @@ def _build_followthrough_refs(decision: EvolutionDecision) -> List[Dict[str, Any
     return refs
 
 
+def _incident_storage_ref(object_type: str) -> Dict[str, Any]:
+    return {
+        "backend": "incident_store",
+        "path": os.path.join(INCIDENT_DATA_DIR, "incidents.json"),
+        "object_type": object_type,
+    }
+
+
+def _default_action_from_incident(incident: IncidentCase) -> str:
+    if incident.severity == "critical" and incident.deployment_stage in {"paper", "canary", "live"}:
+        return EvolutionActionType.FREEZE.value
+    return EvolutionActionType.FLAG_FOR_REVIEW.value
+
+
+def _incident_threshold_snapshot(incident: IncidentCase) -> Dict[str, Any]:
+    if incident.severity == "critical":
+        return {
+            "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md §7.5",
+            "signal_type": "governance_incident",
+            "metric_name": "severity1_incident_count",
+            "comparator": "gte",
+            "observed_value": 1,
+            "threshold_value": 1,
+            "window": "active-incident",
+            "breached": True,
+            "note": "Critical incident opens the high-risk freeze proposal path.",
+        }
+    return {
+        "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md §7.5",
+        "signal_type": "manual_review",
+        "metric_name": "incident_postmortem_followup_required",
+        "comparator": "gte",
+        "observed_value": 1,
+        "threshold_value": 1,
+        "window": "incident-followup",
+        "breached": True,
+        "note": "Incident/postmortem evidence requires explicit evolution review.",
+    }
+
+
+def _incident_evidence_refs(
+    incident: IncidentCase,
+    postmortem: Postmortem | None,
+) -> List[Dict[str, Any]]:
+    refs = [
+        {
+            "ref_type": EvidenceRefType.MANUAL_REVIEW_TICKET.value,
+            "ref_id": incident.incident_id,
+            "storage_ref": _incident_storage_ref("IncidentCase"),
+            "note": "IncidentCase evidence snapshot for derived EvolutionDecision proposal.",
+        }
+    ]
+    if postmortem is not None:
+        refs.append(
+            {
+                "ref_type": EvidenceRefType.MANUAL_REVIEW_TICKET.value,
+                "ref_id": postmortem.postmortem_id,
+                "storage_ref": _incident_storage_ref("Postmortem"),
+                "note": "Postmortem findings linked to the derived EvolutionDecision proposal.",
+            }
+        )
+    return refs
+
+
+def _default_incident_rationale(
+    incident: IncidentCase,
+    postmortem: Postmortem | None,
+    action_type: str,
+) -> str:
+    source = (
+        f"postmortem {postmortem.postmortem_id} for incident {incident.incident_id}"
+        if postmortem is not None
+        else f"incident {incident.incident_id}"
+    )
+    return (
+        f"Create a governed {action_type} proposal from {source}. "
+        "The proposal is review-gated and does not mutate runtime, broker, or capital-binding state."
+    )
+
+
+def _postmortem_for_incident_request(
+    incident: IncidentCase,
+    postmortem_id: str | None,
+) -> Postmortem | None:
+    if postmortem_id:
+        postmortem = incident_store.get_postmortem(postmortem_id)
+        if postmortem is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Postmortem not found: {postmortem_id}",
+            )
+        if postmortem.incident_id != incident.incident_id:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Postmortem {postmortem_id} belongs to incident "
+                    f"{postmortem.incident_id}, not {incident.incident_id}"
+                ),
+            )
+        return postmortem
+    return incident_store.find_postmortem_for_incident(incident.incident_id)
+
+
+def _proposal_request_from_incident(body: ProposeFromIncidentRequest) -> ProposeRequest:
+    incident = incident_store.get_incident(body.incident_id)
+    if incident is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"IncidentCase not found: {body.incident_id}",
+        )
+    postmortem = _postmortem_for_incident_request(incident, body.postmortem_id)
+    action_type = body.action_type or _default_action_from_incident(incident)
+    target_stage = body.target_stage if body.target_stage is not None else incident.deployment_stage
+    metadata = dict(body.metadata or {})
+    metadata.update(
+        {
+            "task_id": "MGMT-EVO-002",
+            "source": "incident_postmortem",
+            "source_incident_id": incident.incident_id,
+            "source_postmortem_id": postmortem.postmortem_id if postmortem else None,
+            "source_trace_id": incident.trace_id,
+            "binding_id": incident.binding_id,
+            "deployment_plan_id": incident.deployment_plan_id,
+            "persona_capital_binding_id": incident.persona_capital_binding_id,
+            "runtime_id": incident.runtime_id,
+            "deployment_stage_snapshot": incident.deployment_stage,
+            "has_active_runtime": body.has_active_runtime,
+            "proposal_only": True,
+            "live_mutation_allowed": False,
+            "runtime_binding_mutation_allowed": False,
+            "broker_order_allowed": False,
+            "capital_binding_mutation_allowed": False,
+        }
+    )
+    return ProposeRequest(
+        decision_id=body.decision_id,
+        target_type=body.target_type,
+        target_id=body.target_id or incident.artifact_id,
+        target_version=body.target_version or incident.artifact_version,
+        action_type=action_type,
+        rationale=body.rationale or _default_incident_rationale(incident, postmortem, action_type),
+        created_by_id=body.created_by_id,
+        created_by_role=body.created_by_role,
+        target_stage=target_stage,
+        capital_pool_id=incident.capital_pool_id,
+        linked_incident_id=incident.incident_id,
+        linked_postmortem_id=postmortem.postmortem_id if postmortem else None,
+        evidence_refs=_incident_evidence_refs(incident, postmortem),
+        threshold_snapshots=[_incident_threshold_snapshot(incident)],
+        metadata=metadata,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -369,6 +524,24 @@ def propose(body: ProposeRequest):
             )
     log.info("evolution.proposed decision_id=%s action=%s", decision.decision_id, decision.action_type)
     return _decision_to_response(decision)
+
+
+@app.post(
+    "/api/evolution/proposals/from-incident",
+    status_code=201,
+    response_model=DecisionResponse,
+)
+def propose_from_incident(body: ProposeFromIncidentRequest):
+    """
+    Create a proposed EvolutionDecision from canonical IncidentCase/Postmortem evidence.
+
+    This route derives target lineage from the incident snapshot, links the
+    resulting decision back to the incident/postmortem chain, and then reuses
+    the normal proposal path. It intentionally stops at ``proposed``: review,
+    approval, runtime mitigation, broker orders, and capital-binding writes
+    remain separate gated steps.
+    """
+    return propose(_proposal_request_from_incident(body))
 
 
 # --- List / filter -----------------------------------------------------------
