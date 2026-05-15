@@ -1,0 +1,61 @@
+{
+  "task_id": "MGMT-PAPER-002",
+  "epic": "EPIC-02 Management Paper Loop Proof",
+  "environment": "paper",
+  "generated_at": "2026-05-15T15:01:43Z",
+  "live_capital_side_effects": false,
+  "approval_decision": {
+    "decision_id": "approval-paper-strategy-001",
+    "target_type": "strategy_spec",
+    "target_id": "strategy-spec-paper-qlib-lgbm-001",
+    "target_version": "1.0.0",
+    "decision": "approved",
+    "decision_state": "decided",
+    "actor_role": "risk_owner",
+    "actor_id": "governance-reviewer-paper-01",
+    "rationale": "StrategySpec strategy-spec-paper-qlib-lgbm-001@1.0.0 reviewed and approved for paper-stage deployment. Live broker and capital-binding side effects remain fail-closed. Evidence: paper evaluator result attached.",
+    "created_at": "2026-05-15T15:01:43Z",
+    "decided_at": "2026-05-15T15:01:43Z",
+    "conditions": [],
+    "risk_level": "medium",
+    "evidence_refs": [
+      {
+        "ref_type": "evaluator_result",
+        "ref_id": "eval-strategy-spec-paper-qlib-lgbm-001-paper",
+        "storage_ref": {
+          "backend": "object_store",
+          "path": "/paper/eval/strategy-spec-paper-qlib-lgbm-001"
+        },
+        "note": "Paper-mode evaluator result \u2014 no live capital exposure"
+      }
+    ],
+    "superseded_by": null,
+    "expires_at": null,
+    "capital_pool_id": "capital-pool-paper-001",
+    "persona_id": "persona-quant-paper-01",
+    "metadata": null
+  },
+  "audit_event": {
+    "event_type": "approval_decision_state_changed",
+    "decision_id": "approval-paper-strategy-001",
+    "target_type": "strategy_spec",
+    "target_id": "strategy-spec-paper-qlib-lgbm-001",
+    "decision": "approved",
+    "actor_id": "governance-reviewer-paper-01",
+    "actor_role": "risk_owner",
+    "timestamp": "2026-05-15T15:01:43Z"
+  },
+  "validation_errors": [],
+  "ooda_decide_ref": {
+    "approval_decision_id": "approval-paper-strategy-001"
+  },
+  "paper_loop_chain": [
+    "MGMT-PAPER-001: candidate StrategySpec",
+    "MGMT-PAPER-002: ApprovalDecision packet  \u2190 this artifact",
+    "MGMT-PAPER-003: DeploymentPlan packet",
+    "MGMT-PAPER-004: paper RuntimeBinding packet",
+    "MGMT-PAPER-005: telemetry packet",
+    "MGMT-PAPER-006: EvolutionDecision review packet",
+    "MGMT-PAPER-007: complete OODA packet"
+  ]
+}
