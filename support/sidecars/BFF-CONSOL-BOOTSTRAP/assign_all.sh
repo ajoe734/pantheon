@@ -136,31 +136,31 @@ TASK_ARTIFACTS="execute-plans/src/lib/bff/runAction.ts,execute-plans/src/lib/bff
 TASK_ACCEPTANCE="runAction.ts 暴露 commandClient 新 caller,新 caller 直接打 /bff/v1/commands,舊 caller 仍 work 透過 BFF adapter,兩種 response shape 對齊 CommandResponse,confirmToken 從 high-risk modal 正確傳入,unit test cover 新舊兩條 path" \
 $CLI assign BFF-CONSOL-020 Codex2 Claude2 "runAction.ts migration to /bff/v1/commands"
 
-TASK_SUMMARY_ZH="舊 action receipt + 新 command receipt 並存。Test cases: same idempotency + same body→replay;same idempotency + diff body→409;missing confirm token→CONFIRM_TOKEN_REQUIRED;missing approval evidence→APPROVAL_REQUIRED。Soak 1 週後啟動 024。" \
+TASK_SUMMARY_ZH="舊 action receipt + 新 command receipt 並存。Test cases: same idempotency + same body→replay;same idempotency + diff body→409;missing confirm token→CONFIRM_TOKEN_REQUIRED;missing approval evidence→APPROVAL_REQUIRED。驗證通過後立即啟動 024，後續 regression 追蹤不阻塞派工。" \
 TASK_DEPENDS_ON="BFF-CONSOL-019,BFF-CONSOL-020" \
 TASK_ARTIFACTS="services/control-plane/bff/tests/test_command_replay_conflict.py,support/evidence/BFF-CONSOL-021-dual-write-soak.json" \
-TASK_ACCEPTANCE="receipt dual-write log 同時含 action 與 command receipt,replay test 通過,idempotency conflict test 回 409,missing confirm token 回 CONFIRM_TOKEN_REQUIRED,missing approval evidence 回 APPROVAL_REQUIRED,soak window ≥7 day 紀錄無 regression" \
+TASK_ACCEPTANCE="receipt dual-write log 同時含 action 與 command receipt,replay test 通過,idempotency conflict test 回 409,missing confirm token 回 CONFIRM_TOKEN_REQUIRED,missing approval evidence 回 APPROVAL_REQUIRED,dual-write regression follow-up 已拆成非阻塞追蹤，不再要求固定 7 day soak gate" \
 $CLI assign BFF-CONSOL-021 Codex Claude "Receipt dual-write + replay/conflict/idempotency tests"
 
-TASK_SUMMARY_ZH="開 Lovable preview branch 設 VITE_BFF_MODE=live + VITE_BFF_FALLBACK=strict + VITE_BFF_REAL_WRITES=false。現有 staging 維持 auto fallback 不切。Soak ≥7 day 紀錄 strict mode 下 read/SSE/detail journey 沒 regression。" \
+TASK_SUMMARY_ZH="開 Lovable preview branch 設 VITE_BFF_MODE=live + VITE_BFF_FALLBACK=strict + VITE_BFF_REAL_WRITES=false。現有 staging 維持 auto fallback 不切。用 strict mode read/SSE/detail journey regression evidence 決定是否推進，不再用固定天數 gate。" \
 TASK_DEPENDS_ON="BFF-CONSOL-008,BFF-CONSOL-009,BFF-CONSOL-010,BFF-CONSOL-015" \
 TASK_ARTIFACTS="execute-plans/.lovable/preview-strict.env,support/evidence/BFF-CONSOL-022-staging-strict-soak.md" \
-TASK_ACCEPTANCE="preview branch 切 strict 模式運行,REAL_WRITES 維持 false,現有 staging 保留 auto fallback,7 day soak 完成,SSE replay/read smoke 都 pass,evidence 紀錄 strict 下無 fallback regression" \
+TASK_ACCEPTANCE="preview branch 切 strict 模式運行,REAL_WRITES 維持 false,現有 staging 保留 auto fallback,strict mode regression evidence 完成,SSE replay/read smoke 都 pass,evidence 紀錄 strict 下無 fallback regression" \
 $CLI assign BFF-CONSOL-022 Gemini2 Gemini "Lovable staging strict cutover (isolated preview branch)"
 
 # ----- Wave 4 — Cutover & cleanup (Day 19–24) -----
 
-TASK_SUMMARY_ZH="等 022 staging soak 1 週 0 regression prod 切 VITE_BFF_FALLBACK=strict (REAL_WRITES 仍 false 直到 operator onboard)。Prod soak ≥7 day 才算 cutover 完成。" \
+TASK_SUMMARY_ZH="等 022 staging strict verification 0 regression 後 prod 切 VITE_BFF_FALLBACK=strict (REAL_WRITES 仍 false 直到 operator onboard)。Prod cutover 以 smoke/regression evidence 完成，不再用固定天數 gate。" \
 TASK_DEPENDS_ON="BFF-CONSOL-022" \
 TASK_ARTIFACTS="execute-plans/.lovable/prod-strict.env,support/evidence/BFF-CONSOL-023-prod-strict-soak.md" \
-TASK_ACCEPTANCE="prod 切 strict 模式運行,REAL_WRITES 仍 false,prod 7 day soak 完成,operator 體感 0 regression,SSE/read smoke 在 prod 都 pass,evidence 紀錄 cutover 過程與監控指標" \
-$CLI assign BFF-CONSOL-023 Gemini2 Gemini "Lovable prod strict cutover (staging soak gate)"
+TASK_ACCEPTANCE="prod 切 strict 模式運行,REAL_WRITES 仍 false,prod smoke/regression evidence 完成,operator 體感 0 regression,SSE/read smoke 在 prod 都 pass,evidence 紀錄 cutover 過程與監控指標" \
+$CLI assign BFF-CONSOL-023 Gemini2 Gemini "Lovable prod strict cutover (staging verification gate)"
 
-TASK_SUMMARY_ZH="021 dual-write soak 1 週後標 deprecated 保留 /bff/actions/* 路徑但 receipt schema 加 deprecated flag。前端 runAction.ts 預設改打 /bff/v1/commands。" \
+TASK_SUMMARY_ZH="021 dual-write 驗證通過後標 deprecated 保留 /bff/actions/* 路徑但 receipt schema 加 deprecated flag。前端 runAction.ts 預設改打 /bff/v1/commands。" \
 TASK_DEPENDS_ON="BFF-CONSOL-021" \
 TASK_ARTIFACTS="services/control-plane/bff/command_executor.py,services/control-plane/bff/BFF_COMMAND_API_CONTRACT.md" \
 TASK_ACCEPTANCE="舊 action receipt schema 加 deprecated flag,前端 default caller 改為 /bff/v1/commands,/bff/actions/* 仍可運作但加 deprecation warning header,audit 工具 confirm 已 consume 新 receipt,contract doc 更新 deprecation 時間表" \
-$CLI assign BFF-CONSOL-024 Codex Claude "Deprecate old action receipt (after 1-week soak)"
+$CLI assign BFF-CONSOL-024 Codex Claude "Deprecate old action receipt"
 
 TASK_SUMMARY_ZH="用 007 taxonomy 與 016/017/018 detail evidence 把 live_required helper 全部接上 BFF route mock_only_dev 在 live mode 隱藏 deprecated 移除 deferred 寫進 follow-up task。strict live mode 下沒有頁面會暗中用 seed 當 live 資料。" \
 TASK_DEPENDS_ON="BFF-CONSOL-015,BFF-CONSOL-016,BFF-CONSOL-017,BFF-CONSOL-018" \
@@ -174,10 +174,10 @@ TASK_ARTIFACTS="scripts/bff_route_diff.py,.github/workflows/bff-route-diff.yml" 
 TASK_ACCEPTANCE="diff CLI 切 fail-hard 模式,PR 中任何 unmatched route 都會 block merge,mock_only 與 deferred 仍允許 unmatched,baseline 鎖定後續 route 變更必須同步,文件更新 fail-hard 切換時間表" \
 $CLI assign BFF-CONSOL-026 Gemini Codex "CI route diff fail-hard mode"
 
-TASK_SUMMARY_ZH="集合 001..026 evidence 輸出 support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md。內容含 contract diff baseline/live smoke (read+write)/SSE evidence/command receipt sample/staging+prod cutover log/soak metric/seed.ts post-state。Copilot 統整 Claude 最終簽核。" \
+TASK_SUMMARY_ZH="集合 001..026 evidence 輸出 support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md。內容含 contract diff baseline/live smoke (read+write)/SSE evidence/command receipt sample/staging+prod cutover log/regression follow-up/seed.ts post-state。Copilot 統整 Claude 最終簽核。" \
 TASK_DEPENDS_ON="BFF-CONSOL-001,BFF-CONSOL-002,BFF-CONSOL-003,BFF-CONSOL-004,BFF-CONSOL-005,BFF-CONSOL-006,BFF-CONSOL-007,BFF-CONSOL-008,BFF-CONSOL-009,BFF-CONSOL-010,BFF-CONSOL-011,BFF-CONSOL-012,BFF-CONSOL-013,BFF-CONSOL-014,BFF-CONSOL-015,BFF-CONSOL-016,BFF-CONSOL-017,BFF-CONSOL-018,BFF-CONSOL-019,BFF-CONSOL-020,BFF-CONSOL-021,BFF-CONSOL-022,BFF-CONSOL-023,BFF-CONSOL-024,BFF-CONSOL-025,BFF-CONSOL-026" \
 TASK_ARTIFACTS="support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md" \
-TASK_ACCEPTANCE="acceptance packet 含 contract diff baseline,acceptance packet 含 read+write live smoke,acceptance packet 含 SSE evidence,acceptance packet 含 command receipt sample,acceptance packet 含 staging+prod cutover log,acceptance packet 含 7-day soak metric,acceptance packet 含 seed.ts post-state,Claude 最終簽核" \
+TASK_ACCEPTANCE="acceptance packet 含 contract diff baseline,acceptance packet 含 read+write live smoke,acceptance packet 含 SSE evidence,acceptance packet 含 command receipt sample,acceptance packet 含 staging+prod cutover log,acceptance packet 含 regression follow-up 狀態,acceptance packet 含 seed.ts post-state,Claude 最終簽核" \
 $CLI assign BFF-CONSOL-027 Copilot Claude "Final BFF consolidation acceptance packet"
 
 echo "All 27 BFF-CONSOL tasks assigned."

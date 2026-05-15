@@ -1,7 +1,7 @@
 {
   "version": 1,
   "task_id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
-  "archived_at": "2026-05-13T11:17:05Z",
+  "archived_at": "2026-05-14T08:19:32Z",
   "terminal_status": "done",
   "terminal_outcome": "completed",
   "task": {
@@ -9,8 +9,8 @@
     "title": "Prepare BFF-CONSOL-027 BFF and frontend handoff packet",
     "summary_zh": "平行支援 BFF-CONSOL-027，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
     "phase": "BFF Consolidation 2026-05-13",
-    "owner": "Claude",
-    "reviewer": "Codex",
+    "owner": "Codex2",
+    "reviewer": "Claude",
     "status": "done",
     "depends_on": [
       "BFF-CONSOL-001",
@@ -27,7 +27,9 @@
       "BFF-CONSOL-012",
       "BFF-CONSOL-013",
       "BFF-CONSOL-014",
-      "BFF-CONSOL-018"
+      "BFF-CONSOL-015",
+      "BFF-CONSOL-018",
+      "BFF-CONSOL-021"
     ],
     "artifacts": [
       "support/sidecars/BFF-CONSOL-027/BFF-CONSOL-027-SIDECAR-BFF-HANDOFF.md"
@@ -37,8 +39,8 @@
       "Do not edit canonical truth",
       "Hand off the packet to the assigned reviewer"
     ],
-    "next": "Closeout complete: handoff packet finalized (commit a009993f). Reviewer Codex approved support-only scope at 2026-05-13T11:15:12Z. Evidence inventory covers all 26 predecessor BFF-CONSOL tasks; ACCEPTANCE.md template delivered to Copilot; soak gates and EP5 dependency documented. No canonical/runtime files modified.",
-    "last_update": "2026-05-13T11:17:05Z",
+    "next": "Owner closeout complete for support-only BFF handoff packet. Task-scoped artifact commit 8f6533d8; Claude review approved at 2026-05-14T07:42:31Z. Verified status slice, BFF-CONSOL-024 archive, seed taxonomy counts, route-diff locked metrics, SSE/read/write evidence JSON parsing, and git diff --check. No canonical truth or runtime implementation changes.",
+    "last_update": "2026-05-14T08:19:32Z",
     "task_class": "sidecar",
     "auto_generated": true,
     "helper_parent": "BFF-CONSOL-027",
@@ -46,35 +48,33 @@
     "mutates_canonical": false,
     "auto_created_by": "supervisor-underutilization",
     "review_notes_zh": [
-      "Reviewed support/sidecars/BFF-CONSOL-027/BFF-CONSOL-027-SIDECAR-BFF-HANDOFF.md and commit a9ad7dad. Scope is compliant: a single support handoff artifact, no canonical truth, runtime, registry, or governance implementation edits.",
-      "Packet is sufficient for the BFF-CONSOL-027 parent owner: it indexes completed evidence, calls out hard pending gates, summarizes verified route/operator journey coverage, and includes an ACCEPTANCE.md assembly template.",
-      "Non-blocking note: the packet was authored before reviewer fallback and later task movement, so Copilot/reviewer labels and pending-status rows are contextual snapshots; parent acceptance assembly should refresh live task status before copying final status text."
+      "審查通過：sidecar artifact 僅限 support/ 下的 handoff packet，無 L1 canonical truth 或 runtime 變更；022 blocked / 023 todo / 024 done archived 狀態正確；無固定天數 soak gate 斷言；024 deprecation 標記為 accepted evidence；route diff 措辭正確（fail-hard baseline locked）；驗證命令皆通過。",
+      "後續追蹤：BFF-CONSOL-022 仍 blocked 等待 Gemini；BFF-CONSOL-023 仍 todo；BFF-CONSOL-027 final acceptance packet 尚未開始。"
     ],
     "terminal_outcome": "completed",
     "delivery": {
-      "recorded_at": "2026-05-13T11:17:05Z",
+      "recorded_at": "2026-05-14T08:19:32Z",
       "branch": "feat/bff-consol-022-staging-strict-cutover",
       "git_clean_required": false,
-      "commit": "a009993fcfac68db5bd3d2ff44a1ccab8c7d1774",
-      "commit_subject": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF closeout finalization",
+      "commit": "8f6533d8ab2dac519c400c6ed590bde69743c67d",
+      "commit_subject": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF closeout packet",
       "commit_author": {
         "name": "Codex",
         "email": "codex@pantheon.local"
       },
       "commit_metadata": {
-        "Verification": "artifact scope confirmed support-only; no canonical/runtime",
-        "LLM-Agent": "Claude",
+        "LLM-Agent": "Codex2",
         "Task-ID": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
-        "Reviewer": "Codex"
+        "Reviewer": "Claude"
       },
       "git_clean": false,
-      "dirty_entry_count": 17,
+      "dirty_entry_count": 4,
       "remote_present": true,
       "remote_names": [
         "origin"
       ],
       "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
-      "ahead": 2,
+      "ahead": 1,
       "behind": 0,
       "push_status": "ahead"
     }
@@ -82,30 +82,66 @@
   "handoffs": [
     {
       "task_id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
-      "from": "Claude",
+      "from": "Codex2",
       "to": "Copilot",
-      "message": "Handoff packet ready. Summarizes all done evidence (BFF-CONSOL-001..014, 018), maps pending evidence for 015..026, provides verified route coverage, operator journey, and ACCEPTANCE.md template for Copilot to assemble BFF-CONSOL-027 final acceptance packet. No canonical truth modified.",
+      "message": "Support-only BFF handoff packet refreshed for BFF-CONSOL-027. Artifact updated at support/sidecars/BFF-CONSOL-027/BFF-CONSOL-027-SIDECAR-BFF-HANDOFF.md; it corrects stale pending/7-day gate notes, maps evidence for 001..026, and flags 022 blocked, 023 todo, 024 review as current acceptance blockers. Verification: git diff --check on artifact passed; referenced evidence JSON files parse.",
       "status": "done",
-      "created_at": "2026-05-13T06:38:22Z",
-      "resolved_at": "2026-05-13T08:20:04Z"
+      "created_at": "2026-05-14T07:16:42Z",
+      "resolved_at": "2026-05-14T07:25:19Z"
     },
     {
       "task_id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
       "from": "Copilot",
       "to": "Codex",
-      "message": "Chair reassigned review from Copilot to Codex: Copilot is listed in ready_dispatcher.disabled_agents and cannot be auto-dispatched for review. BFF-CONSOL-027-SIDECAR-BFF-HANDOFF has been in review state since 14:38 UTC+8 with no auto-pickup path. Codex is the first-listed reviewer_fallback for Copilot and currently has available review capacity (no active review assignments).",
+      "message": "Auto-reassigned review from Copilot to Codex after repeated Copilot quota terminal: 402 You have no quota",
       "status": "done",
-      "created_at": "2026-05-13T08:20:04Z",
-      "resolved_at": "2026-05-13T11:15:12Z"
+      "created_at": "2026-05-14T07:25:19Z",
+      "resolved_at": "2026-05-14T07:27:53Z"
     },
     {
       "task_id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
       "from": "Codex",
-      "to": "Claude",
-      "message": "Approved sidecar handoff packet for owner finalization: support-only scope verified, no canonical/runtime changes, and acceptance handoff content is sufficient; owner Claude should perform closeout to done.",
+      "to": "Codex2",
+      "message": "Changes requested: refresh the handoff packet after reviewer reassignment and BFF-CONSOL-024 closeout. Update header/reviewer/status from Copilot to Codex, replace 024 review/provisional blockers with archived done evidence from 2026-05-14T07:23:05Z / Pantheon commit 5225c289, remove checklist items that ask reviewers to confirm 024 is still review, and rerun git diff --check plus the referenced jq evidence checks.",
       "status": "done",
-      "created_at": "2026-05-13T11:15:12Z",
-      "resolved_at": "2026-05-13T11:17:05Z"
+      "created_at": "2026-05-14T07:27:53Z",
+      "resolved_at": "2026-05-14T07:27:53Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-14T07:30:35Z",
+      "resolved_at": "2026-05-14T07:30:35Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-14T07:36:09Z",
+      "resolved_at": "2026-05-14T07:36:16Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Support-only BFF/frontend handoff packet refreshed for BFF-CONSOL-027. Artifact now records Codex2 owner, Claude reviewer, current 022 blocked / 023 todo / 024 done state, accepted 024 deprecation evidence, route-diff fail-hard locked metrics, and verification commands. Ready for Claude review; no canonical/runtime implementation changes intended.",
+      "status": "done",
+      "created_at": "2026-05-14T07:38:25Z",
+      "resolved_at": "2026-05-14T07:42:31Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-027-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: support-only sidecar handoff packet is accurate and complete. 022 blocked/023 todo/024 done states verified. No canonical truth or runtime changes. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-14T07:42:31Z",
+      "resolved_at": "2026-05-14T08:19:32Z"
     }
   ],
   "blockers": []

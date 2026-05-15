@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -11,9 +12,9 @@ import time
 import uuid
 from collections import deque
 from datetime import datetime, timedelta, timezone
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
-from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request
+from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
@@ -131,12 +132,18 @@ _DEFAULT_LOVABLE_CORS_ORIGINS = [
     "https://pantheon-ai-system-front-staging-live.lovable.app",
     "https://pantheon.lovable.app",
     "https://pantheon-ai-system-front.lovable.app",
+    # BFF-CONSOL-022: Pantheon Frontend Lovable project preview URLs.
+    "https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com",
+    "https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app",
 ]
 _DEV_LOVABLE_CORS_ORIGINS = {
     "https://preview--pantheon-dev.lovable.app",
     "https://preview--pantheon-ai-system-front-dev.lovable.app",
     "https://pantheon-dev.lovable.app",
     "https://pantheon-ai-system-front-dev.lovable.app",
+    # Pantheon Frontend Lovable project preview URLs (dev tier).
+    "https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com",
+    "https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app",
 }
 
 
@@ -290,6 +297,167 @@ _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 #   PANTHEON_BFF_MFA_VALUES    - accepted MFA proof values (e.g. mfa,totp,webauthn)
 #   When JWKS_URI is set, RS256/ES256 JWKS path is used instead of HS256.
 #   Strict default still applies: stub tokens are not accepted in strict mode.
+
+
+def _dev_login_client_id() -> str:
+    return _first_nonblank(
+        os.getenv("PANTHEON_BFF_DEV_LOGIN_CLIENT_ID"),
+        os.getenv("PANTHEON_BFF_OIDC_CLIENT_ID"),
+    )
+
+
+def _dev_login_client_secret() -> str:
+    return _first_nonblank(
+        os.getenv("PANTHEON_BFF_DEV_LOGIN_CLIENT_SECRET"),
+        os.getenv("PANTHEON_BFF_OIDC_CLIENT_SECRET"),
+    )
+
+
+def _dev_login_forbidden_environment() -> bool:
+    env_name = os.getenv("PANTHEON_ENV", "").strip().lower()
+    deployment_stage = os.getenv("PANTHEON_DEPLOYMENT_STAGE", "").strip().lower()
+    return env_name in _PRODUCTION_STRICT_ENVIRONMENTS or deployment_stage in _PRODUCTION_STRICT_ENVIRONMENTS
+
+
+def _dev_login_enabled() -> bool:
+    if _dev_login_forbidden_environment():
+        return False
+    return bool(_dev_login_client_id() and _dev_login_client_secret())
+
+
+def _dev_login_ttl_seconds() -> int:
+    raw = os.getenv("PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS", "900").strip()
+    try:
+        ttl = int(raw)
+    except ValueError:
+        ttl = 900
+    return max(300, min(ttl, 3600))
+
+
+def _dev_login_roles() -> List[str]:
+    roles = _env_csv("PANTHEON_BFF_DEV_LOGIN_ROLES") or ["operator", "reviewer"]
+    return sorted(set(role for role in roles if role in _READ_ROLES or role in _WRITE_ROLES))
+
+
+def _dev_login_bool_env(name: str, *, default: bool) -> bool:
+    return _bool_from_env(name, default=default)
+
+
+def _issue_dev_login_jwt(client_id: str) -> Dict[str, Any]:
+    try:
+        from services.runtime_auth_inbound import encode_jwt_hs256
+    except ImportError:
+        from runtime_auth_inbound import encode_jwt_hs256  # type: ignore[no-redef]
+
+    secret = os.getenv("PANTHEON_BFF_DEV_LOGIN_JWT_SECRET") or os.getenv("PANTHEON_BFF_JWT_SECRET", "")
+    if not secret:
+        raise _bff_error(
+            500,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Dev login JWT signing secret is not configured",
+            "PANTHEON_BFF_JWT_SECRET is required to issue dev-login JWTs",
+            precondition_failed="jwt_secret",
+            suggestion="Configure the dev BFF JWT secret before enabling /bff/auth/dev-login",
+        )
+
+    now = int(time.time())
+    ttl = _dev_login_ttl_seconds()
+    expires_at = now + ttl
+    roles = _dev_login_roles() or ["operator", "reviewer"]
+    subject = _first_nonblank(
+        os.getenv("PANTHEON_BFF_DEV_LOGIN_SUBJECT"),
+        f"pantheon-dev-{client_id}",
+    )
+    issuer = _first_nonblank(
+        os.getenv("PANTHEON_BFF_JWT_ISSUER"),
+        "pantheon-dev",
+    )
+    audience = _first_nonblank(
+        os.getenv("PANTHEON_BFF_JWT_AUDIENCE"),
+        "bff-operators",
+    )
+    tenant_id = _first_nonblank(
+        os.getenv("PANTHEON_BFF_TENANT_ID"),
+        os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
+        os.getenv("PANTHEON_TENANT_ID"),
+        "pantheon-dev",
+    )
+    allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [tenant_id]
+    mfa_verified = _dev_login_bool_env("PANTHEON_BFF_DEV_LOGIN_MFA_VERIFIED", default=False)
+    claims: Dict[str, Any] = {
+        "sub": subject,
+        "roles": roles,
+        "iss": issuer,
+        "aud": audience,
+        "iat": now,
+        "nbf": now,
+        "exp": expires_at,
+        "jti": f"dev-login-{uuid.uuid4().hex}",
+        "client_id": client_id,
+        "token_use": "pantheon-bff-dev-login",
+        "tenant_id": tenant_id,
+        "allowed_tenants": allowed_tenants,
+    }
+    if mfa_verified:
+        claims["mfa_verified"] = True
+
+    token = encode_jwt_hs256(claims, secret=secret)
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": ttl,
+        "issued_at": datetime.fromtimestamp(now, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
+        "expires_at": datetime.fromtimestamp(expires_at, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
+        "scope": " ".join(roles),
+    }
+
+
+@app.post("/bff/auth/dev-login")
+async def bff_auth_dev_login(payload: Dict[str, Any] = Body(default_factory=dict)):
+    """Dev-only client-credentials exchange for short-lived BFF JWTs."""
+    if not _dev_login_enabled():
+        raise _bff_error(
+            403,
+            ErrorCode.PRECONDITION_NOT_MET,
+            "Dev login is disabled for this BFF",
+            "dev_login_disabled",
+            precondition_failed="dev_login",
+            suggestion="Use the dev BFF with configured client credentials; staging-live must use IdP OIDC/JWKS auth",
+        )
+    if str(payload.get("grant_type") or "client_credentials").strip() != "client_credentials":
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_PARAMS,
+            "Unsupported grant_type for dev login",
+            "grant_type must be client_credentials",
+            precondition_failed="grant_type",
+        )
+
+    client_id = str(payload.get("client_id") or payload.get("clientId") or "").strip()
+    client_secret = str(payload.get("client_secret") or payload.get("clientSecret") or "").strip()
+    expected_id = _dev_login_client_id()
+    expected_secret = _dev_login_client_secret()
+    if not (
+        hmac.compare_digest(client_id, expected_id)
+        and hmac.compare_digest(client_secret, expected_secret)
+    ):
+        raise _bff_error(
+            401,
+            ErrorCode.INVALID_TOKEN,
+            "Invalid dev login client credentials",
+            "AUTH_DEV_LOGIN_CLIENT_CREDENTIALS",
+            suggestion="Use the configured PANTHEON_BFF_OIDC_CLIENT_ID and CLIENT_SECRET",
+        )
+
+    token_payload = _issue_dev_login_jwt(client_id)
+    return {
+        **token_payload,
+        "meta": {
+            "route": "POST /bff/auth/dev-login",
+            "contract": "FE-INT-GATE-OIDC-DEV-LOGIN",
+            "ttl_seconds": token_payload["expires_in"],
+        },
+    }
 
 
 def _extract_identity(
@@ -490,6 +658,15 @@ def _bff_error(
 
 
 _FOUNDATION_COMMAND_ROUTE = "POST /api/v1/operator/commands"
+_FINAL_COMMAND_ROUTE = "POST /bff/v1/commands"
+_ACTIONS_TO_COMMANDS_SOURCE_ROUTE = "POST /bff/actions/{entityType}/{entityId}/{actionId}"
+_ACTIONS_DEPRECATION_SINCE = "2026-05-14"
+_ACTIONS_SUNSET_DATE = "2026-06-15"
+_ACTIONS_SUNSET_HTTP_DATE = "Mon, 15 Jun 2026 00:00:00 GMT"
+_ACTIONS_DEPRECATION_MESSAGE = (
+    "/bff/actions/* is deprecated; submit the equivalent command envelope to "
+    "/bff/v1/commands."
+)
 
 
 def _foundation_environment_scope() -> EnvironmentScope:
@@ -519,15 +696,31 @@ def _foundation_actor_ref(identity: OperatorIdentity) -> ActorRef:
     )
 
 
-def _foundation_request_payload(cmd: OperatorCommand, raw_payload: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "route": _FOUNDATION_COMMAND_ROUTE,
+def _foundation_request_payload(
+    cmd: OperatorCommand,
+    raw_payload: Dict[str, Any],
+    *,
+    route: str = _FOUNDATION_COMMAND_ROUTE,
+    source_route: Optional[str] = None,
+) -> Dict[str, Any]:
+    payload = {
+        "route": route,
         "command": cmd.command.value,
         "target": cmd.target.model_dump(),
         "params": dict(cmd.params),
         "audit_context": cmd.audit_context.model_dump(),
         "raw_payload": raw_payload,
     }
+    if source_route:
+        payload["source_route"] = source_route
+    return payload
+
+
+def _foundation_route_metadata(route: str, source_route: Optional[str] = None) -> Dict[str, Any]:
+    metadata: Dict[str, Any] = {"route": route}
+    if source_route:
+        metadata["source_route"] = source_route
+    return metadata
 
 
 def _build_foundation_trace(
@@ -569,18 +762,26 @@ def _build_foundation_command_context(
     correlation_id: Optional[str],
     request_id: Optional[str],
     idempotency_key: Optional[str],
+    route: str = _FOUNDATION_COMMAND_ROUTE,
+    source_route: Optional[str] = None,
 ) -> Dict[str, Any]:
     environment = _foundation_environment_scope()
     actor_ref = _foundation_actor_ref(identity)
+    route_metadata = _foundation_route_metadata(route, source_route)
     authority_scope = AuthorityScope(
         action=cmd.command.value,
         target_type=cmd.target.type.value,
         target_id=cmd.target.id,
         environment=environment,
         runtime_id=cmd.target.id if cmd.target.type == ObjectType.RUNTIME else None,
-        attributes={"route": _FOUNDATION_COMMAND_ROUTE},
+        attributes=route_metadata,
     )
-    request_payload = _foundation_request_payload(cmd, raw_payload)
+    request_payload = _foundation_request_payload(
+        cmd,
+        raw_payload,
+        route=route,
+        source_route=source_route,
+    )
     trace = _build_foundation_trace(
         environment=environment,
         actor_ref=actor_ref,
@@ -623,9 +824,11 @@ def _build_foundation_command_context(
         trace=command_envelope.trace,
         payload=request_payload,
         policy_decision_ref=policy_decision.decision_id,
-        metadata={"route": _FOUNDATION_COMMAND_ROUTE},
+        metadata=route_metadata,
     )
     return {
+        "admission_route": route,
+        "source_route": source_route,
         "command_envelope": command_envelope,
         "trace_context": command_envelope.trace,
         "idempotency_record": idempotency_record,
@@ -636,13 +839,17 @@ def _build_foundation_command_context(
 
 
 def _serialize_foundation_context(context: Dict[str, Any]) -> Dict[str, Any]:
-    return {
+    serialized = {
+        "admission_route": context.get("admission_route"),
         "trace_context": context["trace_context"].to_dict(),
         "command_envelope": context["command_envelope"].to_dict(),
         "idempotency_record": context["idempotency_record"].to_dict(),
         "policy_decision": context["policy_decision"].to_dict(),
         "audit_action": context["audit_action"].to_dict(),
     }
+    if context.get("source_route"):
+        serialized["source_route"] = context.get("source_route")
+    return serialized
 
 
 def _extract_error_fields(exc: HTTPException) -> Dict[str, Any]:
@@ -678,6 +885,9 @@ def _foundation_bff_error(
 ) -> HTTPException:
     fields = _extract_error_fields(exc)
     command_envelope: CommandEnvelope = foundation_context["command_envelope"]
+    admission_route = str(foundation_context.get("admission_route") or _FOUNDATION_COMMAND_ROUTE)
+    source_route = str(foundation_context.get("source_route") or "").strip() or None
+    route_metadata = _foundation_route_metadata(admission_route, source_route)
     if fields["status_code"] == 403:
         policy_decision = PolicyDecision.make(
             policy_id="bff.command.admission",
@@ -709,7 +919,7 @@ def _foundation_bff_error(
             trace=command_envelope.trace,
             payload=foundation_context["request_payload"],
             policy_decision_ref=policy_decision.decision_id,
-            metadata={"route": _FOUNDATION_COMMAND_ROUTE},
+            metadata=route_metadata,
         )
         return _bff_error(
             fields["status_code"],
@@ -758,7 +968,7 @@ def _foundation_bff_error(
         reason=fields["reason"],
         trace=command_envelope.trace,
         payload=foundation_context["request_payload"],
-        metadata={"route": _FOUNDATION_COMMAND_ROUTE},
+        metadata=route_metadata,
     )
     return _bff_error(
         fields["status_code"],
@@ -781,6 +991,8 @@ def _foundation_idempotency_conflict_error(
 ) -> HTTPException:
     command_envelope: CommandEnvelope = foundation_context["command_envelope"]
     idempotency_record: IdempotencyRecord = foundation_context["idempotency_record"]
+    admission_route = str(foundation_context.get("admission_route") or _FOUNDATION_COMMAND_ROUTE)
+    source_route = str(foundation_context.get("source_route") or "").strip() or None
     message = "Idempotency key was already used with a different command payload"
     reason = (
         f"idempotency_key={idempotency_record.idempotency_key} is already bound "
@@ -807,7 +1019,7 @@ def _foundation_idempotency_conflict_error(
         reason=reason,
         trace=command_envelope.trace,
         payload=foundation_context["request_payload"],
-        metadata={"route": _FOUNDATION_COMMAND_ROUTE},
+        metadata=_foundation_route_metadata(admission_route, source_route),
     )
     return _bff_error(
         409,
@@ -5619,6 +5831,48 @@ def _ew04_inspiration_payload(
     return payload
 
 
+def _ew04_inspiration_projection_from_lineage_edges(artifact_id: str) -> Optional[Dict[str, Any]]:
+    source = read_store.dataset_source("lineage_edges")
+    if source == "missing":
+        return None
+    lineage_edges = read_store.list_lineage_edges(artifact_id=artifact_id)
+    if not lineage_edges:
+        return None
+    surface_state = "fresh"
+    if source in {"missing", "local_snapshot"} or _surface_status().get("status") == "degraded":
+        surface_state = "stale"
+
+    inspiration_edges: List[Dict[str, Any]] = []
+    strategy_tags = set()
+    for edge in lineage_edges:
+        from_artifact_id = str(edge.get("from_artifact_id") or "").strip()
+        to_artifact_id = str(edge.get("to_artifact_id") or "").strip()
+        source_artifact_id = from_artifact_id if to_artifact_id == artifact_id else to_artifact_id
+        relationship_type = str(edge.get("edge_type") or edge.get("relationship") or "").strip()
+        if not source_artifact_id or not relationship_type:
+            continue
+        strategy_id = str(edge.get("strategy_id") or "").strip()
+        if strategy_id:
+            strategy_tags.add(strategy_id)
+        inspiration_edges.append(
+            {
+                "lineage_edge_id": edge.get("id"),
+                "source_artifact_id": source_artifact_id,
+                "relationship_type": relationship_type,
+                "influence_weight": 1.0,
+            }
+        )
+    return {
+        "artifact_id": artifact_id,
+        "inspiration_edges": inspiration_edges,
+        "strategy_tags": sorted(strategy_tags),
+        "meta": {
+            "snapshot_at": utc_now(),
+            "surfaces": {"inspiration": surface_state},
+        },
+    }
+
+
 def _rw01_surface_state(
     dataset: str,
     *,
@@ -7339,6 +7593,8 @@ def _project_final_command_response(
     accepted_at: str,
     status: CommandStatus,
     staleness_warning: Optional[StalenessWarning],
+    meta: Optional[Dict[str, Any]] = None,
+    deprecation: Optional[Dict[str, Any]] = None,
 ) -> CommandResponse[Dict[str, Any]]:
     final_status = _action_command_status_from_command_status(status)
     legacy_payload = _project_command_submission_response(
@@ -7362,7 +7618,38 @@ def _project_final_command_response(
     legacy_payload["actionReceipt"] = receipts["action_receipt"]
     legacy_payload["command_receipt"] = receipts["command_receipt"]
     legacy_payload["commandReceipt"] = receipts["command_receipt"]
-    return CommandResponse[Dict[str, Any]](status=final_status, data=legacy_payload)
+    final_meta = dict(meta or {})
+    if deprecation:
+        legacy_payload["deprecated"] = True
+        legacy_payload["deprecation"] = dict(deprecation)
+        if isinstance(legacy_payload.get("receipt"), dict):
+            legacy_payload["receipt"]["deprecated"] = True
+            legacy_payload["receipt"]["deprecation"] = dict(deprecation)
+        final_meta["deprecated"] = True
+        final_meta["deprecation"] = dict(deprecation)
+    return CommandResponse[Dict[str, Any]](
+        status=final_status,
+        data=legacy_payload,
+        meta=final_meta or None,
+    )
+
+
+def _legacy_action_deprecation_notice() -> Dict[str, Any]:
+    return {
+        "route": "/bff/actions/{entityType}/{entityId}/{actionId}",
+        "replacement": "/bff/v1/commands",
+        "deprecated_since": _ACTIONS_DEPRECATION_SINCE,
+        "sunset": _ACTIONS_SUNSET_DATE,
+        "message": _ACTIONS_DEPRECATION_MESSAGE,
+    }
+
+
+def _apply_legacy_action_deprecation_headers(response: Response) -> None:
+    response.headers["Deprecation"] = "true"
+    response.headers["Sunset"] = _ACTIONS_SUNSET_HTTP_DATE
+    response.headers["Link"] = '</bff/v1/commands>; rel="successor-version"'
+    response.headers["Warning"] = f'299 - "{_ACTIONS_DEPRECATION_MESSAGE}"'
+    response.headers["X-Pantheon-Deprecated-Route"] = "/bff/actions/*"
 
 
 # --------------------------------------------------------------------------- #
@@ -13237,7 +13524,8 @@ async def get_inspiration_graph(
     snapshot_at = utc_now()
     projection = read_store.get_inspiration_graph(artifact_id)
     artifact_exists = read_store.artifact_exists(artifact_id)
-    dataset_source = read_store.dataset_source("inspiration_graphs")
+    if projection is None and artifact_exists:
+        projection = _ew04_inspiration_projection_from_lineage_edges(artifact_id)
 
     if projection is None and not artifact_exists:
         raise _bff_error(
@@ -13762,28 +14050,39 @@ async def submit_command(
     )
 
 
-@app.post("/bff/v1/commands", status_code=202)
-async def submit_final_command(
-    background_tasks: BackgroundTasks,
-    payload: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(default=None),
-    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
-    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
-    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
-    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
-    x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """
-    Submit an operator command (final BFF contract).
+def _command_response_durable_meta(idempotency_key: str, *, replayed: bool) -> Dict[str, Any]:
+    return {
+        "durable": True,
+        "liveCapitalSideEffects": False,
+        "idempotency": {
+            "key": idempotency_key,
+            "idempotencyKey": idempotency_key,
+            "replayed": replayed,
+        },
+    }
 
-    Idempotency-Key is the required header; X-Idempotency-Key is accepted as a
-    temporary compatibility alias when Idempotency-Key is absent.
-    idempotencyKey in the request body is rejected.
-    Returns CommandResponse<T> wrapping the command receipt.
-    """
-    # 1. Authenticate
+
+def _submit_final_command_admission(
+    *,
+    background_tasks: BackgroundTasks,
+    payload: Dict[str, Any],
+    authorization: Optional[str],
+    x_mfa_token: Optional[str],
+    x_trace_id: Optional[str],
+    x_correlation_id: Optional[str],
+    x_request_id: Optional[str],
+    x_confirm_token: Optional[str],
+    idempotency_key: Optional[str],
+    x_idempotency_key: Optional[str],
+    route: str = _FINAL_COMMAND_ROUTE,
+    source_route: Optional[str] = None,
+    audit_extra: Optional[Dict[str, Any]] = None,
+    extra_precondition: Optional[Callable[[OperatorIdentity, OperatorCommand], None]] = None,
+    enqueue: bool = True,
+    include_durable_meta: bool = False,
+    response_deprecation: Optional[Dict[str, Any]] = None,
+) -> CommandResponse[Dict[str, Any]]:
+    """Submit a final-contract command through the shared BFF command admission path."""
     identity = _extract_identity(authorization, mfa_token=x_mfa_token)
     cmd = _normalize_operator_command_payload(payload)
 
@@ -13799,11 +14098,14 @@ async def submit_final_command(
         correlation_id=x_correlation_id,
         request_id=x_request_id,
         idempotency_key=resolved_key,
+        route=route,
+        source_route=source_route,
     )
 
-    # 2. Precondition validation
     try:
         _reject_body_idempotency_key(payload)
+        if extra_precondition is not None:
+            extra_precondition(identity, cmd)
         _validate_audit_context(cmd)
         _ensure_live_broker_scope_allowed(cmd, payload)
         _validate_drawer_runtime_target(cmd)
@@ -13821,7 +14123,6 @@ async def submit_final_command(
 
     stored_params = _stored_command_params(cmd, identity, raw_payload=payload)
 
-    # 3. Idempotency replay / conflict check
     duplicate = command_store.get_command_by_idempotency_key(
         foundation_context["idempotency_record"].idempotency_key
     )
@@ -13838,9 +14139,12 @@ async def submit_final_command(
             accepted_at=duplicate.get("submitted_at") or utc_now(),
             status=CommandStatus(duplicate.get("status") or CommandStatus.SUBMITTED.value),
             staleness_warning=None,
+            meta=_command_response_durable_meta(resolved_key, replayed=True)
+            if include_durable_meta
+            else None,
+            deprecation=response_deprecation,
         )
 
-    # 4. Concurrent modification check
     active = command_store.get_active_commands_for_target(cmd.target.type.value, cmd.target.id)
     if active:
         error = _bff_error(
@@ -13852,10 +14156,8 @@ async def submit_final_command(
         )
         raise _foundation_bff_error(error, foundation_context=foundation_context)
 
-    # 5. Degraded mode check
     staleness_warning = _check_read_surface_state()
 
-    # 6. Persist command
     command_envelope: CommandEnvelope = foundation_context["command_envelope"]
     idempotency_record: IdempotencyRecord = foundation_context["idempotency_record"]
     idempotency_record = idempotency_record.with_status(
@@ -13893,6 +14195,8 @@ async def submit_final_command(
         "foundation": _serialize_foundation_context(foundation_context),
         "receipt_dual_write": receipt_dual_write,
     }
+    if audit_extra:
+        audit_record.update({key: value for key, value in audit_extra.items() if value is not None})
 
     command_store.submit_command(
         command_id=command_id,
@@ -13909,7 +14213,8 @@ async def submit_final_command(
         command_id, cmd.command.value, cmd.target.type.value, cmd.target.id, identity.operator_id,
     )
 
-    background_tasks.add_task(_process_command_stub, command_id)
+    if enqueue:
+        background_tasks.add_task(_process_command_stub, command_id)
 
     return _project_final_command_response(
         command_id=command_id,
@@ -13917,6 +14222,46 @@ async def submit_final_command(
         accepted_at=submitted_at,
         status=CommandStatus.SUBMITTED,
         staleness_warning=staleness_warning,
+        meta=_command_response_durable_meta(resolved_key, replayed=False)
+        if include_durable_meta
+        else None,
+        deprecation=response_deprecation,
+    )
+
+
+@app.post("/bff/v1/commands", status_code=202)
+async def submit_final_command(
+    background_tasks: BackgroundTasks,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+    x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """
+    Submit an operator command (final BFF contract).
+
+    Idempotency-Key is the required header; X-Idempotency-Key is accepted as a
+    temporary compatibility alias when Idempotency-Key is absent.
+    idempotencyKey in the request body is rejected.
+    Returns CommandResponse<T> wrapping the command receipt.
+    """
+    return _submit_final_command_admission(
+        background_tasks=background_tasks,
+        payload=payload,
+        authorization=authorization,
+        x_mfa_token=x_mfa_token,
+        x_trace_id=x_trace_id,
+        x_correlation_id=x_correlation_id,
+        x_request_id=x_request_id,
+        x_confirm_token=x_confirm_token,
+        idempotency_key=idempotency_key,
+        x_idempotency_key=x_idempotency_key,
+        route=_FINAL_COMMAND_ROUTE,
     )
 
 
@@ -21358,11 +21703,22 @@ _GOV_BFF_JOB_OVERLAY: Dict[str, Dict[str, Any]] = {}
 
 
 def _get_bff_evolution_program(program_id: str) -> Optional[Dict[str, Any]]:
-    return _GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.get(program_id)
+    overlay = _GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.get(program_id)
+    if overlay is not None:
+        return dict(overlay)
+    program = read_store.get_evolution_program(program_id)
+    return dict(program) if program else None
 
 
 def _list_bff_evolution_programs(*, status: Optional[str] = None) -> List[Dict[str, Any]]:
-    programs = list(_GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.values())
+    programs_by_id: Dict[str, Dict[str, Any]] = {}
+    for program in read_store.list_evolution_programs():
+        program_id = str(program.get("program_id") or program.get("id") or "").strip()
+        if program_id:
+            programs_by_id[program_id] = dict(program)
+    for program_id, program in _GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.items():
+        programs_by_id[program_id] = dict(program)
+    programs = list(programs_by_id.values())
     if status:
         requested = {s.strip().lower() for s in status.split(",") if s.strip()}
         programs = [p for p in programs if str(p.get("status") or "").lower() in requested]
@@ -21372,8 +21728,36 @@ def _list_bff_evolution_programs(*, status: Optional[str] = None) -> List[Dict[s
 def _get_bff_experiment(experiment_id: str) -> Optional[Dict[str, Any]]:
     overlay = _GOV_BFF_EXPERIMENT_OVERLAY.get(experiment_id)
     if overlay:
-        return overlay
-    return read_store.get_research_experiment(experiment_id)
+        return _bff_experiment_with_analysis_links(overlay)
+    experiment = read_store.get_research_experiment(experiment_id)
+    if not experiment:
+        return None
+    return _bff_experiment_with_analysis_links(experiment)
+
+
+def _bff_experiment_with_analysis_links(experiment: Dict[str, Any]) -> Dict[str, Any]:
+    record = dict(experiment)
+    experiment_id = str(record.get("experiment_id") or record.get("id") or "").strip()
+    if not experiment_id:
+        return record
+    analyses = read_store.list_research_analyses(experiment_id=experiment_id)
+    analysis_links: List[Dict[str, Any]] = []
+    for analysis in analyses:
+        analysis_id = str(analysis.get("analysis_id") or analysis.get("id") or "").strip()
+        if not analysis_id:
+            continue
+        analysis_links.append(
+            {
+                "analysis_id": analysis_id,
+                "ticket_id": analysis.get("ticket_id"),
+                "status": analysis.get("status"),
+                "detail": f"/bff/research-analyses/{analysis_id}",
+                "api_detail": f"/api/v1/research/analysis/{analysis_id}",
+            }
+        )
+    record["analysis_links"] = analysis_links
+    record["analysis_ids"] = [link["analysis_id"] for link in analysis_links]
+    return record
 
 
 def _list_bff_experiments(*, status: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -22143,6 +22527,199 @@ _prefer_latest_bff_gap004_routes()
 
 _FINAL_CONTRACT_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 
+_ACTION_ADAPTER_ENTITY_SPECS: Dict[str, Dict[str, Any]] = {
+    "strategy": {
+        "target_type": ObjectType.STRATEGY,
+        "command_type": CommandType.STRATEGY_ACTION,
+        "audit_namespace": "strategy",
+    },
+    "persona": {
+        "target_type": ObjectType.PERSONA,
+        "command_type": CommandType.PERSONA_ACTION,
+        "audit_namespace": "persona",
+    },
+    "capital-pool": {
+        "target_type": ObjectType.CAPITAL_POOL,
+        "command_type": CommandType.CAPITAL_POOL_ACTION,
+        "audit_namespace": "capitalpool",
+    },
+    "rebalance": {
+        "target_type": ObjectType.REBALANCE,
+        "command_type": CommandType.REBALANCE_ACTION,
+        "audit_namespace": "rebalance",
+    },
+    "ranking-formula": {
+        "target_type": ObjectType.RANKING_FORMULA,
+        "command_type": CommandType.RANKING_FORMULA_ACTION,
+        "audit_namespace": "rankingformula",
+    },
+    "ranking": {
+        "target_type": ObjectType.RANKING,
+        "command_type": CommandType.RANKING_ACTION,
+        "audit_namespace": "ranking",
+    },
+    "deployment": {
+        "target_type": ObjectType.DEPLOYMENT,
+        "command_type": CommandType.DEPLOYMENT_ACTION,
+        "audit_namespace": "deployment",
+    },
+    "runtime": {
+        "target_type": ObjectType.RUNTIME,
+        "command_type": CommandType.RUNTIME_ACTION,
+        "audit_namespace": "runtime",
+    },
+    "review": {
+        "target_type": ObjectType.REVIEW,
+        "command_type": CommandType.REVIEW_ACTION,
+        "audit_namespace": "review",
+    },
+    "approval": {
+        "target_type": ObjectType.APPROVAL_DECISION,
+        "command_type": CommandType.REVIEW_ACTION,
+        "audit_namespace": "approval",
+    },
+    "alert": {
+        "target_type": ObjectType.RISK_ALERT,
+        "command_type": CommandType.RISK_ALERT_ACTION,
+        "audit_namespace": "alert",
+    },
+    "incident": {
+        "target_type": ObjectType.INCIDENT,
+        "command_type": CommandType.INCIDENT_ACTION,
+        "audit_namespace": "incident",
+    },
+    "evolution-program": {
+        "target_type": ObjectType.EVOLUTION_PROGRAM,
+        "command_type": CommandType.EVOLUTION_PROGRAM_ACTION,
+        "audit_namespace": "evolution",
+    },
+    "research-experiment": {
+        "target_type": ObjectType.EXPERIMENT,
+        "command_type": CommandType.EXPERIMENT_ACTION,
+        "audit_namespace": "research",
+    },
+    "experiment": {
+        "target_type": ObjectType.EXPERIMENT,
+        "command_type": CommandType.EXPERIMENT_ACTION,
+        "audit_namespace": "research",
+    },
+    "job": {
+        "target_type": ObjectType.JOB,
+        "command_type": CommandType.JOB_ACTION,
+        "audit_namespace": "job",
+    },
+    "tool": {
+        "target_type": ObjectType.TOOL,
+        "command_type": CommandType.TOOL_ACTION,
+        "audit_namespace": "tool",
+    },
+    "mcp-server": {
+        "target_type": ObjectType.MCP_SERVER,
+        "command_type": CommandType.MCP_SERVER_ACTION,
+        "audit_namespace": "mcpserver",
+    },
+    "mcp-tool": {
+        "target_type": ObjectType.TOOL,
+        "command_type": CommandType.TOOL_ACTION,
+        "audit_namespace": "mcptool",
+    },
+    "skill": {
+        "target_type": ObjectType.SKILL,
+        "command_type": CommandType.SKILL_ACTION,
+        "audit_namespace": "skill",
+    },
+    "artifact": {
+        "target_type": ObjectType.REVIEW,
+        "command_type": CommandType.REVIEW_ACTION,
+        "audit_namespace": "artifact",
+    },
+    "channel": {
+        "target_type": ObjectType.REVIEW,
+        "command_type": CommandType.REVIEW_ACTION,
+        "audit_namespace": "channel",
+    },
+}
+
+
+def _normalize_action_adapter_entity_type(entity_type: str) -> str:
+    return str(entity_type or "").strip().lower().replace("_", "-")
+
+
+def _action_adapter_spec(entity_type: str) -> Dict[str, Any]:
+    normalized = _normalize_action_adapter_entity_type(entity_type)
+    spec = _ACTION_ADAPTER_ENTITY_SPECS.get(normalized)
+    if spec is None:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Unsupported action entity type",
+            f"/bff/actions does not admit entityType={entity_type!r}",
+            precondition_failed="entity_type",
+            suggestion="Submit a documented BFF action entity type from BFF_COMMAND_API_CONTRACT.md section 8",
+        )
+    return spec
+
+
+def _action_adapter_audit_event(spec: Dict[str, Any], action_id: str) -> str:
+    namespace = str(spec.get("audit_namespace") or "action").strip()
+    action = str(action_id or "").strip()
+    return f"{namespace}.{action}" if action else namespace
+
+
+def _action_adapter_command_payload(
+    *,
+    entity_type: str,
+    entity_id: str,
+    action_id: str,
+    payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    normalized_entity_type = _normalize_action_adapter_entity_type(entity_type)
+    clean_entity_id = str(entity_id or "").strip()
+    clean_action_id = str(action_id or "").strip()
+    if not clean_entity_id:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Action target id is required",
+            "entityId must be a non-empty string",
+            precondition_failed="entity_id",
+        )
+    if not clean_action_id:
+        raise _bff_error(
+            422,
+            ErrorCode.INVALID_PARAMS,
+            "Action id is required",
+            "actionId must be a non-empty string",
+            precondition_failed="action_id",
+        )
+    spec = _action_adapter_spec(normalized_entity_type)
+    audit_event = _action_adapter_audit_event(spec, clean_action_id)
+    body = dict(payload or {})
+    reason = str(
+        body.get("reason")
+        or body.get("operator_note")
+        or body.get("note")
+        or audit_event
+    ).strip()
+    params = {
+        **body,
+        "action_id": clean_action_id,
+        "entity_type": normalized_entity_type,
+        "entity_id": clean_entity_id,
+        "audit_event": audit_event,
+        "adapter_source_route": _ACTIONS_TO_COMMANDS_SOURCE_ROUTE,
+    }
+    return {
+        "command": spec["command_type"].value,
+        "target": {
+            "type": spec["target_type"].value,
+            "id": clean_entity_id,
+        },
+        "action": clean_action_id,
+        "params": params,
+        "audit_context": {"reason": reason},
+    }
+
 
 def _sem_command_target_for(entity_type: str, entity_id: str) -> ObjectType:
     normalized = str(entity_type or "").strip().lower().replace("_", "-")
@@ -22293,25 +22870,56 @@ def _sem_command_response(
 
 @app.post("/bff/actions/{entityType}/{entityId}/{actionId}", status_code=202)
 async def sem_canonical_action_command(
+    background_tasks: BackgroundTasks,
+    response: Response,
     entityType: str,
     entityId: str,
     actionId: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+    x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    command_type = CommandType.STRATEGY_ACTION if entityType.lower() == "strategy" else CommandType.REVIEW_ACTION
-    return _sem_command_response(
-        command_type=command_type,
-        target_type=_sem_command_target_for(entityType, entityId),
-        target_id=entityId,
-        payload={**(payload or {}), "actionId": actionId, "entityType": entityType},
-        identity=identity,
+    deprecation = _legacy_action_deprecation_notice()
+    _apply_legacy_action_deprecation_headers(response)
+    payload = dict(payload or {})
+    _reject_body_idempotency_key(payload)
+    command_payload = _action_adapter_command_payload(
+        entity_type=entityType,
+        entity_id=entityId,
+        action_id=actionId,
+        payload=payload,
+    )
+    params = command_payload["params"]
+    return _submit_final_command_admission(
+        background_tasks=background_tasks,
+        payload=command_payload,
+        authorization=authorization,
+        x_mfa_token=x_mfa_token,
+        x_trace_id=x_trace_id,
+        x_correlation_id=x_correlation_id,
+        x_request_id=x_request_id,
+        x_confirm_token=x_confirm_token,
         idempotency_key=idempotency_key,
         x_idempotency_key=x_idempotency_key,
+        route=_FINAL_COMMAND_ROUTE,
+        source_route=_ACTIONS_TO_COMMANDS_SOURCE_ROUTE,
+        audit_extra={
+            "action_id": params.get("action_id"),
+            "entity_type": params.get("entity_type"),
+            "entity_id": params.get("entity_id"),
+            "audit_event": params.get("audit_event"),
+            "adapter_source_route": _ACTIONS_TO_COMMANDS_SOURCE_ROUTE,
+        },
+        extra_precondition=lambda identity, _cmd: _require_operator_role(identity),
+        enqueue=False,
+        include_durable_meta=True,
+        response_deprecation=deprecation,
     )
 
 
@@ -23041,6 +23649,12 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
             surface_key="research_experiments",
             source=source,
         )
+    if path == "/bff/research-analyses":
+        return _sem_final_list_response(
+            read_store.list_research_analyses(),
+            dataset="research_analyses",
+            surface_key="research_analyses",
+        )
     if path == "/bff/channels":
         return _sem_final_list_response(
             _sem_final_channel_records(),
@@ -23213,6 +23827,14 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
             source=source,
             source_available=True if _GOV_BFF_EXPERIMENT_OVERLAY else None,
         )
+    if path.startswith("/bff/research-analyses/"):
+        return _sem_final_read_model_detail(
+            read_store.get_research_analysis(entity_id),
+            entity_id=entity_id,
+            label="Research analysis",
+            dataset="research_analyses",
+            surface_key="research_analysis_detail",
+        )
     if path.startswith("/bff/v5/interventions/"):
         return _sem_final_registry_detail(
             _sem_final_v5_intervention_record(entity_id),
@@ -23267,6 +23889,7 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
 @app.get("/bff/runtimes/{id}")
 @app.get("/bff/ranking-formulas")
 @app.get("/bff/research-experiments")
+@app.get("/bff/research-analyses")
 @app.get("/bff/tools")
 @app.get("/bff/tools/{id}")
 @app.get("/bff/v5/control-room")
@@ -23301,6 +23924,7 @@ async def sem_final_generic_read_alias(
 @app.get("/bff/personas/{id}")
 @app.get("/bff/ranking-formulas/{id}")
 @app.get("/bff/rebalances/{id}")
+@app.get("/bff/research-analyses/{id}")
 @app.get("/bff/research-experiments/{id}")
 @app.get("/bff/skills/{id}")
 @app.get("/bff/strategies/{id}")

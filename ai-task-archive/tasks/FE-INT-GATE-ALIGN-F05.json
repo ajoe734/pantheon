@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "FE-INT-GATE-ALIGN-F05",
+  "archived_at": "2026-05-15T05:21:40Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "FE-INT-GATE-ALIGN-F05",
+    "title": "Align 04-sentinel-remediation.spec.ts to hosted Lovable DOM",
+    "summary_zh": "hard-gate 首次 run 25846710728 (commit 4774678) e2e step fail：F05 Sentinel remediation spec 04-sentinel-remediation.spec.ts 對 hosted Lovable assertion 對不上。Symptoms: CONFIRM_TOKEN_REQUIRED non-success precondition、advisory action queue 2 個 case 全 fail. 必須 (1) PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io 環境下實際跑 npx playwright test <file> --trace=on / --headed，產出 playwright-report/ 抓真實 DOM；(2) 不可以憑空猜 selector；(3) 對 hosted Lovable 已 render 的 UI 對齊 assertion，不可降級 acceptance；(4) 若發現 hosted Lovable 真有 product gap（非 selector 錯），在 task next 註明並 file follow-up；(5) 修完後本地 npx playwright test 對該 spec 至少連續 2 次綠；(6) closeout commit 必須在 /home/lupin/code/execute-plans/ 上 bff-luv-fe-006-dev-deploy branch（不要再產生 phantom mirror，FE-INT-GATE-A10 處理 root cause）。",
+    "phase": "Pantheon FE Integration Gate 2026-05-13",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "execute-plans/e2e/04-sentinel-remediation.spec.ts",
+      "execute-plans/.lovable/audits/baseline/hardgate-postmerge/pantheon-integration-evidence/.lovable/audits/current-run/playwright-results.json"
+    ],
+    "acceptance": [
+      "cd execute-plans 後 npx playwright test e2e/04-sentinel-remediation.spec.ts 連續 2 次全綠",
+      "assertion 用真實 hosted Lovable DOM/network 對齊",
+      "不可降級 blueprint pass condition",
+      "若 hosted Lovable 真有 product gap 改 file follow-up task 而非 mask spec",
+      "closeout commit 在 execute-plans repo bff-luv-fe-006-dev-deploy branch"
+    ],
+    "next": "FE-INT-GATE-ALIGN-F05 owner closeout complete. execute-plans commit 7a90076 records hosted closeout evidence; pantheon commit 9e129622 records Codex2 review evidence. Codex owner reran e2e/04-sentinel-remediation.spec.ts twice against pantheon-dev Lovable + dev BFF with VITE_BFF_FALLBACK=strict and VITE_BFF_REAL_WRITES=true, both runs passed 2/2. Codex2 review approval recorded in support/reviews/FE-INT-GATE-ALIGN-F05-codex2-review.md.",
+    "last_update": "2026-05-15T05:21:40Z",
+    "review_notes_zh": [
+      "Codex2 review approved: hosted F05 reran twice against pantheon-dev Lovable + dev BFF with strict fallback and real writes enabled; both runs passed 2/2 with traces under support/evidence/FE-INT-GATE-ALIGN-F05-codex2-review. No acceptance downgrade or selector-only masking found."
+    ],
+    "review_file": "support/reviews/FE-INT-GATE-ALIGN-F05-codex2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T05:21:40Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "9e129622fd1e6b127f847d7e3e3d178b6d3ed31e",
+      "commit_subject": "FE-INT-GATE-ALIGN-F05 finalize review evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "FE-INT-GATE-ALIGN-F05",
+        "Reviewer": "Codex2",
+        "Verification": "Codex2 review approved after two hosted F05 reruns passed 2/2; owner closeout also reran e2e/04-sentinel-remediation.spec.ts twice against pantheon-dev Lovable plus dev BFF with strict fallback and real writes, both passed 2/2."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 18,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F05",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-14T11:36:34Z",
+      "resolved_at": "2026-05-14T11:37:37Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F05",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Hosted Lovable deploy blocker cleared by OPS-GEM-REDEPLOY-001: pantheon-dev now serves /assets/index-vlevju41.js, F05 hosted e2e/04-sentinel-remediation.spec.ts passed twice with VITE_BFF_REAL_WRITES=true and strict fallback. Evidence: support/evidence/OPS-GEM-REDEPLOY-001.md and commit a165abe7.",
+      "status": "done",
+      "created_at": "2026-05-15T05:06:05Z",
+      "resolved_at": "2026-05-15T05:13:26Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F05",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Codex2 approved FE-INT-GATE-ALIGN-F05. Reviewer reran hosted e2e/04-sentinel-remediation.spec.ts twice against pantheon-dev + dev BFF with VITE_BFF_FALLBACK=strict and VITE_BFF_REAL_WRITES=true; both runs passed 2/2. Review file: support/reviews/FE-INT-GATE-ALIGN-F05-codex2-review.md. Evidence: support/evidence/FE-INT-GATE-ALIGN-F05-codex2-review/. Owner Codex should finalize to done with task-scoped closeout.",
+      "status": "done",
+      "created_at": "2026-05-15T05:13:26Z",
+      "resolved_at": "2026-05-15T05:21:40Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F05",
+      "owner": "Codex",
+      "waiting_for": "Gemini",
+      "message": "Blocked by hosted Lovable deploy product gap, not selector drift: hosted pantheon-dev bundle index-BYfBkno5.js lacks VITE_BFF_REAL_WRITES/VITE_BFF_FALLBACK so actions render but do not POST /remediate. Evidence committed in execute-plans 7801cff; local Vite with VITE_BFF_REAL_WRITES=true passed e2e/04-sentinel-remediation.spec.ts twice. Follow-up filed as FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE.",
+      "status": "resolved",
+      "created_at": "2026-05-14T11:58:27Z",
+      "resolved_at": "2026-05-15T05:06:05Z"
+    }
+  ]
+}

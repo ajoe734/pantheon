@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "task_id": "FE-INT-GATE-FOLLOWUP-ME-STARTUP",
+  "archived_at": "2026-05-15T07:11:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "FE-INT-GATE-FOLLOWUP-ME-STARTUP",
+    "title": "Wire hosted startup session to /bff/me before local role fallback",
+    "summary_zh": "Hosted Lovable startup 會打 live BFF list/v5/SSE routes，但目前未在 startup 請求 /bff/me；TopBar 仍由 local platform role control 顯示 admin。需要接上 /bff/me 作為 current-user/session source，401 時顯示 auth/error state，且不得 fallback 到 mock current-user。F01 已在 test annotation 與 startup-bff-network attachment 記錄此 gap。",
+    "phase": "Pantheon FE Integration Gate 2026-05-13",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "execute-plans/src/platform/components/TopBar.tsx",
+      "execute-plans/src/lib/v4/session/me.ts",
+      "execute-plans/e2e/01-startup-session.spec.ts"
+    ],
+    "acceptance": [
+      "hosted startup requests /bff/me before showing current-user or role UI",
+      "/bff/me 401 renders auth or error state and never falls back to mock current-user",
+      "F01 startup session 401 coverage can require at least one intercepted /bff/me request"
+    ],
+    "next": "Done: execute-plans commit 3ddb5e6 installs runtime strict override for hosted F01 startup checks; hosted focused rerun passed 2/2; evidence recorded in pantheon commit 5e462e9a.",
+    "last_update": "2026-05-15T07:11:28Z",
+    "review_notes_zh": [
+      "Hosted strict runtime blocker verified: F01 startup strict and injected /bff/me 401 checks now install runtime strict override before bootstrap, matching F15; hosted pantheon-dev focused rerun passed 2/2; unit status/banner tests passed 15/15; no acceptance downgrade."
+    ],
+    "review_file": "support/evidence/FE-INT-GATE-FOLLOWUP-ME-STARTUP.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T07:11:28Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "5e462e9a2c1c4b22a6868e16bf402937ca2f3260",
+      "commit_subject": "FE-INT-GATE-FOLLOWUP-ME-STARTUP: record hosted strict unblock",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "FE-INT-GATE-FOLLOWUP-ME-STARTUP",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 16,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "FE-INT-GATE-FOLLOWUP-ME-STARTUP",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Helper-claimed by idle Claude2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-14T11:57:00Z",
+      "resolved_at": "2026-05-14T11:57:22Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-FOLLOWUP-ME-STARTUP",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Implementation complete. TopBar now calls useMe() on mount; /bff/me 401 renders Lock+Auth error state, never falls back to mock current-user. F01 spec product-gap bypass removed; strict interceptedMeRequests > 0 assertion added. Commit 20dfe79 on bff-luv-fe-006-dev-deploy in execute-plans. Ready for review.",
+      "status": "done",
+      "created_at": "2026-05-14T12:04:50Z",
+      "resolved_at": "2026-05-14T12:18:01Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-FOLLOWUP-ME-STARTUP",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review failed on hosted strict closeout verification: PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io VITE_BFF_FALLBACK=strict npx playwright test e2e/01-startup-session.spec.ts --trace=on --reporter=list --output=/tmp/fe-int-gate-align-f01-closeout-run1 returned 3 passed, 1 failed; 401 startup case still records interceptedMeRequests=0, so hosted startup does not request /bff/me yet.",
+      "status": "done",
+      "created_at": "2026-05-14T12:18:01Z",
+      "resolved_at": "2026-05-14T12:18:01Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-FOLLOWUP-ME-STARTUP",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-14T12:27:30Z",
+      "resolved_at": "2026-05-14T12:27:31Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-FOLLOWUP-ME-STARTUP",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Ready for review: execute-plans commit 3ddb5e6 installs runtime strict override for F01 startup hosted checks; hosted focused rerun passed 2/2 and evidence updated in support/evidence/FE-INT-GATE-FOLLOWUP-ME-STARTUP.md.",
+      "status": "done",
+      "created_at": "2026-05-15T07:10:22Z",
+      "resolved_at": "2026-05-15T07:10:43Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-FOLLOWUP-ME-STARTUP",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Approved: hosted strict runtime false-HYBRID blocker is cleared by commit 3ddb5e6 and verified on pantheon-dev.",
+      "status": "done",
+      "created_at": "2026-05-15T07:10:43Z",
+      "resolved_at": "2026-05-15T07:11:28Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "FE-INT-GATE-FOLLOWUP-ME-STARTUP",
+      "owner": "Codex2",
+      "waiting_for": "Gemini2",
+      "message": "Source fix pushed in execute-plans commits b09d22e/df73c3d and evidence committed in pantheon 0bec9136. Local focused 401 passes and build passes, but hosted https://pantheon-dev.lovable.app still serves old bundle index-DmMAo3dQ.js with local admin role; hosted focused 401 fails with interceptedMeRequests=0. Waiting for Lovable deployment refresh or correct preview URL tracking df73c3d.",
+      "status": "resolved",
+      "created_at": "2026-05-14T12:48:20Z",
+      "resolved_at": "2026-05-15T07:09:57Z"
+    }
+  ]
+}

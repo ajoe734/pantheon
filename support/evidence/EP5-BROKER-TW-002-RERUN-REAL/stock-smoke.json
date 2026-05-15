@@ -1,0 +1,143 @@
+{
+  "task_id": "EP5-BROKER-TW-002-RERUN-REAL",
+  "generated_at": "2026-05-13T00:53:28Z",
+  "completed_at": "2026-05-13T00:53:31Z",
+  "provider": "Shioaji",
+  "adapter": "services.broker.shioaji.ShioajiBrokerAdapter",
+  "account_kind": "stock",
+  "run_mode": "shioaji_simulation_sdk",
+  "status": "failed",
+  "proof_boundary": "broker_adapter_sandbox_smoke; not canary/live/capital proof",
+  "environment": {
+    "BROKER_SHIOAJI_SANDBOX_ENABLED": true,
+    "BROKER_SHIOAJI_API_KEY_configured": true,
+    "BROKER_SHIOAJI_SECRET_KEY_configured": true,
+    "raw_secret_material_persisted": false
+  },
+  "taipei_sandbox_window": {
+    "start": {
+      "label": "stock_smoke_start",
+      "timezone": "Asia/Taipei",
+      "observed_at": "2026-05-13T08:53:28+08:00",
+      "window_start_hour": 8,
+      "window_end_hour_exclusive": 20,
+      "within_window": true
+    },
+    "end": {
+      "label": "stock_smoke_end",
+      "timezone": "Asia/Taipei",
+      "observed_at": "2026-05-13T08:53:31+08:00",
+      "window_start_hour": 8,
+      "window_end_hour_exclusive": 20,
+      "within_window": true
+    },
+    "fail_fast_enforced": true
+  },
+  "submit_spacing_gate": {
+    "scope": "per-account thread-local adapter gate",
+    "configured_seconds": 1.0
+  },
+  "request": {
+    "capital_pool_id": "pool-ep5-broker-tw-sandbox",
+    "strategy_id": "strategy-ep5-broker-tw-smoke",
+    "symbol": "2330",
+    "qty": 1.0,
+    "side": "buy",
+    "order_type": "limit",
+    "limit_price": 2030.0,
+    "account_kind": "stock",
+    "futures_category": null
+  },
+  "place": {
+    "request": {
+      "capital_pool_id": "pool-ep5-broker-tw-sandbox",
+      "strategy_id": "strategy-ep5-broker-tw-smoke",
+      "symbol": "2330",
+      "qty": 1.0,
+      "side": "buy",
+      "order_type": "limit",
+      "limit_price": 2030.0,
+      "account_kind": "stock",
+      "futures_category": null
+    },
+    "response": {},
+    "sdk_trace": "not_captured_for_real_sdk"
+  },
+  "readback": {
+    "after_place": {},
+    "after_cancel": {}
+  },
+  "cancel": {
+    "request": {
+      "order_id": null
+    },
+    "response": {}
+  },
+  "order_ids": {
+    "pantheon_order_id": null,
+    "shioaji_trade_id": null
+  },
+  "status_transitions": [
+    {
+      "step": "place",
+      "order_id": null,
+      "status": null,
+      "observed_at": null
+    },
+    {
+      "step": "readback_after_place",
+      "order_id": null,
+      "status": null,
+      "observed_at": "2026-05-13T00:53:31Z"
+    },
+    {
+      "step": "cancel",
+      "order_id": null,
+      "status": null,
+      "observed_at": null
+    },
+    {
+      "step": "readback_after_cancel",
+      "order_id": null,
+      "status": null,
+      "observed_at": "2026-05-13T00:53:31Z"
+    }
+  ],
+  "live_gate": {
+    "status": "rejected",
+    "response": {
+      "status": "broker_error",
+      "error_code": "SHIOAJI_LIVE_DISABLED",
+      "message": "Live broker execution is permanently disabled. The Shioaji adapter operates in sandbox (simulation) mode only.",
+      "status_code": 403
+    }
+  },
+  "reconciliation": {
+    "status": "failed",
+    "diff": [],
+    "error": {
+      "status": "broker_error",
+      "error_code": "SHIOAJI_ACCOUNT_UNSIGNED",
+      "message": "Shioaji stock account is not signed for API sandbox order placement.",
+      "status_code": 403
+    }
+  },
+  "no_real_capital": {
+    "status": "passed",
+    "real_capital_used": false,
+    "real_capital_reserved": false,
+    "production_live_order_submitted": false,
+    "production_live_cancel_submitted": false
+  },
+  "error": {
+    "status": "broker_error",
+    "error_code": "SHIOAJI_ACCOUNT_UNSIGNED",
+    "message": "Shioaji stock account is not signed for API sandbox order placement.",
+    "status_code": 403
+  },
+  "notes": [
+    "BROKER_SHIOAJI_SANDBOX_ENABLED must be explicitly true; default-false adapter behavior is not bypassed.",
+    "Live execution remains SHIOAJI_LIVE_DISABLED.",
+    "No capital binding, registry admission, paper promotion, canary activation, or live order is performed."
+  ]
+}

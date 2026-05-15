@@ -1,0 +1,57 @@
+{
+  "task_id": "EP5-BROKER-TW-002-RERUN-REAL",
+  "generated_at": "2026-05-13T00:58:59Z",
+  "provider": "Shioaji",
+  "run_mode": "shioaji_simulation_sdk_relogin_signed_status",
+  "status": "failed",
+  "proof_boundary": "post-smoke signed status audit; no order placement",
+  "sleep_seconds_before_relogin": 300.0,
+  "taipei_sandbox_window": {
+    "pre_sleep": {
+      "label": "signed_status_pre_sleep",
+      "timezone": "Asia/Taipei",
+      "observed_at": "2026-05-13T08:53:56+08:00",
+      "window_start_hour": 8,
+      "window_end_hour_exclusive": 20,
+      "within_window": true
+    },
+    "post_sleep": {
+      "label": "signed_status_post_sleep",
+      "timezone": "Asia/Taipei",
+      "observed_at": "2026-05-13T08:58:56+08:00",
+      "window_start_hour": 8,
+      "window_end_hour_exclusive": 20,
+      "within_window": true
+    },
+    "fail_fast_enforced": true
+  },
+  "environment": {
+    "BROKER_SHIOAJI_API_KEY_configured": true,
+    "BROKER_SHIOAJI_SECRET_KEY_configured": true,
+    "raw_secret_material_persisted": false
+  },
+  "accounts_returned_count": 1,
+  "stock_account": {
+    "account_type": "AccountType.Stock",
+    "broker_id": "9A9r",
+    "account_id_last4": "8518",
+    "person_id_last4": "7622",
+    "signed": false
+  },
+  "futopt_account": {
+    "account_type": null,
+    "broker_id": null,
+    "account_id_last4": null,
+    "person_id_last4": null,
+    "signed": false
+  },
+  "acceptance": {
+    "stock_account_signed": false,
+    "futopt_account_signed": false
+  },
+  "no_real_capital": {
+    "status": "passed",
+    "production_live_order_submitted": false,
+    "production_live_cancel_submitted": false
+  }
+}

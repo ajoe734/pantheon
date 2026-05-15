@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "task_id": "FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-05-14T12:50:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE",
+    "title": "Prepare FE-INT-GATE-ALIGN-F01 acceptance packet and dependency map",
+    "summary_zh": "平行支援 FE-INT-GATE-ALIGN-F01，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Pantheon FE Integration Gate 2026-05-13",
+    "owner": "Claude2",
+    "reviewer": "Gemini2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/FE-INT-GATE-ALIGN-F01/FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete. Acceptance packet committed at 0bab6f50 (support/sidecars/FE-INT-GATE-ALIGN-F01/FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE.md). All 5 parent acceptance criteria satisfied; 3 owner runs + 2 reviewer runs all 4/4; product gap FE-INT-GATE-FOLLOWUP-ME-STARTUP tracked in gap register; sidecar constraints met (no canonical truth modified). Approved by Gemini2.",
+    "last_update": "2026-05-14T12:50:34Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "FE-INT-GATE-ALIGN-F01",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-14T12:50:34Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "cc3b402b1331b78a3dae4ecb4a5a0cd0243dfdce",
+      "commit_subject": "FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE: state sync for review_approved",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Gemini2",
+        "Verification": "acceptance packet complete; all 5 parent acceptance criteria"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 5,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE",
+      "from": "Gemini2",
+      "to": "Codex",
+      "message": "Prepared acceptance packet and ready for review.",
+      "status": "done",
+      "created_at": "2026-05-14T11:39:23Z",
+      "resolved_at": "2026-05-14T12:05:20Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Gemini2",
+      "message": "Review returned: packet is still a generic template. Please add a concrete F01 dependency map and handoff packet: map parent task FE-INT-GATE-ALIGN-F01 evidence/artifacts (01-startup-session.spec.ts, hosted strict two-pass verification, headed run, execute-plans commit a685175, and FE-INT-GATE-FOLLOWUP-ME-STARTUP product gap), mark which acceptance criteria are satisfied vs pending, and keep it support-only with no L1/runtime/registry/governance changes.",
+      "status": "done",
+      "created_at": "2026-05-14T12:05:20Z",
+      "resolved_at": "2026-05-14T12:05:20Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE",
+      "from": "Gemini2",
+      "to": "Claude2",
+      "message": "Helper-claimed by Claude2 while Gemini2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-14T12:09:45Z",
+      "resolved_at": "2026-05-14T12:09:46Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Gemini2",
+      "message": "Concrete F01 acceptance packet prepared at support/sidecars/FE-INT-GATE-ALIGN-F01/FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE.md (committed in 2154e992). Documents: (1) commit a685175 scope — e2e/01-startup-session.spec.ts only, +43/-9; (2) all 5 parent acceptance criteria satisfied; (3) test coverage map for all 4 tests (live BFF, no fixture); (4) BFF contract surface; (5) dependency map; (6) verification evidence — 3 owner runs + reviewer 2 runs, all 4/4; (7) FE-INT-GATE-FOLLOWUP-ME-STARTUP product gap register (interceptedMeRequests=0, fix at commit 20dfe79 in review). Support-only; no canonical truth modified.",
+      "status": "done",
+      "created_at": "2026-05-14T12:18:22Z",
+      "resolved_at": "2026-05-14T12:44:06Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE",
+      "from": "Gemini2",
+      "to": "Claude2",
+      "message": "Review approved for FE-INT-GATE-ALIGN-F01-SIDECAR-ACCEPTANCE. Acceptance packet prepared and committed (2154e992). Verification evidence shows all acceptance criteria met. Task is support-only and no canonical truth was modified. Returning to owner Claude2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-14T12:44:06Z",
+      "resolved_at": "2026-05-14T12:50:34Z"
+    }
+  ],
+  "blockers": []
+}

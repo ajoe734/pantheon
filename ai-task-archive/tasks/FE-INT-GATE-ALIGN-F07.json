@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "FE-INT-GATE-ALIGN-F07",
+  "archived_at": "2026-05-14T13:05:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "FE-INT-GATE-ALIGN-F07",
+    "title": "Align 06-entity-registry.spec.ts to hosted Lovable DOM",
+    "summary_zh": "hard-gate 首次 run 25846710728 (commit 4774678) e2e step fail：F07 Entity Registry spec 06-entity-registry.spec.ts 對 hosted Lovable assertion 對不上。Symptoms: 12 registry surface fixture-backed list render fail（可能 fixtures.ts 提供的 seeded id 在 hosted Lovable 對應實體不存在或 selector 不對）. 必須 (1) PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io 環境下實際跑 npx playwright test <file> --trace=on / --headed，產出 playwright-report/ 抓真實 DOM；(2) 不可以憑空猜 selector；(3) 對 hosted Lovable 已 render 的 UI 對齊 assertion，不可降級 acceptance；(4) 若發現 hosted Lovable 真有 product gap（非 selector 錯），在 task next 註明並 file follow-up；(5) 修完後本地 npx playwright test 對該 spec 至少連續 2 次綠；(6) closeout commit 必須在 /home/lupin/code/execute-plans/ 上 bff-luv-fe-006-dev-deploy branch（不要再產生 phantom mirror，FE-INT-GATE-A10 處理 root cause）。",
+    "phase": "Pantheon FE Integration Gate 2026-05-13",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "execute-plans/e2e/06-entity-registry.spec.ts",
+      "execute-plans/.lovable/audits/baseline/hardgate-postmerge/pantheon-integration-evidence/.lovable/audits/current-run/playwright-results.json"
+    ],
+    "acceptance": [
+      "cd execute-plans 後 npx playwright test e2e/06-entity-registry.spec.ts 連續 2 次全綠",
+      "assertion 用真實 hosted Lovable DOM/network 對齊",
+      "不可降級 blueprint pass condition",
+      "若 hosted Lovable 真有 product gap 改 file follow-up task 而非 mask spec",
+      "closeout commit 在 execute-plans repo bff-luv-fe-006-dev-deploy branch"
+    ],
+    "next": "Closeout complete: execute-plans commit 07f60c8 and Pantheon pointer commit 670f161a recorded; hosted F07 closeout runs passed twice against pantheon-dev Lovable/dev BFF (4 passed, 1 skipped each); runtime live wiring gap remains tracked by FE-INT-GATE-F07-RUNTIME-LIVE-WIRING. Pre-existing unrelated dirty/generated files were left unstaged.",
+    "last_update": "2026-05-14T13:05:06Z",
+    "review_notes_zh": [
+      "審查通過：spec diff 確認 PANTHEON_BFF_BASE_URL、expectsHostedListRead/hostedRenderLabel 欄位、fixtures 資料對齊真實 hosted DOM、gotoRegistry 使用 hostedRenderLabel、第一個 test 條件分支記錄 runtimes product gap 而非 mask。",
+      "驗證：evidence note 顯示兩次 run（headless + xvfb headed）均 4 passed/1 skipped，skipped 為需 FE_INT_GATE_LIVE_BFF=1 的 live probe（預期跳過）。",
+      "Closeout 注意：F07 變更尚未 commit；owner 須 stage 僅 e2e/06-entity-registry.spec.ts 與 evidence note 建立 task-scoped commit。",
+      "後續：FE-INT-GATE-F07-RUNTIME-LIVE-WIRING 已正確建立於 ai-status.json，runtime gap 透明記錄。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-14T13:05:06Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "670f161a883b66449134401de1a47e0f1261e95b",
+      "commit_subject": "FE-INT-GATE-ALIGN-F07: record closeout pointer",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verification": "execute-plans commit 07f60c8 passed e2e/06-entity-registry.spec.ts twice against hosted Lovable/dev BFF with 4 passed, 1 skipped each run.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "FE-INT-GATE-ALIGN-F07",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 7,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F07",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Helper-claimed by idle Claude; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-14T11:56:49Z",
+      "resolved_at": "2026-05-14T11:57:10Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F07",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-14T12:10:07Z",
+      "resolved_at": "2026-05-14T12:12:42Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F07",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "F07 ready for review: hosted Lovable run passed twice (trace headless: 4 passed/1 skipped; xvfb headed trace: 4 passed/1 skipped). Spec aligns fixtures/render labels to actual hosted DOM; runtime surface still renders legacy executor-us-east-1 without reading /bff/runtimes, so follow-up FE-INT-GATE-F07-RUNTIME-LIVE-WIRING was filed. Evidence note: execute-plans/.lovable/audits/current-run/fe-int-gate-align-f07-hosted-dom.md.",
+      "status": "done",
+      "created_at": "2026-05-14T12:25:01Z",
+      "resolved_at": "2026-05-14T12:32:27Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F07",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: spec aligns 11/12 registry surfaces to hosted Lovable via fixture routes; runtime surface product gap documented transparently with follow-up FE-INT-GATE-F07-RUNTIME-LIVE-WIRING filed. Owner should create task-scoped commit of e2e/06-entity-registry.spec.ts and evidence note during closeout.",
+      "status": "done",
+      "created_at": "2026-05-14T12:32:27Z",
+      "resolved_at": "2026-05-14T13:05:06Z"
+    }
+  ],
+  "blockers": []
+}

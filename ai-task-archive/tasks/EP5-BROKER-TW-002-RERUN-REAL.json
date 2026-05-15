@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "task_id": "EP5-BROKER-TW-002-RERUN-REAL",
+  "archived_at": "2026-05-13T01:15:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "EP5-BROKER-TW-002-RERUN-REAL",
+    "title": "Re-run EP5-BROKER-TW-002 with real Shioaji SDK (no mock) for stock+futures sandbox smoke",
+    "summary_zh": "EP5-BROKER-TW-002 之前用 --mock-api 路徑收尾，現在 supervisor PID 1034116 已載入 BROKER_SHIOAJI_API_KEY / SECRET_KEY (len=44 各)，且台灣時間 08:00-20:00 sandbox 窗口內，跑真 Shioaji SDK smoke。要求：(1) 不准用 --mock-api；(2) 證券帳戶 place/cancel/readback/reconcile + 期貨帳戶 place/cancel/readback/reconcile 兩段 evidence 分開；(3) 下單間隔 ≥1s；(4) smoke 跑完 sleep ~5min 後 re-login 確認 stock_account.signed=True 與 futopt_account.signed=True；(5) 全程台灣時間 08:00-20:00 內執行（過 20:00 必須 fail-fast 不硬戳）；(6) requirements.txt 升級 shioaji>=1.2.0,<2.0.0；(7) adapter 必須加 ≥1s per-account thread-local last-submit timestamp gate；(8) live order path 仍須一律 reject；(9) evidence 路徑 support/evidence/EP5-BROKER-TW-002-RERUN-REAL/。",
+    "phase": "EP5 Broker TW Real Sandbox Smoke 2026-05-13",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/broker/shioaji/adapter.py",
+      "services/broker/shioaji/requirements.txt",
+      "services/broker/shioaji/sandbox_smoke.py",
+      "support/evidence/EP5-BROKER-TW-002-RERUN-REAL/stock-smoke.json",
+      "support/evidence/EP5-BROKER-TW-002-RERUN-REAL/futures-smoke.json",
+      "support/evidence/EP5-BROKER-TW-002-RERUN-REAL/signed-status.json"
+    ],
+    "acceptance": [
+      "real Shioaji SDK used (no mock fallback)",
+      "stock smoke shows place+cancel+readback+reconcile success with shioaji_trade_id",
+      "futures smoke shows place+cancel+readback+reconcile success with shioaji_trade_id",
+      "signed=True confirmed for both stock_account and futopt_account post-audit",
+      "order spacing >=1s enforced in adapter",
+      "shioaji>=1.2.0 pinned in requirements",
+      "live order route still rejects with SHIOAJI_LIVE_DISABLED",
+      "smoke ran within 08:00-20:00 Asia/Taipei window",
+      "no real capital path opened (is_real_capital remains False)"
+    ],
+    "next": "Acceptance criteria 5 was wrong — signed=True is a production-mode (simulation=False) state that only appears AFTER Sinopac audits the simulation test record. Worker correctly added SHIOAJI_ACCOUNT_UNSIGNED precheck per spec but that blocked the very place_order needed to generate the audit record. Superseded by EP5-BROKER-TW-002-RERUN-REAL-FIX.",
+    "last_update": "2026-05-13T01:15:13Z",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [],
+  "blockers": [
+    {
+      "task_id": "EP5-BROKER-TW-002-RERUN-REAL",
+      "owner": "Codex2",
+      "waiting_for": "Codex",
+      "message": "Blocked after real Shioaji SDK rerun: stock smoke failed before placement with SHIOAJI_ACCOUNT_UNSIGNED (stock_account.signed=False), futures smoke failed with SHIOAJI_ACCOUNT_MISSING (no futopt_account after login), and 300s post-smoke re-login signed-status confirmed stock_account_signed=false and futopt_account_signed=false. Evidence: support/evidence/EP5-BROKER-TW-002-RERUN-REAL/{stock-smoke.json,futures-smoke.json,signed-status.json}. Live path remained SHIOAJI_LIVE_DISABLED and no real-capital order/cancel was submitted.",
+      "status": "resolved",
+      "created_at": "2026-05-13T01:00:09Z",
+      "resolved_at": "2026-05-13T01:15:13Z"
+    }
+  ]
+}

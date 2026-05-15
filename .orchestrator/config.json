@@ -28,8 +28,8 @@
     "max_seen_events": 2000
   },
   "supervisor": {
-    "poll_interval_seconds": 15,
-    "heartbeat_warn_after_seconds": 45.0,
+    "poll_interval_seconds": 300,
+    "heartbeat_warn_after_seconds": 360.0,
     "stall_after_seconds": 300,
     "max_worker_history": 200,
     "auto_refresh_provider_capabilities": true
@@ -313,6 +313,19 @@
       "wake_template": ".orchestrator/templates/wakeup.txt",
       "file_inbox_path": ".llm-inbox/codex.md"
     },
+    "codex2": {
+      "display_name": "Codex2",
+      "provider": "codex2",
+      "adapter": "codex",
+      "worker_slots": [
+        "codex2_1",
+        "codex2_2",
+        "codex2_3",
+        "codex2_4"
+      ],
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/codex2.md"
+    },
     "codex1_1": {
       "display_name": "Codex",
       "provider": "codex1-1",
@@ -348,19 +361,6 @@
       "slot_id": "codex1-4",
       "wake_template": ".orchestrator/templates/wakeup.txt",
       "file_inbox_path": ".llm-inbox/codex.md"
-    },
-    "codex2": {
-      "display_name": "Codex2",
-      "provider": "codex2",
-      "adapter": "codex",
-      "worker_slots": [
-        "codex2_1",
-        "codex2_2",
-        "codex2_3",
-        "codex2_4"
-      ],
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/codex2.md"
     },
     "codex2_1": {
       "display_name": "Codex2",
@@ -433,7 +433,7 @@
         "mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
         "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
         "env": {
-          "CLAUDE_CONFIG_DIR": "/home/lupin/.claude"
+          "CLAUDE_CONFIG_DIR": "/home/lupin/.claude-autoworker"
         }
       },
       "broker": {
@@ -551,14 +551,36 @@
     },
     "codex": {
       "delivery_mode": "codex",
+      "quota_group": "codex1",
       "file_inbox": {
         "path": ".llm-inbox/codex.md",
         "open_in_vscode": false
       },
       "codex": {
         "cli": ".orchestrator/bin/codex",
-        "api_key_env": "OPENAI_API_KEY",
         "codex_home": "~/.codex",
+        "api_key_env": "OPENAI_API_KEY",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      },
+      "approval": {
+        "orchestrator_only": true,
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      }
+    },
+    "codex2": {
+      "delivery_mode": "codex",
+      "quota_group": "codex2",
+      "file_inbox": {
+        "path": ".llm-inbox/codex2.md",
+        "open_in_vscode": false
+      },
+      "codex": {
+        "cli": ".orchestrator/bin/codex",
+        "codex_home": "~/.codex2",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
@@ -575,8 +597,14 @@
       "quota_group": "codex1",
       "codex": {
         "cli": ".orchestrator/bin/codex",
-        "api_key_env": "OPENAI_API_KEY",
         "codex_home": "~/.codex",
+        "api_key_env": "OPENAI_API_KEY",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      },
+      "approval": {
+        "orchestrator_only": true,
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
@@ -587,8 +615,14 @@
       "quota_group": "codex1",
       "codex": {
         "cli": ".orchestrator/bin/codex",
-        "api_key_env": "OPENAI_API_KEY",
         "codex_home": "~/.codex",
+        "api_key_env": "OPENAI_API_KEY",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      },
+      "approval": {
+        "orchestrator_only": true,
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
@@ -599,8 +633,14 @@
       "quota_group": "codex1",
       "codex": {
         "cli": ".orchestrator/bin/codex",
-        "api_key_env": "OPENAI_API_KEY",
         "codex_home": "~/.codex",
+        "api_key_env": "OPENAI_API_KEY",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      },
+      "approval": {
+        "orchestrator_only": true,
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
@@ -611,22 +651,8 @@
       "quota_group": "codex1",
       "codex": {
         "cli": ".orchestrator/bin/codex",
-        "api_key_env": "OPENAI_API_KEY",
         "codex_home": "~/.codex",
-        "ask_for_approval": "never",
-        "sandbox_mode": "workspace-write",
-        "dangerously_bypass": true
-      }
-    },
-    "codex2": {
-      "delivery_mode": "codex",
-      "file_inbox": {
-        "path": ".llm-inbox/codex2.md",
-        "open_in_vscode": false
-      },
-      "codex": {
-        "cli": ".orchestrator/bin/codex",
-        "codex_home": "~/.codex2",
+        "api_key_env": "OPENAI_API_KEY",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
@@ -647,6 +673,12 @@
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
+      },
+      "approval": {
+        "orchestrator_only": true,
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
       }
     },
     "codex2-2": {
@@ -655,6 +687,12 @@
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      },
+      "approval": {
+        "orchestrator_only": true,
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
@@ -669,6 +707,12 @@
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
+      },
+      "approval": {
+        "orchestrator_only": true,
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
       }
     },
     "codex2-4": {
@@ -677,6 +721,12 @@
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
+        "ask_for_approval": "never",
+        "sandbox_mode": "workspace-write",
+        "dangerously_bypass": true
+      },
+      "approval": {
+        "orchestrator_only": true,
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
@@ -760,10 +810,10 @@
         "todo",
         "in_progress"
       ],
-      "require_owner_higher_priority_load": true
+      "require_owner_higher_priority_load": true,
+      "claim_idle_work": true,
+      "claim_sidecars_when_idle": true
     },
-    "max_tasks_per_agent": 1,
-    "max_dispatches_per_tick": 8,
     "target_workload": {
       "Claude": 10,
       "Claude2": 10,
@@ -772,6 +822,8 @@
       "Codex": 35,
       "Codex2": 35,
       "Copilot": 5
-    }
+    },
+    "max_tasks_per_agent": 1,
+    "max_dispatches_per_tick": 8
   }
 }

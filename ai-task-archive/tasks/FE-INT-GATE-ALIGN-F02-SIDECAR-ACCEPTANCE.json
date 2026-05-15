@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "FE-INT-GATE-ALIGN-F02-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-05-14T12:22:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "FE-INT-GATE-ALIGN-F02-SIDECAR-ACCEPTANCE",
+    "title": "Prepare FE-INT-GATE-ALIGN-F02 acceptance packet and dependency map",
+    "summary_zh": "平行支援 FE-INT-GATE-ALIGN-F02，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Pantheon FE Integration Gate 2026-05-13",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/FE-INT-GATE-ALIGN-F02/FE-INT-GATE-ALIGN-F02-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout: acceptance packet committed at 20654966 (initial) + 8ee458b9 (finalization record). Reviewer Codex spot-check passed 5/5 (1 skipped). All 5 parent acceptance criteria + 3 sidecar constraints confirmed. No canonical truth modified. Artifact: support/sidecars/FE-INT-GATE-ALIGN-F02/FE-INT-GATE-ALIGN-F02-SIDECAR-ACCEPTANCE.md.",
+    "last_update": "2026-05-14T12:22:44Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "FE-INT-GATE-ALIGN-F02",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-14T12:22:44Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "8ee458b9f9f1045c0bdfe652e967d26cd9dde941",
+      "commit_subject": "FE-INT-GATE-ALIGN-F02-SIDECAR-ACCEPTANCE: closeout finalization",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Reviewer (Codex) spot-check": "5 passed, 1 skipped.",
+        "LLM-Agent": "Claude",
+        "Task-ID": "FE-INT-GATE-ALIGN-F02-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 7,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F02-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by idle Claude; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-14T11:49:43Z",
+      "resolved_at": "2026-05-14T11:50:04Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F02-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet prepared at support/sidecars/FE-INT-GATE-ALIGN-F02/FE-INT-GATE-ALIGN-F02-SIDECAR-ACCEPTANCE.md. Documents root cause, fix evidence (5/5 tests pass in 2 runs, commit 30c7dc3), BFF API contract surface, dependency map, and handoff notes for parent reviewer Codex2. No canonical truth modified. Ready for review.",
+      "status": "done",
+      "created_at": "2026-05-14T11:53:39Z",
+      "resolved_at": "2026-05-14T12:06:05Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-ALIGN-F02-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Approved: acceptance packet is support-only, tracked in pantheon commit 20654966, documents root cause/fix/dependency map/handoff, and reviewer spot-check passed: PANTHEON_FE_BASE_URL=https://pantheon-dev.lovable.app PANTHEON_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io npx playwright test e2e/02-control-room.spec.ts --reporter=line => 5 passed, 1 skipped. Owner Claude should finalize closeout to done.",
+      "status": "done",
+      "created_at": "2026-05-14T12:06:05Z",
+      "resolved_at": "2026-05-14T12:22:46Z"
+    }
+  ],
+  "blockers": []
+}

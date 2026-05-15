@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-001",
+  "archived_at": "2026-05-13T02:48:17Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-001",
+    "title": "Backend FastAPI route manifest extractor",
+    "summary_zh": "沿用 services/control-plane/bff/contract_snapshots/execute_plans_bff_contract.py 的 app_route_index 邏輯 寫 scripts/bff_route_manifest_backend.py 輸出 backend manifest JSON：列出所有 FastAPI registered routes (method/path/family/status: implemented|alias|superseded|deferred) 與 frontend manifest 對齊用。輸出 services/control-plane/bff/contract_snapshots/backend_routes_manifest.json 與 dump CLI。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "scripts/bff_route_manifest_backend.py",
+      "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json"
+    ],
+    "acceptance": [
+      "manifest JSON 含所有 /bff/* 與 /health route",
+      "每筆有 method+path+family+status",
+      "FastAPI dynamic param 用 {param} 形式 normalize",
+      "alias/superseded/deferred 三種狀態被顯式記錄",
+      "腳本可被 CI 與 pytest 重跑產出穩定 output",
+      "不修改任何現有 BFF runtime code"
+    ],
+    "next": "Closeout complete. Task artifacts committed at 50fa50bc (extractor + manifest, 371 routes, {param} normalization). Review sidecar committed at 68a31c4c. Final --check: routes match snapshot. All acceptance criteria satisfied: /bff/* and /health routes present, method+path+family+status per entry, {param} normalization throughout (0 named params in entries[].path and covered_by), alias/superseded/deferred explicit, stable repeatable output, no runtime code modified. Codex review approved.",
+    "last_update": "2026-05-13T02:48:17Z",
+    "review_notes_zh": [
+      "Codex 複審通過。commit 50fa50bc 已修正 entries[].path 與 covered_by 的 FastAPI dynamic param normalization，重新產生 manifest 與 snapshot 無差異，--check 通過，schema/HEAD/OPTIONS/normalization 檢查通過，371 routes。"
+    ],
+    "review_file": "support/sidecars/BFF-CONSOL-001/review-bff-consol-001-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T02:48:17Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "68a31c4ca69ac43953bc2a25a13cad1d0b239d99",
+      "commit_subject": "BFF-CONSOL-001 closeout: add Codex review sidecar",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BFF-CONSOL-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 19,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 13,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-13T02:01:26Z",
+      "resolved_at": "2026-05-13T02:01:45Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete. Commit: 96d1101c. scripts/bff_route_manifest_backend.py walks the live FastAPI app and writes services/control-plane/bff/contract_snapshots/backend_routes_manifest.json (371 routes). All acceptance criteria met: all /bff/* and /health routes present; each entry has method+path+family+status; {param} curly-brace notation used; 9 explicit alias routes recorded (ranking-formulas, mcp-servers, mcp-tools) with covered_by fields; all 4 status values documented in metadata; --check confirms stable repeatable output; no runtime code modified. Verification: python3 scripts/bff_route_manifest_backend.py --check → routes match snapshot.",
+      "status": "done",
+      "created_at": "2026-05-13T02:21:43Z",
+      "resolved_at": "2026-05-13T02:36:54Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested: backend manifest entries still emit named FastAPI params instead of normalized {param}; see support/sidecars/BFF-CONSOL-001/review-bff-consol-001-codex.md. Regenerate snapshot after normalizing entries[].path and covered_by route targets.",
+      "status": "done",
+      "created_at": "2026-05-13T02:36:54Z",
+      "resolved_at": "2026-05-13T02:36:54Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Codex review changes addressed. Commit: 50fa50bc. Fixed app_route_index() to write normalize_path(path) in entries[].path and normalize covered_by route targets. Verification: python3 scripts/bff_route_manifest_backend.py --check → routes match snapshot; jq non-normalized path count → 0; jq non-normalized covered_by count → 0; schema check → true; 371 routes. All acceptance criteria now satisfied: {param} curly-brace notation used throughout.",
+      "status": "done",
+      "created_at": "2026-05-13T02:39:36Z",
+      "resolved_at": "2026-05-13T02:45:53Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved after re-checking commit 50fa50bc: manifest regenerates cleanly, --check passes, schema/normalization checks pass, and named dynamic params are 0 in entries[].path and covered_by. Owner should finalize via closeout spec.",
+      "status": "done",
+      "created_at": "2026-05-13T02:45:53Z",
+      "resolved_at": "2026-05-13T02:48:18Z"
+    }
+  ],
+  "blockers": []
+}

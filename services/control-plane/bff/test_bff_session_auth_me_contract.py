@@ -252,10 +252,83 @@ def test_bff_session_lifecycle_routes_are_visible_in_openapi(monkeypatch) -> Non
 
     assert response.status_code == 200, response.text
     paths = response.json()["paths"]
+    assert "post" in paths["/bff/auth/dev-login"]
     assert "post" in paths["/bff/auth/refresh"]
     assert "post" in paths["/bff/logout"]
     assert "post" in paths["/bff/switch-tenant"]
     assert "patch" in paths["/bff/me/locale"]
+
+
+def test_bff_dev_login_issues_short_lived_jwt_for_me(monkeypatch) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", "dev")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_ID", "ci-client")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_SECRET", "ci-secret")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS", "600")
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
+    monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha,tenant-beta")
+
+    client = TestClient(bff_main.app)
+    login = client.post(
+        "/bff/auth/dev-login",
+        json={
+            "grant_type": "client_credentials",
+            "client_id": "ci-client",
+            "client_secret": "ci-secret",
+        },
+    )
+
+    assert login.status_code == 200, login.text
+    payload = login.json()
+    assert payload["token_type"] == "bearer"
+    assert 300 <= payload["expires_in"] <= 3600
+    assert payload["expires_in"] == 600
+    assert payload["meta"]["contract"] == "FE-INT-GATE-OIDC-DEV-LOGIN"
+
+    me = client.get("/bff/me", headers={"Authorization": f"Bearer {payload['access_token']}"})
+    assert me.status_code == 200, me.text
+    data = me.json()["data"]
+    assert data["currentUser"]["id"] == "pantheon-dev-ci-client"
+    assert data["session"]["session_kind"] == "bearer"
+    assert data["tenant"]["id"] == "tenant-alpha"
+    assert set(data["roles"]) == {"operator", "reviewer"}
+
+
+def test_bff_dev_login_rejects_bad_client_secret(monkeypatch) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_ID", "ci-client")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_SECRET", "ci-secret")
+
+    client = TestClient(bff_main.app)
+    response = client.post(
+        "/bff/auth/dev-login",
+        json={"client_id": "ci-client", "client_secret": "wrong-secret"},
+    )
+
+    assert response.status_code == 401, response.text
+    error = response.json()["detail"]["error"]
+    assert error["code"] == "INVALID_TOKEN"
+    assert error["details"]["reason"] == "AUTH_DEV_LOGIN_CLIENT_CREDENTIALS"
+
+
+def test_bff_dev_login_disabled_for_staging_live(monkeypatch) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_ENV", "staging-live")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_ID", "ci-client")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_SECRET", "ci-secret")
+
+    client = TestClient(bff_main.app)
+    response = client.post(
+        "/bff/auth/dev-login",
+        json={"client_id": "ci-client", "client_secret": "ci-secret"},
+    )
+
+    assert response.status_code == 403, response.text
+    error = response.json()["detail"]["error"]
+    assert error["code"] == "PRECONDITION_NOT_MET"
+    assert error["details"]["precondition_failed"] == "dev_login"
 
 
 def test_bff_me_propagates_accept_language_when_x_locale_absent(monkeypatch) -> None:

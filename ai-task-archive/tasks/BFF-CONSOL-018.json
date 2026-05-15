@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-018",
+  "archived_at": "2026-05-13T05:38:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-018",
+    "title": "Detail journey smoke C (incident approval rebalance job audit)",
+    "summary_zh": "detail journey smoke C: incident/approval/rebalance/job/audit。job mock fallback undefined 改成 typed 404;audit list-only 特判 detail drawer disabled。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-010"
+    ],
+    "artifacts": [
+      "execute-plans/tests/e2e/detail-smoke-c.spec.ts",
+      "support/evidence/BFF-CONSOL-018-detail-smoke-c.json"
+    ],
+    "acceptance": [
+      "5 個 family detail route 都回 2xx 或 typed 404",
+      "job detail 不再回 undefined",
+      "audit detail drawer 在 UI 上 disabled 並顯示 list-only 說明",
+      "incident detail 顯示 runtime 狀態與 rollback option",
+      "approval detail 顯示 deployment 連結",
+      "evidence JSON 含每個 family transcript"
+    ],
+    "next": "Finalized after Claude approval. Implementation/evidence durable in 1ffa8323; review artifact committed in a6b818e4. Verification: python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/read_store.py passed; python3 -m pytest services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py -q => 10 passed; FastAPI TestClient route probe passed for incident/runtime/approval/deployment/rebalance/job/logs/audit/entity trail plus phantom typed 404/list-only paths.",
+    "last_update": "2026-05-13T05:38:24Z",
+    "review_notes_zh": [
+      "審查通過",
+      "所有6項驗收標準滿足：5個family detail routes返回2xx或typed 404；job detail不回undefined（typed OBJECT_NOT_FOUND）；audit list-only policy正確宣告；incident detail含runtime context與canHardRollback slot；approval detail projection已補全target_type/target_id/deployment_ref且有TestClient assertion驗證；evidence JSON含所有family transcript"
+    ],
+    "review_file": ".orchestrator/reviews/BFF-CONSOL-018-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T05:38:24Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "a6b818e43fd9331f7e9f55a9ea218033e0a6a78b",
+      "commit_subject": "BFF-CONSOL-018 add review approval artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-CONSOL-018",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 41,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 9,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-018",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-13T04:34:38Z",
+      "resolved_at": "2026-05-13T04:34:45Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-018",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review. Commit 1ffa8323 adds detail-smoke-c Playwright API smoke and evidence for incident/approval/rebalance/job/audit. It also preserves approval target/deployment_ref in read_store projection so /bff/approvals/{id} can link plan-pack-c-paper-001. Verification: py_compile main.py/read_store.py passed; pytest test_bff_consol_010_fixture_pack_c.py test_bff_consol_008_fixture_pack_a.py -q => 10 passed; FastAPI TestClient route probe passed for incident/runtime/approval/deployment/rebalance/job/job_logs/audit/audit_entity with missing job typed OBJECT_NOT_FOUND 404 and no undefined. Local Playwright HTTP run was not executed because uvicorn is not installed in this Python env; the Playwright spec is authored for BFF_BASE_URL/BFF_AUTH_TOKEN.",
+      "status": "done",
+      "created_at": "2026-05-13T04:53:19Z",
+      "resolved_at": "2026-05-13T05:32:32Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-018",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 6 acceptance criteria satisfied. Approval projection fix narrowly scoped and tested. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-13T05:32:32Z",
+      "resolved_at": "2026-05-13T05:38:25Z"
+    }
+  ],
+  "blockers": []
+}

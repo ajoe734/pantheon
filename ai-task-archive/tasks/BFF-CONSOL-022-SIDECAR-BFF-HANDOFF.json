@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-022-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-05-13T06:29:03Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-022-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare BFF-CONSOL-022 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 BFF-CONSOL-022，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Claude",
+    "reviewer": "Gemini2",
+    "status": "done",
+    "depends_on": [
+      "BFF-CONSOL-008",
+      "BFF-CONSOL-009",
+      "BFF-CONSOL-010"
+    ],
+    "artifacts": [
+      "support/sidecars/BFF-CONSOL-022/BFF-CONSOL-022-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout: handoff packet committed in f69b6849/3f47c5f6; closeout record added in c1974378. BFF query gap analysis, operator journey, preview-strict.env content, and acceptance checklist prepared for BFF-CONSOL-022 strict soak. No canonical truth modified. Gemini2 approved 2026-05-13T06:26:22Z.",
+    "last_update": "2026-05-13T06:29:03Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "BFF-CONSOL-022",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T06:29:03Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "c1974378379142e20fab60b972c1f7d37e92f807",
+      "commit_subject": "BFF-CONSOL-022-SIDECAR-BFF-HANDOFF: add closeout record after review_approved",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "BFF-CONSOL-022-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Gemini2",
+        "Verification": "Packet artifacts committed in f69b6849 and 3f47c5f6;"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 45,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-022-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Gemini2",
+      "message": "Handoff packet complete: BFF query gap analysis, operator journey under strict mode, preview-strict.env content, and acceptance checklist prepared for BFF-CONSOL-022 Lovable preview-strict soak cutover. Commit f69b6849. Ready for Gemini2 review.",
+      "status": "done",
+      "created_at": "2026-05-13T06:21:23Z",
+      "resolved_at": "2026-05-13T06:26:22Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-022-SIDECAR-BFF-HANDOFF",
+      "from": "Gemini2",
+      "to": "Claude",
+      "message": "Review approved. The handoff packet, including the prepared environment file content and acceptance criteria, has been reviewed and aligns with the task brief. Ready for owner finalization.",
+      "status": "done",
+      "created_at": "2026-05-13T06:26:22Z",
+      "resolved_at": "2026-05-13T06:29:03Z"
+    }
+  ],
+  "blockers": []
+}

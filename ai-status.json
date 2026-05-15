@@ -1,9 +1,9 @@
 {
   "project": "pantheon",
   "sprint": "2026-05-13-ep5-qlib-bff-consolidation",
-  "sprint_started_at": "2026-05-13T12:05:22Z",
-  "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec, 從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV, 跑 production_activation_smoke.py --backend real, submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal, registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff, command envelope unification, non-empty fixture & detail journey, SSE real stream replay, strict env cutover, seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write soak 1 週後 deprecate 舊 receipt。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。",
-  "updated_at": "2026-05-14T04:31:03Z",
+  "sprint_started_at": "2026-05-13T02:00:00Z",
+  "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec，從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV，跑 production_activation_smoke.py --backend real，submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal，registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff，command envelope unification，non-empty fixture & detail journey，SSE real stream replay，strict env cutover，seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write 驗證通過後即可 deprecate 舊 receipt，後續 regression 追蹤不再以固定天數阻塞派工。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。",
+  "updated_at": "2026-05-15T12:16:17Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -98,7 +98,7 @@
       "current_task_ids": [],
       "branch": "feat/claude-execution-control",
       "next": "",
-      "last_update": "2026-05-14T04:15:37Z"
+      "last_update": "2026-05-15T07:51:10Z"
     },
     {
       "name": "Gemini",
@@ -112,7 +112,7 @@
       "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
       "next": "",
-      "last_update": "2026-05-14T00:42:02Z"
+      "last_update": "2026-05-15T04:52:07Z"
     },
     {
       "name": "Codex",
@@ -122,13 +122,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "blocked",
-      "current_task_ids": [
-        "BFF-CONSOL-021"
-      ],
-      "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Implementation commit b4ec7356 is ready and regression tests pass; 7-day dual-write soak is running until 2026-05-21T04:16:21Z. Keep BFF-CONSOL-024 gated until support/evidence/BFF-CONSOL-021-dual-write-soak.json is updated to no_regression.",
-      "last_update": "2026-05-14T04:20:02Z"
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "feat/codex-collab-system",
+      "next": "",
+      "last_update": "2026-05-15T12:12:52Z"
     },
     {
       "name": "Codex2",
@@ -138,13 +136,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "blocked",
-      "current_task_ids": [
-        "BFF-CONSOL-022"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Strict preview soak evidence created at support/evidence/BFF-CONSOL-022-staging-strict-soak.md, but Day 1 cannot start: preview URL is pending, staging BFF HTTPS timed out from this worker, staging smoke auth env is absent, and main staging fallback still needs direct verification as unchanged.",
-      "last_update": "2026-05-14T04:12:08Z"
+      "next": "",
+      "last_update": "2026-05-15T07:57:12Z"
     },
     {
       "name": "Copilot",
@@ -158,7 +154,7 @@
       "current_task_ids": [],
       "branch": "feat/grok-research-critique",
       "next": "",
-      "last_update": "2026-05-14T00:50:28Z"
+      "last_update": "2026-05-15T12:16:00Z"
     },
     {
       "name": "Claude2",
@@ -167,13 +163,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "waiting",
-      "current_task_ids": [
-        "BFF-CONSOL-027"
-      ],
-      "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Chair reassigned owner from Copilot to Claude2: Copilot has hit a hard 402 quota failure and cannot run any tasks this cycle. BFF-CONSOL-027 is the final acceptance packet requiring Claude sign-off; Claude2 (execution + governance-review lane) is the best available substitute and is already handling BFF-CONSOL-027-SIDECAR-BFF-HANDOFF corrections. Reassignment should be deferred until BFF-CONSOL-001..026 dependencies are complete — apply now so the queue is correct when deps clear.. Task returned to todo for a fresh run.",
-      "last_update": "2026-05-13T18:50:18Z"
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "feat/claude2-execution-control",
+      "next": "",
+      "last_update": "2026-05-15T01:06:02Z"
     },
     {
       "name": "Gemini2",
@@ -183,178 +177,14 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "waiting",
-      "current_task_ids": [
-        "BFF-CONSOL-023"
-      ],
-      "branch": "feat/gemini2-research-runtime",
-      "next": "Assignment created",
-      "last_update": "2026-05-13T17:19:57Z"
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "next": "",
+      "last_update": "2026-05-15T07:25:34Z"
     }
   ],
-  "tasks": [
-    {
-      "id": "BFF-CONSOL-021",
-      "title": "Receipt dual-write + replay/conflict/idempotency tests",
-      "summary_zh": "舊 action receipt + 新 command receipt 並存。Test cases: same idempotency + same body→replay;same idempotency + diff body→409;missing confirm token→CONFIRM_TOKEN_REQUIRED;missing approval evidence→APPROVAL_REQUIRED。Soak 1 週後啟動 024。",
-      "phase": "BFF Consolidation 2026-05-13",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "blocked",
-      "depends_on": [
-        "BFF-CONSOL-019",
-        "BFF-CONSOL-020"
-      ],
-      "artifacts": [
-        "services/control-plane/bff/tests/test_command_replay_conflict.py",
-        "support/evidence/BFF-CONSOL-021-dual-write-soak.json"
-      ],
-      "acceptance": [
-        "receipt dual-write log 同時含 action 與 command receipt",
-        "replay test 通過",
-        "idempotency conflict test 回 409",
-        "missing confirm token 回 CONFIRM_TOKEN_REQUIRED",
-        "missing approval evidence 回 APPROVAL_REQUIRED",
-        "soak window ≥7 day 紀錄無 regression"
-      ],
-      "next": "Implementation commit b4ec7356 is ready and regression tests pass; 7-day dual-write soak is running until 2026-05-21T04:16:21Z. Keep BFF-CONSOL-024 gated until support/evidence/BFF-CONSOL-021-dual-write-soak.json is updated to no_regression.",
-      "last_update": "2026-05-14T04:20:02Z",
-      "waiting_for": "Claude"
-    },
-    {
-      "id": "BFF-CONSOL-022",
-      "title": "Lovable staging strict cutover (isolated preview branch)",
-      "summary_zh": "開 Lovable preview branch 設 VITE_BFF_MODE=live + VITE_BFF_FALLBACK=strict + VITE_BFF_REAL_WRITES=false。現有 staging 維持 auto fallback 不切。Soak ≥7 day 紀錄 strict mode 下 read/SSE/detail journey 沒 regression。",
-      "phase": "BFF Consolidation 2026-05-13",
-      "owner": "Codex2",
-      "reviewer": "Gemini2",
-      "status": "blocked",
-      "depends_on": [
-        "BFF-CONSOL-008",
-        "BFF-CONSOL-009",
-        "BFF-CONSOL-010",
-        "BFF-CONSOL-015"
-      ],
-      "artifacts": [
-        "execute-plans/.lovable/preview-strict.env",
-        "support/evidence/BFF-CONSOL-022-staging-strict-soak.md"
-      ],
-      "acceptance": [
-        "preview branch 切 strict 模式運行",
-        "REAL_WRITES 維持 false",
-        "現有 staging 保留 auto fallback",
-        "7 day soak 完成",
-        "SSE replay/read smoke 都 pass",
-        "evidence 紀錄 strict 下無 fallback regression"
-      ],
-      "next": "Strict preview soak evidence created at support/evidence/BFF-CONSOL-022-staging-strict-soak.md, but Day 1 cannot start: preview URL is pending, staging BFF HTTPS timed out from this worker, staging smoke auth env is absent, and main staging fallback still needs direct verification as unchanged.",
-      "last_update": "2026-05-14T04:12:08Z",
-      "waiting_for": "Gemini2"
-    },
-    {
-      "id": "BFF-CONSOL-023",
-      "title": "Lovable prod strict cutover (staging soak gate)",
-      "summary_zh": "等 022 staging soak 1 週 0 regression prod 切 VITE_BFF_FALLBACK=strict (REAL_WRITES 仍 false 直到 operator onboard)。Prod soak ≥7 day 才算 cutover 完成。",
-      "phase": "BFF Consolidation 2026-05-13",
-      "owner": "Gemini2",
-      "reviewer": "Gemini",
-      "status": "todo",
-      "depends_on": [
-        "BFF-CONSOL-022"
-      ],
-      "artifacts": [
-        "execute-plans/.lovable/prod-strict.env",
-        "support/evidence/BFF-CONSOL-023-prod-strict-soak.md"
-      ],
-      "acceptance": [
-        "prod 切 strict 模式運行",
-        "REAL_WRITES 仍 false",
-        "prod 7 day soak 完成",
-        "operator 體感 0 regression",
-        "SSE/read smoke 在 prod 都 pass",
-        "evidence 紀錄 cutover 過程與監控指標"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-13T02:04:44Z"
-    },
-    {
-      "id": "BFF-CONSOL-024",
-      "title": "Deprecate old action receipt (after 1-week soak)",
-      "summary_zh": "021 dual-write soak 1 週後標 deprecated 保留 /bff/actions/* 路徑但 receipt schema 加 deprecated flag。前端 runAction.ts 預設改打 /bff/v1/commands。",
-      "phase": "BFF Consolidation 2026-05-13",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [
-        "BFF-CONSOL-021"
-      ],
-      "artifacts": [
-        "services/control-plane/bff/command_executor.py",
-        "services/control-plane/bff/BFF_COMMAND_API_CONTRACT.md"
-      ],
-      "acceptance": [
-        "舊 action receipt schema 加 deprecated flag",
-        "前端 default caller 改為 /bff/v1/commands",
-        "/bff/actions/* 仍可運作但加 deprecation warning header",
-        "audit 工具 confirm 已 consume 新 receipt",
-        "contract doc 更新 deprecation 時間表"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-05-13T02:04:50Z"
-    },
-    {
-      "id": "BFF-CONSOL-027",
-      "title": "Final BFF consolidation acceptance packet",
-      "summary_zh": "集合 001..026 evidence 輸出 support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md。內容含 contract diff baseline/live smoke (read+write)/SSE evidence/command receipt sample/staging+prod cutover log/soak metric/seed.ts post-state。Copilot 統整 Claude 最終簽核。",
-      "phase": "BFF Consolidation 2026-05-13",
-      "owner": "Claude2",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [
-        "BFF-CONSOL-001",
-        "BFF-CONSOL-002",
-        "BFF-CONSOL-003",
-        "BFF-CONSOL-004",
-        "BFF-CONSOL-005",
-        "BFF-CONSOL-006",
-        "BFF-CONSOL-007",
-        "BFF-CONSOL-008",
-        "BFF-CONSOL-009",
-        "BFF-CONSOL-010",
-        "BFF-CONSOL-011",
-        "BFF-CONSOL-012",
-        "BFF-CONSOL-013",
-        "BFF-CONSOL-014",
-        "BFF-CONSOL-015",
-        "BFF-CONSOL-016",
-        "BFF-CONSOL-017",
-        "BFF-CONSOL-018",
-        "BFF-CONSOL-019",
-        "BFF-CONSOL-020",
-        "BFF-CONSOL-021",
-        "BFF-CONSOL-022",
-        "BFF-CONSOL-023",
-        "BFF-CONSOL-024",
-        "BFF-CONSOL-025",
-        "BFF-CONSOL-026"
-      ],
-      "artifacts": [
-        "support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md"
-      ],
-      "acceptance": [
-        "acceptance packet 含 contract diff baseline",
-        "acceptance packet 含 read+write live smoke",
-        "acceptance packet 含 SSE evidence",
-        "acceptance packet 含 command receipt sample",
-        "acceptance packet 含 staging+prod cutover log",
-        "acceptance packet 含 7-day soak metric",
-        "acceptance packet 含 seed.ts post-state",
-        "Claude 最終簽核"
-      ],
-      "next": "Chair reassigned owner from Copilot to Claude2: Copilot has hit a hard 402 quota failure and cannot run any tasks this cycle. BFF-CONSOL-027 is the final acceptance packet requiring Claude sign-off; Claude2 (execution + governance-review lane) is the best available substitute and is already handling BFF-CONSOL-027-SIDECAR-BFF-HANDOFF corrections. Reassignment should be deferred until BFF-CONSOL-001..026 dependencies are complete — apply now so the queue is correct when deps clear.. Task returned to todo for a fresh run.",
-      "last_update": "2026-05-13T20:00:13Z"
-    }
-  ],
+  "tasks": [],
   "handoffs": [
     {
       "task_id": "EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE",
@@ -372,43 +202,9 @@
       "status": "done",
       "created_at": "2026-04-17T11:50:38Z",
       "resolved_at": "2026-04-17T12:39:53Z"
-    },
-    {
-      "task_id": "BFF-CONSOL-027",
-      "from": "Copilot",
-      "to": "Claude2",
-      "message": "Chair reassigned owner from Copilot to Claude2: Copilot has hit a hard 402 quota failure and cannot run any tasks this cycle. BFF-CONSOL-027 is the final acceptance packet requiring Claude sign-off; Claude2 (execution + governance-review lane) is the best available substitute and is already handling BFF-CONSOL-027-SIDECAR-BFF-HANDOFF corrections. Reassignment should be deferred until BFF-CONSOL-001..026 dependencies are complete — apply now so the queue is correct when deps clear.. Task returned to todo for a fresh run.",
-      "status": "pending",
-      "created_at": "2026-05-13T20:00:13Z"
-    },
-    {
-      "task_id": "BFF-CONSOL-022",
-      "from": "Gemini2",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Gemini2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-14T04:08:30Z",
-      "resolved_at": "2026-05-14T04:08:37Z"
     }
   ],
-  "blockers": [
-    {
-      "task_id": "BFF-CONSOL-022",
-      "owner": "Codex2",
-      "waiting_for": "Gemini2",
-      "message": "Strict preview soak evidence created at support/evidence/BFF-CONSOL-022-staging-strict-soak.md, but Day 1 cannot start: preview URL is pending, staging BFF HTTPS timed out from this worker, staging smoke auth env is absent, and main staging fallback still needs direct verification as unchanged.",
-      "status": "open",
-      "created_at": "2026-05-14T04:12:08Z"
-    },
-    {
-      "task_id": "BFF-CONSOL-021",
-      "owner": "Codex",
-      "waiting_for": "Claude",
-      "message": "Implementation commit b4ec7356 is ready and regression tests pass; 7-day dual-write soak is running until 2026-05-21T04:16:21Z. Keep BFF-CONSOL-024 gated until support/evidence/BFF-CONSOL-021-dual-write-soak.json is updated to no_regression.",
-      "status": "open",
-      "created_at": "2026-05-14T04:20:02Z"
-    }
-  ],
+  "blockers": [],
   "workload": {
     "Claude": 5,
     "Claude2": 5,
@@ -429,13 +225,13 @@
       "todo": 0
     },
     "Claude2": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Gemini": {
       "total": 0,
@@ -447,27 +243,27 @@
       "todo": 0
     },
     "Gemini2": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Codex": {
-      "total": 2,
-      "active": 1,
-      "blocked": 1,
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Codex2": {
-      "total": 1,
-      "active": 1,
-      "blocked": 1,
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,

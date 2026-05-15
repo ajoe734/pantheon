@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "BFF-CONSOL-002",
+  "archived_at": "2026-05-13T02:33:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-CONSOL-002",
+    "title": "Frontend route manifest extractor (execute-plans)",
+    "summary_zh": "在 execute-plans repo 加 scripts/bff_route_manifest_frontend.ts 掃 src/lib/bff-v1/paths.ts、src/lib/bff/client.ts MANAGEMENT_FAMILIES、src/lib/bff/v5.ts、src/lib/bff/agora.ts、src/lib/bff/runAction.ts、src/lib/bff-v1/sse/liveSse.ts 輸出 frontend manifest JSON (method/path/family/caller_file/mode: live_required|mock_only|hybrid)。Pantheon 端可從 sibling repo 讀此 manifest。",
+    "phase": "BFF Consolidation 2026-05-13",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "execute-plans/scripts/bff_route_manifest_frontend.ts",
+      "execute-plans/contract_snapshots/frontend_routes_manifest.json"
+    ],
+    "acceptance": [
+      "manifest 涵蓋上述 6 個 caller source",
+      "每筆有 method/path/family/caller_file/mode",
+      "動態 path segment 用 {param} normalize",
+      "腳本可在 execute-plans CI 重跑",
+      "Pantheon route diff 可消費此 JSON",
+      "不更動 runtime 行為"
+    ],
+    "next": "Finalized after Claude approval. Execute-plans artifact commit 08ec785e03c4935c8443cea4314efa45cd2156f5 is approved; Pantheon closeout evidence commit ab551a3f records reviewer notes and Codex2 verification. Verification: npx tsc --noEmit for scripts/bff_route_manifest_frontend.ts; jq manifest source/count/schema/{param} checks; repo-local temp compile plus EXECUTE_PLANS_ROOT node --check and --dump count check. Unrelated dirty worktree entries were left unstaged.",
+    "last_update": "2026-05-13T02:33:15Z",
+    "review_notes_zh": [
+      "審查通過",
+      "所有驗收條件達成：6 個 caller source 涵蓋完整，欄位齊全，{param} normalize 正確，--check 模式穩定輸出，Pantheon diff 可消費，不改動 runtime code",
+      "buildManifest() 已 export 供 BFF-CONSOL-003 程式化使用"
+    ],
+    "review_file": "support/sidecars/BFF-CONSOL-002/review-bff-consol-002-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-13T02:33:15Z",
+      "branch": "backend-dev-publish-20260429",
+      "git_clean_required": false,
+      "commit": "ab551a3fb7f415ec192ef57d29b80c42e098913a",
+      "commit_subject": "BFF-CONSOL-002 closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-CONSOL-002",
+        "Reviewer": "Claude",
+        "Verification": "npx tsc --noEmit --module NodeNext --moduleResolution NodeNext --target ES2022 --types node --skipLibCheck scripts/bff_route_manifest_frontend.ts; jq manifest schema/count checks; repo-local temp compile plus EXECUTE_PLANS_ROOT node --check and --dump snapshot count check."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 16,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/backend-dev-publish-20260429",
+      "ahead": 8,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-CONSOL-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review. Added execute-plans/scripts/bff_route_manifest_frontend.ts and execute-plans/contract_snapshots/frontend_routes_manifest.json. Task-scoped execute-plans commit: 08ec785e03c4935c8443cea4314efa45cd2156f5. Manifest covers the six scoped sources via metadata.source_files, emits 63 route entries with method/path/family/caller_file/mode, normalizes dynamic path segments to {param}, and leaves runtime behavior unchanged. Verification: npx tsc --noEmit --module NodeNext --moduleResolution NodeNext --target ES2022 --types node --skipLibCheck scripts/bff_route_manifest_frontend.ts; generated snapshot with EXECUTE_PLANS_ROOT=/home/lupin/code/execute-plans node .tmp-bff-route-manifest/bff_route_manifest_frontend.js; check passed with same compiled runner --check. Local worker has no bun binary, so verification used tsc+node.",
+      "status": "done",
+      "created_at": "2026-05-13T02:24:42Z",
+      "resolved_at": "2026-05-13T02:28:22Z"
+    },
+    {
+      "task_id": "BFF-CONSOL-002",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved. All acceptance criteria met: 6 sources covered, all fields present, {param} normalization correct, --check exits 0 (stable repeatable output), JSON consumable by route diff, no runtime changes. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-13T02:28:22Z",
+      "resolved_at": "2026-05-13T02:33:15Z"
+    }
+  ],
+  "blockers": []
+}

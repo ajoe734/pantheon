@@ -31,7 +31,7 @@ jobs:
       - name: Verify backend route manifest snapshot
         run: python3 scripts/bff_route_manifest_backend.py --check
 
-      - name: Run fail-but-warn route diff
+      - name: Run fail-hard route diff baseline gate
         run: python3 scripts/bff_route_diff.py --check-baseline
 
       - name: Run route diff pytest harness

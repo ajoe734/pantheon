@@ -1,6 +1,6 @@
 # BFF Command API Contract (v1)
 
-Last updated: 2026-05-07
+Last updated: 2026-05-14
 Status: canonical - governed BFF command facade contract for P0 command admission
 Tier: L2 Planning & Execution (paired with `BFF_API_CONTRACT.md`)
 Scope: command admission, receipt, idempotency, RBAC/policy, trace, and audit requirements for BFF-routed operator commands
@@ -39,6 +39,7 @@ canonical control-plane authorities. The BFF does not become a canonical store.
 | Route | Method | Purpose |
 |---|---:|---|
 | `/bff/v1/commands` | POST | Submit a governed operator command (final contract); returns `CommandResponse<T>`. |
+| `/bff/actions/{entityType}/{entityId}/{actionId}` | POST | Deprecated generic action adapter; dual-writes through final command admission and returns a deprecated receipt marker. |
 | `/api/v1/operator/commands` | POST | Legacy command submission; returns `CommandSubmissionResponse`. Kept for adapter compatibility. |
 | `/api/v1/operator/commands/{command_id}` | GET | Poll command status, result, error, and audit record. |
 
@@ -48,9 +49,12 @@ mutation endpoint.
 ### Final vs Legacy Route
 
 The final contract route `/bff/v1/commands` is the authoritative command surface for new
-frontend integrations. The legacy `/api/v1/operator/commands` remains active to avoid
-breaking existing adapters and must not be silently removed; use an explicit migration
-test when retiring it.
+frontend integrations. As of 2026-05-14, frontend `runAction()` live writes default to this
+route. The generic `/bff/actions/*` adapter remains active only for explicit compatibility
+checks and old clients; it must expose deprecation metadata rather than silently behaving as
+the preferred path. The legacy `/api/v1/operator/commands` remains active to avoid breaking
+existing adapters and must not be silently removed; use an explicit migration test when
+retiring it.
 
 Key differences:
 
@@ -59,6 +63,23 @@ Key differences:
 | Idempotency header | `Idempotency-Key` (canonical); `X-Idempotency-Key` accepted as alias | `X-Idempotency-Key` only |
 | Body `idempotencyKey` | Rejected with 400 `INVALID_REQUEST` | Not checked |
 | Response shape | `CommandResponse<T>` with `status` and `data` | `CommandSubmissionResponse` with flat `receipt_id` |
+
+### Deprecated Generic Action Adapter
+
+`POST /bff/actions/{entityType}/{entityId}/{actionId}` is deprecated as of 2026-05-14.
+It is retained as a compatibility adapter until at least 2026-06-15 while downstream audit
+and replay tooling finishes consuming the final command receipt.
+
+Compatibility responses must still be successful `CommandResponse<T>` envelopes on accepted
+commands, but they also include:
+
+- HTTP headers: `Deprecation: true`, `Sunset: Mon, 15 Jun 2026 00:00:00 GMT`,
+  `Link: </bff/v1/commands>; rel="successor-version"`, `X-Pantheon-Deprecated-Route:
+  /bff/actions/*`, and a 299 `Warning` naming `/bff/v1/commands`.
+- `data.deprecated: true` and `data.deprecation.replacement: "/bff/v1/commands"`.
+- `data.receipt.deprecated: true` for consumers still reading the nested receipt.
+- `meta.deprecated: true` plus the same `meta.deprecation` object for audit and replay
+  tools that inspect metadata before receipt bodies.
 
 ## 4. Required Admission Controls
 
@@ -478,11 +499,12 @@ Route template: `POST /bff/actions/channel/{channelId}/{actionId}`
 
 ### 8.16 Generic Approval / Alert / Incident Action Fallbacks
 
-`runAction.ts` has an explicit `KIND_TO_ENTITY_TYPE` map for the primary 15
+`runAction.ts` now defaults live writes to `/bff/v1/commands`. It still carries an
+explicit `KIND_TO_ENTITY_TYPE` map for building command envelopes from the primary
 management entity kinds and then falls back to `kind.toLowerCase()` for other
-`RunActionInput.kind` values. The adapter must not admit arbitrary fallback kinds;
-these three fallback route families are documented because they appear in tests,
-state-machine catalogs, or current BFF consolidation acceptance language.
+`RunActionInput.kind` values. The deprecated action adapter must not admit arbitrary
+fallback kinds; these three fallback route families are documented because they appear
+in tests, state-machine catalogs, or current BFF consolidation acceptance language.
 
 | action_id | target_type | command_name | idempotency_key_template | actor_source | trace_propagation | audit_event | policy_check |
 |---|---|---|---|---|---|---|---|
@@ -554,6 +576,12 @@ in this mapping table:
 7. **Target typed reference** — The command envelope `target` field uses `{ "type": <target_type>,
    "id": <entityId> }` where `target_type` is the value from the §8.1-§8.17 tables above.
 
+8. **Deprecated action receipt marker** — Responses served from `/bff/actions/*` must include
+   the deprecation headers and `deprecated: true` markers described in §3. The persisted
+   command foundation context remains `admission_route=POST /bff/v1/commands` with
+   `source_route=POST /bff/actions/{entityType}/{entityId}/{actionId}` so audit consumers
+   reconcile against the final command receipt, not a separate legacy receipt stream.
+
 ---
 
 ## 9. Verification
@@ -561,7 +589,8 @@ in this mapping table:
 Focused regression evidence:
 
 ```bash
-python3 -m pytest services/control-plane/bff/test_governance_command_submission.py services/control-plane/bff/test_cw03_committee_board_contract.py -q
+python3 -m pytest services/control-plane/bff/tests/test_actions_to_commands_adapter.py services/control-plane/bff/tests/test_command_replay_conflict.py services/control-plane/bff/test_governance_command_submission.py -q
+(cd /home/lupin/code/execute-plans && npx vitest run src/lib/bff/__tests__/runAction.test.ts src/lib/bff-v1/__tests__/writes.test.ts)
 ```
 
 This test set verifies:
@@ -574,6 +603,12 @@ This test set verifies:
 - duplicate idempotency key with identical request replays the original `CommandResponse`
 - same key with different body returns 409 `IDEMPOTENCY_CONFLICT`
 - `/bff/v1/commands` response shape is `CommandResponse<T>` with `status` and `data`
+- `/bff/actions/*` remains operational but returns deprecation headers plus
+  `deprecated: true` receipt/meta markers
+- action adapter audit records still persist `admission_route=POST /bff/v1/commands`
+  and the `/bff/actions/*` `source_route`
+- frontend `runAction()` live writes default to `/bff/v1/commands`; explicit
+  compatibility checks can still opt into the legacy action adapter
 - legacy `/api/v1/operator/commands` is unaffected and returns `CommandSubmissionResponse`
 - runtime, deployment, approval, and incident command classes persist actor,
   trace, idempotency, policy decision, and audit evidence

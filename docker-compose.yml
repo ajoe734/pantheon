@@ -615,12 +615,21 @@ services:
       BFF_DATA_DIR: /data/bff
       BFF_READ_SURFACE_STATE: fresh
       PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK: "false"
-      PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-ai-system-front-dev.lovable.app}
+      PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-dev.lovable.app,https://pantheon-ai-system-front-dev.lovable.app,https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app}
       PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS: "2.0"
       PANTHEON_ENV: ${PANTHEON_ENV:-dev}
       PANTHEON_LIVE_BROKER_ENABLED: ${PANTHEON_LIVE_BROKER_ENABLED:-false}
-      PANTHEON_BFF_AUTH_STUB: ${PANTHEON_BFF_AUTH_STUB:-false}
-      PANTHEON_BFF_AUTH_MODE: ${PANTHEON_BFF_AUTH_MODE:-strict}
+      # Dev tier defaults to strict JWT auth. CI/Lovable dev can exchange
+      # dev-only client credentials for a short-lived JWT through
+      # POST /bff/auth/dev-login.
+      #
+      # Dev tier defaults: permissive + colon-format stub bearer so the
+      # browser-side dev token (VITE_BFF_DEV_BEARER_TOKEN=pantheon-dev-browser:reviewer)
+      # is accepted by BFF-CONSOL-022 strict cutover preview. Staging/prod
+      # compose files must explicitly export PANTHEON_BFF_AUTH_STUB=false
+      # and PANTHEON_BFF_AUTH_MODE=strict.
+      PANTHEON_BFF_AUTH_STUB: ${PANTHEON_BFF_AUTH_STUB:-true}
+      PANTHEON_BFF_AUTH_MODE: ${PANTHEON_BFF_AUTH_MODE:-permissive}
       PANTHEON_BFF_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-}
       PANTHEON_BFF_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
       PANTHEON_BFF_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
@@ -628,6 +637,9 @@ services:
       PANTHEON_BFF_OIDC_DISCOVERY_URL: ${PANTHEON_BFF_OIDC_DISCOVERY_URL:-}
       PANTHEON_BFF_OIDC_ISSUER: ${PANTHEON_BFF_OIDC_ISSUER:-}
       PANTHEON_BFF_OIDC_AUDIENCE: ${PANTHEON_BFF_OIDC_AUDIENCE:-}
+      PANTHEON_BFF_OIDC_CLIENT_ID: ${PANTHEON_BFF_OIDC_CLIENT_ID:-}
+      PANTHEON_BFF_OIDC_CLIENT_SECRET: ${PANTHEON_BFF_OIDC_CLIENT_SECRET:-}
+      PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS: ${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-900}
       PANTHEON_BFF_ROLE_CLAIMS: ${PANTHEON_BFF_ROLE_CLAIMS:-roles,role}
       PANTHEON_BFF_ROLE_MAP: ${PANTHEON_BFF_ROLE_MAP:-}
       PANTHEON_BFF_ROLE_MAP_MODE: ${PANTHEON_BFF_ROLE_MAP_MODE:-passthrough}

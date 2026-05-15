@@ -4,7 +4,7 @@ import {
   laneLabelMap,
   scheduleOpenTaskStatuses,
   statusLabelMap,
-} from "./dashboard-config.js?v=20260513-focus";
+} from "./dashboard-config.js?v=20260513-claim";
 
 export const DISPLAY_TIME_ZONE = "Asia/Taipei";
 export const DISPLAY_TIME_ZONE_LABEL = "台灣時間 (UTC+8)";
@@ -139,6 +139,19 @@ export function defaultDashboardBundle() {
       pending_review_agent: null,
       sidecar_approved_until: null,
     },
+    dispatch_policy: {
+      mode: "supervisor_owned_dispatch",
+      helper_claim_enabled: true,
+      claim_idle_work: false,
+      claim_sidecars_when_idle: false,
+      require_owner_higher_priority_load: true,
+      owned_work_first: true,
+      max_dispatches_per_tick: 4,
+      max_tasks_per_agent: 1,
+      sidecar_only_agents: [],
+      disabled_agents: [],
+    },
+    recent_helper_claims: [],
     worker_task_links: [],
     truth_mismatches: [],
   };
@@ -161,6 +174,17 @@ export function normalizeDashboardBundle(value) {
     },
     bridge_summary: { ...base.bridge_summary, ...(value.bridge_summary || {}) },
     chair_summary: { ...base.chair_summary, ...(value.chair_summary || {}) },
+    dispatch_policy: {
+      ...base.dispatch_policy,
+      ...(value.dispatch_policy || {}),
+      sidecar_only_agents: Array.isArray((value.dispatch_policy || {}).sidecar_only_agents)
+        ? value.dispatch_policy.sidecar_only_agents
+        : base.dispatch_policy.sidecar_only_agents,
+      disabled_agents: Array.isArray((value.dispatch_policy || {}).disabled_agents)
+        ? value.dispatch_policy.disabled_agents
+        : base.dispatch_policy.disabled_agents,
+    },
+    recent_helper_claims: Array.isArray(value.recent_helper_claims) ? value.recent_helper_claims : [],
     worker_task_links: Array.isArray(value.worker_task_links) ? value.worker_task_links : [],
     truth_mismatches: Array.isArray(value.truth_mismatches) ? value.truth_mismatches : [],
   };
@@ -204,6 +228,8 @@ export function normalizeReviewNotes(value) {
 
 export function providerLabel(value) {
   if (!value) return "-";
+  const normalized = String(value).toLowerCase().replace(/_/g, "-");
+  if (/^codex[12]-[1-4]$/.test(normalized)) return normalized;
   if (value === "copilot") return "GitHub Copilot";
   return value;
 }
@@ -218,13 +244,15 @@ export function titleCase(value) {
 
 export function agentLabel(value) {
   if (!value) return "-";
-  const normalized = String(value).toLowerCase();
+  const normalized = String(value).toLowerCase().replace(/-/g, "_");
   if (normalized === "claude") return "Claude";
   if (normalized === "claude2") return "Claude (2)";
   if (normalized === "gemini") return "Gemini";
   if (normalized === "gemini2") return "Gemini (2)";
   if (normalized === "codex") return "Codex";
   if (normalized === "codex2") return "Codex (2)";
+  if (/^codex1_[1-4]$/.test(normalized)) return "Codex";
+  if (/^codex2_[1-4]$/.test(normalized)) return "Codex (2)";
   if (normalized === "grok") return "Copilot";
   if (normalized === "copilot") return "Copilot";
   return value;
@@ -233,6 +261,10 @@ export function agentLabel(value) {
 export function actorLabel(agentId, provider) {
   const agent = agentLabel(agentId);
   const host = providerLabel(provider);
+  const normalizedProvider = String(provider || "").toLowerCase().replace(/_/g, "-");
+  if (/^codex[12]-[1-4]$/.test(normalizedProvider)) {
+    return `${agent} · ${normalizedProvider}`;
+  }
   if (agentId && provider && String(agentId).toLowerCase() !== String(provider).toLowerCase()) {
     return `${agent} (${host})`;
   }
@@ -314,7 +346,6 @@ export function buildCodexSlotRoster(orchState, status) {
       status: active ? worker.bucket : "idle",
       task_id: active ? worker.task_id || null : null,
       worker_status: active ? worker.status || null : null,
-      reason: active ? worker.reason || worker.request_snapshot?.reason || null : null,
       last_event_at: active ? worker.last_event_at || null : null,
     };
   });
@@ -345,6 +376,7 @@ export function normalizeWorkerRecords(orchState, status) {
       task_status: taskStatus,
       dispatch_mode: runtimeDispatchMode(worker),
       bucket,
+      reason: worker?.reason || worker?.request_snapshot?.reason || null,
       display_actor: actorLabel(logicalAgentId, worker?.provider),
     };
   });
@@ -423,7 +455,7 @@ function normalizedActorName(value) {
     "codex (2)": "codex2",
     "codex 2": "codex2",
     "codex (3)": "codex",
-    "codex3": "codex",
+    codex3: "codex",
     grok: "copilot",
     "copilot host": "copilot",
     copilot_host: "copilot",
@@ -461,8 +493,6 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
   const workers = normalizeWorkerRecords(orchState, status);
   const queueEvents = normalizeDispatchQueue(orchState, status);
   const approvals = approvalQueue?.pending || [];
-  const pendingApprovalTaskIds = new Set(approvals.map((approval) => String(approval?.task_id || "").trim()).filter(Boolean));
-  const pendingApprovalRunIds = new Set(approvals.map((approval) => String(approval?.worker_run_id || "").trim()).filter(Boolean));
   const liveWorkers = workers.filter((worker) => ["running", "pending"].includes(worker.bucket));
   const liveWorkersByTask = new Map();
   const mismatches = [];
@@ -475,30 +505,6 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
     mismatches.push(payload);
   };
 
-  const workerMatchesExpectedActor = (worker, expectedActor) => {
-    const expected = normalizedActorName(expectedActor);
-    const actual = normalizedActorName(agentLabel(worker.logical_agent_id));
-    return Boolean(expected && actual && expected === actual);
-  };
-
-  const relatedLiveWorkerCoversTask = (task) => {
-    const expectedActor = expectedTaskActor(task);
-    if (!expectedActor) return false;
-    const taskId = String(task?.id || "").trim();
-    if (!taskId) return false;
-    const parentId = String(task?.helper_parent || "").trim();
-    if (parentId) {
-      const parentWorkers = liveWorkersByTask.get(parentId) || [];
-      if (parentWorkers.some((worker) => workerMatchesExpectedActor(worker, expectedActor))) return true;
-    }
-    for (const [relatedTaskId, relatedTask] of taskMap.entries()) {
-      if (String(relatedTask?.helper_parent || "").trim() !== taskId) continue;
-      const relatedWorkers = liveWorkersByTask.get(relatedTaskId) || [];
-      if (relatedWorkers.some((worker) => workerMatchesExpectedActor(worker, expectedActor))) return true;
-    }
-    return false;
-  };
-
   for (const worker of liveWorkers) {
     if (worker.task_id) {
       if (!liveWorkersByTask.has(worker.task_id)) liveWorkersByTask.set(worker.task_id, []);
@@ -506,9 +512,6 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
     }
 
     if (!worker.task_id) {
-      if (runtimeDispatchMode(worker) === "chair_review") {
-        continue;
-      }
       pushMismatch({
         id: `worker-without-task:${worker.run_id}`,
         type: "worker_without_task",
@@ -589,13 +592,7 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
   for (const task of status?.tasks || []) {
     const taskStatus = String(task.status || "").toLowerCase();
     const live = liveWorkersByTask.get(task.id) || [];
-    if (pendingApprovalTaskIds.has(String(task.id || "").trim())) {
-      continue;
-    }
     if (taskStatus === "in_progress" && live.length === 0) {
-      if (relatedLiveWorkerCoversTask(task)) {
-        continue;
-      }
       pushMismatch({
         id: `active-task-without-worker:${task.id}`,
         type: "active_task_without_worker",
@@ -612,9 +609,6 @@ export function buildTruthMismatches(status, orchState, approvalQueue = null) {
   for (const event of queueEvents) {
     const hasLiveWorker = liveWorkers.some((worker) => worker.queue_event_id === event.id);
     if (["discussion_planning", "coordination"].includes(runtimeDispatchMode(event))) {
-      continue;
-    }
-    if (pendingApprovalRunIds.has(String(event.run_id || "").trim()) || pendingApprovalTaskIds.has(String(event.task_id || "").trim())) {
       continue;
     }
     if (["started", "manual_pending"].includes(String(event.status || "").toLowerCase()) && !hasLiveWorker) {
@@ -844,6 +838,7 @@ export function deriveAgentState(status, orchState) {
       approved_count: approved.length,
       live_running_count: liveRunningWorkers.length,
       live_pending_count: livePendingWorkers.length,
+      target_workload: Number.isFinite(Number(status?.workload?.[agent.name])) ? Number(status.workload[agent.name]) : null,
     };
   });
 }

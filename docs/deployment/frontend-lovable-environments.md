@@ -46,7 +46,9 @@ Dev Lovable app:
 VITE_PANTHEON_ENV=dev
 VITE_BFF_MODE=live
 VITE_BFF_BASE_URL=https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io
-VITE_BFF_DEV_BEARER_TOKEN=pantheon-dev-browser:reviewer
+VITE_BFF_DEV_LOGIN_PATH=/bff/auth/dev-login
+VITE_BFF_OIDC_CLIENT_ID=<dev-client-id>
+VITE_BFF_OIDC_CLIENT_SECRET=<dev-client-secret>
 VITE_PANTHEON_LIVE_BROKER_ENABLED=false
 ```
 
@@ -103,17 +105,24 @@ intentionally running a temporary migration window.
 
 ## Dev BFF Auth
 
-The dev Lovable app needs a browser bootstrap identity before real operator
-login/OIDC is wired. The dev frontend may carry the non-secret build value
-`VITE_BFF_DEV_BEARER_TOKEN=pantheon-dev-browser:reviewer`, and the dev BFF must
+The dev Lovable app uses the BFF dev-login client-credentials exchange before
+real operator login/OIDC is wired. The browser calls `POST /bff/auth/dev-login`
+with the dev-only `VITE_BFF_OIDC_CLIENT_ID` / `VITE_BFF_OIDC_CLIENT_SECRET` and
+receives a short-lived JWT for `/bff/me` and strict BFF probes. The dev BFF must
 explicitly run with:
 
 ```env
-PANTHEON_BFF_AUTH_STUB=true
+PANTHEON_BFF_AUTH_STUB=false
+PANTHEON_BFF_AUTH_MODE=strict
+PANTHEON_BFF_JWT_SECRET=<dev-jwt-signing-secret>
+PANTHEON_BFF_JWT_ISSUER=pantheon-dev
+PANTHEON_BFF_JWT_AUDIENCE=bff-operators
+PANTHEON_BFF_OIDC_CLIENT_ID=<dev-client-id>
+PANTHEON_BFF_OIDC_CLIENT_SECRET=<dev-client-secret>
 ```
 
 This pairing is dev-only. Staging-live and production must keep
-`PANTHEON_BFF_AUTH_STUB=false` and require strict JWT/OIDC tokens.
+`PANTHEON_BFF_AUTH_STUB=false` and require their strict OIDC/JWKS tokens.
 
 ## Promotion Flow
 

@@ -64,7 +64,7 @@ function bffUrl(path: string): string {
 }
 
 function authHeaders(): Record<string, string> {
-  const token = process.env.BFF_AUTH_TOKEN;
+  const token = process.env.BFF_AUTH_TOKEN || process.env.PANTHEON_BFF_ACCESS_TOKEN;
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 

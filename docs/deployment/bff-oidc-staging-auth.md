@@ -58,7 +58,8 @@ identity as MFA-verified and satisfies admin-action MFA checks.
 
 ## HS256 Fallback
 
-HS256 remains available only as the explicit dev fallback:
+HS256 remains available only as the explicit dev fallback and the dev-login
+issuer for CI/Lovable short-lived JWTs:
 
 ```env
 PANTHEON_BFF_AUTH_STUB=false
@@ -68,10 +69,30 @@ PANTHEON_BFF_JWT_ISSUER=pantheon-dev
 PANTHEON_BFF_JWT_AUDIENCE=bff-operators
 PANTHEON_BFF_JWKS_URI=
 PANTHEON_BFF_OIDC_DISCOVERY_URL=
+PANTHEON_BFF_OIDC_CLIENT_ID=<dev-client-id>
+PANTHEON_BFF_OIDC_CLIENT_SECRET=<dev-client-secret>
+PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS=900
 ```
 
 Do not set `PANTHEON_BFF_JWT_SECRET` in staging-live when OIDC discovery or a
 JWKS URI is configured.
+
+The dev BFF exposes `POST /bff/auth/dev-login` for client-credentials exchange:
+
+```json
+{
+  "grant_type": "client_credentials",
+  "client_id": "<dev-client-id>",
+  "client_secret": "<dev-client-secret>"
+}
+```
+
+The response contains `access_token`, `token_type=bearer`, `expires_in`,
+`issued_at`, and `expires_at`. The token is signed with the dev HS256 secret,
+uses `PANTHEON_BFF_JWT_ISSUER` / `PANTHEON_BFF_JWT_AUDIENCE`, and is limited to
+5 minutes through 1 hour. Revocation is by rotating
+`PANTHEON_BFF_OIDC_CLIENT_SECRET`, disabling the endpoint, or rotating the dev
+JWT signing secret. The endpoint must stay disabled on staging-live/live/prod.
 
 ## Staging Smoke
 

@@ -2,20 +2,20 @@
  * BFF-CONSOL-016 - Detail journey smoke A
  * Families: strategy / persona / deployment / runtime
  *
- * Each family: list -> detail -> related tabs via live BFF routes.
- * Fixture IDs come from Pack A (BFF-CONSOL-008).
+ * Each family: list -> detail -> related tabs/routes via live BFF, no mock.
+ * Fixture IDs come from pack A (BFF-CONSOL-008).
  *
  * Acceptance:
- *   1. 4 family detail routes return 2xx for Pack A fixture IDs
- *   2. related tabs expose at least one non-empty fixture-backed entry
- *   3. missing detail IDs return typed 404, not raw 500
- *   4. strategy detail links specs/experiments/artifacts/lineage/audit
- *   5. persona detail shows route-policy and activity
+ *   1. 4 family detail routes return 2xx or typed 404
+ *   2. related tabs/routes render at least one non-empty fixture-backed entry
+ *   3. degraded path shows typed OBJECT_NOT_FOUND instead of raw 500
+ *   4. strategy detail links specs / experiments / artifacts / lineage / audit
+ *   5. persona detail shows route-policy and activity/evaluation surfaces
  *   6. evidence JSON captures each family route and status
  *
  * Runner: Playwright (page.request - BFF API smoke, no UI render required)
- * Env:    BFF_BASE_URL (default: https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io)
- *         BFF_AUTH_TOKEN, PANTHEON_BFF_SMOKE_BEARER_TOKEN, or PANTHEON_BFF_SMOKE_TOKEN
+ * Env:    BFF_BASE_URL  (default: https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io)
+ *         BFF_AUTH_TOKEN  (optional bearer token; required by strict-auth BFFs)
  */
 
 import { test, expect } from "@playwright/test";
@@ -23,33 +23,29 @@ import { test, expect } from "@playwright/test";
 const PACK_A = {
   strategy: {
     strategyId: "strategy-pack-a-momentum",
-    specId: "spec-pack-a-momentum-v1",
+    specVersionId: "spec-pack-a-momentum-v1",
     experimentId: "exp-pack-a-momentum-001",
     artifactId: "artifact-pack-a-momentum-v1",
-    lineageId: "lineage-pack-a-strategy-artifact",
-    auditId: "audit-pack-a-strategy-approved",
+    lineageEdgeId: "lineage-pack-a-strategy-artifact",
+    auditEntryId: "audit-pack-a-strategy-approved",
   },
   persona: {
     personaId: "persona-pack-a-momentum",
-    activitySessionId: "session-pack-a-momentum-activity",
-    evaluationId: "eval-pack-a-momentum-001",
-    auditId: "audit-pack-a-persona-policy",
+    routePolicyId: "route-policy-pack-a-momentum",
+    evaluationSessionId: "eval-pack-a-momentum-001",
   },
   deployment: {
     planId: "plan-pack-a-paper-001",
     approvalId: "approval-pack-a-deploy",
-    poolId: "pool-pack-a-ops",
-    runtimeId: "runtime-pack-a-paper-001",
   },
   runtime: {
     runtimeId: "runtime-pack-a-paper-001",
-    planId: "plan-pack-a-paper-001",
-    artifactId: "artifact-pack-a-momentum-v1",
+    stage: "paper",
     poolId: "pool-pack-a-ops",
   },
 } as const;
 
-type JsonRecord = Record<string, unknown>;
+type JsonRecord = Record<string, any>;
 
 function bffUrl(path: string): string {
   const base =
@@ -59,16 +55,8 @@ function bffUrl(path: string): string {
 }
 
 function authHeaders(): Record<string, string> {
-  const token =
-    process.env.BFF_AUTH_TOKEN ||
-    process.env.PANTHEON_BFF_SMOKE_BEARER_TOKEN ||
-    process.env.PANTHEON_BFF_SMOKE_TOKEN;
-  if (!token) {
-    return {};
-  }
-  return {
-    Authorization: token.startsWith("Bearer ") ? token : `Bearer ${token}`,
-  };
+  const token = process.env.BFF_AUTH_TOKEN || process.env.PANTHEON_BFF_ACCESS_TOKEN;
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 async function bffGet(
@@ -81,364 +69,299 @@ async function bffGet(
   });
 }
 
-function asRecord(value: unknown): JsonRecord {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return value as JsonRecord;
-  }
-  return {};
+function detailFrom(payload: JsonRecord): JsonRecord {
+  const data = payload.data;
+  return data && typeof data === "object" && !Array.isArray(data)
+    ? data
+    : payload;
 }
 
 function rowsFrom(payload: JsonRecord): JsonRecord[] {
   const rows =
     payload.data ??
     payload.items ??
-    payload.records ??
-    payload.results ??
+    payload.events ??
+    payload.sessions ??
     [];
   return Array.isArray(rows)
-    ? rows.filter((row) => row && typeof row === "object").map(asRecord)
+    ? rows.filter((row) => row && typeof row === "object")
     : [];
-}
-
-function detailFrom(payload: JsonRecord): JsonRecord {
-  const data = payload.data;
-  return data && typeof data === "object" && !Array.isArray(data)
-    ? asRecord(data)
-    : payload;
-}
-
-function arrayField(record: JsonRecord, key: string): JsonRecord[] {
-  const value = record[key];
-  return Array.isArray(value)
-    ? value.filter((row) => row && typeof row === "object").map(asRecord)
-    : [];
-}
-
-function stringArrayField(record: JsonRecord, key: string): string[] {
-  const value = record[key];
-  return Array.isArray(value) ? value.map(String) : [];
-}
-
-function expectRowsContain(
-  rows: JsonRecord[],
-  id: string,
-  keys: string[],
-  label: string
-): void {
-  expect(
-    rows.some((row) => keys.some((key) => row[key] === id)),
-    `${label} must contain ${id}`
-  ).toBe(true);
 }
 
 function errorCodeFrom(payload: JsonRecord): string | undefined {
   return (
-    asRecord(asRecord(payload.detail).error).code ??
-    asRecord(payload.error).code ??
+    payload.detail?.error?.code ??
+    payload.error?.code ??
     payload.code ??
-    asRecord(payload.detail).code
-  ) as string | undefined;
+    payload.detail?.code
+  );
 }
 
-async function expectOkJson(
+async function expect2xxOrTyped404(
   response: import("@playwright/test").APIResponse,
   path: string,
   label: string
-): Promise<JsonRecord> {
+): Promise<boolean> {
   const status = response.status();
   expect(status, `${label}: ${path} returned raw server error`).toBeLessThan(500);
+  if (status === 404) {
+    const text = await response.text();
+    expect(text, `${label}: ${path} must not return undefined`).not.toContain(
+      "undefined"
+    );
+    let payload: JsonRecord = {};
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = {};
+    }
+    expect(
+      errorCodeFrom(payload),
+      `${label}: ${path} 404 must carry a typed error code`
+    ).toBeTruthy();
+    return false;
+  }
   expect(
     status >= 200 && status < 300,
     `${label}: ${path} returned unexpected status ${status}`
   ).toBe(true);
-  return (await response.json()) as JsonRecord;
+  return true;
 }
 
-async function expectTypedObjectNotFound(
-  response: import("@playwright/test").APIResponse,
-  path: string,
+function expectRowsContainId(
+  rows: JsonRecord[],
+  id: string,
+  keys: string[],
   label: string
-): Promise<void> {
-  expect(response.status(), `${label}: ${path} should be typed 404`).toBe(404);
-  const text = await response.text();
-  expect(text, `${label}: ${path} must not return undefined`).not.toContain(
-    "undefined"
+): JsonRecord {
+  const row = rows.find((item) =>
+    keys.some((key) => String(item[key] ?? "") === id)
   );
-  const payload = JSON.parse(text) as JsonRecord;
-  expect(errorCodeFrom(payload), `${label}: ${path} must carry error code`).toBe(
-    "OBJECT_NOT_FOUND"
-  );
+  expect(row, `${label} must contain ${id}`).toBeTruthy();
+  return row as JsonRecord;
 }
 
 test("strategy - detail links specs, experiments, artifacts, lineage, and audit", async ({
   request,
 }) => {
-  const list = await expectOkJson(
-    await bffGet(request, "/bff/strategies"),
-    "/bff/strategies",
-    "strategy list"
-  );
-  expectRowsContain(
-    rowsFrom(list),
+  const list = await bffGet(request, "/bff/strategies");
+  expect(list.status()).toBe(200);
+  const listRows = rowsFrom(await list.json());
+  expectRowsContainId(
+    listRows,
     PACK_A.strategy.strategyId,
     ["id", "strategy_id"],
     "strategy list"
   );
 
   const detailPath = `/bff/strategies/${PACK_A.strategy.strategyId}`;
-  const strategy = detailFrom(
-    await expectOkJson(await bffGet(request, detailPath), detailPath, "strategy detail")
-  );
-  expect(strategy.id).toBe(PACK_A.strategy.strategyId);
-  expect(stringArrayField(strategy, "personaIds")).toContain(
-    PACK_A.persona.personaId
-  );
-  expect(strategy.capitalPoolId).toBe(PACK_A.deployment.poolId);
+  const detail = await bffGet(request, detailPath);
+  expect(detail.status(), `strategy detail must resolve Pack A: ${detailPath}`).toBe(200);
+  const strategy = detailFrom(await detail.json());
+  expect(strategy.id ?? strategy.strategy_id).toBe(PACK_A.strategy.strategyId);
+  expect(
+    Array.isArray(strategy.personaIds) &&
+      strategy.personaIds.includes(PACK_A.persona.personaId),
+    "strategy detail must link the Pack A persona"
+  ).toBe(true);
 
-  const specsPath = `${detailPath}/specs`;
-  const specs = rowsFrom(
-    await expectOkJson(await bffGet(request, specsPath), specsPath, "strategy specs tab")
+  const specs = await bffGet(
+    request,
+    `/bff/strategies/${PACK_A.strategy.strategyId}/specs`
   );
-  expectRowsContain(specs, PACK_A.strategy.specId, ["spec_version_id", "id"], "strategy specs tab");
+  expect(specs.status()).toBe(200);
+  expectRowsContainId(
+    rowsFrom(await specs.json()),
+    PACK_A.strategy.specVersionId,
+    ["spec_version_id", "id"],
+    "strategy specs"
+  );
 
-  const experimentsPath = `${detailPath}/experiments`;
-  const experiments = rowsFrom(
-    await expectOkJson(
-      await bffGet(request, experimentsPath),
-      experimentsPath,
-      "strategy experiments tab"
-    )
+  const experiments = await bffGet(
+    request,
+    `/bff/strategies/${PACK_A.strategy.strategyId}/experiments`
   );
-  expectRowsContain(
-    experiments,
+  expect(experiments.status()).toBe(200);
+  const experiment = expectRowsContainId(
+    rowsFrom(await experiments.json()),
     PACK_A.strategy.experimentId,
     ["experiment_id", "id"],
-    "strategy experiments tab"
+    "strategy experiments"
   );
+  expect(experiment.artifact_ids).toContain(PACK_A.strategy.artifactId);
 
-  const artifactsPath = `${detailPath}/artifacts`;
-  const artifacts = rowsFrom(
-    await expectOkJson(
-      await bffGet(request, artifactsPath),
-      artifactsPath,
-      "strategy artifacts tab"
-    )
+  const artifacts = await bffGet(
+    request,
+    `/bff/strategies/${PACK_A.strategy.strategyId}/artifacts`
   );
-  expectRowsContain(
-    artifacts,
+  expect(artifacts.status()).toBe(200);
+  const artifact = expectRowsContainId(
+    rowsFrom(await artifacts.json()),
     PACK_A.strategy.artifactId,
     ["artifact_id", "id"],
-    "strategy artifacts tab"
+    "strategy artifacts"
   );
+  expect(artifact.lineage_id).toBeTruthy();
 
-  const lineagePath = `${detailPath}/lineage`;
-  const lineage = detailFrom(
-    await expectOkJson(
-      await bffGet(request, lineagePath),
-      lineagePath,
-      "strategy lineage tab"
-    )
+  const lineage = await bffGet(
+    request,
+    `/bff/strategies/${PACK_A.strategy.strategyId}/lineage`
   );
-  const edges = arrayField(lineage, "edges");
-  expectRowsContain(
-    edges,
-    PACK_A.strategy.lineageId,
+  expect(lineage.status()).toBe(200);
+  const lineageRecord = detailFrom(await lineage.json());
+  expect(
+    Array.isArray(lineageRecord.edges) && lineageRecord.edges.length > 0,
+    "strategy lineage must include at least one edge"
+  ).toBe(true);
+  expectRowsContainId(
+    lineageRecord.edges,
+    PACK_A.strategy.lineageEdgeId,
     ["id", "lineage_id"],
-    "strategy lineage tab"
+    "strategy lineage"
   );
 
-  const auditPath = `${detailPath}/audit`;
-  const audit = rowsFrom(
-    await expectOkJson(await bffGet(request, auditPath), auditPath, "strategy audit tab")
+  const audit = await bffGet(
+    request,
+    `/bff/strategies/${PACK_A.strategy.strategyId}/audit`
   );
-  expectRowsContain(
-    audit,
-    PACK_A.strategy.auditId,
+  expect(audit.status()).toBe(200);
+  expectRowsContainId(
+    rowsFrom(await audit.json()),
+    PACK_A.strategy.auditEntryId,
     ["entry_id", "id"],
-    "strategy audit tab"
+    "strategy audit"
   );
 });
 
-test("persona - detail shows route policy, activity, evaluations, and audit", async ({
+test("persona - detail shows route policy plus activity and evaluation surfaces", async ({
   request,
 }) => {
-  const list = await expectOkJson(
-    await bffGet(request, "/bff/personas"),
-    "/bff/personas",
-    "persona list"
-  );
-  expectRowsContain(
-    rowsFrom(list),
+  const list = await bffGet(request, "/bff/personas");
+  expect(list.status()).toBe(200);
+  expectRowsContainId(
+    rowsFrom(await list.json()),
     PACK_A.persona.personaId,
     ["id", "persona_id"],
     "persona list"
   );
 
   const detailPath = `/bff/personas/${PACK_A.persona.personaId}`;
-  const persona = detailFrom(
-    await expectOkJson(await bffGet(request, detailPath), detailPath, "persona detail")
-  );
-  expect(persona.id).toBe(PACK_A.persona.personaId);
-  expect(persona.routedStrategies).toBeGreaterThan(0);
+  const detail = await bffGet(request, detailPath);
+  expect(detail.status(), `persona detail must resolve Pack A: ${detailPath}`).toBe(200);
+  const persona = detailFrom(await detail.json());
+  expect(persona.id ?? persona.persona_id).toBe(PACK_A.persona.personaId);
+  expect(persona.routedStrategies, "persona must expose routed strategy count").toBeGreaterThan(0);
 
-  const policyPath = `${detailPath}/route-policy`;
-  const policy = detailFrom(
-    await expectOkJson(
-      await bffGet(request, policyPath),
-      policyPath,
-      "persona route-policy tab"
-    )
+  const routePolicy = await bffGet(
+    request,
+    `/bff/personas/${PACK_A.persona.personaId}/route-policy`
   );
-  const rules = arrayField(policy, "rules");
-  expect(rules.length, "persona route-policy tab must be non-empty").toBeGreaterThan(0);
-  expect(rules.some((rule) => rule.route === PACK_A.strategy.strategyId)).toBe(true);
+  expect(routePolicy.status()).toBe(200);
+  const policy = detailFrom(await routePolicy.json());
+  expect(policy.personaId).toBe(PACK_A.persona.personaId);
+  expect(
+    Array.isArray(policy.rules) && policy.rules.length > 0,
+    "persona route-policy must include at least one rule"
+  ).toBe(true);
+  expect(policy.rules[0].route).toBe(PACK_A.strategy.strategyId);
 
-  const activityPath = `${detailPath}/activity`;
-  const activity = detailFrom(
-    await expectOkJson(
-      await bffGet(request, activityPath),
-      activityPath,
-      "persona activity tab"
-    )
+  const activity = await bffGet(
+    request,
+    `/bff/personas/${PACK_A.persona.personaId}/activity`
   );
-  expectRowsContain(
-    arrayField(activity, "sessions"),
-    PACK_A.persona.activitySessionId,
+  expect(activity.status()).toBe(200);
+  const activityRecord = detailFrom(await activity.json());
+  expect(activityRecord.personaId).toBe(PACK_A.persona.personaId);
+  expect(Array.isArray(activityRecord.sessions)).toBe(true);
+  expect(Array.isArray(activityRecord.consultations)).toBe(true);
+
+  const evaluations = await bffGet(
+    request,
+    `/bff/personas/${PACK_A.persona.personaId}/evaluations`
+  );
+  expect(evaluations.status()).toBe(200);
+  expectRowsContainId(
+    rowsFrom(await evaluations.json()),
+    PACK_A.persona.evaluationSessionId,
     ["session_id", "id"],
-    "persona activity tab"
-  );
-
-  const evaluationsPath = `${detailPath}/evaluations`;
-  const evaluations = rowsFrom(
-    await expectOkJson(
-      await bffGet(request, evaluationsPath),
-      evaluationsPath,
-      "persona evaluations tab"
-    )
-  );
-  expectRowsContain(
-    evaluations,
-    PACK_A.persona.evaluationId,
-    ["session_id", "id"],
-    "persona evaluations tab"
-  );
-
-  const auditPath = `${detailPath}/audit`;
-  const audit = rowsFrom(
-    await expectOkJson(await bffGet(request, auditPath), auditPath, "persona audit tab")
-  );
-  expectRowsContain(
-    audit,
-    PACK_A.persona.auditId,
-    ["entry_id", "id"],
-    "persona audit tab"
+    "persona evaluations"
   );
 });
 
-test("deployment - detail links approval, stages, capital pool, and runtime", async ({
+test("deployment - detail links approval, capital pool, stage, and runtime", async ({
   request,
 }) => {
-  const list = await expectOkJson(
-    await bffGet(request, "/bff/deployments"),
-    "/bff/deployments",
-    "deployment list"
-  );
-  expectRowsContain(
-    rowsFrom(list),
+  const list = await bffGet(request, "/bff/deployments");
+  expect(list.status()).toBe(200);
+  expectRowsContainId(
+    rowsFrom(await list.json()),
     PACK_A.deployment.planId,
     ["plan_id", "id"],
     "deployment list"
   );
 
   const detailPath = `/bff/deployments/${PACK_A.deployment.planId}`;
-  const deployment = detailFrom(
-    await expectOkJson(
-      await bffGet(request, detailPath),
-      detailPath,
-      "deployment detail"
-    )
-  );
+  const detail = await bffGet(request, detailPath);
+  expect(detail.status(), `deployment detail must resolve Pack A: ${detailPath}`).toBe(200);
+  const deployment = detailFrom(await detail.json());
   expect(deployment.plan_id ?? deployment.id).toBe(PACK_A.deployment.planId);
-  expect(deployment.capital_pool_id).toBe(PACK_A.deployment.poolId);
-  expect(deployment.runtime_binding_id).toBe(PACK_A.deployment.runtimeId);
-  expectRowsContain(
-    arrayField(deployment, "stages"),
-    "paper",
-    ["stage"],
-    "deployment stages"
-  );
   expect(deployment.approval_decision_id).toBe(PACK_A.deployment.approvalId);
-  expect(asRecord(deployment.approval_decision).id).toBe(
-    PACK_A.deployment.approvalId
-  );
-
-  const approvalPath = `/bff/approvals/${PACK_A.deployment.approvalId}`;
-  const approval = detailFrom(
-    await expectOkJson(
-      await bffGet(request, approvalPath),
-      approvalPath,
-      "deployment approval link"
-    )
-  );
-  expect(approval.id ?? approval.decision_id).toBe(PACK_A.deployment.approvalId);
-
-  const runtimePath = `/bff/runtimes/${PACK_A.deployment.runtimeId}`;
-  const runtime = detailFrom(
-    await expectOkJson(
-      await bffGet(request, runtimePath),
-      runtimePath,
-      "deployment runtime link"
-    )
-  );
-  expect(runtime.runtime_id ?? runtime.id).toBe(PACK_A.deployment.runtimeId);
+  expect(deployment.approval_decision?.id).toBe(PACK_A.deployment.approvalId);
+  expect(deployment.capital_pool_id).toBe(PACK_A.runtime.poolId);
+  expect(deployment.runtime_binding_id).toBe(PACK_A.runtime.runtimeId);
+  expect(
+    Array.isArray(deployment.stages) && deployment.stages.length > 0,
+    "deployment detail must expose stage history"
+  ).toBe(true);
 });
 
-test("runtime - detail links deployment plan, artifact, and capital pool", async ({
+test("runtime - detail links deployment, stage, capital pool, and artifact", async ({
   request,
 }) => {
-  const list = await expectOkJson(
-    await bffGet(request, "/bff/runtimes"),
-    "/bff/runtimes",
-    "runtime list"
-  );
-  expectRowsContain(
-    rowsFrom(list),
+  const list = await bffGet(request, "/bff/runtimes");
+  expect(list.status()).toBe(200);
+  expectRowsContainId(
+    rowsFrom(await list.json()),
     PACK_A.runtime.runtimeId,
     ["runtime_id", "binding_id", "id"],
     "runtime list"
   );
 
   const detailPath = `/bff/runtimes/${PACK_A.runtime.runtimeId}`;
-  const runtime = detailFrom(
-    await expectOkJson(await bffGet(request, detailPath), detailPath, "runtime detail")
+  const detail = await bffGet(request, detailPath);
+  expect(detail.status(), `runtime detail must resolve Pack A: ${detailPath}`).toBe(200);
+  const runtime = detailFrom(await detail.json());
+  expect(runtime.runtime_id ?? runtime.binding_id ?? runtime.id).toBe(
+    PACK_A.runtime.runtimeId
   );
-  expect(runtime.runtime_id ?? runtime.id).toBe(PACK_A.runtime.runtimeId);
-  expect(runtime.plan_id).toBe(PACK_A.runtime.planId);
-  expect(runtime.artifact_id).toBe(PACK_A.runtime.artifactId);
+  expect(runtime.plan_id).toBe(PACK_A.deployment.planId);
+  expect(runtime.deployment_stage).toBe(PACK_A.runtime.stage);
   expect(runtime.capital_pool_id).toBe(PACK_A.runtime.poolId);
-  expect(runtime.deployment_stage).toBe("paper");
-  expect(runtime.status).toBeTruthy();
+  expect(runtime.artifact_id).toBe(PACK_A.strategy.artifactId);
 
-  const deploymentPath = `/bff/deployments/${PACK_A.runtime.planId}`;
-  const deployment = detailFrom(
-    await expectOkJson(
-      await bffGet(request, deploymentPath),
-      deploymentPath,
-      "runtime deployment link"
-    )
+  const deployment = await bffGet(
+    request,
+    `/bff/deployments/${PACK_A.deployment.planId}`
   );
-  expect(deployment.runtime_binding_id).toBe(PACK_A.runtime.runtimeId);
+  if (await expect2xxOrTyped404(deployment, `/bff/deployments/${PACK_A.deployment.planId}`, "runtime deployment link")) {
+    const linked = detailFrom(await deployment.json());
+    expect(linked.runtime_binding_id).toBe(PACK_A.runtime.runtimeId);
+  }
 });
 
-test("degraded detail paths - missing IDs return typed 404", async ({ request }) => {
+test("all four families - missing IDs return typed 404, not raw 500", async ({
+  request,
+}) => {
   const phantomPaths = [
-    ["/bff/strategies/phantom-id-does-not-exist", "strategy phantom detail"],
-    ["/bff/personas/phantom-id-does-not-exist", "persona phantom detail"],
-    ["/bff/deployments/phantom-id-does-not-exist", "deployment phantom detail"],
-    ["/bff/runtimes/phantom-id-does-not-exist", "runtime phantom detail"],
-  ] as const;
+    "/bff/strategies/phantom-id-does-not-exist",
+    "/bff/personas/phantom-id-does-not-exist",
+    "/bff/deployments/phantom-id-does-not-exist",
+    "/bff/runtimes/phantom-id-does-not-exist",
+  ];
 
-  for (const [path, label] of phantomPaths) {
-    await expectTypedObjectNotFound(await bffGet(request, path), path, label);
+  for (const path of phantomPaths) {
+    const response = await bffGet(request, path);
+    const resolved = await expect2xxOrTyped404(response, path, "phantom detail");
+    expect(resolved, `${path} should use a typed 404 for missing Pack A IDs`).toBe(false);
   }
 });

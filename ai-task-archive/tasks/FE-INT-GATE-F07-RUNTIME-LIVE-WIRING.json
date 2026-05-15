@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "task_id": "FE-INT-GATE-F07-RUNTIME-LIVE-WIRING",
+  "archived_at": "2026-05-14T13:16:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "FE-INT-GATE-F07-RUNTIME-LIVE-WIRING",
+    "title": "Wire hosted runtime registry surface to /bff/runtimes",
+    "summary_zh": "F07 hosted Lovable DOM evidence shows /management/runtimes still renders the legacy seeded runtime label (executor-us-east-1) and does not read /bff/runtimes under route interception. Restore the runtime registry surface to consume the live-shaped /bff/runtimes ListResponse so F07 can require all 12 registry surfaces to be list-route backed without the current runtime exception.",
+    "phase": "Pantheon FE Integration Gate 2026-05-13",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "execute-plans/e2e/06-entity-registry.spec.ts",
+      "execute-plans/src/management"
+    ],
+    "acceptance": [
+      "Hosted /management/runtimes reads /bff/runtimes",
+      "Hosted runtime registry renders BFF ListResponse item label B06 Runtime Binding",
+      "No seed fallback banner or legacy runtime-only label is required",
+      "F07 runtime exception can be removed and full 12 list-route assertion remains green"
+    ],
+    "next": "Closeout complete. execute-plans commit f5a5f46e26edec7ec47696570d49c5584d45fef1 wires Runtimes.tsx to useLiveListV1(lists.runtimes); pantheon closeout commit b152e6ec records evidence. Verification: npm run build passed; FRONTEND_BASE_URL=http://127.0.0.1:5173 npx playwright test e2e/06-entity-registry.spec.ts --project=chromium passed 4, skipped 1 live probe. e2e/06-entity-registry.spec.ts had no uncommitted closeout diff; unrelated dirty files were not staged.",
+    "last_update": "2026-05-14T13:16:07Z",
+    "review_notes_zh": [
+      "審查通過：Runtimes.tsx 已正確從 bff.runtimes.list()+useEffect 遷移至 useLiveListV1<Runtime>(lists.runtimes, [\"Runtime\"])，路由 /bff/runtimes 已接通",
+      "驗證：npm run build 通過；3 項非 UI 測試（exact-counted、RESOURCE_NOT_FOUND、ActionDescriptor）一次過；12-registry surface 測試在 --retries=1 下通過（timeout 為環境資源問題，非程式碼 regression）",
+      "Fixtures 補充：runtime record 新增 kind/env/cpu/memory/latencyP95Ms/uptimePct/region 欄位，與 Runtimes.tsx 欄存實際 render 的欄位一致",
+      "注意：task 變更尚未 commit；owner 須 stage src/management/pages/Runtimes.tsx 與 e2e/06-entity-registry.spec.ts 建立 task-scoped commit"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-14T13:16:07Z",
+      "branch": "feat/bff-consol-022-staging-strict-cutover",
+      "git_clean_required": false,
+      "commit": "b152e6ec7410d606b9d2808333c17b5dc36ef234",
+      "commit_subject": "FE-INT-GATE-F07-RUNTIME-LIVE-WIRING: record closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "FE-INT-GATE-F07-RUNTIME-LIVE-WIRING",
+        "Reviewer": "Claude",
+        "Verification": "execute-plans npm run build passed; FRONTEND_BASE_URL=http://127.0.0.1:5173 npx playwright test e2e/06-entity-registry.spec.ts --project=chromium passed 4 and skipped 1 live probe."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 11,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/feat/bff-consol-022-staging-strict-cutover",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "FE-INT-GATE-F07-RUNTIME-LIVE-WIRING",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: /management/runtimes now uses bff-v1 lists.runtimes via useLiveListV1 and F07 no longer has the runtime hosted exception. Verified in /home/lupin/code/execute-plans with npm run build; and VITE_BFF_MODE=live VITE_BFF_FALLBACK=strict dev server plus FRONTEND_BASE_URL=http://127.0.0.1:5173 npx playwright test e2e/06-entity-registry.spec.ts --project=chromium (4 passed, 1 live probe skipped).",
+      "status": "done",
+      "created_at": "2026-05-14T12:44:18Z",
+      "resolved_at": "2026-05-14T13:05:49Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-F07-RUNTIME-LIVE-WIRING",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: Runtimes.tsx wiring to /bff/runtimes confirmed correct. Owner should create task-scoped commit for Runtimes.tsx and e2e/06-entity-registry.spec.ts changes during closeout.",
+      "status": "done",
+      "created_at": "2026-05-14T13:05:49Z",
+      "resolved_at": "2026-05-14T13:16:07Z"
+    }
+  ],
+  "blockers": []
+}

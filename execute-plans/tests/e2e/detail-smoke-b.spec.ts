@@ -52,7 +52,7 @@ function bffUrl(path: string): string {
 }
 
 function authHeaders(): Record<string, string> {
-  const token = process.env.BFF_AUTH_TOKEN;
+  const token = process.env.BFF_AUTH_TOKEN || process.env.PANTHEON_BFF_ACCESS_TOKEN;
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
@@ -92,21 +92,19 @@ test("evolution — list returns programs with data items", async ({
   expect(Array.isArray(items) || typeof body.data === "object").toBe(true);
 });
 
-test("evolution — detail for pack-B program returns 2xx or typed 404", async ({
+test("evolution — detail for pack-B program returns 200", async ({
   request,
 }) => {
   const path = `/bff/evolution-programs/${PACK_B.evolution.programId}`;
   const res = await bffGet(request, path);
-  assertAcceptableStatus(res.status(), path, "evolution detail");
-  if (res.status() === 200) {
-    const body = await res.json();
-    const record = body.data ?? body;
-    expect(
-      record.program_id === PACK_B.evolution.programId ||
-        record.id === PACK_B.evolution.programId,
-      "program_id mismatch"
-    ).toBe(true);
-  }
+  expect(res.status(), `evolution detail must resolve Pack B: ${path}`).toBe(200);
+  const body = await res.json();
+  const record = body.data ?? body;
+  expect(
+    record.program_id === PACK_B.evolution.programId ||
+      record.id === PACK_B.evolution.programId,
+    "program_id mismatch"
+  ).toBe(true);
 });
 
 test("evolution — decisions list contains pack-B decision", async ({
@@ -131,46 +129,50 @@ test("research — experiments list returns items", async ({ request }) => {
   expect(res.status()).toBe(200);
 });
 
-test("research — ticket detail for pack-B ticket links to analysis", async ({
+test("research — experiment detail for pack-B experiment links to analysis", async ({
   request,
 }) => {
-  const path = `/api/v1/research/tickets/${PACK_B.research.ticketId}`;
+  const path = `/bff/research-experiments/${PACK_B.research.experimentId}`;
   const res = await bffGet(request, path);
-  assertAcceptableStatus(res.status(), path, "research ticket detail");
-  if (res.status() === 200) {
-    const body = await res.json();
-    const record = body.data ?? body;
-    // research detail must reference analysis (linked_experiments or analysis link)
-    const hasAnalysisLink =
-      (record.linked_experiments && record.linked_experiments.length > 0) ||
-      (record.linked_artifacts && record.linked_artifacts.length > 0) ||
-      record.analyses != null;
-    expect(
-      hasAnalysisLink,
-      "research ticket detail must link to experiments or analyses"
-    ).toBe(true);
+  expect(res.status(), `research experiment detail must resolve Pack B: ${path}`).toBe(200);
+  const body = await res.json();
+  const record = body.data ?? body;
+  expect(record.experiment_id ?? record.id).toBe(PACK_B.research.experimentId);
+  expect(record.ticket_id, "research experiment must link the Pack B ticket").toBe(
+    PACK_B.research.ticketId
+  );
+  const analysisIds = new Set<string>();
+  if (Array.isArray(record.analysis_ids)) {
+    for (const analysisId of record.analysis_ids) {
+      if (typeof analysisId === "string") {
+        analysisIds.add(analysisId);
+      }
+    }
   }
+  if (Array.isArray(record.analysis_links)) {
+    for (const link of record.analysis_links as Array<{ analysis_id?: unknown }>) {
+      if (typeof link.analysis_id === "string") {
+        analysisIds.add(link.analysis_id);
+      }
+    }
+  }
+  expect(
+    analysisIds.has(PACK_B.research.analysisId),
+    "research experiment detail must expose Pack B analysis linkage"
+  ).toBe(true);
 });
 
 test("research — analysis detail for pack-B analysis returns 2xx", async ({
   request,
 }) => {
-  const path = `/api/v1/research/analysis/${PACK_B.research.analysisId}`;
+  const path = `/bff/research-analyses/${PACK_B.research.analysisId}`;
   const res = await bffGet(request, path);
-  assertAcceptableStatus(res.status(), path, "research analysis detail");
-  if (res.status() === 200) {
-    const body = await res.json();
-    const record = body.data ?? body;
-    expect(record.analysis_id ?? record.id).toBeTruthy();
-  }
-});
-
-test("research — experiment detail for pack-B experiment returns 2xx", async ({
-  request,
-}) => {
-  const path = `/bff/research-experiments/${PACK_B.research.experimentId}`;
-  const res = await bffGet(request, path);
-  assertAcceptableStatus(res.status(), path, "research experiment detail");
+  expect(res.status(), `research analysis detail must resolve Pack B: ${path}`).toBe(200);
+  const body = await res.json();
+  const record = body.data ?? body;
+  expect(record.analysis_id ?? record.id).toBe(PACK_B.research.analysisId);
+  expect(record.ticket_id).toBe(PACK_B.research.ticketId);
+  expect(record.experiment_id).toBe(PACK_B.research.experimentId);
 });
 
 // ─── family 3: v5 interventions ───────────────────────────────────────────
@@ -286,8 +288,11 @@ test("artifacts — lineage graph for pack-B artifact returns 2xx", async ({
   if (res.status() === 200) {
     const body = await res.json();
     expect(
-      body.data != null || body.nodes != null || body.edges != null,
-      "lineage response must contain data, nodes, or edges"
+      body.data != null ||
+        body.nodes != null ||
+        body.edges != null ||
+        body.inspiration_edges != null,
+      "lineage response must contain data, nodes, edges, or inspiration_edges"
     ).toBe(true);
   }
 });

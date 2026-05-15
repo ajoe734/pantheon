@@ -449,6 +449,33 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertEqual(entry["blocked_until"], "2026-04-28T03:20:00Z")
         self.assertEqual(entry["reset_after_seconds"], 900)
 
+    def test_codex_slot_pause_uses_shared_quota_group(self) -> None:
+        config = {
+            "provider_guardrails": {"capacity_pause_seconds": 900, "quota_terminal_pause_seconds": 900},
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "providers": {
+                "codex1-1": {"delivery_mode": "codex", "quota_group": "codex1"},
+                "codex1-2": {"delivery_mode": "codex", "quota_group": "codex1"},
+            },
+        }
+        state: dict = {}
+
+        with mock.patch.object(supervisor, "write_activity_log"):
+            supervisor.mark_provider_dispatch_paused(
+                config,
+                state,
+                "codex1-1",
+                "status: 429 RESOURCE_EXHAUSTED",
+                failure_kind="capacity_retryable",
+                pause_kind="capacity_retryable",
+            )
+
+        pauses = state["provider_guardrails"]["dispatch_pauses"]
+        self.assertIn("codex1", pauses)
+        self.assertNotIn("codex1_1", pauses)
+        self.assertEqual(pauses["codex1"]["trigger_provider"], "codex1_1")
+        self.assertIs(supervisor.current_provider_dispatch_pause(state, "codex1-2", config), pauses["codex1"])
+
     def test_expire_provider_dispatch_pauses_removes_expired_entry(self) -> None:
         config = {
             "provider_guardrails": {"capacity_pause_seconds": 900, "quota_terminal_pause_seconds": 900},
@@ -621,6 +648,103 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(request.agent_id, "grok")
         self.assertEqual(request.provider, "copilot")
         self.assertEqual(request.metadata["model_preference"], "grok-code-fast-1")
+
+    def test_build_request_can_target_codex_worker_slot_with_logical_identity(self) -> None:
+        config = {
+            "agents": {
+                "codex": {
+                    "id": "codex",
+                    "display_name": "Codex",
+                    "provider": "codex",
+                    "adapter": "codex",
+                    "worker_slots": ["codex1_1", "codex1_2"],
+                },
+                "codex1_1": {
+                    "id": "codex1_1",
+                    "display_name": "Codex",
+                    "provider": "codex1-1",
+                    "adapter": "codex",
+                    "dispatch_slot_for": "codex",
+                    "slot_id": "codex1-1",
+                },
+                "codex1_2": {
+                    "id": "codex1_2",
+                    "display_name": "Codex",
+                    "provider": "codex1-2",
+                    "adapter": "codex",
+                    "dispatch_slot_for": "codex",
+                    "slot_id": "codex1-2",
+                },
+            },
+            "providers": {
+                "codex": {"delivery_mode": "codex", "quota_group": "codex1"},
+                "codex1-1": {"delivery_mode": "codex", "quota_group": "codex1"},
+                "codex1-2": {"delivery_mode": "codex", "quota_group": "codex1"},
+            },
+        }
+
+        request = supervisor.build_request(
+            config,
+            {
+                "target_agent": "codex",
+                "target_display_name": "Codex",
+                "message": "wake",
+                "task_id": "BFF-CONSOL-011",
+                "context_files": [],
+            },
+            agent_id_override="codex1_2",
+        )
+
+        self.assertEqual(request.agent_id, "codex1_2")
+        self.assertEqual(request.provider, "codex1-2")
+        self.assertEqual(request.metadata["logical_agent_id"], "codex")
+        self.assertEqual(request.metadata["dispatch_slot_id"], "codex1_2")
+        self.assertEqual(request.metadata["dispatch_slot"], "codex1-2")
+        self.assertEqual(request.metadata["target_display_name"], "Codex")
+
+    def test_select_dispatch_agent_id_chooses_free_codex_slot(self) -> None:
+        config = {
+            "agents": {
+                "codex": {
+                    "id": "codex",
+                    "display_name": "Codex",
+                    "provider": "codex",
+                    "adapter": "codex",
+                    "worker_slots": ["codex1_1", "codex1_2"],
+                },
+                "codex1_1": {
+                    "id": "codex1_1",
+                    "display_name": "Codex",
+                    "provider": "codex1-1",
+                    "adapter": "codex",
+                    "dispatch_slot_for": "codex",
+                },
+                "codex1_2": {
+                    "id": "codex1_2",
+                    "display_name": "Codex",
+                    "provider": "codex1-2",
+                    "adapter": "codex",
+                    "dispatch_slot_for": "codex",
+                },
+            },
+            "providers": {
+                "codex1-1": {"delivery_mode": "codex", "quota_group": "codex1"},
+                "codex1-2": {"delivery_mode": "codex", "quota_group": "codex1"},
+            },
+        }
+        state = {
+            "workers": {
+                "run-1": {
+                    "agent_id": "codex1_1",
+                    "provider": "codex1-1",
+                    "status": "running",
+                }
+            }
+        }
+
+        selected = supervisor.select_dispatch_agent_id(config, state, "codex", {"running"})
+
+        self.assertEqual(selected, "codex1_2")
 
     def test_skips_stale_owned_dispatch_event_after_task_completion(self) -> None:
         queued_task = {
@@ -923,6 +1047,88 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["task_id"], "REG-002")
         self.assertEqual(queued_event["target_agent"], "Codex")
         self.assertEqual(queued_event["reason"], "owned_in_progress_dispatch")
+
+    def test_dispatcher_queues_multiple_codex_tasks_up_to_worker_slot_capacity(self) -> None:
+        config = json.loads(json.dumps(self.config))
+        config["agents"]["codex"]["worker_slots"] = ["codex1_1", "codex1_2", "codex1_3", "codex1_4"]
+        for index in range(1, 5):
+            config["agents"][f"codex1_{index}"] = {
+                "id": f"codex1_{index}",
+                "display_name": "Codex",
+                "provider": f"codex1-{index}",
+                "adapter": "codex",
+                "dispatch_slot_for": "codex",
+            }
+            config["providers"][f"codex1-{index}"] = {
+                "delivery_mode": "codex",
+                "quota_group": "codex1",
+            }
+        status = {
+            "tasks": [
+                {
+                    "id": f"BFF-CONSOL-0{index}",
+                    "status": "todo",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "depends_on": [],
+                    "last_update": f"2026-05-13T04:0{index}:00Z",
+                }
+                for index in range(1, 5)
+            ]
+        }
+        state = {"queue": {"events": {}}, "workers": {}}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state)
+
+        self.assertTrue(changed)
+        queued_task_ids = [call.args[1]["task_id"] for call in queue_delivery_event.call_args_list]
+        self.assertEqual(queued_task_ids, ["BFF-CONSOL-01", "BFF-CONSOL-02", "BFF-CONSOL-03", "BFF-CONSOL-04"])
+        self.assertTrue(all(call.args[1]["target_agent"] == "Codex" for call in queue_delivery_event.call_args_list))
+
+    def test_weighted_dispatch_agent_ids_match_target_workload_ratio(self) -> None:
+        config = json.loads(json.dumps(self.config))
+        config["ready_dispatcher"] = {
+            "target_workload": {
+                "Claude": 10,
+                "Claude2": 10,
+                "Gemini": 5,
+                "Gemini2": 5,
+                "Codex": 35,
+                "Codex2": 35,
+                "Copilot": 5,
+            }
+        }
+        config["agents"] = {
+            "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+            "gemini": {"id": "gemini", "display_name": "Gemini", "provider": "gemini"},
+            "gemini2": {"id": "gemini2", "display_name": "Gemini2", "provider": "gemini2"},
+            "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+            "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+            "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+        }
+
+        sequence = supervisor.weighted_dispatch_agent_ids(config, supervisor.ready_dispatch_settings(config))
+        counts = {agent_id: sequence.count(agent_id) for agent_id in config["agents"]}
+
+        self.assertEqual(len(sequence), 21)
+        self.assertEqual(
+            counts,
+            {
+                "claude": 2,
+                "claude2": 2,
+                "gemini": 1,
+                "gemini2": 1,
+                "codex": 7,
+                "codex2": 7,
+                "copilot": 1,
+            },
+        )
 
     def test_dispatcher_queues_owner_finalize_after_review_approved(self) -> None:
         current_task = {
@@ -1274,6 +1480,118 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["task_id"], "FB-003")
         self.assertEqual(queued_event["target_agent"], "Copilot")
 
+    def test_dispatcher_helper_claims_ready_todo_when_idle_claim_enabled(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "claim_idle_work": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Copilot": ["Codex"],
+                }
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+            },
+            "providers": {},
+        }
+        initial_status = {
+            "tasks": [
+                {"id": "FB-003", "status": "todo", "owner": "Copilot", "reviewer": "Claude", "depends_on": []},
+            ]
+        }
+        persisted_status = {
+            "tasks": [
+                {
+                    "id": "FB-003",
+                    "status": "todo",
+                    "owner": "Codex",
+                    "reviewer": "Copilot",
+                    "depends_on": [],
+                    "last_update": "2026-05-13T09:30:00Z",
+                    "next": "Helper-claimed by idle Codex; previous owner Copilot becomes reviewer.",
+                },
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", side_effect=[initial_status, persisted_status]),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, {"queue": {"events": {}}, "workers": {}})
+
+        self.assertTrue(changed)
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "FB-003")
+        self.assertEqual(kwargs["new_owner"], "Codex")
+        self.assertEqual(kwargs["new_reviewer"], "Copilot")
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "FB-003")
+        self.assertEqual(queued_event["target_agent"], "Codex")
+        self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
+
+    def test_dispatcher_prefers_owned_work_before_idle_helper_claim(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "claim_idle_work": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Copilot": ["Codex"],
+                }
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+            },
+            "providers": {},
+        }
+        status = {
+            "tasks": [
+                {"id": "FOREIGN-001", "status": "todo", "owner": "Copilot", "reviewer": "Claude", "depends_on": []},
+                {"id": "OWN-001", "status": "todo", "owner": "Codex", "reviewer": "Claude", "depends_on": []},
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, {"queue": {"events": {}}, "workers": {}})
+
+        self.assertTrue(changed)
+        persist.assert_not_called()
+        queued_events = [call.args[1] for call in queue_delivery_event.call_args_list]
+        self.assertEqual(queued_events[0]["task_id"], "OWN-001")
+        self.assertEqual(queued_events[0]["target_agent"], "Codex")
+
     def test_dispatcher_helper_claims_todo_when_owner_lane_is_disabled(self) -> None:
         config = {
             "schema": {
@@ -1337,6 +1655,82 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["task_id"], "FB-009-SIDECAR-BFF-HANDOFF")
         self.assertEqual(queued_event["target_agent"], "Codex")
         self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
+
+    def test_dispatcher_helper_claims_sidecar_when_idle_claim_allows_sidecars(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "claim_idle_work": True,
+                    "claim_sidecars_when_idle": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Gemini2": ["Codex"],
+                }
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "gemini2": {"id": "gemini2", "display_name": "Gemini2", "provider": "gemini2"},
+            },
+            "providers": {},
+        }
+        initial_status = {
+            "tasks": [
+                {
+                    "id": "FB-009-SIDECAR-BFF-HANDOFF",
+                    "status": "todo",
+                    "owner": "Gemini2",
+                    "reviewer": "Claude",
+                    "depends_on": [],
+                    "task_class": "sidecar",
+                    "helper_parent": "FB-009",
+                    "helper_kind": "bff_handoff_packet",
+                },
+            ]
+        }
+        persisted_status = {
+            "tasks": [
+                {
+                    "id": "FB-009-SIDECAR-BFF-HANDOFF",
+                    "status": "todo",
+                    "owner": "Codex",
+                    "reviewer": "Gemini2",
+                    "depends_on": [],
+                    "task_class": "sidecar",
+                    "helper_parent": "FB-009",
+                    "helper_kind": "bff_handoff_packet",
+                    "last_update": "2026-05-13T09:31:00Z",
+                },
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", side_effect=[initial_status, persisted_status]),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, {"queue": {"events": {}}, "workers": {}})
+
+        self.assertTrue(changed)
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "FB-009-SIDECAR-BFF-HANDOFF")
+        self.assertEqual(kwargs["new_owner"], "Codex")
+        self.assertEqual(kwargs["new_reviewer"], "Gemini2")
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "FB-009-SIDECAR-BFF-HANDOFF")
+        self.assertEqual(queued_event["target_agent"], "Codex")
 
     def test_dispatcher_does_not_helper_claim_sidecar_when_owner_is_only_busy(self) -> None:
         config = {
@@ -2731,6 +3125,115 @@ class DiscussionPlanningDispatchTests(unittest.TestCase):
         }
 
         self.assertFalse(supervisor.higher_priority_ready_task_exists(self.config, worker, task_map))
+
+    def test_priority_preemption_respects_logical_agent_slot_capacity(self) -> None:
+        config = json.loads(json.dumps(self.config))
+        config["agents"]["codex"]["worker_slots"] = ["codex1_1", "codex1_2", "codex1_3", "codex1_4"]
+        for slot_id in config["agents"]["codex"]["worker_slots"]:
+            config["agents"][slot_id] = {
+                "id": slot_id,
+                "display_name": "Codex",
+                "dispatch_slot_for": "codex",
+                "provider": slot_id.replace("_", "-"),
+            }
+        state = {
+            "queue": {"events": {}},
+            "workers": {
+                "run-high": {
+                    "run_id": "run-high",
+                    "task_id": "BFF-CONSOL-016",
+                    "agent_id": "codex1_1",
+                    "logical_agent_id": "codex",
+                    "status": "running",
+                    "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+                },
+                "run-low": {
+                    "run_id": "run-low",
+                    "task_id": "BFF-CONSOL-017",
+                    "agent_id": "codex1_2",
+                    "logical_agent_id": "codex",
+                    "status": "running",
+                    "request_snapshot": {"reason": "owned_ready_dispatch"},
+                },
+            },
+        }
+        task_map = {
+            "BFF-CONSOL-016": {
+                "id": "BFF-CONSOL-016",
+                "status": "in_progress",
+                "owner": "Codex",
+                "reviewer": "Codex2",
+                "depends_on": [],
+            },
+            "BFF-CONSOL-017": {
+                "id": "BFF-CONSOL-017",
+                "status": "todo",
+                "owner": "Codex",
+                "reviewer": "Codex2",
+                "depends_on": [],
+            },
+        }
+
+        self.assertFalse(
+            supervisor.higher_priority_ready_task_exists(
+                config,
+                state["workers"]["run-low"],
+                task_map,
+                state,
+            )
+        )
+
+    def test_slotted_worker_is_not_preempted_for_non_urgent_owned_backlog(self) -> None:
+        config = json.loads(json.dumps(self.config))
+        config["agents"]["codex"]["worker_slots"] = ["codex1_1", "codex1_2", "codex1_3", "codex1_4"]
+        for slot_id in config["agents"]["codex"]["worker_slots"]:
+            config["agents"][slot_id] = {
+                "id": slot_id,
+                "display_name": "Codex",
+                "dispatch_slot_for": "codex",
+                "provider": slot_id.replace("_", "-"),
+            }
+        state = {
+            "queue": {"events": {}},
+            "workers": {
+                f"run-low-{index}": {
+                    "run_id": f"run-low-{index}",
+                    "task_id": f"BFF-CONSOL-0{20 + index}",
+                    "agent_id": f"codex1_{index}",
+                    "logical_agent_id": "codex",
+                    "status": "running",
+                    "request_snapshot": {"reason": "owned_ready_dispatch"},
+                }
+                for index in range(1, 5)
+            },
+        }
+        task_map = {
+            f"BFF-CONSOL-0{20 + index}": {
+                "id": f"BFF-CONSOL-0{20 + index}",
+                "status": "todo",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "depends_on": [],
+            }
+            for index in range(1, 5)
+        }
+        task_map["BFF-CONSOL-099"] = {
+            "id": "BFF-CONSOL-099",
+            "status": "in_progress",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "depends_on": [],
+        }
+
+        with mock.patch.object(supervisor, "load_event_queue", return_value=[]):
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(
+                    config,
+                    state["workers"]["run-low-1"],
+                    task_map,
+                    state,
+                )
+            )
 
     def test_dead_coordination_worker_is_completed_without_taskboard_entry(self) -> None:
         config = {

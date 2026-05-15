@@ -23,13 +23,69 @@ export interface BffMeResponse {
   data: BffMeData;
 }
 
+let cachedDevBearer:
+  | {
+      token: string;
+      expiresAtMs: number;
+    }
+  | undefined;
+
+function viteEnvValue(name: string): string {
+  if (typeof import.meta === "undefined" || !(import.meta as Record<string, unknown>).env) {
+    return "";
+  }
+  return (
+    (import.meta as Record<string, Record<string, string | undefined>>).env[name] ??
+    ""
+  ).trim();
+}
+
+async function acquireDevBearerToken(baseUrl: string): Promise<string | undefined> {
+  if (cachedDevBearer && cachedDevBearer.expiresAtMs - Date.now() > 60_000) {
+    return cachedDevBearer.token;
+  }
+  const clientId = viteEnvValue("VITE_BFF_OIDC_CLIENT_ID");
+  const clientSecret = viteEnvValue("VITE_BFF_OIDC_CLIENT_SECRET");
+  if (!clientId || !clientSecret) return undefined;
+
+  const loginPath = viteEnvValue("VITE_BFF_DEV_LOGIN_PATH") || "/bff/auth/dev-login";
+  const res = await fetch(`${baseUrl}${loginPath}`, {
+    method: "POST",
+    credentials: "omit",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      grant_type: "client_credentials",
+      client_id: clientId,
+      client_secret: clientSecret,
+    }),
+  });
+  if (!res.ok) return undefined;
+  const body = (await res.json()) as {
+    access_token?: string;
+    expires_in?: number;
+  };
+  if (!body.access_token) return undefined;
+  const ttlSeconds = Math.max(300, Math.min(Number(body.expires_in || 900), 3600));
+  cachedDevBearer = {
+    token: body.access_token,
+    expiresAtMs: Date.now() + ttlSeconds * 1000,
+  };
+  return cachedDevBearer.token;
+}
+
 /** Fetch the /bff/me endpoint. Includes credentials so cookies are sent. */
 async function fetchBffMe(baseUrl: string): Promise<BffMeResponse> {
   const url = `${baseUrl}/bff/me`;
+  const headers: Record<string, string> = { Accept: "application/json" };
+  const bearer = await acquireDevBearerToken(baseUrl);
+  if (bearer) headers.Authorization = `Bearer ${bearer}`;
   const res = await fetch(url, {
     method: "GET",
     credentials: "include",
-    headers: { Accept: "application/json" },
+    headers,
   });
   if (!res.ok) {
     throw new Error(`/bff/me returned ${res.status}`);
@@ -49,12 +105,9 @@ async function fetchBffMe(baseUrl: string): Promise<BffMeResponse> {
  *                 the VITE_BFF_BASE_URL env var or window.location.origin.
  */
 export async function liveWriteGated(baseUrl?: string): Promise<boolean> {
+  const configuredBase = baseUrl ?? viteEnvValue("VITE_BFF_BASE_URL");
   const resolvedBase =
-    baseUrl ??
-    (typeof import.meta !== "undefined" && (import.meta as Record<string, unknown>).env
-      ? ((import.meta as Record<string, Record<string, string>>).env["VITE_BFF_BASE_URL"] ?? "")
-      : "") ||
-    (typeof window !== "undefined" ? window.location.origin : "");
+    configuredBase || (typeof window !== "undefined" ? window.location.origin : "");
 
   try {
     const me = await fetchBffMe(resolvedBase);
@@ -66,14 +119,8 @@ export async function liveWriteGated(baseUrl?: string): Promise<boolean> {
     if (kind === "stub") {
       // Allow stubs outside strict production; deny in live/production mode.
       const isProduction =
-        typeof import.meta !== "undefined" && (import.meta as Record<string, unknown>).env
-          ? ((import.meta as Record<string, Record<string, string>>).env[
-              "VITE_BFF_MODE"
-            ] === "live" ||
-              (import.meta as Record<string, Record<string, string>>).env[
-                "VITE_BFF_FALLBACK"
-              ] === "strict")
-          : false;
+        viteEnvValue("VITE_BFF_MODE") === "live" ||
+        viteEnvValue("VITE_BFF_FALLBACK") === "strict";
       return !isProduction;
     }
     return false;
