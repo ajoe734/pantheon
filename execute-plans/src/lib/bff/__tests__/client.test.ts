@@ -196,6 +196,84 @@ describe("managementClient — OODA packet live adapter", () => {
   });
 });
 
+describe("managementClient — evolution review / approval linkage", () => {
+  const realFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.stubEnv("VITE_BFF_BASE_URL", "https://example.test");
+    liveStatus._reset({ mode: "live", effective: "live", baseUrl: "https://example.test" });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    vi.unstubAllEnvs();
+    liveStatus._reset();
+  });
+
+  it("reads mutation review authority and linked approval identity from the live route", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        decision_id: "evo-dec-88f3a2c1",
+        target_type: "candidate_artifact",
+        target_id: "artifact-44d7e9b0",
+        target_version: "v3.1.2",
+        action_type: "freeze_canary",
+        decision_state: "reviewed",
+        risk_level: "medium",
+        created_at: "2026-04-18T09:32:00Z",
+        approval_decision_id: "appr-dec-c5a9f11e",
+        proposed_changes: {
+          summary: "Freeze candidate artifact at canary stage.",
+          target_stage: "canary",
+          downstream_plane: "runtime",
+          change_details: [],
+        },
+        risk_assessment: {
+          risk_summary: "Execution drift threshold breached.",
+          severity: null,
+          threshold_triggers: [],
+        },
+        required_approvals: [
+          { role: "reviewer", approved_by: "reviewer-01", approved_at: "2026-04-18T10:00:00Z", status: "approved" },
+          { role: "risk_owner", approved_by: null, approved_at: null, status: "pending" },
+        ],
+        review_chain: [
+          {
+            action: "reviewed",
+            actor_role: "reviewer",
+            actor_id: "reviewer-01",
+            acted_at: "2026-04-18T10:00:00Z",
+            note: "Ready for risk-owner decision.",
+          },
+        ],
+        linked_incident_id: null,
+        linked_postmortem_id: null,
+        evidence_refs: [],
+        rollback_followthrough: null,
+        allowedActions: {
+          canApproveMutation: true,
+          canRejectMutation: true,
+        },
+        meta: {
+          snapshot_at: "2026-04-18T11:05:00Z",
+          surfaces: {
+            mutation_review: "fresh",
+          },
+        },
+      }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+    globalThis.fetch = fetchMock;
+
+    const detail = await managementClient.evolutionReviews.get("evo-dec-88f3a2c1");
+
+    expect(fetchMock.mock.calls[0][0]).toBe("https://example.test/api/v1/operator/mutation-review/evo-dec-88f3a2c1");
+    expect(detail?.decision_id).toBe("evo-dec-88f3a2c1");
+    expect(detail?.approval_decision_id).toBe("appr-dec-c5a9f11e");
+    expect(detail?.allowedActions.canApproveMutation).toBe(true);
+    expect(detail?.meta.surfaces?.mutation_review).toBe("fresh");
+  });
+});
+
 describe("managementClient — mode detection", () => {
   it("defaults to mock in test runs", () => {
     expect(detectManagementMode()).toBe("mock");

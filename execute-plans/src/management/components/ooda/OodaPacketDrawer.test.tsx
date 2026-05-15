@@ -38,6 +38,7 @@ const completePacket: OodaLoopPacket = {
   },
   decide: {
     approval_decision_id: "approval-paper-001",
+    evolution_decision_id: "evo-dec-paper-001",
     deployment_plan_id: "deployment-plan-paper-001",
     policy_decision_refs: ["policy-decision://paper-gate/001"],
   },
@@ -97,7 +98,15 @@ describe("OodaPacketDrawer", () => {
     expect(screen.getByText("source://search/rs-003")).toBeInTheDocument();
     expect(screen.getAllByText("runtime-binding-paper-001").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("audit://ooda-paper-001")).toBeInTheDocument();
-  });
+    expect(screen.getByRole("link", { name: /Mutation review/i })).toHaveAttribute(
+      "href",
+      "/evolution/mutation-review/evo-dec-paper-001",
+    );
+    expect(screen.getByRole("link", { name: /Approval queue/i })).toHaveAttribute(
+      "href",
+      "/management/approvals?approval=approval-paper-001",
+    );
+  }, 10_000);
 
   it("surfaces reached stages with missing evidence", () => {
     renderDrawer({

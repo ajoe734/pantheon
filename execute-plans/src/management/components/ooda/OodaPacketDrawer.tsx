@@ -4,7 +4,9 @@ import {
   CheckCircle2,
   Circle,
   Clock3,
+  ExternalLink,
   FileText,
+  GitPullRequest,
   RefreshCw,
   ShieldAlert,
   ShieldCheck,
@@ -89,6 +91,22 @@ function fieldValue(value: unknown): string {
   if (Array.isArray(value)) return value.map((item) => String(item)).filter(Boolean).join(", ") || "-";
   const text = String(value ?? "").trim();
   return text || "-";
+}
+
+function recordFrom(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function reviewHref(decisionId: unknown): string | undefined {
+  const id = String(decisionId ?? "").trim();
+  return id ? `/evolution/mutation-review/${encodeURIComponent(id)}` : undefined;
+}
+
+function approvalHref(approvalId: unknown): string | undefined {
+  const id = String(approvalId ?? "").trim();
+  return id ? `/management/approvals?approval=${encodeURIComponent(id)}` : undefined;
 }
 
 export function OodaPacketDrawer({
@@ -302,13 +320,20 @@ function StageTimeline({ rows }: { rows: OodaStageRow[] }) {
 }
 
 function PacketLinks({ packet }: { packet: OodaLoopPacket }) {
+  const decide = recordFrom(packet.decide);
+  const approvalId = decide.approval_decision_id;
+  const evolutionDecisionId = decide.evolution_decision_id;
   const fields = [
     ["Strategy", packet.strategy_id ?? packet.strategy_ids],
-    ["Runtime", packet.runtime_id ?? (packet.act as Record<string, unknown> | undefined)?.runtime_binding_id],
+    ["Runtime", packet.runtime_id ?? recordFrom(packet.act).runtime_binding_id],
     ["Capital pool", packet.capital_pool_id],
     ["Personas", packet.persona_ids],
-    ["Evolution program", packet.evolution_program_id ?? (packet.learn as Record<string, unknown> | undefined)?.evolution_program_id],
+    ["Evolution program", packet.evolution_program_id ?? recordFrom(packet.learn).evolution_program_id],
+    ["Evolution decision", evolutionDecisionId],
+    ["Approval", approvalId],
   ] as const;
+  const mutationReviewHref = reviewHref(evolutionDecisionId);
+  const approvalQueueHref = approvalHref(approvalId);
   return (
     <section className="rounded-md border border-border p-3">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -319,6 +344,30 @@ function PacketLinks({ packet }: { packet: OodaLoopPacket }) {
           <Field key={label} label={label} value={fieldValue(value)} mono={Array.isArray(value) || String(value ?? "").includes("-")} />
         ))}
       </dl>
+      {(mutationReviewHref || approvalQueueHref) && (
+        <div className="mt-3 flex flex-wrap gap-2" data-testid="ooda-review-approval-links">
+          {mutationReviewHref && (
+            <a
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium hover:bg-muted"
+              href={mutationReviewHref}
+            >
+              <GitPullRequest className="h-3.5 w-3.5" aria-hidden="true" />
+              Mutation review
+              <ExternalLink className="h-3 w-3" aria-hidden="true" />
+            </a>
+          )}
+          {approvalQueueHref && (
+            <a
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium hover:bg-muted"
+              href={approvalQueueHref}
+            >
+              <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
+              Approval queue
+              <ExternalLink className="h-3 w-3" aria-hidden="true" />
+            </a>
+          )}
+        </div>
+      )}
     </section>
   );
 }

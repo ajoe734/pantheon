@@ -159,6 +159,81 @@ export type OodaPacketListQuery = {
   page_size?: number;
 };
 
+export interface EvolutionReviewProjection {
+  decision_id: string;
+  target_type: string;
+  target_id: string;
+  target_version: string;
+  action_type: string;
+  decision_state: string;
+  risk_level: string;
+  created_at: string;
+  approval_decision_id: string | null;
+  proposed_changes: {
+    summary: string;
+    target_stage: string | null;
+    downstream_plane: string | null;
+    change_details: Array<Record<string, unknown>>;
+  };
+  risk_assessment: {
+    risk_summary: string;
+    severity: string | null;
+    threshold_triggers: Array<Record<string, unknown>>;
+  };
+  required_approvals: Array<{
+    role: string;
+    approved_by: string | null;
+    approved_at: string | null;
+    status: string;
+  }>;
+  review_chain: Array<{
+    action: string;
+    actor_role: string;
+    actor_id: string;
+    acted_at: string;
+    note: string | null;
+  }>;
+  linked_incident_id: string | null;
+  linked_postmortem_id: string | null;
+  evidence_refs: Array<Record<string, unknown>>;
+  rollback_followthrough: Record<string, unknown> | null;
+  allowedActions: {
+    canApproveMutation?: boolean;
+    canRejectMutation?: boolean;
+  };
+  meta: {
+    snapshot_at?: string;
+    surfaces?: {
+      mutation_review?: string;
+      [key: string]: unknown;
+    };
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+function isEvolutionReviewProjection(value: unknown): value is EvolutionReviewProjection {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return [
+    "decision_id",
+    "target_type",
+    "target_id",
+    "target_version",
+    "action_type",
+    "decision_state",
+    "risk_level",
+    "created_at",
+    "proposed_changes",
+    "risk_assessment",
+    "required_approvals",
+    "review_chain",
+    "evidence_refs",
+    "allowedActions",
+    "meta",
+  ].every((field) => record[field] !== undefined && record[field] !== null);
+}
+
 function oodaPacketList(
   path: string,
   query?: OodaPacketListQuery,
@@ -176,6 +251,20 @@ function oodaPacketDetail(id: string): Promise<OodaPacketDetail | undefined> {
     { method: "GET", path: paths.oodaPacket(id) },
     async () => undefined,
     adaptOodaPacketDetail,
+    strictNotFoundAsUndefined,
+  );
+}
+
+function adaptEvolutionReview(body: unknown): EvolutionReviewProjection | undefined {
+  const raw = strictDataFrom(body) ?? body;
+  return isEvolutionReviewProjection(raw) ? raw : undefined;
+}
+
+function evolutionReviewDetail(decisionId: string): Promise<EvolutionReviewProjection | undefined> {
+  return withStrictLiveOrMock<EvolutionReviewProjection | undefined, unknown>(
+    { method: "GET", path: paths.evolutionMutationReview(decisionId) },
+    async () => undefined,
+    adaptEvolutionReview,
     strictNotFoundAsUndefined,
   );
 }
@@ -320,6 +409,10 @@ const oodaPackets = {
     oodaPacketList(paths.evolutionProgramOodaPackets(id), query),
 };
 
+const evolutionReviews = {
+  get: evolutionReviewDetail,
+};
+
 // ---------- Public surface ----------
 
 /** Canonical Management Console read surface — list + detail per family,
@@ -346,6 +439,7 @@ export const managementClient = {
   approvals,
   audit,
   oodaPackets,
+  evolutionReviews,
 } as const;
 
 export type ManagementFamily = keyof typeof managementClient;

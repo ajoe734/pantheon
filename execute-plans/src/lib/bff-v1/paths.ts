@@ -70,6 +70,7 @@ export const paths = {
   evolutionProgram: (id: string) => `${BASE}/evolution-programs/${enc(id)}`,
   evolutionProgramRuns: (id: string) => `${BASE}/evolution-programs/${enc(id)}/runs`,
   evolutionProgramCandidates: (id: string) => `${BASE}/evolution-programs/${enc(id)}/candidates`,
+  evolutionMutationReview: (decisionId: string) => `/api/v1/operator/mutation-review/${enc(decisionId)}`,
 
   // ---- Jobs / Approvals / Incidents ----
   jobs: () => `${BASE}/jobs`,
