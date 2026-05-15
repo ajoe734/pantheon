@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OODA-004",
+  "archived_at": "2026-05-15T15:15:50Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OODA-004",
+    "title": "BFF read routes for OODA packets",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-01 OODA Packet Foundation",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete for MGMT-OODA-004. Implementation commit d565f58b and review artifact commit 56beabf5 are durable. Verified: pytest services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py -q -> 6 passed; pytest services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_contract_paths_are_registered services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_openapi_json_is_route_discoverable -q -> 2 passed with existing duplicate Operation ID warning; python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/read_store.py scripts/bff_route_manifest_backend.py -> passed. Worktree still contains unrelated dirty files from other active tasks, so only task-owned artifacts were committed before finalization.",
+    "last_update": "2026-05-15T15:15:50Z",
+    "review_notes_zh": [
+      "審查通過：5 條 BFF OODA read route 實作正確，含 auth gate、feature flag fail-closed、JSONL envelope replay、filter 與 degraded mode；6 tests pass",
+      "後續：owner Codex2 完成 closeout 後即可 done"
+    ],
+    "review_file": "support/reviews/MGMT-OODA-004-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T15:15:50Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "merge/backend-dev-into-master",
+      "git_clean_required": false,
+      "commit": "56beabf51f542e52542a3dbc7cc48b9f13a9dd93",
+      "commit_subject": "MGMT-OODA-004 add review closeout artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-OODA-004",
+        "Reviewer": "Claude",
+        "Verification": "pytest services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py -q -> 6 passed; pytest services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_contract_paths_are_registered services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_openapi_json_is_route_discoverable -q -> 2 passed, 1 existing duplicate Operation ID warning; python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/read_store.py scripts/bff_route_manifest_backend.py -> passed."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 20,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 6,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OODA-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T14:51:26Z",
+      "resolved_at": "2026-05-15T14:52:18Z"
+    },
+    {
+      "task_id": "MGMT-OODA-004",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implemented BFF OODA packet read routes and JSON/JSONL read-store support. Commit d565f58b. Routes: GET /bff/ooda/packets, GET /bff/ooda/packets/{packet_id}, GET /bff/strategies/{id}/ooda, GET /bff/runtimes/{id}/ooda, GET /bff/evolution-programs/{id}/ooda. Verification: pytest services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py -q -> 6 passed; pytest services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_contract_paths_are_registered services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_openapi_json_is_route_discoverable -q -> 2 passed; py_compile main/read_store/route_manifest ok. Note: scripts/bff_route_manifest_backend.py --check still reports snapshot drift including this task's OODA routes plus pre-existing /bff/research-analyses* and /bff/auth/dev-login, so no generated manifest was staged.",
+      "status": "done",
+      "created_at": "2026-05-15T15:05:51Z",
+      "resolved_at": "2026-05-15T15:09:18Z"
+    },
+    {
+      "task_id": "MGMT-OODA-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all 5 BFF OODA routes verified — auth, feature flag, JSONL replay, filters, degraded mode all correct; 6 task tests + 2 contract path tests pass. Returned to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-15T15:09:18Z",
+      "resolved_at": "2026-05-15T15:15:51Z"
+    }
+  ],
+  "blockers": []
+}
