@@ -173,9 +173,22 @@ store.add(packet)
 | `Unknown loop_type` | Not in `LoopType` enum |
 | `Unknown status` | Not in `LoopStatus` enum |
 | `Unknown environment` | Not in `LoopEnvironment` enum |
-| `live_capital_side_effects must be False in environment ...` | Non-live env with live side effects |
+| `act.live_capital_side_effects must be false in dev, paper, sandbox, and canary environments` | Non-live env with live side effects; enforced by Python validator AND JSON Schema top-level `allOf` |
+| `closed OODA packets must include closed_at` | Closed/failed packet missing timestamp |
+| `closed OODA packets must include <bundle> bundle` | Missing stage bundle on closed packet |
+| `closed OODA packets must include at least one evidence ref in the <bundle> bundle` | All-empty bundle on closed packet |
 | `created_at is required` | Empty timestamp |
 | `updated_at is required` | Empty timestamp |
+
+### Closed-Packet Evidence Rule
+
+A packet in `closed` status must satisfy all of the following:
+
+1. `closed_at` must be set.
+2. `observe`, `orient`, `decide`, and `act` bundles must be present.
+3. Each of those four bundles must have at least one non-null, non-empty evidence field.
+
+This prevents OODA-complete loops from being recorded without evidence at each stage.
 
 ---
 

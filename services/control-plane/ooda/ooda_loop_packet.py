@@ -34,6 +34,19 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+try:  # Supports both direct test imports and package-style imports.
+    from .stage_transition import (
+        OodaTransitionError,
+        validate_packet_stage_invariants,
+        validate_status_transition,
+    )
+except ImportError:  # pragma: no cover - used by direct unittest discovery
+    from stage_transition import (
+        OodaTransitionError,
+        validate_packet_stage_invariants,
+        validate_status_transition,
+    )
+
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
@@ -291,12 +304,10 @@ class OodaLoopPacket:
         """Advance the loop to *to_status*, validating the allowed transition."""
         current = LoopStatus(self.status)
         target = LoopStatus(to_status)
-        allowed = _ALLOWED_TRANSITIONS.get(current, [])
-        if target not in allowed:
-            raise ValueError(
-                f"Invalid OODA transition: {current} -> {target}. "
-                f"Allowed from {current}: {[s.value for s in allowed]}"
-            )
+        try:
+            validate_status_transition(current.value, target.value)
+        except OodaTransitionError as exc:
+            raise ValueError(str(exc)) from exc
         self.status = target
         self.updated_at = _now_utc()
         if target in (LoopStatus.CLOSED, LoopStatus.FAILED):
@@ -359,21 +370,32 @@ class OodaLoopPacket:
             errors.append(f"Unknown status: {self.status!r}")
 
         try:
-            env = LoopEnvironment(self.environment)
+            LoopEnvironment(self.environment)
         except ValueError:
             errors.append(f"Unknown environment: {self.environment!r}")
-            env = None
-
-        if env and env not in LIVE_SIDE_EFFECTS_ALLOWED_ENVS:
-            if self.act.live_capital_side_effects:
-                errors.append(
-                    f"live_capital_side_effects must be False in environment '{self.environment}'"
-                )
 
         if not self.created_at:
             errors.append("created_at is required")
         if not self.updated_at:
             errors.append("updated_at is required")
+
+        stage_errors = validate_packet_stage_invariants({
+            "status": self.status.value if isinstance(self.status, LoopStatus) else self.status,
+            "environment": (
+                self.environment.value
+                if isinstance(self.environment, LoopEnvironment)
+                else self.environment
+            ),
+            "observe": self.observe.to_dict(),
+            "orient": self.orient.to_dict(),
+            "decide": self.decide.to_dict(),
+            "act": self.act.to_dict(),
+            "learn": self.learn.to_dict(),
+            "closed_at": self.closed_at,
+        })
+        for error in stage_errors:
+            if error not in errors:
+                errors.append(error)
 
         return errors
 
@@ -478,11 +500,14 @@ class OodaLoopStore:
     ) -> List[OodaLoopPacket]:
         results = list(self._packets.values())
         if loop_type is not None:
-            results = [p for p in results if str(p.loop_type) == str(loop_type)]
+            lt_val = LoopType(loop_type).value
+            results = [p for p in results if LoopType(p.loop_type).value == lt_val]
         if status is not None:
-            results = [p for p in results if str(p.status) == str(status)]
+            st_val = LoopStatus(status).value
+            results = [p for p in results if LoopStatus(p.status).value == st_val]
         if environment is not None:
-            results = [p for p in results if str(p.environment) == str(environment)]
+            env_val = LoopEnvironment(environment).value
+            results = [p for p in results if LoopEnvironment(p.environment).value == env_val]
         return sorted(results, key=lambda p: p.created_at)
 
     # -- persistence ------------------------------------------------------

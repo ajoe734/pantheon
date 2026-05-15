@@ -13,6 +13,8 @@
 # Canonical spec: MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md
 from .models import (
     PersonaAllocationProposal,
+    ProposalDirection,
+    ProposalTargetType,
     AllocationPolicyArtifact,
     ConflictResolutionLog,
     SynthesisMethod,
@@ -20,11 +22,14 @@ from .models import (
     VetoRecord,
     CommitteeReferral,
     SynthesisError,
+    validate_persona_allocation_proposal_json,
 )
 from .synthesizer import PoolRiskPolicy, PortfolioSynthesizer
 
 __all__ = [
     "PersonaAllocationProposal",
+    "ProposalDirection",
+    "ProposalTargetType",
     "AllocationPolicyArtifact",
     "ConflictResolutionLog",
     "SynthesisMethod",
@@ -34,4 +39,5 @@ __all__ = [
     "SynthesisError",
     "PoolRiskPolicy",
     "PortfolioSynthesizer",
+    "validate_persona_allocation_proposal_json",
 ]

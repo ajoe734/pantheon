@@ -91,6 +91,38 @@
       "description": "ISO-8601 UTC timestamp when the loop was closed or failed."
     }
   },
+  "allOf": [
+    {
+      "description": "act.live_capital_side_effects must be false in dev, paper, sandbox, and canary environments",
+      "if": {
+        "properties": {
+          "environment": {"enum": ["dev", "paper", "sandbox", "canary"]}
+        },
+        "required": ["environment"]
+      },
+      "then": {
+        "properties": {
+          "act": {
+            "properties": {
+              "live_capital_side_effects": {"const": false}
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "closed OODA packets must include the four main stage bundles",
+      "if": {
+        "properties": {
+          "status": {"const": "closed"}
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["observe", "orient", "decide", "act"]
+      }
+    }
+  ],
   "definitions": {
     "ObserveBundle": {
       "type": "object",

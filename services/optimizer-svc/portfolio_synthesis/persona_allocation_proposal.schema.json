@@ -1,0 +1,153 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "persona_allocation_proposal",
+  "title": "PersonaAllocationProposal",
+  "description": "Standardized proposal from one advisor persona for a capital pool or candidate universe before multi-persona portfolio synthesis.",
+  "type": "object",
+  "required": [
+    "proposal_id",
+    "persona_id",
+    "capital_pool_id",
+    "scope_ref",
+    "target_type",
+    "directions",
+    "target_weights",
+    "conviction",
+    "uncertainty",
+    "evidence_refs",
+    "created_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "proposal_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique stable identifier for this proposal."
+    },
+    "persona_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Advisor persona that produced the proposal."
+    },
+    "capital_pool_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Capital pool being proposed against."
+    },
+    "scope_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Deployment or universe scope for this proposal, such as paper, canary, live, or a universe reference."
+    },
+    "target_type": {
+      "type": "string",
+      "enum": ["asset", "sleeve", "basket", "pool"],
+      "description": "Granularity of the proposed allocation target."
+    },
+    "directions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "long",
+          "short",
+          "buy",
+          "sell",
+          "hold",
+          "flat",
+          "increase",
+          "decrease",
+          "risk_on",
+          "risk_off",
+          "add_leverage",
+          "de_risk"
+        ]
+      },
+      "uniqueItems": true,
+      "description": "Directional hints used by conflict classification and committee escalation."
+    },
+    "target_weights": {
+      "type": "object",
+      "minProperties": 1,
+      "patternProperties": {
+        "^[A-Za-z0-9._:/-]+$": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": false,
+      "description": "Symbol, sleeve, basket, or pool weight map. Semantic validation also requires the sum to be no greater than 1.0."
+    },
+    "conviction": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Persona confidence in this proposal."
+    },
+    "uncertainty": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Persona uncertainty estimate; lower values increase fusion weight."
+    },
+    "rationale_ref": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "description": "Reference to supporting rationale or memo."
+    },
+    "regime_ref": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "description": "Reference to the regime state used by this proposal."
+    },
+    "valid_from": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "UTC ISO-8601 start of proposal validity."
+    },
+    "valid_to": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "UTC ISO-8601 end of proposal validity. Null means open-ended."
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Evidence packet, OODA packet, memo, or audit references supporting the proposal."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC ISO-8601 timestamp when the proposal was created."
+    },
+    "reliability_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 1,
+      "description": "Recent track-record score used by weighted fusion."
+    },
+    "regime_fit_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 1,
+      "description": "How well this persona proposal fits the current regime."
+    },
+    "governance_multiplier": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 2,
+      "default": 1,
+      "description": "Governance multiplier applied during fusion."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Governance and normalization metadata, such as asset_classes, strategy_family, strategy_family_risk, first_deployment_in_scope, wants_leverage, or wants_de_risk."
+    }
+  }
+}

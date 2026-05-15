@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from services.foundation.health import register_fastapi_health_routes
 
@@ -55,18 +55,20 @@ class ProposalIn(BaseModel):
     capital_pool_id: str
     scope_ref: str
     target_type: str = "pool"
-    directions: List[str] = []
-    target_weights: Dict[str, float] = {}
+    directions: List[str] = Field(default_factory=list)
+    target_weights: Dict[str, float] = Field(default_factory=dict)
     conviction: float = 0.5
     uncertainty: float = 0.0
     rationale_ref: Optional[str] = None
     regime_ref: Optional[str] = None
     valid_from: Optional[str] = None
     valid_to: Optional[str] = None
+    evidence_refs: List[str] = Field(default_factory=list)
+    created_at: Optional[str] = None
     reliability_score: float = 1.0
     regime_fit_score: float = 1.0
     governance_multiplier: float = 1.0
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class SynthesizeRequest(BaseModel):
@@ -96,7 +98,10 @@ async def synthesize(req: SynthesizeRequest):
     is required.  A ConflictResolutionLog is always recorded.
     """
     try:
-        proposals = [PersonaAllocationProposal(**p.model_dump()) for p in req.proposals]
+        proposals = [
+            PersonaAllocationProposal(**p.model_dump(exclude_none=True))
+            for p in req.proposals
+        ]
     except (SynthesisError, Exception) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
