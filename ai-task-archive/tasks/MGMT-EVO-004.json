@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "MGMT-EVO-004",
+  "archived_at": "2026-05-15T16:30:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-EVO-004",
+    "title": "retrain / revalidate dispatch",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-06 Evolution Follow-Through",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete: committed f00af5d0 for revalidate dispatch; verified PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_command_executor.py -q => 29 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/smoke_test.py -q => 25 passed.",
+    "last_update": "2026-05-15T16:30:39Z",
+    "review_notes_zh": [
+      "無阻塞發現：BFF ExecuteEvolutionAction 現在接受 revalidate，並仍由 governance evolution execute endpoint 依 approved EvolutionDecision action 決定 research_revalidate 邊界。",
+      "查核重點：command executor 保留 downstream execution_result / execution_ref_id；BFF submission smoke 覆蓋 revalidate params；runtime-manager client/service 文件同步標明 research_job_id 為 retrain/revalidate dispatch 必填。",
+      "驗證命令：PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_command_executor.py -q => 29 passed；PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/smoke_test.py -q => 25 passed。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T16:30:39Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "merge/backend-dev-into-master",
+      "git_clean_required": false,
+      "commit": "f00af5d0d0cf737eeb825fd5944ae96c5a64379f",
+      "commit_subject": "MGMT-EVO-004 enable revalidate dispatch",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-EVO-004",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 45,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 4,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-EVO-004",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Ready for review. Implemented BFF ExecuteEvolutionAction validation for revalidate research dispatch, added command executor coverage preserving research dispatch result, added BFF submission smoke for revalidate, and fixed runtime-manager retrain client/descriptor docs to require research_job_id. Verification: python3 -m pytest services/control-plane/bff/test_command_executor.py -q; python3 -m pytest services/control-plane/bff/smoke_test.py -q.",
+      "status": "done",
+      "created_at": "2026-05-15T16:04:41Z",
+      "resolved_at": "2026-05-15T16:08:54Z"
+    },
+    {
+      "task_id": "MGMT-EVO-004",
+      "from": "Copilot",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Copilot to Codex2 after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-05-15T16:08:54Z",
+      "resolved_at": "2026-05-15T16:18:42Z"
+    },
+    {
+      "task_id": "MGMT-EVO-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved for MGMT-EVO-004; revalidate dispatch path is covered and returned to Codex for owner closeout.",
+      "status": "done",
+      "created_at": "2026-05-15T16:18:42Z",
+      "resolved_at": "2026-05-15T16:30:40Z"
+    }
+  ],
+  "blockers": []
+}
