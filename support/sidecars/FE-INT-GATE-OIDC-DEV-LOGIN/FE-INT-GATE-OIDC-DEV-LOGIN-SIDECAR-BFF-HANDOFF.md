@@ -59,7 +59,7 @@ File: `execute-plans/scripts/probe-bff-authenticated-live.mjs`
 
 - Script reads `PANTHEON_BFF_ACCESS_TOKEN` or `PANTHEON_BFF_SMOKE_BEARER_TOKEN` first.
 - Falls back to `PANTHEON_BFF_OIDC_CLIENT_ID` / `PANTHEON_BFF_OIDC_CLIENT_SECRET` → `acquireToken()`.
-- Checks 27 authenticated read routes (2xx + envelope shape) and 3 precondition
+- Checks 28 authenticated read routes (2xx + envelope shape) and 3 precondition
   write routes (allowed error codes).
 
 ### 2.5 Documentation Updates
@@ -72,7 +72,7 @@ File: `execute-plans/scripts/probe-bff-authenticated-live.mjs`
 
 ## 3. BFF Query Gap Analysis
 
-The table below maps the 27 authenticated smoke routes to their current BFF
+The table below maps the 28 authenticated smoke routes to their current BFF
 status. "Seed" means the route returns a response drawn from seed fixtures.
 "Live" means the route is wired to a live backend service or state store.
 
@@ -105,6 +105,7 @@ status. "Seed" means the route returns a response drawn from seed fixtures.
 | `GET /bff/v5/loop-runs` | Seed | Returns seed fixture list. |
 | `GET /bff/v5/sentinel/findings` | Seed | Returns seed fixture list. |
 | `GET /bff/v5/interventions` | Seed | Returns seed fixture list. |
+| `GET /bff/v5/execution/persona-health` | Seed | Derived from persona seed/read-store records. |
 
 **Auth-gate boundary:** With the new `dev-login` flow, all of the above routes
 now require a valid bearer JWT rather than the old colon-format stub token. The
@@ -235,7 +236,8 @@ This section describes the dev operator experience after deployment is complete.
 2. Token is masked and exported to all downstream steps as
    `PANTHEON_BFF_ACCESS_TOKEN`.
 3. "Authenticated BFF smoke" and "Playwright E2E" steps use this token.
-4. Smoke checks 30 routes; e2e checks `MeResponse` shape.
+4. Smoke checks 31 routes (28 read + 3 precondition write checks); e2e checks
+   `MeResponse` shape.
 
 ### 5.3 Staging-Live Isolation
 
