@@ -176,6 +176,40 @@ class DecisionResponse(BaseModel):
     is_active: bool
 
 
+class ObservationWindowReportResponse(BaseModel):
+    decision_id: str
+    target_type: str
+    target_id: str
+    target_version: str
+    target_stage: Optional[str]
+    action_type: str
+    risk_level: str
+    decision_state: str
+    report_generated_at: str
+    observation_window_started_at: str
+    observation_window_ends_at: str
+    cooldown_started_at: str
+    cooldown_ends_at: str
+    observation_state: str
+    cooldown_state: str
+    active_until: str
+    active_blocking: bool
+    seconds_since_observation_start: int
+    seconds_until_observation_end: int
+    seconds_until_cooldown_end: int
+    convergence_status: str
+    approval_decision_id: Optional[str]
+    linked_incident_id: Optional[str]
+    linked_postmortem_id: Optional[str]
+    execution: Dict[str, Any]
+    followthrough_refs: List[Dict[str, Any]]
+    evidence_refs: List[Dict[str, Any]]
+    threshold_snapshots: List[Dict[str, Any]]
+    review_chain: List[Dict[str, Any]]
+    policy_refs: List[str]
+    notes: List[str]
+
+
 class BoundaryResponse(BaseModel):
     boundary_key: str
     execution_plane: str

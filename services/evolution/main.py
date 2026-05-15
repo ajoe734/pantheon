@@ -33,6 +33,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -80,6 +81,7 @@ from models import (  # type: ignore
     DecisionResponse,
     DispatchCommandResponse,
     ExecuteRequest,
+    ObservationWindowReportResponse,
     ProposeRequest,
     RejectRequest,
     RedeployFollowthroughRequest,
@@ -180,6 +182,94 @@ def _domain_error(exc: Exception) -> HTTPException:
 
 def _enum_value(value: Any) -> Any:
     return value.value if hasattr(value, "value") else value
+
+
+def _parse_rfc3339(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _format_rfc3339(value: datetime) -> str:
+    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _window_state(as_of: datetime, start: datetime, end: datetime) -> str:
+    if as_of < start:
+        return "not_started"
+    if as_of <= end:
+        return "open"
+    return "elapsed"
+
+
+def _seconds_until(as_of: datetime, end: datetime) -> int:
+    return max(0, int((end - as_of).total_seconds()))
+
+
+def _seconds_since(start: datetime, as_of: datetime) -> int:
+    return max(0, int((as_of - start).total_seconds()))
+
+
+def _convergence_status(observation_state: str, cooldown_state: str) -> str:
+    if observation_state == "not_started":
+        return "pending_observation"
+    if observation_state == "open":
+        return "collecting_observation_evidence"
+    if cooldown_state in {"not_started", "open"}:
+        return "observation_elapsed_cooldown_active"
+    return "eligible_for_next_decision"
+
+
+def _observation_report_notes(
+    *,
+    observation_state: str,
+    cooldown_state: str,
+    active_blocking: bool,
+) -> List[str]:
+    if observation_state == "not_started":
+        return [
+            "Execution has been accepted, but the observation clock has not reached the requested report time.",
+            "Do not create another same-target structural mutation before the active window opens and closes.",
+        ]
+    if observation_state == "open":
+        return [
+            "Observation window is open; collect telemetry, drift, incident, and operator evidence.",
+            "Single-active-rule still blocks another same-target structural mutation during the active window.",
+        ]
+    if active_blocking or cooldown_state == "open":
+        return [
+            "Observation window has elapsed, but cooldown still blocks another same-target structural mutation.",
+            "Only severe escalation paths should bypass normal convergence wait semantics.",
+        ]
+    return [
+        "Observation and cooldown windows have elapsed for this decision.",
+        "The target is no longer blocked by this decision's active window.",
+    ]
+
+
+def _build_followthrough_refs(decision: EvolutionDecision) -> List[Dict[str, Any]]:
+    refs: List[Dict[str, Any]] = []
+    if decision.execution_result and decision.execution_result.execution_ref_id:
+        refs.append(
+            {
+                "ref_type": "dispatch_command",
+                "ref_id": decision.execution_result.execution_ref_id,
+                "plane": _enum_value(decision.execution_result.plane),
+                "status": _enum_value(decision.execution_result.status),
+                "note": decision.execution_result.outcome_summary,
+            }
+        )
+    metadata = decision.metadata or {}
+    for item in metadata.get("followthrough_refs", []):
+        if isinstance(item, dict):
+            refs.append(dict(item))
+    return refs
 
 
 # ---------------------------------------------------------------------------
@@ -325,6 +415,113 @@ def get_proposal(decision_id: str):
     if decision is None:
         raise _not_found(decision_id)
     return _decision_to_response(decision)
+
+
+# --- Observation report ------------------------------------------------------
+
+@app.get(
+    "/api/evolution/proposals/{decision_id}/observation-report",
+    response_model=ObservationWindowReportResponse,
+)
+def get_observation_report(
+    decision_id: str,
+    as_of: Optional[str] = Query(default=None),
+):
+    """
+    Produce the post-execution observation-window report for one decision.
+
+    The report is read-only evidence for the Learn/Evolve leg: it makes the
+    parent decision's observation window, cooldown window, active blocking
+    status, execution reference, and evidence links inspectable without opening
+    a new EvolutionDecision or follow-through command.
+    """
+    decision = store.get(decision_id)
+    if decision is None:
+        raise _not_found(decision_id)
+    if EvolutionDecisionState(decision.decision_state) != EvolutionDecisionState.EXECUTED:
+        raise HTTPException(
+            status_code=422,
+            detail="Observation window report requires an executed EvolutionDecision.",
+        )
+
+    report_time = _parse_rfc3339(as_of) if as_of else datetime.now(timezone.utc)
+    if report_time is None:
+        raise HTTPException(status_code=400, detail=f"Invalid as_of timestamp: {as_of!r}")
+
+    cooldown_start = _parse_rfc3339(decision.cooldown_started_at)
+    cooldown_end = _parse_rfc3339(decision.cooldown_ends_at)
+    observation_start = _parse_rfc3339(decision.observation_window_started_at)
+    observation_end = _parse_rfc3339(decision.observation_window_ends_at)
+    if not all((cooldown_start, cooldown_end, observation_start, observation_end)):
+        raise HTTPException(
+            status_code=422,
+            detail="Executed EvolutionDecision is missing cooldown or observation window timestamps.",
+        )
+
+    assert cooldown_start is not None
+    assert cooldown_end is not None
+    assert observation_start is not None
+    assert observation_end is not None
+    active_until = max(cooldown_end, observation_end)
+    observation_state = _window_state(report_time, observation_start, observation_end)
+    cooldown_state = _window_state(report_time, cooldown_start, cooldown_end)
+    active_blocking = report_time <= active_until
+
+    execution = (
+        decision.execution_result.to_dict()
+        if decision.execution_result is not None
+        else {}
+    )
+    return ObservationWindowReportResponse(
+        decision_id=decision.decision_id,
+        target_type=str(_enum_value(decision.target_type)),
+        target_id=decision.target_id,
+        target_version=decision.target_version,
+        target_stage=decision.target_stage,
+        action_type=str(_enum_value(decision.action_type)),
+        risk_level=str(_enum_value(decision.risk_level)),
+        decision_state=str(_enum_value(decision.decision_state)),
+        report_generated_at=_format_rfc3339(report_time),
+        observation_window_started_at=decision.observation_window_started_at or "",
+        observation_window_ends_at=decision.observation_window_ends_at or "",
+        cooldown_started_at=decision.cooldown_started_at or "",
+        cooldown_ends_at=decision.cooldown_ends_at or "",
+        observation_state=observation_state,
+        cooldown_state=cooldown_state,
+        active_until=_format_rfc3339(active_until),
+        active_blocking=active_blocking,
+        seconds_since_observation_start=_seconds_since(observation_start, report_time),
+        seconds_until_observation_end=_seconds_until(report_time, observation_end),
+        seconds_until_cooldown_end=_seconds_until(report_time, cooldown_end),
+        convergence_status=_convergence_status(observation_state, cooldown_state),
+        approval_decision_id=decision.approval_decision_id,
+        linked_incident_id=decision.linked_incident_id,
+        linked_postmortem_id=decision.linked_postmortem_id,
+        execution=execution,
+        followthrough_refs=_build_followthrough_refs(decision),
+        evidence_refs=[
+            ref.to_dict() if hasattr(ref, "to_dict") else ref
+            for ref in decision.evidence_refs
+        ],
+        threshold_snapshots=[
+            snap.to_dict() if hasattr(snap, "to_dict") else snap
+            for snap in decision.threshold_snapshots
+        ],
+        review_chain=[
+            step.to_dict() if hasattr(step, "to_dict") else step
+            for step in decision.review_chain
+        ],
+        policy_refs=[
+            "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md §5.2-§5.4",
+            "services/control-plane/governance/evolution_decision.contract.md §10",
+            "docs/04/pantheon_sa_supplemental_2026-05-15/SA_management_console_multi_persona_ooda.md §6.5",
+        ],
+        notes=_observation_report_notes(
+            observation_state=observation_state,
+            cooldown_state=cooldown_state,
+            active_blocking=active_blocking,
+        ),
+    )
 
 
 # --- Review ------------------------------------------------------------------

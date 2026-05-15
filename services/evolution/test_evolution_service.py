@@ -979,6 +979,79 @@ def test_cooldown_blocks_high_risk_freeze_live_repeated_trigger():
 
 
 # ---------------------------------------------------------------------------
+# MGMT-EVO-006: Observation window report
+# ---------------------------------------------------------------------------
+
+def test_observation_window_report_open_window_contains_evidence_refs():
+    """
+    MGMT-EVO-006: the service exposes a post-execution observation-window
+    report with window state, active blocking, execution refs, and evidence refs.
+    """
+    from datetime import datetime, timedelta
+
+    did = uid()
+    body = {**LOW_RISK_BODY, "decision_id": did, "target_id": f"strat-obs-{did}"}
+    client.post("/api/evolution/proposals", json=body).raise_for_status()
+    advance_to_reviewed(did)
+    advance_to_approved(did)
+    executed = advance_to_executed(did)
+
+    obs_start = datetime.fromisoformat(executed["observation_window_started_at"].replace("Z", "+00:00"))
+    as_of = (obs_start + timedelta(days=1)).isoformat().replace("+00:00", "Z")
+    r = client.get(f"/api/evolution/proposals/{did}/observation-report?as_of={as_of}")
+
+    assert r.status_code == 200, r.text
+    report = r.json()
+    assert report["decision_id"] == did
+    assert report["decision_state"] == "executed"
+    assert report["observation_state"] == "open"
+    assert report["cooldown_state"] == "open"
+    assert report["active_blocking"] is True
+    assert report["convergence_status"] == "collecting_observation_evidence"
+    assert report["active_until"] == executed["observation_window_ends_at"]
+    assert report["seconds_since_observation_start"] == 86400
+    assert report["seconds_until_observation_end"] > 0
+    assert report["execution"]["execution_ref_id"] == f"dispatch-{did}"
+    assert report["followthrough_refs"][0]["ref_type"] == "dispatch_command"
+    assert report["threshold_snapshots"][0]["metric_name"] == "sharpe_pct_of_baseline"
+    assert "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md §5.2-§5.4" in report["policy_refs"]
+
+
+def test_observation_window_report_after_active_window_allows_next_decision():
+    """Once observation and cooldown windows have elapsed, the report marks the target unblocked."""
+    from datetime import datetime, timedelta
+
+    did = uid()
+    body = {**LOW_RISK_BODY, "decision_id": did, "target_id": f"strat-obs-elapsed-{did}"}
+    client.post("/api/evolution/proposals", json=body).raise_for_status()
+    advance_to_reviewed(did)
+    advance_to_approved(did)
+    executed = advance_to_executed(did)
+
+    obs_end = datetime.fromisoformat(executed["observation_window_ends_at"].replace("Z", "+00:00"))
+    as_of = (obs_end + timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+    r = client.get(f"/api/evolution/proposals/{did}/observation-report?as_of={as_of}")
+
+    assert r.status_code == 200, r.text
+    report = r.json()
+    assert report["observation_state"] == "elapsed"
+    assert report["cooldown_state"] == "elapsed"
+    assert report["active_blocking"] is False
+    assert report["seconds_until_observation_end"] == 0
+    assert report["seconds_until_cooldown_end"] == 0
+    assert report["convergence_status"] == "eligible_for_next_decision"
+
+
+def test_observation_window_report_rejected_before_execute():
+    """Observation reports are only valid after the EvolutionDecision is executed."""
+    d = propose({"target_id": f"strat-obs-pre-{uuid.uuid4().hex[:6]}"})
+    r = client.get(f"/api/evolution/proposals/{d['decision_id']}/observation-report")
+
+    assert r.status_code == 422
+    assert "executed" in r.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
 # EVO-004: Action-paths routing matrix endpoint
 # ---------------------------------------------------------------------------
 
