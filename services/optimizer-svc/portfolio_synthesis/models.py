@@ -8,6 +8,7 @@ Canonical spec: MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md
 from __future__ import annotations
 
 import math
+import re
 import uuid
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
@@ -72,6 +73,7 @@ class ProposalDirection(str, Enum):
 SCHEMA_PATH = Path(__file__).with_name("persona_allocation_proposal.schema.json")
 _TARGET_TYPES = {item.value for item in ProposalTargetType}
 _DIRECTIONS = {item.value for item in ProposalDirection}
+_TARGET_WEIGHT_KEY_RE = re.compile(r"^[A-Za-z0-9._:/-]+$")
 
 
 def _is_non_empty_string(value: Any) -> bool:
@@ -90,7 +92,7 @@ def _validate_number_range(name: str, value: Any, lo: float, hi: float) -> None:
 # Input: PersonaAllocationProposal
 # ---------------------------------------------------------------------------
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class PersonaAllocationProposal:
     """
     Standardised proposal from one advisor persona for a capital pool.
@@ -122,18 +124,18 @@ class PersonaAllocationProposal:
     capital_pool_id: str
     scope_ref: str
 
-    target_type: str = "pool"
-    directions: List[str] = field(default_factory=list)
-    target_weights: Dict[str, float] = field(default_factory=dict)
+    target_type: str
+    directions: List[str]
+    target_weights: Dict[str, float]
 
-    conviction: float = 0.5
-    uncertainty: float = 0.0
+    conviction: float
+    uncertainty: float
     rationale_ref: Optional[str] = None
     regime_ref: Optional[str] = None
     valid_from: Optional[str] = None
     valid_to: Optional[str] = None
-    evidence_refs: List[str] = field(default_factory=list)
-    created_at: str = field(default_factory=_utc_now)
+    evidence_refs: List[str]
+    created_at: str
 
     reliability_score: float = 1.0
     regime_fit_score: float = 1.0
@@ -155,11 +157,13 @@ class PersonaAllocationProposal:
             raise SynthesisError("directions must be a list of direction strings")
 
         for direction in self.directions:
-            if direction not in _DIRECTIONS:
+            if not isinstance(direction, str) or direction not in _DIRECTIONS:
                 raise SynthesisError(
                     f"directions contains invalid value {direction!r}; "
                     f"must be one of {sorted(_DIRECTIONS)}"
                 )
+        if len(set(self.directions)) != len(self.directions):
+            raise SynthesisError("directions entries must be unique")
 
         if not isinstance(self.target_weights, Mapping):
             raise SynthesisError("target_weights must be a symbol-to-weight mapping")
@@ -170,6 +174,10 @@ class PersonaAllocationProposal:
         for symbol, weight in self.target_weights.items():
             if not _is_non_empty_string(symbol):
                 raise SynthesisError("target_weights keys must be non-empty strings")
+            if not _TARGET_WEIGHT_KEY_RE.fullmatch(symbol):
+                raise SynthesisError(
+                    "target_weights keys must match pattern ^[A-Za-z0-9._:/-]+$"
+                )
             _validate_number_range(f"target_weights[{symbol!r}]", weight, 0.0, 1.0)
 
         if not isinstance(self.evidence_refs, list):

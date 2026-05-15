@@ -54,17 +54,17 @@ class ProposalIn(BaseModel):
     persona_id: str
     capital_pool_id: str
     scope_ref: str
-    target_type: str = "pool"
-    directions: List[str] = Field(default_factory=list)
-    target_weights: Dict[str, float] = Field(default_factory=dict)
-    conviction: float = 0.5
-    uncertainty: float = 0.0
+    target_type: str
+    directions: List[str]
+    target_weights: Dict[str, float]
+    conviction: float
+    uncertainty: float
     rationale_ref: Optional[str] = None
     regime_ref: Optional[str] = None
     valid_from: Optional[str] = None
     valid_to: Optional[str] = None
-    evidence_refs: List[str] = Field(default_factory=list)
-    created_at: Optional[str] = None
+    evidence_refs: List[str]
+    created_at: str
     reliability_score: float = 1.0
     regime_fit_score: float = 1.0
     governance_multiplier: float = 1.0

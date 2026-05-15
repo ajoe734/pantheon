@@ -95,6 +95,33 @@ class TestPersonaAllocationProposalSchema(unittest.TestCase):
         with self.assertRaises(SynthesisError):
             PersonaAllocationProposal(**valid_payload(directions=["rotate"]))
 
+    def test_dataclass_rejects_duplicate_directions(self) -> None:
+        with self.assertRaisesRegex(SynthesisError, "directions entries must be unique"):
+            PersonaAllocationProposal(**valid_payload(directions=["long", "long"]))
+
+    def test_dataclass_rejects_invalid_target_weight_key(self) -> None:
+        with self.assertRaisesRegex(SynthesisError, "target_weights keys must match pattern"):
+            PersonaAllocationProposal(**valid_payload(target_weights={"2330 TW": 0.7}))
+
+    def test_api_rejects_omitted_created_at(self) -> None:
+        from fastapi.testclient import TestClient
+        from main import app
+
+        proposal = valid_payload()
+        proposal.pop("created_at")
+
+        response = TestClient(app).post(
+            "/api/optimizer/synthesize",
+            json={
+                "proposals": [proposal],
+                "capital_pool_id": "pool-001",
+                "scope_ref": "paper",
+            },
+        )
+
+        self.assertEqual(422, response.status_code)
+        self.assertIn("created_at", response.text)
+
     def test_dataclass_rejects_weight_sum_above_one(self) -> None:
         errors = validate_persona_allocation_proposal_json(
             valid_payload(target_weights={"2330.TW": 0.7, "0050.TW": 0.4})
