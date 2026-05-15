@@ -1,8 +1,9 @@
 # MGMT-BROKER-001 Evidence Note
 
 Task: Shioaji sandbox adapter facade
-Owner: Codex
+Owner: Codex2
 Reviewer: Gemini2
+Implementation commit: `80788f94` (original Codex task commit before reassignment)
 
 ## Scope
 
@@ -52,4 +53,4 @@ Observed result:
 - `test_facade`: 7 tests passed
 - `test_adapter`: 40 tests passed
 - `py_compile`: passed
-- `pytest services/broker/shioaji -q`: 54 tests passed
+- `pytest services/broker/shioaji -q`: 58 tests passed
