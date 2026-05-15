@@ -1,0 +1,242 @@
+{
+  "assertions": {
+    "broker_tools_denied_by_adapter_policy": true,
+    "denied_tools_not_dispatched_upstream": true,
+    "denied_workflows_not_dispatched_upstream": true
+  },
+  "rows": [
+    {
+      "error": "",
+      "evidence": {
+        "broker_execution": "deferred",
+        "status": 200,
+        "upstream_status": "ok"
+      },
+      "row": "capabilities-remain-fail-closed",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "effective_tools": [
+          "research.search"
+        ],
+        "policy_blocked_tools": [
+          "broker.submit",
+          "broker_order",
+          "canary.order",
+          "capital.bind",
+          "lean.deploy",
+          "live.order",
+          "paper.execute",
+          "submit_order"
+        ],
+        "status": 200
+      },
+      "row": "effective-tools-exclude-broker-tools",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "status": 200,
+        "tool_name": "research.search"
+      },
+      "row": "safe-control-tool-dispatches",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "error_code": "BRIDGE_TOOL_DENIED",
+        "policy_class": "always_blocked",
+        "status": 403
+      },
+      "row": "tool-denied:broker.submit",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "error_code": "BRIDGE_TOOL_DENIED",
+        "policy_class": "always_blocked",
+        "status": 403
+      },
+      "row": "tool-denied:broker_order",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "error_code": "BRIDGE_TOOL_DENIED",
+        "policy_class": "always_blocked",
+        "status": 403
+      },
+      "row": "tool-denied:submit_order",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "error_code": "BRIDGE_TOOL_DENIED",
+        "policy_class": "always_blocked",
+        "status": 403
+      },
+      "row": "tool-denied:paper.execute",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "error_code": "BRIDGE_TOOL_DENIED",
+        "policy_class": "always_blocked",
+        "status": 403
+      },
+      "row": "tool-denied:live.order",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "error_code": "BRIDGE_TOOL_DENIED",
+        "policy_class": "always_blocked",
+        "status": 403
+      },
+      "row": "tool-denied:canary.order",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "error_code": "BRIDGE_TOOL_DENIED",
+        "policy_class": "always_blocked",
+        "status": 403
+      },
+      "row": "tool-denied:capital.bind",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "error_code": "BRIDGE_TOOL_DENIED",
+        "policy_class": "always_blocked",
+        "status": 403
+      },
+      "row": "tool-denied:lean.deploy",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "status": 200,
+        "workflow_ref": "research.daily_scan"
+      },
+      "row": "safe-control-workflow-dispatches",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "error_code": "BRIDGE_WORKFLOW_DENIED",
+        "policy_class": "always_blocked",
+        "status": 403
+      },
+      "row": "workflow-denied:broker.submit",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "error_code": "BRIDGE_WORKFLOW_DENIED",
+        "policy_class": "always_blocked",
+        "status": 403
+      },
+      "row": "workflow-denied:paper.execute",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "error_code": "BRIDGE_WORKFLOW_DENIED",
+        "policy_class": "always_blocked",
+        "status": 403
+      },
+      "row": "workflow-denied:live.order",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "error_code": "BRIDGE_WORKFLOW_DENIED",
+        "policy_class": "always_blocked",
+        "status": 403
+      },
+      "row": "workflow-denied:canary.deploy",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "error_code": "BRIDGE_WORKFLOW_DENIED",
+        "policy_class": "always_blocked",
+        "status": 403
+      },
+      "row": "workflow-denied:capital.bind",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "error_code": "BRIDGE_WORKFLOW_DENIED",
+        "policy_class": "always_blocked",
+        "status": 403
+      },
+      "row": "workflow-denied:lean.deploy",
+      "status": "passed"
+    },
+    {
+      "error": "",
+      "evidence": {
+        "denied_tools": [
+          "broker.submit",
+          "broker_order",
+          "canary.order",
+          "capital.bind",
+          "lean.deploy",
+          "live.order",
+          "paper.execute",
+          "submit_order"
+        ],
+        "denied_workflows": [
+          "broker.submit",
+          "canary.deploy",
+          "capital.bind",
+          "lean.deploy",
+          "live.order",
+          "paper.execute"
+        ],
+        "status": 200,
+        "upstream_tool_invocations": [
+          "research.search"
+        ],
+        "upstream_workflow_invocations": [
+          "research.daily_scan"
+        ]
+      },
+      "row": "audit-denials-without-upstream-dispatch",
+      "status": "passed"
+    }
+  ],
+  "summary": {
+    "blocked_tool_count": 8,
+    "blocked_workflow_count": 6,
+    "canary_execution_enabled": false,
+    "capital_binding_enabled": false,
+    "live_execution_enabled": false,
+    "passed": 19,
+    "production_broker_enabled": false,
+    "rows": 19,
+    "smoke_passed": true
+  },
+  "task_id": "MGMT-SAFE-003"
+}

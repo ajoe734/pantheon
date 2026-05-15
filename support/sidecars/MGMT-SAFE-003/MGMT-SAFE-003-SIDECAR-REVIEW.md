@@ -2,9 +2,9 @@
 
 **Sidecar Kind:** review_packet  
 **Parent Task:** MGMT-SAFE-003 — OpenClaw broker tool denial smoke  
-**Prepared by:** Claude (sidecar owner, MGMT-SAFE-003-SIDECAR-REVIEW)  
+**Prepared by:** Claude (initial), updated by Claude2 (2026-05-15, MGMT-SAFE-003-SIDECAR-REVIEW)
 **Prepared at:** 2026-05-15  
-**Intended reviewer:** Copilot (MGMT-SAFE-003 reviewer)  
+**Intended reviewer:** Claude (MGMT-SAFE-003 reviewer — reassigned from Copilot after quota exhaustion)
 **Supporting reviewer:** Codex (MGMT-SAFE-003-SIDECAR-REVIEW reviewer)
 
 ---
@@ -137,9 +137,10 @@ PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_openclaw_broker_tool_denial_smoke.
 # Run smoke runner tests
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_run_openclaw_broker_tool_denial_smoke.py -q
 
-# Run bridge unit tests (58 tests)
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest \
+# Run bridge unit tests (58 tests) — run via pytest from repo root
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest \
   services/openclaw-gateway-adapter/test_tool_workflow_bridge.py -q
+# Alternative: cd services/openclaw-gateway-adapter && python3 -m unittest test_tool_workflow_bridge -q
 
 # Run full gateway adapter pytest suite (223 tests)
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest \
@@ -167,9 +168,9 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
 
 ---
 
-## 7. Review Checklist for Copilot
+## 7. Review Checklist for Claude
 
-The reviewer (Copilot) should verify:
+The reviewer (Claude) should verify:
 
 - [ ] `_ALWAYS_BLOCKED_TOOLS` frozenset covers expected broker/live/paper/canary/capital/lean names.
 - [ ] `_ALWAYS_BLOCKED_TOOL_PREFIXES` / `_ALWAYS_BLOCKED_WORKFLOW_PREFIXES` cover the expected namespaces.
@@ -184,8 +185,9 @@ The reviewer (Copilot) should verify:
 
 ## 8. Reviewer Handoff Notes
 
-MGMT-SAFE-003 is currently in `review` status awaiting Copilot's response.
-This sidecar is provided to accelerate that review:
+MGMT-SAFE-003 is currently in `review_approved` status. Reviewer was reassigned
+from Copilot (quota exhausted) to Claude, who has already approved the parent task.
+This sidecar packet documents the evidence and implementation for the record:
 
 - The evidence JSON at `support/evidence/MGMT-SAFE-003/openclaw-broker-tool-denial-smoke.json`
   is the machine-readable ground truth for all 19 checks.
@@ -193,10 +195,13 @@ This sidecar is provided to accelerate that review:
   `services/openclaw-gateway-adapter/tool_workflow_bridge.py`.
 - No canonical architecture documents were modified by MGMT-SAFE-003.
 
-If Copilot approves, use:
+If Claude approves this sidecar packet, use:
 ```bash
-AI_NAME=Copilot REVIEW_FILE=support/sidecars/MGMT-SAFE-003/MGMT-SAFE-003-SIDECAR-REVIEW.md \
-  ./scripts/ai-status.sh approve MGMT-SAFE-003 "Review approved — 19/19 smoke checks verified, always-blocked policy correct, no upstream dispatch for denied calls."
+AI_NAME=Claude REVIEW_FILE=support/sidecars/MGMT-SAFE-003/MGMT-SAFE-003-SIDECAR-REVIEW.md \
+  ./scripts/ai-status.sh approve MGMT-SAFE-003-SIDECAR-REVIEW \
+  "Sidecar review packet verified — reviewer routing corrected to Claude, reproducibility commands fixed, evidence summary accurate."
 ```
+
+Note: Parent task MGMT-SAFE-003 was already approved by Claude via the main review path.
 
 If changes are needed, use `reopen` with concrete required changes.
