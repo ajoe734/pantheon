@@ -3,7 +3,7 @@
   "sprint": "2026-05-13-ep5-qlib-bff-consolidation",
   "sprint_started_at": "2026-05-13T02:00:00Z",
   "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec，從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV，跑 production_activation_smoke.py --backend real，submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal，registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff，command envelope unification，non-empty fixture & detail journey，SSE real stream replay，strict env cutover，seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write 驗證通過後即可 deprecate 舊 receipt，後續 regression 追蹤不再以固定天數阻塞派工。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。",
-  "updated_at": "2026-05-15T01:20:44Z",
+  "updated_at": "2026-05-15T01:26:30Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -108,13 +108,13 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "reviewing",
+      "status": "finalize",
       "current_task_ids": [
         "FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE"
       ],
       "branch": "feat/gemini-research-runtime",
-      "next": "Acceptance packet and dependency map for FE-INT-GATE-A11Y-BREADCRUMB prepared at support/sidecars/FE-INT-GATE-A11Y-BREADCRUMB/FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout.",
-      "last_update": "2026-05-15T01:10:00Z"
+      "next": "Sidecar acceptance packet reviewed and approved. Packet accurately captured the breadcrumb list semantic violation requirements. All 6 acceptance criteria were satisfied by the parent closeout. Minor artifact path discrepancy noted but non-blocking. Owner may finalize.",
+      "last_update": "2026-05-15T01:26:30Z"
     },
     {
       "name": "Codex",
@@ -476,8 +476,8 @@
         "design token 改動有 commit 訊息 reference token name",
         "本地 npx playwright test e2e/17-a11y-v5.spec.ts 全綠"
       ],
-      "next": "Review approved. Evidence: support/reviews/FE-INT-GATE-A11Y-CONTRAST-codex2-review.md. Owner should finalize with task-scoped closeout commit and done transition.",
-      "last_update": "2026-05-15T01:20:05Z",
+      "next": "Supervisor resumed FE-INT-GATE-A11Y-CONTRAST for finalize after successful dispatch.",
+      "last_update": "2026-05-15T01:24:28Z",
       "review_notes_zh": [
         "已核對 execute-plans commit e3452cf 僅改 src/index.css；env/status/sidebar token 對比在 light/dark 均 >=4.5，最低 status-warning/15 light mode 4.88:1；本地 Vite 5173 重跑 npx playwright test e2e/17-a11y-v5.spec.ts，9/9 pass，六個 v5 axe 頁 critical+serious=0。"
       ],
@@ -490,7 +490,7 @@
       "phase": "Pantheon FE Integration Gate 2026-05-13",
       "owner": "Gemini",
       "reviewer": "Claude",
-      "status": "review",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [
         "support/sidecars/FE-INT-GATE-A11Y-BREADCRUMB/FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE.md"
@@ -500,14 +500,18 @@
         "Do not edit canonical truth",
         "Hand off the packet to the assigned reviewer"
       ],
-      "next": "Acceptance packet and dependency map for FE-INT-GATE-A11Y-BREADCRUMB prepared at support/sidecars/FE-INT-GATE-A11Y-BREADCRUMB/FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout.",
-      "last_update": "2026-05-15T01:10:00Z",
+      "next": "Sidecar acceptance packet reviewed and approved. Packet accurately captured the breadcrumb list semantic violation requirements. All 6 acceptance criteria were satisfied by the parent closeout. Minor artifact path discrepancy noted but non-blocking. Owner may finalize.",
+      "last_update": "2026-05-15T01:26:30Z",
       "task_class": "sidecar",
       "auto_generated": true,
       "helper_parent": "FE-INT-GATE-A11Y-BREADCRUMB",
       "helper_kind": "acceptance_packet",
       "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
+      "auto_created_by": "supervisor-underutilization",
+      "review_notes_zh": [
+        "驗收包正確涵蓋 WCAG 1.3.1 list 語意問題、6 項 acceptance checklist 與 verification 指令；不觸及 canonical truth；父任務已於 2026-05-15 done，所有標準均達成。"
+      ],
+      "review_file": "support/reviews/FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE-claude-review.md"
     },
     {
       "id": "FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE",
@@ -710,8 +714,9 @@
       "from": "Gemini",
       "to": "Claude",
       "message": "Acceptance packet and dependency map for FE-INT-GATE-A11Y-BREADCRUMB prepared at support/sidecars/FE-INT-GATE-A11Y-BREADCRUMB/FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout.",
-      "status": "pending",
-      "created_at": "2026-05-15T01:10:00Z"
+      "status": "done",
+      "created_at": "2026-05-15T01:10:00Z",
+      "resolved_at": "2026-05-15T01:26:30Z"
     },
     {
       "task_id": "FE-INT-GATE-A11Y-CONTRAST",
@@ -729,6 +734,14 @@
       "message": "Review approved. Evidence: support/reviews/FE-INT-GATE-A11Y-CONTRAST-codex2-review.md. Owner should finalize with task-scoped closeout commit and done transition.",
       "status": "pending",
       "created_at": "2026-05-15T01:20:05Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Sidecar acceptance packet reviewed and approved. Packet accurately captured the breadcrumb list semantic violation requirements. All 6 acceptance criteria were satisfied by the parent closeout. Minor artifact path discrepancy noted but non-blocking. Owner may finalize.",
+      "status": "pending",
+      "created_at": "2026-05-15T01:26:30Z"
     }
   ],
   "blockers": [
@@ -844,11 +857,11 @@
     },
     "Gemini": {
       "total": 1,
-      "active": 1,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 1,
-      "review_approved": 0,
+      "review": 0,
+      "review_approved": 1,
       "todo": 0
     },
     "Gemini2": {
