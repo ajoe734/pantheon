@@ -11085,6 +11085,7 @@ class ReadSurfaceStore:
             "created_at": artifact.get("created_at"),
             "metric_summary": self._rw05_metric_summary(artifact),
             "experiment_refs": self._rw05_experiment_refs(artifact),
+            "research_linkage": self._rw05_research_linkage(artifact),
             "is_current_version": self._rw05_is_current_version(artifact),
             "allowedActions": {
                 "canCompare": self._rw05_can_compare(artifact.get("status")),
@@ -11105,6 +11106,16 @@ class ReadSurfaceStore:
         if not isinstance(refs, list):
             return []
         return [json.loads(json.dumps(ref)) for ref in refs if isinstance(ref, dict)]
+
+    @staticmethod
+    def _rw05_research_linkage(artifact: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        metadata = artifact.get("metadata") if isinstance(artifact.get("metadata"), dict) else {}
+        provenance = artifact.get("provenance") if isinstance(artifact.get("provenance"), dict) else {}
+        for source in (artifact, metadata, provenance):
+            linkage = source.get("research_linkage")
+            if isinstance(linkage, dict):
+                return json.loads(json.dumps(linkage))
+        return None
 
     def _project_research_artifact_detail(self, artifact: Dict[str, Any]) -> Dict[str, Any]:
         lineage_chain = self._rw05_lineage_versions(artifact.get("lineage_id"))
@@ -11148,6 +11159,7 @@ class ReadSurfaceStore:
             "parameters": json.loads(json.dumps(artifact.get("parameters") or {})),
             "provenance": json.loads(json.dumps(artifact.get("provenance") or {})),
             "experiment_refs": self._rw05_experiment_refs(artifact),
+            "research_linkage": self._rw05_research_linkage(artifact),
             "allowedActions": {
                 "canCompare": self._rw05_can_compare(artifact.get("status")),
                 "canViewDetail": True,
