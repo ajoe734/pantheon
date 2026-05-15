@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PAPER-006",
+  "archived_at": "2026-05-15T17:06:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PAPER-006",
+    "title": "paper EvolutionDecision review packet",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-02 Management Paper Loop Proof",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Owner closeout complete. Approved implementation is durable in commit 2de69c28; reviewer approval note is durable in task-scoped closeout commit 57db9ad5. Owner re-read task brief, Claude2 review notes, and task-owned artifacts; confirmed EvolutionDecision review packet still has validation_errors=[], live_capital_side_effects=false, environment=paper, and all 9 safety_assertions=true. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/governance/paper_evolution_decision.py services/control-plane/governance/test_paper_evolution_decision.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/governance/test_paper_evolution_decision.py services/control-plane/governance/test_evolution_decision.py -q -> 22 passed; jq evidence invariant check -> true; git diff --check on task-owned implementation/evidence -> pass. Worktree still has unrelated dirty files from other tasks, excluded from MGMT-PAPER-006 closeout.",
+    "last_update": "2026-05-15T17:06:36Z",
+    "review_notes_zh": [
+      "審查通過：paper EvolutionDecision review packet 符合 MGMT-PAPER-006 scope。",
+      "查核重點：EvolutionDecision action_type=revalidate、decision_state=executed、risk_level=low、execution_result.plane=research；ApprovalDecision target_type=evolution_proposal、target_id 正確指向 evolution decision_id、decided/approved 狀態；review_chain 含 reviewed/approved/executed 三步；cooldown 3d/observation 7d 正確計算；OODA decide_ref + learn_ref 齊全；telemetry ingest 4 個 invariant 全 true；safety_assertions 6 項全 true；evidence packet validation_errors=[]；live_capital_side_effects=false。",
+      "驗證命令：py_compile 兩檔案 => PASS；pytest test_paper_evolution_decision.py test_evolution_decision.py -q => 22 passed；jq evidence invariant check => validation_errors=[] 且 9 個 safety_assertions 全 true。"
+    ],
+    "review_file": "support/reviews/MGMT-PAPER-006-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T17:06:36Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "merge/backend-dev-into-master",
+      "git_clean_required": false,
+      "commit": "57db9ad5324d22eea8935ad39357e7e42742e235",
+      "commit_subject": "MGMT-PAPER-006 closeout review note",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-PAPER-006",
+        "Reviewer": "Claude2",
+        "Verification": "PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/governance/paper_evolution_decision.py services/control-plane/governance/test_paper_evolution_decision.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/governance/test_paper_evolution_decision.py services/control-plane/governance/test_evolution_decision.py -q -> 22 passed; jq evidence invariant check -> true; git diff --check on task-owned implementation/evidence -> pass."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 49,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 5,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PAPER-006",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T16:43:03Z",
+      "resolved_at": "2026-05-15T16:43:31Z"
+    },
+    {
+      "task_id": "MGMT-PAPER-006",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Ready for review: added standalone paper EvolutionDecision review packet in commit 2de69c28. Task-owned files: services/control-plane/governance/paper_evolution_decision.py, services/control-plane/governance/test_paper_evolution_decision.py, support/evidence/MGMT-PAPER-006-paper-evolution-decision.json. Packet consumes tracked MGMT-PAPER-005 telemetry evidence, creates low-risk revalidate EvolutionDecision with ApprovalDecision target_type=evolution_proposal, reviewer_on_duty reviewed/approved chain, research-plane execution, 3d cooldown, 7d observation, OODA decide/learn refs, and explicit no runtime/broker/live-capital mutation flags. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/governance/paper_evolution_decision.py services/control-plane/governance/test_paper_evolution_decision.py; PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.control-plane.governance.test_paper_evolution_decision; PYTHONDONTWRITEBYTECODE=1 python3 services/control-plane/governance/paper_evolution_decision.py; PYTHONDONTWRITEBYTECODE=1 python3 services/control-plane/governance/test_paper_evolution_decision.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/governance/test_paper_evolution_decision.py services/control-plane/governance/test_evolution_decision.py -q -> 22 passed; jq evidence invariant check passed; git diff --check on task-owned files passed. Worktree has unrelated dirty files from other tasks/status; review only listed task-owned files.",
+      "status": "done",
+      "created_at": "2026-05-15T16:52:05Z",
+      "resolved_at": "2026-05-15T16:59:31Z"
+    },
+    {
+      "task_id": "MGMT-PAPER-006",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved by Claude2: paper EvolutionDecision review packet passes scoped review and focused verification. 22 tests passed, evidence validation_errors=[], all 9 safety assertions true. Owner Codex2 should complete closeout per task-closeout-finalization.",
+      "status": "done",
+      "created_at": "2026-05-15T16:59:31Z",
+      "resolved_at": "2026-05-15T17:06:37Z"
+    }
+  ],
+  "blockers": []
+}
