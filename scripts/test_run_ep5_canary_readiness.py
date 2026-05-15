@@ -51,6 +51,50 @@ def base_env() -> dict[str, str]:
     }
 
 
+def canary_plan_fixture(**promotion_gate_overrides: object) -> dict[str, object]:
+    promotion_gate = {
+        "promotion_gate_decision_id": "apv-canary-001",
+        "human_gate_packet_ref": "docs/deployment/evidence/ep5-human-gate-input/test/human-gate-packet.json",
+        "broker_sandbox_smoke_ref": "docs/deployment/evidence/execution-sandbox-canary-activation-ready/test",
+        "risk_owner_approval_ref": "approval://risk-owner/canary-001",
+        "operator_approval_ref": "approval://operator/canary-001",
+        "persona_capital_binding_id": "pcb-canary-001",
+        "allowed_deployment_scope": "canary",
+        "capital_scale_pct": 5.0,
+        "gross_scale_pct": 25.0,
+    }
+    promotion_gate.update(promotion_gate_overrides)
+    return {
+        "target_stage": "canary",
+        "scale": {"capital_scale_pct": 5.0, "gross_scale_pct": 25.0},
+        "rollback": {"action_type": "pause_then_replace"},
+        "metadata": {"promotion_gate": promotion_gate},
+    }
+
+
+def broker_smoke_summary_fixture() -> dict[str, object]:
+    return {
+        "task_id": "EP5-BROKER-TW-002",
+        "provider": "Shioaji",
+        "status": "passed",
+        "run_mode": "mock_api_replay",
+        "proof_boundary": "broker_adapter_sandbox_smoke; not canary/live/capital proof",
+        "order_ids": {
+            "pantheon_order_id": "order-001",
+            "shioaji_trade_id": "trade-001",
+        },
+        "reconciliation": {"status": "passed"},
+        "live_gate": {
+            "status": "rejected",
+            "response": {"error_code": "SHIOAJI_LIVE_DISABLED"},
+        },
+        "no_real_capital": {
+            "real_capital_used": False,
+            "production_live_order_submitted": False,
+        },
+    }
+
+
 class RunEp5CanaryReadinessTest(unittest.TestCase):
     def test_evaluate_provider_matrix_requires_all_secret_refs(self) -> None:
         env = base_env()
@@ -119,6 +163,7 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
             datasource_summary_path = tmp / "datasource-summary.json"
             plan_path = tmp / "canary-deployment-plan.json"
             drill_summary_path = tmp / "rollback-drill-summary.json"
+            broker_smoke_summary_path = tmp / "broker-smoke-summary.json"
             output_dir = tmp / "packet"
 
             checklist_path.write_text(
@@ -129,16 +174,7 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
                 json.dumps({"status": "pass", "providers": ["ibkr", "kraken", "shioaji", "tej"]}),
                 encoding="utf-8",
             )
-            plan_path.write_text(
-                json.dumps(
-                    {
-                        "target_stage": "canary",
-                        "scale": {"capital_scale_pct": 5.0, "gross_scale_pct": 25.0},
-                        "rollback": {"action_type": "pause_then_replace"},
-                    }
-                ),
-                encoding="utf-8",
-            )
+            plan_path.write_text(json.dumps(canary_plan_fixture()), encoding="utf-8")
             drill_summary_path.write_text(
                 json.dumps(
                     {
@@ -149,6 +185,7 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            broker_smoke_summary_path.write_text(json.dumps(broker_smoke_summary_fixture()), encoding="utf-8")
 
             args = type(
                 "Args",
@@ -158,6 +195,7 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
                     "datasource_summary_json": str(datasource_summary_path),
                     "plan_json": str(plan_path),
                     "drill_summary_json": str(drill_summary_path),
+                    "broker_smoke_summary_json": str(broker_smoke_summary_path),
                     "dual_vm_evidence_dir": str(tmp),
                     "event_trace_status": "packetized",
                     "event_trace_note": "Trace query evidence remains packetized pending a replay-clean projection capture.",
@@ -173,6 +211,10 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
             self.assertEqual(packet["event_trace_read_model"]["status"], "packetized")
             self.assertEqual(summary["event_trace_status"], "packetized")
             self.assertEqual(packet["bundle"]["canary_plan"]["target_stage"], "canary")
+            self.assertEqual(
+                packet["bundle"]["canary_plan"]["promotion_gate"]["operator_approval_ref"],
+                "approval://operator/canary-001",
+            )
 
     def test_emit_human_gate_packet_consumes_broker_smoke_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -189,16 +231,7 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
                 json.dumps({"status": "pass", "providers": ["ibkr", "kraken", "shioaji", "tej"]}),
                 encoding="utf-8",
             )
-            plan_path.write_text(
-                json.dumps(
-                    {
-                        "target_stage": "canary",
-                        "scale": {"capital_scale_pct": 5.0, "gross_scale_pct": 25.0},
-                        "rollback": {"action_type": "pause_then_replace"},
-                    }
-                ),
-                encoding="utf-8",
-            )
+            plan_path.write_text(json.dumps(canary_plan_fixture()), encoding="utf-8")
             drill_summary_path.write_text(
                 json.dumps(
                     {
@@ -209,31 +242,7 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            broker_smoke_summary_path.write_text(
-                json.dumps(
-                    {
-                        "task_id": "EP5-BROKER-TW-002",
-                        "provider": "Shioaji",
-                        "status": "passed",
-                        "run_mode": "mock_api_replay",
-                        "proof_boundary": "broker_adapter_sandbox_smoke; not canary/live/capital proof",
-                        "order_ids": {
-                            "pantheon_order_id": "order-001",
-                            "shioaji_trade_id": "trade-001",
-                        },
-                        "reconciliation": {"status": "passed"},
-                        "live_gate": {
-                            "status": "rejected",
-                            "response": {"error_code": "SHIOAJI_LIVE_DISABLED"},
-                        },
-                        "no_real_capital": {
-                            "real_capital_used": False,
-                            "production_live_order_submitted": False,
-                        },
-                    }
-                ),
-                encoding="utf-8",
-            )
+            broker_smoke_summary_path.write_text(json.dumps(broker_smoke_summary_fixture()), encoding="utf-8")
 
             args = type(
                 "Args",
@@ -262,6 +271,89 @@ class RunEp5CanaryReadinessTest(unittest.TestCase):
             self.assertEqual(packet["bundle"]["broker_sandbox_smoke"]["provider"], "Shioaji")
             checks = {item["name"]: item for item in packet["acceptance_checks"]}
             self.assertEqual(checks["broker_sandbox_smoke_consumed"]["status"], "pass")
+
+    def test_emit_human_gate_packet_requires_operator_approval_ref(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            checklist_path = tmp / "operator-checklist.json"
+            datasource_summary_path = tmp / "datasource-summary.json"
+            plan_path = tmp / "canary-deployment-plan.json"
+            drill_summary_path = tmp / "rollback-drill-summary.json"
+            broker_smoke_summary_path = tmp / "broker-smoke-summary.json"
+
+            checklist_path.write_text(json.dumps({"status": "pass", "check_health": True}), encoding="utf-8")
+            datasource_summary_path.write_text(
+                json.dumps({"status": "pass", "providers": ["ibkr", "kraken", "shioaji", "tej"]}),
+                encoding="utf-8",
+            )
+            plan_path.write_text(json.dumps(canary_plan_fixture(operator_approval_ref="")), encoding="utf-8")
+            drill_summary_path.write_text(
+                json.dumps(
+                    {
+                        "status": "executed",
+                        "replacement_binding_id": "rb-replacement-001",
+                        "kill_switch_safe_mode": "paused",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            broker_smoke_summary_path.write_text(json.dumps(broker_smoke_summary_fixture()), encoding="utf-8")
+
+            packet = readiness.build_human_gate_packet(
+                checklist_path=checklist_path,
+                datasource_summary_path=datasource_summary_path,
+                plan_path=plan_path,
+                drill_summary_path=drill_summary_path,
+                broker_smoke_summary_path=broker_smoke_summary_path,
+                dual_vm_evidence_dir=tmp,
+                event_trace_status="packetized",
+                event_trace_note="Trace query evidence remains packetized.",
+            )
+
+            self.assertEqual(packet["status"], "incomplete")
+            checks = {item["name"]: item for item in packet["acceptance_checks"]}
+            self.assertEqual(checks["canary_activation_gate_refs_present"]["status"], "fail")
+            self.assertIn("operator_approval_ref", checks["canary_activation_gate_refs_present"]["detail"])
+
+    def test_emit_human_gate_packet_requires_broker_smoke_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            checklist_path = tmp / "operator-checklist.json"
+            datasource_summary_path = tmp / "datasource-summary.json"
+            plan_path = tmp / "canary-deployment-plan.json"
+            drill_summary_path = tmp / "rollback-drill-summary.json"
+
+            checklist_path.write_text(json.dumps({"status": "pass", "check_health": True}), encoding="utf-8")
+            datasource_summary_path.write_text(
+                json.dumps({"status": "pass", "providers": ["ibkr", "kraken", "shioaji", "tej"]}),
+                encoding="utf-8",
+            )
+            plan_path.write_text(json.dumps(canary_plan_fixture()), encoding="utf-8")
+            drill_summary_path.write_text(
+                json.dumps(
+                    {
+                        "status": "executed",
+                        "replacement_binding_id": "rb-replacement-001",
+                        "kill_switch_safe_mode": "paused",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            packet = readiness.build_human_gate_packet(
+                checklist_path=checklist_path,
+                datasource_summary_path=datasource_summary_path,
+                plan_path=plan_path,
+                drill_summary_path=drill_summary_path,
+                broker_smoke_summary_path=None,
+                dual_vm_evidence_dir=tmp,
+                event_trace_status="packetized",
+                event_trace_note="Trace query evidence remains packetized.",
+            )
+
+            self.assertEqual(packet["status"], "incomplete")
+            checks = {item["name"]: item for item in packet["acceptance_checks"]}
+            self.assertEqual(checks["broker_sandbox_smoke_consumed"]["status"], "fail")
 
 
 if __name__ == "__main__":

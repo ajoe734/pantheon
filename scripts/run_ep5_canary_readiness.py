@@ -114,6 +114,19 @@ GOVERNED_PROVIDER_SPECS = (
     ),
 )
 
+CANARY_HUMAN_GATE_REQUIRED_FIELDS = (
+    "promotion_gate_decision_id",
+    "human_gate_packet_ref",
+    "broker_sandbox_smoke_ref",
+    "risk_owner_approval_ref",
+    "operator_approval_ref",
+    "persona_capital_binding_id",
+    "allowed_deployment_scope",
+    "capital_scale_pct",
+    "gross_scale_pct",
+)
+CANARY_HUMAN_GATE_ALLOWED_SCOPES = {"canary", "live"}
+
 
 def sanitize_headers(headers: dict[str, str] | None) -> dict[str, str]:
     sanitized: dict[str, str] = {}
@@ -184,6 +197,87 @@ def parse_float(env_map: dict[str, str], key: str, *, default: float | None = No
 
 def normalize_token(value: str | None) -> str:
     return str(value or "").strip().lower().replace(" ", "").replace("_", "").replace("-", "").replace("/", "")
+
+
+def nested_mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def optional_float(value: Any) -> float | None:
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def promotion_gate_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    metadata = nested_mapping(plan.get("metadata"))
+    for candidate in (
+        nested_mapping(plan.get("promotion_gate")),
+        nested_mapping(plan.get("activation_gate")),
+        nested_mapping(metadata.get("promotion_gate")),
+        nested_mapping(metadata.get("activation_gate")),
+    ):
+        if candidate:
+            return candidate
+    return {}
+
+
+def evaluate_canary_human_gate_plan(plan: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
+    gate = promotion_gate_from_plan(plan)
+    scale = nested_mapping(plan.get("scale"))
+    rollback = nested_mapping(plan.get("rollback"))
+    failures: list[str] = []
+
+    if plan.get("target_stage") != "canary":
+        failures.append(f"target_stage={plan.get('target_stage') or '<missing>'}")
+
+    plan_capital_scale = optional_float(scale.get("capital_scale_pct"))
+    plan_gross_scale = optional_float(scale.get("gross_scale_pct"))
+    if plan_capital_scale is None or not (0 < plan_capital_scale <= 5):
+        failures.append("plan.scale.capital_scale_pct must be > 0 and <= 5")
+    if plan_gross_scale is None or not (0 < plan_gross_scale <= 25):
+        failures.append("plan.scale.gross_scale_pct must be > 0 and <= 25")
+
+    if str(rollback.get("action_type") or "") != "pause_then_replace":
+        failures.append("rollback.action_type must be pause_then_replace")
+
+    missing = [field for field in CANARY_HUMAN_GATE_REQUIRED_FIELDS if not str(gate.get(field) or "").strip()]
+    if missing:
+        failures.append("missing promotion gate refs: " + ", ".join(missing))
+
+    allowed_scope = str(gate.get("allowed_deployment_scope") or "").strip().lower()
+    if allowed_scope and allowed_scope not in CANARY_HUMAN_GATE_ALLOWED_SCOPES:
+        failures.append("allowed_deployment_scope must permit canary")
+
+    gate_capital_scale = optional_float(gate.get("capital_scale_pct"))
+    gate_gross_scale = optional_float(gate.get("gross_scale_pct"))
+    if gate_capital_scale is None or not (0 < gate_capital_scale <= 5):
+        failures.append("promotion_gate.capital_scale_pct must be > 0 and <= 5")
+    if gate_gross_scale is None or not (0 < gate_gross_scale <= 25):
+        failures.append("promotion_gate.gross_scale_pct must be > 0 and <= 25")
+    if (
+        plan_capital_scale is not None
+        and gate_capital_scale is not None
+        and plan_capital_scale != gate_capital_scale
+    ):
+        failures.append("promotion_gate.capital_scale_pct must match plan scale")
+    if (
+        plan_gross_scale is not None
+        and gate_gross_scale is not None
+        and plan_gross_scale != gate_gross_scale
+    ):
+        failures.append("promotion_gate.gross_scale_pct must match plan scale")
+
+    if failures:
+        return False, "; ".join(failures), gate
+    return (
+        True,
+        "canary human gate carries explicit human-gate, broker-smoke, risk-owner, operator, capital-binding, and policy-scale refs",
+        gate,
+    )
 
 
 def evaluate_provider_matrix(env_map: dict[str, str]) -> list[ChecklistItem]:
@@ -772,15 +866,10 @@ def build_human_gate_packet(
 
     checklist_ok = checklist.get("status") == "pass"
     datasource_ok = datasource_summary.get("status") == "pass"
-    plan_ok = (
-        plan.get("target_stage") == "canary"
-        and float((plan.get("scale") or {}).get("capital_scale_pct") or 0.0) <= 5.0
-        and float((plan.get("scale") or {}).get("gross_scale_pct") or 0.0) <= 25.0
-        and str((plan.get("rollback") or {}).get("action_type") or "") == "pause_then_replace"
-    )
+    plan_ok, plan_detail, promotion_gate = evaluate_canary_human_gate_plan(plan)
     drill_ok = drill_summary.get("status") == "executed"
-    broker_smoke_ok = True
-    broker_smoke_detail = "No broker smoke summary was provided; retaining backward-compatible packet emission."
+    broker_smoke_ok = False
+    broker_smoke_detail = "Shioaji broker sandbox smoke summary is required before a canary human gate packet can be ready."
     if broker_smoke_summary is not None:
         no_real_capital = broker_smoke_summary.get("no_real_capital") or {}
         production_live = broker_smoke_summary.get("production_live") or {}
@@ -808,8 +897,13 @@ def build_human_gate_packet(
     acceptance_checks = [
         {
             "name": "repo_authoritative_operator_packet",
-            "status": "pass" if checklist_ok and datasource_ok and plan_ok and drill_ok else "fail",
-            "detail": "Checklist, datasource smoke, canary plan, and rollback drill evidence are all present and internally consistent.",
+            "status": "pass" if checklist_ok and datasource_ok and drill_ok else "fail",
+            "detail": "Checklist, datasource smoke, and rollback drill evidence are present and internally consistent.",
+        },
+        {
+            "name": "canary_activation_gate_refs_present",
+            "status": "pass" if plan_ok else "fail",
+            "detail": plan_detail,
         },
         {
             "name": "event_trace_gap_dispositioned",
@@ -822,14 +916,13 @@ def build_human_gate_packet(
             "detail": "Human gate input bundle is replay-clean at the artifact level; EP5 proof remains deferred.",
         },
     ]
-    if broker_smoke_summary_path is not None:
-        acceptance_checks.append(
-            {
-                "name": "broker_sandbox_smoke_consumed",
-                "status": "pass" if broker_smoke_ok else "fail",
-                "detail": broker_smoke_detail,
-            }
-        )
+    acceptance_checks.append(
+        {
+            "name": "broker_sandbox_smoke_consumed",
+            "status": "pass" if broker_smoke_ok else "fail",
+            "detail": broker_smoke_detail,
+        }
+    )
 
     return {
         "task_id": "APP-003-OPENCLAW-CLOSEOUT-001",
@@ -859,6 +952,17 @@ def build_human_gate_packet(
                 "capital_scale_pct": (plan.get("scale") or {}).get("capital_scale_pct"),
                 "gross_scale_pct": (plan.get("scale") or {}).get("gross_scale_pct"),
                 "rollback_action_type": (plan.get("rollback") or {}).get("action_type"),
+                "promotion_gate": {
+                    "promotion_gate_decision_id": promotion_gate.get("promotion_gate_decision_id"),
+                    "human_gate_packet_ref": promotion_gate.get("human_gate_packet_ref"),
+                    "broker_sandbox_smoke_ref": promotion_gate.get("broker_sandbox_smoke_ref"),
+                    "risk_owner_approval_ref": promotion_gate.get("risk_owner_approval_ref"),
+                    "operator_approval_ref": promotion_gate.get("operator_approval_ref"),
+                    "persona_capital_binding_id": promotion_gate.get("persona_capital_binding_id"),
+                    "allowed_deployment_scope": promotion_gate.get("allowed_deployment_scope"),
+                    "capital_scale_pct": promotion_gate.get("capital_scale_pct"),
+                    "gross_scale_pct": promotion_gate.get("gross_scale_pct"),
+                },
             },
             "rollback_drill": {
                 "path": str(drill_summary_path),
