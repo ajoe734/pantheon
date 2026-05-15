@@ -1,0 +1,399 @@
+{
+  "acceptance_checks": [
+    {
+      "detail": "source smoke provider is Shioaji",
+      "name": "broker_is_shioaji",
+      "status": "pass"
+    },
+    {
+      "detail": "order response stays in sandbox",
+      "name": "environment_is_sandbox",
+      "status": "pass"
+    },
+    {
+      "detail": "place response status is submitted",
+      "name": "place_result_recorded",
+      "status": "pass"
+    },
+    {
+      "detail": "cancel response status is cancelled",
+      "name": "cancel_result_recorded",
+      "status": "pass"
+    },
+    {
+      "detail": "readback after cancel confirms cancelled status",
+      "name": "readback_after_cancel_recorded",
+      "status": "pass"
+    },
+    {
+      "detail": "reconciliation status is passed",
+      "name": "reconcile_passed",
+      "status": "pass"
+    },
+    {
+      "detail": "live broker request is rejected with SHIOAJI_LIVE_DISABLED",
+      "name": "live_broker_fail_closed",
+      "status": "pass"
+    },
+    {
+      "detail": "real capital is neither used nor reserved",
+      "name": "capital_binding_not_enabled",
+      "status": "pass"
+    },
+    {
+      "detail": "raw Shioaji secret material is not persisted",
+      "name": "no_secret_material_persisted",
+      "status": "pass"
+    }
+  ],
+  "account_status": "ready",
+  "account_status_detail": {
+    "api_key_configured": false,
+    "basis": "mock Shioaji API replay completed; real account credential readiness is not asserted",
+    "raw_secret_material_persisted": false,
+    "run_mode": "mock_api_replay",
+    "secret_key_configured": false
+  },
+  "broker": "shioaji",
+  "canary_readiness_inputs": {
+    "broker_sandbox_evidence_packet_ref": "support/evidence/MGMT-BROKER-004/shioaji-sandbox-evidence-packet.json",
+    "broker_sandbox_smoke_ref": "support/evidence/MGMT-BROKER-003/summary.json",
+    "human_gate_required": true,
+    "operator_approval_required": true,
+    "risk_owner_approval_required": true
+  },
+  "cancel_result": {
+    "account_kind": "stock",
+    "capital_pool_id": "pool-ep5-broker-tw-sandbox",
+    "created_at": "2026-05-15T16:09:43.000453Z",
+    "deployment_stage": "sandbox",
+    "fill_price": 18.0,
+    "fill_qty": 0.0,
+    "filled_at": "2026-05-15T16:09:43.001034Z",
+    "is_real_capital": false,
+    "is_real_order": false,
+    "limit_price": 18.0,
+    "order_id": "4195d0aa0b4f4a0dbc63c57571e45e1b",
+    "order_type": "limit",
+    "qty": 1.0,
+    "reject_reason": null,
+    "shioaji_order_status": "cancelled",
+    "shioaji_order_status_code": null,
+    "shioaji_order_status_id": null,
+    "shioaji_order_status_message": null,
+    "shioaji_trade_id": "mock-shioaji-trade-001",
+    "side": "buy",
+    "sim_fill_flag": true,
+    "status": "cancelled",
+    "strategy_id": "strategy-ep5-broker-tw-smoke",
+    "submit_spacing_previous_elapsed_seconds": null,
+    "submit_spacing_seconds": 0.0,
+    "submit_spacing_wait_seconds": 0.0,
+    "symbol": "2890"
+  },
+  "capital_binding_enabled": false,
+  "environment": "sandbox",
+  "fail_closed_posture": {
+    "live_gate": {
+      "response": {
+        "error_code": "SHIOAJI_LIVE_DISABLED",
+        "message": "Live broker execution is permanently disabled. The Shioaji adapter operates in sandbox (simulation) mode only.",
+        "status": "broker_error",
+        "status_code": 403
+      },
+      "status": "rejected"
+    },
+    "no_real_capital": {
+      "production_live_cancel_submitted": false,
+      "production_live_order_submitted": false,
+      "real_capital_reserved": false,
+      "real_capital_used": false,
+      "status": "passed"
+    },
+    "production_live_cancel_submitted": false,
+    "production_live_order_submitted": false
+  },
+  "generated_at": "2026-05-15T17:08:10Z",
+  "human_gate_required": true,
+  "milestone_id": "MGMT-OODA-M3",
+  "ooda_packet": {
+    "act": {
+      "broker_evidence_refs": [
+        "support/evidence/MGMT-BROKER-003/summary.json",
+        "support/evidence/MGMT-BROKER-004/shioaji-sandbox-evidence-packet.json"
+      ],
+      "command_receipt_refs": [
+        "command-receipt://mgmt-broker-004/no-live-command-issued"
+      ],
+      "live_capital_side_effects": false,
+      "rollback_refs": [],
+      "runtime_binding_id": null,
+      "safe_mode_refs": []
+    },
+    "audit_refs": [
+      "support/evidence/MGMT-BROKER-003/summary.json",
+      "support/evidence/MGMT-BROKER-004/shioaji-sandbox-evidence-packet.json"
+    ],
+    "capital_pool_id": "pool-ep5-broker-tw-sandbox",
+    "closed_at": "2026-05-15T17:08:10Z",
+    "created_at": "2026-05-15T17:08:10Z",
+    "decide": {
+      "approval_decision_id": "human-gate-required-before-canary",
+      "decision_rationale_ref": "support/evidence/MGMT-BROKER-004/README.md",
+      "deployment_plan_id": null,
+      "evolution_decision_id": null,
+      "policy_decision_refs": [
+        "PAPER_CANARY_LIVE_POLICY.md",
+        "BINDING_AND_DEPLOYMENT_SEMANTICS.md"
+      ],
+      "sponsor_persona_id": null
+    },
+    "environment": "sandbox",
+    "learn": {
+      "evolution_followthrough_refs": [],
+      "observation_window": null,
+      "postmortem_refs": [
+        "support/evidence/MGMT-BROKER-004/README.md"
+      ],
+      "retrain_refs": [],
+      "telemetry_refs": [],
+      "trainer_refs": []
+    },
+    "loop_type": "rebalance",
+    "observe": {
+      "human_feedback_refs": [],
+      "incident_refs": [],
+      "market_refs": [
+        "support/evidence/MGMT-BROKER-003/summary.json"
+      ],
+      "signal_refs": [],
+      "source_refs": [
+        "docs/04/pantheon_sa_supplemental_2026-05-15/SA_management_console_multi_persona_ooda.md",
+        "docs/04/pantheon_sa_supplemental_2026-05-15/SD_management_console_multi_persona_ooda.md"
+      ],
+      "telemetry_refs": []
+    },
+    "orient": {
+      "allocation_proposal_refs": [],
+      "evidence_bundle_refs": [
+        "support/evidence/MGMT-BROKER-004/shioaji-sandbox-evidence-packet.json"
+      ],
+      "persona_proposal_refs": [],
+      "regime_state_ref": null,
+      "risk_adjudication_ref": "policy://live-broker-and-capital-binding-fail-closed",
+      "signal_inference_refs": [],
+      "universe_selection_ref": null
+    },
+    "packet_id": "ooda-mgmt-broker-004-shioaji-sandbox",
+    "persona_ids": [],
+    "status": "closed",
+    "strategy_id": "strategy-ep5-broker-tw-smoke",
+    "updated_at": "2026-05-15T17:08:10Z"
+  },
+  "ooda_packet_validation_errors": [],
+  "place_result": {
+    "account_kind": "stock",
+    "capital_pool_id": "pool-ep5-broker-tw-sandbox",
+    "created_at": "2026-05-15T16:09:43.000453Z",
+    "deployment_stage": "sandbox",
+    "fill_price": 18.0,
+    "fill_qty": 0.0,
+    "filled_at": null,
+    "is_real_capital": false,
+    "is_real_order": false,
+    "limit_price": 18.0,
+    "order_id": "4195d0aa0b4f4a0dbc63c57571e45e1b",
+    "order_type": "limit",
+    "qty": 1.0,
+    "reject_reason": null,
+    "shioaji_order_status": "submitted",
+    "shioaji_order_status_code": null,
+    "shioaji_order_status_id": null,
+    "shioaji_order_status_message": null,
+    "shioaji_trade_id": "mock-shioaji-trade-001",
+    "side": "buy",
+    "sim_fill_flag": true,
+    "status": "submitted",
+    "strategy_id": "strategy-ep5-broker-tw-smoke",
+    "submit_spacing_previous_elapsed_seconds": null,
+    "submit_spacing_seconds": 0.0,
+    "submit_spacing_wait_seconds": 0.0,
+    "symbol": "2890"
+  },
+  "production_live_enabled": false,
+  "proof_boundary": "broker_sandbox_evidence_packet; not canary/live/capital proof",
+  "provider": "Shioaji",
+  "readback_result": {
+    "after_cancel": {
+      "account_kind": "stock",
+      "capital_pool_id": "pool-ep5-broker-tw-sandbox",
+      "created_at": "2026-05-15T16:09:43.000453Z",
+      "deployment_stage": "sandbox",
+      "fill_price": 18.0,
+      "fill_qty": 0.0,
+      "filled_at": "2026-05-15T16:09:43.001034Z",
+      "is_real_capital": false,
+      "is_real_order": false,
+      "limit_price": 18.0,
+      "order_id": "4195d0aa0b4f4a0dbc63c57571e45e1b",
+      "order_type": "limit",
+      "qty": 1.0,
+      "reject_reason": null,
+      "shioaji_order_status": "cancelled",
+      "shioaji_order_status_code": null,
+      "shioaji_order_status_id": null,
+      "shioaji_order_status_message": null,
+      "shioaji_trade_id": "mock-shioaji-trade-001",
+      "side": "buy",
+      "sim_fill_flag": true,
+      "status": "cancelled",
+      "strategy_id": "strategy-ep5-broker-tw-smoke",
+      "submit_spacing_previous_elapsed_seconds": null,
+      "submit_spacing_seconds": 0.0,
+      "submit_spacing_wait_seconds": 0.0,
+      "symbol": "2890"
+    },
+    "after_place": {
+      "account_kind": "stock",
+      "capital_pool_id": "pool-ep5-broker-tw-sandbox",
+      "created_at": "2026-05-15T16:09:43.000453Z",
+      "deployment_stage": "sandbox",
+      "fill_price": 18.0,
+      "fill_qty": 0.0,
+      "filled_at": null,
+      "is_real_capital": false,
+      "is_real_order": false,
+      "limit_price": 18.0,
+      "order_id": "4195d0aa0b4f4a0dbc63c57571e45e1b",
+      "order_type": "limit",
+      "qty": 1.0,
+      "reject_reason": null,
+      "shioaji_order_status": "submitted",
+      "shioaji_order_status_code": null,
+      "shioaji_order_status_id": null,
+      "shioaji_order_status_message": null,
+      "shioaji_trade_id": "mock-shioaji-trade-001",
+      "side": "buy",
+      "sim_fill_flag": true,
+      "status": "submitted",
+      "strategy_id": "strategy-ep5-broker-tw-smoke",
+      "submit_spacing_previous_elapsed_seconds": null,
+      "submit_spacing_seconds": 0.0,
+      "submit_spacing_wait_seconds": 0.0,
+      "symbol": "2890"
+    }
+  },
+  "reconcile_result": {
+    "diff": [
+      {
+        "expected": "2890",
+        "field": "place.symbol",
+        "observed": "2890",
+        "status": "match"
+      },
+      {
+        "expected": 1.0,
+        "field": "place.qty",
+        "observed": 1.0,
+        "status": "match"
+      },
+      {
+        "expected": "buy",
+        "field": "place.side",
+        "observed": "buy",
+        "status": "match"
+      },
+      {
+        "expected": "stock",
+        "field": "place.account_kind",
+        "observed": "stock",
+        "status": "match"
+      },
+      {
+        "expected": "submitted",
+        "field": "place.status",
+        "observed": "submitted",
+        "status": "match"
+      },
+      {
+        "expected": "4195d0aa0b4f4a0dbc63c57571e45e1b",
+        "field": "readback_after_place.order_id",
+        "observed": "4195d0aa0b4f4a0dbc63c57571e45e1b",
+        "status": "match"
+      },
+      {
+        "expected": "submitted",
+        "field": "readback_after_place.status",
+        "observed": "submitted",
+        "status": "match"
+      },
+      {
+        "expected": "4195d0aa0b4f4a0dbc63c57571e45e1b",
+        "field": "cancel.order_id",
+        "observed": "4195d0aa0b4f4a0dbc63c57571e45e1b",
+        "status": "match"
+      },
+      {
+        "expected": "cancelled",
+        "field": "cancel.status",
+        "observed": "cancelled",
+        "status": "match"
+      },
+      {
+        "expected": "4195d0aa0b4f4a0dbc63c57571e45e1b",
+        "field": "readback_after_cancel.order_id",
+        "observed": "4195d0aa0b4f4a0dbc63c57571e45e1b",
+        "status": "match"
+      },
+      {
+        "expected": "cancelled",
+        "field": "readback_after_cancel.status",
+        "observed": "cancelled",
+        "status": "match"
+      },
+      {
+        "expected": false,
+        "field": "is_real_order",
+        "observed": false,
+        "status": "match"
+      },
+      {
+        "expected": false,
+        "field": "is_real_capital",
+        "observed": false,
+        "status": "match"
+      },
+      {
+        "expected": "sandbox",
+        "field": "deployment_stage",
+        "observed": "sandbox",
+        "status": "match"
+      },
+      {
+        "expected": "SHIOAJI_LIVE_DISABLED",
+        "field": "live_reject.error_code",
+        "observed": "SHIOAJI_LIVE_DISABLED",
+        "status": "match"
+      },
+      {
+        "expected": "present",
+        "field": "shioaji_trade_id",
+        "observed": "mock-shioaji-trade-001",
+        "status": "match"
+      }
+    ],
+    "status": "passed"
+  },
+  "schema_version": "shioaji_sandbox_evidence_packet.v1",
+  "source_evidence_refs": [
+    {
+      "path": "support/evidence/MGMT-BROKER-003/summary.json",
+      "ref_type": "broker_sandbox_smoke_summary",
+      "run_mode": "mock_api_replay",
+      "source_task_id": "MGMT-BROKER-003",
+      "status": "passed"
+    }
+  ],
+  "status": "passed",
+  "task_id": "MGMT-BROKER-004"
+}

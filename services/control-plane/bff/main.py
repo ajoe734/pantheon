@@ -17679,6 +17679,231 @@ def _ooda_packet_list_payload(
     }
 
 
+def _synthesis_conflict_log_routes_enabled() -> bool:
+    raw = os.getenv("PANTHEON_SYNTHESIS_CONFLICT_LOG_VIEW_ENABLED")
+    if raw is None:
+        return True
+    return raw.strip().lower() not in {"0", "false", "no", "off", "disabled"}
+
+
+def _require_synthesis_conflict_log_routes_enabled() -> None:
+    if _synthesis_conflict_log_routes_enabled():
+        return
+    raise _bff_error(
+        503,
+        ErrorCode.DOWNSTREAM_UNAVAILABLE,
+        "Synthesis conflict log view disabled",
+        "PANTHEON_SYNTHESIS_CONFLICT_LOG_VIEW_ENABLED is disabled for this BFF instance.",
+        precondition_failed="synthesis_conflict_log_feature_flag",
+        suggestion="Re-enable the synthesis conflict log read surface before retrying this route.",
+    )
+
+
+def _synthesis_conflict_log_id(log: Dict[str, Any]) -> str:
+    return str(log.get("log_id") or log.get("id") or log.get("conflict_resolution_log_id") or "").strip()
+
+
+def _synthesis_conflict_resolution_state(log: Dict[str, Any]) -> str:
+    if log.get("rejected_reason"):
+        return "rejected"
+    if log.get("committee_ref"):
+        return "committee_required"
+    if log.get("vetoed_proposals"):
+        return "resolved_with_veto"
+    return "resolved"
+
+
+def _float_or_none(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _synthesis_conflict_proposal_rows(log: Dict[str, Any]) -> List[Dict[str, Any]]:
+    proposal_ids = [str(item) for item in (log.get("proposal_ids") or []) if str(item).strip()]
+    weighting_inputs = log.get("weighting_inputs") if isinstance(log.get("weighting_inputs"), dict) else {}
+    weighting_outputs = log.get("weighting_outputs") if isinstance(log.get("weighting_outputs"), dict) else {}
+    vetoes_by_proposal: Dict[str, Dict[str, Any]] = {}
+    for veto in log.get("vetoed_proposals") or []:
+        if not isinstance(veto, dict):
+            continue
+        proposal_id = str(veto.get("proposal_id") or "").strip()
+        if proposal_id:
+            vetoes_by_proposal[proposal_id] = veto
+            if proposal_id not in proposal_ids:
+                proposal_ids.append(proposal_id)
+
+    rows: List[Dict[str, Any]] = []
+    for proposal_id in proposal_ids:
+        veto = vetoes_by_proposal.get(proposal_id)
+        input_weight = _float_or_none(weighting_inputs.get(proposal_id))
+        output_share = _float_or_none(weighting_outputs.get(proposal_id))
+        state = "vetoed" if veto else "not_selected"
+        if not veto and output_share is not None and output_share > 0:
+            state = "selected"
+        row: Dict[str, Any] = {
+            "proposal_id": proposal_id,
+            "state": state,
+            "input_weight": input_weight,
+            "output_share": output_share,
+            "is_vetoed": bool(veto),
+        }
+        if veto:
+            row["persona_id"] = veto.get("persona_id")
+            row["veto_reason"] = veto.get("reason")
+            row["veto_detail"] = veto.get("detail")
+        rows.append(row)
+    return rows
+
+
+def _synthesis_conflict_log_view_payload(log: Dict[str, Any]) -> Dict[str, Any]:
+    raw = json.loads(json.dumps(log))
+    log_id = _synthesis_conflict_log_id(raw)
+    proposal_rows = _synthesis_conflict_proposal_rows(raw)
+    veto_count = sum(1 for row in proposal_rows if row.get("is_vetoed"))
+    selected_count = sum(1 for row in proposal_rows if row.get("state") == "selected")
+    resolution_state = _synthesis_conflict_resolution_state(raw)
+    artifact_id = raw.get("allocation_policy_artifact_id") or raw.get("artifact_id")
+    artifact_href = raw.get("allocation_policy_artifact_href") or raw.get("artifact_href")
+    governance_approval_id = raw.get("governance_approval_id")
+    view = {
+        "title": f"Synthesis conflict log {log_id}",
+        "resolution_state": resolution_state,
+        "summary": {
+            "proposal_count": len(proposal_rows),
+            "selected_count": selected_count,
+            "veto_count": veto_count,
+            "committee_required": bool(raw.get("committee_ref")),
+            "sponsor_persona_id": raw.get("sponsor_persona_id"),
+            "synthesis_method": raw.get("synthesis_method"),
+            "capital_pool_id": raw.get("capital_pool_id"),
+            "scope_ref": raw.get("scope_ref"),
+        },
+        "proposal_rows": proposal_rows,
+        "governance": {
+            "committee_ref": raw.get("committee_ref"),
+            "rejected_reason": raw.get("rejected_reason"),
+            "approval_id": governance_approval_id,
+            "decision": raw.get("governance_decision"),
+            "decision_state": raw.get("governance_decision_state"),
+            "can_proceed": raw.get("governance_can_proceed"),
+        },
+        "links": {
+            "allocation_policy_artifact": (
+                {"id": artifact_id, "href": artifact_href}
+                if artifact_id
+                else None
+            ),
+            "governance_approval": (
+                {"id": governance_approval_id, "href": f"/bff/approvals/{governance_approval_id}"}
+                if governance_approval_id
+                else None
+            ),
+        },
+    }
+    raw["id"] = log_id
+    raw["resolution_state"] = resolution_state
+    raw["view"] = view
+    return raw
+
+
+def _synthesis_conflict_log_list_payload(
+    logs: List[Dict[str, Any]],
+    *,
+    surface_key: str,
+    page_token: Optional[str] = None,
+    page_size: int = 20,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    total = len(logs)
+    page_logs, next_page_token = _page_slice(logs, page_token, page_size)
+    page_items = [_synthesis_conflict_log_view_payload(log) for log in page_logs]
+    return {
+        "data": page_items,
+        "items": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta(
+            "synthesis_conflict_logs",
+            surface_key,
+            snapshot_at=snapshot_at,
+            total=total,
+        ),
+    }
+
+
+@app.get("/bff/synthesis/conflict-logs")
+async def bff_list_synthesis_conflict_logs(
+    capital_pool_id: Optional[str] = None,
+    scope_ref: Optional[str] = None,
+    proposal_id: Optional[str] = None,
+    sponsor_persona_id: Optional[str] = None,
+    synthesis_method: Optional[str] = None,
+    committee_ref: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list Management-visible multi-persona synthesis conflict logs."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _require_synthesis_conflict_log_routes_enabled()
+    logs = read_store.list_synthesis_conflict_logs(
+        capital_pool_id=capital_pool_id,
+        scope_ref=scope_ref,
+        proposal_id=proposal_id,
+        sponsor_persona_id=sponsor_persona_id,
+        synthesis_method=synthesis_method,
+        committee_ref=committee_ref,
+    )
+    return _synthesis_conflict_log_list_payload(
+        logs,
+        surface_key="synthesis_conflict_logs",
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
+@app.get("/bff/synthesis/conflict-logs/{log_id}")
+async def bff_get_synthesis_conflict_log(
+    log_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: get one Management-visible synthesis conflict log view."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _require_synthesis_conflict_log_routes_enabled()
+    clean_id = log_id.strip()
+    log_record = read_store.get_synthesis_conflict_log(clean_id)
+    source = read_store.dataset_source("synthesis_conflict_logs")
+    if not log_record:
+        if source == "missing":
+            return _sem_final_degraded_detail(
+                entity_id=clean_id,
+                label="Synthesis conflict log",
+                dataset="synthesis_conflict_logs",
+                surface_key="synthesis_conflict_log_detail",
+                source="missing",
+            )
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Synthesis conflict log not found",
+            f"Synthesis conflict log {log_id} does not exist",
+        )
+    snapshot_at = utc_now()
+    return {
+        "data": _synthesis_conflict_log_view_payload(log_record),
+        "meta": _read_surface_meta(
+            "synthesis_conflict_logs",
+            "synthesis_conflict_log_detail",
+            snapshot_at=snapshot_at,
+        ),
+    }
+
+
 @app.get("/bff/ooda/packets")
 async def bff_list_ooda_packets(
     status: Optional[str] = None,
@@ -23563,6 +23788,7 @@ async def sem_bff_capabilities(authorization: Optional[str] = Header(default=Non
                 "executePlansBff": True,
                 "sessionAuthMe": True,
                 "oodaPackets": _ooda_packet_routes_enabled(),
+                "synthesisConflictLogs": _synthesis_conflict_log_routes_enabled(),
             }
         },
         "meta": {"snapshot_at": utc_now()},
