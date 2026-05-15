@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "task_id": "MGMT-SAFE-003",
+  "archived_at": "2026-05-15T18:36:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-SAFE-003",
+    "title": "OpenClaw broker tool denial smoke",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-07 Safety / Fail-Closed Regression",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete: task-scoped commit 361a20d1; verification passed: broker denial smoke 19/19, runner pytest 2 passed, bridge unittest 58 OK, py_compile passed, full openclaw gateway adapter pytest 223 passed. Evidence: support/evidence/MGMT-SAFE-003/openclaw-broker-tool-denial-smoke.json.",
+    "last_update": "2026-05-15T18:36:11Z",
+    "review_file": "support/sidecars/MGMT-SAFE-003/MGMT-SAFE-003-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T18:36:11Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "361a20d1b7c9d8eabb137ed6e6fb386ec16be9a8",
+      "commit_subject": "MGMT-SAFE-003 fail-close OpenClaw broker tools",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-SAFE-003",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 32,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 4,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-SAFE-003",
+      "from": "Codex",
+      "to": "Copilot",
+      "message": "Ready for review: added OpenClaw broker tool denial smoke and tightened effective tool filtering so always-blocked broker/live/paper/canary/capital/Lean tool refs are excluded even if allowlisted and upstream-reported. Task-owned files: services/openclaw-gateway-adapter/tool_workflow_bridge.py, services/openclaw-gateway-adapter/test_tool_workflow_bridge.py, scripts/run_openclaw_broker_tool_denial_smoke.py, scripts/test_run_openclaw_broker_tool_denial_smoke.py, support/evidence/MGMT-SAFE-003/openclaw-broker-tool-denial-smoke.json. Verification: PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_openclaw_broker_tool_denial_smoke.py --json-out support/evidence/MGMT-SAFE-003/openclaw-broker-tool-denial-smoke.json => 19/19 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/openclaw-gateway-adapter scripts/test_run_openclaw_broker_tool_denial_smoke.py -q => 223 passed; PYTHONDONTWRITEBYTECODE=1 python3 services/openclaw-gateway-adapter/test_tool_workflow_bridge.py -q => 58 passed; py_compile on smoke/test/bridge files => passed; git diff --check on tracked bridge files => passed.",
+      "status": "done",
+      "created_at": "2026-05-15T16:20:44Z",
+      "resolved_at": "2026-05-15T18:21:56Z"
+    },
+    {
+      "task_id": "MGMT-SAFE-003",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-05-15T18:21:56Z",
+      "resolved_at": "2026-05-15T18:25:06Z"
+    },
+    {
+      "task_id": "MGMT-SAFE-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved — 19/19 smoke checks verified live, 223 pytest suite passed, always-blocked policy covers all broker/live/paper/canary/capital/lean tool and workflow namespaces, effective_tools excludes blocked names even when allowlisted, denied calls never reach upstream (audit-denials-without-upstream-dispatch confirmed).",
+      "status": "done",
+      "created_at": "2026-05-15T18:25:06Z",
+      "resolved_at": "2026-05-15T18:36:12Z"
+    }
+  ],
+  "blockers": []
+}
