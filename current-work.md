@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-16 02:45:11
+Last updated: 2026-05-16 03:00:06
 
 ## Objective
 
@@ -39,10 +39,10 @@ Last updated: 2026-05-16 02:45:11
 
 - `Claude`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
-- `Codex`: integration, status-system, schema, acceptance; next: Ready for review: added repo-local no-live-side-effects assertion smoke that scans Track E paper/sandbox/safety evidence, validates non-live OODA packets, and proves the OODA guard rejects forced live_capital_side_effects=true. Task-owned files: scripts/run_no_live_side_effects_assertion.py, scripts/test_run_no_live_side_effects_assertion.py, support/evidence/MGMT-SAFE-005/README.md, support/evidence/MGMT-SAFE-005/no-live-side-effects-assertion.json. Evidence summary: 8 required artifacts loaded, 5 optional artifacts loaded, 13 side-effect flag names checked, 3 non-live OODA packets validated, 0 violations, synthetic model/schema guard rejected live side effects. Verification: PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_no_live_side_effects_assertion.py --json-out support/evidence/MGMT-SAFE-005/no-live-side-effects-assertion.json => 4/4 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_run_no_live_side_effects_assertion.py -q => 3 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/run_no_live_side_effects_assertion.py scripts/test_run_no_live_side_effects_assertion.py => passed.
-- `Codex2`: integration, status-system, schema, acceptance; next: Ready for review: support-only sidecar packet created at support/sidecars/MGMT-EVO-003/MGMT-EVO-003-SIDECAR-REVIEW.md. Parent MGMT-EVO-003 is already archived done; packet summarizes parent review, archive, pantheon f4021113, execute-plans 6346300, EPIC-06 evidence, and re-run verification. Verification: npm test -- src/lib/bff/__tests__/client.test.ts src/management/components/ooda/OodaPacketDrawer.test.tsx in /home/lupin/code/execute-plans => 25 passed; npm run build => passed with existing Browserslist/realtime chunk/large chunk warnings.
+- `Codex`: integration, status-system, schema, acceptance; next: No active assignment
+- `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
-- `Claude2`: execution, control-plane, governance-review; next: Re-approval after state restoration: original approval at 2026-05-16 02:36:03 remains valid. Sidecar packet verified — policy constants match implementation (13 entries, 6 prefixes), evaluation order correct, evidence accurate (19/19 passed, 3 assertions true, 0 upstream dispatches for denied calls), reviewer routing Claude throughout, reproducibility commands fixed to pytest from repo root.
+- `Claude2`: execution, control-plane, governance-review; next: No active assignment
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check.
 
 ## Delivery Layers
@@ -52,9 +52,6 @@ Last updated: 2026-05-16 02:45:11
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | Gemini2 | blocked | - | - |
-| `MGMT-SAFE-005` | Track E / EPIC-07 Safety / Fail-Closed Regression | no live side effects assertion | Codex | review | - | - |
-| `MGMT-SAFE-003-SIDECAR-REVIEW` | Track E / EPIC-07 Safety / Fail-Closed Regression | [Sidecar] [Auto] [Parent MGMT-SAFE-003] Prepare MGMT-SAFE-003 review packet and evidence summary | Claude2 | review_approved | - | 平行支援 MGMT-SAFE-003，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
-| `MGMT-EVO-003-SIDECAR-REVIEW` | Track E / EPIC-06 Evolution Follow-Through | [Sidecar] [Auto] [Parent MGMT-EVO-003] Prepare MGMT-EVO-003 review packet and evidence summary | Codex2 | review | - | 平行支援 MGMT-EVO-003，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 |
 
 ### External / Upstream Integration Work
 
@@ -64,11 +61,15 @@ Last updated: 2026-05-16 02:45:11
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-16 02:37:26
-- Terminal tasks archived: `1096` total, `1078` completed, `18` superseded
+- Archive updated: 2026-05-16 03:00:06
+- Terminal tasks archived: `1100` total, `1082` completed, `18` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `MGMT-BROKER-002-SIDECAR-ACCEPTANCE` | Track E / EPIC-05 Shioaji Sandbox | Prepare MGMT-BROKER-002 acceptance packet and dependency map | Claude | completed | 2026-05-16 03:00:06 | `ai-task-archive/tasks/MGMT-BROKER-002-SIDECAR-ACCEPTANCE.json` |
+| `MGMT-EVO-003-SIDECAR-REVIEW` | Track E / EPIC-06 Evolution Follow-Through | Prepare MGMT-EVO-003 review packet and evidence summary | Codex2 | completed | 2026-05-16 02:56:04 | `ai-task-archive/tasks/MGMT-EVO-003-SIDECAR-REVIEW.json` |
+| `MGMT-SAFE-005` | Track E / EPIC-07 Safety / Fail-Closed Regression | no live side effects assertion | Codex | completed | 2026-05-16 02:55:30 | `ai-task-archive/tasks/MGMT-SAFE-005.json` |
+| `MGMT-SAFE-003-SIDECAR-REVIEW` | Track E / EPIC-07 Safety / Fail-Closed Regression | Prepare MGMT-SAFE-003 review packet and evidence summary | Claude2 | completed | 2026-05-16 02:45:58 | `ai-task-archive/tasks/MGMT-SAFE-003-SIDECAR-REVIEW.json` |
 | `MGMT-SAFE-005-SIDECAR-REVIEW` | Track E / EPIC-07 Safety / Fail-Closed Regression | Prepare MGMT-SAFE-005 review packet and evidence summary | Claude2 | completed | 2026-05-16 02:37:26 | `ai-task-archive/tasks/MGMT-SAFE-005-SIDECAR-REVIEW.json` |
 | `MGMT-SAFE-003` | Track E / EPIC-07 Safety / Fail-Closed Regression | OpenClaw broker tool denial smoke | Codex | completed | 2026-05-16 02:36:11 | `ai-task-archive/tasks/MGMT-SAFE-003.json` |
 | `MGMT-EVO-003` | Track E / EPIC-06 Evolution Follow-Through | evolution review / approval UI linkage | Codex2 | completed | 2026-05-16 02:35:33 | `ai-task-archive/tasks/MGMT-EVO-003.json` |
@@ -85,28 +86,18 @@ Last updated: 2026-05-16 02:45:11
 | `MGMT-QLIB-005` | Track E / EPIC-04 Qlib Admission | Qlib registry admission packet | Codex | completed | 2026-05-16 01:39:42 | `ai-task-archive/tasks/MGMT-QLIB-005.json` |
 | `MGMT-PAPER-002` | Track E / EPIC-02 Management Paper Loop Proof | paper ApprovalDecision packet | Claude | completed | 2026-05-16 01:37:46 | `ai-task-archive/tasks/MGMT-PAPER-002.json` |
 | `MGMT-SYN-005` | Track E / EPIC-03 Multi-Persona Synthesis | AllocationPolicyArtifact output | Codex | completed | 2026-05-16 01:37:22 | `ai-task-archive/tasks/MGMT-SYN-005.json` |
-| `MGMT-QLIB-006` | Track E / EPIC-04 Qlib Admission | Management artifact / research linkage | Codex2 | completed | 2026-05-16 01:31:58 | `ai-task-archive/tasks/MGMT-QLIB-006.json` |
-| `MGMT-QLIB-001` | Track E / EPIC-04 Qlib Admission | Qlib dataset manifest | Codex | completed | 2026-05-16 01:14:47 | `ai-task-archive/tasks/MGMT-QLIB-001.json` |
-| `MGMT-SYN-004` | Track E / EPIC-03 Multi-Persona Synthesis | allocation synthesis method v1 | Codex | completed | 2026-05-16 01:13:32 | `ai-task-archive/tasks/MGMT-SYN-004.json` |
-| `MGMT-PAPER-006` | Track E / EPIC-02 Management Paper Loop Proof | paper EvolutionDecision review packet | Codex2 | completed | 2026-05-16 01:06:36 | `ai-task-archive/tasks/MGMT-PAPER-006.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | - | Gemini2 | Gemini | blocked | - | 2026-05-15 23:15:06 | Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check. |
-| `MGMT-SAFE-005` | Track E / EPIC-07 Safety / Fail-Closed Regression | no live side effects assertion | - | Codex | Copilot | review | - | 2026-05-16 00:43:53 | Ready for review: added repo-local no-live-side-effects assertion smoke that scans Track E paper/sandbox/safety evidence, validates non-live OODA packets, and proves the OODA guard rejects forced live_capital_side_effects=true. Task-owned files: scripts/run_no_live_side_effects_assertion.py, scripts/test_run_no_live_side_effects_assertion.py, support/evidence/MGMT-SAFE-005/README.md, support/evidence/MGMT-SAFE-005/no-live-side-effects-assertion.json. Evidence summary: 8 required artifacts loaded, 5 optional artifacts loaded, 13 side-effect flag names checked, 3 non-live OODA packets validated, 0 violations, synthetic model/schema guard rejected live side effects. Verification: PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_no_live_side_effects_assertion.py --json-out support/evidence/MGMT-SAFE-005/no-live-side-effects-assertion.json => 4/4 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_run_no_live_side_effects_assertion.py -q => 3 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/run_no_live_side_effects_assertion.py scripts/test_run_no_live_side_effects_assertion.py => passed. |
-| `MGMT-SAFE-003-SIDECAR-REVIEW` | Track E / EPIC-07 Safety / Fail-Closed Regression | [Sidecar] [Auto] [Parent MGMT-SAFE-003] Prepare MGMT-SAFE-003 review packet and evidence summary | 平行支援 MGMT-SAFE-003，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Claude2 | Claude | review_approved | - | 2026-05-16 02:44:37 | Re-approval after state restoration: original approval at 2026-05-16 02:36:03 remains valid. Sidecar packet verified — policy constants match implementation (13 entries, 6 prefixes), evaluation order correct, evidence accurate (19/19 passed, 3 assertions true, 0 upstream dispatches for denied calls), reviewer routing Claude throughout, reproducibility commands fixed to pytest from repo root. |
-| `MGMT-EVO-003-SIDECAR-REVIEW` | Track E / EPIC-06 Evolution Follow-Through | [Sidecar] [Auto] [Parent MGMT-EVO-003] Prepare MGMT-EVO-003 review packet and evidence summary | 平行支援 MGMT-EVO-003，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。 | Codex2 | Codex | review | - | 2026-05-16 02:45:11 | Ready for review: support-only sidecar packet created at support/sidecars/MGMT-EVO-003/MGMT-EVO-003-SIDECAR-REVIEW.md. Parent MGMT-EVO-003 is already archived done; packet summarizes parent review, archive, pantheon f4021113, execute-plans 6346300, EPIC-06 evidence, and re-run verification. Verification: npm test -- src/lib/bff/__tests__/client.test.ts src/management/components/ooda/OodaPacketDrawer.test.tsx in /home/lupin/code/execute-plans => 25 passed; npm run build => passed with existing Browserslist/realtime chunk/large chunk warnings. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
 | `EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE` | Gemini | Codex2 | Acceptance packet and dependency map for EP5-BROKER-TW-002 prepared at support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout. | pending | 2026-05-12 22:50:00 |
-| `MGMT-SAFE-005` | Codex | Copilot | Ready for review: added repo-local no-live-side-effects assertion smoke that scans Track E paper/sandbox/safety evidence, validates non-live OODA packets, and proves the OODA guard rejects forced live_capital_side_effects=true. Task-owned files: scripts/run_no_live_side_effects_assertion.py, scripts/test_run_no_live_side_effects_assertion.py, support/evidence/MGMT-SAFE-005/README.md, support/evidence/MGMT-SAFE-005/no-live-side-effects-assertion.json. Evidence summary: 8 required artifacts loaded, 5 optional artifacts loaded, 13 side-effect flag names checked, 3 non-live OODA packets validated, 0 violations, synthetic model/schema guard rejected live side effects. Verification: PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_no_live_side_effects_assertion.py --json-out support/evidence/MGMT-SAFE-005/no-live-side-effects-assertion.json => 4/4 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_run_no_live_side_effects_assertion.py -q => 3 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/run_no_live_side_effects_assertion.py scripts/test_run_no_live_side_effects_assertion.py => passed. | pending | 2026-05-16 00:43:53 |
-| `MGMT-SAFE-003-SIDECAR-REVIEW` | Claude | Claude2 | Re-approval after state restoration: original approval at 2026-05-16 02:36:03 remains valid. Sidecar packet verified — policy constants match implementation (13 entries, 6 prefixes), evaluation order correct, evidence accurate (19/19 passed, 3 assertions true, 0 upstream dispatches for denied calls), reviewer routing Claude throughout, reproducibility commands fixed to pytest from repo root. | pending | 2026-05-16 02:44:37 |
-| `MGMT-EVO-003-SIDECAR-REVIEW` | Codex2 | Codex | Ready for review: support-only sidecar packet created at support/sidecars/MGMT-EVO-003/MGMT-EVO-003-SIDECAR-REVIEW.md. Parent MGMT-EVO-003 is already archived done; packet summarizes parent review, archive, pantheon f4021113, execute-plans 6346300, EPIC-06 evidence, and re-run verification. Verification: npm test -- src/lib/bff/__tests__/client.test.ts src/management/components/ooda/OodaPacketDrawer.test.tsx in /home/lupin/code/execute-plans => 25 passed; npm run build => passed with existing Browserslist/realtime chunk/large chunk warnings. | pending | 2026-05-16 02:45:11 |
 
 ## Blockers
 
@@ -189,23 +180,23 @@ Last updated: 2026-05-16 02:45:11
 
 ## Latest Checkpoints
 
-- 2026-05-16 02:43:49 Orchestrator: PostToolUse: Write
-- 2026-05-16 02:43:58 Orchestrator: PreToolUse: Write
-- 2026-05-16 02:43:59 Orchestrator: PostToolUse: Write
-- 2026-05-16 02:44:02 Orchestrator: PreToolUse: Bash
-- 2026-05-16 02:44:09 Orchestrator: Stop: Stop
-- 2026-05-16 02:44:09 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-16 02:44:12 Orchestrator: PreToolUse: Bash
-- 2026-05-16 02:44:13 Claude2: `MGMT-SAFE-003-SIDECAR-REVIEW` Handoff to Claude: Restoring review state for closeout: owner accidentally called progress during finalize dispatch. All sidecar work is complete and durable in commit 361a20d1. Re-routing to Claude for re-approval before done.
-- 2026-05-16 02:44:28 Orchestrator: PostToolUse: Bash
-- 2026-05-16 02:44:31 Orchestrator: PreToolUse: Bash
-- 2026-05-16 02:44:31 Orchestrator: PostToolUse: Bash
-- 2026-05-16 02:44:37 Orchestrator: PreToolUse: Bash
-- 2026-05-16 02:44:37 Claude: `MGMT-SAFE-003-SIDECAR-REVIEW` Re-approval after state restoration: original approval at 2026-05-16 02:36:03 remains valid. Sidecar packet verified — policy constants match implementation (13 entries, 6 prefixes), evaluation order correct, evidence accurate (19/19 passed, 3 assertions true, 0 upstream dispatches for denied calls), reviewer routing Claude throughout, reproducibility commands fixed to pytest from repo root.
-- 2026-05-16 02:44:52 Orchestrator: PostToolUse: Bash
-- 2026-05-16 02:44:55 Orchestrator: PreToolUse: Bash
-- 2026-05-16 02:44:56 Orchestrator: PostToolUse: Bash
-- 2026-05-16 02:45:01 Orchestrator: PreToolUse: Bash
-- 2026-05-16 02:45:08 Orchestrator: PreToolUse: Bash
-- 2026-05-16 02:45:09 Orchestrator: PostToolUse: Bash
-- 2026-05-16 02:45:11 Codex2: `MGMT-EVO-003-SIDECAR-REVIEW` Handoff to Codex: Ready for review: support-only sidecar packet created at support/sidecars/MGMT-EVO-003/MGMT-EVO-003-SIDECAR-REVIEW.md. Parent MGMT-EVO-003 is already archived done; packet summarizes parent review, archive, pantheon f4021113, execute-plans 6346300, EPIC-06 evidence, and re-run verification. Verification: npm test -- src/lib/bff/__tests__/client.test.ts src/management/components/ooda/OodaPacketDrawer.test.tsx in /home/lupin/code/execute-plans => 25 passed; npm run build => passed with existing Browserslist/realtime chunk/large chunk warnings.
+- 2026-05-16 02:59:17 Orchestrator: PreToolUse: Read
+- 2026-05-16 02:59:18 Orchestrator: PostToolUse: Read
+- 2026-05-16 02:59:19 Orchestrator: PostToolUse: Read
+- 2026-05-16 02:59:19 Orchestrator: PostToolUse: Read
+- 2026-05-16 02:59:24 Orchestrator: `MGMT-BROKER-002-SIDECAR-ACCEPTANCE` Supervisor resumed MGMT-BROKER-002-SIDECAR-ACCEPTANCE for finalize after successful dispatch.
+- 2026-05-16 02:59:28 Orchestrator: PreToolUse: Read
+- 2026-05-16 02:59:29 Orchestrator: PreToolUse: Bash
+- 2026-05-16 02:59:29 Orchestrator: PostToolUse: Read
+- 2026-05-16 02:59:30 Orchestrator: PostToolUse: Bash
+- 2026-05-16 02:59:39 Orchestrator: PreToolUse: Edit
+- 2026-05-16 02:59:40 Orchestrator: PostToolUse: Edit
+- 2026-05-16 02:59:43 Orchestrator: PreToolUse: Bash
+- 2026-05-16 02:59:44 Orchestrator: PostToolUse: Bash
+- 2026-05-16 02:59:51 Orchestrator: PreToolUse: Bash
+- 2026-05-16 02:59:53 Orchestrator: PostToolUse: Bash
+- 2026-05-16 02:59:59 Orchestrator: PreToolUse: Bash
+- 2026-05-16 03:00:00 Orchestrator: PostToolUse: Bash
+- 2026-05-16 03:00:04 Orchestrator: PostToolUse: Read
+- 2026-05-16 03:00:05 Orchestrator: PreToolUse: Bash
+- 2026-05-16 03:00:06 Claude: `MGMT-BROKER-002-SIDECAR-ACCEPTANCE` Owner closeout complete: acceptance packet verified (checklist, blocker, dependency map, safety invariants), status marked closed, task-scoped commit ed00e60b on bff-luv-fe-006-dev-deploy. No canonical files modified. Packet handed off to MGMT-BROKER-002 parent owner (Gemini2) for credential-unblock flow.

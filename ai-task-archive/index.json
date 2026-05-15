@@ -1,12 +1,16 @@
 {
   "version": 1,
-  "updated_at": "2026-05-15T18:37:26Z",
+  "updated_at": "2026-05-15T19:00:06Z",
   "counts": {
-    "total": 1096,
-    "completed": 1078,
+    "total": 1100,
+    "completed": 1082,
     "superseded": 18
   },
   "recent_terminal_ids": [
+    "MGMT-BROKER-002-SIDECAR-ACCEPTANCE",
+    "MGMT-EVO-003-SIDECAR-REVIEW",
+    "MGMT-SAFE-005",
+    "MGMT-SAFE-003-SIDECAR-REVIEW",
     "MGMT-SAFE-005-SIDECAR-REVIEW",
     "MGMT-SAFE-003",
     "MGMT-EVO-003",
@@ -22,10 +26,6 @@
     "MGMT-QLIB-002",
     "MGMT-QLIB-005",
     "MGMT-PAPER-002",
-    "MGMT-SYN-005",
-    "MGMT-QLIB-006",
-    "MGMT-QLIB-001",
-    "MGMT-SYN-004",
-    "MGMT-PAPER-006"
+    "MGMT-SYN-005"
   ]
 }
