@@ -3,7 +3,7 @@
   "sprint": "2026-05-13-ep5-qlib-bff-consolidation",
   "sprint_started_at": "2026-05-13T02:00:00Z",
   "objective": "並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec，從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV，跑 production_activation_smoke.py --backend real，submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal，registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff，command envelope unification，non-empty fixture & detail journey，SSE real stream replay，strict env cutover，seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write 驗證通過後即可 deprecate 舊 receipt，後續 regression 追蹤不再以固定天數阻塞派工。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。",
-  "updated_at": "2026-05-15T01:07:46Z",
+  "updated_at": "2026-05-15T01:20:44Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -94,13 +94,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "reviewing",
-      "current_task_ids": [
-        "FE-INT-GATE-A11Y-BREADCRUMB"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude-execution-control",
-      "next": "Review started: checking handed-off breadcrumb semantics, sidecar acceptance packet, and focused build/a11y evidence before approval decision.",
-      "last_update": "2026-05-15T01:00:40Z"
+      "next": "",
+      "last_update": "2026-05-15T01:18:44Z"
     },
     {
       "name": "Gemini",
@@ -132,12 +130,11 @@
         "FE-INT-GATE-ALIGN-F01",
         "FE-INT-GATE-ALIGN-F05",
         "FE-INT-GATE-FOLLOWUP-F15-STRICT-LOVABLE",
-        "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE",
-        "FE-INT-GATE-A11Y-CONTRAST"
+        "FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "Located frontend worktree at /home/lupin/code/execute-plans; checking current token state and running focused F17 axe test before edits.",
-      "last_update": "2026-05-15T00:38:04Z"
+      "next": "Code remediation committed and pushed in execute-plans (7dff8fa; runtime hook from 104f06b). Local live-mode F15 strict passed twice, but pantheon-dev.lovable.app still serves old /assets/index-BYfBkno5.js and hosted strict still renders hybrid seed fallback. Lovable trigger attempt failed because stored auth state is expired; waiting on Lovable dev redeploy/refresh before hosted acceptance can pass.",
+      "last_update": "2026-05-14T12:37:28Z"
     },
     {
       "name": "Codex2",
@@ -465,7 +462,7 @@
       "phase": "Pantheon FE Integration Gate 2026-05-13",
       "owner": "Codex",
       "reviewer": "Codex2",
-      "status": "in_progress",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [
         "execute-plans/tailwind.config.ts",
@@ -479,29 +476,12 @@
         "design token 改動有 commit 訊息 reference token name",
         "本地 npx playwright test e2e/17-a11y-v5.spec.ts 全綠"
       ],
-      "next": "Located frontend worktree at /home/lupin/code/execute-plans; checking current token state and running focused F17 axe test before edits.",
-      "last_update": "2026-05-15T00:38:04Z"
-    },
-    {
-      "id": "FE-INT-GATE-A11Y-BREADCRUMB",
-      "title": "Fix Breadcrumb list semantic violation",
-      "summary_zh": "F17 a11y axe serious 中 list + listitem 違規：Breadcrumb 元件用 <ol> 直接含 <li class=contents>，render 結果 ol 直接帶 span，違反 list 結構規則（cat.structure / wcag131）。實際 HTML：<ol class=\"flex flex-wrap items-center gap-1.5 break-words text-sm text-muted-foreground sm:gap-2.5\"> 內含 li.inline-flex 但 li 是 'display: contents'，造成 li 的 child span 變成 ol 的直接 child。修：(1) 不要用 li.contents（破壞 list 語意）；(2) 改 Breadcrumb 結構讓 <li> 真實是 ol 直接 child；(3) 或不用 ol/li，改用 <nav aria-label=\"breadcrumb\">+<ol>+<li> 但去掉 contents class。修完後 axe list/listitem 規則無 violation。Evidence: execute-plans/.lovable/audits/baseline/postfix/pantheon-integration-evidence/test-results/ 17-a11y-v5-*on-control-room*/error-context.md 內含 'List element has direct children that are not allowed: span'",
-      "phase": "Pantheon FE Integration Gate 2026-05-13",
-      "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "review",
-      "depends_on": [],
-      "artifacts": [
-        "execute-plans/src/platform/components/Breadcrumb.tsx",
-        "execute-plans/src/components/ui/breadcrumb.tsx"
+      "next": "Review approved. Evidence: support/reviews/FE-INT-GATE-A11Y-CONTRAST-codex2-review.md. Owner should finalize with task-scoped closeout commit and done transition.",
+      "last_update": "2026-05-15T01:20:05Z",
+      "review_notes_zh": [
+        "已核對 execute-plans commit e3452cf 僅改 src/index.css；env/status/sidebar token 對比在 light/dark 均 >=4.5，最低 status-warning/15 light mode 4.88:1；本地 Vite 5173 重跑 npx playwright test e2e/17-a11y-v5.spec.ts，9/9 pass，六個 v5 axe 頁 critical+serious=0。"
       ],
-      "acceptance": [
-        "<ol> 不再直接 children span",
-        "Breadcrumb 在所有 v5 頁面 axe list/listitem 規則 0 violation",
-        "nav aria-label='breadcrumb' 保持"
-      ],
-      "next": "Review started: checking handed-off breadcrumb semantics, sidecar acceptance packet, and focused build/a11y evidence before approval decision.",
-      "last_update": "2026-05-15T01:00:40Z"
+      "review_file": "support/reviews/FE-INT-GATE-A11Y-CONTRAST-codex2-review.md"
     },
     {
       "id": "FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE",
@@ -718,15 +698,6 @@
       "resolved_at": "2026-05-15T00:33:26Z"
     },
     {
-      "task_id": "FE-INT-GATE-A11Y-BREADCRUMB",
-      "from": "Codex2",
-      "to": "Claude",
-      "message": "Helper-claimed by idle Claude; previous owner Codex2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-15T00:32:36Z",
-      "resolved_at": "2026-05-15T00:33:42Z"
-    },
-    {
       "task_id": "FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE",
       "from": "Gemini2",
       "to": "Codex",
@@ -735,20 +706,29 @@
       "created_at": "2026-05-15T00:35:55Z"
     },
     {
-      "task_id": "FE-INT-GATE-A11Y-BREADCRUMB",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Breadcrumb list semantic violation fixed. Root cause was PageHeader.tsx using <span className='contents'> as keyed map wrapper (commit 6feed7f), making span a direct child of <ol> and breaking list/listitem axe rules. Fix: dd411e2 replaced span.contents with <Fragment key={node.path}>, ensuring all <li> elements are direct children of <ol>. Task commit b0dc126 in execute-plans (bff-luv-fe-006-dev-deploy): fixes BreadcrumbEllipsis.displayName typo. Verification: tsc --noEmit exit 0, vite build exit 0. nav aria-label=breadcrumb preserved. Acceptance: ol has no direct span children; all li are direct ol children via transparent Fragment. Ready for review.",
-      "status": "pending",
-      "created_at": "2026-05-15T00:53:16Z"
-    },
-    {
       "task_id": "FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE",
       "from": "Gemini",
       "to": "Claude",
       "message": "Acceptance packet and dependency map for FE-INT-GATE-A11Y-BREADCRUMB prepared at support/sidecars/FE-INT-GATE-A11Y-BREADCRUMB/FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout.",
       "status": "pending",
       "created_at": "2026-05-15T01:10:00Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-A11Y-CONTRAST",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review. execute-plans commit e3452cf hardens env-paper/env-live/status-pending/status-paused plus dark counterparts; existing env-research/status-warning/sidebar pairs remain >=4.5. Verification: node contrast ratio check for env/status/sidebar pairs all >=4.5; npx playwright test e2e/17-a11y-v5.spec.ts passed 9/9 on clean Vite server. Only src/index.css was committed; pre-existing untracked audit/test artifacts left untouched.",
+      "status": "done",
+      "created_at": "2026-05-15T01:11:11Z",
+      "resolved_at": "2026-05-15T01:20:05Z"
+    },
+    {
+      "task_id": "FE-INT-GATE-A11Y-CONTRAST",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved. Evidence: support/reviews/FE-INT-GATE-A11Y-CONTRAST-codex2-review.md. Owner should finalize with task-scoped closeout commit and done transition.",
+      "status": "pending",
+      "created_at": "2026-05-15T01:20:05Z"
     }
   ],
   "blockers": [
@@ -845,11 +825,11 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 1,
-      "active": 1,
+      "total": 0,
+      "active": 0,
       "blocked": 0,
       "done": 0,
-      "review": 1,
+      "review": 0,
       "review_approved": 0,
       "todo": 0
     },
@@ -882,12 +862,12 @@
     },
     "Codex": {
       "total": 6,
-      "active": 6,
+      "active": 5,
       "blocked": 5,
       "done": 0,
       "review": 0,
-      "review_approved": 0,
-      "todo": 1
+      "review_approved": 1,
+      "todo": 0
     },
     "Codex2": {
       "total": 3,
