@@ -1,0 +1,411 @@
+{
+  "artifact_state": "draft",
+  "backend_smoke": {
+    "backend": "stub_lgbm",
+    "metrics": {
+      "ic": 0.0,
+      "mean_label": -2.102e-05,
+      "mse": 0.000133346,
+      "num_features": 4,
+      "num_instruments": 50,
+      "num_samples": 26700
+    },
+    "real_backend_selected": false,
+    "run_id": "qlib-stub-62f94503afa2",
+    "stub_backend_selected": true
+  },
+  "candidate_handoff": {
+    "allowed_next_action": "offline_registry_review_only",
+    "artifact_state_review_scope": "draft_or_candidate_only",
+    "candidate_registry_projection": {
+      "artifact_state": "candidate",
+      "artifact_type": "model_artifact",
+      "checksum": "sha256:da63b48ae98cd4a2978a9d0face6e252692c3223f6d0d5737b67a114c11af866",
+      "created_at": "2026-05-15T17:14:25Z",
+      "deployment_summary": {
+        "current_stage": "none"
+      },
+      "evaluation_summary": {
+        "ic": 0.0,
+        "mean_label": -2.102e-05,
+        "mse": 0.000133346,
+        "num_features": 4,
+        "num_instruments": 50,
+        "num_samples": 26700
+      },
+      "lineage": {
+        "source_dataset_refs": [
+          "dataset:tw-equity-ohlcv-top50-2024-daily"
+        ],
+        "source_run_ids": [
+          "qlib-stub-62f94503afa2"
+        ],
+        "source_strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1"
+      },
+      "metadata": {
+        "candidate_promotion_scope": "offline_alpha_model_review_only",
+        "data_frequency": "daily",
+        "entry_criteria_satisfied": {
+          "activation_ready_data_volume_met": true,
+          "governed_data_adapter_present": true,
+          "lightgbm_backend_present": true,
+          "source_strategy_spec_bound": true,
+          "version_pinned": true
+        },
+        "feature_names": [
+          "momentum_1d",
+          "momentum_2d",
+          "volume_change_1d",
+          "volatility_1d"
+        ],
+        "framework": "qlib",
+        "framework_version": "0.9.6",
+        "model_family": "lightgbm",
+        "num_instruments": 50,
+        "num_samples": 26700,
+        "training_backend": "stub_lgbm"
+      },
+      "producer_run_id": "qlib-stub-62f94503afa2",
+      "registry_id": "qlib-alpha-tw-cross-sectional-equity-alpha-1.0.0",
+      "storage_ref": {
+        "backend": "object_store",
+        "path": "research/qlib/tw-cross-sectional-equity-alpha/1.0.0/artifact.bin"
+      },
+      "strategy_id": "tw-cross-sectional-equity-alpha",
+      "version": "1.0.0"
+    },
+    "current_artifact_state": "draft",
+    "dataset_floor_summary": {
+      "data_frequency": "daily",
+      "history_years": 2.0507,
+      "min_instrument_history_years": 2.0507,
+      "min_periods_per_instrument": 536,
+      "num_instruments": 50
+    },
+    "deployment_stage": "none",
+    "evaluator_handoff": {
+      "candidate_use": "offline_review_only",
+      "consumer": "EV-001",
+      "minimum_artifact_state_for_scoring": "approved",
+      "model_family": "qlib_alpha"
+    },
+    "gate_state": "candidate_handoff_ready",
+    "packet_id": "qlib-candidate-tw-cross-sectional-equity-alpha",
+    "production_dataset_proof": {
+      "audit": {
+        "evidence_bundle_ref": "evidence:tw-equity-ohlcv-top50-2024-daily-v1.0",
+        "ingest_run_id": "ingest-twse-openapi-2026-01-05-001",
+        "normalization_run_id": "norm-tw-equity-ohlcv-2026-01-05-001",
+        "rate_limit_policy_ref": "policy:twse-openapi-rate-limit-v1"
+      },
+      "controls": {
+        "execution_targets": [],
+        "no_order_route": true
+      },
+      "entitlement": {
+        "allowed_use": [
+          "model_training",
+          "research"
+        ],
+        "entitlement_ref": "ENT-TWSE-OPENAPI-RESEARCH-2024-001",
+        "entitlement_tags": [
+          "twse_research_grade",
+          "tpex_research_grade",
+          "ohlcv_daily_approved"
+        ],
+        "license_scope": "research_and_model_training"
+      },
+      "freshness": {
+        "as_of": "2026-01-05T00:00:00Z",
+        "freshness_sla_seconds": 86400,
+        "last_ingested_at": "2026-01-05T02:00:00Z",
+        "status": "fresh"
+      },
+      "pit": {
+        "available_time_field": "ingestion_timestamp",
+        "event_time_field": "date",
+        "point_in_time": true,
+        "source_watermark": "2026-01-05T00:00:00Z"
+      },
+      "provider": {
+        "dataset_id": "tw-equity-ohlcv-top50-2024-daily",
+        "name": "TWSE-OpenAPI",
+        "source_class": "research_grade"
+      },
+      "storage": {
+        "backend": "object_store",
+        "checksum": "sha256:fda828e5504eb3b4ae962bd2982c62b5c7b9075f7d2aa44ab197077f02146662",
+        "dataset_ref": "dataset:tw-equity-ohlcv-top50-2024-daily",
+        "durable": true,
+        "path": "research/qlib/tw-equity-ohlcv-top50-2024-daily/v1.0/dataset.json",
+        "snapshot_ref": "snapshot:tw-equity-ohlcv-top50-2024-daily-v1.0"
+      }
+    },
+    "registry_write_authority": "registry_service_only",
+    "requested_artifact_state": "candidate",
+    "required_checks": [
+      "RS-003 candidate proof and StrategySpec binding must remain attached.",
+      "Governed data floors must remain satisfied before candidate admission.",
+      "Qlib alpha output is scoring-only and must not route to LEAN directly.",
+      "Registry admission must happen through the registry service, never this adapter."
+    ],
+    "source_dataset_refs": [
+      "dataset:tw-equity-ohlcv-top50-2024-daily"
+    ],
+    "source_run_id": "qlib-stub-62f94503afa2"
+  },
+  "created_at": "2026-05-15T17:14:25Z",
+  "dataset_floor_summary": {
+    "data_frequency": "daily",
+    "history_years": 2.0507,
+    "min_instrument_history_years": 2.0507,
+    "min_periods_per_instrument": 536,
+    "num_instruments": 50,
+    "required_min_daily_periods": 504,
+    "required_min_history_years": 2.0,
+    "required_min_instruments": 50
+  },
+  "deployment_stage": "none",
+  "model_eval_artifact_refs": {
+    "artifact_state": "draft",
+    "backend": "stub_lgbm",
+    "created_at": "2026-05-15T17:14:25Z",
+    "deployment_stage": "none",
+    "evaluation_report_ref": {
+      "artifact_name": "evaluation_report",
+      "artifact_ref": "eval-qlib-alpha-tw-cross-sectional-equity-alpha-1.0.0-qlib-stub-62f94503afa2@1.0.0",
+      "artifact_state": "draft",
+      "artifact_type": "evaluation_result",
+      "checksum": "sha256:af8fde0e34d9846e8c3fb6c577a6ab4d775efc0a2a078bd8dd9956c9cc50e91e",
+      "deployment_stage": "none",
+      "evaluation_summary": {
+        "ic": 0.0,
+        "mean_label": -2.102e-05,
+        "mse": 0.000133346,
+        "num_features": 4,
+        "num_instruments": 50,
+        "num_samples": 26700
+      },
+      "registry_id": "eval-qlib-alpha-tw-cross-sectional-equity-alpha-1.0.0-qlib-stub-62f94503afa2",
+      "source_field": "artifact_bundle.evaluation_summary",
+      "source_run_id": "qlib-stub-62f94503afa2",
+      "storage_ref": {
+        "backend": "inline",
+        "path": "$.artifact_bundle.evaluation_summary"
+      },
+      "strategy_id": "tw-cross-sectional-equity-alpha",
+      "target_artifact_checksum": "sha256:da63b48ae98cd4a2978a9d0face6e252692c3223f6d0d5737b67a114c11af866",
+      "target_artifact_id": "qlib-alpha-tw-cross-sectional-equity-alpha-1.0.0",
+      "target_artifact_ref": "qlib-alpha-tw-cross-sectional-equity-alpha-1.0.0@1.0.0",
+      "target_artifact_version": "1.0.0",
+      "version": "1.0.0"
+    },
+    "lineage": {
+      "source_dataset_refs": [
+        "dataset:tw-equity-ohlcv-top50-2024-daily"
+      ],
+      "source_run_ids": [
+        "qlib-stub-62f94503afa2"
+      ],
+      "source_strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1"
+    },
+    "model_artifact_ref": {
+      "artifact_name": "model_artifact",
+      "artifact_ref": "qlib-alpha-tw-cross-sectional-equity-alpha-1.0.0@1.0.0",
+      "artifact_state": "draft",
+      "artifact_type": "model_artifact",
+      "checksum": "sha256:da63b48ae98cd4a2978a9d0face6e252692c3223f6d0d5737b67a114c11af866",
+      "deployment_stage": "none",
+      "registry_id": "qlib-alpha-tw-cross-sectional-equity-alpha-1.0.0",
+      "source_dataset_refs": [
+        "dataset:tw-equity-ohlcv-top50-2024-daily"
+      ],
+      "source_field": "registry_entry",
+      "source_run_id": "qlib-stub-62f94503afa2",
+      "source_strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+      "storage_ref": {
+        "backend": "object_store",
+        "path": "research/qlib/tw-cross-sectional-equity-alpha/1.0.0/artifact.bin"
+      },
+      "strategy_id": "tw-cross-sectional-equity-alpha",
+      "version": "1.0.0"
+    },
+    "producer_run_id": "qlib-stub-62f94503afa2",
+    "refs": [
+      {
+        "artifact_name": "model_artifact",
+        "artifact_ref": "qlib-alpha-tw-cross-sectional-equity-alpha-1.0.0@1.0.0",
+        "artifact_state": "draft",
+        "artifact_type": "model_artifact",
+        "checksum": "sha256:da63b48ae98cd4a2978a9d0face6e252692c3223f6d0d5737b67a114c11af866",
+        "deployment_stage": "none",
+        "registry_id": "qlib-alpha-tw-cross-sectional-equity-alpha-1.0.0",
+        "source_dataset_refs": [
+          "dataset:tw-equity-ohlcv-top50-2024-daily"
+        ],
+        "source_field": "registry_entry",
+        "source_run_id": "qlib-stub-62f94503afa2",
+        "source_strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+        "storage_ref": {
+          "backend": "object_store",
+          "path": "research/qlib/tw-cross-sectional-equity-alpha/1.0.0/artifact.bin"
+        },
+        "strategy_id": "tw-cross-sectional-equity-alpha",
+        "version": "1.0.0"
+      },
+      {
+        "artifact_name": "evaluation_report",
+        "artifact_ref": "eval-qlib-alpha-tw-cross-sectional-equity-alpha-1.0.0-qlib-stub-62f94503afa2@1.0.0",
+        "artifact_state": "draft",
+        "artifact_type": "evaluation_result",
+        "checksum": "sha256:af8fde0e34d9846e8c3fb6c577a6ab4d775efc0a2a078bd8dd9956c9cc50e91e",
+        "deployment_stage": "none",
+        "evaluation_summary": {
+          "ic": 0.0,
+          "mean_label": -2.102e-05,
+          "mse": 0.000133346,
+          "num_features": 4,
+          "num_instruments": 50,
+          "num_samples": 26700
+        },
+        "registry_id": "eval-qlib-alpha-tw-cross-sectional-equity-alpha-1.0.0-qlib-stub-62f94503afa2",
+        "source_field": "artifact_bundle.evaluation_summary",
+        "source_run_id": "qlib-stub-62f94503afa2",
+        "storage_ref": {
+          "backend": "inline",
+          "path": "$.artifact_bundle.evaluation_summary"
+        },
+        "strategy_id": "tw-cross-sectional-equity-alpha",
+        "target_artifact_checksum": "sha256:da63b48ae98cd4a2978a9d0face6e252692c3223f6d0d5737b67a114c11af866",
+        "target_artifact_id": "qlib-alpha-tw-cross-sectional-equity-alpha-1.0.0",
+        "target_artifact_ref": "qlib-alpha-tw-cross-sectional-equity-alpha-1.0.0@1.0.0",
+        "target_artifact_version": "1.0.0",
+        "version": "1.0.0"
+      },
+      {
+        "artifact_name": "artifact_bundle",
+        "artifact_ref": "artifact://qlib/qlib-alpha-tw-cross-sectional-equity-alpha-1.0.0/1.0.0/artifact_bundle",
+        "artifact_state": "draft",
+        "artifact_type": "qlib_artifact_bundle",
+        "checksum": "sha256:da63b48ae98cd4a2978a9d0face6e252692c3223f6d0d5737b67a114c11af866",
+        "deployment_stage": "none",
+        "registry_id": "qlib-alpha-tw-cross-sectional-equity-alpha-1.0.0",
+        "source_field": "artifact_bundle",
+        "source_run_id": "qlib-stub-62f94503afa2",
+        "storage_ref": {
+          "backend": "inline",
+          "path": "$.artifact_bundle"
+        },
+        "strategy_id": "tw-cross-sectional-equity-alpha",
+        "version": "1.0.0"
+      },
+      {
+        "artifact_name": "registry_entry",
+        "artifact_ref": "artifact://qlib/qlib-alpha-tw-cross-sectional-equity-alpha-1.0.0/1.0.0/registry_entry",
+        "artifact_state": "draft",
+        "artifact_type": "registry_entry_projection",
+        "checksum": "sha256:0cc867df9bf329a2ef11c1c8b92532ea851a88336e81c99ede73778cf0e9926c",
+        "deployment_stage": "none",
+        "registry_id": "qlib-alpha-tw-cross-sectional-equity-alpha-1.0.0",
+        "source_field": "registry_entry",
+        "source_run_id": "qlib-stub-62f94503afa2",
+        "storage_ref": {
+          "backend": "inline",
+          "path": "$.registry_entry"
+        },
+        "strategy_id": "tw-cross-sectional-equity-alpha",
+        "version": "1.0.0"
+      },
+      {
+        "artifact_name": "candidate_packet",
+        "artifact_ref": "artifact://qlib/qlib-alpha-tw-cross-sectional-equity-alpha-1.0.0/1.0.0/candidate_packet",
+        "artifact_state": "candidate",
+        "artifact_type": "registry_candidate_handoff",
+        "checksum": "sha256:75721b56dbff94a3de52ceee918f90325b1714584aa0f8a748acfd110a6965ff",
+        "deployment_stage": "none",
+        "registry_id": "qlib-alpha-tw-cross-sectional-equity-alpha-1.0.0",
+        "source_field": "candidate_packet",
+        "source_run_id": "qlib-stub-62f94503afa2",
+        "storage_ref": {
+          "backend": "inline",
+          "path": "$.candidate_packet"
+        },
+        "strategy_id": "tw-cross-sectional-equity-alpha",
+        "version": "1.0.0"
+      }
+    ],
+    "registry_id": "qlib-alpha-tw-cross-sectional-equity-alpha-1.0.0",
+    "registry_write_authority": "registry_service_only",
+    "safety_assertions": {
+      "deployment_stage_remains_none": true,
+      "no_registry_write": true,
+      "registry_write_authority": "registry_service_only",
+      "scoring_only_not_direct_action": true
+    },
+    "schema_version": "1.0",
+    "strategy_id": "tw-cross-sectional-equity-alpha",
+    "version": "1.0.0"
+  },
+  "order_route": "none",
+  "packet_id": "qlib-production-activation-tw-cross-sectional-equity-alpha",
+  "production_dataset_proof": {
+    "audit": {
+      "evidence_bundle_ref": "evidence:tw-equity-ohlcv-top50-2024-daily-v1.0",
+      "ingest_run_id": "ingest-twse-openapi-2026-01-05-001",
+      "normalization_run_id": "norm-tw-equity-ohlcv-2026-01-05-001",
+      "rate_limit_policy_ref": "policy:twse-openapi-rate-limit-v1"
+    },
+    "controls": {
+      "execution_targets": [],
+      "no_order_route": true
+    },
+    "entitlement": {
+      "allowed_use": [
+        "model_training",
+        "research"
+      ],
+      "entitlement_ref": "ENT-TWSE-OPENAPI-RESEARCH-2024-001",
+      "entitlement_tags": [
+        "twse_research_grade",
+        "tpex_research_grade",
+        "ohlcv_daily_approved"
+      ],
+      "license_scope": "research_and_model_training"
+    },
+    "freshness": {
+      "as_of": "2026-01-05T00:00:00Z",
+      "freshness_sla_seconds": 86400,
+      "last_ingested_at": "2026-01-05T02:00:00Z",
+      "status": "fresh"
+    },
+    "pit": {
+      "available_time_field": "ingestion_timestamp",
+      "event_time_field": "date",
+      "point_in_time": true,
+      "source_watermark": "2026-01-05T00:00:00Z"
+    },
+    "provider": {
+      "dataset_id": "tw-equity-ohlcv-top50-2024-daily",
+      "name": "TWSE-OpenAPI",
+      "source_class": "research_grade"
+    },
+    "storage": {
+      "backend": "object_store",
+      "checksum": "sha256:fda828e5504eb3b4ae962bd2982c62b5c7b9075f7d2aa44ab197077f02146662",
+      "dataset_ref": "dataset:tw-equity-ohlcv-top50-2024-daily",
+      "durable": true,
+      "path": "research/qlib/tw-equity-ohlcv-top50-2024-daily/v1.0/dataset.json",
+      "snapshot_ref": "snapshot:tw-equity-ohlcv-top50-2024-daily-v1.0"
+    }
+  },
+  "registry_write_authority": "registry_service_only",
+  "requested_artifact_state": "candidate",
+  "safety_assertions": {
+    "deployment_stage_remains_none": true,
+    "no_broker_session": true,
+    "no_capital_binding": true,
+    "no_order_route": true,
+    "no_registry_write": true
+  },
+  "task_id": "P2-QLIB-PROD-DATA-ACTIVATION-001"
+}
