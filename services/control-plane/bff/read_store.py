@@ -103,6 +103,7 @@ _FIXTURE_RECORD_KEYS = [
     "skill_id",
     "session_id",
     "sessionId",
+    "packet_id",
     "strategy_id",
     "experiment_id",
     "artifact_id",
@@ -418,6 +419,77 @@ def _load_snapshot_dataset(
     dataset_payload = payload.get(dataset_key, {})
     normalized = _normalize_records(dataset_payload, key_candidates)
     return True, normalized, (str(snapshot_path), stat)
+
+
+def _load_record_store_payload(path: Path) -> Any:
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        return []
+    if path.suffix.lower() == ".jsonl":
+        records: List[Any] = []
+        for line in text.splitlines():
+            raw = line.strip()
+            if raw:
+                records.append(json.loads(raw))
+        return records
+    return json.loads(text)
+
+
+def _packet_from_ooda_store_record(record: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(record, dict):
+        return None
+    if str(record.get("schema_version") or "") != "ooda_loop_packet_record.v1":
+        return None
+    payload = record.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    record_type = str(record.get("record_type") or "")
+    if record_type == "packet_snapshot":
+        packet = payload
+    elif record_type == "stage_transition":
+        packet = payload.get("packet")
+    else:
+        packet = None
+    if not isinstance(packet, dict):
+        return None
+    projected = json.loads(json.dumps(packet))
+    projected.setdefault("packet_id", record.get("packet_id"))
+    return projected
+
+
+def _project_ooda_packet_store_payload(payload: Any) -> Any:
+    if isinstance(payload, dict):
+        for key in ("items", "packets", "data", "records"):
+            nested = payload.get(key)
+            if isinstance(nested, list):
+                return _project_ooda_packet_store_payload(nested)
+        packet = _packet_from_ooda_store_record(payload)
+        if packet is not None:
+            return {str(packet.get("packet_id") or packet.get("id")): packet}
+        return payload
+
+    if not isinstance(payload, list):
+        return payload
+
+    projected: Dict[str, Dict[str, Any]] = {}
+    passthrough: List[Dict[str, Any]] = []
+    for item in payload:
+        packet = _packet_from_ooda_store_record(item)
+        if packet is None:
+            if isinstance(item, dict):
+                packet_id = _record_key(item, ["packet_id", "id"])
+                if packet_id:
+                    projected[str(packet_id)] = item
+                else:
+                    passthrough.append(item)
+            continue
+        packet_id = _record_key(packet, ["packet_id", "id"])
+        if packet_id:
+            projected[str(packet_id)] = packet
+
+    if passthrough:
+        return [*projected.values(), *passthrough]
+    return projected
 
 
 def _base_url_from_env(env_names: tuple[str, ...]) -> Optional[str]:
@@ -1026,6 +1098,18 @@ class ServiceBackedReadAdapter:
             "keys": ["id"],
             "snapshot_key": "sentinel_findings",
         },
+        "ooda_packets": {
+            "env": "PANTHEON_BFF_OODA_PACKET_STORE",
+            "dirs": ("PANTHEON_OODA_DATA_DIR", "PANTHEON_CONTROL_PLANE_DATA_DIR"),
+            "filenames": (
+                "ooda_packets.jsonl",
+                "ooda_loop_packets.jsonl",
+                "loop_packets.jsonl",
+                "ooda_packets.json",
+            ),
+            "keys": ["packet_id", "id"],
+            "snapshot_key": "ooda_packets",
+        },
     }
 
     _HTTP_DATASETS = {
@@ -1070,6 +1154,11 @@ class ServiceBackedReadAdapter:
             "base_env": ("PANTHEON_MEMORY_API_URL", "PANTHEON_MEMORY_SERVICE_URL"),
             "list_path": "/api/memory/entries",
             "list_key": "entries",
+        },
+        "ooda_packets": {
+            "base_env": ("PANTHEON_OODA_API_URL", "PANTHEON_CONTROL_PLANE_OODA_URL"),
+            "list_path": "/api/ooda/packets",
+            "list_key": "items",
         },
     }
 
@@ -1151,8 +1240,9 @@ class ServiceBackedReadAdapter:
             if self._cache_meta.get(dataset) == (cache_key, stat):
                 return True, self._cache.get(dataset, {})
 
-            text = path.read_text(encoding="utf-8").strip()
-            payload = json.loads(text) if text else {}
+            payload = _load_record_store_payload(path)
+            if dataset == "ooda_packets":
+                payload = _project_ooda_packet_store_payload(payload)
             nested_key = self._DATASETS[dataset].get("nested_key")
             if nested_key and isinstance(payload, dict):
                 payload = payload.get(str(nested_key), {})
@@ -5103,6 +5193,7 @@ class ReadSurfaceStore:
         "agora_training_examples": "agora_training_examples",
         "agora_audit_events": "agora_audit_events",
         "v5_interventions": "v5_interventions",
+        "ooda_packets": "ooda_packets",
         "ranking_formulas": "ranking_formulas",
         "rebalances": "rebalances",
         "rankings": "rankings",
@@ -8620,6 +8711,186 @@ class ReadSurfaceStore:
         ]
 
     # ------------------------------------------------------------------ #
+    # OODA packet read surface (MGMT-OODA-004)
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _ooda_packet_id(packet: Dict[str, Any]) -> str:
+        return str(packet.get("packet_id") or packet.get("id") or "").strip()
+
+    @staticmethod
+    def _add_ooda_ref_value(target: set[str], value: Any) -> None:
+        if value in (None, ""):
+            return
+        if isinstance(value, (str, int, float)):
+            text = str(value).strip()
+            if text:
+                target.add(text)
+            return
+        if isinstance(value, list):
+            for item in value:
+                ReadSurfaceStore._add_ooda_ref_value(target, item)
+            return
+        if isinstance(value, dict):
+            for field in ("id", "ref_id", "object_id", "entity_id", "strategy_id", "runtime_id", "program_id"):
+                raw = value.get(field)
+                if raw not in (None, ""):
+                    target.add(str(raw).strip())
+
+    @classmethod
+    def _collect_ooda_ref_values(
+        cls,
+        value: Any,
+        *,
+        field_aliases: set[str],
+        type_tokens: set[str],
+    ) -> set[str]:
+        refs: set[str] = set()
+
+        def visit(node: Any) -> None:
+            if isinstance(node, dict):
+                raw_type = str(
+                    node.get("type")
+                    or node.get("object_type")
+                    or node.get("entity_type")
+                    or node.get("ref_type")
+                    or ""
+                ).lower()
+                if raw_type and any(token in raw_type for token in type_tokens):
+                    cls._add_ooda_ref_value(refs, node)
+                for key, child in node.items():
+                    normalized_key = str(key).replace("_", "").lower()
+                    if normalized_key in field_aliases:
+                        cls._add_ooda_ref_value(refs, child)
+                    visit(child)
+                return
+            if isinstance(node, list):
+                for child in node:
+                    visit(child)
+
+        visit(value)
+        return refs
+
+    @classmethod
+    def _ooda_packet_matches_ref(cls, packet: Dict[str, Any], ref_id: str, ref_type: str) -> bool:
+        clean_ref = str(ref_id or "").strip()
+        if not clean_ref:
+            return False
+        aliases_by_type = {
+            "strategy": {
+                "strategyid",
+                "strategyids",
+                "linkedstrategyid",
+                "linkedstrategyids",
+                "strategyspecid",
+                "strategyspecids",
+            },
+            "runtime": {
+                "runtimeid",
+                "runtimeids",
+                "runtimebindingid",
+                "runtimebindingids",
+                "bindingid",
+                "bindingids",
+            },
+            "evolution_program": {
+                "evolutionprogramid",
+                "evolutionprogramids",
+                "programid",
+                "programids",
+            },
+        }
+        type_tokens_by_type = {
+            "strategy": {"strategy"},
+            "runtime": {"runtime", "runtimebinding"},
+            "evolution_program": {"evolutionprogram"},
+        }
+        refs = cls._collect_ooda_ref_values(
+            packet,
+            field_aliases=aliases_by_type[ref_type],
+            type_tokens=type_tokens_by_type[ref_type],
+        )
+        return clean_ref in refs
+
+    def list_ooda_packets(
+        self,
+        *,
+        status: Optional[str] = None,
+        stage: Optional[str] = None,
+        strategy_id: Optional[str] = None,
+        runtime_id: Optional[str] = None,
+        evolution_program_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        items = [
+            json.loads(json.dumps(packet))
+            for packet in self._read_dataset_records("ooda_packets")
+            if self._ooda_packet_id(packet)
+        ]
+        if status:
+            requested = {item.strip().lower() for item in status.split(",") if item.strip()}
+            items = [
+                packet
+                for packet in items
+                if str(packet.get("status") or packet.get("state") or "").lower() in requested
+            ]
+        if stage:
+            requested_stages = {item.strip().lower() for item in stage.split(",") if item.strip()}
+            items = [
+                packet
+                for packet in items
+                if str(packet.get("stage") or packet.get("current_stage") or "").lower() in requested_stages
+            ]
+        if strategy_id:
+            items = [
+                packet
+                for packet in items
+                if self._ooda_packet_matches_ref(packet, strategy_id, "strategy")
+            ]
+        if runtime_id:
+            items = [
+                packet
+                for packet in items
+                if self._ooda_packet_matches_ref(packet, runtime_id, "runtime")
+            ]
+        if evolution_program_id:
+            items = [
+                packet
+                for packet in items
+                if self._ooda_packet_matches_ref(packet, evolution_program_id, "evolution_program")
+            ]
+        items.sort(
+            key=lambda packet: (
+                _parse_rfc3339(
+                    packet.get("updated_at")
+                    or packet.get("closed_at")
+                    or packet.get("created_at")
+                    or packet.get("started_at")
+                )
+                or datetime.min
+            ),
+            reverse=True,
+        )
+        return items
+
+    def get_ooda_packet(self, packet_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        clean_id = str(packet_id or "").strip()
+        if not clean_id:
+            return None
+        for packet in self.list_ooda_packets():
+            if self._ooda_packet_id(packet) == clean_id:
+                return json.loads(json.dumps(packet))
+        return None
+
+    def list_ooda_packets_for_strategy(self, strategy_id: str) -> List[Dict[str, Any]]:
+        return self.list_ooda_packets(strategy_id=strategy_id)
+
+    def list_ooda_packets_for_runtime(self, runtime_id: str) -> List[Dict[str, Any]]:
+        return self.list_ooda_packets(runtime_id=runtime_id)
+
+    def list_ooda_packets_for_evolution_program(self, program_id: str) -> List[Dict[str, Any]]:
+        return self.list_ooda_packets(evolution_program_id=program_id)
+
+    # ------------------------------------------------------------------ #
     # v5 intervention fixture read surface (BFF-CONSOL-009)
     # ------------------------------------------------------------------ #
 
@@ -11110,6 +11381,7 @@ class ReadSurfaceStore:
                         "sessionId",
                         "packId",
                         "handoffId",
+                        "packet_id",
                         "trainingExampleId",
                         "example_id",
                         "analysis_id",

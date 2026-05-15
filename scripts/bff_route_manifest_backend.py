@@ -57,6 +57,11 @@ ROUTE_STATUS_OVERRIDES: dict[str, dict] = {
         "covered_by": "PATCH /bff/ranking/formulas/{formula_id}",
     },
     "POST /bff/ranking-formulas": {"status": "alias", "covered_by": "POST /bff/ranking/formulas"},
+    # Track E OODA read routes are backend-owned first; frontend cards/drawer
+    # activate in follow-on MGMT-OODA tasks.
+    "GET /bff/strategies/{strategy_id}/ooda": {"family": "ooda-packet-foundation"},
+    "GET /bff/runtimes/{runtime_id}/ooda": {"family": "ooda-packet-foundation"},
+    "GET /bff/evolution-programs/{program_id}/ooda": {"family": "ooda-packet-foundation"},
 }
 
 FAMILY_RULES: list[tuple[str, str]] = [
@@ -87,6 +92,8 @@ FAMILY_RULES: list[tuple[str, str]] = [
     ("/bff/mcp-tools", "mcp-final"),
     # ── v5 interventions ─────────────────────────────────────────────────────
     ("/bff/v5/interventions", "v5-interventions"),
+    # ── Track E OODA packet foundation ───────────────────────────────────────
+    ("/bff/ooda", "ooda-packet-foundation"),
     # ── execute-plans cutover / v5 smoke ─────────────────────────────────────
     ("/bff/v5/sentinel", "execute-plans-cutover-smoke"),
     ("/bff/v5/loop-runs", "execute-plans-cutover-smoke"),

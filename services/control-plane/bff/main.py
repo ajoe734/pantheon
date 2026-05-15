@@ -17632,6 +17632,187 @@ async def bff_get_strategy_audit(
     }
 
 
+def _ooda_packet_routes_enabled() -> bool:
+    raw = os.getenv("PANTHEON_OODA_PACKET_ENABLED")
+    if raw is None:
+        return True
+    return raw.strip().lower() not in {"0", "false", "no", "off", "disabled"}
+
+
+def _require_ooda_packet_routes_enabled() -> None:
+    if _ooda_packet_routes_enabled():
+        return
+    raise _bff_error(
+        503,
+        ErrorCode.DOWNSTREAM_UNAVAILABLE,
+        "OODA packet read routes disabled",
+        "PANTHEON_OODA_PACKET_ENABLED is disabled for this BFF instance.",
+        precondition_failed="ooda_packet_feature_flag",
+        suggestion="Re-enable the OODA packet read surface before retrying this route.",
+    )
+
+
+def _ooda_packet_list_payload(
+    packets: List[Dict[str, Any]],
+    *,
+    surface_key: str,
+    page_token: Optional[str] = None,
+    page_size: int = 20,
+    related: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    total = len(packets)
+    page_items, next_page_token = _page_slice(packets, page_token, page_size)
+    meta = _read_surface_meta(
+        "ooda_packets",
+        surface_key,
+        snapshot_at=snapshot_at,
+        total=total,
+    )
+    if related:
+        meta["related"] = related
+    return {
+        "data": page_items,
+        "items": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": meta,
+    }
+
+
+@app.get("/bff/ooda/packets")
+async def bff_list_ooda_packets(
+    status: Optional[str] = None,
+    stage: Optional[str] = None,
+    strategy_id: Optional[str] = None,
+    runtime_id: Optional[str] = None,
+    evolution_program_id: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list replayable Management OODA packets."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _require_ooda_packet_routes_enabled()
+    packets = read_store.list_ooda_packets(
+        status=status,
+        stage=stage,
+        strategy_id=strategy_id,
+        runtime_id=runtime_id,
+        evolution_program_id=evolution_program_id,
+    )
+    return _ooda_packet_list_payload(
+        packets,
+        surface_key="ooda_packets",
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
+@app.get("/bff/ooda/packets/{packet_id}")
+async def bff_get_ooda_packet(
+    packet_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: get a single replayable Management OODA packet."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _require_ooda_packet_routes_enabled()
+    clean_id = packet_id.strip()
+    packet = read_store.get_ooda_packet(clean_id)
+    source = read_store.dataset_source("ooda_packets")
+    if not packet:
+        if source == "missing":
+            return _sem_final_degraded_detail(
+                entity_id=clean_id,
+                label="OODA packet",
+                dataset="ooda_packets",
+                surface_key="ooda_packet_detail",
+                source="missing",
+            )
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "OODA packet not found",
+            f"OODA packet {packet_id} does not exist",
+        )
+    snapshot_at = utc_now()
+    return {
+        "data": packet,
+        "meta": _read_surface_meta(
+            "ooda_packets",
+            "ooda_packet_detail",
+            snapshot_at=snapshot_at,
+        ),
+    }
+
+
+@app.get("/bff/strategies/{strategy_id}/ooda")
+async def bff_list_strategy_ooda_packets(
+    strategy_id: str,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list OODA packets linked to a strategy."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _require_ooda_packet_routes_enabled()
+    clean_id = strategy_id.strip()
+    packets = read_store.list_ooda_packets_for_strategy(clean_id)
+    return _ooda_packet_list_payload(
+        packets,
+        surface_key="strategy_ooda_packets",
+        page_token=page_token,
+        page_size=page_size,
+        related={"type": "Strategy", "id": clean_id},
+    )
+
+
+@app.get("/bff/runtimes/{runtime_id}/ooda")
+async def bff_list_runtime_ooda_packets(
+    runtime_id: str,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list OODA packets linked to a runtime or RuntimeBinding."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _require_ooda_packet_routes_enabled()
+    clean_id = runtime_id.strip()
+    packets = read_store.list_ooda_packets_for_runtime(clean_id)
+    return _ooda_packet_list_payload(
+        packets,
+        surface_key="runtime_ooda_packets",
+        page_token=page_token,
+        page_size=page_size,
+        related={"type": "Runtime", "id": clean_id},
+    )
+
+
+@app.get("/bff/evolution-programs/{program_id}/ooda")
+async def bff_list_evolution_program_ooda_packets(
+    program_id: str,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: list OODA packets linked to an evolution program."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _require_ooda_packet_routes_enabled()
+    clean_id = program_id.strip()
+    packets = read_store.list_ooda_packets_for_evolution_program(clean_id)
+    return _ooda_packet_list_payload(
+        packets,
+        surface_key="evolution_program_ooda_packets",
+        page_token=page_token,
+        page_size=page_size,
+        related={"type": "EvolutionProgram", "id": clean_id},
+    )
+
+
 @app.post("/bff/strategies/{strategy_id}/actions/{action_id}", status_code=202)
 async def bff_strategy_action(
     strategy_id: str,
@@ -23376,7 +23557,16 @@ async def sem_bff_health_alias():
 @app.get("/bff/feature-flags")
 async def sem_bff_capabilities(authorization: Optional[str] = Header(default=None)):
     _require_read_role(_extract_identity(authorization))
-    return {"data": {"feature_flags": {"executePlansBff": True, "sessionAuthMe": True}}, "meta": {"snapshot_at": utc_now()}}
+    return {
+        "data": {
+            "feature_flags": {
+                "executePlansBff": True,
+                "sessionAuthMe": True,
+                "oodaPackets": _ooda_packet_routes_enabled(),
+            }
+        },
+        "meta": {"snapshot_at": utc_now()},
+    }
 
 
 def _sem_empty_final_list(surface_key: str) -> Dict[str, Any]:
