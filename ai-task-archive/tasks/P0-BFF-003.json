@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "P0-BFF-003",
+  "archived_at": "2026-05-16T00:33:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-BFF-003",
+    "title": "POST /bff/logout",
+    "summary_zh": null,
+    "phase": "Sprint 1 / EPIC-BFF-P0",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete: POST /bff/logout implementation verified. All 34 tests pass (18 session-auth, 13 cookie-session-write-gate, 3 live-wiring). py_compile clean. Evidence at support/evidence/P0-BFF-003/README.md, review at support/reviews/P0-BFF-003-review-claude2.md. Task-scoped commit c1cc3bed. main.py logout hunk remains in shared dirty worktree with sibling tasks; deliverable is durable per reviewer approval.",
+    "last_update": "2026-05-16T00:33:02Z",
+    "review_notes_zh": [
+      "審查通過",
+      "POST /bff/logout 實作正確：嚴格模式 cookie session、X-MFA-Token、idempotent DTO 行為全部驗證通過；34 個測試全過；無需修改"
+    ],
+    "review_file": "support/reviews/P0-BFF-003-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T00:33:02Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "c1cc3bedba90c7ed5a65991d167154b661e48fe2",
+      "commit_subject": "P0-BFF-003: POST /bff/logout closeout — evidence, review, and cookie-session tests",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Note": "main.py logout hunk is in the concurrent dirty worktree shared with",
+        "LLM-Agent": "Claude",
+        "Task-ID": "P0-BFF-003",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 56,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 11,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-BFF-003",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T23:07:37Z",
+      "resolved_at": "2026-05-15T23:09:24Z"
+    },
+    {
+      "task_id": "P0-BFF-003",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Ready for review: POST /bff/logout now accepts strict-mode pantheon_session cookie plus X-MFA-Token, preserves idempotent logged_out session DTO behavior, and has evidence at support/evidence/P0-BFF-003/README.md. Verification: pytest services/control-plane/bff/test_bff_session_auth_me_contract.py -q => 18 passed; pytest services/control-plane/bff/test_bff_consol_013_cookie_session_write_gate.py -q => 13 passed; final live wiring route/OpenAPI/live-probe subset => 3 passed; py_compile main/session store passed. Note: worktree also contains concurrent non-P0-BFF-003 dirty hunks in the same files from sibling BFF tasks; review scope is logout hunks plus P0-BFF-003 evidence.",
+      "status": "done",
+      "created_at": "2026-05-15T23:15:50Z",
+      "resolved_at": "2026-05-15T23:23:48Z"
+    },
+    {
+      "task_id": "P0-BFF-003",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved: POST /bff/logout implementation is correct. Cookie session, X-MFA-Token, idempotency, logged_out DTO behavior all verified. 18+13+3 tests pass. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-15T23:23:48Z",
+      "resolved_at": "2026-05-15T23:35:38Z"
+    },
+    {
+      "task_id": "P0-BFF-003",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-05-15T23:35:38Z",
+      "resolved_at": "2026-05-16T00:33:02Z"
+    }
+  ],
+  "blockers": []
+}
