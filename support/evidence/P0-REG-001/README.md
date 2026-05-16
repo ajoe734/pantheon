@@ -54,3 +54,24 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_exec
 
 The two warnings are existing `datetime.utcnow()` deprecation warnings emitted
 from `services/control-plane/bff/read_store.py`.
+
+## Closeout Verification (2026-05-16 — Claude2 finalize)
+
+Finalization re-run confirmed all tests still pass:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_bff_strategy_persona_contract.py -q
+# 16 passed in 14.00s
+
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q
+# 7 passed, 1 failed (out-of-scope), 2 warnings in 12.62s
+```
+
+The 1 failure (`test_execute_plans_final_stub_auth_smoke_avoids_server_errors`) is the
+P0-CAP-001 fail-closed 503 on `/bff/capital-pools/pool_001`, explicitly noted in the
+review as out-of-scope for P0-REG-001.
+
+No isolated task commit was created: `main.py` and `read_store.py` contain
+multi-task hunks (P0-PER-001, P0-AUD-001) that cannot be separated non-interactively
+in a background worker. Reviewed deliverable (implementation, evidence, review artifact,
+and contract tests) was already durable in the repository before closeout.
