@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-16 22:25:27
+Last updated: 2026-05-16 23:26:23
 
 ## Objective
 
@@ -61,11 +61,12 @@ Last updated: 2026-05-16 22:25:27
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-16 22:25:26
-- Terminal tasks archived: `1157` total, `1137` completed, `20` superseded
+- Archive updated: 2026-05-16 23:21:18
+- Terminal tasks archived: `1158` total, `1138` completed, `20` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE` | Sidecar / EP5 broker TW acceptance review | Review EP5-BROKER-TW-002 sidecar acceptance packet | Codex | completed | 2026-05-16 23:21:18 | `ai-task-archive/tasks/EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE.json` |
 | `ASK-005` | Sprint 5 / EPIC-RESEARCH | approval / ask SSE event publishing | Claude | completed | 2026-05-16 22:25:26 | `ai-task-archive/tasks/ASK-005.json` |
 | `ASK-005-SIDECAR-REVIEW` | Sprint 5 / EPIC-RESEARCH | Prepare ASK-005 review packet and evidence summary | Codex | completed | 2026-05-16 22:13:36 | `ai-task-archive/tasks/ASK-005-SIDECAR-REVIEW.json` |
 | `EVO-001` | Sprint 6 / EPIC-EVOLUTION | EvolutionDecision service | Claude | completed | 2026-05-16 20:05:30 | `ai-task-archive/tasks/EVO-001.json` |
@@ -85,7 +86,6 @@ Last updated: 2026-05-16 22:25:27
 | `TRN-001` | Sprint 5 / EPIC-RESEARCH | TeachingSession / TeachingEvent schema | Codex | completed | 2026-05-16 17:57:42 | `ai-task-archive/tasks/TRN-001.json` |
 | `EXP-001` | Sprint 5 / EPIC-RESEARCH | ExperimentTask / ExperimentRun schema | Codex | completed | 2026-05-16 17:53:55 | `ai-task-archive/tasks/EXP-001.json` |
 | `IMT-003` | Sprint 5 / EPIC-RESEARCH | imitation dataset builder skeleton | Claude2 | completed | 2026-05-16 17:40:02 | `ai-task-archive/tasks/IMT-003.json` |
-| `STRAT-004` | Sprint 5 / EPIC-RESEARCH | evidence / code refs lineage | Codex | completed | 2026-05-16 17:29:19 | `ai-task-archive/tasks/STRAT-004.json` |
 
 ## Task Board
 
@@ -97,7 +97,7 @@ Last updated: 2026-05-16 22:25:27
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| `EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE` | Gemini | Codex2 | Acceptance packet and dependency map for EP5-BROKER-TW-002 prepared at support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout. | pending | 2026-05-12 22:50:00 |
+| _(none)_ | - | - | - | - | - |
 
 ## Blockers
 
@@ -180,23 +180,23 @@ Last updated: 2026-05-16 22:25:27
 
 ## Latest Checkpoints
 
-- 2026-05-16 22:23:38 Orchestrator: PreToolUse: Bash
-- 2026-05-16 22:23:48 Orchestrator: PostToolUse: Bash
-- 2026-05-16 22:23:48 Orchestrator: PreToolUse: Read
-- 2026-05-16 22:23:49 Orchestrator: PostToolUse: Read
-- 2026-05-16 22:23:55 Orchestrator: PreToolUse: Bash
-- 2026-05-16 22:23:56 Orchestrator: PreToolUse: Bash
-- 2026-05-16 22:23:56 Orchestrator: PostToolUse: Bash
-- 2026-05-16 22:23:57 Orchestrator: PostToolUse: Bash
-- 2026-05-16 22:24:00 Orchestrator: PreToolUse: Bash
-- 2026-05-16 22:24:01 Orchestrator: PostToolUse: Bash
-- 2026-05-16 22:24:46 Orchestrator: PreToolUse: Bash
-- 2026-05-16 22:24:54 Orchestrator: PreToolUse: Bash
-- 2026-05-16 22:24:57 Orchestrator: PostToolUse: Bash
-- 2026-05-16 22:25:03 Orchestrator: PreToolUse: Bash
-- 2026-05-16 22:25:11 Orchestrator: PreToolUse: Bash
-- 2026-05-16 22:25:12 Orchestrator: PostToolUse: Bash
-- 2026-05-16 22:25:17 Orchestrator: PreToolUse: Bash
-- 2026-05-16 22:25:18 Orchestrator: PostToolUse: Bash
-- 2026-05-16 22:25:25 Orchestrator: PreToolUse: Bash
-- 2026-05-16 22:25:26 Claude: `ASK-005` ASK-005 closeout: approval/ask SSE event publishing fully implemented and reviewed. Commits: 6c7484c1 initial SSE implementation; 73304fe0 escalate/freeze semantics + replay de-dup; f5400502 body idempotency before publish; 632d72a8 durable command_store replay; 106b0cca idempotency-conflict no-double-publish (R4). Final verification: 12 ASK-005 contract tests, 66 adjacent approval/ask/SSE tests, 33 governance/idempotency tests — all passed (0 regressions). Reviewer Codex approved R4 fix.
+- 2026-05-16 23:23:18 Orchestrator: PreToolUse: Bash
+- 2026-05-16 23:23:19 Orchestrator: PostToolUse: Bash
+- 2026-05-16 23:23:48 Orchestrator: PreToolUse: Bash
+- 2026-05-16 23:24:02 Orchestrator: PostToolUse: Bash
+- 2026-05-16 23:24:09 Orchestrator: PreToolUse: Bash
+- 2026-05-16 23:24:13 Orchestrator: PostToolUse: Bash
+- 2026-05-16 23:24:31 Orchestrator: PreToolUse: Bash
+- 2026-05-16 23:24:32 Orchestrator: PostToolUse: Bash
+- 2026-05-16 23:24:39 Orchestrator: PreToolUse: Bash
+- 2026-05-16 23:24:40 Orchestrator: PostToolUse: Bash
+- 2026-05-16 23:24:53 Orchestrator: PreToolUse: Bash
+- 2026-05-16 23:24:54 Orchestrator: PostToolUse: Bash
+- 2026-05-16 23:25:10 Orchestrator: PreToolUse: Bash
+- 2026-05-16 23:25:11 Orchestrator: PostToolUse: Bash
+- 2026-05-16 23:25:21 Orchestrator: PreToolUse: Bash
+- 2026-05-16 23:25:21 Orchestrator: PostToolUse: Bash
+- 2026-05-16 23:25:44 Orchestrator: PreToolUse: Bash
+- 2026-05-16 23:25:44 Orchestrator: PostToolUse: Bash
+- 2026-05-16 23:25:59 Orchestrator: PreToolUse: TodoWrite
+- 2026-05-16 23:25:59 Orchestrator: PostToolUse: TodoWrite

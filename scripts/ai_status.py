@@ -1770,9 +1770,16 @@ def normalize_runtime_workers(state: dict[str, Any], orchestrator_state: dict[st
     for run_id, worker in (orchestrator_state.get("workers", {}) or {}).items():
         task_id = str(worker.get("task_id") or "").strip()
         task = resolver.get(task_id) if task_id else None
+        request_snapshot = worker.get("request_snapshot") if isinstance(worker.get("request_snapshot"), dict) else {}
+        request_metadata = request_snapshot.get("metadata") if isinstance(request_snapshot.get("metadata"), dict) else {}
+        handoff = request_metadata.get("handoff") if isinstance(request_metadata.get("handoff"), dict) else None
         task_status = str(task.get("status") or "") if task else None
         task_source = resolver.source(task_id) if task_id else None
         worker_status = str(worker.get("status") or "")
+        reason = worker.get("reason") or request_snapshot.get("reason")
+        if task is None and str(reason or "") == "handoff_pending" and handoff:
+            task_status = str(handoff.get("status") or "pending")
+            task_source = "handoff"
         pid = worker.get("pid")
         pid_alive = pid_is_alive(pid) if pid not in {None, "", 0, "0"} else None
         live_runtime = worker_has_live_runtime(worker, pid_alive=pid_alive)
@@ -1799,7 +1806,8 @@ def normalize_runtime_workers(state: dict[str, Any], orchestrator_state: dict[st
                 "bucket": bucket,
                 "task_status": task_status,
                 "task_source": task_source,
-                "reason": worker.get("reason") or (worker.get("request_snapshot") or {}).get("reason"),
+                "reason": reason,
+                "handoff": handoff,
                 "delivery_mode": worker.get("mode"),
                 "dispatch_mode": runtime_dispatch_mode(worker),
                 "last_event_at": worker.get("last_event_at"),
@@ -1960,6 +1968,8 @@ def detect_truth_mismatches(
             if str(worker.get("dispatch_mode") or "").strip() in {"discussion_planning", "coordination", "chair_review"}:
                 continue
             if resolver.source(task_id) == "archive":
+                continue
+            if worker.get("task_source") == "handoff":
                 continue
             push(
                 {
@@ -2738,6 +2748,19 @@ def build_dashboard_bundle(
     for worker in live_workers:
         task_id = str(worker.get("task_id") or "")
         task = task_map.get(task_id, {})
+        if not task and worker.get("task_source") == "handoff" and isinstance(worker.get("handoff"), dict):
+            handoff = worker["handoff"]
+            task = {
+                "id": task_id,
+                "title": "Pending handoff",
+                "summary_zh": handoff.get("message"),
+                "next": handoff.get("message"),
+                "status": handoff.get("status") or "pending",
+                "owner": handoff.get("to"),
+                "reviewer": handoff.get("from"),
+                "source_plane": "handoff",
+                "source_ref": {"handoff_from": handoff.get("from"), "handoff_to": handoff.get("to")},
+            }
         queue_event = queue_map.get(str(worker.get("queue_event_id") or ""), {})
         linked_mismatches = mismatch_detail_index.get((task_id, str(worker.get("run_id") or "")), [])
         worker_task_links.append(
