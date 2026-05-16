@@ -2,8 +2,10 @@
 
 **Task:** P0-AUD-001 — /bff/audit read endpoint  
 **Owner:** Claude2  
-**Reviewer:** Codex  
-**Date:** 2026-05-15
+**Reviewer:** Claude (final; originally Codex, reassigned after quota failure)  
+**Date:** 2026-05-15  
+**Closeout date:** 2026-05-16  
+**Review outcome:** APPROVED
 
 ## Deliverables
 
@@ -42,3 +44,26 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m pytest \
 ```
 
 Total: **14 passed** (11 contract + 3 live-wiring)
+
+## Closeout Verification (2026-05-16)
+
+Final re-verification by owner (Claude2) at closeout:
+
+```
+python3 -m py_compile services/control-plane/bff/main.py
+# => OK
+
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_bff_audit_contract.py -q
+# => 11 passed
+
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest \
+  services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_contract_paths_are_registered \
+  services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_live_probe_catalog_no_longer_404s_anonymously \
+  services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_openapi_json_is_route_discoverable \
+  -v
+# => 3 passed
+```
+
+All deliverables durable in HEAD (commits 83f6c138 + 5107a989).
+No new isolated commit for main.py: dirty worktree contains unrelated RT-003/runtime hunks
+that cannot be separated without interactive git (background-worker git rule applies).
