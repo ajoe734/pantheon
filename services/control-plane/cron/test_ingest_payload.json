@@ -1,0 +1,9 @@
+{
+  "strategy_id": "strat-test-001",
+  "title": "Test Ingest",
+  "hypothesis": "Hypothesis test",
+  "objective": "Objective test",
+  "symbols": ["SPY"],
+  "frequency": "daily",
+  "source_refs": ["http://example.com/source"]
+}
