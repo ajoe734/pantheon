@@ -1,0 +1,57 @@
+name: Publish Promote
+
+# Opens a `publish/<VER>` → `master` PR once the publish snapshot has soaked
+# in staging for `wave_workflow.promote.soak_days` days and no `regression/*`
+# label is set. Cron runs hourly; also triggered on `release/v*` tag push.
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  push:
+    tags:
+      - "release/v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Publish version to promote (e.g. v2026.20.0). Omit to evaluate all candidates."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+concurrency:
+  group: publish-promote
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Evaluate publish snapshots
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: master
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Discover candidates
+        id: discover
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          python3 scripts/git/publish_promote.py discover \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Open promote PRs
+        if: steps.discover.outputs.candidate_count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROMOTE_CANDIDATES: ${{ steps.discover.outputs.candidates }}
+        run: |
+          python3 scripts/git/publish_promote.py open-prs

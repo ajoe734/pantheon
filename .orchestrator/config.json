@@ -835,5 +835,72 @@
     },
     "max_tasks_per_agent": 1,
     "max_dispatches_per_tick": 8
+  },
+  "wave_workflow": {
+    "enabled": true,
+    "wave_length_days": 5,
+    "wave_open_dow": "monday",
+    "wave_close_dow": "friday",
+    "freeze_hour_local": 12,
+    "close_hour_local": 17,
+    "current_wave_id": null,
+    "wave_branch_prefix": "wave/",
+    "worker_branch_prefix": "worker/",
+    "publish_branch_prefix": "publish/",
+    "release_tag_prefix": "release/",
+    "prod_tag_prefix": "prod/",
+    "archive_tag_prefix": "archive/",
+    "dev_branch": "dev",
+    "main_branch": "master",
+    "promote": {
+      "trigger": "publish_soak",
+      "soak_days": 3,
+      "regression_label_prefix": "regression/",
+      "promote_pr_label": "auto-promote",
+      "block_labels": [
+        "hold-promote",
+        "regression"
+      ]
+    },
+    "wave_merge": {
+      "mode": "no-ff",
+      "auto_merge_on_push": true,
+      "require_commit_trailers": [
+        "LLM-Agent",
+        "Task-ID",
+        "Reviewer",
+        "Wave"
+      ],
+      "subject_prefix_required": true
+    },
+    "worker_branches": {
+      "Claude": "worker/claude",
+      "Claude2": "worker/claude2",
+      "Codex": "worker/codex",
+      "Codex2": "worker/codex2",
+      "Gemini": "worker/gemini",
+      "Gemini2": "worker/gemini2",
+      "Copilot": "worker/copilot",
+      "Qwen": "worker/qwen"
+    },
+    "drift_alarms": {
+      "wave_must_close_within_days": 7,
+      "worker_must_merge_within_waves": 1,
+      "publish_must_promote_within_days": 14
+    },
+    "orchestrator_sync_webhook": {
+      "enabled": false,
+      "url_env": "PANTHEON_ORCHESTRATOR_SYNC_URL",
+      "secret_env": "PANTHEON_ORCHESTRATOR_SYNC_SECRET",
+      "events": [
+        "wave_open",
+        "wave_freeze",
+        "wave_close",
+        "publish_cut",
+        "promote_pr_opened",
+        "promote_merged",
+        "hotfix_landed"
+      ]
+    }
   }
 }

@@ -1,0 +1,70 @@
+name: Orchestrator Sync
+
+# Forwards git events to the local orchestrator's HTTP sync endpoint
+# (or a designated relay) so the dashboard reflects wave progress, publish
+# cuts, and promotions without manual intervention.
+
+on:
+  push:
+    branches:
+      - "dev"
+      - "wave/**"
+      - "publish/**"
+    tags:
+      - "release/v*"
+      - "prod/v*"
+      - "archive/**"
+  pull_request:
+    types: [opened, closed, labeled]
+    branches:
+      - master
+      - dev
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: orchestrator-sync-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    name: Forward to orchestrator
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build event payload
+        id: payload
+        env:
+          GH_EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REFNAME: ${{ github.ref_name }}
+          REFTYPE: ${{ github.ref_type }}
+          SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_LABEL: ${{ github.event.label.name }}
+          PR_ACTION: ${{ github.event.action }}
+        run: |
+          python3 scripts/git/notify_orchestrator.py classify > event.json
+          echo "event_path=$(pwd)/event.json" >> "$GITHUB_OUTPUT"
+
+      - name: POST to orchestrator sync URL
+        env:
+          SYNC_URL: ${{ secrets.PANTHEON_ORCHESTRATOR_SYNC_URL }}
+          SYNC_SECRET: ${{ secrets.PANTHEON_ORCHESTRATOR_SYNC_SECRET }}
+        run: |
+          if [[ -z "$SYNC_URL" ]]; then
+            echo "PANTHEON_ORCHESTRATOR_SYNC_URL secret not set; skipping POST"
+            exit 0
+          fi
+          python3 scripts/git/notify_orchestrator.py send --payload-file event.json
