@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "STRAT-004",
+  "archived_at": "2026-05-16T09:29:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "STRAT-004",
+    "title": "evidence / code refs lineage",
+    "summary_zh": null,
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Finalize STRAT-004 after Claude review_approved. Deliverable commits: d9c834f4 implementation, 110fca2a reviewer approval evidence, ee257004 closeout checkpoint. Verification rerun: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/research/strategy_spec/models.py services/research/strategy_spec/lineage.py services/research/strategy_spec/__init__.py services/research/strategy_spec/test_models.py services/research/strategy_spec/test_lineage.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/research/strategy_spec -q (22 passed); git diff --check targeted STRAT-004 files. Pre-existing unrelated dirty worktree state/service files remain outside STRAT-004 scope; no broad unrelated generated-state commit staged.",
+    "last_update": "2026-05-16T09:29:19Z",
+    "review_notes_zh": [
+      "審查通過。build_strategy_spec_lineage_refs 正確組裝 evidence_bundle + evidence_item refs 及 allowlisted code_refs；_validate_seed_inputs 拒絕 seed lineage 外的 SourceRecord/EvidenceItem；attach_lineage_refs_to_strategy_spec_payload 保留 provenance.source_refs；lineage edge to_lineage_edge 欄位完整；__init__.py 四項 export 正確；contract.md 2.4 明確標示 lineage-only 無執行授權。14 targeted tests + 22 strategy_spec tests 全過。兩項非阻塞觀察：trace_id 空值時 fallback 為空字串（可接受）；seed 中重複 evidence_item_id 不被 _validate_seed_inputs 攔截但 dedup 後產生單一 ref（可接受）。"
+    ],
+    "review_file": "support/evidence/STRAT-004/review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T09:29:19Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "ee257004c83eafa4fc64629de559c88b26450ca8",
+      "commit_subject": "STRAT-004 closeout checkpoint",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "STRAT-004",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 70,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "STRAT-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T07:13:09Z",
+      "resolved_at": "2026-05-16T07:16:08Z"
+    },
+    {
+      "task_id": "STRAT-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T07:39:25Z",
+      "resolved_at": "2026-05-16T07:41:32Z"
+    },
+    {
+      "task_id": "STRAT-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T08:47:43Z",
+      "resolved_at": "2026-05-16T08:49:51Z"
+    },
+    {
+      "task_id": "STRAT-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "STRAT-004 ready for review. Published the StrategySpec evidence/code refs lineage surface: exported lineage helpers from services.research.strategy_spec, documented evidence_refs/code_refs lineage in the StrategySpec README and OC-003 contract, and added dedicated lineage regression tests for seed evidence, repo code refs, package exports, payload attachment, lineage edge shape, and out-of-lineage rejection. Commit: d9c834f4. Evidence: support/evidence/STRAT-004/README.md. Verification: py_compile StrategySpec lineage/model/export/test files; json.tool strategy_spec.schema.json; pytest services/research/strategy_spec/test_models.py services/research/strategy_spec/test_lineage.py -q (14 passed); pytest services/source_ingestion/tests/test_strategy_seed_builder.py -q (5 passed); pytest services/research/strategy_spec -q (22 passed); git diff --check targeted STRAT-004 files.",
+      "status": "done",
+      "created_at": "2026-05-16T09:08:48Z",
+      "resolved_at": "2026-05-16T09:15:10Z"
+    },
+    {
+      "task_id": "STRAT-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "STRAT-004 review approved. Lineage surface correct, execution boundary respected, all 22 tests pass. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T09:15:10Z",
+      "resolved_at": "2026-05-16T09:29:20Z"
+    }
+  ],
+  "blockers": []
+}
