@@ -1,0 +1,122 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/source-record/v1",
+  "title": "SourceRecord",
+  "description": "Canonical source-ingest record persisted by source-ingest-svc before evidence bundle and search indexing. The record is research evidence only; it is not a runtime execution route.",
+  "type": "object",
+  "required": [
+    "source_id",
+    "connector_id",
+    "source_type",
+    "title",
+    "content_ref",
+    "status",
+    "metadata",
+    "trace_id",
+    "created_at"
+  ],
+  "properties": {
+    "source_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable SourceRecord identifier. Used as the primary source evidence id and readback key."
+    },
+    "connector_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "SourceConnector.connector_id that fetched or accepted this record."
+    },
+    "source_type": {
+      "type": "string",
+      "enum": [
+        "paper",
+        "repo",
+        "internal_note",
+        "filing",
+        "news",
+        "social",
+        "alpha_db",
+        "macro",
+        "market",
+        "telemetry"
+      ],
+      "description": "Canonical research source family."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable citation or source title."
+    },
+    "content_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Reference to fetched content or canonical location. May be https, doi, repo, memory, file-feed, or another governed reference scheme."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["raw", "normalized", "indexed", "rejected", "archived"],
+      "description": "SourceRecord lifecycle status."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Governed metadata preserved with the source record. Known normalization, ACL, PIT, and governance keys are declared here; adapters may add provider-specific keys.",
+      "properties": {
+        "body": { "type": "string" },
+        "excerpt": { "type": "string" },
+        "citation_label": { "type": "string" },
+        "canonical_url": { "type": ["string", "null"] },
+        "canonical_doi": { "type": ["string", "null"] },
+        "canonical_repo": { "type": ["string", "null"] },
+        "source_dedupe_key": { "type": "string" },
+        "content_hash": { "type": "string" },
+        "body_hash": { "type": "string" },
+        "license_scope": { "type": "string" },
+        "access_scope": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "keywords": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "event_time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "available_time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "entitlement_tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "pit": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "governance": {
+          "type": "object",
+          "properties": {
+            "canonical_sink": { "type": "string" },
+            "direct_execution_allowed": { "type": "boolean" },
+            "lean_consumption": { "type": "string" },
+            "broker_consumption": { "type": "string" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "trace_id": {
+      "type": "string",
+      "description": "Trace correlation id supplied by the caller or copied from metadata. Empty string is allowed for older records."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC creation timestamp for this SourceRecord."
+    }
+  },
+  "additionalProperties": false
+}
