@@ -291,6 +291,37 @@ class DeploymentExecutionProjectionBody(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
+class DeploymentProjectionReadModelResponse(BaseModel):
+    projection_contract: str = "DEP-003"
+    derived_only: bool = True
+    plan_id: str
+    strategy_id: str
+    artifact_id: str
+    artifact_version: str
+    capital_pool_id: str
+    approval_decision_id: str
+    current_stage: str
+    target_stage: str
+    projected_stage: str
+    actual_stage: str
+    plan_status: str
+    approval_outcome: Optional[str] = None
+    approval_state: Optional[str] = None
+    runtime_binding_id: Optional[str] = None
+    runtime_id: Optional[str] = None
+    runtime_status: Optional[str] = None
+    deployment_saga_id: Optional[str] = None
+    deployment_saga_status: Optional[str] = None
+    lifecycle_state: str
+    source_status: Dict[str, str] = Field(default_factory=dict)
+    summary: Dict[str, Any] = Field(default_factory=dict)
+    plan: DeploymentPlanBody
+    approval_decision: Optional[Dict[str, Any]] = None
+    runtime_binding: Optional[Dict[str, Any]] = None
+    deployment_saga: Optional[DeploymentSagaBody] = None
+    execution_projection: Optional[DeploymentExecutionProjectionBody] = None
+
+
 class DispatchDeploymentPlanRequest(BaseModel):
     trace_id: Optional[str] = None
     correlation_id: Optional[str] = None
@@ -341,3 +372,26 @@ class FinalizeCompensationRequest(BaseModel):
 
 class ConsumeOutboxEventRequest(BaseModel):
     consumer_name: str
+
+
+class PoolCompatibilityRequest(BaseModel):
+    capital_pool_id: str
+    target_stage: DeploymentStageBody
+    sponsor_persona_id: Optional[str] = None
+
+
+class PoolCompatibilityResponse(BaseModel):
+    ok: bool
+    capital_pool_id: str
+    target_stage: str
+    pool_found: Optional[bool] = None
+    pool_status: Optional[str] = None
+    pool_active: Optional[bool] = None
+    single_runtime_enforced: Optional[bool] = None
+    persona_binding_found: Optional[bool] = None
+    persona_scope_ok: Optional[bool] = None
+    allowed_deployment_scope: Optional[str] = None
+    active_runtime_binding_count: Optional[int] = None
+    single_runtime_ok: Optional[bool] = None
+    errors: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)

@@ -21,6 +21,8 @@ The service can now:
 - record failures and finalize compensation
 - inspect pending outbox events and durable inbox receipts
 - read a strategy-scoped deployment read model
+- read DEP-003 deployment projections that join plan, approval, runtime, saga,
+  and execution metadata state without becoming a write authority
 
 ## Files
 
@@ -52,6 +54,11 @@ Approval lookups default to `${...}/approval_decisions.json`.
 Registry lookups are optional and use `PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH`.
 If that snapshot path is not configured, callers must embed `registry_entry` in
 the create / validate / dispatch request body.
+
+DEP-003 projection lookups read RuntimeBinding rows from
+`PANTHEON_RUNTIME_BINDING_STORE_PATH`, or
+`${PANTHEON_RUNTIME_DATA_DIR}/runtime_bindings.json`, or
+`/tmp/pantheon/runtime-manager/bindings.json`.
 
 ## Tests
 

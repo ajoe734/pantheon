@@ -82,18 +82,21 @@ def client():
     governance_dir.mkdir(parents=True, exist_ok=True)
     approval_store = governance_dir / "approval_decisions.json"
     registry_snapshot = Path(tempdir) / "registry_entries.json"
+    runtime_binding_store = Path(tempdir) / "runtime_bindings.json"
     _seed_approval_store(approval_store)
     _seed_registry_snapshot(registry_snapshot)
 
     env_backup = {
         "DEPLOYMENT_DATA_DIR": os.environ.get("DEPLOYMENT_DATA_DIR"),
         "PANTHEON_GOVERNANCE_DATA_DIR": os.environ.get("PANTHEON_GOVERNANCE_DATA_DIR"),
+        "PANTHEON_RUNTIME_BINDING_STORE_PATH": os.environ.get("PANTHEON_RUNTIME_BINDING_STORE_PATH"),
         "PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH": os.environ.get(
             "PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH"
         ),
     }
     os.environ["DEPLOYMENT_DATA_DIR"] = str(governance_dir)
     os.environ["PANTHEON_GOVERNANCE_DATA_DIR"] = str(governance_dir)
+    os.environ["PANTHEON_RUNTIME_BINDING_STORE_PATH"] = str(runtime_binding_store)
     os.environ["PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH"] = str(registry_snapshot)
 
     sys.modules.pop("services.deployment.service", None)
@@ -297,6 +300,93 @@ def test_status_transition_updates_read_model(client):
     assert body["latest_plan_id"] == "plan-paper-002"
     assert body["active_plan_id"] is None
     assert body["plan_count"] == 1
+
+
+def test_projection_read_model_exposes_derived_plan_view(client):
+    test_client, _ = client
+    created = test_client.post(
+        "/api/deployment/plans",
+        json=_plan_payload(plan_id="plan-projection-001"),
+    )
+    assert created.status_code == 201
+
+    response = test_client.get("/api/deployment/projections/plan-projection-001")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["projection_contract"] == "DEP-003"
+    assert body["derived_only"] is True
+    assert body["plan_id"] == "plan-projection-001"
+    assert body["projected_stage"] == "paper"
+    assert body["actual_stage"] == "none"
+    assert body["plan_status"] == "approved"
+    assert body["approval_outcome"] == "approved"
+    assert body["approval_state"] == "decided"
+    assert body["runtime_binding_id"] is None
+    assert body["lifecycle_state"] == "ready_for_dispatch"
+    assert body["source_status"]["deployment_plan"] == "canonical"
+    assert body["source_status"]["approval_decision"] == "canonical"
+    assert body["source_status"]["registry_entry"] == "canonical"
+    assert body["source_status"]["runtime_binding"] == "missing"
+    assert body["source_status"]["execution_projection"] == "derived"
+    assert body["execution_projection"]["metadata"]["deployment_plan_id"] == "plan-projection-001"
+    assert body["summary"]["has_approval_authority"] is True
+    assert body["summary"]["runtime_backing_present"] is False
+
+    alias = test_client.get("/api/deployment/plans/plan-projection-001/projection")
+    assert alias.status_code == 200
+    assert alias.json()["plan_id"] == "plan-projection-001"
+
+    listing = test_client.get("/api/deployment/projections", params={"strategy_id": "strat-001"})
+    assert listing.status_code == 200
+    assert [item["plan_id"] for item in listing.json()] == ["plan-projection-001"]
+
+
+def test_projection_read_model_joins_runtime_and_saga_state(client):
+    test_client, governance_dir = client
+    created = test_client.post(
+        "/api/deployment/plans",
+        json=_plan_payload(plan_id="plan-projection-runtime-001"),
+    )
+    assert created.status_code == 201
+    dispatch = test_client.post(
+        "/api/deployment/plans/plan-projection-runtime-001/dispatch",
+        json={"trace_id": "trace-projection-runtime-001"},
+    )
+    assert dispatch.status_code == 200, dispatch.text
+
+    runtime_store = governance_dir.parent / "runtime_bindings.json"
+    runtime_store.write_text(
+        json.dumps(
+            [
+                {
+                    "binding_id": "rb-projection-runtime-001",
+                    "runtime_id": "runtime-projection-001",
+                    "plan_id": "plan-projection-runtime-001",
+                    "capital_pool_id": "pool-001",
+                    "artifact_id": "reg-strat-001-1.2.0",
+                    "artifact_version": "1.2.0",
+                    "deployment_mode": "paper",
+                    "status": "active",
+                }
+            ],
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    response = test_client.get("/api/deployment/projections/plan-projection-runtime-001")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["runtime_binding_id"] == "rb-projection-runtime-001"
+    assert body["runtime_id"] == "runtime-projection-001"
+    assert body["runtime_status"] == "active"
+    assert body["actual_stage"] == "paper"
+    assert body["deployment_saga_id"] == "deployment-saga-plan-projection-runtime-001"
+    assert body["deployment_saga_status"] == "awaiting_binding"
+    assert body["lifecycle_state"] == "active"
+    assert body["source_status"]["runtime_binding"] == "canonical"
+    assert body["source_status"]["deployment_saga"] == "canonical"
+    assert body["summary"]["runtime_backing_present"] is True
 
 
 def test_invalid_status_transition_rejected(client):

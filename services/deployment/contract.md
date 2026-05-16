@@ -16,6 +16,7 @@ The service exposes two canonical surfaces:
 
 - `DEP-001` `DeploymentPlan` create / validate / read / status APIs
 - `DEP-002` deployment saga dispatch / progress / outbox / inbox APIs
+- `DEP-003` deployment projection read model APIs
 
 The governing semantics still come from:
 
@@ -38,6 +39,7 @@ This service owns the deployable HTTP surface and file-backed persistence only.
 | DeploymentSaga bootstrap + local outbox append | **Deployment Service** via canonical `DeploymentSagaStore` |
 | Inbox dedupe / per-saga ordering receipts | **Deployment Service** |
 | Compensation decision derivation | **Deployment Service** via canonical DEP-002 policy logic |
+| Deployment projection read model | **Deployment Service** derived-only composition |
 | ApprovalDecision lifecycle | `services/governance/` |
 | Registry artifact lifecycle | `services/registry/` |
 | RuntimeBinding writes / execution | Runtime Manager / execution plane |
@@ -214,6 +216,56 @@ Read-model rule:
 - if at least one plan is `executed`, `current_stage` becomes the newest
   executed plan's `target_stage`
 - otherwise `current_stage` reflects the newest plan's `current_stage`
+
+---
+
+### `GET /api/deployment/projections`
+
+List DEP-003 deployment projection read models.
+
+Supported filters:
+
+- `strategy_id`
+- `capital_pool_id`
+- `target_stage`
+- `status`
+
+Response shape:
+
+- `projection_contract = DEP-003`
+- `derived_only = true`
+- plan identity, artifact, approval, stage, status, and lifecycle summary fields
+- `source_status` for `deployment_plan`, `approval_decision`, `registry_entry`,
+  `execution_projection`, `deployment_saga`, and `runtime_binding`
+- embedded `plan`
+- optional embedded `approval_decision`, `runtime_binding`, `deployment_saga`,
+  and `execution_projection`
+
+Read-model rule:
+
+- `DeploymentPlan` remains the only deployment-plan truth
+- `ApprovalDecision`, registry snapshot, runtime binding, and saga state are
+  joined read-only when their stores are available
+- `actual_stage` comes from RuntimeBinding when present, otherwise from executed
+  plan state, otherwise from `DeploymentPlan.current_stage`
+- `projected_stage` is always `DeploymentPlan.target_stage`
+- the projection never writes plan, approval, runtime, registry, or saga records
+
+RuntimeBinding lookup uses `PANTHEON_RUNTIME_BINDING_STORE_PATH` when present,
+then `${PANTHEON_RUNTIME_DATA_DIR}/runtime_bindings.json`, then
+`/tmp/pantheon/runtime-manager/bindings.json`.
+
+### `GET /api/deployment/projections/{plan_id}`
+
+Fetch one DEP-003 projection by deployment plan id.
+
+Alias:
+
+- `GET /api/deployment/plans/{plan_id}/projection`
+
+Errors:
+
+- `404 Not Found` when the plan does not exist
 
 ---
 
