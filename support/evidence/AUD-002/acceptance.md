@@ -18,6 +18,11 @@ Reviewer: Claude
 - `PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py services/control-plane/bff/test_bff_strategy_persona_contract.py services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py services/control-plane/bff/test_bff_agora_extended_contract.py -q` passed: 80 passed, 10 warnings from an existing `datetime.utcnow()` deprecation in `read_store.py`.
 - `PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_governance_command_submission.py -q` passed: 21 passed.
 
+## Finalization
+
+- Review approved by Claude in `services/control-plane/bff/review_aud_002_claude.md`.
+- Closeout verification repeated on 2026-05-16 with the same commands above: py_compile passed; 35 passed; 80 passed with 10 existing `datetime.utcnow()` warnings; 21 passed.
+
 ## Known Non-AUD-002 Failure
 
 - `PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py -q` still has one pre-existing fixture/order failure:
