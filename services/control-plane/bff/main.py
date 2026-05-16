@@ -1034,6 +1034,214 @@ def _foundation_idempotency_conflict_error(
     )
 
 
+def _foundation_audit_for_command_record(
+    *,
+    identity: OperatorIdentity,
+    command_type: CommandType,
+    target_type: ObjectType,
+    target_id: str,
+    payload: Dict[str, Any],
+    reason: str,
+    command_id: str,
+    idempotency_key: str,
+    route: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> AuditAction:
+    environment = _foundation_environment_scope()
+    actor_ref = _foundation_actor_ref(identity)
+    trace = _build_foundation_trace(
+        environment=environment,
+        actor_ref=actor_ref,
+        trace_id=command_id,
+        correlation_id=command_id,
+        request_id=command_id,
+        idempotency_key=idempotency_key,
+    )
+    audit_metadata = {
+        "route": route,
+        "command": command_type.value,
+        "idempotency_key": idempotency_key,
+    }
+    if metadata:
+        audit_metadata.update({key: value for key, value in metadata.items() if value is not None})
+    return AuditAction.record(
+        actor_ref=actor_ref,
+        action_type="bff.command.accepted",
+        target_ref=f"{target_type.value}:{target_id}",
+        environment=environment,
+        reason=reason,
+        trace=trace,
+        payload={
+            "command": command_type.value,
+            "target": {"type": target_type.value, "id": target_id},
+            "payload": payload,
+        },
+        metadata=audit_metadata,
+    )
+
+
+def _command_audit_action_from_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    foundation = record.get("foundation") if isinstance(record.get("foundation"), dict) else {}
+    audit_action = foundation.get("audit_action") if isinstance(foundation.get("audit_action"), dict) else None
+    if audit_action:
+        return dict(audit_action)
+    audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
+    audit_foundation = audit.get("foundation") if isinstance(audit.get("foundation"), dict) else {}
+    audit_action = (
+        audit_foundation.get("audit_action")
+        if isinstance(audit_foundation.get("audit_action"), dict)
+        else None
+    )
+    return dict(audit_action or {})
+
+
+def _audit_datetime(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _project_command_record_audit_event(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    command_id = str(record.get("command_id") or "").strip()
+    if not command_id:
+        return None
+    target = record.get("target") if isinstance(record.get("target"), dict) else {}
+    audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
+    foundation = record.get("foundation") if isinstance(record.get("foundation"), dict) else {}
+    audit_action = _command_audit_action_from_record(record)
+    idempotency_record = (
+        foundation.get("idempotency_record")
+        if isinstance(foundation.get("idempotency_record"), dict)
+        else {}
+    )
+    audit_actor_ref = audit_action.get("actor_ref") if isinstance(audit_action.get("actor_ref"), dict) else {}
+    metadata = audit_action.get("metadata") if isinstance(audit_action.get("metadata"), dict) else {}
+    trace_context = foundation.get("trace_context") if isinstance(foundation.get("trace_context"), dict) else {}
+    action_type = str(record.get("type") or metadata.get("command") or "").strip()
+    target_type = str(target.get("type") or "").strip()
+    target_id = str(target.get("id") or "").strip()
+    timestamp = str(
+        audit.get("timestamp")
+        or audit_action.get("timestamp")
+        or record.get("submitted_at")
+        or utc_now()
+    )
+    reason = str(audit.get("reason") or audit_action.get("reason") or action_type or "operator command")
+    event = {
+        "entry_id": str(audit_action.get("action_id") or f"audit-{command_id}"),
+        "actor": str(
+            audit.get("operator_id")
+            or audit.get("actor")
+            or audit_actor_ref.get("actor_id")
+            or "operator"
+        ),
+        "action_type": action_type,
+        "target_type": target_type,
+        "target_id": target_id,
+        "timestamp": timestamp,
+        "outcome": "accepted" if record.get("status") == CommandStatus.SUBMITTED.value else record.get("status"),
+        "audit_context": {
+            "reason": reason,
+            "command_id": command_id,
+            "receipt_id": command_id,
+            "idempotency_key": (
+                idempotency_record.get("idempotency_key")
+                or metadata.get("idempotency_key")
+                or audit.get("idempotency_key")
+            ),
+            "action_id": audit.get("action_id"),
+            "foundation_action_type": audit_action.get("action_type"),
+        },
+        "evidence_refs": audit.get("evidence_refs") if isinstance(audit.get("evidence_refs"), list) else [],
+        "command_ref": command_id,
+        "trace_id": audit_action.get("trace_id") or trace_context.get("trace_id"),
+        "correlation_id": (
+            audit_action.get("correlation_id")
+            or trace_context.get("correlation_id")
+        ),
+        "payload_checksum": audit_action.get("payload_checksum"),
+        "audit_action": audit_action or None,
+        "metadata": {
+            "source": "command_store",
+            "route": metadata.get("route"),
+            "source_route": metadata.get("source_route"),
+            "live_capital_side_effects": audit.get("live_capital_side_effects", False),
+        },
+    }
+    return json.loads(json.dumps(event))
+
+
+def _audit_event_matches(
+    event: Dict[str, Any],
+    *,
+    actor: Optional[str] = None,
+    action_types: Optional[List[str]] = None,
+    target_type: Optional[str] = None,
+    from_ts: Optional[datetime] = None,
+    to_ts: Optional[datetime] = None,
+) -> bool:
+    if actor and event.get("actor") != actor:
+        return False
+    if action_types:
+        allowed = {value for value in action_types if value}
+        if event.get("action_type") not in allowed:
+            return False
+    if target_type and event.get("target_type") != target_type:
+        return False
+    event_dt = _audit_datetime(event.get("timestamp"))
+    if from_ts is not None and (event_dt is None or event_dt < from_ts):
+        return False
+    if to_ts is not None and (event_dt is None or event_dt > to_ts):
+        return False
+    return True
+
+
+def _list_governance_audit_events(
+    *,
+    actor: Optional[str] = None,
+    action_types: Optional[List[str]] = None,
+    target_type: Optional[str] = None,
+    from_ts: Optional[datetime] = None,
+    to_ts: Optional[datetime] = None,
+) -> List[Dict[str, Any]]:
+    events = read_store.list_governance_audit_events(
+        actor=actor,
+        action_types=action_types,
+        target_type=target_type,
+        from_ts=from_ts,
+        to_ts=to_ts,
+    )
+    events_by_id: Dict[str, Dict[str, Any]] = {
+        str(event.get("entry_id") or event.get("auditId") or event.get("id") or index): event
+        for index, event in enumerate(events)
+    }
+    for record in command_store._get_all_commands():
+        event = _project_command_record_audit_event(record)
+        if not event or not _audit_event_matches(
+            event,
+            actor=actor,
+            action_types=action_types,
+            target_type=target_type,
+            from_ts=from_ts,
+            to_ts=to_ts,
+        ):
+            continue
+        events_by_id.setdefault(str(event.get("entry_id")), event)
+    merged = list(events_by_id.values())
+    merged.sort(key=lambda event: str(event.get("timestamp") or ""), reverse=True)
+    return json.loads(json.dumps(merged))
+
+
 # --------------------------------------------------------------------------- #
 # Command-specific precondition validators (§3 of contract)
 # --------------------------------------------------------------------------- #
@@ -12717,7 +12925,7 @@ async def list_governance_audit_trail(
     if action_type:
         action_types = [value.strip() for value in action_type.split(",") if value.strip()]
 
-    entries = read_store.list_governance_audit_events(
+    entries = _list_governance_audit_events(
         actor=actor,
         action_types=action_types,
         target_type=target_type,
@@ -12728,7 +12936,7 @@ async def list_governance_audit_trail(
         "governance_audit_events",
         snapshot_at=snapshot_at,
     )
-    if audit_surface.get("status") == "unavailable":
+    if audit_surface.get("status") == "unavailable" and not entries:
         entries = []
         next_page_token = None
     else:
@@ -16382,10 +16590,23 @@ def _capital_bff_action_command(
     cached = _capital_bff_idempotency_check(resolved_key, request_hash)
     if cached is not None:
         return cached
+    catalog_entry = get_catalog_entry(command_type.value)
     staleness_warning = _check_read_surface_state()
     command_id = str(uuid.uuid4())
     submitted_at = utc_now()
     target = TargetObject(type=entity_type, id=entity_id)
+    audit_action = _foundation_audit_for_command_record(
+        identity=identity,
+        command_type=command_type,
+        target_type=entity_type,
+        target_id=entity_id,
+        payload={"action_id": action_id, **payload},
+        reason=str(payload.get("reason") or action_id or command_type.value),
+        command_id=command_id,
+        idempotency_key=resolved_key,
+        route=f"POST /bff/{entity_type.value}/{entity_id}/actions/{action_id}",
+        metadata={"action_id": action_id, "catalog_entry": catalog_entry.action_id if catalog_entry else None},
+    )
     audit_record = {
         "operator_id": identity.operator_id,
         "roles_at_submission": identity.roles,
@@ -16407,7 +16628,9 @@ def _capital_bff_action_command(
     )
     foundation_ctx = {
         "idempotency_record": idempotency_record.to_dict(),
+        "audit_action": audit_action.to_dict(),
     }
+    audit_record["foundation"] = foundation_ctx
     command_store.submit_command(
         command_id=command_id,
         command_type=command_type,
@@ -17091,6 +17314,18 @@ def _strategy_persona_action_command(
     command_id = str(uuid.uuid4())
     submitted_at = utc_now()
     target = TargetObject(type=entity_type, id=entity_id)
+    audit_action = _foundation_audit_for_command_record(
+        identity=identity,
+        command_type=command_type,
+        target_type=entity_type,
+        target_id=entity_id,
+        payload={"action_id": action_id, **payload},
+        reason=str(payload.get("reason") or action_id or command_type.value),
+        command_id=command_id,
+        idempotency_key=resolved_key,
+        route=f"POST /bff/{entity_type.value}/{entity_id}/actions/{action_id}",
+        metadata={"action_id": action_id, "catalog_entry": catalog_entry.action_id if catalog_entry else None},
+    )
     audit_record = {
         "operator_id": identity.operator_id,
         "roles_at_submission": identity.roles,
@@ -17107,9 +17342,11 @@ def _strategy_persona_action_command(
             "request_hash": request_hash,
             "operation_type": f"bff.{command_type.value}",
             "target_ref": f"{entity_type.value}:{entity_id}",
-            "trace_id": None,
+            "trace_id": audit_action.trace_id,
         },
+        "audit_action": audit_action.to_dict(),
     }
+    audit_record["foundation"] = foundation_ctx
     command_store.submit_command(
         command_id=command_id,
         command_type=command_type,
@@ -17644,7 +17881,7 @@ async def bff_get_strategy_audit(
     _require_read_role(identity)
     _ensure_strategy_exists(strategy_id)
     snapshot_at = utc_now()
-    events = read_store.list_governance_audit_events(target_type="strategy") or []
+    events = _list_governance_audit_events() or []
     filtered = _filter_audit_events_by_target(events, strategy_id)
     return {
         "data": filtered,
@@ -18461,7 +18698,7 @@ async def bff_get_persona_audit(
     _require_read_role(identity)
     _ensure_persona_exists(persona_id)
     snapshot_at = utc_now()
-    events = read_store.list_governance_audit_events(target_type="persona") or []
+    events = _list_governance_audit_events() or []
     filtered = _filter_audit_events_by_target(events, persona_id)
     return {
         "data": filtered,
@@ -19615,10 +19852,23 @@ def _evol_exp_bff_action_command(
     cached = _evol_exp_bff_idempotency_check(resolved_key, request_hash)
     if cached is not None:
         return cached
+    catalog_entry = get_catalog_entry(command_type.value)
     staleness_warning = _check_read_surface_state()
     command_id = str(uuid.uuid4())
     submitted_at = utc_now()
     target = TargetObject(type=entity_type, id=entity_id)
+    audit_action = _foundation_audit_for_command_record(
+        identity=identity,
+        command_type=command_type,
+        target_type=entity_type,
+        target_id=entity_id,
+        payload={"action_id": action_id, **payload},
+        reason=str(payload.get("reason") or action_id or command_type.value),
+        command_id=command_id,
+        idempotency_key=resolved_key,
+        route=f"POST /bff/{entity_type.value}/{entity_id}/actions/{action_id}",
+        metadata={"action_id": action_id, "catalog_entry": catalog_entry.action_id if catalog_entry else None},
+    )
     audit_record = {
         "operator_id": identity.operator_id,
         "roles_at_submission": identity.roles,
@@ -19638,6 +19888,11 @@ def _evol_exp_bff_action_command(
         },
         trace_id=command_id,
     )
+    foundation_ctx = {
+        "idempotency_record": idempotency_record.to_dict(),
+        "audit_action": audit_action.to_dict(),
+    }
+    audit_record["foundation"] = foundation_ctx
     command_store.submit_command(
         command_id=command_id,
         command_type=command_type,
@@ -19645,7 +19900,7 @@ def _evol_exp_bff_action_command(
         submitted_at=submitted_at,
         params={"action_id": action_id, **payload},
         audit_context=audit_record,
-        foundation_context={"idempotency_record": idempotency_record.to_dict()},
+        foundation_context=foundation_ctx,
     )
     result = _project_final_command_response(
         command_id=command_id,
@@ -20528,6 +20783,18 @@ def _tools_mcp_skills_action_command(
     command_id = str(uuid.uuid4())
     submitted_at = utc_now()
     target = TargetObject(type=entity_type, id=entity_id)
+    audit_action = _foundation_audit_for_command_record(
+        identity=identity,
+        command_type=command_type,
+        target_type=entity_type,
+        target_id=entity_id,
+        payload={"action_id": action_id, **payload},
+        reason=str(payload.get("reason") or action_id or command_type.value),
+        command_id=command_id,
+        idempotency_key=resolved_key,
+        route=f"POST /bff/{entity_type.value}/{entity_id}/actions/{action_id}",
+        metadata={"action_id": action_id, "catalog_entry": catalog_entry.action_id if catalog_entry else None},
+    )
     audit_record = {
         "operator_id": identity.operator_id,
         "roles_at_submission": identity.roles,
@@ -20544,9 +20811,11 @@ def _tools_mcp_skills_action_command(
             "request_hash": request_hash,
             "operation_type": f"bff.{command_type.value}",
             "target_ref": f"{entity_type.value}:{entity_id}",
-            "trace_id": None,
+            "trace_id": audit_action.trace_id,
         },
+        "audit_action": audit_action.to_dict(),
     }
+    audit_record["foundation"] = foundation_ctx
     command_store.submit_command(
         command_id=command_id,
         command_type=command_type,
@@ -21224,6 +21493,18 @@ def _gov_bff_action_command(
     command_id = str(uuid.uuid4())
     submitted_at = utc_now()
     target = TargetObject(type=entity_type, id=entity_id)
+    audit_action = _foundation_audit_for_command_record(
+        identity=identity,
+        command_type=command_type,
+        target_type=entity_type,
+        target_id=entity_id,
+        payload={"action_id": action_id, **payload},
+        reason=str(payload.get("reason") or action_id or command_type.value),
+        command_id=command_id,
+        idempotency_key=resolved_key,
+        route=f"POST /bff/{entity_type.value}/{entity_id}/actions/{action_id}",
+        metadata={"action_id": action_id, "catalog_entry": catalog_entry.action_id if catalog_entry else None},
+    )
     audit_record = {
         "operator_id": identity.operator_id,
         "roles_at_submission": identity.roles,
@@ -21246,7 +21527,11 @@ def _gov_bff_action_command(
         },
         trace_id=command_id,
     )
-    foundation_ctx = {"idempotency_record": idempotency_record.to_dict()}
+    foundation_ctx = {
+        "idempotency_record": idempotency_record.to_dict(),
+        "audit_action": audit_action.to_dict(),
+    }
+    audit_record["foundation"] = foundation_ctx
     command_store.submit_command(
         command_id=command_id,
         command_type=command_type,
@@ -21427,7 +21712,7 @@ async def bff_review_audit(
 
     snapshot_at = utc_now()
     clean_id = review_id.strip()
-    events = read_store.list_governance_audit_events()
+    events = _list_governance_audit_events()
     item_events = [
         e for e in events
         if str(e.get("target_id") or e.get("item_id") or "") == clean_id
@@ -21955,7 +22240,7 @@ async def bff_list_audit(
     _require_read_role(identity)
     snapshot_at = utc_now()
     action_types = [v.strip() for v in action_type.split(",") if v.strip()] if action_type else None
-    events = read_store.list_governance_audit_events(
+    events = _list_governance_audit_events(
         actor=actor,
         action_types=action_types,
         target_type=target_type,
@@ -21996,7 +22281,7 @@ async def bff_list_audit_events(
     from_dt = _parse_rfc3339_header(from_ts) if from_ts else None
     to_dt = _parse_rfc3339_header(to_ts) if to_ts else None
 
-    events = read_store.list_governance_audit_events(
+    events = _list_governance_audit_events(
         actor=actor,
         action_types=action_types,
         target_type=target_type,
@@ -22028,7 +22313,7 @@ async def bff_get_entity_audit(
     clean_type = entity_type.strip()
     clean_id = entity_id.strip()
 
-    events = read_store.list_governance_audit_events(target_type=clean_type)
+    events = _list_governance_audit_events(target_type=clean_type)
     entity_events = [
         e for e in events
         if str(e.get("target_id") or e.get("entity_id") or "") == clean_id
@@ -22062,7 +22347,7 @@ async def bff_audit_export(
     from_dt = _parse_rfc3339_header(from_ts) if from_ts else None
     to_dt = _parse_rfc3339_header(to_ts) if to_ts else None
 
-    events = read_store.list_governance_audit_events(
+    events = _list_governance_audit_events(
         actor=actor,
         action_types=action_types,
         target_type=target_type,
@@ -22903,7 +23188,7 @@ async def bff_list_events(
 
     snapshot_at = utc_now()
     action_types = [event_type] if event_type else None
-    events = read_store.list_governance_audit_events(
+    events = _list_governance_audit_events(
         actor=actor,
         action_types=action_types,
         target_type=target_type,
@@ -23310,6 +23595,27 @@ def _sem_command_response(
         status=ActionCommandStatus.ACCEPTED.value,
         accepted_at=now,
     )
+    reason = str(payload.get("reason") or command_type.value)
+    audit_action = _foundation_audit_for_command_record(
+        identity=identity,
+        command_type=command_type,
+        target_type=target_type,
+        target_id=target_id,
+        payload=payload,
+        reason=reason,
+        command_id=command_id,
+        idempotency_key=clean_key,
+        route="POST /bff/semantic-command",
+    )
+    foundation_ctx = {
+        "idempotency_record": {
+            "idempotency_key": clean_key,
+            "request_hash": request_hash,
+            "status": "succeeded",
+            "trace_id": audit_action.trace_id,
+        },
+        "audit_action": audit_action.to_dict(),
+    }
     record = command_store.submit_command(
         command_id,
         command_type,
@@ -23318,17 +23624,12 @@ def _sem_command_response(
         payload,
         {
             "actor": identity.operator_id,
-            "reason": str(payload.get("reason") or command_type.value),
+            "reason": reason,
             "live_capital_side_effects": False,
             "receipt_dual_write": receipt_dual_write,
+            "foundation": foundation_ctx,
         },
-        {
-            "idempotency_record": {
-                "idempotency_key": clean_key,
-                "request_hash": request_hash,
-                "status": "succeeded",
-            }
-        },
+        foundation_ctx,
     )
     result = _sem_command_payload_from_record(record, idempotency_key=clean_key, replayed=False)
     _FINAL_CONTRACT_IDEMPOTENCY[clean_key] = {"request_hash": request_hash, "result": result}
@@ -24272,7 +24573,7 @@ def _build_ooda_control_room_status_card(snapshot_at: str) -> Dict[str, Any]:
 def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
     if path == "/bff/audit":
         return _sem_final_list_response(
-            read_store.list_governance_audit_events(),
+            _list_governance_audit_events(),
             dataset="governance_audit_events",
             surface_key="audit",
         )
