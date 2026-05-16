@@ -1,13 +1,14 @@
 # ASK-005 Sidecar Acceptance Packet
 
-**Sidecar task:** `ASK-005-SIDECAR-ACCEPTANCE`  
-**Helper parent:** `ASK-005`  
-**Helper kind:** `acceptance_packet`  
-**Parent owner:** `Claude`  
-**Parent reviewer:** `Codex2`  
-**Sidecar owner:** `Codex`  
-**Sidecar reviewer:** `Claude`  
-**Generated:** `2026-05-16T11:13:57Z`  
+**Sidecar task:** `ASK-005-SIDECAR-ACCEPTANCE`
+**Helper parent:** `ASK-005`
+**Helper kind:** `acceptance_packet`
+**Parent owner:** `Claude`
+**Parent reviewer:** `Codex2`
+**Sidecar owner:** `Codex`
+**Sidecar reviewer:** `Claude`
+**Generated:** `2026-05-16T11:13:57Z`
+**Owner closeout verification:** `2026-05-16T14:08:27Z` by `Codex`
 **Status:** `review-approved / closeout-ready`
 
 > Scope constraint: support artifact only. This packet summarizes acceptance
@@ -27,7 +28,7 @@ Closeout update: the sidecar reviewer approved this packet on
 parent commit `73304fe0`. Current parent evidence records 10 direct `ASK-005`
 contract tests, including `escalate`, `freeze`, approval replay de-duplication,
 and body `idempotencyKey` rejection before any approval SSE publish. The
-current worktree now collects and passes 11 direct `ASK-005` tests, adding a
+current worktree now collects and passes 12 direct `ASK-005` tests, adding a
 durable approval replay de-duplication guard.
 
 The delivered slice has strong direct coverage for:
@@ -115,7 +116,7 @@ file, implementation, and tests as the concrete review sources.
 | `services/control-plane/bff/main.py` SSE substrate | runtime dependency | `_sse_buffers`, `_sse_subscribers`, and `_publish_event` are the in-memory event path ASK-005 now uses |
 | `services/control-plane/bff/main.py` `sem_agora_ask_create_session` | parent implementation | Publishes `ask.session.started` after creating quick-ask sessions and after the ask idempotency early-return guard |
 | `services/control-plane/bff/main.py` `bff_approvals_decide` | parent implementation | Publishes approval events after role/shape checks and before command-response idempotency replay handling |
-| `services/control-plane/bff/test_ask005_sse_event_publishing_contract.py` | direct verification | Current worktree collects 11 direct ASK-005 tests for ask started, approval decided/stage changed, role-gate, ask replay, approval replay, and body idempotency rejection |
+| `services/control-plane/bff/test_ask005_sse_event_publishing_contract.py` | direct verification | Current worktree collects 12 direct ASK-005 tests for ask started, approval decided/stage changed, role-gate, ask replay, approval replay, and body idempotency rejection |
 | `services/control-plane/bff/test_pkt005_sse_substrate_contract.py` | substrate regression guard | Parent evidence reports 14 passing tests for SSE replay/substrate behavior |
 | `services/control-plane/bff/test_bff_approvals_decide_contract.py` | adjacent approval command guard | Parent evidence reports this remained green with ASK-001/003/004 tests in the 113-test bundle |
 | `support/evidence/ASK-005/README.md` | parent evidence packet | Records the parent implementation summary, reviewer fixes, and verification commands |
@@ -161,8 +162,8 @@ rg -n "ASK-005|ask.session.started|approval.decided|approval.stage.changed"
 sed -n focused reads of the ASK-005 evidence, test file, BFF contract section 11,
 and relevant `main.py` implementation ranges.
 
-python3 -m pytest services/control-plane/bff/test_ask005_sse_event_publishing_contract.py -q
-# 11 passed in 28.49s
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_ask005_sse_event_publishing_contract.py -q
+# 12 passed in 37.18s
 ```
 
 No runtime, registry, governance, or L1 canonical files were modified by this
