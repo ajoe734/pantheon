@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "task_id": "EVO-001",
+  "archived_at": "2026-05-16T12:05:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EVO-001",
+    "title": "EvolutionDecision service",
+    "summary_zh": null,
+    "phase": "Sprint 6 / EPIC-EVOLUTION",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete. Review file committed in b6c5cc34. Verification: python3 -m pytest services/evolution/test_evolution_service.py -q → 57 passed. All acceptance criteria met per evidence packet. BFF v5 read-model integration confirmed out of scope.",
+    "last_update": "2026-05-16T12:05:30Z",
+    "review_notes_zh": [
+      "Codex review approved: no blocking findings; focused suite passed 57 tests; BFF v5 read-model bridge and live ApprovalDecision writes remain out of scope for EVO-001."
+    ],
+    "review_file": "support/reviews/EVO-001-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T12:05:30Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "b6c5cc34af2f81b6311b90e8d23bade2fe9ad12a",
+      "commit_subject": "EVO-001: add Codex review packet (closeout)",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "EVO-001",
+        "Reviewer": "Codex",
+        "Verification": "python3 -m pytest services/evolution/test_evolution_service.py -q → 57 passed in 29.49s"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 75,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 6,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EVO-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "EVO-001 EvolutionDecision service implementation complete. Commit 5535c426. Service at services/evolution/ is fully implemented: 16 HTTP routes covering proposal lifecycle (proposed→reviewed→approved→executed/rejected/canceled), actor-role gates, evidence enforcement, cooldown/observation windows, single-active rule, incident-derived proposals, boundary/action-path endpoints, threshold evaluation, and rollback/redeploy follow-through. Evidence packet: support/evidence/EVO-001/README.md. Verification: python3 -m pytest services/evolution/test_evolution_service.py -q → 57 passed. Sidecar acceptance packet approved. BFF v5 read-model integration (loop-runs, sentinel/findings) is out of scope for this task — separate Sprint 6 tasks.",
+      "status": "done",
+      "created_at": "2026-05-16T11:54:02Z",
+      "resolved_at": "2026-05-16T11:59:23Z"
+    },
+    {
+      "task_id": "EVO-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Codex review approved; no blocking findings. Owner Claude should run closeout and finalize to done.",
+      "status": "done",
+      "created_at": "2026-05-16T11:59:23Z",
+      "resolved_at": "2026-05-16T12:05:31Z"
+    }
+  ],
+  "blockers": []
+}

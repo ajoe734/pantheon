@@ -1,12 +1,14 @@
 {
   "version": 1,
-  "updated_at": "2026-05-16T11:08:06Z",
+  "updated_at": "2026-05-16T12:05:30Z",
   "counts": {
-    "total": 1153,
-    "completed": 1134,
-    "superseded": 19
+    "total": 1155,
+    "completed": 1135,
+    "superseded": 20
   },
   "recent_terminal_ids": [
+    "EVO-001",
+    "EVO-001-SIDECAR-REVIEW",
     "SENT-001",
     "ASK-004",
     "ASK-002",
@@ -24,8 +26,6 @@
     "IMT-003",
     "STRAT-004",
     "TRN-003",
-    "EXP-005",
-    "PER-002",
-    "SRC-003"
+    "EXP-005"
   ]
 }
