@@ -82,4 +82,4 @@ changes had landed:
 
 The implementation commit is `f7d155a9`. This closeout evidence update records
 the review artifact and final verification without changing canonical
-architecture scope.
+architecture scope. Owner finalization is performed with `AI_NAME=Codex`.
