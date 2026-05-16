@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "TRN-002",
+  "archived_at": "2026-05-16T10:33:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "TRN-002",
+    "title": "trainer session endpoints",
+    "summary_zh": null,
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "TRN-002 finalized. Commit fea7a07a captures approved trainer session endpoint tests/docs/evidence with main.py hunks isolated; verification rerun: 25 TRN-002, 14 TW regression, 3 service-client with 2 existing utcnow warnings, 7 training-session service, py_compile passed.",
+    "last_update": "2026-05-16T10:33:35Z",
+    "review_notes_zh": [
+      "審查通過：TRN-002 所有 8 個 trainer session BFF 端點已驗證；25 contract tests 全部通過；TW-01/02/03 回歸測試（17 passed）無損；preview refresh 雙模式 mode=refresh / refresh_mode=manual 兼容確認；lifecycle 409 狀態校驗正確。最終確認由 owner Codex 完成 closeout。"
+    ],
+    "review_file": "support/reviews/TRN-002-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T10:33:35Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "fea7a07aa768c582679d99b4b059073fc5193657",
+      "commit_subject": "TRN-002 finalize trainer session endpoints",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "TRN-002",
+        "Reviewer": "Claude",
+        "Verification": "pytest services/control-plane/bff/test_trn002_trainer_session_contract.py -q (25 passed); pytest services/control-plane/bff/test_tw01_teaching_dialog_contract.py services/control-plane/bff/test_tw02_parameter_controls_contract.py services/control-plane/bff/test_tw03_before_after_compare_contract.py -q (14 passed); pytest services/control-plane/bff/test_training_session_service_client.py -q (3 passed, 2 existing datetime.utcnow warnings); pytest services/training-session/tests/test_http_service.py -q (7 passed); python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/read_store.py services/training-session/main.py (passed)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 69,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 6,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TRN-002",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T09:11:23Z",
+      "resolved_at": "2026-05-16T09:15:40Z"
+    },
+    {
+      "task_id": "TRN-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T09:33:00Z",
+      "resolved_at": "2026-05-16T09:36:34Z"
+    },
+    {
+      "task_id": "TRN-002",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T09:58:55Z",
+      "resolved_at": "2026-05-16T09:59:55Z"
+    },
+    {
+      "task_id": "TRN-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "TRN-002 ready for review. Added services/control-plane/bff/test_trn002_trainer_session_contract.py covering trainer session create/list/detail/message/controls/patch/preview read/refresh; updated BFF preview refresh to accept service-native mode=refresh while preserving refresh_mode=manual and to fail completed sessions with precondition_failed=status; documented surface in services/training-session/README.md; evidence in support/evidence/TRN-002/README.md. Verification: pytest services/control-plane/bff/test_trn002_trainer_session_contract.py -q (25 passed); pytest services/control-plane/bff/test_tw01_teaching_dialog_contract.py services/control-plane/bff/test_tw02_parameter_controls_contract.py services/control-plane/bff/test_tw03_before_after_compare_contract.py -q (14 passed); pytest services/control-plane/bff/test_training_session_service_client.py -q (3 passed, 2 existing datetime.utcnow warnings); pytest services/training-session/tests/test_http_service.py -q (7 passed); py_compile main/read_store/training-session main passed. No task-scoped commit at review handoff because the worktree/index already contains unrelated staged/concurrent ASK changes in services/control-plane/bff/main.py; TRN-002-owned main.py hunks are documented in the evidence packet.",
+      "status": "done",
+      "created_at": "2026-05-16T10:13:36Z",
+      "resolved_at": "2026-05-16T10:20:46Z"
+    },
+    {
+      "task_id": "TRN-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved. 25 TRN-002 contract tests pass; 17 TW regression tests pass; 7 training-session service tests pass. Dual-mode preview refresh and lifecycle enforcement verified. Owner Codex to finalize to done.",
+      "status": "done",
+      "created_at": "2026-05-16T10:20:46Z",
+      "resolved_at": "2026-05-16T10:33:35Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,175 @@
+{
+  "version": 1,
+  "task_id": "GOV-001-RB",
+  "archived_at": "2026-05-16T05:34:27Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "GOV-001-RB",
+    "title": "ApprovalDecision schema + write authority (rebaseline)",
+    "summary_zh": null,
+    "phase": "Sprint 2 / EPIC-GOV-DEPLOY",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Owner finalized GOV-001-RB at d36027de after closeout rerun: decide authority, target_version schema/contract alignment, drift tests, and evidence packet remain approved. Verified 69 focused pytest, 42 unittest, 29 smoke PASS/0 FAIL, 234 broader governance/deployment tests plus 3 subtests, and diff check clean. Unrelated dirty worktree changes left untouched.",
+    "last_update": "2026-05-16T05:34:27Z",
+    "review_notes_zh": [
+      "審查通過 — decide() 寫入權限保護正確；schema target_version 接受服務版本字串；drift 測試確保 write_authority 與 OWNER_MATRIX 同步；contract 文件 approval_decision_decided 事件；69+42+29+234 tests 全通過"
+    ],
+    "review_file": "support/evidence/GOV-001-RB/approval-decision-rebaseline.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T05:34:27Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "d36027def922cec825eeba86b7673fd6b54bfeb2",
+      "commit_subject": "GOV-001-RB enforce approval decision authority",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "GOV-001-RB",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 64,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "GOV-001-RB",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T02:03:24Z",
+      "resolved_at": "2026-05-16T02:04:24Z"
+    },
+    {
+      "task_id": "GOV-001-RB",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T02:21:23Z",
+      "resolved_at": "2026-05-16T02:22:23Z"
+    },
+    {
+      "task_id": "GOV-001-RB",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T02:39:18Z",
+      "resolved_at": "2026-05-16T02:40:21Z"
+    },
+    {
+      "task_id": "GOV-001-RB",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T02:57:09Z",
+      "resolved_at": "2026-05-16T02:58:04Z"
+    },
+    {
+      "task_id": "GOV-001-RB",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T03:14:58Z",
+      "resolved_at": "2026-05-16T03:15:56Z"
+    },
+    {
+      "task_id": "GOV-001-RB",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T03:32:43Z",
+      "resolved_at": "2026-05-16T03:33:46Z"
+    },
+    {
+      "task_id": "GOV-001-RB",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T03:50:37Z",
+      "resolved_at": "2026-05-16T03:51:36Z"
+    },
+    {
+      "task_id": "GOV-001-RB",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T04:08:26Z",
+      "resolved_at": "2026-05-16T04:09:28Z"
+    },
+    {
+      "task_id": "GOV-001-RB",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T04:26:24Z",
+      "resolved_at": "2026-05-16T04:27:23Z"
+    },
+    {
+      "task_id": "GOV-001-RB",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T04:44:17Z",
+      "resolved_at": "2026-05-16T04:45:20Z"
+    },
+    {
+      "task_id": "GOV-001-RB",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T05:02:23Z",
+      "resolved_at": "2026-05-16T05:03:24Z"
+    },
+    {
+      "task_id": "GOV-001-RB",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: tightened ApprovalDecision decide write-authority, aligned target_version schema/contract, added drift tests and support/evidence/GOV-001-RB/approval-decision-rebaseline.md. Verification: 69 focused tests passed; unittest 42 passed; smoke 29 PASS/0 FAIL; broader governance/deployment 234 passed + 3 subtests.",
+      "status": "done",
+      "created_at": "2026-05-16T05:11:02Z",
+      "resolved_at": "2026-05-16T05:16:48Z"
+    },
+    {
+      "task_id": "GOV-001-RB",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: decide() write-authority enforcement correct, schema and contract aligned, drift tests pass. Returning to Codex for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T05:16:48Z",
+      "resolved_at": "2026-05-16T05:34:27Z"
+    }
+  ],
+  "blockers": []
+}

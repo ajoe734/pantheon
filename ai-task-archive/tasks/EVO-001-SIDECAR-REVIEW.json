@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "task_id": "EVO-001-SIDECAR-REVIEW",
+  "archived_at": "2026-05-16T12:00:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "EVO-001-SIDECAR-REVIEW",
+    "title": "Prepare EVO-001 review packet and evidence summary",
+    "summary_zh": "平行支援 EVO-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Sprint 6 / EPIC-EVOLUTION",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/EVO-001/EVO-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Superseded by the direct EVO-001 review approval and review artifact support/reviews/EVO-001-review-codex.md; no separate sidecar review packet is needed.",
+    "last_update": "2026-05-16T12:00:55Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "EVO-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "superseded",
+    "superseded_by": "EVO-001"
+  },
+  "handoffs": [],
+  "blockers": []
+}

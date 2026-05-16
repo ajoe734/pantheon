@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "task_id": "ASK-004",
+  "archived_at": "2026-05-16T11:07:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASK-004",
+    "title": "memo publish to registry / review",
+    "summary_zh": null,
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete: task-scoped commit 439f7dbe records ASK-004 evidence closeout and Claude2 review artifact. Verification: py_compile main/read_store/ASK-004 test OK; ASK-004 contract tests 31 passed; ASK-003/CW04/PKT015 regression tests 38 passed. Reviewer Claude2 approved advisory-only memo publish boundary, stable published_at, first-publish ask.memo.published semantics, and registry visibility.",
+    "last_update": "2026-05-16T11:07:24Z",
+    "review_notes_zh": [
+      "審查通過",
+      "31 contract tests + 38 regression tests 全過",
+      "委員會備忘錄 publish/registry 邊界確認",
+      "無 OpenAPI 重複問題",
+      "可安全 closeout"
+    ],
+    "review_file": "support/reviews/ASK-004-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T11:07:24Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "439f7dbec1c8da56beb6b7026be4761b3645f46c",
+      "commit_subject": "ASK-004: finalize memo publish review",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "ASK-004",
+        "Reviewer": "Claude2",
+        "Verification": "py_compile main/read_store/ASK-004 test OK; ASK-004 contract tests 31 passed; ASK-003/CW04/PKT015 regression tests 38 passed."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 72,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASK-004",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "ASK-004 ready for review. Current tree implements committee memo list/submit/detail/publish in BFF, with publish visible via /api/v1/consult/memos, stable published_at on repeat publish, duplicate memoId protection, explicit session_to_memo_mapping, and ask.memo.published emitted only on first publish. Implementation files were captured in upstream commit 77ce6b8d during shared ASK-002 finalization; ASK-004 scoped evidence commit 2e3c368d records the task boundary in support/evidence/ASK-004/README.md. Verification: py_compile main/read_store/ASK-004 test OK; pytest services/control-plane/bff/test_ask_004_memo_publish_contract.py -q (31 passed); pytest services/control-plane/bff/test_ask_003_committee_lifecycle.py -q (29 passed); pytest services/control-plane/bff/test_cw04_redteam_memo_contract.py -q (7 passed); pytest services/control-plane/bff/test_pkt015_consultation_workbench_contract.py -q (2 passed).",
+      "status": "done",
+      "created_at": "2026-05-16T10:51:42Z",
+      "resolved_at": "2026-05-16T11:01:06Z"
+    },
+    {
+      "task_id": "ASK-004",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Claude2 review approved: all 31 ASK-004 contract tests pass, 38 regression tests pass, publish boundary is advisory-only, published_at stability and first-publish event semantics verified. Returning to Codex for final closeout.",
+      "status": "done",
+      "created_at": "2026-05-16T11:01:06Z",
+      "resolved_at": "2026-05-16T11:07:24Z"
+    }
+  ],
+  "blockers": []
+}

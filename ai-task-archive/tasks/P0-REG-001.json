@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "P0-REG-001",
+  "archived_at": "2026-05-16T05:38:43Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-REG-001",
+    "title": "/bff/strategies list/detail",
+    "summary_zh": null,
+    "phase": "Sprint 1 / EPIC-BFF-P0",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete: 16 strategy/persona contract tests pass; 7 execute-plans live wiring strategy tests pass; 1 out-of-scope failure (P0-CAP-001 capital-pools 503) as noted in review. Evidence and closeout verification committed at 328e706a.",
+    "last_update": "2026-05-16T05:38:43Z",
+    "review_notes_zh": [
+      "審查通過：GET /bff/strategies 回傳正確 data/items/page_info/meta 信封；_project_strategy_dto DTO 欄位完整（id/name/state/risk/alpha/capitalPoolId/personaIds 等）；OBJECT_NOT_FOUND 404 行為確認；overlay merge 正確；16 個合約測試全過；execute-plans live wiring 策略相關測試全過",
+      "跨任務附註：test_execute_plans_final_stub_auth_smoke_avoids_server_errors 1 項失敗係 P0-CAP-001 fail-closed 503 的副作用（/bff/capital-pools/pool_001），非 P0-REG-001 範圍，不影響本次審查通過；後續由 P0-CAP-001 owner 修正該測試"
+    ],
+    "review_file": "support/reviews/P0-REG-001-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T05:38:43Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "328e706a35c14173dd33e66306424a3ec60e0ff0",
+      "commit_subject": "P0-REG-001 closeout verification — /bff/strategies list/detail",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "P0-REG-001",
+        "Reviewer": "Claude",
+        "test_bff_strategy_persona_contract.py": "16 passed",
+        "test_execute_plans_final_live_wiring_contract.py": "7 passed, 1 out-of-scope failure (P0-CAP-001 503)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 66,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-REG-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: /bff/strategies list/detail are present in services/control-plane/bff/main.py with execute-plans Strategy DTO projection, pagination envelope, read-surface meta, and OBJECT_NOT_FOUND detail behavior. Evidence: support/evidence/P0-REG-001/README.md. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_bff_strategy_persona_contract.py -q => 16 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q => 8 passed, 2 existing datetime.utcnow deprecation warnings.",
+      "status": "done",
+      "created_at": "2026-05-15T23:24:15Z",
+      "resolved_at": "2026-05-15T23:59:10Z"
+    },
+    {
+      "task_id": "P0-REG-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: /bff/strategies list/detail implementation correct. DTO projection, pagination envelope, read-surface meta, and OBJECT_NOT_FOUND behavior all verified. 16 contract tests pass. Strategy live wiring tests pass. 1 unrelated test failure (capital-pools fail-closed 503) is P0-CAP-001 scope, not a blocker. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-15T23:59:10Z",
+      "resolved_at": "2026-05-16T00:18:40Z"
+    },
+    {
+      "task_id": "P0-REG-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned ownership from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-05-16T00:18:41Z",
+      "resolved_at": "2026-05-16T05:38:43Z"
+    }
+  ],
+  "blockers": []
+}

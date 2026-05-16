@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "task_id": "TRN-004",
+  "archived_at": "2026-05-16T10:47:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "TRN-004",
+    "title": "trainer commit / discard / replay",
+    "summary_zh": null,
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "TRN-004 closeout complete: implementation commit 92784e26 is already task-scoped and approved by Claude2 in support/reviews/TRN-004-review-claude2.md; closeout verification commit d7d395c6 records current owner/reviewer metadata. Verification rerun: py_compile training-session main/test passed; pytest services/training-session/tests/test_http_service.py -q (7 passed); pytest services/training-session/tests -q (17 passed); pytest services/control-plane/bff/test_training_session_service_client.py -q (3 passed, existing utcnow warnings); pytest services/control-plane/bff/test_tw04_teaching_replay_contract.py -q (34 passed, existing utcnow warnings). Existing dirty/staged worktree entries are unrelated to TRN-004 and were not staged for this closeout.",
+    "last_update": "2026-05-16T10:47:33Z",
+    "review_notes_zh": [
+      "審查通過：TRN-004 commit 92784e26 正確實作 trainer replay 決策路徑強化。Idempotency-Key 與 X-Idempotency-Key 兩種 header 均支援；同 key / 同 payload 重試回傳現有決策，不重複附加 TeachingEvent；同 key / 不同 payload 回傳 409 conflict；commit 決策正確在 artifacts 與 event artifact_refs 兩層寫入 lineage_ref、lineage_edge_id、persona_policy_ref、route_policy_ref；discard 決策保持 after_artifact_ref 為 None、不寫 persona/route policy 欄位；evidence packet 在 support/evidence/TRN-004/README.md。61 個測試全數通過，治理不變量均覆蓋。最終收尾由 owner Codex 完成。"
+    ],
+    "review_file": "support/reviews/TRN-004-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T10:47:33Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "d7d395c6c5c99c580df4983da7dc9910d169843d",
+      "commit_subject": "TRN-004 closeout verification",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "TRN-004",
+        "Reviewer": "Claude2",
+        "Implementation commit reviewed": "92784e26",
+        "Review file": "support/reviews/TRN-004-review-claude2.md"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 74,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TRN-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T09:34:16Z",
+      "resolved_at": "2026-05-16T09:34:39Z"
+    },
+    {
+      "task_id": "TRN-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T09:34:37Z",
+      "resolved_at": "2026-05-16T09:38:45Z"
+    },
+    {
+      "task_id": "TRN-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "TRN-004 implementation ready for review. Commit 92784e26 hardens training-session replay decisions with optional Idempotency-Key/X-Idempotency-Key replay protection, conflict on same-key changed payloads, commit/discard decision lineage artifact refs, README contract notes, and evidence packet support/evidence/TRN-004/README.md. Verification: py_compile training-session main/test; pytest services/training-session/tests/test_http_service.py -q (7 passed); pytest services/training-session/tests -q (17 passed); pytest services/control-plane/bff/test_training_session_service_client.py -q (3 passed, 2 existing datetime.utcnow warnings); pytest services/control-plane/bff/test_tw04_teaching_replay_contract.py -q (34 passed, 8 existing datetime.utcnow warnings); git diff --cached --check.",
+      "status": "done",
+      "created_at": "2026-05-16T09:59:00Z",
+      "resolved_at": "2026-05-16T10:34:56Z"
+    },
+    {
+      "task_id": "TRN-004",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Codex2 to Claude2: Codex2 is quota-terminal paused until 2026-05-18T23:40Z. Claude2 has execution/control-plane capability and just completed SENT-001 (adjacent training-session endpoint family); she is available after this chair review session.",
+      "status": "done",
+      "created_at": "2026-05-16T10:34:56Z",
+      "resolved_at": "2026-05-16T10:40:12Z"
+    },
+    {
+      "task_id": "TRN-004",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: TRN-004 implementation correct and complete. 61 tests pass. Returning to owner Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-16T10:40:12Z",
+      "resolved_at": "2026-05-16T10:47:33Z"
+    }
+  ],
+  "blockers": []
+}
