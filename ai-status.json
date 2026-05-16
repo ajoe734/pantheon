@@ -3,7 +3,7 @@
   "sprint": "2026-05-16-pantheon-bff-p0-foundation",
   "sprint_started_at": "2026-05-16T00:00:00Z",
   "objective": "跨進開發團隊 GAP master rebaseline (docs/04/pantheon_sa_supplemental_2026-05-15/GAP_dev_team_master_rebaseline_2026-05-15.md)，以 pantheon@master + execute-plans@main 為基準。並行 6 條 EPIC，按 P0→P3 階梯推進：(I) EPIC-BFF-P0 (P0 10 task / Sprint 1) — session trio (/bff/me, auth/refresh, logout) + /openapi.json + canonical action endpoint + approval decide + registry reads (strategies/personas/capital-pools/audit)，讓 execute-plans@main 在 VITE_BFF_FALLBACK=strict 下可 bootstrap 核心 Management flow 不再 fallback mock；(II) EPIC-GOV-DEPLOY (P1 5 task / Sprint 2) — ApprovalDecision first-class + DeploymentPlan contract/service + stage planner + deployment projection + pool/runtime compatibility 檢查；(III) EPIC-RUNTIME (P1 6 task / Sprint 3) — RuntimeBinding schema + Runtime Manager skeleton + /bff/runtimes + deploy/pause/replace/rollback actions + loader metadata migration (promotion_state → artifact_state + deployment_stage) + LEAN algorithm-level smoke；(IV) EPIC-TELEMETRY (P2 7 task / Sprint 4) — TelemetryEvent canonical schema + RuntimeHeartbeat ingest + AuditAction backend + /bff/alerts + /bff/incidents + reconciliation record + Postmortem schema/endpoint；(V) EPIC-RESEARCH (P3 28 task / Sprint 5) — Source Ingest (SRC) + StrategySpec (STRAT) + Experiment orchestrator (EXP) + Qlib/vectorbt adapters + Persona/Trainer (PER/TRN) + Imitation dataset (IMT) + Consult/Committee (ASK)；(VI) EPIC-EVOLUTION (P3 3 task / Sprint 6) — EvolutionDecision service + /bff/v5/loop-runs + /bff/v5/sentinel/findings。GAP § 10 最大阻塞：BFF live endpoints 不足 → EPIC-BFF-P0 必須最先收斂；Registry/Promotion canonical 已 implemented，DeploymentPlan/RuntimeBinding 是 governance→execution 缺口；Artifact Loader 仍寫 legacy promotion_state，EX-002 metadata migration 是 execution-side 技術債。fail-closed 鐵律延續：broker production live、capital binding live 仍禁止；canary 需 risk-owner + operator 雙閘；evidence 走 support/evidence/<epic>-<task>/。Track E 收尾備註：46 個 MGMT-* task 中 45 個 done+archive，僅 MGMT-BROKER-002 仍 blocked 等 Shioaji credentials (commit 22e5ca3b 已備 sidecar acceptance packet)；M7 canary readiness 因此未閉合；Track E objective 不在本 sprint 推進範圍，僅 carry-over 記錄。",
-  "updated_at": "2026-05-16T10:40:26Z",
+  "updated_at": "2026-05-16T10:48:09Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -97,8 +97,7 @@
       "status": "ready",
       "current_task_ids": [
         "ASK-005",
-        "EVO-001",
-        "ASK-002-SIDECAR-REVIEW"
+        "EVO-001"
       ],
       "branch": "feat/claude-execution-control",
       "next": "Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.",
@@ -128,7 +127,6 @@
       ],
       "status": "working",
       "current_task_ids": [
-        "ASK-002",
         "ASK-004"
       ],
       "branch": "feat/codex-collab-system",
@@ -172,12 +170,11 @@
       ],
       "status": "working",
       "current_task_ids": [
-        "LOOP-001-RB",
         "SENT-001"
       ],
       "branch": "feat/claude2-execution-control",
-      "next": "Chair reassigned review from Codex2 to Codex: Codex2 is quota-terminal paused until 2026-05-18T23:40Z. Codex is already reviewing SENT-001 in the same /bff/v5/ endpoint module and is the natural reviewer once SENT-001 completes.",
-      "last_update": "2026-05-16T10:35:06Z"
+      "next": "Codex review requests changes; see support/reviews/SENT-001-review-codex.md. Required: fix duplicate /bff/v5/sentinel/findings OpenAPI registration so kind/status/severity query params appear in /openapi.json, add a focused OpenAPI regression test, and make the SENT-001 implementation hunks durable/task-scoped because current referenced commits only contain tests/evidence while main.py/read_store.py implementation is still dirty.",
+      "last_update": "2026-05-16T10:33:21Z"
     },
     {
       "name": "Gemini2",
@@ -213,54 +210,22 @@
       "waiting_for": "Gemini"
     },
     {
-      "id": "TRN-004",
-      "title": "trainer commit / discard / replay",
-      "summary_zh": null,
-      "phase": "Sprint 5 / EPIC-RESEARCH",
-      "owner": "Codex",
-      "reviewer": "Claude2",
-      "status": "review_approved",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Review approved: TRN-004 implementation correct and complete. 61 tests pass. Returning to owner Codex for closeout.",
-      "last_update": "2026-05-16T10:40:12Z",
-      "review_notes_zh": [
-        "審查通過：TRN-004 commit 92784e26 正確實作 trainer replay 決策路徑強化。Idempotency-Key 與 X-Idempotency-Key 兩種 header 均支援；同 key / 同 payload 重試回傳現有決策，不重複附加 TeachingEvent；同 key / 不同 payload 回傳 409 conflict；commit 決策正確在 artifacts 與 event artifact_refs 兩層寫入 lineage_ref、lineage_edge_id、persona_policy_ref、route_policy_ref；discard 決策保持 after_artifact_ref 為 None、不寫 persona/route policy 欄位；evidence packet 在 support/evidence/TRN-004/README.md。61 個測試全數通過，治理不變量均覆蓋。最終收尾由 owner Codex 完成。"
-      ],
-      "review_file": "support/reviews/TRN-004-review-claude2.md"
-    },
-    {
-      "id": "IMT-004",
-      "title": "behavior policy artifact type registration",
-      "summary_zh": null,
-      "phase": "Sprint 5 / EPIC-RESEARCH",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "review_approved",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Review approved: behavior_policy registered consistently across schema/model/adapter layers; governance non-live gate confirmed; all 116+ tests passed. Returning to owner Codex for closeout.",
-      "last_update": "2026-05-16T10:37:32Z",
-      "review_notes_zh": [
-        "審查通過：behavior_policy 在 registry schema、Python enum、adapter 輸出三層一致註冊；artifact_state=draft + lifecycle_state=draft 雙欄位相容正確；registry test 驗證 draft→candidate→approved 全程 deployment_stage=none，無 live 洩漏；contract.md 明確禁止直接上線；preference/correction 兩個 JSON schema 及 Python model 同步更新；45+3+17+51 pytest 全過，兩項 smoke test 通過。治理不變量全部成立，closeout 交還 owner Codex。"
-      ],
-      "review_file": "support/reviews/IMT-004-review-claude.md"
-    },
-    {
       "id": "ASK-002",
       "title": "ConsultRequest / ConsultMemo schema",
       "summary_zh": null,
       "phase": "Sprint 5 / EPIC-RESEARCH",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "review",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "ASK-002 ready for review. Commit b23fb2e3 adds Draft-07 ConsultRequest/ConsultMemo schemas, schema load/validate helpers, memo-to-request lineage validation, tighter consultation model identity/confidence constraints, and evidence at support/evidence/ASK-002/README.md. Advisory-only boundary covered by tests rejecting direct deployment/broker side-effect fields. Verification: py_compile consultation models/main/store/client; pytest services/consultation/test_models.py -q (8 passed); pytest services/consultation/smoke_test.py services/consultation/test_postgres_store.py -q (8 passed); pytest services/consultation/test_compose_activation.py -q (1 passed); pytest services/control-plane/bff/test_cw01_consult_request_contract.py services/control-plane/bff/test_read_store_service_clients.py -q (10 passed).",
-      "last_update": "2026-05-16T10:26:42Z"
+      "next": "Review approved: ConsultRequest/ConsultMemo schemas correct and complete; advisory boundary enforced; all 27 tests pass. Returning to owner Codex for closeout.",
+      "last_update": "2026-05-16T10:47:19Z",
+      "review_notes_zh": [
+        "審查通過：ASK-002 commit b23fb2e3 正確實作 Draft-07 ConsultRequest/ConsultMemo schemas。additionalProperties: false 在兩個 schema 中均有效阻止 deployment_command 與 broker_order 等副作用欄位注入；allOf conditional 正確強制 published memo 需要 published_at；Pydantic model 約束（min_length、confidence bounds）與 schema 一致；validate_consult_memo_against_request 跨物件 lineage 驗證完整；全部 27 個測試通過（8+8+1+10）。Advisory-only 邊界成立，closeout 交還 owner Codex。"
+      ],
+      "review_file": "support/reviews/ASK-002-review-claude.md"
     },
     {
       "id": "ASK-004",
@@ -305,20 +270,6 @@
       "last_update": "2026-05-15T23:37:02Z"
     },
     {
-      "id": "LOOP-001-RB",
-      "title": "/bff/v5/loop-runs endpoint (rebaseline)",
-      "summary_zh": null,
-      "phase": "Sprint 6 / EPIC-EVOLUTION",
-      "owner": "Claude2",
-      "reviewer": "Codex",
-      "status": "review",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Chair reassigned review from Codex2 to Codex: Codex2 is quota-terminal paused until 2026-05-18T23:40Z. Codex is already reviewing SENT-001 in the same /bff/v5/ endpoint module and is the natural reviewer once SENT-001 completes.",
-      "last_update": "2026-05-16T10:35:06Z"
-    },
-    {
       "id": "SENT-001",
       "title": "/bff/v5/sentinel/findings endpoint",
       "summary_zh": null,
@@ -357,32 +308,6 @@
       "helper_kind": "bff_handoff_packet",
       "mutates_canonical": false,
       "auto_created_by": "supervisor-underutilization"
-    },
-    {
-      "id": "ASK-002-SIDECAR-REVIEW",
-      "title": "Prepare ASK-002 review packet and evidence summary",
-      "summary_zh": "平行支援 ASK-002，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
-      "phase": "Sprint 5 / EPIC-RESEARCH",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [
-        "support/sidecars/ASK-002/ASK-002-SIDECAR-REVIEW.md"
-      ],
-      "acceptance": [
-        "Create support artifacts only",
-        "Do not edit canonical truth",
-        "Hand off the packet to the assigned reviewer"
-      ],
-      "next": "Auto-reassigned ownership from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota. Task returned to todo until Claude starts a fresh run.",
-      "last_update": "2026-05-16T10:37:26Z",
-      "task_class": "sidecar",
-      "auto_generated": true,
-      "helper_parent": "ASK-002",
-      "helper_kind": "review_packet",
-      "mutates_canonical": false,
-      "auto_created_by": "supervisor-underutilization"
     }
   ],
   "handoffs": [
@@ -404,33 +329,6 @@
       "resolved_at": "2026-04-17T12:39:53Z"
     },
     {
-      "task_id": "TRN-004",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T09:34:16Z",
-      "resolved_at": "2026-05-16T09:34:39Z"
-    },
-    {
-      "task_id": "TRN-004",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T09:34:37Z",
-      "resolved_at": "2026-05-16T09:38:45Z"
-    },
-    {
-      "task_id": "IMT-004",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T09:36:51Z",
-      "resolved_at": "2026-05-16T09:59:02Z"
-    },
-    {
       "task_id": "ASK-002",
       "from": "Claude",
       "to": "Codex2",
@@ -440,39 +338,13 @@
       "resolved_at": "2026-05-16T09:59:44Z"
     },
     {
-      "task_id": "TRN-004",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "TRN-004 implementation ready for review. Commit 92784e26 hardens training-session replay decisions with optional Idempotency-Key/X-Idempotency-Key replay protection, conflict on same-key changed payloads, commit/discard decision lineage artifact refs, README contract notes, and evidence packet support/evidence/TRN-004/README.md. Verification: py_compile training-session main/test; pytest services/training-session/tests/test_http_service.py -q (7 passed); pytest services/training-session/tests -q (17 passed); pytest services/control-plane/bff/test_training_session_service_client.py -q (3 passed, 2 existing datetime.utcnow warnings); pytest services/control-plane/bff/test_tw04_teaching_replay_contract.py -q (34 passed, 8 existing datetime.utcnow warnings); git diff --cached --check.",
-      "status": "done",
-      "created_at": "2026-05-16T09:59:00Z",
-      "resolved_at": "2026-05-16T10:34:56Z"
-    },
-    {
-      "task_id": "LOOP-001-RB",
-      "from": "Claude2",
-      "to": "Codex2",
-      "message": "LOOP-001-RB implementation complete. Routes GET /bff/v5/loop-runs, /loop-runs/{id}, /sentinel/findings, /sentinel/findings/{id}, /control-room, /execution/persona-health, /execution/strategy-health all verified in main.py. Fixed regression in ReadSurfaceStore._backfill_local_contract_defaults: explicitly-provided empty incidents snapshot was being overwritten by fixture_pack_c incidents; fix guards the merge when 'incidents' key already exists in self._data. Commit: 43a51a2f. Evidence: support/evidence/LOOP-001-RB/README.md. Verification: pytest test_bff_v5_loop_sentinel_contract.py -q (19 passed); pytest test_read_store_loop_sentinel.py -q (14 passed); combined 33 passed.",
-      "status": "done",
-      "created_at": "2026-05-16T10:09:07Z",
-      "resolved_at": "2026-05-16T10:35:06Z"
-    },
-    {
-      "task_id": "IMT-004",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "IMT-004 ready for review. Commit df0ab9f3 registers behavior_policy as a governed registry artifact type, updates imitation BC output to emit artifact_type=behavior_policy with artifact_state=draft plus legacy lifecycle_state, allows preference/correction targets to reference behavior_policy, and records evidence in support/evidence/IMT-004/README.md. Verification: json.tool registry/preference/correction schemas; py_compile touched registry/imitation modules; pytest services/registry/test_service.py -q (45 passed); pytest services/learning/imitation/test_adapter.py -q (3 passed); pytest services/research/imitation/test_preference_models.py -q (17 passed); python3 services/learning/imitation/smoke_test.py (passed); pytest services/research/imitation -q (51 passed); python3 services/research/imitation/smoke_test.py (passed).",
-      "status": "done",
-      "created_at": "2026-05-16T10:26:22Z",
-      "resolved_at": "2026-05-16T10:37:32Z"
-    },
-    {
       "task_id": "ASK-002",
       "from": "Codex",
       "to": "Claude",
       "message": "ASK-002 ready for review. Commit b23fb2e3 adds Draft-07 ConsultRequest/ConsultMemo schemas, schema load/validate helpers, memo-to-request lineage validation, tighter consultation model identity/confidence constraints, and evidence at support/evidence/ASK-002/README.md. Advisory-only boundary covered by tests rejecting direct deployment/broker side-effect fields. Verification: py_compile consultation models/main/store/client; pytest services/consultation/test_models.py -q (8 passed); pytest services/consultation/smoke_test.py services/consultation/test_postgres_store.py -q (8 passed); pytest services/consultation/test_compose_activation.py -q (1 passed); pytest services/control-plane/bff/test_cw01_consult_request_contract.py services/control-plane/bff/test_read_store_service_clients.py -q (10 passed).",
-      "status": "pending",
-      "created_at": "2026-05-16T10:26:42Z"
+      "status": "done",
+      "created_at": "2026-05-16T10:26:42Z",
+      "resolved_at": "2026-05-16T10:47:19Z"
     },
     {
       "task_id": "SENT-001",
@@ -493,37 +365,12 @@
       "resolved_at": "2026-05-16T10:33:21Z"
     },
     {
-      "task_id": "TRN-004",
-      "from": "Codex2",
-      "to": "Claude2",
-      "message": "Chair reassigned review from Codex2 to Claude2: Codex2 is quota-terminal paused until 2026-05-18T23:40Z. Claude2 has execution/control-plane capability and just completed SENT-001 (adjacent training-session endpoint family); she is available after this chair review session.",
-      "status": "done",
-      "created_at": "2026-05-16T10:34:56Z",
-      "resolved_at": "2026-05-16T10:40:12Z"
-    },
-    {
-      "task_id": "LOOP-001-RB",
-      "from": "Codex2",
-      "to": "Codex",
-      "message": "Chair reassigned review from Codex2 to Codex: Codex2 is quota-terminal paused until 2026-05-18T23:40Z. Codex is already reviewing SENT-001 in the same /bff/v5/ endpoint module and is the natural reviewer once SENT-001 completes.",
-      "status": "pending",
-      "created_at": "2026-05-16T10:35:06Z"
-    },
-    {
-      "task_id": "IMT-004",
+      "task_id": "ASK-002",
       "from": "Claude",
       "to": "Codex",
-      "message": "Review approved: behavior_policy registered consistently across schema/model/adapter layers; governance non-live gate confirmed; all 116+ tests passed. Returning to owner Codex for closeout.",
+      "message": "Review approved: ConsultRequest/ConsultMemo schemas correct and complete; advisory boundary enforced; all 27 tests pass. Returning to owner Codex for closeout.",
       "status": "pending",
-      "created_at": "2026-05-16T10:37:32Z"
-    },
-    {
-      "task_id": "TRN-004",
-      "from": "Claude2",
-      "to": "Codex",
-      "message": "Review approved: TRN-004 implementation correct and complete. 61 tests pass. Returning to owner Codex for closeout.",
-      "status": "pending",
-      "created_at": "2026-05-16T10:40:12Z"
+      "created_at": "2026-05-16T10:47:19Z"
     }
   ],
   "blockers": [
@@ -547,20 +394,20 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 3,
+      "total": 2,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 3
+      "todo": 2
     },
     "Claude2": {
-      "total": 2,
-      "active": 2,
+      "total": 1,
+      "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 1,
+      "review": 0,
       "review_approved": 0,
       "todo": 1
     },
@@ -583,12 +430,12 @@
       "todo": 0
     },
     "Codex": {
-      "total": 5,
-      "active": 2,
+      "total": 3,
+      "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 1,
-      "review_approved": 2,
+      "review": 0,
+      "review_approved": 1,
       "todo": 2
     },
     "Codex2": {

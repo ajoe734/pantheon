@@ -1547,17 +1547,18 @@ def _resolve_final_idempotency_key(
 
 def _reject_body_idempotency_key(payload: Dict[str, Any]) -> None:
     """Reject final-contract payloads that carry idempotencyKey in the body."""
-    if "idempotencyKey" in payload:
+    body_key = "idempotencyKey" if "idempotencyKey" in payload else "idempotency_key" if "idempotency_key" in payload else None
+    if body_key is not None:
         raise _bff_error(
             400,
             ErrorCode.INVALID_REQUEST,
-            "idempotencyKey must not appear in the request body",
+            f"{body_key} must not appear in the request body",
             (
                 "Final contract routes require idempotency via the Idempotency-Key header, "
                 "not the request body"
             ),
             precondition_failed="body_idempotency_key",
-            suggestion="Remove idempotencyKey from the body and set the Idempotency-Key header",
+            suggestion=f"Remove {body_key} from the body and set the Idempotency-Key header",
         )
 
 
@@ -24358,6 +24359,64 @@ async def sem_v5_sentinel_remediation_execute_command(
     )
 
 
+_SENTINEL_FINDING_KINDS = {"hiq_sentinel", "risk_breach", "strategy_drift", "loop_anomaly"}
+_SENTINEL_FINDING_STATUSES = {"open", "resolved", "dismissed", "escalated"}
+_SENTINEL_FINDING_SEVERITIES = {"critical", "high", "medium", "low"}
+
+
+@app.get("/bff/v5/sentinel/findings")
+async def bff_v5_sentinel_findings_list(
+    kind: Optional[str] = Query(default=None, description="Filter by kind: hiq_sentinel, risk_breach, strategy_drift, loop_anomaly"),
+    status: Optional[str] = Query(default=None, description="Filter by status: open, resolved, dismissed, escalated"),
+    severity: Optional[str] = Query(default=None, description="Filter by severity: critical, high, medium, low"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """
+    GET /bff/v5/sentinel/findings — list sentinel findings from the read surface store.
+
+    Optional query filters:
+      ?kind=hiq_sentinel|risk_breach|strategy_drift|loop_anomaly
+      ?status=open|resolved|dismissed|escalated
+      ?severity=critical|high|medium|low
+
+    Returns source-aware list response.  When the source is missing the items
+    list is empty and meta.surfaces.sentinel_findings.source is 'missing'.
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    if kind is not None and kind.lower() not in _SENTINEL_FINDING_KINDS:
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_REQUEST,
+            f"Invalid kind '{kind}'. Must be one of: {', '.join(sorted(_SENTINEL_FINDING_KINDS))}",
+            "Unknown sentinel finding kind filter value",
+        )
+    if status is not None and status.lower() not in _SENTINEL_FINDING_STATUSES:
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_REQUEST,
+            f"Invalid status '{status}'. Must be one of: {', '.join(sorted(_SENTINEL_FINDING_STATUSES))}",
+            "Unknown sentinel finding status filter value",
+        )
+    if severity is not None and severity.lower() not in _SENTINEL_FINDING_SEVERITIES:
+        raise _bff_error(
+            400,
+            ErrorCode.INVALID_REQUEST,
+            f"Invalid severity '{severity}'. Must be one of: {', '.join(sorted(_SENTINEL_FINDING_SEVERITIES))}",
+            "Unknown sentinel finding severity filter value",
+        )
+
+    available, records = read_store.list_sentinel_findings(
+        kind=kind,
+        status=status,
+        severity=severity,
+    )
+    src_dataset = "sentinel_findings" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
+    source = None if available else "missing"
+    return _sem_final_list_response(records, dataset=src_dataset, surface_key="sentinel_findings", source=source)
+
+
 def _sem_local_records(dataset: str) -> tuple[str, List[Dict[str, Any]]]:
     data = getattr(read_store, "_data", {})
     raw = data.get(dataset) if isinstance(data, dict) else None
@@ -24725,6 +24784,201 @@ async def sem_agora_committee_close_session(
         "meta": {
             "snapshot_at": now,
             "surfaces": {"agora_committee_session_detail": {"status": "ok", "source": "bff_local"}},
+        },
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+# ---- ASK-004: committee session memo publish to registry / review ---- #
+
+
+@app.get("/bff/agora/committee/sessions/{sessionId}/memos")
+async def sem_agora_committee_session_memos(
+    sessionId: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """ASK-004: list memos linked to a committee session."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    session = read_store.get_agora_session(sessionId)
+    if session is None or str(session.get("mode") or "").strip() != "committee":
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Committee session not found",
+            f"Committee session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    snapshot_at = utc_now()
+    memos = read_store.list_committee_session_memos(sessionId)
+    return {
+        "items": memos,
+        "page_info": {"next_page_token": None, "total": len(memos)},
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {"agora_committee_session_memos": {"status": "ok", "source": "bff_local"}},
+        },
+    }
+
+
+@app.post("/bff/agora/committee/sessions/{sessionId}/memos", status_code=201)
+async def sem_agora_committee_submit_memo(
+    sessionId: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """ASK-004: submit a draft memo for a committee session."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({
+        "route": f"POST /bff/agora/committee/sessions/{sessionId}/memos",
+        "sessionId": sessionId,
+        "payload": payload,
+    })
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    now = utc_now()
+    session = read_store.get_agora_session(sessionId)
+    if session is None or str(session.get("mode") or "").strip() != "committee":
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Committee session not found",
+            f"Committee session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    memo_id = str(payload.get("memoId") or payload.get("memo_id") or "").strip() or f"memo-{uuid.uuid4().hex[:12]}"
+    if read_store.get_consult_memo(memo_id) is not None:
+        raise _bff_error(
+            409,
+            ErrorCode.CONCURRENT_MODIFICATION,
+            "Committee memo id already exists",
+            f"Memo {memo_id} already exists in the consult memo registry",
+            precondition_failed="memo_id",
+            suggestion="Retry with a new memoId or replay the original request with the same Idempotency-Key",
+        )
+    memo = read_store.submit_committee_session_memo(
+        sessionId,
+        memo_id=memo_id,
+        actor_id=identity.operator_id,
+        payload=payload,
+        created_at=now,
+    )
+    result = {
+        "data": memo,
+        "meta": {
+            "snapshot_at": now,
+            "surfaces": {"agora_committee_memo_detail": {"status": "ok", "source": "bff_local"}},
+        },
+    }
+    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
+
+
+@app.get("/bff/agora/committee/sessions/{sessionId}/memos/{memoId}")
+async def sem_agora_committee_memo_detail(
+    sessionId: str,
+    memoId: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """ASK-004: get a committee session memo for review."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    session = read_store.get_agora_session(sessionId)
+    if session is None or str(session.get("mode") or "").strip() != "committee":
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Committee session not found",
+            f"Committee session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    memo = read_store.get_committee_session_memo(sessionId, memoId)
+    if memo is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Committee memo not found",
+            f"Memo {memoId} for session {sessionId} does not exist",
+            precondition_failed="memo_id",
+        )
+    return {
+        "data": memo,
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {"agora_committee_memo_detail": {"status": "ok", "source": "bff_local"}},
+        },
+    }
+
+
+@app.post("/bff/agora/committee/sessions/{sessionId}/memos/{memoId}/publish", status_code=200)
+async def sem_agora_committee_publish_memo(
+    sessionId: str,
+    memoId: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """ASK-004: publish a committee session memo to the consult memo registry."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({
+        "route": f"POST /bff/agora/committee/sessions/{sessionId}/memos/{memoId}/publish",
+        "sessionId": sessionId,
+        "memoId": memoId,
+        "payload": payload,
+    })
+    cached = _agora_core_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    now = utc_now()
+    session = read_store.get_agora_session(sessionId)
+    if session is None or str(session.get("mode") or "").strip() != "committee":
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Committee session not found",
+            f"Committee session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
+    existing_memo = read_store.get_committee_session_memo(sessionId, memoId)
+    was_published = str((existing_memo or {}).get("status") or "").strip().lower() == "published"
+    memo = read_store.publish_committee_session_memo(
+        sessionId,
+        memoId,
+        actor_id=identity.operator_id,
+        published_at=now,
+    )
+    if memo is None:
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Committee memo not found",
+            f"Memo {memoId} for session {sessionId} does not exist",
+            precondition_failed="memo_id",
+        )
+    if not was_published:
+        _publish_event(
+            _sse_buffers["ask"],
+            _sse_subscribers["ask"],
+            "ask.memo.published",
+            {"sessionId": sessionId, "memoId": memoId},
+        )
+    result = {
+        "data": memo,
+        "meta": {
+            "snapshot_at": now,
+            "surfaces": {"agora_committee_memo_detail": {"status": "ok", "source": "bff_local"}},
         },
     }
     _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}

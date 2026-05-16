@@ -1447,12 +1447,32 @@ class ServiceBackedReadAdapter:
             "binding_id": inc.get("binding_id"),
         }
 
-    @staticmethod
-    def _derive_sentinel_finding(inc: Dict[str, Any], *, override_id: Optional[str] = None) -> Dict[str, Any]:
+    _SENTINEL_KIND_KEYWORDS: Dict[str, List[str]] = {
+        "hiq_sentinel": ["hiq", "sentinel"],
+        "risk_breach": ["risk", "breach", "capital"],
+        "strategy_drift": ["drift", "strategy"],
+        "loop_anomaly": ["loop", "anomaly"],
+    }
+
+    @classmethod
+    def _infer_sentinel_kind(cls, inc: Dict[str, Any]) -> Optional[str]:
+        """Infer sentinel finding kind from kind field or title keywords."""
+        raw_kind = str(inc.get("kind") or "").strip().lower()
+        if raw_kind in cls._SENTINEL_KIND_KEYWORDS:
+            return raw_kind
+        title_lower = str(inc.get("title") or "").lower()
+        for kind, keywords in cls._SENTINEL_KIND_KEYWORDS.items():
+            if any(kw in title_lower for kw in keywords):
+                return kind
+        return None
+
+    @classmethod
+    def _derive_sentinel_finding(cls, inc: Dict[str, Any], *, override_id: Optional[str] = None) -> Dict[str, Any]:
         inc_id = str(inc.get("incident_id") or inc.get("id") or "")
         return {
             "id": override_id or inc_id,
             "status": inc.get("status", "unknown"),
+            "kind": inc.get("kind") or cls._infer_sentinel_kind(inc),
             "derived_from_incident_id": inc_id,
             "runtime_id": inc.get("runtime_id"),
             "binding_id": inc.get("binding_id"),
@@ -1494,18 +1514,46 @@ class ServiceBackedReadAdapter:
             return True, lr_data.get(loop_run_id)
         return False, None
 
-    def list_sentinel_findings(self) -> tuple[bool, List[Dict[str, Any]]]:
+    def list_sentinel_findings(
+        self,
+        *,
+        kind: Optional[str] = None,
+        status: Optional[str] = None,
+        severity: Optional[str] = None,
+    ) -> tuple[bool, List[Dict[str, Any]]]:
         avail_inc, incidents = self._load_dataset("incidents")
         if avail_inc:
-            return True, [
+            results = [
                 self._derive_sentinel_finding(inc)
                 for inc in incidents.values()
                 if isinstance(inc, dict) and "loop" not in str(inc.get("title") or "").lower()
             ]
+            return True, self._apply_sentinel_filters(results, kind=kind, status=status, severity=severity)
         avail_sf, sf_data = self._load_dataset("sentinel_findings")
         if avail_sf:
-            return True, list(sf_data.values())
+            results = list(sf_data.values())
+            return True, self._apply_sentinel_filters(results, kind=kind, status=status, severity=severity)
         return False, []
+
+    @staticmethod
+    def _apply_sentinel_filters(
+        records: List[Dict[str, Any]],
+        *,
+        kind: Optional[str],
+        status: Optional[str],
+        severity: Optional[str],
+    ) -> List[Dict[str, Any]]:
+        out = records
+        if kind is not None:
+            kind_lower = kind.lower()
+            out = [r for r in out if str(r.get("kind") or "").lower() == kind_lower]
+        if status is not None:
+            status_lower = status.lower()
+            out = [r for r in out if str(r.get("status") or "").lower() == status_lower]
+        if severity is not None:
+            severity_lower = severity.lower()
+            out = [r for r in out if str(r.get("severity") or "").lower() == severity_lower]
+        return out
 
     def get_sentinel_finding(self, finding_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
         avail_inc, incidents = self._load_dataset("incidents")
@@ -7683,6 +7731,137 @@ class ReadSurfaceStore:
         self._save()
         return json.loads(json.dumps(session))
 
+    # ---- ASK-004: committee session memo publish to registry / review ---- #
+
+    def submit_committee_session_memo(
+        self,
+        session_id: str,
+        *,
+        memo_id: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """ASK-004: draft a memo linked to a committee session."""
+        session = self.get_agora_session(session_id)
+        if session is None or str(session.get("mode") or "").strip() != "committee":
+            return None
+        timestamp = created_at or _utc_now_rfc3339()
+        memo_type = str(payload.get("memoType") or payload.get("memo_type") or "committee_summary").strip() or "committee_summary"
+        author_ref = json.loads(
+            json.dumps(
+                payload.get("authorRef")
+                or payload.get("author_ref")
+                or {"type": "operator", "id": actor_id}
+            )
+        )
+        evidence_refs = json.loads(
+            json.dumps(list(payload.get("evidenceRefs") or payload.get("evidence_refs") or []))
+        )
+        evidence_ref_ids: List[str] = []
+        for item in evidence_refs:
+            if isinstance(item, dict):
+                ref_id = str(item.get("id") or item.get("ref_id") or item.get("artifact_ref") or "").strip()
+            else:
+                ref_id = str(item or "").strip()
+            if ref_id and ref_id not in evidence_ref_ids:
+                evidence_ref_ids.append(ref_id)
+        if isinstance(author_ref, dict):
+            created_by = json.loads(json.dumps(author_ref))
+        else:
+            created_by = {"actor_type": "operator", "actor_id": str(author_ref or actor_id)}
+        target = self._agora_session_target(session)
+        memo: Dict[str, Any] = {
+            "id": memo_id,
+            "memo_id": memo_id,
+            "memo_type": memo_type,
+            "status": "draft",
+            "lifecycle_state": "draft",
+            "linked_session_id": session_id,
+            "linked_request_id": (
+                payload.get("linkedRequestId")
+                or payload.get("linked_request_id")
+                or session.get("linkedRequestId")
+            ),
+            "author_ref": author_ref,
+            "session_to_memo_mapping": {
+                "mapping_id": f"map-{memo_id}",
+                "source_session_id": session_id,
+                "transcript_id": payload.get("transcriptId") or payload.get("transcript_id") or f"tr-{session_id}",
+                "transcript_version": payload.get("transcriptVersion") or payload.get("transcript_version"),
+                "memo_id": memo_id,
+                "memo_type": memo_type,
+                "created_by": created_by,
+                "evidence_refs": evidence_ref_ids,
+                "mapping_status": "draft",
+                "created_at": timestamp,
+            },
+            "summary": str(payload.get("summary") or "").strip() or None,
+            "recommendations": json.loads(json.dumps(list(payload.get("recommendations") or []))),
+            "evidence_refs": evidence_refs,
+            "created_at": timestamp,
+            "published_at": None,
+            "governance_target": {
+                "target_type": target.get("type"),
+                "target_id": target.get("id"),
+                "deployment_plan_id": target.get("id") if target.get("type") == "deployment_plan" else None,
+                "artifact_id": target.get("id") if target.get("type") == "artifact" else None,
+                "strategy_id": target.get("id") if target.get("type") == "strategy" else None,
+            },
+        }
+        self._ensure_local_overlay_records("consult_memos")[memo_id] = memo
+        self._save()
+        return self._project_consult_memo_detail(json.loads(json.dumps(memo)))
+
+    def list_committee_session_memos(self, session_id: str) -> List[Dict[str, Any]]:
+        """ASK-004: list memos linked to a committee session."""
+        all_memos = self._read_dataset_records("consult_memos")
+        memos = [
+            memo
+            for memo in all_memos
+            if isinstance(memo, dict) and str(memo.get("linked_session_id") or "") == str(session_id)
+        ]
+        memos.sort(key=self._recent_sort_value, reverse=True)
+        return [self._project_consult_memo_summary(memo) for memo in memos]
+
+    def get_committee_session_memo(self, session_id: str, memo_id: str) -> Optional[Dict[str, Any]]:
+        """ASK-004: get a memo linked to a committee session."""
+        record = self._agora_record_map("consult_memos", ["memo_id", "id"]).get(str(memo_id))
+        if record is None:
+            return None
+        if str(record.get("linked_session_id") or "") != str(session_id):
+            return None
+        return self._project_consult_memo_detail(record)
+
+    def publish_committee_session_memo(
+        self,
+        session_id: str,
+        memo_id: str,
+        *,
+        actor_id: str,
+        published_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """ASK-004: publish a committee session memo to the consult memo registry."""
+        record = self._agora_record_map("consult_memos", ["memo_id", "id"]).get(str(memo_id))
+        if record is None:
+            return None
+        if str(record.get("linked_session_id") or "") != str(session_id):
+            return None
+        timestamp = published_at or _utc_now_rfc3339()
+        memo = json.loads(json.dumps(record))
+        if str(memo.get("status") or memo.get("lifecycle_state") or "").strip().lower() == "published":
+            return self._project_consult_memo_detail(memo)
+        memo["status"] = "published"
+        memo["lifecycle_state"] = "published"
+        memo["published_at"] = timestamp
+        memo["published_by"] = actor_id
+        mapping = memo.get("session_to_memo_mapping")
+        if isinstance(mapping, dict):
+            mapping["mapping_status"] = "active"
+        self._ensure_local_overlay_records("consult_memos")[memo_id] = memo
+        self._save()
+        return self._project_consult_memo_detail(memo)
+
     def get_agora_message(self, message_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not message_id:
             return None
@@ -11690,6 +11869,7 @@ class ReadSurfaceStore:
                     record,
                     [
                         "id",
+                        "memo_id",
                         "entry_id",
                         "note_id",
                         "insight_id",
@@ -12455,8 +12635,14 @@ class ReadSurfaceStore:
     def get_loop_run(self, loop_run_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
         return self._service.get_loop_run(loop_run_id)
 
-    def list_sentinel_findings(self) -> tuple[bool, List[Dict[str, Any]]]:
-        return self._service.list_sentinel_findings()
+    def list_sentinel_findings(
+        self,
+        *,
+        kind: Optional[str] = None,
+        status: Optional[str] = None,
+        severity: Optional[str] = None,
+    ) -> tuple[bool, List[Dict[str, Any]]]:
+        return self._service.list_sentinel_findings(kind=kind, status=status, severity=severity)
 
     def get_sentinel_finding(self, finding_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
         return self._service.get_sentinel_finding(finding_id)
