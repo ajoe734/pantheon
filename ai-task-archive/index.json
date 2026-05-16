@@ -1,13 +1,20 @@
 {
   "version": 1,
-  "updated_at": "2026-05-16T06:30:13Z",
+  "updated_at": "2026-05-16T07:19:29Z",
   "counts": {
-    "total": 1124,
-    "completed": 1106,
+    "total": 1131,
+    "completed": 1113,
     "superseded": 18
   },
   "recent_terminal_ids": [
+    "SRC-002",
+    "TEL-002-RB",
+    "INC-001-RB",
+    "DEP-002-RB",
+    "TEL-001-RB",
     "CAP-002-RB",
+    "DEP-001-RB",
+    "RT-003",
     "QLIB-001",
     "DEP-003",
     "ALT-001",
@@ -19,13 +26,6 @@
     "P0-PER-001",
     "P0-REG-001",
     "GOV-001-RB",
-    "REC-001",
-    "RT-001",
-    "P0-APP-001",
-    "VBT-001",
-    "P0-CAP-001",
-    "P0-BFF-003",
-    "SRC-005",
-    "P0-BFF-002"
+    "REC-001"
   ]
 }
