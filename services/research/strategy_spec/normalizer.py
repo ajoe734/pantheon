@@ -20,6 +20,8 @@ from typing import Any, Dict, Iterable, List
 
 from jsonschema import Draft7Validator, RefResolver
 
+from .models import StrategySpecValidationError, validate_strategy_spec_payload
+
 
 class StrategySpecNormalizationError(ValueError):
     """Raised when RS-001 material cannot be normalized safely."""
@@ -104,9 +106,6 @@ class StrategySpecNormalizer:
         repo_root = Path(__file__).resolve().parents[3]
         self.schema_dir = schema_dir or (repo_root / "services" / "control-plane" / "specs")
         self.created_by = created_by
-        self._strategy_spec_validator = self._build_validator(
-            self.schema_dir / "strategy_spec.schema.json"
-        )
         self._workflow_handoff_validator = self._build_validator(
             self.schema_dir / "workflow_handoff.schema.json"
         )
@@ -199,16 +198,10 @@ class StrategySpecNormalizer:
         )
 
     def validate_strategy_spec(self, strategy_spec: Dict[str, Any]) -> None:
-        errors = sorted(
-            self._strategy_spec_validator.iter_errors(strategy_spec),
-            key=lambda item: list(item.path),
-        )
-        if errors:
-            first = errors[0]
-            location = ".".join(str(part) for part in first.path) or "<root>"
-            raise StrategySpecNormalizationError(
-                f"StrategySpec validation failed at {location}: {first.message}"
-            )
+        try:
+            validate_strategy_spec_payload(strategy_spec, self.schema_dir / "strategy_spec.schema.json")
+        except StrategySpecValidationError as exc:
+            raise StrategySpecNormalizationError(str(exc)) from exc
 
     def validate_workflow_handoff(self, workflow_handoff: Dict[str, Any]) -> None:
         errors = sorted(

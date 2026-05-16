@@ -2,9 +2,14 @@
 
 `RS-002` consumes governed `RS-001` discovery handoffs and turns them into the canonical objects defined by `OC-003`:
 
-1. `StrategySpec` validated against [services/control-plane/specs/strategy_spec.schema.json](/home/ajoe734/code/pantheon/services/control-plane/specs/strategy_spec.schema.json)
-2. `WorkflowHandoff` validated against [services/control-plane/specs/workflow_handoff.schema.json](/home/ajoe734/code/pantheon/services/control-plane/specs/workflow_handoff.schema.json)
+1. `StrategySpec` validated against [services/control-plane/specs/strategy_spec.schema.json](../../control-plane/specs/strategy_spec.schema.json)
+2. `WorkflowHandoff` validated against [services/control-plane/specs/workflow_handoff.schema.json](../../control-plane/specs/workflow_handoff.schema.json)
 3. A legacy replication compatibility envelope so the current `RS-003` gate can keep running while it migrates to the canonical handoff
+
+`models.py` is the typed StrategySpec domain model for code paths that need
+schema-backed construction, validation, or round-trip serialization. It does
+not grant execution authority; paper, canary, and live hints still require
+governance approval before any downstream deployment work.
 
 ## Why this exists
 

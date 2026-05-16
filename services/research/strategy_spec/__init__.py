@@ -1,5 +1,27 @@
-"""RS-002 StrategySpec normalization helpers."""
+"""StrategySpec contract models and RS-002 normalization helpers."""
 
+from .models import (
+    CodeRef,
+    DataDependency,
+    EvidenceRef,
+    EvaluationPlan,
+    ExecutionProfile,
+    Governance,
+    MarketScope,
+    Provenance,
+    StrategyDataDependencyKind,
+    StrategyEvidenceRefType,
+    StrategyExecutionModeHint,
+    StrategyLifecycleState,
+    StrategyQuantityType,
+    StrategySourceKind,
+    StrategySpec,
+    StrategySpecValidationError,
+    load_strategy_spec_schema,
+    strategy_spec_schema_path,
+    validate_strategy_spec,
+    validate_strategy_spec_payload,
+)
 from .normalizer import (
     NormalizationResult,
     StrategySpecNormalizationError,
@@ -7,7 +29,27 @@ from .normalizer import (
 )
 
 __all__ = [
+    "CodeRef",
+    "DataDependency",
+    "EvidenceRef",
+    "EvaluationPlan",
+    "ExecutionProfile",
+    "Governance",
+    "MarketScope",
     "NormalizationResult",
+    "Provenance",
+    "StrategyEvidenceRefType",
+    "StrategyDataDependencyKind",
+    "StrategyExecutionModeHint",
+    "StrategyLifecycleState",
     "StrategySpecNormalizationError",
     "StrategySpecNormalizer",
+    "StrategyQuantityType",
+    "StrategySourceKind",
+    "StrategySpec",
+    "StrategySpecValidationError",
+    "load_strategy_spec_schema",
+    "strategy_spec_schema_path",
+    "validate_strategy_spec",
+    "validate_strategy_spec_payload",
 ]
