@@ -427,6 +427,13 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
 | `/api/v1/operator/post-incident-review/{incident_id}` | IN-04, EV-01, EV-02, LN-01, TL-03 | Post-incident analysis | `operator` |
 | `/api/v1/operator/persona-management/{persona_id}` | PS-02, CP-03, CP-04, PS-03, PS-05 | Persona lifecycle management | `operator` |
 
+### 10.1.1 Source-Reference BFF Aliases
+
+| Route | Backing View | Response | Min Role |
+|---|---|---|---|
+| `/bff/alerts` | `/api/v1/operator/alerts` | `{ alerts, summary, meta }` with backend-owned severity, category, target refs, and surface degradation metadata | `operator` |
+| `/bff/alerts/{id}` | `/api/v1/operator/alerts` | `{ data: AlertProjection, meta }` for a single projected alert id | `operator` |
+
 ### 10.2 Consistency Model
 
 Composed views support the `snapshot` query parameter:
