@@ -40,6 +40,10 @@ python3 -m pytest services/control-plane/bff/test_pkt015_consultation_workbench_
 # 2 passed
 ```
 
+## Publication Note
+
+The implementation files were captured in upstream commit `77ce6b8d` while an ASK-002 review/finalization commit was created in the shared worktree. This evidence packet records the ASK-004 scope and verification so the reviewer can evaluate the current tree without treating the ASK-002 review note as the ASK-004 task boundary.
+
 ## Reviewer Notes
 
 - Publish is stable after the first successful publish: later calls with a new idempotency key return the existing published memo without changing `published_at`.
