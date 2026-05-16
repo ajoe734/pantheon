@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "SRC-003",
+  "archived_at": "2026-05-16T07:36:50Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SRC-003",
+    "title": "repo allowlist ingest skeleton",
+    "summary_zh": null,
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "SRC-003 finalized. Repo allowlist ingest skeleton reviewed and durable in HEAD; SRC-003 closeout evidence commit e651e60a records verification and commit-isolation exception after concurrent closeout batched implementation files in 19d306c4. Verification: py_compile provider/catalog exports passed; pytest test_repo_allowlist.py 3 passed; pytest services/source_ingestion/tests 46 passed.",
+    "last_update": "2026-05-16T07:36:50Z",
+    "review_notes_zh": [
+      "審查通過。RepoAllowlistEntry/Provider 邊界驗證正確：URL 格式拒絕、路徑 traversal/絕對路徑/萬用字元/重複項目全部拒絕；fetch_config 以 static_records 模式輸出、no watermark；governance 欄位 direct_execution_allowed=false、lean/broker consumption 均設 research_only；provider catalog 正確暴露 example-github-repo-allowlist；46 個 source_ingestion tests 全通過。"
+    ],
+    "review_file": "support/evidence/SRC-003/review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T07:36:50Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "e651e60a2963358b98b0b48581ddb5673cbde1a8",
+      "commit_subject": "SRC-003 closeout evidence note",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verification": "python3 -m py_compile services/source_ingestion/connectors/repo_allowlist.py services/source_ingestion/connectors/examples.py services/source_ingestion/connectors/__init__.py; python3 -m pytest services/source_ingestion/tests/test_repo_allowlist.py -q (3 passed); python3 -m pytest services/source_ingestion/tests -q (46 passed).",
+        "LLM-Agent": "Codex",
+        "Task-ID": "SRC-003",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 80,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 4,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SRC-003",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-16T01:09:47Z",
+      "resolved_at": "2026-05-16T01:10:22Z"
+    },
+    {
+      "task_id": "SRC-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T06:40:43Z",
+      "resolved_at": "2026-05-16T06:42:01Z"
+    },
+    {
+      "task_id": "SRC-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Repo allowlist ingest skeleton ready for review. Added RepoAllowlistProvider/Entry, exposed provider catalog example, and covered allowlist/static-record fetch behavior plus URL/path/duplicate rejection. Verification: python3 -m py_compile services/source_ingestion/connectors/repo_allowlist.py services/source_ingestion/connectors/examples.py services/source_ingestion/connectors/__init__.py; python3 -m pytest services/source_ingestion/tests/test_repo_allowlist.py -q; python3 -m pytest services/source_ingestion/tests -q.",
+      "status": "done",
+      "created_at": "2026-05-16T06:50:37Z",
+      "resolved_at": "2026-05-16T07:17:54Z"
+    },
+    {
+      "task_id": "SRC-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: repo allowlist ingest skeleton is correctly bounded to static_records mode, execution-route denial is complete, all validation guards pass, and 46 source_ingestion tests pass. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T07:17:54Z",
+      "resolved_at": "2026-05-16T07:36:52Z"
+    }
+  ],
+  "blockers": []
+}
