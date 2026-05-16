@@ -25814,6 +25814,10 @@ _BFF_APPROVAL_DECIDE_COMMANDS: Dict[str, CommandType] = {
     "request_revision": CommandType.REQUEST_APPROVAL_REVISION,
 }
 
+# Decisions that emit approval.stage.changed rather than approval.decided.
+# escalate and freeze are stage transitions despite mapping to APPROVE_DECISION command type.
+_APPROVAL_STAGE_CHANGE_DECISIONS: frozenset = frozenset({"request_revision", "escalate", "freeze"})
+
 
 @app.post("/bff/approvals/{id}/decide", status_code=202)
 async def bff_approvals_decide(
@@ -25889,26 +25893,40 @@ async def bff_approvals_decide(
             precondition_failed="approval_id",
         )
 
-    if command_type in (CommandType.APPROVE_DECISION, CommandType.REJECT_DECISION):
-        _outcome = "approved" if command_type == CommandType.APPROVE_DECISION else "rejected"
-        _publish_event(
-            _sse_buffers["approval"],
-            _sse_subscribers["approval"],
-            "approval.decided",
-            {"approval_id": clean_id, "outcome": _outcome, "decided_by": identity.operator_id},
-        )
-    else:
-        _publish_event(
-            _sse_buffers["approval"],
-            _sse_subscribers["approval"],
-            "approval.stage.changed",
-            {
-                "approval_id": clean_id,
-                "previous_stage": "under_review",
-                "current_stage": raw_decision,
-                "actor_id": identity.operator_id,
-            },
-        )
+    # Idempotency pre-check: skip SSE publish on command replay to avoid duplicate events.
+    # Replicates the hash key _sem_command_response uses so the check is consistent.
+    _idem_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    _idem_hash = _stable_json_hash({
+        "command": command_type.value,
+        "target_type": ObjectType.APPROVAL_DECISION.value,
+        "target_id": clean_id,
+        "payload": {**payload, "decision_id": clean_id},
+    })
+    _existing_idem = _FINAL_CONTRACT_IDEMPOTENCY.get(_idem_key)
+    _is_approval_replay = _existing_idem is not None and _existing_idem.get("request_hash") == _idem_hash
+
+    if not _is_approval_replay:
+        # escalate/freeze are stage transitions; use raw_decision to determine event type
+        if raw_decision in _APPROVAL_STAGE_CHANGE_DECISIONS or command_type == CommandType.REQUEST_APPROVAL_REVISION:
+            _publish_event(
+                _sse_buffers["approval"],
+                _sse_subscribers["approval"],
+                "approval.stage.changed",
+                {
+                    "approval_id": clean_id,
+                    "previous_stage": "under_review",
+                    "current_stage": raw_decision or "request_revision",
+                    "actor_id": identity.operator_id,
+                },
+            )
+        else:
+            _outcome = "approved" if command_type == CommandType.APPROVE_DECISION else "rejected"
+            _publish_event(
+                _sse_buffers["approval"],
+                _sse_subscribers["approval"],
+                "approval.decided",
+                {"approval_id": clean_id, "outcome": _outcome, "decided_by": identity.operator_id},
+            )
 
     return _sem_command_response(
         command_type=command_type,

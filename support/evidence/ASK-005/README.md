@@ -2,7 +2,7 @@
 
 **Task:** ASK-005  
 **Owner:** Claude  
-**Reviewer:** Codex2  
+**Reviewer:** Codex  
 **Phase:** Sprint 5 / EPIC-RESEARCH
 
 ## Scope
@@ -18,26 +18,40 @@ Implement SSE event publishing for the approval and ask channels when BFF mutati
    - Idempotency replay is blocked by the early-return guard (`_agora_core_idempotency_check`) before the publish call.
 
 2. `bff_approvals_decide` (`POST /bff/approvals/{id}/decide`):
+   - Added `_APPROVAL_STAGE_CHANGE_DECISIONS` frozenset (`request_revision`, `escalate`, `freeze`) to classify stage-change decisions.
+   - Added idempotency pre-check before SSE publish: resolves key, computes request hash matching `_sem_command_response`, checks `_FINAL_CONTRACT_IDEMPOTENCY`; skips SSE publish on confirmed replay.
    - Added `_publish_event` calls publishing to the `approval` channel.
    - `approve` / `reject` → `approval.decided` with outcome `approved` / `rejected`.
    - `request_revision` / `escalate` / `freeze` → `approval.stage.changed` with `current_stage=raw_decision`.
    - Event is not published on role-gate failures (403 is raised before the publish code).
+   - Event is not published on idempotency replay (pre-check skips publish; `_sem_command_response` returns cached response).
 
-### services/control-plane/bff/test_ask005_sse_event_publishing_contract.py (new)
+### services/control-plane/bff/test_ask005_sse_event_publishing_contract.py
 
-6 contract tests covering:
+9 contract tests covering:
 - `test_create_ask_session_publishes_ask_session_started`
 - `test_create_ask_session_idempotency_replay_does_not_double_publish`
 - `test_bff_approvals_decide_approve_publishes_approval_decided`
 - `test_bff_approvals_decide_reject_publishes_approval_decided_rejected`
 - `test_bff_approvals_decide_request_revision_publishes_stage_changed`
+- `test_bff_approvals_decide_escalate_publishes_stage_changed` *(new — Codex review fix)*
+- `test_bff_approvals_decide_freeze_publishes_stage_changed` *(new — Codex review fix)*
+- `test_bff_approvals_decide_replay_does_not_double_publish` *(new — Codex review fix)*
 - `test_bff_approvals_decide_role_gate_failure_does_not_publish`
+
+## Codex Review Fixes (commit after afaca235)
+
+Two blocking findings addressed:
+
+1. **escalate/freeze event semantics**: Both now correctly publish `approval.stage.changed` (not `approval.decided`). Fix: `_APPROVAL_STAGE_CHANGE_DECISIONS` frozenset; SSE branch now uses `raw_decision` membership test instead of `command_type` alone.
+
+2. **Approval idempotency replay de-duplication**: SSE publish is now guarded by an in-memory idempotency pre-check. The same hash computed by `_sem_command_response` is checked against `_FINAL_CONTRACT_IDEMPOTENCY` before any publish; replay calls are skipped.
 
 ## Verification
 
 ```
 pytest services/control-plane/bff/test_ask005_sse_event_publishing_contract.py -v
-# 6 passed
+# 9 passed in 28.24s
 
 pytest services/control-plane/bff/test_pkt005_sse_substrate_contract.py -q
 # 14 passed
@@ -49,4 +63,4 @@ pytest services/control-plane/bff/test_bff_approvals_decide_contract.py \
 # 113 passed
 ```
 
-Total: 133 tests passing, 0 failures.
+Total: 122 tests passing, 0 failures.
