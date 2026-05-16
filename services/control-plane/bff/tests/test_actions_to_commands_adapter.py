@@ -34,6 +34,17 @@ def _isolated_action_adapter() -> Iterator[TestClient]:
             bff_main.command_store = original_command_store
 
 
+def test_bff_actions_openapi_uses_canonical_type_id_action_template() -> None:
+    bff_main.app.openapi_schema = None
+    schema = bff_main.app.openapi()
+
+    assert "/bff/actions/{type}/{id}/{action}" in schema["paths"]
+    assert "/bff/actions/{entityType}/{entityId}/{actionId}" not in schema["paths"]
+    parameters = schema["paths"]["/bff/actions/{type}/{id}/{action}"]["post"]["parameters"]
+    path_params = [param["name"] for param in parameters if param.get("in") == "path"]
+    assert path_params == ["type", "id", "action"]
+
+
 def test_bff_actions_adapter_records_final_command_foundation_context() -> None:
     with _isolated_action_adapter() as client:
         response = client.post(
@@ -50,6 +61,7 @@ def test_bff_actions_adapter_records_final_command_foundation_context() -> None:
         assert body["status"] == "accepted"
         assert body["data"]["command"] == "StrategyAction"
         assert body["data"]["deprecated"] is True
+        assert body["data"]["deprecation"]["route"] == "/bff/actions/{type}/{id}/{action}"
         assert body["data"]["receipt"]["deprecated"] is True
         assert body["meta"]["deprecation"]["replacement"] == "/bff/v1/commands"
 
