@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "P0-ACT-001",
+  "archived_at": "2026-05-16T00:14:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-ACT-001",
+    "title": "canonical action endpoint /bff/actions/{type}/{id}/{action}",
+    "summary_zh": null,
+    "phase": "Sprint 1 / EPIC-BFF-P0",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Finalized: POST /bff/actions/{type}/{id}/{action} canonical route, schema-hidden legacy alias, shared admission helper, deprecation headers+markers all verified. 11 adapter tests + 3 live wiring tests pass. py_compile clean. Task-scoped commit 89d03439 covers BFF_COMMAND_API_CONTRACT.md, test_actions_to_commands_adapter.py, review and evidence files. main.py action hunk is durable in worktree (concurrent sibling hunks prevent non-interactive isolation; will be included in BFF batch commit per background-worker rule).",
+    "last_update": "2026-05-16T00:14:30Z",
+    "review_notes_zh": [
+      "審查通過：POST /bff/actions/{type}/{id}/{action} 正確以 type/id/action 路徑參數登錄 OpenAPI；舊版 entityType/entityId/actionId 別名以 include_in_schema=False 隱藏；兩條路由共用 _submit_canonical_action_command，admission_route=POST /bff/v1/commands，source_route 保持向後兼容；deprecation headers 及 response markers 完整；11 個 action adapter 測試全通；無需修改"
+    ],
+    "review_file": "support/reviews/P0-ACT-001-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T00:14:30Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "89d034395fa62f6a09446dfe4848e576005e9be0",
+      "commit_subject": "P0-ACT-001: canonical action endpoint /bff/actions/{type}/{id}/{action} closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "- BFF_COMMAND_API_CONTRACT.md": "§3 route table and §4 adapter mapping updated to",
+        "- tests/test_actions_to_commands_adapter.py": "new OpenAPI template assertion test",
+        "- support/reviews/P0-ACT-001-review-claude.md": "reviewer Claude approval record",
+        "- support/evidence/P0-ACT-001/acceptance.md": "finalization evidence with commands",
+        "Verification": "py_compile OK; 11 adapter tests passed; 3 live wiring tests passed.",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "P0-ACT-001",
+        "Reviewer": "Claude",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 59,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 6,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-ACT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T23:07:53Z",
+      "resolved_at": "2026-05-15T23:10:00Z"
+    },
+    {
+      "task_id": "P0-ACT-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: canonical action adapter now registers POST /bff/actions/{type}/{id}/{action} in OpenAPI with type/id/action path params, keeps POST /bff/actions/{entityType}/{entityId}/{actionId} as schema-hidden compatibility alias, and preserves final /bff/v1/commands admission plus backward-compatible source_route. Task-owned files: services/control-plane/bff/main.py action adapter hunk, BFF_COMMAND_API_CONTRACT.md, tests/test_actions_to_commands_adapter.py, test_execute_plans_final_live_wiring_contract.py route expectation. Verification: python3 -m py_compile services/control-plane/bff/main.py; python3 -m pytest services/control-plane/bff/tests/test_actions_to_commands_adapter.py services/control-plane/bff/tests/test_command_replay_conflict.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py -q => 19 passed, 2 pre-existing utcnow warnings. python3 scripts/bff_route_manifest_backend.py --check still fails on unrelated pre-existing snapshot drift for OODA/synthesis/dev-login/research routes, not /bff/actions.",
+      "status": "done",
+      "created_at": "2026-05-15T23:20:31Z",
+      "resolved_at": "2026-05-15T23:53:20Z"
+    },
+    {
+      "task_id": "P0-ACT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: canonical POST /bff/actions/{type}/{id}/{action} is correct. OpenAPI registers type/id/action params, legacy entityType alias is schema-hidden, both routes share the same admission helper with admission_route=POST /bff/v1/commands and backward-compatible source_route. Deprecation headers and response markers verified. 11 action adapter tests pass. No changes needed. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-15T23:53:20Z",
+      "resolved_at": "2026-05-15T23:58:58Z"
+    },
+    {
+      "task_id": "P0-ACT-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned ownership from Codex to Claude2 after repeated Codex terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-05-15T23:58:58Z",
+      "resolved_at": "2026-05-16T00:14:30Z"
+    }
+  ],
+  "blockers": []
+}
