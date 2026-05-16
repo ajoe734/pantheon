@@ -24449,7 +24449,7 @@ async def sem_agora_ask_session_detail(
     _require_read_role(identity)
     snapshot_at = utc_now()
     session = read_store.get_agora_session(sessionId)
-    if session is None:
+    if session is None or str(session.get("mode") or "").strip() != "quick_ask":
         raise _bff_error(
             404,
             ErrorCode.OBJECT_NOT_FOUND,
@@ -24489,6 +24489,15 @@ async def sem_agora_ask_close_session(
         return cached
     now = utc_now()
     outcome = str(payload.get("outcome") or "").strip() or None
+    existing = read_store.get_agora_session(sessionId)
+    if existing is None or str(existing.get("mode") or "").strip() != "quick_ask":
+        raise _bff_error(
+            404,
+            ErrorCode.OBJECT_NOT_FOUND,
+            "Ask session not found",
+            f"Ask session {sessionId} does not exist",
+            precondition_failed="session_id",
+        )
     session = read_store.close_agora_session(sessionId, closed_at=now, outcome=outcome)
     if session is None:
         raise _bff_error(
@@ -24583,7 +24592,7 @@ async def sem_agora_committee_session_detail(
     _require_read_role(identity)
     snapshot_at = utc_now()
     session = read_store.get_agora_session(sessionId)
-    if session is None:
+    if session is None or str(session.get("mode") or "").strip() != "committee":
         raise _bff_error(
             404,
             ErrorCode.OBJECT_NOT_FOUND,

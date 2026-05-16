@@ -260,6 +260,12 @@ def test_ask_001_detail_404_for_unknown() -> None:
         assert resp.status_code == 404, resp.text
 
 
+def test_ask_001_detail_404_for_committee_session() -> None:
+    with _client(seeded=True) as client:
+        resp = client.get("/bff/agora/ask/sessions/committee-seeded-001", headers=AUTH)
+        assert resp.status_code == 404, resp.text
+
+
 def test_ask_001_detail_serves_as_sse_resync_route() -> None:
     """SSE resync route must return the canonical session shape with data + meta."""
     with _client(seeded=True) as client:
@@ -310,6 +316,16 @@ def test_ask_001_close_404_for_unknown() -> None:
     with _client() as client:
         resp = client.post(
             "/bff/agora/ask/sessions/nonexistent-999/close",
+            json={},
+            headers={**AUTH, "Idempotency-Key": _idem()},
+        )
+        assert resp.status_code == 404, resp.text
+
+
+def test_ask_001_close_404_for_committee_session() -> None:
+    with _client(seeded=True) as client:
+        resp = client.post(
+            "/bff/agora/ask/sessions/committee-seeded-001/close",
             json={},
             headers={**AUTH, "Idempotency-Key": _idem()},
         )
