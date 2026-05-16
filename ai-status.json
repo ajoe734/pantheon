@@ -3,7 +3,7 @@
   "sprint": "2026-05-16-pantheon-bff-p0-foundation",
   "sprint_started_at": "2026-05-16T00:00:00Z",
   "objective": "跨進開發團隊 GAP master rebaseline (docs/04/pantheon_sa_supplemental_2026-05-15/GAP_dev_team_master_rebaseline_2026-05-15.md)，以 pantheon@master + execute-plans@main 為基準。並行 6 條 EPIC，按 P0→P3 階梯推進：(I) EPIC-BFF-P0 (P0 10 task / Sprint 1) — session trio (/bff/me, auth/refresh, logout) + /openapi.json + canonical action endpoint + approval decide + registry reads (strategies/personas/capital-pools/audit)，讓 execute-plans@main 在 VITE_BFF_FALLBACK=strict 下可 bootstrap 核心 Management flow 不再 fallback mock；(II) EPIC-GOV-DEPLOY (P1 5 task / Sprint 2) — ApprovalDecision first-class + DeploymentPlan contract/service + stage planner + deployment projection + pool/runtime compatibility 檢查；(III) EPIC-RUNTIME (P1 6 task / Sprint 3) — RuntimeBinding schema + Runtime Manager skeleton + /bff/runtimes + deploy/pause/replace/rollback actions + loader metadata migration (promotion_state → artifact_state + deployment_stage) + LEAN algorithm-level smoke；(IV) EPIC-TELEMETRY (P2 7 task / Sprint 4) — TelemetryEvent canonical schema + RuntimeHeartbeat ingest + AuditAction backend + /bff/alerts + /bff/incidents + reconciliation record + Postmortem schema/endpoint；(V) EPIC-RESEARCH (P3 28 task / Sprint 5) — Source Ingest (SRC) + StrategySpec (STRAT) + Experiment orchestrator (EXP) + Qlib/vectorbt adapters + Persona/Trainer (PER/TRN) + Imitation dataset (IMT) + Consult/Committee (ASK)；(VI) EPIC-EVOLUTION (P3 3 task / Sprint 6) — EvolutionDecision service + /bff/v5/loop-runs + /bff/v5/sentinel/findings。GAP § 10 最大阻塞：BFF live endpoints 不足 → EPIC-BFF-P0 必須最先收斂；Registry/Promotion canonical 已 implemented，DeploymentPlan/RuntimeBinding 是 governance→execution 缺口；Artifact Loader 仍寫 legacy promotion_state，EX-002 metadata migration 是 execution-side 技術債。fail-closed 鐵律延續：broker production live、capital binding live 仍禁止；canary 需 risk-owner + operator 雙閘；evidence 走 support/evidence/<epic>-<task>/。Track E 收尾備註：46 個 MGMT-* task 中 45 個 done+archive，僅 MGMT-BROKER-002 仍 blocked 等 Shioaji credentials (commit 22e5ca3b 已備 sidecar acceptance packet)；M7 canary readiness 因此未閉合；Track E objective 不在本 sprint 推進範圍，僅 carry-over 記錄。",
-  "updated_at": "2026-05-16T07:46:41Z",
+  "updated_at": "2026-05-16T08:57:42Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -96,7 +96,8 @@
       ],
       "status": "ready",
       "current_task_ids": [
-        "STRAT-004",
+        "EXP-001",
+        "TRN-001",
         "TRN-002",
         "TRN-004",
         "IMT-001",
@@ -109,7 +110,7 @@
       ],
       "branch": "feat/claude-execution-control",
       "next": "Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.",
-      "last_update": "2026-05-16T07:44:52Z"
+      "last_update": "2026-05-16T08:53:29Z"
     },
     {
       "name": "Gemini",
@@ -135,13 +136,11 @@
       ],
       "status": "reviewing",
       "current_task_ids": [
-        "EX-002-RB",
-        "STRAT-002",
-        "STRAT-003"
+        "EXP-005"
       ],
       "branch": "feat/codex-collab-system",
-      "next": "STRAT-003 ready for review. Added side-effect-free Source/Evidence -> StrategySpec conversion service that builds StrategySpecSeed, converts it into schema-backed draft StrategySpec, emits registry facade payload with source_seed_id lineage, inline storage_ref, checksum, and candidate advance request, and preserves evidence/code lineage without registry writes or execution routes. Evidence: support/evidence/STRAT-003/README.md. Verification: py_compile conversion/test; pytest services/research/strategy_spec/test_conversion.py -q (4 passed); pytest services/research/strategy_spec -q (19 passed); pytest services/source_ingestion/tests/test_strategy_seed_builder.py -q (5 passed); pytest services/registry/test_service.py -q (44 passed); git diff --check targeted STRAT-003 files.",
-      "last_update": "2026-05-16T07:46:19Z"
+      "next": "Ready for review: implemented controlled ExperimentRun artifact registry writeback for completed runs only. Writeback creates draft/candidate registry entries with deployment_stage=none, producer_run_id, run/StrategySpec/dataset lineage, idempotent HTTP path, and rejection coverage. Verification: py_compile registry_writeback/main; pytest services/research/experiments/test_models.py services/research/experiments/test_registry_writeback.py services/research/tests -q (27 passed); pytest services/registry/test_service.py -q (44 passed).",
+      "last_update": "2026-05-16T08:57:02Z"
     },
     {
       "name": "Codex2",
@@ -155,7 +154,7 @@
       "current_task_ids": [],
       "branch": "bff-luv-fe-006-dev-deploy",
       "next": "",
-      "last_update": "2026-05-16T07:44:16Z"
+      "last_update": "2026-05-16T08:51:09Z"
     },
     {
       "name": "Copilot",
@@ -178,18 +177,14 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "ready",
+      "status": "working",
       "current_task_ids": [
         "TRN-003",
-        "IMT-003",
-        "ASK-001",
-        "ASK-003",
-        "LOOP-001-RB",
-        "SENT-001"
+        "ASK-001"
       ],
       "branch": "feat/claude2-execution-control",
-      "next": "Supervisor preempted TRN-003 to free Claude2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
-      "last_update": "2026-05-16T07:29:53Z"
+      "next": "Auto-reassigned review from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached",
+      "last_update": "2026-05-16T08:52:09Z"
     },
     {
       "name": "Gemini2",
@@ -225,82 +220,22 @@
       "waiting_for": "Gemini"
     },
     {
-      "id": "EX-002-RB",
-      "title": "Loader metadata migration promotion_state -> artifact_state + deployment_stage (rebaseline)",
-      "summary_zh": null,
-      "phase": "Sprint 3 / EPIC-RUNTIME",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "review",
-      "depends_on": [],
-      "artifacts": [
-        "services/registry/promotion/gate.py",
-        "services/registry/lineage/promoted_artifact_metadata.schema.json",
-        "services/execution/artifact_loader.py",
-        "services/execution/test_artifact_loader.py",
-        "services/execution/smoke_test_artifact_loader.py",
-        "services/execution/artifact-loader/contract.md",
-        "support/evidence/EX-002-RB/README.md",
-        "support/evidence/EX-002-RB/review-response.md"
-      ],
-      "acceptance": [
-        "PromotionGate execution projection emits artifact_state and deployment_stage while preserving promotion_state compatibility",
-        "ArtifactLoader validates deployment_stage as canonical execution stage and requires artifact_state=approved for split metadata",
-        "Promotion_state-only legacy Object Store metadata remains loadable during compatibility window",
-        "Focused loader, smoke, promotion gate, and registry tests pass"
-      ],
-      "next": "Ready for review: canonical execution metadata now requires artifact_state=approved plus matching deployment_stage, promotion_state-only legacy fallback remains intact, and evidence is updated under support/evidence/EX-002-RB. Verification: loader tests 18 passed; artifact loader smoke passed; promotion gate tests 4 passed; registry suite 69 passed.",
-      "last_update": "2026-05-16T07:42:10Z"
-    },
-    {
-      "id": "SRC-004",
-      "title": "StrategySpecSeed builder",
-      "summary_zh": null,
-      "phase": "Sprint 5 / EPIC-RESEARCH",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "review_approved",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Review approved: research-only StrategySpecSeed builder is correctly bounded. lineage/citation preservation complete, rejected-source guard operational, promotion lineage edge carries no registry write authority. 73 source_ingestion + 5 seed-specific tests all pass. Returning to Codex for finalization.",
-      "last_update": "2026-05-16T07:36:37Z",
-      "review_notes_zh": [
-        "審查通過。StrategySpecSeed builder 研究邊界正確閉合：lineage.registry_write_performed=false 及 execution_route=none 均由 schema 強制；rejection guard 在 REJECTED source record 時立即拋出錯誤；lineage 保存 evidence_bundle_id/source_ids/citation_refs/trace_refs/promotion_requires 完整；seed_id 由 SHA-256 deterministic hash 生成；schema Draft-7 additionalProperties:false 正確。73 個 source_ingestion tests 全通過；5 個 SRC-004 專屬 tests 全通過。無 registry write、無 execution route。"
-      ],
-      "review_file": "support/evidence/SRC-004/review-claude.md"
-    },
-    {
-      "id": "STRAT-001",
-      "title": "StrategySpec schema / model",
-      "summary_zh": null,
-      "phase": "Sprint 5 / EPIC-RESEARCH",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "review_approved",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Review approved: StrategySpec schema/model is correctly bounded. Schema additionalProperties:false, minLength constraints, lifecycle/canary/source_record additions all correct. Governance gate (paper/canary/live requires approval_required=true) enforced at model layer and confirmed by live test. Normalizer compatibility intact. Returning to Codex for finalization.",
-      "last_update": "2026-05-16T07:46:41Z",
-      "review_notes_zh": [
-        "審查通過。schema 強化正確：minLength/additionalProperties/lifecycle_state enum/source_record/execution_mode_hint 全部到位。domain model frozen dataclass 完整 round-trip；governance gate（paper/canary/live 要求 approval_required=true）由 validate_strategy_spec() 在 model 層強制執行，live 測試確認有效。normalizer 相容性透過共享 validate_strategy_spec_payload 保持。10 個 tests（含 7 個 test_models.py）全通過；後續 STRAT-003/004 增加 8 個 tests 仍全數通過。無 blocking findings。"
-      ],
-      "review_file": "support/evidence/STRAT-001/review-claude.md"
-    },
-    {
       "id": "STRAT-002",
       "title": "StrategySpec registry endpoints",
       "summary_zh": null,
       "phase": "Sprint 5 / EPIC-RESEARCH",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "review",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "STRAT-002 ready for review. Added StrategySpec-specific registry facade: POST/GET /api/registry/strategy-specs, GET /api/registry/strategies/{strategy_id}/strategy-specs, and POST /api/registry/strategy-specs/{registry_id}/advance. The facade forces artifact_type=strategy_spec, requires lineage, preserves storage_ref/checksum, derives inline checksum/storage when strategy_spec payload is provided, and delegates draft->candidate to the existing artifact-state machine. Commit: 6a1ee000. Evidence: support/evidence/STRAT-002/README.md. Verification: py_compile registry service/main/test; pytest services/registry/test_service.py -q (44 passed); pytest services/registry -q (69 passed); git diff --check targeted files.",
-      "last_update": "2026-05-16T07:09:00Z"
+      "next": "STRAT-002 StrategySpec registry facade review passed. artifact_type forced, lineage required, inline checksum deterministic, type-guards correct, no regression. Returned to Codex for finalization.",
+      "last_update": "2026-05-16T08:54:20Z",
+      "review_notes_zh": [
+        "審查通過。artifact_type=strategy_spec 強制設定正確，不可繞過；lineage gate 在 _strategy_spec_register_payload() 中正確攔截；inline strategy_spec 路徑使用 sort_keys SHA-256 產生確定性 checksum；StorageRef(INLINE) 指向正確路徑。source_seed_id 注入 lineage.source_run_ids（去重安全）。_ensure_strategy_spec_view() 對 GET 和 advance 端點均做類型保護，錯誤類型回傳 404。advance 委派現有 advance_artifact_state()，無自訂狀態機分歧。deployment_stage 全程未被觸動，split semantics 保持完整。44 test_service.py 測試通過；69 完整 registry 套件通過，無迴歸。兩個非阻塞性觀察：缺少對非 strategy_spec 類型 ID 的 GET/advance 404 測試，以及缺少顯式 storage_ref+checksum 路徑的測試——主要 acceptance 路徑覆蓋率充足，不影響通過。"
+      ],
+      "review_file": "support/evidence/STRAT-002/review-claude.md"
     },
     {
       "id": "STRAT-003",
@@ -309,16 +244,34 @@
       "phase": "Sprint 5 / EPIC-RESEARCH",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "review",
+      "status": "review_approved",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "STRAT-003 ready for review. Added side-effect-free Source/Evidence -> StrategySpec conversion service that builds StrategySpecSeed, converts it into schema-backed draft StrategySpec, emits registry facade payload with source_seed_id lineage, inline storage_ref, checksum, and candidate advance request, and preserves evidence/code lineage without registry writes or execution routes. Evidence: support/evidence/STRAT-003/README.md. Verification: py_compile conversion/test; pytest services/research/strategy_spec/test_conversion.py -q (4 passed); pytest services/research/strategy_spec -q (19 passed); pytest services/source_ingestion/tests/test_strategy_seed_builder.py -q (5 passed); pytest services/registry/test_service.py -q (44 passed); git diff --check targeted STRAT-003 files.",
-      "last_update": "2026-05-16T07:46:19Z"
+      "next": "STRAT-003 Source->StrategySpec conversion service review passed. Side-effect-free, safety invariants enforced, STRAT-002 integration verified end-to-end. Returned to Codex for finalization.",
+      "last_update": "2026-05-16T08:57:42Z",
+      "review_notes_zh": [
+        "審查通過。convert_source_material 正確委派至 seed builder（拒絕 rejected sources）；_build_registry_payload 硬編碼 artifact_state=draft，不可繞過；lineage 完整可追溯（source_run_ids=[seed_id], source_dataset_refs=source_ids）；storage_ref/checksum 與 STRAT-002 facade 規範一致。安全不變量：research_only=True / registry_write_performed=False / execution_route=none 在 _conversion_metadata 末尾強制覆寫，測試明確驗證無法由呼叫者覆蓋。_validate_seed_inputs 拒絕範圍外 source_records 或 evidence_items。STRAT-002/STRAT-003 端對端整合：test_converted_registry_payload_registers_and_advances_to_candidate 驗證 conversion 產出直接可提交並推進至 candidate，deployment_stage 維持 none。21 tests pass，5 seed builder tests pass，44 registry tests pass，無迴歸。三項非阻塞觀察：task_id STRAT-003 硬編碼在 metadata、SHA-1 用於 stable_strategy_id、_frequency 在無頻率訊號時回退 research，均可接受。"
+      ],
+      "review_file": "support/evidence/STRAT-003/review-claude.md"
     },
     {
       "id": "STRAT-004",
       "title": "evidence / code refs lineage",
+      "summary_zh": null,
+      "phase": "Sprint 5 / EPIC-RESEARCH",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [],
+      "acceptance": [],
+      "next": "Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run.",
+      "last_update": "2026-05-16T08:52:43Z"
+    },
+    {
+      "id": "EXP-001",
+      "title": "ExperimentTask / ExperimentRun schema",
       "summary_zh": null,
       "phase": "Sprint 5 / EPIC-RESEARCH",
       "owner": "Claude",
@@ -328,21 +281,7 @@
       "artifacts": [],
       "acceptance": [],
       "next": "Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.",
-      "last_update": "2026-05-16T07:44:52Z"
-    },
-    {
-      "id": "EXP-001",
-      "title": "ExperimentTask / ExperimentRun schema",
-      "summary_zh": null,
-      "phase": "Sprint 5 / EPIC-RESEARCH",
-      "owner": "Codex",
-      "reviewer": "Claude",
-      "status": "todo",
-      "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-05-16T07:45:24Z"
+      "last_update": "2026-05-16T08:53:29Z"
     },
     {
       "id": "EXP-005",
@@ -351,26 +290,39 @@
       "phase": "Sprint 5 / EPIC-RESEARCH",
       "owner": "Codex",
       "reviewer": "Claude",
-      "status": "todo",
+      "status": "review",
       "depends_on": [],
-      "artifacts": [],
-      "acceptance": [],
-      "next": "Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-05-16T07:45:56Z"
+      "artifacts": [
+        "services/research/experiments/registry_writeback.py",
+        "services/research/experiments/test_registry_writeback.py",
+        "services/research/experiments/__init__.py",
+        "services/research/experiments/README.md",
+        "services/research/main.py",
+        "services/research/tests/test_research_orchestrator_http_service.py",
+        "support/evidence/EXP-005/README.md"
+      ],
+      "acceptance": [
+        "Completed ExperimentRun artifacts can be written to the artifact registry only as draft or candidate entries with deployment_stage=none",
+        "Registry entries record producer_run_id plus lineage to ExperimentRun StrategySpec and dataset refs",
+        "Non-completed runs approved-state writes and non-none deployment-stage requests are rejected",
+        "Focused ExperimentRun research orchestrator and registry tests pass"
+      ],
+      "next": "Ready for review: implemented controlled ExperimentRun artifact registry writeback for completed runs only. Writeback creates draft/candidate registry entries with deployment_stage=none, producer_run_id, run/StrategySpec/dataset lineage, idempotent HTTP path, and rejection coverage. Verification: py_compile registry_writeback/main; pytest services/research/experiments/test_models.py services/research/experiments/test_registry_writeback.py services/research/tests -q (27 passed); pytest services/registry/test_service.py -q (44 passed).",
+      "last_update": "2026-05-16T08:57:02Z"
     },
     {
       "id": "TRN-001",
       "title": "TeachingSession / TeachingEvent schema",
       "summary_zh": null,
       "phase": "Sprint 5 / EPIC-RESEARCH",
-      "owner": "Codex",
-      "reviewer": "Claude",
+      "owner": "Claude",
+      "reviewer": "Codex",
       "status": "todo",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Codex starts a fresh run.",
-      "last_update": "2026-05-16T07:46:29Z"
+      "next": "Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.",
+      "last_update": "2026-05-16T08:54:07Z"
     },
     {
       "id": "TRN-002",
@@ -393,12 +345,12 @@
       "phase": "Sprint 5 / EPIC-RESEARCH",
       "owner": "Claude2",
       "reviewer": "Copilot",
-      "status": "todo",
+      "status": "in_progress",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Supervisor preempted TRN-003 to free Claude2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.",
-      "last_update": "2026-05-16T07:29:53Z"
+      "next": "Supervisor auto-started TRN-003 after successful dispatch.",
+      "last_update": "2026-05-16T08:49:12Z"
     },
     {
       "id": "TRN-004",
@@ -476,13 +428,13 @@
       "summary_zh": null,
       "phase": "Sprint 5 / EPIC-RESEARCH",
       "owner": "Claude2",
-      "reviewer": "Codex2",
-      "status": "todo",
+      "reviewer": "Codex",
+      "status": "review",
       "depends_on": [],
       "artifacts": [],
       "acceptance": [],
-      "next": "Assignment created",
-      "last_update": "2026-05-15T23:35:24Z"
+      "next": "Auto-reassigned review from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached",
+      "last_update": "2026-05-16T08:52:09Z"
     },
     {
       "id": "ASK-002",
@@ -602,15 +554,6 @@
       "resolved_at": "2026-04-17T12:39:53Z"
     },
     {
-      "task_id": "SRC-004",
-      "from": "Copilot",
-      "to": "Codex2",
-      "message": "Helper-claimed by Codex2 while Copilot is dispatch-paused.",
-      "status": "done",
-      "created_at": "2026-05-16T01:09:51Z",
-      "resolved_at": "2026-05-16T01:10:30Z"
-    },
-    {
       "task_id": "IMT-003",
       "from": "Copilot",
       "to": "Codex",
@@ -618,51 +561,6 @@
       "status": "done",
       "created_at": "2026-05-16T01:27:42Z",
       "resolved_at": "2026-05-16T01:28:00Z"
-    },
-    {
-      "task_id": "EX-002-RB",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T05:59:46Z",
-      "resolved_at": "2026-05-16T06:01:46Z"
-    },
-    {
-      "task_id": "EX-002-RB",
-      "from": "Codex",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T06:23:01Z",
-      "resolved_at": "2026-05-16T06:24:10Z"
-    },
-    {
-      "task_id": "EX-002-RB",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "EX-002-RB ready for review. Migration: PromotionGate.build_execution_projection() now emits artifact_state+deployment_stage (with promotion_state retained during transition). ArtifactLoader._validate_metadata() reads deployment_stage first (fallback promotion_state). Schema: artifact_state+deployment_stage added as optional properties; allOf condition migrated to deployment_stage==live. 6 new migration tests + original 9 pass (15 total). 65 registry tests pass. Evidence: support/evidence/EX-002-RB/README.md. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/execution/test_artifact_loader.py -v; PYTHONDONTWRITEBYTECODE=1 python3 services/execution/smoke_test_artifact_loader.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/registry/ -v",
-      "status": "done",
-      "created_at": "2026-05-16T06:46:03Z",
-      "resolved_at": "2026-05-16T07:03:49Z"
-    },
-    {
-      "task_id": "SRC-004",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T06:48:38Z",
-      "resolved_at": "2026-05-16T06:50:10Z"
-    },
-    {
-      "task_id": "STRAT-001",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T06:48:59Z",
-      "resolved_at": "2026-05-16T06:50:37Z"
     },
     {
       "task_id": "STRAT-002",
@@ -674,48 +572,13 @@
       "resolved_at": "2026-05-16T06:51:07Z"
     },
     {
-      "task_id": "EX-002-RB",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Review reopened: loader now reads deployment_stage but still accepts new split-envelope metadata unless artifact_state=approved; see support/reviews/EX-002-RB-review-codex.md.",
-      "status": "done",
-      "created_at": "2026-05-16T07:03:49Z",
-      "resolved_at": "2026-05-16T07:03:49Z"
-    },
-    {
-      "task_id": "STRAT-001",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "STRAT-001 ready for review. Added schema-backed StrategySpec domain model, strengthened canonical strategy_spec.schema.json with lifecycle/source_record/canary/non-empty constraints, exported model helpers, and kept RS-002 normalizer output compatible via shared schema validation helper. Evidence: support/evidence/STRAT-001/README.md. Verification: py_compile strategy_spec model/normalizer/__init__; pytest services/research/strategy_spec -q (10 passed); git diff --check targeted STRAT-001 files.",
-      "status": "done",
-      "created_at": "2026-05-16T07:07:20Z",
-      "resolved_at": "2026-05-16T07:46:41Z"
-    },
-    {
       "task_id": "STRAT-002",
       "from": "Codex",
       "to": "Claude",
       "message": "STRAT-002 ready for review. Added StrategySpec-specific registry facade: POST/GET /api/registry/strategy-specs, GET /api/registry/strategies/{strategy_id}/strategy-specs, and POST /api/registry/strategy-specs/{registry_id}/advance. The facade forces artifact_type=strategy_spec, requires lineage, preserves storage_ref/checksum, derives inline checksum/storage when strategy_spec payload is provided, and delegates draft->candidate to the existing artifact-state machine. Commit: 6a1ee000. Evidence: support/evidence/STRAT-002/README.md. Verification: py_compile registry service/main/test; pytest services/registry/test_service.py -q (44 passed); pytest services/registry -q (69 passed); git diff --check targeted files.",
-      "status": "pending",
-      "created_at": "2026-05-16T07:09:00Z"
-    },
-    {
-      "task_id": "SRC-004",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "SRC-004 ready for review. Implemented research-only StrategySpecSeed builder from EvidenceBundle with lineage/citation preservation, explicit schema, deterministic hint extraction, rejected-source guard, and promotion lineage edge without registry writes or execution routes. Commit: 5a872693. Evidence: support/evidence/SRC-004/README.md. Verification: py_compile builder/test; pytest test_strategy_seed_builder.py 5 passed; pytest services/source_ingestion/tests 46 passed; pytest services/knowledge/evidence/tests/test_bundle.py 4 passed; pytest services/source_ingestion 73 passed; git diff --check targeted files passed.",
       "status": "done",
-      "created_at": "2026-05-16T07:11:54Z",
-      "resolved_at": "2026-05-16T07:36:37Z"
-    },
-    {
-      "task_id": "EX-002-RB",
-      "from": "Claude",
-      "to": "Codex2",
-      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
-      "status": "done",
-      "created_at": "2026-05-16T07:12:02Z",
-      "resolved_at": "2026-05-16T07:12:02Z"
+      "created_at": "2026-05-16T07:09:00Z",
+      "resolved_at": "2026-05-16T08:54:20Z"
     },
     {
       "task_id": "STRAT-003",
@@ -736,14 +599,6 @@
       "resolved_at": "2026-05-16T07:16:08Z"
     },
     {
-      "task_id": "SRC-004",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Review approved: research-only StrategySpecSeed builder is correctly bounded. lineage/citation preservation complete, rejected-source guard operational, promotion lineage edge carries no registry write authority. 73 source_ingestion + 5 seed-specific tests all pass. Returning to Codex for finalization.",
-      "status": "pending",
-      "created_at": "2026-05-16T07:36:37Z"
-    },
-    {
       "task_id": "STRAT-004",
       "from": "Codex",
       "to": "Codex2",
@@ -760,15 +615,6 @@
       "status": "done",
       "created_at": "2026-05-16T07:39:56Z",
       "resolved_at": "2026-05-16T07:42:58Z"
-    },
-    {
-      "task_id": "EX-002-RB",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Ready for review: loader now requires artifact_state=approved for canonical split metadata, keeps promotion_state-only legacy fallback, and evidence is updated under support/evidence/EX-002-RB. Verification: execution loader tests 18 passed; artifact loader smoke passed; registry promotion tests 4 passed; registry suite 69 passed.",
-      "status": "done",
-      "created_at": "2026-05-16T07:39:58Z",
-      "resolved_at": "2026-05-16T07:42:10Z"
     },
     {
       "task_id": "EXP-005",
@@ -789,28 +635,90 @@
       "resolved_at": "2026-05-16T07:44:16Z"
     },
     {
-      "task_id": "EX-002-RB",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Ready for review: canonical execution metadata now requires artifact_state=approved plus matching deployment_stage, promotion_state-only legacy fallback remains intact, and evidence is updated under support/evidence/EX-002-RB. Verification: loader tests 18 passed; artifact loader smoke passed; promotion gate tests 4 passed; registry suite 69 passed.",
-      "status": "pending",
-      "created_at": "2026-05-16T07:42:10Z"
-    },
-    {
       "task_id": "STRAT-003",
       "from": "Codex",
       "to": "Claude",
       "message": "STRAT-003 ready for review. Added side-effect-free Source/Evidence -> StrategySpec conversion service that builds StrategySpecSeed, converts it into schema-backed draft StrategySpec, emits registry facade payload with source_seed_id lineage, inline storage_ref, checksum, and candidate advance request, and preserves evidence/code lineage without registry writes or execution routes. Evidence: support/evidence/STRAT-003/README.md. Verification: py_compile conversion/test; pytest services/research/strategy_spec/test_conversion.py -q (4 passed); pytest services/research/strategy_spec -q (19 passed); pytest services/source_ingestion/tests/test_strategy_seed_builder.py -q (5 passed); pytest services/registry/test_service.py -q (44 passed); git diff --check targeted STRAT-003 files.",
-      "status": "pending",
-      "created_at": "2026-05-16T07:46:19Z"
+      "status": "done",
+      "created_at": "2026-05-16T07:46:19Z",
+      "resolved_at": "2026-05-16T08:57:42Z"
     },
     {
-      "task_id": "STRAT-001",
+      "task_id": "ASK-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "ASK-001 implementation complete. Added POST /bff/agora/ask/sessions (create), GET /bff/agora/ask/sessions/{sessionId} (detail/SSE resync), POST /bff/agora/ask/sessions/{sessionId}/close (close with outcome). close_agora_session() added to ReadSurfaceStore. All routes enforce Idempotency-Key; close publishes ask.session.completed SSE event. 19 contract tests pass; agora extended + SSE substrate regression clean. Commit: 4f3bc011. Evidence: support/evidence/ASK-001/README.md.",
+      "status": "done",
+      "created_at": "2026-05-16T08:42:24Z",
+      "resolved_at": "2026-05-16T08:52:09Z"
+    },
+    {
+      "task_id": "STRAT-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T08:47:43Z",
+      "resolved_at": "2026-05-16T08:49:51Z"
+    },
+    {
+      "task_id": "EXP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T08:48:05Z",
+      "resolved_at": "2026-05-16T08:50:31Z"
+    },
+    {
+      "task_id": "TRN-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T08:48:27Z",
+      "resolved_at": "2026-05-16T08:51:09Z"
+    },
+    {
+      "task_id": "ASK-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Codex2 to Codex after repeated Codex2 terminal: Codex usage limit reached",
+      "status": "pending",
+      "created_at": "2026-05-16T08:52:09Z"
+    },
+    {
+      "task_id": "STRAT-002",
       "from": "Claude",
       "to": "Codex",
-      "message": "Review approved: StrategySpec schema/model is correctly bounded. Schema additionalProperties:false, minLength constraints, lifecycle/canary/source_record additions all correct. Governance gate (paper/canary/live requires approval_required=true) enforced at model layer and confirmed by live test. Normalizer compatibility intact. Returning to Codex for finalization.",
+      "message": "STRAT-002 StrategySpec registry facade review passed. artifact_type forced, lineage required, inline checksum deterministic, type-guards correct, no regression. Returned to Codex for finalization.",
       "status": "pending",
-      "created_at": "2026-05-16T07:46:41Z"
+      "created_at": "2026-05-16T08:54:20Z"
+    },
+    {
+      "task_id": "EXP-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: implemented controlled ExperimentRun artifact registry writeback for completed runs only. Writeback creates draft/candidate registry entries with deployment_stage=none, producer_run_id, run/StrategySpec/dataset lineage, idempotent HTTP path, and rejection coverage. Verification: py_compile registry_writeback/main; pytest services/research/experiments/test_models.py services/research/experiments/test_registry_writeback.py services/research/tests -q (27 passed); pytest services/registry/test_service.py -q (44 passed).",
+      "status": "done",
+      "created_at": "2026-05-16T08:55:15Z",
+      "resolved_at": "2026-05-16T08:57:02Z"
+    },
+    {
+      "task_id": "EXP-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: implemented controlled ExperimentRun artifact registry writeback for completed runs only. Writeback creates draft/candidate registry entries with deployment_stage=none, producer_run_id, run/StrategySpec/dataset lineage, idempotent HTTP path, and rejection coverage. Verification: py_compile registry_writeback/main; pytest services/research/experiments/test_models.py services/research/experiments/test_registry_writeback.py services/research/tests -q (27 passed); pytest services/registry/test_service.py -q (44 passed).",
+      "status": "pending",
+      "created_at": "2026-05-16T08:57:02Z"
+    },
+    {
+      "task_id": "STRAT-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "STRAT-003 Source->StrategySpec conversion service review passed. Side-effect-free, safety invariants enforced, STRAT-002 integration verified end-to-end. Returned to Codex for finalization.",
+      "status": "pending",
+      "created_at": "2026-05-16T08:57:42Z"
     }
   ],
   "blockers": [
@@ -834,22 +742,22 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 10,
+      "total": 11,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 10
+      "todo": 11
     },
     "Claude2": {
       "total": 6,
-      "active": 0,
+      "active": 2,
       "blocked": 0,
       "done": 0,
-      "review": 0,
+      "review": 1,
       "review_approved": 0,
-      "todo": 6
+      "todo": 5
     },
     "Gemini": {
       "total": 0,
@@ -870,13 +778,13 @@
       "todo": 0
     },
     "Codex": {
-      "total": 8,
-      "active": 3,
+      "total": 4,
+      "active": 1,
       "blocked": 0,
       "done": 0,
-      "review": 3,
+      "review": 1,
       "review_approved": 2,
-      "todo": 3
+      "todo": 1
     },
     "Codex2": {
       "total": 0,
