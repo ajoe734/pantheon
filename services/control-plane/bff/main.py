@@ -25907,6 +25907,15 @@ async def bff_approvals_decide(
     })
     _existing_idem = _FINAL_CONTRACT_IDEMPOTENCY.get(_idem_key)
     _is_approval_replay = _existing_idem is not None and _existing_idem.get("request_hash") == _idem_hash
+    if not _is_approval_replay:
+        # Extend pre-check to durable command_store to match _sem_command_response replay semantics:
+        # if _FINAL_CONTRACT_IDEMPOTENCY was evicted but command_store still holds the record,
+        # _sem_command_response will replay — skip SSE publish here too to prevent double-publish.
+        _durable_record = command_store.get_command_by_idempotency_key(_idem_key)
+        if _durable_record:
+            _stored_hash = (_durable_record.get("foundation") or {}).get("idempotency_record", {}).get("request_hash")
+            if _stored_hash == _idem_hash:
+                _is_approval_replay = True
 
     if not _is_approval_replay:
         # escalate/freeze are stage transitions; use raw_decision to determine event type

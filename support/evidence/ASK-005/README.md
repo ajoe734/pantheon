@@ -24,7 +24,8 @@ Implement SSE event publishing for the approval and ask channels when BFF mutati
    - `approve` / `reject` → `approval.decided` with outcome `approved` / `rejected`.
    - `request_revision` / `escalate` / `freeze` → `approval.stage.changed` with `current_stage=raw_decision`.
    - Event is not published on role-gate failures (403 is raised before the publish code).
-   - Event is not published on idempotency replay (pre-check skips publish; `_sem_command_response` returns cached response).
+   - Event is not published on in-memory idempotency replay (`_FINAL_CONTRACT_IDEMPOTENCY` pre-check skips publish).
+   - Event is not published on durable `command_store` replay either: extended pre-check now also queries `command_store.get_command_by_idempotency_key` so that `_FINAL_CONTRACT_IDEMPOTENCY` eviction cannot cause a second SSE publish. *(Codex R3 fix)*
 
 ### services/control-plane/bff/test_ask005_sse_event_publishing_contract.py
 
@@ -38,6 +39,7 @@ Implement SSE event publishing for the approval and ask channels when BFF mutati
 - `test_bff_approvals_decide_freeze_publishes_stage_changed` *(new — Codex R1 fix)*
 - `test_bff_approvals_decide_replay_does_not_double_publish` *(new — Codex R1 fix)*
 - `test_bff_approvals_decide_body_idempotency_key_rejected_does_not_publish` *(new — Codex R2 fix)*
+- `test_bff_approvals_decide_durable_replay_does_not_double_publish` *(new — Codex R3 fix)*
 - `test_bff_approvals_decide_role_gate_failure_does_not_publish`
 
 ## Codex Review Fixes (commit after afaca235)
@@ -52,20 +54,22 @@ Two blocking findings addressed:
 
 1. **Body idempotency key rejected before SSE publish**: `_reject_body_idempotency_key(payload)` is now called in `bff_approvals_decide` before the idempotency pre-check and SSE publish block. A request with a valid `Idempotency-Key` header but a forbidden body `idempotencyKey` now returns 400 without ever writing to the approval SSE buffer.
 
+## Codex R3 Fix
+
+1. **Durable command_store replay de-duplication**: After the `_FINAL_CONTRACT_IDEMPOTENCY` in-memory check, the pre-check now also calls `command_store.get_command_by_idempotency_key(_idem_key)` to detect durable replay records. If the stored `request_hash` matches the computed hash, `_is_approval_replay` is set to `True` and the SSE publish is skipped — preventing double-publish when in-memory state is evicted but the durable store still holds the command record. This matches the exact replay semantics of `_sem_command_response`.
+
 ## Verification
 
 ```
 pytest services/control-plane/bff/test_ask005_sse_event_publishing_contract.py -v
-# 10 passed in 12.44s
+# 11 passed in 24.91s
 
-pytest services/control-plane/bff/test_pkt005_sse_substrate_contract.py -q
-# 14 passed
-
-pytest services/control-plane/bff/test_bff_approvals_decide_contract.py \
+pytest services/control-plane/bff/test_pkt005_sse_substrate_contract.py \
+       services/control-plane/bff/test_bff_approvals_decide_contract.py \
        services/control-plane/bff/test_ask_001_sessions_contract.py \
        services/control-plane/bff/test_ask_003_committee_lifecycle.py \
        services/control-plane/bff/test_ask_004_memo_publish_contract.py -q
-# 113 passed
+# 113 passed in 101.69s + 31 passed = 144 adjacent tests
 ```
 
-Total: 123 tests passing, 0 failures.
+Total: 155 tests passing (11 + 144), 0 failures.

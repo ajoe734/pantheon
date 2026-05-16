@@ -233,6 +233,40 @@ def test_bff_approvals_decide_replay_does_not_double_publish() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Durable command_store replay does not double-publish (R3 regression)
+# ---------------------------------------------------------------------------
+
+def test_bff_approvals_decide_durable_replay_does_not_double_publish() -> None:
+    """After _FINAL_CONTRACT_IDEMPOTENCY is evicted, durable command_store replay must not re-publish SSE."""
+    client = TestClient(bff_main.app)
+    idem = _idem()
+
+    resp1 = client.post(
+        f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
+        json={"decision": "approve"},
+        headers={**APPROVER_HEADERS, "Idempotency-Key": idem},
+    )
+    assert resp1.status_code == 202, resp1.text
+    assert len(bff_main._sse_buffers["approval"]) == 1
+
+    # Simulate in-memory eviction: clear _FINAL_CONTRACT_IDEMPOTENCY but leave command_store intact
+    bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+
+    # Durable replay via command_store — must NOT publish a second SSE event
+    resp2 = client.post(
+        f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
+        json={"decision": "approve"},
+        headers={**APPROVER_HEADERS, "Idempotency-Key": idem},
+    )
+    assert resp2.status_code == 202, resp2.text
+    meta = resp2.json().get("meta", {})
+    assert meta.get("idempotency", {}).get("replayed") is True, "second call should be marked as replayed"
+    assert len(bff_main._sse_buffers["approval"]) == 1, (
+        "durable command_store replay must not publish a second SSE event"
+    )
+
+
+# ---------------------------------------------------------------------------
 # No approval event on body idempotency key rejection
 # ---------------------------------------------------------------------------
 
