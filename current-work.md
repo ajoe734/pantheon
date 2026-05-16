@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-16 22:13:37
+Last updated: 2026-05-16 22:22:36
 
 ## Objective
 
@@ -37,7 +37,7 @@ Last updated: 2026-05-16 22:13:37
 
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Codex R4 fix applied in commit 106b0cca. Introduced _is_idem_conflict flag to mirror _sem_command_response conflict path: when _FINAL_CONTRACT_IDEMPOTENCY or durable command_store holds a different hash for the same key, SSE publish is skipped before the 409 is raised. New test: test_bff_approvals_decide_idempotency_conflict_does_not_double_publish. Verification: 12 ASK-005 tests passed, 66 approval/ask adjacent tests passed, 33 contract/governance tests passed (0 regressions).
+- `Claude`: execution, control-plane, governance-review; next: Supervisor resumed ASK-005 for finalize after successful dispatch.
 - `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 - `Codex`: integration, status-system, schema, acceptance; next: No active assignment
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
@@ -52,7 +52,7 @@ Last updated: 2026-05-16 22:13:37
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | Gemini2 | blocked | - | - |
-| `ASK-005` | Sprint 5 / EPIC-RESEARCH | approval / ask SSE event publishing | Claude | review | - | - |
+| `ASK-005` | Sprint 5 / EPIC-RESEARCH | approval / ask SSE event publishing | Claude | review_approved | - | - |
 
 ### External / Upstream Integration Work
 
@@ -93,14 +93,14 @@ Last updated: 2026-05-16 22:13:37
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
 | `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | - | Gemini2 | Gemini | blocked | - | 2026-05-15 23:15:06 | Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check. |
-| `ASK-005` | Sprint 5 / EPIC-RESEARCH | approval / ask SSE event publishing | - | Claude | Codex | review | - | 2026-05-16 22:11:37 | Codex R4 fix applied in commit 106b0cca. Introduced _is_idem_conflict flag to mirror _sem_command_response conflict path: when _FINAL_CONTRACT_IDEMPOTENCY or durable command_store holds a different hash for the same key, SSE publish is skipped before the 409 is raised. New test: test_bff_approvals_decide_idempotency_conflict_does_not_double_publish. Verification: 12 ASK-005 tests passed, 66 approval/ask adjacent tests passed, 33 contract/governance tests passed (0 regressions). |
+| `ASK-005` | Sprint 5 / EPIC-RESEARCH | approval / ask SSE event publishing | - | Claude | Codex | review_approved | - | 2026-05-16 22:22:36 | Supervisor resumed ASK-005 for finalize after successful dispatch. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
 | `EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE` | Gemini | Codex2 | Acceptance packet and dependency map for EP5-BROKER-TW-002 prepared at support/sidecars/EP5-BROKER-TW-002/EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE.md. Ready for review and incorporation into parent closeout. | pending | 2026-05-12 22:50:00 |
-| `ASK-005` | Claude | Codex | Codex R4 fix applied in commit 106b0cca. Introduced _is_idem_conflict flag to mirror _sem_command_response conflict path: when _FINAL_CONTRACT_IDEMPOTENCY or durable command_store holds a different hash for the same key, SSE publish is skipped before the 409 is raised. New test: test_bff_approvals_decide_idempotency_conflict_does_not_double_publish. Verification: 12 ASK-005 tests passed, 66 approval/ask adjacent tests passed, 33 contract/governance tests passed (0 regressions). | pending | 2026-05-16 22:11:37 |
+| `ASK-005` | Codex | Claude | Codex review approved: R4 idempotency-conflict no-double-publish fix verified; 12 ASK-005 tests, 66 adjacent approval/ask/SSE tests, and 33 governance/idempotency tests passed. Owner Claude should finalize closeout. | pending | 2026-05-16 22:21:49 |
 
 ## Blockers
 
@@ -112,7 +112,7 @@ Last updated: 2026-05-16 22:13:37
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| _(none)_ | - | - | - |
+| `ASK-005` | Codex | 未發現 blocking findings；R4 修正讓 approval decide 在 _FINAL_CONTRACT_IDEMPOTENCY 或 durable command_store 偵測到同 key 不同 hash 時，於 _sem_command_response 回傳 409 前跳過 SSE publish。<br>已重跑 focused verification：ASK-005 contract 12 passed；approval/ask/SSE adjacent 66 passed；final contract/governance/idempotency 33 passed。<br>狀態已由 reviewer approve；owner Claude 需依 closeout checklist 建立 task-scoped closeout 並執行 done。 | - |
 
 ## Lovable Coordination
 
@@ -183,23 +183,23 @@ Last updated: 2026-05-16 22:13:37
 
 ## Latest Checkpoints
 
-- 2026-05-16 22:12:03 Orchestrator: PostToolUse: Read
-- 2026-05-16 22:12:03 Orchestrator: PostToolUse: Read
-- 2026-05-16 22:12:04 Orchestrator: PreToolUse: Bash
-- 2026-05-16 22:12:14 Orchestrator: PreToolUse: Bash
-- 2026-05-16 22:12:15 Orchestrator: PostToolUse: Bash
-- 2026-05-16 22:12:25 Orchestrator: PreToolUse: Bash
-- 2026-05-16 22:12:38 Orchestrator: PostToolUse: Bash
-- 2026-05-16 22:12:46 Orchestrator: PreToolUse: Bash
-- 2026-05-16 22:12:46 Codex: `ASK-005-SIDECAR-ACCEPTANCE` Closeout complete. Support-only acceptance packet updated in non-empty commit 2acbb1ce, with finalization anchor 56256541 after parent ASK-005 HEAD advanced. Reviewer approval confirmed. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_ask005_sse_event_publishing_contract.py -q (12 passed in 37.18s). Existing in-progress rebase and unrelated dirty state files prevent an isolated generated state/archive commit in this worker.
-- 2026-05-16 22:13:00 Orchestrator: PreToolUse: Read
-- 2026-05-16 22:13:00 Orchestrator: PostToolUse: Read
-- 2026-05-16 22:13:06 Orchestrator: PreToolUse: Edit
-- 2026-05-16 22:13:07 Orchestrator: PostToolUse: Edit
-- 2026-05-16 22:13:10 Orchestrator: PreToolUse: Bash
-- 2026-05-16 22:13:11 Orchestrator: PostToolUse: Bash
-- 2026-05-16 22:13:16 Orchestrator: PreToolUse: Bash
-- 2026-05-16 22:13:17 Orchestrator: PostToolUse: Bash
-- 2026-05-16 22:13:21 Orchestrator: PreToolUse: Bash
-- 2026-05-16 22:13:22 Claude2: `SENT-001-SIDECAR-BFF-HANDOFF` Closeout finalization complete. Sidecar artifact committed (1f31fd5e v2, closeout record 2f8c1b11). Focused verification: 16/16 tests passed (test_sent001_sentinel_findings_contract.py). Codex review approved — no blocking findings; response-shape/provenance issues resolved in v2. Support-only scope; no canonical or runtime changes.
-- 2026-05-16 22:13:36 Codex: `ASK-005-SIDECAR-REVIEW` Closeout complete. Support packet updated with Claude review approval, parent fix commit 73304fe0 publication note, and finalization verification. Task-scoped commit 0b98baae. Verification: AI_NAME=Codex ./scripts/ai-status.sh show ASK-005-SIDECAR-REVIEW; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_ask005_sse_event_publishing_contract.py -q (12 passed in 11.64s).
+- 2026-05-16 22:15:02 Orchestrator: PostToolUse: Bash
+- 2026-05-16 22:15:12 Orchestrator: Stop: Stop
+- 2026-05-16 22:15:12 Orchestrator: SessionEnd: SessionEnd
+- 2026-05-16 22:17:21 Orchestrator: Worker suspended for approval apr-20260516T135935Z-52fe67f5
+- 2026-05-16 22:17:21 Orchestrator: `ASK-005-SIDECAR-ACCEPTANCE` Worker superseded after task responsibility moved to another agent.
+- 2026-05-16 22:17:21 Orchestrator: `ASK-005-SIDECAR-REVIEW` Worker superseded after task responsibility moved to another agent.
+- 2026-05-16 22:17:21 Orchestrator: `SENT-001-SIDECAR-BFF-HANDOFF` Worker superseded after task responsibility moved to another agent.
+- 2026-05-16 22:17:21 Orchestrator: `ASK-005` Wake-up queued for supervisor: review_ready_dispatch
+- 2026-05-16 22:17:21 Orchestrator: `ASK-005` Worker started via codex: review_ready_dispatch
+- 2026-05-16 22:17:22 Orchestrator: Worker suspended for approval apr-20260516T135935Z-52fe67f5
+- 2026-05-16 22:18:07 Codex: `ASK-005` Reviewer pickup: validating commit 106b0cca idempotency conflict no-double-publish behavior and focused tests before approval decision.
+- 2026-05-16 22:21:49 Codex: `ASK-005` Codex review approved: R4 idempotency-conflict no-double-publish fix verified; 12 ASK-005 tests, 66 adjacent approval/ask/SSE tests, and 33 governance/idempotency tests passed. Owner Claude should finalize closeout.
+- 2026-05-16 22:22:35 Orchestrator: Worker suspended for approval apr-20260516T135935Z-52fe67f5
+- 2026-05-16 22:22:35 Orchestrator: `ASK-005` Worker superseded after task responsibility moved to another agent.
+- 2026-05-16 22:22:35 Orchestrator: `ASK-005` Wake-up queued for supervisor: owned_finalize_dispatch
+- 2026-05-16 22:22:35 Orchestrator: `ASK-005-SIDECAR-REVIEW` Failed to create sidecar for ASK-005: Task ASK-005-SIDECAR-REVIEW is archived. Create a new follow-up task instead of reusing the archived task id.
+- 2026-05-16 22:22:35 Orchestrator: `MGMT-BROKER-002-SIDECAR-ACCEPTANCE` Failed to create sidecar for MGMT-BROKER-002: Task MGMT-BROKER-002-SIDECAR-ACCEPTANCE is archived. Create a new follow-up task instead of reusing the archived task id.
+- 2026-05-16 22:22:35 Orchestrator: underutilized but no sidecar candidate could be assigned safely
+- 2026-05-16 22:22:35 Orchestrator: `ASK-005` Worker started via claude_cli: owned_finalize_dispatch
+- 2026-05-16 22:22:36 Claude: `ASK-005` Supervisor resumed ASK-005 for finalize after successful dispatch.
