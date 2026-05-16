@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "task_id": "TRN-005",
+  "archived_at": "2026-05-16T23:50:17Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "TRN-005",
+    "title": "Trainer commit -> persona policy lineage edge",
+    "summary_zh": "把 TRN-004 commit 動作的副作用接到 persona policy 的 lineage：每次 commit 在 persona policy artifact 上產生 lineage edge 指向 trainer session id 與 teaching event ids。獨立 module。",
+    "phase": "Sprint 7 / EPIC-TRAINER-ADVANCED",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "TRN-004"
+    ],
+    "artifacts": [
+      "services/training-session/policy_lineage.py",
+      "services/training-session/test_policy_lineage.py",
+      "services/training-session/policy_lineage_contract.md"
+    ],
+    "acceptance": [
+      "policy_lineage.py exposes record_commit(session_id event_ids persona_id) writing a lineage edge to lineage-read store",
+      "edge contains commit_at timestamp source=trainer_session producer=session_id and target=persona_policy_artifact",
+      "test_policy_lineage.py covers 1 commit with N events asserting N edges + 1 fail-fast for unknown persona",
+      "test passes pytest -q exit 0"
+    ],
+    "next": "Closeout complete: committed a1df0492 (TRN-005: record trainer policy lineage edges). Verified: pytest -q services/training-session/test_policy_lineage.py; pytest -q services/training-session/tests/test_http_service.py.",
+    "last_update": "2026-05-16T23:50:17Z",
+    "review_notes_zh": [
+      "審查通過：record_commit 正確為每個 teaching event 寫入一條 lineage edge，edge 欄位含 commit_at / source=trainer_session / producer=session_id / target=persona_policy_artifact，UnknownPersonaPolicyError fail-fast 在寫入前觸發。測試 2 passed，JSONL 冪等性與協議注入均符合規範。",
+      "後續：owner (Codex) 需建立 task-scoped commit 並 git push。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T23:50:17Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "a1df04924140238223e2a409fe03c21cbe5ba4f1",
+      "commit_subject": "TRN-005: record trainer policy lineage edges",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "TRN-005",
+        "Reviewer": "Claude",
+        "Wave": "2026-W20",
+        "Verified": "pytest -q services/training-session/test_policy_lineage.py; pytest -q services/training-session/tests/test_http_service.py"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 39,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TRN-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented trainer commit persona-policy lineage edges: record_commit writes one lineage-read edge per teaching event, commit route stores policy_lineage_edge_ids, contract added. Verification: pytest -q services/training-session (19 passed).",
+      "status": "done",
+      "created_at": "2026-05-16T23:35:00Z",
+      "resolved_at": "2026-05-16T23:40:49Z"
+    },
+    {
+      "task_id": "TRN-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 4 acceptance criteria met. record_commit writes one lineage-read edge per teaching event with correct commit_at/source/producer/target fields; UnknownPersonaPolicyError raised before any writes; 2 tests pass (pytest -q). JSONL idempotency and protocol injection verified. Returning to Codex for closeout commit and push.",
+      "status": "done",
+      "created_at": "2026-05-16T23:40:49Z",
+      "resolved_at": "2026-05-16T23:50:18Z"
+    }
+  ],
+  "blockers": []
+}

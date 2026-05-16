@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-16T15:21:18Z",
+  "updated_at": "2026-05-16T23:50:17Z",
   "counts": {
-    "total": 1158,
-    "completed": 1138,
+    "total": 1159,
+    "completed": 1139,
     "superseded": 20
   },
   "recent_terminal_ids": [
+    "TRN-005",
     "EP5-BROKER-TW-002-SIDECAR-ACCEPTANCE",
     "ASK-005",
     "ASK-005-SIDECAR-REVIEW",
@@ -25,7 +26,6 @@
     "IMT-002",
     "ASK-001",
     "TRN-001",
-    "EXP-001",
-    "IMT-003"
+    "EXP-001"
   ]
 }
