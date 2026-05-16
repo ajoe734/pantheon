@@ -22,6 +22,15 @@ POST  /api/telemetry/ingest/batch
     Body: { "events": [ ... ] }
     Returns 202 with { ingested, rejected } counts.
 
+POST  /api/v1/telemetry/heartbeats
+    Ingest one RuntimeHeartbeat payload and adapt it into a canonical
+    TelemetryEvent heartbeat.
+    Body: RuntimeHeartbeat (see SD-09).
+    Returns 202 on success, 400 on validation failure.
+
+GET   /api/v1/telemetry/runtime/<runtime_id>/heartbeat
+    Return the latest RuntimeHeartbeatStatus derived from accepted telemetry.
+
 GET   /api/telemetry/stats
     Service statistics (buffer, writer, DLQ, backpressure).
 
@@ -128,6 +137,11 @@ from typing import Any
 
 from flask import Flask, jsonify, request
 
+from .heartbeat_service import (
+    RuntimeHeartbeatValidationError,
+    build_telemetry_event_from_runtime_heartbeat,
+    heartbeat_status_from_summary,
+)
 from .ingest_svc import TelemetryIngestService, build_postgres_write_fn
 from .lineage_read import LineageReadService
 from .runtime_summary import RuntimeSummaryProjectionStore
@@ -506,6 +520,79 @@ def ingest_batch():
         return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
 
     return jsonify(result), 202
+
+
+@app.route("/api/v1/telemetry/heartbeats", methods=["POST"])
+def ingest_runtime_heartbeat():
+    """Ingest a RuntimeHeartbeat through the canonical TelemetryEvent path."""
+    body = request.get_json(force=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": {"code": "INVALID_BODY", "message": "Request body must be a JSON object"}}), 400
+
+    svc = _get_service()
+    binding = None
+    runtime_binding_id = body.get("runtime_binding_id")
+    if isinstance(runtime_binding_id, str) and runtime_binding_id.strip():
+        try:
+            binding = svc.resolve_runtime_binding(runtime_binding_id.strip())
+        except Exception as exc:  # noqa: BLE001
+            log.exception("RuntimeBinding lookup failed during RuntimeHeartbeat ingest")
+            return jsonify({
+                "error": {
+                    "code": "RUNTIME_BINDING_LOOKUP_FAILED",
+                    "message": str(exc),
+                }
+            }), 503
+        if svc.has_runtime_binding_store() and binding is None:
+            return jsonify({
+                "error": {
+                    "code": "BINDING_NOT_FOUND",
+                    "message": f"runtime_binding_id {runtime_binding_id!r} was not found",
+                }
+            }), 400
+
+    try:
+        event = build_telemetry_event_from_runtime_heartbeat(body, binding=binding)
+    except RuntimeHeartbeatValidationError as exc:
+        return jsonify({"error": {"code": exc.code, "message": exc.message}}), 400
+
+    try:
+        ok = _run_async(svc.ingest(event))
+    except Exception as exc:
+        log.exception("Unexpected error during RuntimeHeartbeat ingest")
+        return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
+
+    if not ok:
+        return jsonify({
+            "status": "rejected",
+            "detail": "RuntimeHeartbeat failed canonical TelemetryEvent validation; see DLQ for details",
+        }), 400
+
+    summary = svc.get_runtime_summary(event["runtime_id"])
+    response: dict[str, Any] = {
+        "status": "accepted",
+        "event_id": event["event_id"],
+        "runtime_id": event["runtime_id"],
+        "runtime_binding_id": event["binding_id"],
+    }
+    if summary is not None:
+        response["heartbeat_status"] = heartbeat_status_from_summary(summary)
+    return jsonify(response), 202
+
+
+@app.route("/api/v1/telemetry/runtime/<runtime_id>/heartbeat", methods=["GET"])
+def runtime_heartbeat_status(runtime_id: str):
+    """Return the latest RuntimeHeartbeatStatus for one runtime."""
+    svc = _get_service()
+    summary = svc.get_runtime_summary(runtime_id)
+    if summary is None or not summary.get("last_heartbeat_at"):
+        return jsonify({
+            "error": {
+                "code": "RUNTIME_HEARTBEAT_NOT_FOUND",
+                "message": f"No RuntimeHeartbeat has been accepted for {runtime_id}",
+            }
+        }), 404
+    return jsonify(heartbeat_status_from_summary(summary)), 200
 
 
 @app.route("/api/telemetry/stats", methods=["GET"])
