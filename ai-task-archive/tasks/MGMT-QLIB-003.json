@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "MGMT-QLIB-003",
+  "archived_at": "2026-05-15T15:36:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-QLIB-003",
+    "title": "Qlib LightGBM smoke",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-04 Qlib Admission",
+    "owner": "Gemini2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Finalized Qlib smoke verification and closed task.",
+    "last_update": "2026-05-15T15:36:54Z",
+    "review_notes_zh": [
+      "驗證 services/research/qlib/examples/smoke_dataset.json 含 50 instruments、每檔 536 periods、2024-01-02 至 2026-01-20，符合 activation-ready floor。",
+      "已跑 python3 services/research/qlib/smoke_test.py --backend stub。",
+      "已跑 python3 -m pytest services/research/qlib/test_preflight.py services/research/qlib/test_adapter.py services/research/qlib/test_production_activation.py，33 passed。",
+      "已用臨時 proof 跑 services/research/qlib/production_activation_smoke.py --backend stub --dataset services/research/qlib/examples/smoke_dataset.json --output-dir /tmp/...，輸出 draft artifact、candidate handoff、deployment_stage none、order_route none。",
+      "Real Qlib backend 未在目前 host 驗證；python3 services/research/qlib/smoke_test.py --backend real 因缺少 numpy/qlib runtime deps 失敗，需在 services/research/qlib container 或已安裝 requirements 的環境補跑。此限制與 handoff 所述 real backend requires containerized Qlib setup 一致。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T15:36:54Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "merge/backend-dev-into-master",
+      "git_clean_required": false,
+      "commit": "440ac4eae69c1131e5c7944315fec6671f131b9b",
+      "commit_subject": "feat(qlib): MGMT-QLIB-003 Qlib LightGBM smoke",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Gemini2",
+        "Task-ID": "MGMT-QLIB-003",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 15,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 18,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-QLIB-003",
+      "from": "Gemini2",
+      "to": "Copilot",
+      "message": "Dataset generator script and smoke test workflow verified with stub backend (real backend requires containerized Qlib setup). Please review.",
+      "status": "done",
+      "created_at": "2026-05-15T15:03:18Z",
+      "resolved_at": "2026-05-15T15:26:58Z"
+    },
+    {
+      "task_id": "MGMT-QLIB-003",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Copilot to Codex after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-05-15T15:26:58Z",
+      "resolved_at": "2026-05-15T15:32:41Z"
+    },
+    {
+      "task_id": "MGMT-QLIB-003",
+      "from": "Codex",
+      "to": "Gemini2",
+      "message": "Review approved: stub LightGBM smoke workflow and activation-floor dataset verified; real backend remains container-environment verification for owner closeout/follow-up.",
+      "status": "done",
+      "created_at": "2026-05-15T15:32:41Z",
+      "resolved_at": "2026-05-15T15:36:56Z"
+    }
+  ],
+  "blockers": []
+}

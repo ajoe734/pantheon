@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "task_id": "MGMT-EVO-001",
+  "archived_at": "2026-05-15T16:31:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-EVO-001",
+    "title": "telemetry-to-evolution packet link",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-06 Evolution Follow-Through",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Finalized MGMT-EVO-001 after Codex2 approval. Task-scoped commit 8539f0fb adds telemetry-to-evolution proposal-only link builder, focused tests, evidence packet, and review note. Verification rerun: py_compile passed; pytest services/control-plane/ooda/test_telemetry_evolution_link.py -q => 3 passed; pytest services/control-plane/ooda -q => 45 passed; pytest services/evolution/test_evolution_service.py -q => 53 passed.",
+    "last_update": "2026-05-15T16:31:09Z",
+    "review_notes_zh": [
+      "無阻塞發現：telemetry-to-evolution link builder、test、evidence packet 符合 MGMT-EVO-001 scope。",
+      "查核重點：evidence packet 為 paper-only、validation_errors=[]；EvolutionDecision 保持 proposed/revalidate/proposal_only，不建立 executed/cooldown/runtime follow-through；OODA learn patch 只追加 telemetry refs 與 evolution proposal ref，沒有 runtime binding、broker 或 capital mutation。",
+      "驗證命令：PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/ooda/telemetry_evolution_link.py services/control-plane/ooda/test_telemetry_evolution_link.py；PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/ooda/test_telemetry_evolution_link.py -q；PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/ooda -q；PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/evolution/test_evolution_service.py -q。"
+    ],
+    "review_file": "support/reviews/MGMT-EVO-001-review-codex2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T16:31:09Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "merge/backend-dev-into-master",
+      "git_clean_required": false,
+      "commit": "8539f0fbc93c4a96da1dcc450326cb59074a289c",
+      "commit_subject": "MGMT-EVO-001 telemetry evolution link",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-EVO-001",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 42,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 5,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-EVO-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: added telemetry-to-evolution link builder, tests, and evidence artifact. Task-owned files: services/control-plane/ooda/telemetry_evolution_link.py, services/control-plane/ooda/test_telemetry_evolution_link.py, support/evidence/MGMT-EVO-001-telemetry-evolution-link.json. Verification: py_compile telemetry_evolution_link/test; pytest services/control-plane/ooda/test_telemetry_evolution_link.py -q (3 passed); pytest services/control-plane/ooda -q (45 passed); pytest services/evolution/test_evolution_service.py -q (53 passed). Worktree has unrelated dirty files from other tasks; review only listed task-owned files.",
+      "status": "done",
+      "created_at": "2026-05-15T16:06:45Z",
+      "resolved_at": "2026-05-15T16:18:53Z"
+    },
+    {
+      "task_id": "MGMT-EVO-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved. Owner must finalize MGMT-EVO-001 with task-scoped artifacts, commit, and done closeout.",
+      "status": "done",
+      "created_at": "2026-05-15T16:18:53Z",
+      "resolved_at": "2026-05-15T16:31:09Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "TEL-002-RB",
+  "archived_at": "2026-05-16T07:15:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "TEL-002-RB",
+    "title": "RuntimeHeartbeat ingest endpoint (rebaseline)",
+    "summary_zh": null,
+    "phase": "Sprint 4 / EPIC-TELEMETRY",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete for RuntimeHeartbeat ingest endpoint. Implementation commit 0d1fdd11; review artifact commit f6fd4ae4. Reviewer Claude approved heartbeat adapter, binding guard, projection fields, and staleness handling. Verification rerun: py_compile targeted telemetry files; /tmp/pantheon-tel002-rb-venv/bin/python -m unittest services.telemetry.test_main_routes services.telemetry.test_runtime_summary_projection services.telemetry.test_paper_runtime_ingest_contract services.telemetry.test_tel001_rebaseline_schema (24 tests OK); targeted git diff --check OK.",
+    "last_update": "2026-05-16T07:15:11Z",
+    "review_notes_zh": [
+      "審查通過。heartbeat adapter 正確轉換 SD-09 RuntimeHeartbeat → TelemetryEvent；binding fail-closed；projection 保留 connectivity/broker/lag/health 欄位；24 個測試全通過。"
+    ],
+    "review_file": "support/evidence/TEL-002-RB/review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T07:15:11Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "f6fd4ae4ee4f6a8ab0cb513a80ca1788c0c673fd",
+      "commit_subject": "TEL-002-RB add review approval artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "TEL-002-RB",
+        "Reviewer": "Claude",
+        "Verification": "PYTHONPYCACHEPREFIX=/tmp/pantheon-tel002-rb-pycache python3 -m py_compile services/telemetry/heartbeat_service.py services/telemetry/runtime_summary.py services/telemetry/ingest_svc.py services/telemetry/main.py services/telemetry/test_main_routes.py services/telemetry/test_runtime_summary_projection.py; /tmp/pantheon-tel002-rb-venv/bin/python -m unittest services.telemetry.test_main_routes services.telemetry.test_runtime_summary_projection services.telemetry.test_paper_runtime_ingest_contract services.telemetry.test_tel001_rebaseline_schema; git diff --check targeted telemetry/evidence files."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 83,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 8,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TEL-002-RB",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T06:00:03Z",
+      "resolved_at": "2026-05-16T06:02:42Z"
+    },
+    {
+      "task_id": "TEL-002-RB",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T06:23:18Z",
+      "resolved_at": "2026-05-16T06:24:53Z"
+    },
+    {
+      "task_id": "TEL-002-RB",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T06:40:14Z",
+      "resolved_at": "2026-05-16T06:41:20Z"
+    },
+    {
+      "task_id": "TEL-002-RB",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "TEL-002-RB ready for review. Implemented RuntimeHeartbeat ingest/status surface: POST /api/v1/telemetry/heartbeats adapts SD-09 RuntimeHeartbeat into canonical TelemetryEvent via existing ingest validation; GET /api/v1/telemetry/runtime/<runtime_id>/heartbeat returns latest derived status; projection preserves connectivity/broker/lag/reported health fields. Commit: 0d1fdd11. Evidence: support/evidence/TEL-002-RB/README.md. Verification: py_compile targeted files; telemetry venv unittest test_main_routes + test_runtime_summary_projection + test_paper_runtime_ingest_contract + test_tel001_rebaseline_schema (24 tests OK); git diff --check targeted files.",
+      "status": "done",
+      "created_at": "2026-05-16T06:52:16Z",
+      "resolved_at": "2026-05-16T07:01:02Z"
+    },
+    {
+      "task_id": "TEL-002-RB",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 24 telemetry tests pass; heartbeat adapter, binding guard, projection fields, and staleness handling are correct. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T07:01:02Z",
+      "resolved_at": "2026-05-16T07:15:12Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,161 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/research/experiment-task/v1",
+  "title": "ExperimentTask",
+  "description": "Canonical research-orchestrator task contract. A task binds exactly one StrategySpec version to pinned dataset and code inputs before any backend run.",
+  "type": "object",
+  "required": [
+    "task_id",
+    "strategy_id",
+    "strategy_spec_version",
+    "requested_by",
+    "task_type",
+    "backend_id",
+    "backend_selection_policy_id",
+    "dataset_version_id",
+    "code_version",
+    "priority",
+    "status",
+    "idempotency_key",
+    "trace_id",
+    "created_at"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "strategy_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "strategy_spec_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "requested_by": {
+      "type": "string",
+      "minLength": 1
+    },
+    "task_type": {
+      "type": "string",
+      "enum": [
+        "backtest",
+        "factor_eval",
+        "regime_model",
+        "pricing",
+        "rl_training",
+        "rapid_eval"
+      ]
+    },
+    "backend_id": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "backend_selection_policy_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dataset_version_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "code_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "feature_spec_version": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "label_spec_version": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "cost_assumption_ref": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "risk_assumption_ref": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "priority": {
+      "type": "string",
+      "enum": [
+        "low",
+        "normal",
+        "high"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "selecting_backend",
+        "ready",
+        "running",
+        "completed",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "ready",
+              "running",
+              "completed",
+              "failed",
+              "cancelled"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "backend_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "definitions": {
+    "nullableString": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

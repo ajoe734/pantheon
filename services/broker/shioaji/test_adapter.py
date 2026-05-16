@@ -93,6 +93,28 @@ class TestSandboxGateFailClosed(unittest.TestCase):
             adapter = ShioajiBrokerAdapter()
         self.assertFalse(adapter._sandbox_enabled)
 
+    def test_gate_closed_does_not_touch_injected_sdk(self):
+        mock_api = _make_mock_api()
+        adapter = ShioajiBrokerAdapter(
+            sandbox_enabled=False,
+            _api=mock_api,
+            submit_spacing_seconds=_TEST_SPACING_SECONDS,
+        )
+
+        for call in (
+            lambda: adapter.submit(**_ORDER_KWARGS),
+            lambda: adapter.cancel("order-never-submitted"),
+            lambda: adapter.get_status("order-never-submitted"),
+        ):
+            with self.assertRaises(ShioajiBrokerError) as ctx:
+                call()
+            self.assertEqual(ctx.exception.error_code, "SHIOAJI_SANDBOX_DISABLED")
+
+        mock_api.Order.assert_not_called()
+        mock_api.place_order.assert_not_called()
+        mock_api.cancel_order.assert_not_called()
+        mock_api.update_status.assert_not_called()
+
 
 class TestLiveOrderAlwaysRejected(unittest.TestCase):
     """Live reject path must raise unconditionally regardless of sandbox gate."""
@@ -123,13 +145,33 @@ class TestLiveOrderAlwaysRejected(unittest.TestCase):
             sandbox_enabled=False,
             submit_spacing_seconds=_TEST_SPACING_SECONDS,
         )
-        try:
+
+        with self.assertRaises(ShioajiBrokerError) as ctx:
             adapter.reject_live_order()
-        except ShioajiBrokerError as exc:
-            payload = exc.to_payload()
-            self.assertEqual(payload["status"], "broker_error")
-            self.assertIn("error_code", payload)
-            self.assertIn("message", payload)
+
+        payload = ctx.exception.to_payload()
+        self.assertEqual(payload["status"], "broker_error")
+        self.assertIn("error_code", payload)
+        self.assertIn("message", payload)
+
+    def test_live_reject_does_not_touch_sdk_or_order_book_when_gate_open(self):
+        mock_api = _make_mock_api()
+        adapter = ShioajiBrokerAdapter(
+            sandbox_enabled=True,
+            _api=mock_api,
+            submit_spacing_seconds=_TEST_SPACING_SECONDS,
+        )
+
+        with self.assertRaises(ShioajiBrokerError) as ctx:
+            adapter.reject_live_order()
+
+        self.assertEqual(ctx.exception.error_code, "SHIOAJI_LIVE_DISABLED")
+        mock_api.Order.assert_not_called()
+        mock_api.place_order.assert_not_called()
+        mock_api.cancel_order.assert_not_called()
+        mock_api.update_status.assert_not_called()
+        self.assertEqual(adapter._orders, {})
+        self.assertEqual(adapter._trades, {})
 
 
 class TestSandboxSubmitHappyPath(unittest.TestCase):

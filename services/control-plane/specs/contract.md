@@ -75,6 +75,22 @@ That means it must already contain enough information to support:
 
 This allows `RS-002` to normalize research directly into a governed object instead of inventing a second format later.
 
+### 2.4 Evidence and code reference lineage
+
+StrategySpec can carry optional evidence/code linkage fields when a source seed
+has governed source material:
+
+| Field | Required | Purpose |
+|---|---|---|
+| `evidence_refs[]` | no | evidence bundle, evidence item, source record, citation, experiment artifact, or registry-entry refs that justify the StrategySpec |
+| `code_refs[]` | no | allowlisted repository/path/commit/symbol/line refs that identify source implementation or prototype material |
+
+These refs are lineage inputs only. They do not grant registry write authority,
+experiment launch authority, deployment-plan authority, broker access, or order
+routing. Implementations that build these refs must preserve
+`provenance.source_refs` and reject source/evidence objects outside the source
+seed lineage.
+
 ---
 
 ## 3. WorkflowHandoff
@@ -159,4 +175,3 @@ Claude should review this contract for:
 - whether the StrategySpec boundary is clear enough that OpenClaw is not leaking execution detail too early
 - whether WorkflowHandoff carries enough governance context for later approval and registry steps
 - whether the registry hints are specific enough for REG-001 / REG-002 without over-coupling orchestration to storage internals
-

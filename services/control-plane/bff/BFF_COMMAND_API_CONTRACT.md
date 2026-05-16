@@ -39,7 +39,7 @@ canonical control-plane authorities. The BFF does not become a canonical store.
 | Route | Method | Purpose |
 |---|---:|---|
 | `/bff/v1/commands` | POST | Submit a governed operator command (final contract); returns `CommandResponse<T>`. |
-| `/bff/actions/{entityType}/{entityId}/{actionId}` | POST | Deprecated generic action adapter; dual-writes through final command admission and returns a deprecated receipt marker. |
+| `/bff/actions/{type}/{id}/{action}` | POST | Deprecated generic action adapter; dual-writes through final command admission and returns a deprecated receipt marker. The legacy named template `/bff/actions/{entityType}/{entityId}/{actionId}` remains a schema-hidden compatibility alias. |
 | `/api/v1/operator/commands` | POST | Legacy command submission; returns `CommandSubmissionResponse`. Kept for adapter compatibility. |
 | `/api/v1/operator/commands/{command_id}` | GET | Poll command status, result, error, and audit record. |
 
@@ -66,9 +66,14 @@ Key differences:
 
 ### Deprecated Generic Action Adapter
 
-`POST /bff/actions/{entityType}/{entityId}/{actionId}` is deprecated as of 2026-05-14.
+`POST /bff/actions/{type}/{id}/{action}` is deprecated as of 2026-05-14.
 It is retained as a compatibility adapter until at least 2026-06-15 while downstream audit
 and replay tooling finishes consuming the final command receipt.
+
+The old named template `POST /bff/actions/{entityType}/{entityId}/{actionId}` remains
+accepted as a schema-hidden alias for clients and audit tooling that still use the
+former parameter names. OpenAPI exposes only `{type}/{id}/{action}` for the
+generic action adapter.
 
 Compatibility responses must still be successful `CommandResponse<T>` envelopes on accepted
 commands, but they also include:
@@ -219,7 +224,7 @@ codes include:
 
 ## 8. Command Adapter Mapping
 
-This section maps every `/bff/actions/{entityType}/{entityId}/{actionId}` call that
+This section maps every `/bff/actions/{type}/{id}/{action}` call that
 `runAction.ts` emits (plus special-path decision writes and confirm-token lifecycle
 calls) to the equivalent `/bff/v1/commands` envelope fields required by
 BFF-CONSOL-019's command adapter implementation.
@@ -234,8 +239,8 @@ Sources for the action vocabulary:
 
 | Column | Meaning |
 |---|---|
-| `action_id` | Value of the `{actionId}` path segment in `/bff/actions/…` (matches `input.action` in `RunActionInput`). |
-| `target_type` | Value of `{entityType}` in the BFF action path; also becomes `target.type` in the command envelope. |
+| `action_id` | Value of the `{action}` path segment in `/bff/actions/…` (matches `input.action` in `RunActionInput`). |
+| `target_type` | Value of `{type}` in the BFF action path; also becomes `target.type` in the command envelope. |
 | `command_name` | Value of the `command` field submitted to `/bff/v1/commands`. |
 | `idempotency_key_template` | Pattern for the `Idempotency-Key` header; `{entityId}` and `{idemKey}` are placeholders. The frontend-minted key is passed through as-is; this template documents the expected structure for backend idempotency records. |
 | `actor_source` | Where `actor_ref` is extracted — always from the authenticated session. |
@@ -579,8 +584,9 @@ in this mapping table:
 8. **Deprecated action receipt marker** — Responses served from `/bff/actions/*` must include
    the deprecation headers and `deprecated: true` markers described in §3. The persisted
    command foundation context remains `admission_route=POST /bff/v1/commands` with
-   `source_route=POST /bff/actions/{entityType}/{entityId}/{actionId}` so audit consumers
-   reconcile against the final command receipt, not a separate legacy receipt stream.
+   `source_route=POST /bff/actions/{entityType}/{entityId}/{actionId}` for backward-compatible
+   audit consumers to reconcile against the final command receipt, not a separate legacy
+   receipt stream.
 
 ---
 

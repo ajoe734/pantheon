@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "task_id": "INC-001-RB",
+  "archived_at": "2026-05-16T06:51:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "INC-001-RB",
+    "title": "Claude2 reclaiming as original task owner for review_approved closeout; Codex implementation reviewed and approved.",
+    "summary_zh": null,
+    "phase": "Sprint 4 / EPIC-TELEMETRY",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete. INC-001-RB contract tests and evidence committed at 524783f4 (test_inc001_rebaseline_incidents_contract.py 3 passed, regression 4 passed). Implementation in main.py/read_store.py durable in worktree; shared-file isolated commit exception noted (concurrent tasks). All verification passes: list data/items+total+surface/degradation meta, canonical IncidentCase evidence fields, affected_pool_id alias filter, fail-closed DOWNSTREAM_UNAVAILABLE, idempotent create overlay.",
+    "last_update": "2026-05-16T06:51:26Z",
+    "review_notes_zh": [
+      "審查通過：/bff/incidents IncidentCase rebaseline 實作正確",
+      "list 回應含 data/items/page_info.total/surface meta/degradation meta",
+      "evidence field 完整保留 (binding_id, deployment_stage, deployment_plan_id, capital_pool_id, persona_capital_binding_id, artifact_id, artifact_version, runtime_id, trace_id)",
+      "affected_pool_id alias filtering 正確 (capital_pool_id",
+      "affected_pool_id)",
+      "detail/action fail-closed DOWNSTREAM_UNAVAILABLE 邏輯正確",
+      "create overlay evidence field 保留並冪等",
+      "contract tests 3 passed; regression tests 4 passed"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T06:51:26Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "524783f49e8fbb7fb722c6dca269cfb4af0824ce",
+      "commit_subject": "INC-001-RB /bff/incidents IncidentCase rebaseline contract tests and evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "- test_inc001_rebaseline_incidents_contract.py": "3 passed",
+        "- test_bff_governance_runtime_risk_audit_contract.py": "4 passed (regression)",
+        "- test_pkt012_alerts_rail_contract.py + test_bff_runtimes_contract.py": "6 passed",
+        "- execute_plans seeded detail": "1 passed; Pack C live smoke/detail: 2 passed",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "INC-001-RB",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 80,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "INC-001-RB",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T06:23:30Z",
+      "resolved_at": "2026-05-16T06:25:18Z"
+    },
+    {
+      "task_id": "INC-001-RB",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "INC-001-RB ready for review. Implemented /bff/incidents IncidentCase rebaseline: list data/items + total + surface/degradation meta, canonical IncidentCase evidence-field preservation, affected_pool_id alias filtering, detail/action fail-closed DOWNSTREAM_UNAVAILABLE when incident backend is missing, and create overlay evidence-field preservation. Evidence: support/evidence/INC-001-RB/README.md. Verification: pytest test_inc001_rebaseline_incidents_contract.py 3 passed; test_bff_governance_runtime_risk_audit_contract.py 4 passed; test_pkt012_alerts_rail_contract.py + test_bff_runtimes_contract.py 6 passed; execute_plans seeded detail 1 passed; Pack C live smoke/detail 2 passed.",
+      "status": "done",
+      "created_at": "2026-05-16T06:36:30Z",
+      "resolved_at": "2026-05-16T06:43:51Z"
+    },
+    {
+      "task_id": "INC-001-RB",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: /bff/incidents IncidentCase rebaseline passes all contract checks. list data/items+total+surface/degradation meta correct; canonical evidence fields preserved; affected_pool_id alias filter works; fail-closed 503 DOWNSTREAM_UNAVAILABLE when backend missing; create overlay idempotent and evidence-preserving. Tests: 3+4=7 passed. Returning to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-16T06:43:51Z",
+      "resolved_at": "2026-05-16T06:47:03Z"
+    },
+    {
+      "task_id": "INC-001-RB",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Ownership updated",
+      "status": "done",
+      "created_at": "2026-05-16T06:47:03Z",
+      "resolved_at": "2026-05-16T06:47:46Z"
+    },
+    {
+      "task_id": "INC-001-RB",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Restoring review_approved state after assign inadvertently downgraded it. Prior approval evidence present in review_notes_zh.",
+      "status": "done",
+      "created_at": "2026-05-16T06:50:43Z",
+      "resolved_at": "2026-05-16T06:51:27Z"
+    }
+  ],
+  "blockers": []
+}

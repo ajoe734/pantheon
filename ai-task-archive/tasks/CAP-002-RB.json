@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "CAP-002-RB",
+  "archived_at": "2026-05-16T06:30:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "CAP-002-RB",
+    "title": "Pool/runtime compatibility checks (rebaseline)",
+    "summary_zh": null,
+    "phase": "Sprint 2 / EPIC-GOV-DEPLOY",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Finalized CAP-002-RB with task-scoped commit ee088a2b. Claude review approved; evidence updated in support/evidence/CAP-002-RB/verification.md. Verification: python3 -m py_compile services/deployment/models.py services/deployment/service.py services/deployment/test_service.py; python3 -m pytest -q services/deployment/test_service.py (21 passed in 25.95s).",
+    "last_update": "2026-05-16T06:30:13Z",
+    "review_notes_zh": [
+      "審查通過：POST /api/deployment/plans/compatibility-check 讀取 CapitalPool/PersonaCapitalBinding/RuntimeBinding 快照均為唯讀，無任何寫入；response model 欄位完整匹配 contract（pool 狀態、persona 範疇、single-runtime 計數）；persona scope 優先選最高 scope binding；exactly-1 active binding 正確回傳 warning 而非 error；缺少 sponsor_persona_id 或 target_stage 非 paper/canary/live 均回傳 ok=false；3 個 CAP-002-RB 測試全部通過，既有 18 個測試未受影響"
+    ],
+    "review_file": "support/reviews/CAP-002-RB-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T06:30:13Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "ee088a2bd1d0061ba5a0a72f092077986251381e",
+      "commit_subject": "CAP-002-RB add pool runtime compatibility preflight",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "CAP-002-RB",
+        "Reviewer": "Claude",
+        "Verification": "python3 -m py_compile services/deployment/models.py services/deployment/service.py services/deployment/test_service.py; python3 -m pytest -q services/deployment/test_service.py (21 passed)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 64,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "CAP-002-RB",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T05:59:38Z",
+      "resolved_at": "2026-05-16T06:01:20Z"
+    },
+    {
+      "task_id": "CAP-002-RB",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented pool/runtime compatibility preflight: POST /api/deployment/plans/compatibility-check, read-only PoolRuntimeCompatibilityService, response models, docs, tests, and support/evidence/CAP-002-RB/verification.md. Verification: python3 -m py_compile services/deployment/models.py services/deployment/service.py services/deployment/test_service.py; python3 -m pytest -q services/deployment/test_service.py (21 passed).",
+      "status": "done",
+      "created_at": "2026-05-16T06:10:33Z",
+      "resolved_at": "2026-05-16T06:19:24Z"
+    },
+    {
+      "task_id": "CAP-002-RB",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: PoolRuntimeCompatibilityService is correctly read-only; response fields and persona scope selection match contract; single-runtime semantics correct (1 active → warning, 2+ → error); 3 CAP-002-RB tests pass, 21 total pass. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T06:19:24Z",
+      "resolved_at": "2026-05-16T06:30:13Z"
+    }
+  ],
+  "blockers": []
+}

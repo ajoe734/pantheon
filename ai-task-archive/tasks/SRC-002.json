@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "SRC-002",
+  "archived_at": "2026-05-16T07:19:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SRC-002",
+    "title": "paper ingest adapter skeleton",
+    "summary_zh": null,
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Finalized SRC-002 after Claude review approval. Task commit d59a6ecd adds OpenAlexPaperIngestAdapter, tests, docs, and evidence. Verification: py_compile connector files passed; paper adapter pytest 3 passed; connector/provider regression 4 passed; services/source_ingestion 73 passed.",
+    "last_update": "2026-05-16T07:19:29Z",
+    "review_notes_zh": [
+      "審查通過。OpenAlexPaperIngestAdapter 構造時邊界驗證正確；execution-route 拒絕完整覆蓋 lean/broker/runtime/live；normalization 保留 DOI/authors/event_time/available_time/venue/abstract/governance 全欄位；provider catalog swap 與 __init__ export 正確；73 tests pass。"
+    ],
+    "review_file": "support/evidence/SRC-002/review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T07:19:29Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "d59a6ecdaf6ded9f68c5e523671ae01652467384",
+      "commit_subject": "SRC-002 add OpenAlex paper ingest adapter",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SRC-002",
+        "Reviewer": "Claude",
+        "- python3 -m pytest -q services/source_ingestion/tests/test_connector_framework.py services/source_ingestion/test_service.py": ":test_registry_exposes_connector_status_policy_and_provider_examples (4 passed)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 81,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 10,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SRC-002",
+      "from": "Copilot",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Copilot is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-16T01:09:44Z",
+      "resolved_at": "2026-05-16T01:10:04Z"
+    },
+    {
+      "task_id": "SRC-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T06:40:29Z",
+      "resolved_at": "2026-05-16T06:41:43Z"
+    },
+    {
+      "task_id": "SRC-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "SRC-002 ready for review. Implemented OpenAlex paper ingest adapter skeleton: bounded connector/fetch policy, pure OpenAlex work-to-SourceRecord normalization preserving DOI/authors/publication/event/available time/license/access/governance metadata, execution-route denial, provider catalog export, and source connector doc note. Evidence: support/evidence/SRC-002/README.md. Verification: py_compile paper/examples/__init__; pytest test_paper_ingest_adapter.py 3 passed; pytest connector_framework + registry provider example 4 passed; pytest services/source_ingestion 68 passed. Note: __init__.py/examples.py also contain adjacent SRC-003 repo allowlist hunks already present; SRC-002-owned hunks are OpenAlexPaperIngestAdapter export/catalog swap.",
+      "status": "done",
+      "created_at": "2026-05-16T06:55:59Z",
+      "resolved_at": "2026-05-16T07:09:38Z"
+    },
+    {
+      "task_id": "SRC-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: OpenAlex paper adapter skeleton is correctly bounded, execution-route denial is complete, SourceRecord normalization preserves all required metadata, and 73 source_ingestion tests pass. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T07:09:38Z",
+      "resolved_at": "2026-05-16T07:19:30Z"
+    }
+  ],
+  "blockers": []
+}

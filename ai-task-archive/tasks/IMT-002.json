@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "IMT-002",
+  "archived_at": "2026-05-16T10:07:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "IMT-002",
+    "title": "PreferenceExample / CorrectionTrace schema",
+    "summary_zh": null,
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "IMT-002 finalized after Claude review approval. Implementation commit 908914b6 and closeout review artifact commit 609e04be are task-scoped. Evidence: support/evidence/IMT-002/README.md; review: support/reviews/IMT-002-review-claude.md. Verification rerun: py_compile preference models/tests; json.tool preference_example and correction_trace schemas; pytest services/research/imitation/test_preference_models.py -q (16 passed); pytest services/research/imitation -q (40 passed).",
+    "last_update": "2026-05-16T10:07:48Z",
+    "review_notes_zh": [
+      "審查通過：PreferenceExample / CorrectionTrace Draft-7 schema 與 Python model 正確實作所有 governance invariant。actor_role 限 operator/approver；promotion_state 限 candidate/paper；governed linkage anyOf 強制執行；approve/edit/reject pair semantics 在 schema allOf 和 model 雙層防守；CorrectionTrace non-noop 與 operations 非空在 schema 和 model 均強制；cross-object lineage 六項欄位驗證完整；16 focused + 40 regression test 全通過；additionalProperties: false 無未知欄位洩漏。scope boundary 乾淨，無 registry 寫入、無 runtime 授權、無 capital binding。"
+    ],
+    "review_file": "support/reviews/IMT-002-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T10:07:48Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "609e04bee567256e15a6f65c90933307155bf33d",
+      "commit_subject": "IMT-002 add review closeout artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "IMT-002",
+        "Reviewer": "Claude",
+        "Verification": "python3 -m py_compile services/research/imitation/preference_models.py services/research/imitation/test_preference_models.py; python3 -m json.tool services/research/imitation/preference_example.schema.json; python3 -m json.tool services/research/imitation/correction_trace.schema.json; python3 -m pytest services/research/imitation/test_preference_models.py -q (16 passed); python3 -m pytest services/research/imitation -q (40 passed)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 71,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 10,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "IMT-002",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T09:35:47Z",
+      "resolved_at": "2026-05-16T09:36:08Z"
+    },
+    {
+      "task_id": "IMT-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T09:36:08Z",
+      "resolved_at": "2026-05-16T09:40:08Z"
+    },
+    {
+      "task_id": "IMT-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "IMT-002 ready for review. Added PreferenceExample and CorrectionTrace Draft-7 schemas, schema-backed frozen models, package exports, focused tests, and evidence packet. Commit: 3374f9c1. Evidence: support/evidence/IMT-002/README.md. Verification: py_compile preference_models/test_preference_models; json.tool both schemas; pytest services/research/imitation/test_preference_models.py -q (16 passed); pytest services/research/imitation -q (40 passed); git diff --cached --check.",
+      "status": "done",
+      "created_at": "2026-05-16T09:56:12Z",
+      "resolved_at": "2026-05-16T09:57:19Z"
+    },
+    {
+      "task_id": "IMT-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "IMT-002 ready for review. Added PreferenceExample and CorrectionTrace Draft-7 schemas, schema-backed frozen models, package exports, focused tests, and evidence packet. Commit: 908914b6. Evidence: support/evidence/IMT-002/README.md. Verification: py_compile preference_models/test_preference_models; json.tool both schemas; pytest services/research/imitation/test_preference_models.py -q (16 passed); pytest services/research/imitation -q (40 passed); git diff --cached --check.",
+      "status": "done",
+      "created_at": "2026-05-16T09:57:19Z",
+      "resolved_at": "2026-05-16T10:02:43Z"
+    },
+    {
+      "task_id": "IMT-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all governance invariants enforced at schema and model levels, 16/16 focused tests and 40/40 regression tests pass, scope boundary clean. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T10:02:43Z",
+      "resolved_at": "2026-05-16T10:07:49Z"
+    }
+  ],
+  "blockers": []
+}

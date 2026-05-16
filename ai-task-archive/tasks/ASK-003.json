@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "task_id": "ASK-003",
+  "archived_at": "2026-05-16T10:19:53Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASK-003",
+    "title": "ask / committee session lifecycle",
+    "summary_zh": null,
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete. Reviewer patch (163f041f) fixed SSE resync contract drift and cross-mode session isolation. Verified: py_compile OK; 29 ASK-003 tests passed; 24 ASK-001 regression tests passed; 22 SSE+Agora extended tests passed. Evidence updated at support/evidence/ASK-003/README.md. Closeout commit: efdeed96.",
+    "last_update": "2026-05-16T10:19:53Z",
+    "review_notes_zh": [
+      "審查通過：ASK-003 lifecycle routes verified; reviewer patch fixed ask-channel SSE resync contract/test drift and enforced quick_ask vs committee mode isolation on detail/open/close paths. Verification: ASK-003 29 passed; ASK-001 24 passed; Agora extended + SSE substrate 22 passed; py_compile OK. Review patch commit 163f041f."
+    ],
+    "review_file": "support/reviews/ASK-003-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T10:19:53Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "efdeed967f3a3c6c419afb789a4f5708b2faa8d8",
+      "commit_subject": "ASK-003 closeout: update evidence with reviewer patch notes and final verification",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "ASK-003",
+        "Reviewer": "Codex",
+        "Verification": "py_compile OK; 29+24+22 = 75 tests passed across ASK-003/ASK-001/SSE+Agora suites."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 71,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 13,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASK-003",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "ASK-003 implementation complete. Routes: GET/POST /bff/agora/committee/sessions, GET detail, POST /open, POST /close. open_committee_session()/close_committee_session() in ReadSurfaceStore. 26 contract tests pass; 22 ASK-001 regression tests pass. Bundled ASK-001 idempotency fix (_ASK_SESSIONS_IDEMPOTENCY aliased to shared store). Commit: a24a9b49. Evidence: support/evidence/ASK-003/README.md.",
+      "status": "done",
+      "created_at": "2026-05-16T09:52:08Z",
+      "resolved_at": "2026-05-16T10:13:10Z"
+    },
+    {
+      "task_id": "ASK-003",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review approved after reviewer patch commit 163f041f. ASK-003 lifecycle verified; SSE resync contract aligned; quick_ask/committee mode isolation covered. Owner Claude2 should finalize closeout to done.",
+      "status": "done",
+      "created_at": "2026-05-16T10:13:10Z",
+      "resolved_at": "2026-05-16T10:19:54Z"
+    }
+  ],
+  "blockers": []
+}

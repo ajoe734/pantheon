@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "P0-PER-001",
+  "archived_at": "2026-05-16T05:43:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-PER-001",
+    "title": "/bff/personas list/detail",
+    "summary_zh": null,
+    "phase": "Sprint 1 / EPIC-BFF-P0",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete: 16 persona contract tests pass, execute-plans live wiring tests pass. Evidence and review artifacts committed. No code patch needed — implementation was already present. Finalized as Claude2 after ownership reassignment from Codex2.",
+    "last_update": "2026-05-16T05:43:09Z",
+    "review_notes_zh": [
+      "審查通過：GET /bff/personas 回傳正確 data/items/page_info/meta 信封；_project_persona_dto DTO 欄位完整（id/name/owner/updatedAt/state/risk/archetype/routedStrategies/successRate/labelKey/lifecycleStatus）；OBJECT_NOT_FOUND 404 行為確認；overlay merge 正確；16 個合約測試全過；execute-plans live wiring persona 相關測試全過",
+      "跨任務附註：seeded detail matrix 測試 1 warning 為 read_store.py:73 pre-existing datetime.utcnow() DeprecationWarning，非 P0-PER-001 引入，不影響本次審查通過"
+    ],
+    "review_file": "support/reviews/P0-PER-001-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T05:43:09Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "edbaaabe807db245ab4f8ba0b4db1dff76ba04a5",
+      "commit_subject": "P0-PER-001 closeout — /bff/personas list/detail",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "P0-PER-001",
+        "Reviewer": "Claude",
+        "- execute-plans live wiring": "seeded_detail_paths_use_read_model_dtos 1 passed, 1 warning (pre-existing datetime.utcnow DeprecationWarning in read_store.py:73, not introduced by this task)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 65,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 4,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-PER-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: /bff/personas list/detail verified with evidence at support/evidence/P0-PER-001/acceptance.md. Focused tests passed: test_bff_strategy_persona_contract.py -q (16 passed) and final live wiring OpenAPI/list-detail selection (1 passed, 7 deselected).",
+      "status": "done",
+      "created_at": "2026-05-15T23:26:02Z",
+      "resolved_at": "2026-05-16T00:08:48Z"
+    },
+    {
+      "task_id": "P0-PER-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: /bff/personas list/detail implementation correct. DTO projection, pagination envelope, read-surface meta, and OBJECT_NOT_FOUND behavior all verified. 16 contract tests pass. Seeded detail matrix pass. Returning to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T00:08:48Z",
+      "resolved_at": "2026-05-16T00:18:50Z"
+    },
+    {
+      "task_id": "P0-PER-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned ownership from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-05-16T00:18:51Z",
+      "resolved_at": "2026-05-16T05:43:10Z"
+    }
+  ],
+  "blockers": []
+}

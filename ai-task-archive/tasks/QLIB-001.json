@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "QLIB-001",
+  "archived_at": "2026-05-16T06:13:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "QLIB-001",
+    "title": "Qlib adapter skeleton",
+    "summary_zh": null,
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete: 33 unit tests pass, smoke assertions OK, docs corrected (stale Copilot reviewer replaced with Claude, test count updated to 33). Task-scoped commit 6f2f2d4f staged to bff-luv-fe-006-dev-deploy.",
+    "last_update": "2026-05-16T06:13:28Z",
+    "review_notes_zh": [
+      "審查通過：GovernedQlibDataAdapter 正確執行 OHLCV + source_dataset_refs 治理邊界；33 個單元測試在 Reviewer 環境全過；smoke test assertions OK；artifact_state=draft、deployment_stage=none、registry_write_authority=registry_service_only 語義全正確；ActivationReadyGate 環境變數門控正確（worker exitcode=2 已驗）；preflight 模組無探針時 fail-closed",
+      "跨任務附註：integrations/qlib/integration.md 仍顯示 Reviewer: Copilot 為 reassignment 前遺留，不影響本次審查通過"
+    ],
+    "review_file": "support/reviews/QLIB-001-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T06:13:28Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "6f2f2d4f62e49182722bb9200b0b320437e7d890",
+      "commit_subject": "QLIB-001 closeout: Qlib adapter skeleton finalized",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "QLIB-001",
+        "Reviewer": "Claude",
+        "assertions": "OK  |  artifact_state: draft  |  deployment_stage: none"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 66,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 6,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "QLIB-001",
+      "from": "Gemini",
+      "to": "Copilot",
+      "message": "Qlib adapter skeleton re-verified for Sprint 5. All 33 unit tests and smoke tests pass. Documentation in integrations/qlib/ updated with latest verification results.",
+      "status": "done",
+      "created_at": "2026-05-16T00:57:21Z",
+      "resolved_at": "2026-05-16T01:04:24Z"
+    },
+    {
+      "task_id": "QLIB-001",
+      "from": "Copilot",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Copilot to Claude after repeated Copilot quota terminal: 402 You have no quota",
+      "status": "done",
+      "created_at": "2026-05-16T01:04:24Z",
+      "resolved_at": "2026-05-16T01:06:54Z"
+    },
+    {
+      "task_id": "QLIB-001",
+      "from": "Claude",
+      "to": "Gemini",
+      "message": "Review approved: Qlib adapter skeleton correct. 33 unit tests pass in reviewer env. Smoke test OK. Governance semantics verified: draft state, none stage, registry_write_authority=registry_service_only, fail-closed worker gate. Returning to Gemini for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T01:06:54Z",
+      "resolved_at": "2026-05-16T01:22:13Z"
+    },
+    {
+      "task_id": "QLIB-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned ownership from Gemini to Claude2 after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-05-16T01:22:13Z",
+      "resolved_at": "2026-05-16T06:13:29Z"
+    }
+  ],
+  "blockers": []
+}

@@ -83,6 +83,40 @@ def load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def portable_ref(path: Path | str) -> str:
+    artifact_path = Path(path)
+    resolved = artifact_path.resolve() if artifact_path.is_absolute() else (ROOT / artifact_path).resolve()
+    try:
+        return resolved.relative_to(ROOT).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def path_ref_matches(candidate: Any, expected_path: Path | str) -> bool:
+    candidate_ref = str(candidate or "").strip()
+    if not candidate_ref:
+        return False
+
+    expected = Path(expected_path)
+    expected_refs: set[str] = {
+        str(expected_path),
+        expected.as_posix(),
+        portable_ref(expected),
+    }
+    try:
+        expected_refs.add(str(expected.resolve()))
+    except OSError:
+        pass
+
+    try:
+        candidate_path = Path(candidate_ref)
+        normalized_candidate = str(candidate_path.resolve()) if candidate_path.is_absolute() else portable_ref(candidate_path)
+    except OSError:
+        normalized_candidate = candidate_ref
+
+    return candidate_ref in expected_refs or normalized_candidate in expected_refs
+
+
 GOVERNED_PROVIDER_SPECS = (
     GovernedProviderSpec(
         key="ibkr",
@@ -112,6 +146,31 @@ GOVERNED_PROVIDER_SPECS = (
         secret_name_keys=("TEJ_API_KEY_SECRET_NAME",),
         role="Taiwan research-grade vendor",
     ),
+)
+
+CANARY_HUMAN_GATE_REQUIRED_FIELDS = (
+    "promotion_gate_decision_id",
+    "human_gate_packet_ref",
+    "broker_sandbox_smoke_ref",
+    "risk_owner_approval_ref",
+    "operator_approval_ref",
+    "persona_capital_binding_id",
+    "allowed_deployment_scope",
+    "capital_scale_pct",
+    "gross_scale_pct",
+)
+CANARY_HUMAN_GATE_ALLOWED_SCOPES = {"canary", "live"}
+SHIOAJI_SANDBOX_EVIDENCE_SCHEMA_VERSION = "shioaji_sandbox_evidence_packet.v1"
+SHIOAJI_SANDBOX_REQUIRED_ACCEPTANCE_CHECK_NAMES = (
+    "broker_is_shioaji",
+    "environment_is_sandbox",
+    "place_result_recorded",
+    "cancel_result_recorded",
+    "readback_after_cancel_recorded",
+    "reconcile_passed",
+    "live_broker_fail_closed",
+    "capital_binding_not_enabled",
+    "no_secret_material_persisted",
 )
 
 
@@ -184,6 +243,202 @@ def parse_float(env_map: dict[str, str], key: str, *, default: float | None = No
 
 def normalize_token(value: str | None) -> str:
     return str(value or "").strip().lower().replace(" ", "").replace("_", "").replace("-", "").replace("/", "")
+
+
+def nested_mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def optional_float(value: Any) -> float | None:
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def promotion_gate_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    metadata = nested_mapping(plan.get("metadata"))
+    for candidate in (
+        nested_mapping(plan.get("promotion_gate")),
+        nested_mapping(plan.get("activation_gate")),
+        nested_mapping(metadata.get("promotion_gate")),
+        nested_mapping(metadata.get("activation_gate")),
+    ):
+        if candidate:
+            return candidate
+    return {}
+
+
+def evaluate_canary_human_gate_plan(plan: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
+    gate = promotion_gate_from_plan(plan)
+    scale = nested_mapping(plan.get("scale"))
+    rollback = nested_mapping(plan.get("rollback"))
+    failures: list[str] = []
+
+    if plan.get("target_stage") != "canary":
+        failures.append(f"target_stage={plan.get('target_stage') or '<missing>'}")
+
+    plan_capital_scale = optional_float(scale.get("capital_scale_pct"))
+    plan_gross_scale = optional_float(scale.get("gross_scale_pct"))
+    if plan_capital_scale is None or not (0 < plan_capital_scale <= 5):
+        failures.append("plan.scale.capital_scale_pct must be > 0 and <= 5")
+    if plan_gross_scale is None or not (0 < plan_gross_scale <= 25):
+        failures.append("plan.scale.gross_scale_pct must be > 0 and <= 25")
+
+    if str(rollback.get("action_type") or "") != "pause_then_replace":
+        failures.append("rollback.action_type must be pause_then_replace")
+
+    missing = [field for field in CANARY_HUMAN_GATE_REQUIRED_FIELDS if not str(gate.get(field) or "").strip()]
+    if missing:
+        failures.append("missing promotion gate refs: " + ", ".join(missing))
+
+    allowed_scope = str(gate.get("allowed_deployment_scope") or "").strip().lower()
+    if allowed_scope and allowed_scope not in CANARY_HUMAN_GATE_ALLOWED_SCOPES:
+        failures.append("allowed_deployment_scope must permit canary")
+
+    gate_capital_scale = optional_float(gate.get("capital_scale_pct"))
+    gate_gross_scale = optional_float(gate.get("gross_scale_pct"))
+    if gate_capital_scale is None or not (0 < gate_capital_scale <= 5):
+        failures.append("promotion_gate.capital_scale_pct must be > 0 and <= 5")
+    if gate_gross_scale is None or not (0 < gate_gross_scale <= 25):
+        failures.append("promotion_gate.gross_scale_pct must be > 0 and <= 25")
+    if (
+        plan_capital_scale is not None
+        and gate_capital_scale is not None
+        and plan_capital_scale != gate_capital_scale
+    ):
+        failures.append("promotion_gate.capital_scale_pct must match plan scale")
+    if (
+        plan_gross_scale is not None
+        and gate_gross_scale is not None
+        and plan_gross_scale != gate_gross_scale
+    ):
+        failures.append("promotion_gate.gross_scale_pct must match plan scale")
+
+    if failures:
+        return False, "; ".join(failures), gate
+    return (
+        True,
+        "canary human gate carries explicit human-gate, broker-smoke, risk-owner, operator, capital-binding, and policy-scale refs",
+        gate,
+    )
+
+
+def evaluate_shioaji_sandbox_evidence_packet(
+    evidence_packet: dict[str, Any] | None,
+    *,
+    evidence_packet_path: Path | None,
+    broker_smoke_summary_path: Path | None,
+) -> tuple[bool, str, dict[str, Any]]:
+    if evidence_packet is None:
+        return (
+            False,
+            "Shioaji sandbox evidence packet is required before a canary human gate packet can be ready.",
+            {},
+        )
+
+    readiness_inputs = nested_mapping(evidence_packet.get("canary_readiness_inputs"))
+    fail_closed = nested_mapping(evidence_packet.get("fail_closed_posture"))
+    live_gate = nested_mapping(fail_closed.get("live_gate"))
+    no_real_capital = nested_mapping(fail_closed.get("no_real_capital"))
+    raw_acceptance_checks = evidence_packet.get("acceptance_checks")
+    acceptance_checks = raw_acceptance_checks if isinstance(raw_acceptance_checks, list) else []
+    ooda_packet = nested_mapping(evidence_packet.get("ooda_packet"))
+    ooda_packet_status = ooda_packet.get("status")
+    failures: list[str] = []
+
+    if evidence_packet.get("schema_version") != SHIOAJI_SANDBOX_EVIDENCE_SCHEMA_VERSION:
+        failures.append("schema_version must be shioaji_sandbox_evidence_packet.v1")
+    if evidence_packet.get("status") != "passed":
+        failures.append(f"status={evidence_packet.get('status') or '<missing>'}")
+    if evidence_packet.get("broker") != "shioaji" or normalize_token(evidence_packet.get("provider")) != normalize_token("Shioaji"):
+        failures.append("broker/provider must identify Shioaji")
+    if evidence_packet.get("environment") != "sandbox":
+        failures.append("environment must be sandbox")
+    if evidence_packet.get("production_live_enabled") is not False:
+        failures.append("production_live_enabled must be false")
+    if evidence_packet.get("capital_binding_enabled") is not False:
+        failures.append("capital_binding_enabled must be false")
+    if evidence_packet.get("human_gate_required") is not True:
+        failures.append("human_gate_required must be true")
+    if live_gate.get("status") != "rejected" or nested_mapping(live_gate.get("response")).get("error_code") != "SHIOAJI_LIVE_DISABLED":
+        failures.append("live gate must reject with SHIOAJI_LIVE_DISABLED")
+    if no_real_capital.get("real_capital_used") is not False or no_real_capital.get("production_live_order_submitted") is not False:
+        failures.append("no_real_capital must prove no real capital and no production live order")
+    if no_real_capital.get("real_capital_reserved") not in {False, None}:
+        failures.append("no_real_capital must not reserve real capital")
+    if not isinstance(raw_acceptance_checks, list):
+        failures.append("acceptance_checks must be a non-empty list")
+    elif not acceptance_checks:
+        failures.append("acceptance_checks must not be empty")
+    else:
+        checks_by_name: dict[str, dict[str, Any]] = {}
+        failing_checks: list[str] = []
+        unnamed_check_indexes: list[str] = []
+        for index, item in enumerate(acceptance_checks):
+            check_item = nested_mapping(item)
+            check_name = str(check_item.get("name") or "").strip()
+            if check_name:
+                checks_by_name[check_name] = check_item
+            else:
+                unnamed_check_indexes.append(str(index))
+            if check_item.get("status") != "pass":
+                failing_checks.append(check_name or f"<unnamed:{index}>")
+
+        missing_checks = [
+            name
+            for name in SHIOAJI_SANDBOX_REQUIRED_ACCEPTANCE_CHECK_NAMES
+            if name not in checks_by_name
+        ]
+        if missing_checks:
+            failures.append("missing Shioaji evidence acceptance checks: " + ", ".join(missing_checks))
+        if unnamed_check_indexes:
+            failures.append("acceptance_checks entries missing name at indexes: " + ", ".join(unnamed_check_indexes))
+        if failing_checks:
+            failures.append("all Shioaji evidence acceptance checks must pass: " + ", ".join(failing_checks))
+    if evidence_packet.get("ooda_packet_validation_errors"):
+        failures.append("OODA packet validation errors must be empty")
+    if ooda_packet_status != "closed":
+        failures.append(f"OODA packet status must be closed, got {ooda_packet_status or '<missing>'}")
+
+    if readiness_inputs.get("human_gate_required") is not True:
+        failures.append("canary_readiness_inputs.human_gate_required must be true")
+    if readiness_inputs.get("risk_owner_approval_required") is not True:
+        failures.append("canary_readiness_inputs.risk_owner_approval_required must be true")
+    if readiness_inputs.get("operator_approval_required") is not True:
+        failures.append("canary_readiness_inputs.operator_approval_required must be true")
+    if broker_smoke_summary_path and not path_ref_matches(
+        readiness_inputs.get("broker_sandbox_smoke_ref"),
+        broker_smoke_summary_path,
+    ):
+        failures.append("canary_readiness_inputs.broker_sandbox_smoke_ref must match the consumed broker smoke summary")
+    if evidence_packet_path and not path_ref_matches(
+        readiness_inputs.get("broker_sandbox_evidence_packet_ref"),
+        evidence_packet_path,
+    ):
+        failures.append("canary_readiness_inputs.broker_sandbox_evidence_packet_ref must match the consumed evidence packet")
+
+    projection = {
+        "path": str(evidence_packet_path) if evidence_packet_path else None,
+        "status": evidence_packet.get("status"),
+        "provider": evidence_packet.get("provider"),
+        "environment": evidence_packet.get("environment"),
+        "account_status": evidence_packet.get("account_status"),
+        "proof_boundary": evidence_packet.get("proof_boundary"),
+        "broker_sandbox_smoke_ref": readiness_inputs.get("broker_sandbox_smoke_ref"),
+        "broker_sandbox_evidence_packet_ref": readiness_inputs.get("broker_sandbox_evidence_packet_ref"),
+        "ooda_packet_status": ooda_packet_status,
+    }
+
+    if failures:
+        return False, "; ".join(failures), projection
+    return (
+        True,
+        "Shioaji sandbox evidence packet consumed with required passed checks, closed OODA packet, OODA validation, and fail-closed canary readiness inputs.",
+        projection,
+    )
 
 
 def evaluate_provider_matrix(env_map: dict[str, str]) -> list[ChecklistItem]:
@@ -755,11 +1010,13 @@ def command_emit_canary_plan(args: argparse.Namespace) -> int:
 
 def build_human_gate_packet(
     *,
+    task_id: str = "APP-003-OPENCLAW-CLOSEOUT-001",
     checklist_path: Path,
     datasource_summary_path: Path,
     plan_path: Path,
     drill_summary_path: Path,
     broker_smoke_summary_path: Path | None,
+    shioaji_evidence_packet_path: Path | None,
     dual_vm_evidence_dir: Path | None,
     event_trace_status: str,
     event_trace_note: str,
@@ -769,18 +1026,14 @@ def build_human_gate_packet(
     plan = load_json(plan_path)
     drill_summary = load_json(drill_summary_path)
     broker_smoke_summary = load_json(broker_smoke_summary_path) if broker_smoke_summary_path else None
+    shioaji_evidence_packet = load_json(shioaji_evidence_packet_path) if shioaji_evidence_packet_path else None
 
     checklist_ok = checklist.get("status") == "pass"
     datasource_ok = datasource_summary.get("status") == "pass"
-    plan_ok = (
-        plan.get("target_stage") == "canary"
-        and float((plan.get("scale") or {}).get("capital_scale_pct") or 0.0) <= 5.0
-        and float((plan.get("scale") or {}).get("gross_scale_pct") or 0.0) <= 25.0
-        and str((plan.get("rollback") or {}).get("action_type") or "") == "pause_then_replace"
-    )
+    plan_ok, plan_detail, promotion_gate = evaluate_canary_human_gate_plan(plan)
     drill_ok = drill_summary.get("status") == "executed"
-    broker_smoke_ok = True
-    broker_smoke_detail = "No broker smoke summary was provided; retaining backward-compatible packet emission."
+    broker_smoke_ok = False
+    broker_smoke_detail = "Shioaji broker sandbox smoke summary is required before a canary human gate packet can be ready."
     if broker_smoke_summary is not None:
         no_real_capital = broker_smoke_summary.get("no_real_capital") or {}
         production_live = broker_smoke_summary.get("production_live") or {}
@@ -804,12 +1057,24 @@ def build_human_gate_packet(
             if broker_smoke_ok
             else "Shioaji broker sandbox smoke summary is missing pass status, reconciliation, no-real-capital, or live-disabled evidence."
         )
-    packet_ready = checklist_ok and datasource_ok and plan_ok and drill_ok and broker_smoke_ok
+    shioaji_evidence_ok, shioaji_evidence_detail, shioaji_evidence_projection = (
+        evaluate_shioaji_sandbox_evidence_packet(
+            shioaji_evidence_packet,
+            evidence_packet_path=shioaji_evidence_packet_path,
+            broker_smoke_summary_path=broker_smoke_summary_path,
+        )
+    )
+    packet_ready = checklist_ok and datasource_ok and plan_ok and drill_ok and broker_smoke_ok and shioaji_evidence_ok
     acceptance_checks = [
         {
             "name": "repo_authoritative_operator_packet",
-            "status": "pass" if checklist_ok and datasource_ok and plan_ok and drill_ok else "fail",
-            "detail": "Checklist, datasource smoke, canary plan, and rollback drill evidence are all present and internally consistent.",
+            "status": "pass" if checklist_ok and datasource_ok and drill_ok else "fail",
+            "detail": "Checklist, datasource smoke, and rollback drill evidence are present and internally consistent.",
+        },
+        {
+            "name": "canary_activation_gate_refs_present",
+            "status": "pass" if plan_ok else "fail",
+            "detail": plan_detail,
         },
         {
             "name": "event_trace_gap_dispositioned",
@@ -822,17 +1087,23 @@ def build_human_gate_packet(
             "detail": "Human gate input bundle is replay-clean at the artifact level; EP5 proof remains deferred.",
         },
     ]
-    if broker_smoke_summary_path is not None:
-        acceptance_checks.append(
-            {
-                "name": "broker_sandbox_smoke_consumed",
-                "status": "pass" if broker_smoke_ok else "fail",
-                "detail": broker_smoke_detail,
-            }
-        )
+    acceptance_checks.append(
+        {
+            "name": "broker_sandbox_smoke_consumed",
+            "status": "pass" if broker_smoke_ok else "fail",
+            "detail": broker_smoke_detail,
+        }
+    )
+    acceptance_checks.append(
+        {
+            "name": "shioaji_sandbox_evidence_packet_consumed",
+            "status": "pass" if shioaji_evidence_ok else "fail",
+            "detail": shioaji_evidence_detail,
+        }
+    )
 
     return {
-        "task_id": "APP-003-OPENCLAW-CLOSEOUT-001",
+        "task_id": task_id,
         "generated_at": iso_now(),
         "mode": "human_gate_packet",
         "status": "ready_for_review" if packet_ready else "incomplete",
@@ -859,6 +1130,17 @@ def build_human_gate_packet(
                 "capital_scale_pct": (plan.get("scale") or {}).get("capital_scale_pct"),
                 "gross_scale_pct": (plan.get("scale") or {}).get("gross_scale_pct"),
                 "rollback_action_type": (plan.get("rollback") or {}).get("action_type"),
+                "promotion_gate": {
+                    "promotion_gate_decision_id": promotion_gate.get("promotion_gate_decision_id"),
+                    "human_gate_packet_ref": promotion_gate.get("human_gate_packet_ref"),
+                    "broker_sandbox_smoke_ref": promotion_gate.get("broker_sandbox_smoke_ref"),
+                    "risk_owner_approval_ref": promotion_gate.get("risk_owner_approval_ref"),
+                    "operator_approval_ref": promotion_gate.get("operator_approval_ref"),
+                    "persona_capital_binding_id": promotion_gate.get("persona_capital_binding_id"),
+                    "allowed_deployment_scope": promotion_gate.get("allowed_deployment_scope"),
+                    "capital_scale_pct": promotion_gate.get("capital_scale_pct"),
+                    "gross_scale_pct": promotion_gate.get("gross_scale_pct"),
+                },
             },
             "rollback_drill": {
                 "path": str(drill_summary_path),
@@ -880,6 +1162,11 @@ def build_human_gate_packet(
                 else None,
                 "run_mode": broker_smoke_summary.get("run_mode") if broker_smoke_summary else None,
             },
+            "shioaji_sandbox_evidence_packet": shioaji_evidence_projection
+            or {
+                "path": str(shioaji_evidence_packet_path) if shioaji_evidence_packet_path else None,
+                "status": "not_provided",
+            },
             "dual_vm_evidence_dir": str(dual_vm_evidence_dir) if dual_vm_evidence_dir else None,
         },
         "event_trace_read_model": {
@@ -895,12 +1182,16 @@ def command_emit_human_gate_packet(args: argparse.Namespace) -> int:
     output_dir = make_output_dir(args.output_dir, "pantheon-ep5-human-gate-")
     dual_vm_evidence_dir = Path(args.dual_vm_evidence_dir) if args.dual_vm_evidence_dir else None
     packet = build_human_gate_packet(
+        task_id=getattr(args, "task_id", "APP-003-OPENCLAW-CLOSEOUT-001"),
         checklist_path=Path(args.checklist_json),
         datasource_summary_path=Path(args.datasource_summary_json),
         plan_path=Path(args.plan_json),
         drill_summary_path=Path(args.drill_summary_json),
         broker_smoke_summary_path=Path(args.broker_smoke_summary_json)
         if getattr(args, "broker_smoke_summary_json", None)
+        else None,
+        shioaji_evidence_packet_path=Path(args.shioaji_evidence_packet_json)
+        if getattr(args, "shioaji_evidence_packet_json", None)
         else None,
         dual_vm_evidence_dir=dual_vm_evidence_dir,
         event_trace_status=args.event_trace_status,
@@ -910,12 +1201,14 @@ def command_emit_human_gate_packet(args: argparse.Namespace) -> int:
     dump_json(
         output_dir / "summary.json",
         {
-            "task_id": "APP-003-OPENCLAW-CLOSEOUT-001",
+            "task_id": packet["task_id"],
             "generated_at": packet["generated_at"],
             "mode": "human_gate_packet",
             "status": packet["status"],
             "event_trace_status": packet["event_trace_read_model"]["status"],
             "proof_boundary": packet["proof_boundary"],
+            "broker_sandbox_smoke_status": packet["bundle"]["broker_sandbox_smoke"]["status"],
+            "shioaji_sandbox_evidence_packet_status": packet["bundle"]["shioaji_sandbox_evidence_packet"]["status"],
         },
     )
     print(json.dumps({"status": packet["status"], "output_dir": str(output_dir)}, ensure_ascii=False))
@@ -1143,11 +1436,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_smoke.set_defaults(func=command_run_datasource_smoke)
 
     p_packet = subparsers.add_parser("emit-human-gate-packet")
+    p_packet.add_argument("--task-id", default="APP-003-OPENCLAW-CLOSEOUT-001")
     p_packet.add_argument("--checklist-json", required=True)
     p_packet.add_argument("--datasource-summary-json", required=True)
     p_packet.add_argument("--plan-json", required=True)
     p_packet.add_argument("--drill-summary-json", required=True)
     p_packet.add_argument("--broker-smoke-summary-json", default=None)
+    p_packet.add_argument("--shioaji-evidence-packet-json", default=None)
     p_packet.add_argument("--dual-vm-evidence-dir", default=None)
     p_packet.add_argument("--event-trace-status", choices=("closed", "packetized"), required=True)
     p_packet.add_argument("--event-trace-note", required=True)

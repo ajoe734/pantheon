@@ -78,6 +78,22 @@ class ProposeRequest(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
+class ProposeFromIncidentRequest(BaseModel):
+    decision_id: str
+    incident_id: str
+    postmortem_id: Optional[str] = None
+    created_by_id: str = "evolution-controller-incident-postmortem"
+    created_by_role: str = "evolution_controller"
+    action_type: Optional[str] = None
+    target_type: str = "candidate_artifact"
+    target_id: Optional[str] = None
+    target_version: Optional[str] = None
+    target_stage: Optional[str] = None
+    rationale: Optional[str] = None
+    has_active_runtime: bool = False
+    metadata: Optional[Dict[str, Any]] = None
+
+
 # ---------------------------------------------------------------------------
 # Review / Approve / Reject / Execute / Cancel
 # ---------------------------------------------------------------------------
@@ -174,6 +190,40 @@ class DecisionResponse(BaseModel):
     execution_result: Optional[Dict[str, Any]]
     metadata: Optional[Dict[str, Any]]
     is_active: bool
+
+
+class ObservationWindowReportResponse(BaseModel):
+    decision_id: str
+    target_type: str
+    target_id: str
+    target_version: str
+    target_stage: Optional[str]
+    action_type: str
+    risk_level: str
+    decision_state: str
+    report_generated_at: str
+    observation_window_started_at: str
+    observation_window_ends_at: str
+    cooldown_started_at: str
+    cooldown_ends_at: str
+    observation_state: str
+    cooldown_state: str
+    active_until: str
+    active_blocking: bool
+    seconds_since_observation_start: int
+    seconds_until_observation_end: int
+    seconds_until_cooldown_end: int
+    convergence_status: str
+    approval_decision_id: Optional[str]
+    linked_incident_id: Optional[str]
+    linked_postmortem_id: Optional[str]
+    execution: Dict[str, Any]
+    followthrough_refs: List[Dict[str, Any]]
+    evidence_refs: List[Dict[str, Any]]
+    threshold_snapshots: List[Dict[str, Any]]
+    review_chain: List[Dict[str, Any]]
+    policy_refs: List[str]
+    notes: List[str]
 
 
 class BoundaryResponse(BaseModel):

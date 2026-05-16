@@ -1,0 +1,92 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "allocation_policy_artifact",
+  "title": "AllocationPolicyArtifact",
+  "description": "Canonical output of optimizer-svc multi-persona allocation synthesis for one capital pool and scope.",
+  "type": "object",
+  "required": [
+    "artifact_id",
+    "capital_pool_id",
+    "scope_ref",
+    "sponsor_persona_id",
+    "synthesis_method",
+    "target_weights",
+    "created_at",
+    "provenance_refs",
+    "conflict_resolution_log_id"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "artifact_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identifier for the produced allocation policy artifact."
+    },
+    "capital_pool_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Capital pool governed by this allocation policy."
+    },
+    "scope_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Deployment or universe scope for this artifact, such as paper, canary, live, or a universe reference."
+    },
+    "sponsor_persona_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Single explicit sponsor persona selected for this pool and scope."
+    },
+    "synthesis_method": {
+      "type": "string",
+      "enum": ["weighted_fusion", "committee_override", "single_proposal"],
+      "description": "Synthesis method that produced this artifact."
+    },
+    "target_weights": {
+      "type": "object",
+      "minProperties": 1,
+      "patternProperties": {
+        "^[A-Za-z0-9._:/-]+$": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": false,
+      "description": "Canonical target weight map for the optimizer to solve within. Semantic validation also requires the sum to be no greater than 1.0."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC ISO-8601 timestamp when the artifact was produced."
+    },
+    "constraints_bundle": {
+      "type": "object",
+      "description": "Constraint bundle supplied to the synthesis run, such as max weight, forbidden family, or environment controls."
+    },
+    "risk_budget": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Optional normalized risk budget supplied to the synthesis run."
+    },
+    "provenance_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "PersonaAllocationProposal ids that formed the artifact provenance."
+    },
+    "conflict_resolution_log_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ConflictResolutionLog id that explains veto, weighting, sponsor, and committee decisions."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Additional implementation metadata."
+    }
+  }
+}

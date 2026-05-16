@@ -1,0 +1,221 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/research/experiment-run/v1",
+  "title": "ExperimentRun",
+  "description": "Canonical research-orchestrator run contract. Runs preserve the StrategySpec, dataset, code, manifest, and trace bindings needed for CandidateArtifact lineage.",
+  "type": "object",
+  "required": [
+    "run_id",
+    "task_id",
+    "strategy_id",
+    "strategy_spec_version",
+    "backend_id",
+    "runtime_env",
+    "status",
+    "dataset_version_id",
+    "code_version",
+    "input_manifest_ref",
+    "artifact_refs",
+    "trace_id",
+    "created_at"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "strategy_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "strategy_spec_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "backend_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runtime_env": {
+      "type": "string",
+      "enum": [
+        "dev",
+        "sandbox",
+        "research"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "started_at": {
+      "$ref": "#/definitions/nullableDateTime"
+    },
+    "finished_at": {
+      "$ref": "#/definitions/nullableDateTime"
+    },
+    "dataset_version_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "code_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "input_manifest_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "output_manifest_ref": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "metric_bundle_id": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "artifact_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "logs_ref": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "failure_reason": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "running"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "started_at"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "completed"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "output_manifest_ref": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "started_at",
+          "finished_at",
+          "output_manifest_ref"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "failed"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "failure_reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "failure_reason"
+        ]
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "definitions": {
+    "nullableString": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "nullableDateTime": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

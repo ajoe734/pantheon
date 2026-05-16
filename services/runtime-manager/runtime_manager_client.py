@@ -229,7 +229,8 @@ class RuntimeManagerClient:
     def evolution_retrain(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Record dispatch of an approved retrain/revalidate EvolutionDecision.
 
-        Required: evolution_decision_id, action_type, artifact_id, actor_id
+        Required: evolution_decision_id, action_type, artifact_id, actor_id,
+                  research_job_id
         Optional: note
 
         Returns { evolution_decision_id, action_type, artifact_id, actor_id,

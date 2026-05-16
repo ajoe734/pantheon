@@ -282,11 +282,24 @@ class ArtifactLoader:
                 f"Metadata version mismatch: expected {version}, got {metadata.get('version')}"
             )
 
-        promotion_state = metadata.get("promotion_state")
-        expected_state = mode.value
-        if promotion_state != expected_state:
+        has_canonical_stage = metadata.get("deployment_stage") not in (None, "")
+        artifact_state = metadata.get("artifact_state")
+        if artifact_state not in (None, "approved"):
             raise ArtifactLoadError(
-                f"{mode.value} loader rejects promotion_state={promotion_state!r}; expected {expected_state!r}."
+                "Artifact loader requires artifact_state='approved' for executable metadata; "
+                f"got {artifact_state!r}."
+            )
+        if has_canonical_stage and artifact_state != "approved":
+            raise ArtifactLoadError(
+                "Artifact loader requires artifact_state='approved' when deployment_stage is present; "
+                f"got {artifact_state!r}."
+            )
+
+        deployment_stage = metadata.get("deployment_stage") or metadata.get("promotion_state")
+        expected_state = mode.value
+        if deployment_stage != expected_state:
+            raise ArtifactLoadError(
+                f"{mode.value} loader rejects deployment_stage={deployment_stage!r}; expected {expected_state!r}."
             )
 
         if not metadata.get("checksum"):

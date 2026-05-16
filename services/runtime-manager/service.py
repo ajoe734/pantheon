@@ -518,6 +518,7 @@ class EvolutionRetrainRequest:
     action_type             str  — retrain | revalidate
     artifact_id             str  — target artifact that will be retrained
     actor_id                str  — reviewer/operator dispatching retrain
+    research_job_id         str  — authoritative research-plane work item id
 
     Optional fields
     ---------------

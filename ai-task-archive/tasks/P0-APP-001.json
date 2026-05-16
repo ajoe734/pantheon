@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "P0-APP-001",
+  "archived_at": "2026-05-16T01:30:31Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "P0-APP-001",
+    "title": "approval decide endpoint /bff/approvals/{id}/decide",
+    "summary_zh": null,
+    "phase": "Sprint 1 / EPIC-BFF-P0",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout complete. Implementation in e8d18e92; review artifact committed in b6686eb1. 15 contract tests pass, 7/8 live wiring pass (1 pre-existing P0-CAP-001 503). All approved scope verified in current worktree.",
+    "last_update": "2026-05-16T01:30:31Z",
+    "review_notes_zh": [
+      "審查通過：POST /bff/approvals/{id}/decide 專用 handler 正確實作；approver/admin role gate 確認；decision→CommandType 路由（approve/reject/request_revision/escalate/freeze）全部正確；rejection_reason 與 revision_notes 驗證正確（422）；unknown id → 404（dataset available 條件確認）；Idempotency-Key via _resolve_final_idempotency_key 正確強制（400 if absent）；15 個合約測試全過；live wiring 7/8（1 pre-existing P0-CAP-001 fail-closed 503）",
+      "跨任務附註：commit e8d18e92 含 P0-AUD-001 main.py hunk 屬 concurrent dirty worktree，已由 P0-AUD-001 審查處理，不影響本次審查通過"
+    ],
+    "review_file": "support/reviews/P0-APP-001-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T01:30:31Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "b6686eb160d22b2637b3edfae61434bda07a5e5f",
+      "commit_subject": "P0-APP-001: closeout — add Claude2 review artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "P0-APP-001",
+        "Reviewer": "Claude2",
+        "- test_bff_approvals_decide_contract.py": "15 passed",
+        "- test_execute_plans_final_live_wiring_contract.py": "7 passed, 1 pre-existing"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 60,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "P0-APP-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Ready for review: POST /bff/approvals/{id}/decide dedicated handler. Approver/admin role gate, decision->CommandType routing (approve/reject/request_revision/escalate/freeze), rejection_reason+revision_notes validation, 404 for unknown ids, Idempotency-Key required. Evidence: support/evidence/P0-APP-001/acceptance.md. Verification: 15 contract tests passed; live wiring 7/8 (1 pre-existing P0-CAP-001 fail-closed 503). Commit: e8d18e92.",
+      "status": "done",
+      "created_at": "2026-05-16T00:54:37Z",
+      "resolved_at": "2026-05-16T01:11:06Z"
+    },
+    {
+      "task_id": "P0-APP-001",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-05-16T01:11:06Z",
+      "resolved_at": "2026-05-16T01:19:50Z"
+    },
+    {
+      "task_id": "P0-APP-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: POST /bff/approvals/{id}/decide dedicated handler correct. Role gate, decision routing, field validation, 404 for unknown ids, Idempotency-Key enforcement all verified. 15 contract tests pass. Live wiring 7/8 (1 pre-existing P0-CAP-001 503). Returning to Claude for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T01:19:50Z",
+      "resolved_at": "2026-05-16T01:30:31Z"
+    }
+  ],
+  "blockers": []
+}

@@ -2,7 +2,7 @@
   "task_id": "MGMT-PAPER-002",
   "epic": "EPIC-02 Management Paper Loop Proof",
   "environment": "paper",
-  "generated_at": "2026-05-15T15:01:43Z",
+  "generated_at": "2026-05-15T15:14:54Z",
   "live_capital_side_effects": false,
   "approval_decision": {
     "decision_id": "approval-paper-strategy-001",
@@ -14,8 +14,8 @@
     "actor_role": "risk_owner",
     "actor_id": "governance-reviewer-paper-01",
     "rationale": "StrategySpec strategy-spec-paper-qlib-lgbm-001@1.0.0 reviewed and approved for paper-stage deployment. Live broker and capital-binding side effects remain fail-closed. Evidence: paper evaluator result attached.",
-    "created_at": "2026-05-15T15:01:43Z",
-    "decided_at": "2026-05-15T15:01:43Z",
+    "created_at": "2026-05-15T15:14:54Z",
+    "decided_at": "2026-05-15T15:14:54Z",
     "conditions": [],
     "risk_level": "medium",
     "evidence_refs": [
@@ -43,7 +43,7 @@
     "decision": "approved",
     "actor_id": "governance-reviewer-paper-01",
     "actor_role": "risk_owner",
-    "timestamp": "2026-05-15T15:01:43Z"
+    "timestamp": "2026-05-15T15:14:54Z"
   },
   "validation_errors": [],
   "ooda_decide_ref": {

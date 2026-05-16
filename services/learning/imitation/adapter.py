@@ -500,8 +500,9 @@ def build_artifact_bundle(
             "notes": list(training_result.notes),
         },
         "registry_hints": {
-            "artifact_type": "model_artifact",
+            "artifact_type": "behavior_policy",
             "model_family": "imitation_policy",
+            "initial_artifact_state": config.lifecycle_state,
             "initial_lifecycle_state": config.lifecycle_state,
             "source_dataset_refs": list(dataset.source_dataset_refs),
         },
@@ -527,9 +528,10 @@ def build_registry_entry(
 
     return {
         "registry_id": f"reg-{dataset.strategy_id}-imitation-{config.version}",
-        "artifact_type": "model_artifact",
+        "artifact_type": "behavior_policy",
         "strategy_id": dataset.strategy_id,
         "version": config.version,
+        "artifact_state": config.lifecycle_state,
         "lifecycle_state": config.lifecycle_state,
         "lineage": lineage,
         "storage_ref": {

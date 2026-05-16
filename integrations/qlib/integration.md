@@ -1,9 +1,10 @@
 # Qlib Integration — Governed LightGBM Alpha Adapter
 
-Last updated: 2026-04-30
-Owner: SVC-QLIB-ACTIVATION-READY-ADAPTER (Codex)
-Reviewer: Claude2
-Status: activation-ready offline adapter verified; production gates remain closed
+Last updated: 2026-05-16
+Task: QLIB-001
+Owner: Gemini
+Reviewer: Claude
+Status: activation-ready offline adapter re-verified for Sprint 5; production gates remain closed
 Implementation home: `services/research/qlib/`
 
 ## 1. Locked Upstream Selection

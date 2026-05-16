@@ -1,0 +1,215 @@
+{
+  "approval_decision_ref": {
+    "actor_id": "governance-reviewer-paper-01",
+    "actor_role": "risk_owner",
+    "capital_pool_id": "capital-pool-paper-001",
+    "decision": "approved",
+    "decision_id": "approval-paper-strategy-001",
+    "decision_state": "decided",
+    "persona_id": "persona-quant-paper-01",
+    "target_id": "strategy-spec-paper-qlib-lgbm-001",
+    "target_type": "strategy_spec",
+    "target_version": "1.0.0"
+  },
+  "approved_registry_entry": {
+    "approval_decision_id": "approval-paper-strategy-001",
+    "approved_at": "2026-05-15T15:14:54Z",
+    "artifact_state": "approved",
+    "artifact_type": "strategy_spec",
+    "checksum": "sha256:mgmtpaper003paperdeployment001",
+    "deployment_summary": {
+      "current_stage": "none"
+    },
+    "lineage": {
+      "source_artifact_refs": [
+        "support/evidence/MGMT-PAPER-001-paper-strategy-spec.json",
+        "support/evidence/MGMT-PAPER-002-paper-approval-decision.json"
+      ],
+      "source_run_ids": [
+        "MGMT-PAPER-001",
+        "MGMT-PAPER-002"
+      ],
+      "strategy_spec_ref": "strategy-spec://strategy-spec-paper-qlib-lgbm-001@1.0.0"
+    },
+    "metadata": {
+      "environment": "paper",
+      "live_capital_side_effects": false,
+      "paper_loop_candidate": true
+    },
+    "registry_id": "strategy-spec-paper-qlib-lgbm-001",
+    "strategy_id": "paper-qlib-lgbm-tw-equity-alpha",
+    "version": "1.0.0"
+  },
+  "deployment_execution_projection": {
+    "artifact_key": "openclaw/registry/paper-qlib-lgbm-tw-equity-alpha/1.0.0/artifact.bin",
+    "metadata": {
+      "approval_decision_id": "approval-paper-strategy-001",
+      "approved_at": "2026-05-15T15:14:54Z",
+      "artifact_state": "approved",
+      "artifact_type": "strategy_spec",
+      "capital_pool_id": "capital-pool-paper-001",
+      "capital_scale_pct": 0.0,
+      "checksum": "sha256:mgmtpaper003paperdeployment001",
+      "created_at": "2026-05-15T16:50:51Z",
+      "deployment_plan_id": "deployment-plan-paper-001",
+      "deployment_stage": "paper",
+      "gross_scale_pct": 100.0,
+      "lineage": {
+        "source_artifact_refs": [
+          "support/evidence/MGMT-PAPER-001-paper-strategy-spec.json",
+          "support/evidence/MGMT-PAPER-002-paper-approval-decision.json"
+        ],
+        "source_run_ids": [
+          "MGMT-PAPER-001",
+          "MGMT-PAPER-002"
+        ],
+        "strategy_spec_ref": "strategy-spec://strategy-spec-paper-qlib-lgbm-001@1.0.0"
+      },
+      "promotion_state": "paper",
+      "registry_id": "strategy-spec-paper-qlib-lgbm-001",
+      "rollback": {
+        "action_type": "replace",
+        "target_registry_id": "strategy-spec-paper-qlib-lgbm-000",
+        "target_version": "0.9.0"
+      },
+      "runtime_action": "deploy_new_binding",
+      "sponsor_persona_id": "persona-quant-paper-01",
+      "strategy_id": "paper-qlib-lgbm-tw-equity-alpha",
+      "version": "1.0.0"
+    },
+    "metadata_key": "openclaw/registry/paper-qlib-lgbm-tw-equity-alpha/1.0.0/metadata.json"
+  },
+  "deployment_plan": {
+    "approval_decision_id": "approval-paper-strategy-001",
+    "artifact_id": "strategy-spec-paper-qlib-lgbm-001",
+    "artifact_type": "strategy_spec",
+    "artifact_version": "1.0.0",
+    "binding_id": null,
+    "capital_pool_id": "capital-pool-paper-001",
+    "created_at": "2026-05-15T16:50:51Z",
+    "created_by": "operator-paper-loop-01",
+    "current_stage": "none",
+    "metadata": {
+      "engine_bridge_commit": "paper-loop-bridge-commit-001",
+      "engine_bridge_path": "pantheon/lean",
+      "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+      "live_broker_enabled": false,
+      "live_capital_binding_enabled": false,
+      "live_capital_side_effects": false,
+      "persona_capital_binding_id": "pcb-paper-quant-001",
+      "runtime_adapter_version": "0.1.0",
+      "runtime_profile": "pantheon_lean_paper_v1",
+      "runtime_role": "paper"
+    },
+    "plan_id": "deployment-plan-paper-001",
+    "post_checks": [
+      "runtime binding is paper",
+      "runtime bootstrap request references deployment plan",
+      "telemetry heartbeat accepted",
+      "logged-only order evidence emitted"
+    ],
+    "pre_checks": [
+      "strategy_spec approved for paper",
+      "paper runtime package available",
+      "pantheon/lean bridge identity recorded",
+      "live broker disabled",
+      "capital binding live writes disabled"
+    ],
+    "rollback": {
+      "action_type": "replace",
+      "reason": "Previous paper baseline for rollback-only recovery.",
+      "target_artifact_id": "strategy-spec-paper-qlib-lgbm-000",
+      "target_version": "0.9.0"
+    },
+    "runtime_action": "deploy_new_binding",
+    "runtime_config_ref": "launch-manifest://paper-runtime-mgmt-001",
+    "scale": {
+      "capital_scale_pct": 0.0,
+      "gross_scale_pct": 100.0,
+      "ramp_schedule": []
+    },
+    "schedule_window": null,
+    "sponsor_persona_id": "persona-quant-paper-01",
+    "status": "approved",
+    "strategy_id": "paper-qlib-lgbm-tw-equity-alpha",
+    "supersedes_plan_id": null,
+    "target_stage": "paper",
+    "transition_type": "activate"
+  },
+  "environment": "paper",
+  "epic": "EPIC-02 Management Paper Loop Proof",
+  "generated_at": "2026-05-15T16:50:51Z",
+  "live_capital_side_effects": false,
+  "ooda_decide_ref": {
+    "approval_decision_id": "approval-paper-strategy-001",
+    "deployment_plan_id": "deployment-plan-paper-001"
+  },
+  "paper_loop_chain": [
+    "MGMT-PAPER-001: candidate StrategySpec",
+    "MGMT-PAPER-002: ApprovalDecision packet",
+    "MGMT-PAPER-003: DeploymentPlan packet <- this artifact",
+    "MGMT-PAPER-004: paper RuntimeBinding packet",
+    "MGMT-PAPER-005: telemetry packet",
+    "MGMT-PAPER-006: EvolutionDecision review packet",
+    "MGMT-PAPER-007: complete OODA packet"
+  ],
+  "runtime_binding_input_ref": {
+    "capital_pool_id": "capital-pool-paper-001",
+    "deployment_plan_id": "deployment-plan-paper-001",
+    "persona_capital_binding_id": "pcb-paper-quant-001",
+    "runtime_action": "deploy_new_binding",
+    "target_stage": "paper"
+  },
+  "runtime_bootstrap_request_preview": {
+    "artifact": {
+      "artifact_id": "strategy-spec-paper-qlib-lgbm-001",
+      "artifact_type": "strategy_spec",
+      "artifact_version": "1.0.0",
+      "checksum": "sha256:mgmtpaper003paperdeployment001",
+      "strategy_id": "paper-qlib-lgbm-tw-equity-alpha"
+    },
+    "bridge": {
+      "commit": "paper-loop-bridge-commit-001",
+      "path": "pantheon/lean",
+      "remote": "ajoe734/pantheon-lean.git"
+    },
+    "capital": {
+      "capital_pool_id": "capital-pool-paper-001",
+      "capital_scale_pct": 0.0,
+      "gross_scale_pct": 100.0,
+      "persona_capital_binding_id": "pcb-paper-quant-001"
+    },
+    "deployment_plan_id": "deployment-plan-paper-001",
+    "deployment_stage": "paper",
+    "request_id": "runtime-bootstrap-paper-mgmt-001",
+    "runtime_binding_id": null,
+    "runtime_config": {
+      "config_ref": "launch-manifest://paper-runtime-mgmt-001",
+      "live_broker_enabled": false,
+      "live_capital_binding_enabled": false,
+      "paper_mode": true,
+      "runtime_profile": "pantheon_lean_paper_v1"
+    },
+    "runtime_role": "paper",
+    "secrets_included": false,
+    "trace_id": "03829d25-2c9f-44f0-981e-56a94d8ff003"
+  },
+  "safety_assertions": {
+    "activate_from_none": true,
+    "bridge_points_to_pantheon_lean": true,
+    "deploy_new_binding": true,
+    "gross_scale_is_paper_simulation": true,
+    "live_broker_disabled": true,
+    "live_capital_binding_disabled": true,
+    "no_broker_secrets_included": true,
+    "no_lean_platform_target": true,
+    "paper_environment": true,
+    "zero_live_capital_scale": true
+  },
+  "source_artifacts": {
+    "approval_decision": "support/evidence/MGMT-PAPER-002-paper-approval-decision.json",
+    "strategy_spec": "support/evidence/MGMT-PAPER-001-paper-strategy-spec.json"
+  },
+  "task_id": "MGMT-PAPER-003",
+  "validation_errors": []
+}

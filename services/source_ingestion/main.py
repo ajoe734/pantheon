@@ -77,6 +77,7 @@ SOURCE_EVIDENCE_STORE_PATH = Path(os.getenv("SOURCE_INGEST_EVIDENCE_STORE_PATH",
 DLQ_STORE_PATH = Path(os.getenv("SOURCE_INGEST_DLQ_PATH", str(DATA_DIR / "source_ingest_dlq.jsonl")))
 AUDIT_STORE_PATH = Path(os.getenv("SOURCE_INGEST_AUDIT_PATH", str(DATA_DIR / "source_ingest_audit.jsonl")))
 CONNECTOR_SCHEDULE_CONFIG_PATH = Path(os.getenv("SOURCE_INGEST_SCHEDULE_CONFIG_PATH", str(DATA_DIR / "connector_schedule.jsonl")))
+SOURCE_RECORD_SCHEMA_PATH = Path(__file__).with_name("source_record.schema.json")
 MAX_RECORDS_PER_JOB = int(os.getenv("SOURCE_INGEST_MAX_RECORDS", "100"))
 SCHEDULER_MAX_CONCURRENCY = max(1, int(os.getenv("SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY", "2")))
 FRONTIER_MAX_ATTEMPTS = max(1, int(os.getenv("SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS", "2")))
@@ -274,6 +275,15 @@ class TriggerIngestJobRequest(StrictBaseModel):
     fetch: ConfiguredFetchBody | None = None
 
 
+class SourceRecordIngestRequest(StrictBaseModel):
+    connector: ConnectorBody | None = None
+    connector_id: str | None = None
+    trace_id: str
+    trigger_type: str = "manual"
+    records: list[SourceRecordBody] = Field(default_factory=list)
+    next_watermark: str | None = None
+
+
 class ReplayDlqRequest(StrictBaseModel):
     tag: str = "retry_exhausted"
     entry_ids: list[str] = Field(default_factory=list)
@@ -331,6 +341,10 @@ def _configure_connector(request: ConfigureConnectorRequest) -> dict[str, Any]:
         "state": connector_store.get_fetch_state(connector.connector_id),
         "updated_at": config.updated_at,
     }
+
+
+def _source_record_schema() -> dict[str, Any]:
+    return json.loads(SOURCE_RECORD_SCHEMA_PATH.read_text(encoding="utf-8"))
 
 
 def _fetch_policy_summary(fetch: dict[str, Any] | None) -> dict[str, Any]:
@@ -796,6 +810,36 @@ def _run_job(
     return result, evidence_refs
 
 
+def _run_ingest_request(request: TriggerIngestJobRequest) -> dict[str, Any]:
+    if len(request.records) > MAX_RECORDS_PER_JOB:
+        raise HTTPException(status_code=413, detail=f"records exceeds SOURCE_INGEST_MAX_RECORDS={MAX_RECORDS_PER_JOB}")
+
+    try:
+        connector = _connector_for_job(request)
+        if request.records:
+            records = tuple(
+                validate_external_source_record(record.to_domain(), connector=connector)
+                for record in request.records
+            )
+            for record in records:
+                if record.connector_id != connector.connector_id:
+                    raise SourceEvidenceError("record connector_id must match job connector")
+                if record.source_type != connector.source_type:
+                    raise SourceEvidenceError("record source_type must match job connector")
+            fetch_batch = _inline_fetch(records, request.next_watermark)
+        else:
+            fetch_batch = _configured_fetch(connector.connector_id)
+        result, evidence_refs = _run_job(
+            connector=connector,
+            trace_id=request.trace_id,
+            trigger_type=request.trigger_type,
+            fetch_batch=fetch_batch,
+        )
+        return _result_payload(result, evidence_refs)
+    except (EvidenceValidationError, SourceEvidenceError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 def _notify_search_index_refresh(ingest_run_id: str) -> None:
     """Fire-and-forget: POST to search service to trigger incremental index refresh."""
     if not SEARCH_INGEST_NOTIFY_URL:
@@ -1033,6 +1077,11 @@ def source_policy_registry() -> dict[str, Any]:
     return _source_policy_registry_payload()
 
 
+@app.get("/api/source-ingest/schemas/source-record")
+def source_record_schema() -> dict[str, Any]:
+    return _source_record_schema()
+
+
 @app.get("/api/source-ingest/connectors/{connector_id}")
 def get_connector(connector_id: str) -> dict[str, Any]:
     config = connector_store.get_config(connector_id)
@@ -1056,33 +1105,23 @@ def set_connector_lifecycle(connector_id: str, request: SetConnectorLifecycleReq
 
 @app.post("/api/source-ingest/jobs", status_code=201)
 def trigger_job(request: TriggerIngestJobRequest) -> dict[str, Any]:
-    if len(request.records) > MAX_RECORDS_PER_JOB:
-        raise HTTPException(status_code=413, detail=f"records exceeds SOURCE_INGEST_MAX_RECORDS={MAX_RECORDS_PER_JOB}")
+    return _run_ingest_request(request)
 
-    try:
-        connector = _connector_for_job(request)
-        if request.records:
-            records = tuple(
-                validate_external_source_record(record.to_domain(), connector=connector)
-                for record in request.records
-            )
-            for record in records:
-                if record.connector_id != connector.connector_id:
-                    raise SourceEvidenceError("record connector_id must match job connector")
-                if record.source_type != connector.source_type:
-                    raise SourceEvidenceError("record source_type must match job connector")
-            fetch_batch = _inline_fetch(records, request.next_watermark)
-        else:
-            fetch_batch = _configured_fetch(connector.connector_id)
-        result, evidence_refs = _run_job(
-            connector=connector,
+
+@app.post("/api/source-ingest/source-records", status_code=201)
+def ingest_source_records(request: SourceRecordIngestRequest) -> dict[str, Any]:
+    if not request.records:
+        raise HTTPException(status_code=400, detail="records is required for SourceRecord ingest")
+    return _run_ingest_request(
+        TriggerIngestJobRequest(
+            connector=request.connector,
+            connector_id=request.connector_id,
             trace_id=request.trace_id,
             trigger_type=request.trigger_type,
-            fetch_batch=fetch_batch,
+            records=request.records,
+            next_watermark=request.next_watermark,
         )
-        return _result_payload(result, evidence_refs)
-    except (EvidenceValidationError, SourceEvidenceError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    )
 
 
 @app.get("/api/source-ingest/jobs")

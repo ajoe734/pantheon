@@ -1,0 +1,297 @@
+{
+  "task_id": "MGMT-EVO-007",
+  "milestone_id": "MGMT-OODA-M6",
+  "epic": "EPIC-06 Evolution Follow-Through",
+  "packet_id": "ooda-evolution-mgmt-007-closure",
+  "generated_at": "2026-05-15T18:00:00Z",
+  "environment": "paper",
+  "live_capital_side_effects": false,
+  "freeze_decision": {
+    "decision_id": "evo-mgmt-005-freeze-stage",
+    "target_type": "persona_capital_binding",
+    "target_id": "persona-capital-binding-live-mgmt-evo-005",
+    "target_version": "v1",
+    "action_type": "freeze",
+    "decision_state": "executed",
+    "risk_level": "high",
+    "created_at": "2026-05-15T17:55:00Z",
+    "created_by_role": "evolution_controller",
+    "created_by_id": "evolution-controller-mgmt-evo-005",
+    "rationale": "Severity-1 execution drift requires governed freeze follow-through. Rollback remains a companion runtime mitigation, not the freeze object itself.",
+    "approval_decision_id": "approval-mgmt-evo-005",
+    "evidence_refs": [
+      {
+        "ref_type": "manual_review_ticket",
+        "ref_id": "incident-mgmt-evo-005",
+        "storage_ref": {
+          "backend": "support/evidence",
+          "path": "support/evidence/MGMT-EVO-005/rollback-freeze-followthrough.json"
+        },
+        "note": "Synthetic local replay anchor for rollback/freeze follow-through."
+      }
+    ],
+    "threshold_snapshots": [
+      {
+        "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.5 and section 11.1",
+        "signal_type": "governance_incident",
+        "metric_name": "severity1_execution_drift",
+        "comparator": "gte",
+        "observed_value": 1,
+        "threshold_value": 1,
+        "window": "incident-followthrough",
+        "breached": true,
+        "note": "High-risk live freeze path requires governance committee approval."
+      }
+    ],
+    "review_chain": [
+      {
+        "step_type": "reviewed",
+        "actor_role": "governance_committee",
+        "actor_id": "committee-mgmt-evo-005",
+        "timestamp": "2026-05-15T17:55:00Z",
+        "note": "Reviewed high-risk freeze follow-through packet."
+      },
+      {
+        "step_type": "approved",
+        "actor_role": "governance_committee",
+        "actor_id": "committee-mgmt-evo-005",
+        "timestamp": "2026-05-15T17:55:00Z",
+        "note": "Approved local replay of freeze and rollback follow-through."
+      },
+      {
+        "step_type": "executed",
+        "actor_role": "evolution_controller",
+        "actor_id": "evolution-controller-mgmt-evo-005",
+        "timestamp": "2026-05-15T17:55:00Z",
+        "note": "Evolution OODA loop closure follow-through recorded."
+      }
+    ],
+    "linked_postmortem_id": "postmortem-mgmt-evo-005",
+    "linked_incident_id": "incident-mgmt-evo-005",
+    "capital_pool_id": "capital-pool-paper-001",
+    "persona_id": "persona-quant-paper-01",
+    "target_stage": "live",
+    "cooldown_started_at": "2026-05-15T17:55:00Z",
+    "cooldown_ends_at": "2026-05-16T17:55:00Z",
+    "observation_window_started_at": "2026-05-15T17:55:00Z",
+    "observation_window_ends_at": "2026-05-22T17:55:00Z",
+    "execution_result": {
+      "status": "succeeded",
+      "plane": "deployment",
+      "executed_at": "2026-05-15T17:55:00Z",
+      "execution_ref_id": "freeze-stage-command-mgmt-evo-005",
+      "outcome_summary": "Freeze stage command emitted; no live capital side effects."
+    },
+    "superseded_by": null,
+    "supersedes_decision_id": null,
+    "metadata": {
+      "task_id": "MGMT-EVO-007",
+      "ooda_packet_id": "ooda-evolution-mgmt-007-closure",
+      "source": "local_followthrough_replay",
+      "live_mutation_allowed": false,
+      "broker_order_allowed": false,
+      "capital_binding_mutation_allowed": false
+    }
+  },
+  "ooda_packet": {
+    "packet_id": "ooda-evolution-mgmt-007-closure",
+    "loop_type": "evolution",
+    "status": "closed",
+    "environment": "paper",
+    "capital_pool_id": "capital-pool-paper-001",
+    "strategy_id": "strategy-spec-paper-qlib-lgbm-001",
+    "persona_ids": [
+      "persona-quant-paper-01"
+    ],
+    "observe": {
+      "source_refs": [
+        "support/evidence/MGMT-EVO-001-telemetry-evolution-link.json",
+        "strategy-spec://strategy-spec-paper-qlib-lgbm-001@1.0.0"
+      ],
+      "telemetry_refs": [
+        "telemetry-event://631f17dc-bbba-4593-9ad3-9ed24c5b3001"
+      ],
+      "signal_refs": [
+        "signal://severity1-execution-drift-breach"
+      ],
+      "market_refs": [],
+      "incident_refs": [
+        "incident://incident-mgmt-evo-005"
+      ],
+      "human_feedback_refs": []
+    },
+    "orient": {
+      "regime_state_ref": null,
+      "universe_selection_ref": null,
+      "signal_inference_refs": [
+        "signal-inference://severity1-drift-freeze-path-confirmed"
+      ],
+      "allocation_proposal_refs": [],
+      "risk_adjudication_ref": "risk-adjudication://governance-committee-freeze-approved-mgmt-evo-005",
+      "persona_proposal_refs": [
+        "persona://persona-quant-paper-01"
+      ],
+      "evidence_bundle_refs": [
+        "support/evidence/MGMT-EVO-005/rollback-freeze-followthrough.json",
+        "support/evidence/MGMT-EVO-006/summary.md"
+      ]
+    },
+    "decide": {
+      "approval_decision_id": "approval-mgmt-evo-005-governance-freeze",
+      "deployment_plan_id": "deployment-plan-mgmt-evo-005-freeze",
+      "evolution_decision_id": "evo-mgmt-005-freeze-stage",
+      "sponsor_persona_id": "persona-quant-paper-01",
+      "decision_rationale_ref": "rationale://governance-committee-approved-live-freeze-no-capital-side-effects",
+      "policy_decision_refs": [
+        "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.5",
+        "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md section 5.2",
+        "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md section 3"
+      ]
+    },
+    "act": {
+      "runtime_binding_id": "runtime-binding-live-mgmt-evo-005",
+      "command_receipt_refs": [
+        "command-receipt://freeze-stage-mgmt-evo-005",
+        "command-receipt://runtime-rollback-mgmt-evo-005"
+      ],
+      "broker_evidence_refs": [],
+      "rollback_refs": [
+        "evolution-decision://evo-mgmt-005-runtime-rollback/runtime-rollback",
+        "rollback://pause_then_replace/artifact-paper-safe-fallback-001"
+      ],
+      "safe_mode_refs": [
+        "safe-mode://live-broker-disabled-throughout-freeze"
+      ],
+      "live_capital_side_effects": false
+    },
+    "learn": {
+      "telemetry_refs": [
+        "telemetry-event://631f17dc-bbba-4593-9ad3-9ed24c5b3003",
+        "telemetry-event://631f17dc-bbba-4593-9ad3-9ed24c5b3004"
+      ],
+      "postmortem_refs": [
+        "postmortem://postmortem-mgmt-evo-005"
+      ],
+      "evolution_followthrough_refs": [
+        "evolution-decision://evo-mgmt-005-freeze-stage/freeze-stage-command-mgmt-evo-005",
+        "evolution-decision://evo-mgmt-005-runtime-rollback/runtime-rollback-mgmt-evo-005",
+        "support/evidence/MGMT-EVO-005/rollback-freeze-followthrough.json"
+      ],
+      "trainer_refs": [],
+      "retrain_refs": [],
+      "observation_window": {
+        "start_at": "2026-05-15T17:55:00Z",
+        "end_at": "2026-05-15T18:00:00Z",
+        "duration_hours": 0.083
+      }
+    },
+    "audit_refs": [
+      "audit://evolution-closure/incident-opened",
+      "audit://evolution-closure/freeze-governance-approved",
+      "audit://evolution-closure/no-live-side-effects",
+      "audit://evolution-closure/observation-window-closed"
+    ],
+    "created_at": "2026-05-15T17:55:00Z",
+    "updated_at": "2026-05-15T18:06:19Z",
+    "closed_at": "2026-05-15T18:06:19Z"
+  },
+  "stage_transitions": [
+    {
+      "packet_id": "ooda-evolution-mgmt-007-closure",
+      "stage": "observe",
+      "from_status": "open",
+      "to_status": "observing",
+      "actor_id": "operator-evolution-closure-01",
+      "transitioned_at": "2026-05-15T18:06:19Z"
+    },
+    {
+      "packet_id": "ooda-evolution-mgmt-007-closure",
+      "stage": "orient",
+      "from_status": "observing",
+      "to_status": "oriented",
+      "actor_id": "operator-evolution-closure-01",
+      "transitioned_at": "2026-05-15T18:06:19Z"
+    },
+    {
+      "packet_id": "ooda-evolution-mgmt-007-closure",
+      "stage": "decide",
+      "from_status": "oriented",
+      "to_status": "decided",
+      "actor_id": "operator-evolution-closure-01",
+      "transitioned_at": "2026-05-15T18:06:19Z"
+    },
+    {
+      "packet_id": "ooda-evolution-mgmt-007-closure",
+      "stage": "act",
+      "from_status": "decided",
+      "to_status": "acted",
+      "actor_id": "operator-evolution-closure-01",
+      "transitioned_at": "2026-05-15T18:06:19Z"
+    },
+    {
+      "packet_id": "ooda-evolution-mgmt-007-closure",
+      "stage": "learn",
+      "from_status": "acted",
+      "to_status": "evolving",
+      "actor_id": "operator-evolution-closure-01",
+      "transitioned_at": "2026-05-15T18:06:19Z"
+    },
+    {
+      "packet_id": "ooda-evolution-mgmt-007-closure",
+      "stage": "close",
+      "from_status": "evolving",
+      "to_status": "closed",
+      "actor_id": "operator-evolution-closure-01",
+      "transitioned_at": "2026-05-15T18:06:19Z"
+    }
+  ],
+  "replay_validation": {
+    "can_replay": true,
+    "record_count": 7,
+    "stage_transition_count": 6,
+    "latest_packet_id": "ooda-evolution-mgmt-007-closure",
+    "latest_status": "closed",
+    "query_matches": {
+      "evolution_decision_id": [
+        "ooda-evolution-mgmt-007-closure"
+      ],
+      "runtime_binding_id": [
+        "ooda-evolution-mgmt-007-closure"
+      ]
+    }
+  },
+  "evolution_chain": [
+    "MGMT-EVO-001: telemetry-to-evolution packet link (observe refs)",
+    "MGMT-EVO-002: proposal from incident/postmortem (orient evidence)",
+    "MGMT-EVO-003: mutation-review UI linkage (decide refs)",
+    "MGMT-EVO-004: retrain/revalidate dispatch (orient/learn refs)",
+    "MGMT-EVO-005: rollback/freeze follow-through (act refs)",
+    "MGMT-EVO-006: observation window report (learn window)",
+    "MGMT-EVO-007: OODA loop closure (packet closed)"
+  ],
+  "safety_assertions": {
+    "evolution_type_packet": true,
+    "paper_environment": true,
+    "ooda_live_capital_side_effects_false": true,
+    "freeze_decision_executed": true,
+    "no_live_broker_action": true,
+    "no_real_capital_mutation": true,
+    "no_deployment_side_effects": true,
+    "replay_store_roundtrip": true
+  },
+  "policy_refs": [
+    "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.5",
+    "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 11.1",
+    "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md section 5.2",
+    "ROLLBACK_AND_POSITION_SEMANTICS.md section 10",
+    "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md section 3",
+    "docs/04/pantheon_sa_supplemental_2026-05-15/SD_management_console_multi_persona_ooda.md section 7.5"
+  ],
+  "artifact_refs": {
+    "task_evidence": "support/evidence/MGMT-EVO-007/evolution-ooda-loop-closure.json",
+    "milestone_evidence": "support/evidence/MGMT-OODA-M6-evolution-followthrough.json",
+    "evo_005_followthrough": "support/evidence/MGMT-EVO-005/rollback-freeze-followthrough.json",
+    "evo_006_observation": "support/evidence/MGMT-EVO-006/summary.md"
+  },
+  "validation_errors": []
+}

@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "task_id": "MGMT-SYN-002",
+  "archived_at": "2026-05-15T15:46:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-SYN-002",
+    "title": "PersonaAllocationProposal store",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-03 Multi-Persona Synthesis",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Owner closeout complete: reviewed approval notes, implementation commit 2085e5c3, closeout evidence commit 6f6292bb, and focused verification passed (py_compile proposal_store/__init__, proposal_store pytest 6 passed, portfolio_synthesis+proposal_store pytest 13 passed).",
+    "last_update": "2026-05-15T15:46:52Z",
+    "review_notes_zh": [
+      "審查通過：commit 2085e5c3 新增 optimizer-svc allocation_aggregation PersonaAllocationProposal JSONL store，覆蓋 immutable proposal snapshot、replay/query、duplicate retry idempotence、proposal_id conflict rejection，以及 require_proposals() 可直接餵入既有 PortfolioSynthesizer。",
+      "驗證命令：python3 -m py_compile services/optimizer-svc/allocation_aggregation/proposal_store.py services/optimizer-svc/allocation_aggregation/__init__.py；python3 -m pytest services/optimizer-svc/test_persona_allocation_proposal_store.py -q；python3 -m pytest services/optimizer-svc/test_portfolio_synthesis.py services/optimizer-svc/test_persona_allocation_proposal_store.py -q；python3 -m unittest discover -s services/optimizer-svc -p 'test_*.py'；python3 -m pytest services/optimizer-svc -q。",
+      "非阻塞追蹤：若後續 API 正式暴露 query.limit，建議補上 limit=0/negative 的明確語義測試；本 task acceptance 未依賴該邊界。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T15:46:52Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "merge/backend-dev-into-master",
+      "git_clean_required": false,
+      "commit": "6f6292bb1438547f18b98389c267af6c2f2c0397",
+      "commit_subject": "MGMT-SYN-002 closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-SYN-002",
+        "Reviewer": "Codex2",
+        "Verification": "python3 -m py_compile services/optimizer-svc/allocation_aggregation/proposal_store.py services/optimizer-svc/allocation_aggregation/__init__.py; python3 -m pytest services/optimizer-svc/test_persona_allocation_proposal_store.py -q; python3 -m pytest services/optimizer-svc/test_portfolio_synthesis.py services/optimizer-svc/test_persona_allocation_proposal_store.py -q"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 16,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-SYN-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: added optimizer-svc PersonaAllocationProposal JSONL store under allocation_aggregation with immutable proposal snapshots, idempotent duplicate retry handling, conflict rejection for reused proposal_id, query/replay helpers, and synthesis-ready require_proposals(). Commit: 2085e5c3. Task-owned files: services/optimizer-svc/allocation_aggregation/__init__.py, services/optimizer-svc/allocation_aggregation/proposal_store.py, services/optimizer-svc/test_persona_allocation_proposal_store.py. Verification: python3 -m py_compile services/optimizer-svc/allocation_aggregation/proposal_store.py services/optimizer-svc/allocation_aggregation/__init__.py; python3 -m pytest services/optimizer-svc/test_persona_allocation_proposal_store.py -q; python3 -m pytest services/optimizer-svc/test_portfolio_synthesis.py services/optimizer-svc/test_persona_allocation_proposal_store.py -q; python3 -m unittest discover -s services/optimizer-svc -p 'test_*.py'; python3 -m pytest services/optimizer-svc -q.",
+      "status": "done",
+      "created_at": "2026-05-15T15:16:55Z",
+      "resolved_at": "2026-05-15T15:31:56Z"
+    },
+    {
+      "task_id": "MGMT-SYN-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved by Codex2; owner Codex should run closeout-finalization and move MGMT-SYN-002 to done.",
+      "status": "done",
+      "created_at": "2026-05-15T15:31:56Z",
+      "resolved_at": "2026-05-15T15:46:53Z"
+    }
+  ],
+  "blockers": []
+}

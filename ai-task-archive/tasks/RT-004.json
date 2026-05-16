@@ -1,0 +1,191 @@
+{
+  "version": 1,
+  "task_id": "RT-004",
+  "archived_at": "2026-05-16T05:44:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RT-004",
+    "title": "Runtime deploy/pause/replace/rollback actions",
+    "summary_zh": null,
+    "phase": "Sprint 3 / EPIC-RUNTIME",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Finalized RT-004. Closeout commit 9745648c records owner rerun evidence; implementation proof commit 42d7b6c1 remains in branch history. Verification rerun: runtime-manager focused pytest 16 passed/35 deselected; internal API route pytest 6 passed; py_compile service/main/client/tests passed. Pre-existing unrelated dirty worktree prevents an isolated generated-state closeout commit in this worker.",
+    "last_update": "2026-05-16T05:44:24Z",
+    "review_notes_zh": [
+      "審查通過：deploy/pause/replace/rollback 四條 action lane 均有完整測試覆蓋",
+      "deploy 前置條件 (plan_status, persona_capital_binding_status, loader_checks_passed, scope, stage) 全數在 service 層執行",
+      "pause 遵循 active→pending_pause→paused 狀態機",
+      "replace 先建新 binding 再 retire 舊 binding，rollback_parent 有記錄",
+      "position lineage 在 replace/liquidate_then_replace 場景均正確更新",
+      "legacy BFF 內部路由與 canonical /api/... 路由共享同一個 in-process RuntimeManagerService，state 一致",
+      "Kill-switch 快速路徑 (foundation、idempotency、durability) 測試同步通過",
+      "commit 42d7b6c1 符合格式要求 (Task-ID, LLM-Agent, Reviewer, Verification)"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T05:44:24Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "9745648c809bcffe3495555dc1885f9d64f1ebe4",
+      "commit_subject": "RT-004 finalize runtime action evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "RT-004",
+        "Reviewer": "Claude2",
+        "Verification": "PYTHONDONTWRITEBYTECODE=1 /tmp/pantheon-rt004-venv/bin/python -m pytest services/runtime-manager/test_runtime_manager.py -k 'RuntimeManagerServiceTests or RuntimeManagerClientTests or RuntimeManagerHttpRouteTests' -q => 16 passed, 35 deselected; PYTHONDONTWRITEBYTECODE=1 /tmp/pantheon-rt004-venv/bin/python -m pytest services/runtime-manager/test_internal_api_routes.py -q => 6 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/runtime-manager/service.py services/runtime-manager/main.py services/runtime-manager/runtime_manager_client.py services/runtime-manager/test_runtime_manager.py services/runtime-manager/test_internal_api_routes.py => passed."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 68,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 6,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "RT-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T01:45:33Z",
+      "resolved_at": "2026-05-16T01:46:10Z"
+    },
+    {
+      "task_id": "RT-004",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T02:03:00Z",
+      "resolved_at": "2026-05-16T02:03:44Z"
+    },
+    {
+      "task_id": "RT-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T02:20:57Z",
+      "resolved_at": "2026-05-16T02:21:41Z"
+    },
+    {
+      "task_id": "RT-004",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T02:38:49Z",
+      "resolved_at": "2026-05-16T02:39:37Z"
+    },
+    {
+      "task_id": "RT-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T02:56:43Z",
+      "resolved_at": "2026-05-16T02:57:26Z"
+    },
+    {
+      "task_id": "RT-004",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T03:14:33Z",
+      "resolved_at": "2026-05-16T03:15:17Z"
+    },
+    {
+      "task_id": "RT-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T03:32:18Z",
+      "resolved_at": "2026-05-16T03:33:02Z"
+    },
+    {
+      "task_id": "RT-004",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T03:50:14Z",
+      "resolved_at": "2026-05-16T03:50:56Z"
+    },
+    {
+      "task_id": "RT-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T04:08:02Z",
+      "resolved_at": "2026-05-16T04:08:44Z"
+    },
+    {
+      "task_id": "RT-004",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T04:25:57Z",
+      "resolved_at": "2026-05-16T04:26:43Z"
+    },
+    {
+      "task_id": "RT-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T04:43:52Z",
+      "resolved_at": "2026-05-16T04:44:37Z"
+    },
+    {
+      "task_id": "RT-004",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T05:01:58Z",
+      "resolved_at": "2026-05-16T05:02:41Z"
+    },
+    {
+      "task_id": "RT-004",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "RT-004 ready for review. Evidence: support/evidence/RT-004/acceptance.md. Commit: 42d7b6c1. Verified deploy/pause/replace/rollback action lane: runtime-manager focused slice 16 passed; internal command surface 6 passed; py_compile service/main/client/tests passed.",
+      "status": "done",
+      "created_at": "2026-05-16T05:21:05Z",
+      "resolved_at": "2026-05-16T05:31:18Z"
+    },
+    {
+      "task_id": "RT-004",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved and returned to owner for finalization. 16 focused runtime-action tests passed; 6 internal-API-route tests passed; py_compile passed. Deploy/pause/replace/rollback action lane fully verified.",
+      "status": "done",
+      "created_at": "2026-05-16T05:31:18Z",
+      "resolved_at": "2026-05-16T05:44:24Z"
+    }
+  ],
+  "blockers": []
+}

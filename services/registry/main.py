@@ -13,6 +13,10 @@ Routes (from service.py)
   GET  /api/registry/strategies/{strategy_id}/latest-approved
   GET  /api/registry/strategies/{strategy_id}/deployment-view
   PUT  /api/registry/entries/{registry_id}/deployment-summary
+  POST /api/registry/strategy-specs
+  GET  /api/registry/strategy-specs/{registry_id}
+  GET  /api/registry/strategies/{strategy_id}/strategy-specs
+  POST /api/registry/strategy-specs/{registry_id}/advance
   GET  /health
 
 Additional

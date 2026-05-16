@@ -1,0 +1,11 @@
+{
+  "capital_pool_id": "pool-ep5-broker-tw-sandbox",
+  "strategy_id": "strategy-ep5-broker-tw-smoke",
+  "symbol": "2890",
+  "qty": 1.0,
+  "side": "buy",
+  "order_type": "limit",
+  "limit_price": 18.0,
+  "account_kind": "stock",
+  "futures_category": null
+}

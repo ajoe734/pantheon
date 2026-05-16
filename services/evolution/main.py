@@ -12,6 +12,7 @@ enforced by the platform objects imported from
 Routes
 ------
   POST   /api/evolution/proposals                         propose
+  POST   /api/evolution/proposals/from-incident           propose from incident/postmortem
   GET    /api/evolution/proposals                         list / filter
   GET    /api/evolution/proposals/{decision_id}           get single
   POST   /api/evolution/proposals/{decision_id}/review    mark reviewed
@@ -33,6 +34,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -80,6 +82,8 @@ from models import (  # type: ignore
     DecisionResponse,
     DispatchCommandResponse,
     ExecuteRequest,
+    ObservationWindowReportResponse,
+    ProposeFromIncidentRequest,
     ProposeRequest,
     RejectRequest,
     RedeployFollowthroughRequest,
@@ -99,7 +103,7 @@ _INCIDENT_SVC = Path(__file__).resolve().parent.parent / "incident"
 if str(_INCIDENT_SVC) not in sys.path:
     sys.path.insert(0, str(_INCIDENT_SVC))
 
-from incident import IncidentError, IncidentStore  # type: ignore
+from incident import IncidentCase, IncidentError, IncidentStore, Postmortem  # type: ignore
 
 # ---------------------------------------------------------------------------
 # App + storage
@@ -180,6 +184,247 @@ def _domain_error(exc: Exception) -> HTTPException:
 
 def _enum_value(value: Any) -> Any:
     return value.value if hasattr(value, "value") else value
+
+
+def _parse_rfc3339(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _format_rfc3339(value: datetime) -> str:
+    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _window_state(as_of: datetime, start: datetime, end: datetime) -> str:
+    if as_of < start:
+        return "not_started"
+    if as_of <= end:
+        return "open"
+    return "elapsed"
+
+
+def _seconds_until(as_of: datetime, end: datetime) -> int:
+    return max(0, int((end - as_of).total_seconds()))
+
+
+def _seconds_since(start: datetime, as_of: datetime) -> int:
+    return max(0, int((as_of - start).total_seconds()))
+
+
+def _convergence_status(observation_state: str, cooldown_state: str) -> str:
+    if observation_state == "not_started":
+        return "pending_observation"
+    if observation_state == "open":
+        return "collecting_observation_evidence"
+    if cooldown_state in {"not_started", "open"}:
+        return "observation_elapsed_cooldown_active"
+    return "eligible_for_next_decision"
+
+
+def _observation_report_notes(
+    *,
+    observation_state: str,
+    cooldown_state: str,
+    active_blocking: bool,
+) -> List[str]:
+    if observation_state == "not_started":
+        return [
+            "Execution has been accepted, but the observation clock has not reached the requested report time.",
+            "Do not create another same-target structural mutation before the active window opens and closes.",
+        ]
+    if observation_state == "open":
+        return [
+            "Observation window is open; collect telemetry, drift, incident, and operator evidence.",
+            "Single-active-rule still blocks another same-target structural mutation during the active window.",
+        ]
+    if active_blocking or cooldown_state == "open":
+        return [
+            "Observation window has elapsed, but cooldown still blocks another same-target structural mutation.",
+            "Only severe escalation paths should bypass normal convergence wait semantics.",
+        ]
+    return [
+        "Observation and cooldown windows have elapsed for this decision.",
+        "The target is no longer blocked by this decision's active window.",
+    ]
+
+
+def _build_followthrough_refs(decision: EvolutionDecision) -> List[Dict[str, Any]]:
+    refs: List[Dict[str, Any]] = []
+    if decision.execution_result and decision.execution_result.execution_ref_id:
+        refs.append(
+            {
+                "ref_type": "dispatch_command",
+                "ref_id": decision.execution_result.execution_ref_id,
+                "plane": _enum_value(decision.execution_result.plane),
+                "status": _enum_value(decision.execution_result.status),
+                "note": decision.execution_result.outcome_summary,
+            }
+        )
+    metadata = decision.metadata or {}
+    for item in metadata.get("followthrough_refs", []):
+        if isinstance(item, dict):
+            refs.append(dict(item))
+    return refs
+
+
+def _incident_storage_ref(object_type: str) -> Dict[str, Any]:
+    return {
+        "backend": "incident_store",
+        "path": os.path.join(INCIDENT_DATA_DIR, "incidents.json"),
+        "object_type": object_type,
+    }
+
+
+def _default_action_from_incident(incident: IncidentCase) -> str:
+    if incident.severity == "critical" and incident.deployment_stage in {"paper", "canary", "live"}:
+        return EvolutionActionType.FREEZE.value
+    return EvolutionActionType.FLAG_FOR_REVIEW.value
+
+
+def _incident_threshold_snapshot(incident: IncidentCase) -> Dict[str, Any]:
+    if incident.severity == "critical":
+        return {
+            "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md §7.5",
+            "signal_type": "governance_incident",
+            "metric_name": "severity1_incident_count",
+            "comparator": "gte",
+            "observed_value": 1,
+            "threshold_value": 1,
+            "window": "active-incident",
+            "breached": True,
+            "note": "Critical incident opens the high-risk freeze proposal path.",
+        }
+    return {
+        "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md §7.5",
+        "signal_type": "manual_review",
+        "metric_name": "incident_postmortem_followup_required",
+        "comparator": "gte",
+        "observed_value": 1,
+        "threshold_value": 1,
+        "window": "incident-followup",
+        "breached": True,
+        "note": "Incident/postmortem evidence requires explicit evolution review.",
+    }
+
+
+def _incident_evidence_refs(
+    incident: IncidentCase,
+    postmortem: Postmortem | None,
+) -> List[Dict[str, Any]]:
+    refs = [
+        {
+            "ref_type": EvidenceRefType.MANUAL_REVIEW_TICKET.value,
+            "ref_id": incident.incident_id,
+            "storage_ref": _incident_storage_ref("IncidentCase"),
+            "note": "IncidentCase evidence snapshot for derived EvolutionDecision proposal.",
+        }
+    ]
+    if postmortem is not None:
+        refs.append(
+            {
+                "ref_type": EvidenceRefType.MANUAL_REVIEW_TICKET.value,
+                "ref_id": postmortem.postmortem_id,
+                "storage_ref": _incident_storage_ref("Postmortem"),
+                "note": "Postmortem findings linked to the derived EvolutionDecision proposal.",
+            }
+        )
+    return refs
+
+
+def _default_incident_rationale(
+    incident: IncidentCase,
+    postmortem: Postmortem | None,
+    action_type: str,
+) -> str:
+    source = (
+        f"postmortem {postmortem.postmortem_id} for incident {incident.incident_id}"
+        if postmortem is not None
+        else f"incident {incident.incident_id}"
+    )
+    return (
+        f"Create a governed {action_type} proposal from {source}. "
+        "The proposal is review-gated and does not mutate runtime, broker, or capital-binding state."
+    )
+
+
+def _postmortem_for_incident_request(
+    incident: IncidentCase,
+    postmortem_id: str | None,
+) -> Postmortem | None:
+    if postmortem_id:
+        postmortem = incident_store.get_postmortem(postmortem_id)
+        if postmortem is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Postmortem not found: {postmortem_id}",
+            )
+        if postmortem.incident_id != incident.incident_id:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Postmortem {postmortem_id} belongs to incident "
+                    f"{postmortem.incident_id}, not {incident.incident_id}"
+                ),
+            )
+        return postmortem
+    return incident_store.find_postmortem_for_incident(incident.incident_id)
+
+
+def _proposal_request_from_incident(body: ProposeFromIncidentRequest) -> ProposeRequest:
+    incident = incident_store.get_incident(body.incident_id)
+    if incident is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"IncidentCase not found: {body.incident_id}",
+        )
+    postmortem = _postmortem_for_incident_request(incident, body.postmortem_id)
+    action_type = body.action_type or _default_action_from_incident(incident)
+    target_stage = body.target_stage if body.target_stage is not None else incident.deployment_stage
+    metadata = dict(body.metadata or {})
+    metadata.update(
+        {
+            "task_id": "MGMT-EVO-002",
+            "source": "incident_postmortem",
+            "source_incident_id": incident.incident_id,
+            "source_postmortem_id": postmortem.postmortem_id if postmortem else None,
+            "source_trace_id": incident.trace_id,
+            "binding_id": incident.binding_id,
+            "deployment_plan_id": incident.deployment_plan_id,
+            "persona_capital_binding_id": incident.persona_capital_binding_id,
+            "runtime_id": incident.runtime_id,
+            "deployment_stage_snapshot": incident.deployment_stage,
+            "has_active_runtime": body.has_active_runtime,
+            "proposal_only": True,
+            "live_mutation_allowed": False,
+            "runtime_binding_mutation_allowed": False,
+            "broker_order_allowed": False,
+            "capital_binding_mutation_allowed": False,
+        }
+    )
+    return ProposeRequest(
+        decision_id=body.decision_id,
+        target_type=body.target_type,
+        target_id=body.target_id or incident.artifact_id,
+        target_version=body.target_version or incident.artifact_version,
+        action_type=action_type,
+        rationale=body.rationale or _default_incident_rationale(incident, postmortem, action_type),
+        created_by_id=body.created_by_id,
+        created_by_role=body.created_by_role,
+        target_stage=target_stage,
+        capital_pool_id=incident.capital_pool_id,
+        linked_incident_id=incident.incident_id,
+        linked_postmortem_id=postmortem.postmortem_id if postmortem else None,
+        evidence_refs=_incident_evidence_refs(incident, postmortem),
+        threshold_snapshots=[_incident_threshold_snapshot(incident)],
+        metadata=metadata,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +526,24 @@ def propose(body: ProposeRequest):
     return _decision_to_response(decision)
 
 
+@app.post(
+    "/api/evolution/proposals/from-incident",
+    status_code=201,
+    response_model=DecisionResponse,
+)
+def propose_from_incident(body: ProposeFromIncidentRequest):
+    """
+    Create a proposed EvolutionDecision from canonical IncidentCase/Postmortem evidence.
+
+    This route derives target lineage from the incident snapshot, links the
+    resulting decision back to the incident/postmortem chain, and then reuses
+    the normal proposal path. It intentionally stops at ``proposed``: review,
+    approval, runtime mitigation, broker orders, and capital-binding writes
+    remain separate gated steps.
+    """
+    return propose(_proposal_request_from_incident(body))
+
+
 # --- List / filter -----------------------------------------------------------
 
 @app.get("/api/evolution/proposals", response_model=List[DecisionResponse])
@@ -325,6 +588,113 @@ def get_proposal(decision_id: str):
     if decision is None:
         raise _not_found(decision_id)
     return _decision_to_response(decision)
+
+
+# --- Observation report ------------------------------------------------------
+
+@app.get(
+    "/api/evolution/proposals/{decision_id}/observation-report",
+    response_model=ObservationWindowReportResponse,
+)
+def get_observation_report(
+    decision_id: str,
+    as_of: Optional[str] = Query(default=None),
+):
+    """
+    Produce the post-execution observation-window report for one decision.
+
+    The report is read-only evidence for the Learn/Evolve leg: it makes the
+    parent decision's observation window, cooldown window, active blocking
+    status, execution reference, and evidence links inspectable without opening
+    a new EvolutionDecision or follow-through command.
+    """
+    decision = store.get(decision_id)
+    if decision is None:
+        raise _not_found(decision_id)
+    if EvolutionDecisionState(decision.decision_state) != EvolutionDecisionState.EXECUTED:
+        raise HTTPException(
+            status_code=422,
+            detail="Observation window report requires an executed EvolutionDecision.",
+        )
+
+    report_time = _parse_rfc3339(as_of) if as_of else datetime.now(timezone.utc)
+    if report_time is None:
+        raise HTTPException(status_code=400, detail=f"Invalid as_of timestamp: {as_of!r}")
+
+    cooldown_start = _parse_rfc3339(decision.cooldown_started_at)
+    cooldown_end = _parse_rfc3339(decision.cooldown_ends_at)
+    observation_start = _parse_rfc3339(decision.observation_window_started_at)
+    observation_end = _parse_rfc3339(decision.observation_window_ends_at)
+    if not all((cooldown_start, cooldown_end, observation_start, observation_end)):
+        raise HTTPException(
+            status_code=422,
+            detail="Executed EvolutionDecision is missing cooldown or observation window timestamps.",
+        )
+
+    assert cooldown_start is not None
+    assert cooldown_end is not None
+    assert observation_start is not None
+    assert observation_end is not None
+    active_until = max(cooldown_end, observation_end)
+    observation_state = _window_state(report_time, observation_start, observation_end)
+    cooldown_state = _window_state(report_time, cooldown_start, cooldown_end)
+    active_blocking = report_time <= active_until
+
+    execution = (
+        decision.execution_result.to_dict()
+        if decision.execution_result is not None
+        else {}
+    )
+    return ObservationWindowReportResponse(
+        decision_id=decision.decision_id,
+        target_type=str(_enum_value(decision.target_type)),
+        target_id=decision.target_id,
+        target_version=decision.target_version,
+        target_stage=decision.target_stage,
+        action_type=str(_enum_value(decision.action_type)),
+        risk_level=str(_enum_value(decision.risk_level)),
+        decision_state=str(_enum_value(decision.decision_state)),
+        report_generated_at=_format_rfc3339(report_time),
+        observation_window_started_at=decision.observation_window_started_at or "",
+        observation_window_ends_at=decision.observation_window_ends_at or "",
+        cooldown_started_at=decision.cooldown_started_at or "",
+        cooldown_ends_at=decision.cooldown_ends_at or "",
+        observation_state=observation_state,
+        cooldown_state=cooldown_state,
+        active_until=_format_rfc3339(active_until),
+        active_blocking=active_blocking,
+        seconds_since_observation_start=_seconds_since(observation_start, report_time),
+        seconds_until_observation_end=_seconds_until(report_time, observation_end),
+        seconds_until_cooldown_end=_seconds_until(report_time, cooldown_end),
+        convergence_status=_convergence_status(observation_state, cooldown_state),
+        approval_decision_id=decision.approval_decision_id,
+        linked_incident_id=decision.linked_incident_id,
+        linked_postmortem_id=decision.linked_postmortem_id,
+        execution=execution,
+        followthrough_refs=_build_followthrough_refs(decision),
+        evidence_refs=[
+            ref.to_dict() if hasattr(ref, "to_dict") else ref
+            for ref in decision.evidence_refs
+        ],
+        threshold_snapshots=[
+            snap.to_dict() if hasattr(snap, "to_dict") else snap
+            for snap in decision.threshold_snapshots
+        ],
+        review_chain=[
+            step.to_dict() if hasattr(step, "to_dict") else step
+            for step in decision.review_chain
+        ],
+        policy_refs=[
+            "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md §5.2-§5.4",
+            "services/control-plane/governance/evolution_decision.contract.md §10",
+            "docs/04/pantheon_sa_supplemental_2026-05-15/SA_management_console_multi_persona_ooda.md §6.5",
+        ],
+        notes=_observation_report_notes(
+            observation_state=observation_state,
+            cooldown_state=cooldown_state,
+            active_blocking=active_blocking,
+        ),
+    )
 
 
 # --- Review ------------------------------------------------------------------

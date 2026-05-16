@@ -24,16 +24,32 @@
       ]
     },
     "strategy_id": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     },
     "title": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     },
     "hypothesis": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     },
     "objective": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
+    },
+    "lifecycle_state": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "candidate",
+        "review",
+        "approved",
+        "archived",
+        "rejected",
+        "superseded"
+      ]
     },
     "market_scope": {
       "type": "object",
@@ -45,24 +61,28 @@
         "symbols": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "minItems": 1
         },
         "asset_classes": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           }
         },
         "venues": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           }
         },
         "frequency": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         }
       },
       "additionalProperties": false
@@ -78,7 +98,8 @@
         ],
         "properties": {
           "ref": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "kind": {
             "type": "string",
@@ -87,7 +108,8 @@
               "feature_set",
               "paper",
               "repo",
-              "note"
+              "note",
+              "source_record"
             ]
           }
         },
@@ -102,7 +124,8 @@
       ],
       "properties": {
         "signal_schema_version": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "quantity_type": {
           "type": "string",
@@ -120,6 +143,7 @@
           "enum": [
             "research",
             "paper",
+            "canary",
             "live"
           ]
         }
@@ -135,18 +159,22 @@
         "metrics": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "minItems": 1
         },
         "candidate_gate": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "paper_gate": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "live_gate": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         }
       },
       "additionalProperties": false
@@ -161,10 +189,12 @@
           "type": "boolean"
         },
         "policy_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "risk_profile": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         }
       },
       "additionalProperties": false
@@ -193,14 +223,117 @@
         "source_refs": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           }
         },
         "created_by": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         }
       },
       "additionalProperties": false
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "ref_type",
+          "ref_id"
+        ],
+        "properties": {
+          "ref_type": {
+            "type": "string",
+            "enum": [
+              "evidence_bundle",
+              "evidence_item",
+              "source_record",
+              "citation",
+              "experiment_artifact",
+              "registry_entry"
+            ]
+          },
+          "ref_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence_item_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "citation_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "association": {
+            "type": "string",
+            "minLength": 1
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "code_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "repo_ref",
+          "path"
+        ],
+        "properties": {
+          "repo_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "commit": {
+            "type": "string",
+            "minLength": 1
+          },
+          "symbol": {
+            "type": "string",
+            "minLength": 1
+          },
+          "line_start": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "line_end": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "url": {
+            "type": "string",
+            "minLength": 1
+          },
+          "association": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
     }
   },
   "additionalProperties": false

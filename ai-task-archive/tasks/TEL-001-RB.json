@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "TEL-001-RB",
+  "archived_at": "2026-05-16T06:37:31Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "TEL-001-RB",
+    "title": "TelemetryEvent canonical schema (rebaseline)",
+    "summary_zh": null,
+    "phase": "Sprint 4 / EPIC-TELEMETRY",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Finalized after Claude review approval. Task commit 8c69a4ae records TEL-001-RB test/evidence/review artifacts. Verification passed: TEL schema 2 tests; paper runtime ingest/packet 10 tests; telemetry capture 35 tests; smoke 14/14 steps. Unrelated dirty/staged DEP/state worktree entries pre-existed and were not included in the TEL task commit.",
+    "last_update": "2026-05-16T06:37:31Z",
+    "review_notes_zh": [
+      "審查通過：canonical JSON Schema draft-07 有效；所有 8 個 RuntimeBinding evidence 欄位均在 required 清單中；17 個 rebaseline 必需 event_type 全部宣告於 schema enum；Evidence E-5 rollback 共存約束以 allOf if/then 執行；每個宣告的 event_type 均通過 TelemetryIngestService 含 authoritative binding 驗證成功，0 rejections",
+      "跨任務附註：test_capture.py 35 個測試全過；smoke_test.py 14/14 steps 通過；既有 paper runtime ingest contract + paper telemetry packet 共 10 個測試未受影響"
+    ],
+    "review_file": "support/reviews/TEL-001-RB-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T06:37:31Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "8c69a4aea1b72f6ce8123b4714b21811789c1046",
+      "commit_subject": "TEL-001-RB add telemetry schema rebaseline evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "TEL-001-RB",
+        "Reviewer": "Claude",
+        "Verification": "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.telemetry.test_tel001_rebaseline_schema; PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.telemetry.test_paper_runtime_ingest_contract services.telemetry.test_paper_telemetry_packet; PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_capture -v from services/telemetry; PYTHONDONTWRITEBYTECODE=1 python3 smoke_test.py from services/telemetry."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 65,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TEL-001-RB",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T05:59:55Z",
+      "resolved_at": "2026-05-16T06:02:20Z"
+    },
+    {
+      "task_id": "TEL-001-RB",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "TEL-001-RB ready for review. Added services/telemetry/test_tel001_rebaseline_schema.py covering draft-07 schema validity, required RuntimeBinding evidence fields, required runtime/action/event surface, and every declared event_type through TelemetryIngestService with authoritative binding evidence. Evidence note: support/evidence/TEL-001-RB/README.md. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.telemetry.test_tel001_rebaseline_schema; PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.telemetry.test_paper_runtime_ingest_contract services.telemetry.test_paper_telemetry_packet; cd services/telemetry && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_capture -v; cd services/telemetry && PYTHONDONTWRITEBYTECODE=1 python3 smoke_test.py.",
+      "status": "done",
+      "created_at": "2026-05-16T06:08:15Z",
+      "resolved_at": "2026-05-16T06:26:52Z"
+    },
+    {
+      "task_id": "TEL-001-RB",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: canonical schema has all required binding evidence fields, all 17 rebaseline event types declared, E-5 rollback constraints enforced, every event type ingests with authoritative binding — 2+10+35 tests + 14 smoke steps pass. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T06:26:52Z",
+      "resolved_at": "2026-05-16T06:37:31Z"
+    }
+  ],
+  "blockers": []
+}

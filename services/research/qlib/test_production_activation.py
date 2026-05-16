@@ -44,6 +44,14 @@ class TestQlibProductionActivationPacket(unittest.TestCase):
         self.assertEqual(packet["production_dataset_proof"]["freshness"]["status"], "fresh")
         self.assertTrue(packet["production_dataset_proof"]["pit"]["point_in_time"])
         self.assertEqual(
+            packet["model_eval_artifact_refs"]["model_artifact_ref"]["artifact_state"],
+            "draft",
+        )
+        self.assertEqual(
+            packet["model_eval_artifact_refs"]["evaluation_report_ref"]["artifact_type"],
+            "evaluation_result",
+        )
+        self.assertEqual(
             packet["candidate_handoff"]["production_dataset_proof"]["storage"]["dataset_ref"],
             "dataset:polygon-us-equity-top50-daily-2024-2026",
         )
@@ -107,8 +115,11 @@ class TestQlibProductionActivationPacket(unittest.TestCase):
             self.assertEqual(payload["artifact_state"], "draft")
             self.assertEqual(payload["requested_artifact_state"], "candidate")
             self.assertEqual(payload["order_route"], "none")
+            self.assertEqual(payload["model_artifact_ref"]["artifact_state"], "draft")
+            self.assertEqual(payload["evaluation_report_ref"]["artifact_type"], "evaluation_result")
             self.assertTrue(os.path.exists(output_dir / "production_activation_packet.json"))
             self.assertTrue(os.path.exists(output_dir / "candidate_packet.json"))
+            self.assertTrue(os.path.exists(output_dir / "artifact_refs.json"))
 
 
 def _activation_dataset() -> dict:

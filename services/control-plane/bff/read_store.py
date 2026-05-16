@@ -103,6 +103,7 @@ _FIXTURE_RECORD_KEYS = [
     "skill_id",
     "session_id",
     "sessionId",
+    "packet_id",
     "strategy_id",
     "experiment_id",
     "artifact_id",
@@ -418,6 +419,192 @@ def _load_snapshot_dataset(
     dataset_payload = payload.get(dataset_key, {})
     normalized = _normalize_records(dataset_payload, key_candidates)
     return True, normalized, (str(snapshot_path), stat)
+
+
+def _load_record_store_payload(path: Path) -> Any:
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        return []
+    if path.suffix.lower() == ".jsonl":
+        records: List[Any] = []
+        for line in text.splitlines():
+            raw = line.strip()
+            if raw:
+                records.append(json.loads(raw))
+        return records
+    return json.loads(text)
+
+
+def _packet_from_ooda_store_record(record: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(record, dict):
+        return None
+    if str(record.get("schema_version") or "") != "ooda_loop_packet_record.v1":
+        return None
+    payload = record.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    record_type = str(record.get("record_type") or "")
+    if record_type == "packet_snapshot":
+        packet = payload
+    elif record_type == "stage_transition":
+        packet = payload.get("packet")
+    else:
+        packet = None
+    if not isinstance(packet, dict):
+        return None
+    projected = json.loads(json.dumps(packet))
+    projected.setdefault("packet_id", record.get("packet_id"))
+    return projected
+
+
+def _project_ooda_packet_store_payload(payload: Any) -> Any:
+    if isinstance(payload, dict):
+        for key in ("items", "packets", "data", "records"):
+            nested = payload.get(key)
+            if isinstance(nested, list):
+                return _project_ooda_packet_store_payload(nested)
+        packet = _packet_from_ooda_store_record(payload)
+        if packet is not None:
+            return {str(packet.get("packet_id") or packet.get("id")): packet}
+        return payload
+
+    if not isinstance(payload, list):
+        return payload
+
+    projected: Dict[str, Dict[str, Any]] = {}
+    passthrough: List[Dict[str, Any]] = []
+    for item in payload:
+        packet = _packet_from_ooda_store_record(item)
+        if packet is None:
+            if isinstance(item, dict):
+                packet_id = _record_key(item, ["packet_id", "id"])
+                if packet_id:
+                    projected[str(packet_id)] = item
+                else:
+                    passthrough.append(item)
+            continue
+        packet_id = _record_key(packet, ["packet_id", "id"])
+        if packet_id:
+            projected[str(packet_id)] = packet
+
+    if passthrough:
+        return [*projected.values(), *passthrough]
+    return projected
+
+
+def _project_synthesis_conflict_log_record(record: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(record, dict):
+        return None
+
+    payload = record.get("payload") if isinstance(record.get("payload"), dict) else record
+    log_payload = (
+        payload.get("conflict_resolution_log")
+        or payload.get("conflictResolutionLog")
+        or payload.get("log")
+        if isinstance(payload, dict)
+        else None
+    )
+    if log_payload is None and isinstance(payload, dict):
+        log_payload = payload
+    if not isinstance(log_payload, dict):
+        return None
+
+    log_id = _record_key(log_payload, ["log_id", "id", "conflict_resolution_log_id"])
+    if not log_id:
+        return None
+
+    projected = json.loads(json.dumps(log_payload))
+    projected.setdefault("log_id", str(log_id))
+    projected.setdefault("id", str(log_id))
+
+    artifact = None
+    if isinstance(payload, dict):
+        artifact = (
+            payload.get("allocation_policy_artifact")
+            or payload.get("allocationPolicyArtifact")
+            or payload.get("artifact")
+        )
+    if isinstance(artifact, dict):
+        artifact_id = artifact.get("artifact_id") or artifact.get("id")
+        if artifact_id:
+            projected.setdefault("allocation_policy_artifact_id", str(artifact_id))
+        for field in (
+            "target_weights",
+            "constraints_bundle",
+            "risk_budget",
+            "provenance_refs",
+            "sponsor_persona_id",
+            "synthesis_method",
+        ):
+            if field in artifact and field not in projected:
+                projected[field] = json.loads(json.dumps(artifact[field]))
+
+    approval = None
+    if isinstance(payload, dict):
+        approval = (
+            payload.get("governance_approval_packet")
+            or payload.get("governanceApprovalPacket")
+            or payload.get("approval_decision")
+        )
+    if isinstance(approval, dict):
+        approval_id = approval.get("approval_decision_id") or approval.get("decision_id") or approval.get("id")
+        if approval_id:
+            projected.setdefault("governance_approval_id", str(approval_id))
+        for source, target in (
+            ("decision", "governance_decision"),
+            ("decision_state", "governance_decision_state"),
+            ("can_proceed", "governance_can_proceed"),
+            ("rationale", "governance_rationale"),
+            ("risk_level", "governance_risk_level"),
+        ):
+            if source in approval and target not in projected:
+                projected[target] = json.loads(json.dumps(approval[source]))
+        if "evidence_refs" in approval and "evidence_refs" not in projected:
+            projected["evidence_refs"] = json.loads(json.dumps(approval["evidence_refs"]))
+
+    return projected
+
+
+def _project_synthesis_conflict_log_store_payload(payload: Any) -> Any:
+    if isinstance(payload, dict):
+        for key in ("items", "logs", "conflict_resolution_logs", "data", "records"):
+            nested = payload.get(key)
+            if isinstance(nested, list):
+                return _project_synthesis_conflict_log_store_payload(nested)
+
+        single = _project_synthesis_conflict_log_record(payload)
+        if single is not None:
+            return {str(single["log_id"]): single}
+
+        projected: Dict[str, Dict[str, Any]] = {}
+        for item in payload.values():
+            single = _project_synthesis_conflict_log_record(item)
+            if single is not None:
+                projected[str(single["log_id"])] = single
+        if projected:
+            return projected
+        return payload
+
+    if not isinstance(payload, list):
+        return payload
+
+    projected: Dict[str, Dict[str, Any]] = {}
+    passthrough: List[Dict[str, Any]] = []
+    for item in payload:
+        single = _project_synthesis_conflict_log_record(item)
+        if single is None:
+            if isinstance(item, dict):
+                log_id = _record_key(item, ["log_id", "id", "conflict_resolution_log_id"])
+                if log_id:
+                    projected[str(log_id)] = item
+                else:
+                    passthrough.append(item)
+            continue
+        projected[str(single["log_id"])] = single
+
+    if passthrough:
+        return [*projected.values(), *passthrough]
+    return projected
 
 
 def _base_url_from_env(env_names: tuple[str, ...]) -> Optional[str]:
@@ -1026,6 +1213,31 @@ class ServiceBackedReadAdapter:
             "keys": ["id"],
             "snapshot_key": "sentinel_findings",
         },
+        "ooda_packets": {
+            "env": "PANTHEON_BFF_OODA_PACKET_STORE",
+            "dirs": ("PANTHEON_OODA_DATA_DIR", "PANTHEON_CONTROL_PLANE_DATA_DIR"),
+            "filenames": (
+                "ooda_packets.jsonl",
+                "ooda_loop_packets.jsonl",
+                "loop_packets.jsonl",
+                "ooda_packets.json",
+            ),
+            "keys": ["packet_id", "id"],
+            "snapshot_key": "ooda_packets",
+        },
+        "synthesis_conflict_logs": {
+            "env": "PANTHEON_BFF_SYNTHESIS_CONFLICT_LOG_STORE",
+            "dirs": ("PANTHEON_SYNTHESIS_DATA_DIR", "PANTHEON_OPTIMIZER_DATA_DIR"),
+            "filenames": (
+                "synthesis_conflict_logs.jsonl",
+                "conflict_resolution_logs.jsonl",
+                "conflict_logs.jsonl",
+                "synthesis_conflict_logs.json",
+                "conflict_resolution_logs.json",
+            ),
+            "keys": ["log_id", "id", "conflict_resolution_log_id"],
+            "snapshot_key": "synthesis_conflict_logs",
+        },
     }
 
     _HTTP_DATASETS = {
@@ -1070,6 +1282,11 @@ class ServiceBackedReadAdapter:
             "base_env": ("PANTHEON_MEMORY_API_URL", "PANTHEON_MEMORY_SERVICE_URL"),
             "list_path": "/api/memory/entries",
             "list_key": "entries",
+        },
+        "ooda_packets": {
+            "base_env": ("PANTHEON_OODA_API_URL", "PANTHEON_CONTROL_PLANE_OODA_URL"),
+            "list_path": "/api/ooda/packets",
+            "list_key": "items",
         },
     }
 
@@ -1151,8 +1368,11 @@ class ServiceBackedReadAdapter:
             if self._cache_meta.get(dataset) == (cache_key, stat):
                 return True, self._cache.get(dataset, {})
 
-            text = path.read_text(encoding="utf-8").strip()
-            payload = json.loads(text) if text else {}
+            payload = _load_record_store_payload(path)
+            if dataset == "ooda_packets":
+                payload = _project_ooda_packet_store_payload(payload)
+            if dataset == "synthesis_conflict_logs":
+                payload = _project_synthesis_conflict_log_store_payload(payload)
             nested_key = self._DATASETS[dataset].get("nested_key")
             if nested_key and isinstance(payload, dict):
                 payload = payload.get(str(nested_key), {})
@@ -1227,12 +1447,32 @@ class ServiceBackedReadAdapter:
             "binding_id": inc.get("binding_id"),
         }
 
-    @staticmethod
-    def _derive_sentinel_finding(inc: Dict[str, Any], *, override_id: Optional[str] = None) -> Dict[str, Any]:
+    _SENTINEL_KIND_KEYWORDS: Dict[str, List[str]] = {
+        "hiq_sentinel": ["hiq", "sentinel"],
+        "risk_breach": ["risk", "breach", "capital"],
+        "strategy_drift": ["drift", "strategy"],
+        "loop_anomaly": ["loop", "anomaly"],
+    }
+
+    @classmethod
+    def _infer_sentinel_kind(cls, inc: Dict[str, Any]) -> Optional[str]:
+        """Infer sentinel finding kind from kind field or title keywords."""
+        raw_kind = str(inc.get("kind") or "").strip().lower()
+        if raw_kind in cls._SENTINEL_KIND_KEYWORDS:
+            return raw_kind
+        title_lower = str(inc.get("title") or "").lower()
+        for kind, keywords in cls._SENTINEL_KIND_KEYWORDS.items():
+            if any(kw in title_lower for kw in keywords):
+                return kind
+        return None
+
+    @classmethod
+    def _derive_sentinel_finding(cls, inc: Dict[str, Any], *, override_id: Optional[str] = None) -> Dict[str, Any]:
         inc_id = str(inc.get("incident_id") or inc.get("id") or "")
         return {
             "id": override_id or inc_id,
             "status": inc.get("status", "unknown"),
+            "kind": inc.get("kind") or cls._infer_sentinel_kind(inc),
             "derived_from_incident_id": inc_id,
             "runtime_id": inc.get("runtime_id"),
             "binding_id": inc.get("binding_id"),
@@ -1274,18 +1514,46 @@ class ServiceBackedReadAdapter:
             return True, lr_data.get(loop_run_id)
         return False, None
 
-    def list_sentinel_findings(self) -> tuple[bool, List[Dict[str, Any]]]:
+    def list_sentinel_findings(
+        self,
+        *,
+        kind: Optional[str] = None,
+        status: Optional[str] = None,
+        severity: Optional[str] = None,
+    ) -> tuple[bool, List[Dict[str, Any]]]:
         avail_inc, incidents = self._load_dataset("incidents")
         if avail_inc:
-            return True, [
+            results = [
                 self._derive_sentinel_finding(inc)
                 for inc in incidents.values()
                 if isinstance(inc, dict) and "loop" not in str(inc.get("title") or "").lower()
             ]
+            return True, self._apply_sentinel_filters(results, kind=kind, status=status, severity=severity)
         avail_sf, sf_data = self._load_dataset("sentinel_findings")
         if avail_sf:
-            return True, list(sf_data.values())
+            results = list(sf_data.values())
+            return True, self._apply_sentinel_filters(results, kind=kind, status=status, severity=severity)
         return False, []
+
+    @staticmethod
+    def _apply_sentinel_filters(
+        records: List[Dict[str, Any]],
+        *,
+        kind: Optional[str],
+        status: Optional[str],
+        severity: Optional[str],
+    ) -> List[Dict[str, Any]]:
+        out = records
+        if kind is not None:
+            kind_lower = kind.lower()
+            out = [r for r in out if str(r.get("kind") or "").lower() == kind_lower]
+        if status is not None:
+            status_lower = status.lower()
+            out = [r for r in out if str(r.get("status") or "").lower() == status_lower]
+        if severity is not None:
+            severity_lower = severity.lower()
+            out = [r for r in out if str(r.get("severity") or "").lower() == severity_lower]
+        return out
 
     def get_sentinel_finding(self, finding_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
         avail_inc, incidents = self._load_dataset("incidents")
@@ -5103,6 +5371,8 @@ class ReadSurfaceStore:
         "agora_training_examples": "agora_training_examples",
         "agora_audit_events": "agora_audit_events",
         "v5_interventions": "v5_interventions",
+        "ooda_packets": "ooda_packets",
+        "synthesis_conflict_logs": "synthesis_conflict_logs",
         "ranking_formulas": "ranking_formulas",
         "rebalances": "rebalances",
         "rankings": "rankings",
@@ -6549,7 +6819,12 @@ class ReadSurfaceStore:
     def _backfill_local_contract_defaults(self) -> bool:
         changed = False
         default_data = _default_read_data()
-        if _merge_default_fixture_pack(self._data, _load_default_fixture_pack_datasets()):
+        fixture_datasets = _load_default_fixture_pack_datasets()
+        # When the snapshot explicitly provides an "incidents" key (even if empty),
+        # preserve it as-is and do not inject fixture-pack incident records.
+        if "incidents" in self._data:
+            fixture_datasets.pop("incidents", None)
+        if _merge_default_fixture_pack(self._data, fixture_datasets):
             changed = True
         deployment_plans = self._data.get("deployment_plans")
         default_plans = default_data.get("deployment_plans", {})
@@ -7341,6 +7616,9 @@ class ReadSurfaceStore:
             "createdAt": timestamp,
             "updatedAt": timestamp,
         }
+        for _committee_field in ("quorumState", "consensusState", "participantRoster", "linkedRequestId"):
+            if payload.get(_committee_field) is not None:
+                session[_committee_field] = json.loads(json.dumps(payload[_committee_field]))
         self._ensure_local_overlay_records("agora_sessions")[session_id] = json.loads(json.dumps(session))
         self._save()
         return json.loads(json.dumps(session))
@@ -7385,6 +7663,204 @@ class ReadSurfaceStore:
         self._ensure_local_overlay_records("agora_sessions")[session_id] = session
         self._save()
         return json.loads(json.dumps(message))
+
+    def close_agora_session(
+        self,
+        session_id: str,
+        *,
+        closed_at: Optional[str] = None,
+        outcome: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        session = self.get_agora_session(session_id)
+        if session is None:
+            return None
+        timestamp = closed_at or _utc_now_rfc3339()
+        session = json.loads(json.dumps(session))
+        session["status"] = "closed"
+        session["closedAt"] = timestamp
+        session["updatedAt"] = timestamp
+        if outcome is not None:
+            session["outcome"] = outcome
+        self._ensure_local_overlay_records("agora_sessions")[session_id] = session
+        self._save()
+        return json.loads(json.dumps(session))
+
+    def open_committee_session(
+        self,
+        session_id: str,
+        *,
+        opened_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        session = self.get_agora_session(session_id)
+        if session is None:
+            return None
+        if str(session.get("mode") or "").strip() != "committee":
+            return None
+        timestamp = opened_at or _utc_now_rfc3339()
+        session = json.loads(json.dumps(session))
+        session["status"] = "open"
+        session["openedAt"] = timestamp
+        session["updatedAt"] = timestamp
+        self._ensure_local_overlay_records("agora_sessions")[session_id] = session
+        self._save()
+        return json.loads(json.dumps(session))
+
+    def close_committee_session(
+        self,
+        session_id: str,
+        *,
+        closed_at: Optional[str] = None,
+        outcome: Optional[str] = None,
+        memo_ids: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        session = self.get_agora_session(session_id)
+        if session is None:
+            return None
+        if str(session.get("mode") or "").strip() != "committee":
+            return None
+        timestamp = closed_at or _utc_now_rfc3339()
+        session = json.loads(json.dumps(session))
+        session["status"] = "closed"
+        session["closedAt"] = timestamp
+        session["updatedAt"] = timestamp
+        if outcome is not None:
+            session["outcome"] = outcome
+        if memo_ids is not None:
+            session["memoIds"] = memo_ids
+        self._ensure_local_overlay_records("agora_sessions")[session_id] = session
+        self._save()
+        return json.loads(json.dumps(session))
+
+    # ---- ASK-004: committee session memo publish to registry / review ---- #
+
+    def submit_committee_session_memo(
+        self,
+        session_id: str,
+        *,
+        memo_id: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """ASK-004: draft a memo linked to a committee session."""
+        session = self.get_agora_session(session_id)
+        if session is None or str(session.get("mode") or "").strip() != "committee":
+            return None
+        timestamp = created_at or _utc_now_rfc3339()
+        memo_type = str(payload.get("memoType") or payload.get("memo_type") or "committee_summary").strip() or "committee_summary"
+        author_ref = json.loads(
+            json.dumps(
+                payload.get("authorRef")
+                or payload.get("author_ref")
+                or {"type": "operator", "id": actor_id}
+            )
+        )
+        evidence_refs = json.loads(
+            json.dumps(list(payload.get("evidenceRefs") or payload.get("evidence_refs") or []))
+        )
+        evidence_ref_ids: List[str] = []
+        for item in evidence_refs:
+            if isinstance(item, dict):
+                ref_id = str(item.get("id") or item.get("ref_id") or item.get("artifact_ref") or "").strip()
+            else:
+                ref_id = str(item or "").strip()
+            if ref_id and ref_id not in evidence_ref_ids:
+                evidence_ref_ids.append(ref_id)
+        if isinstance(author_ref, dict):
+            created_by = json.loads(json.dumps(author_ref))
+        else:
+            created_by = {"actor_type": "operator", "actor_id": str(author_ref or actor_id)}
+        target = self._agora_session_target(session)
+        memo: Dict[str, Any] = {
+            "id": memo_id,
+            "memo_id": memo_id,
+            "memo_type": memo_type,
+            "status": "draft",
+            "lifecycle_state": "draft",
+            "linked_session_id": session_id,
+            "linked_request_id": (
+                payload.get("linkedRequestId")
+                or payload.get("linked_request_id")
+                or session.get("linkedRequestId")
+            ),
+            "author_ref": author_ref,
+            "session_to_memo_mapping": {
+                "mapping_id": f"map-{memo_id}",
+                "source_session_id": session_id,
+                "transcript_id": payload.get("transcriptId") or payload.get("transcript_id") or f"tr-{session_id}",
+                "transcript_version": payload.get("transcriptVersion") or payload.get("transcript_version"),
+                "memo_id": memo_id,
+                "memo_type": memo_type,
+                "created_by": created_by,
+                "evidence_refs": evidence_ref_ids,
+                "mapping_status": "draft",
+                "created_at": timestamp,
+            },
+            "summary": str(payload.get("summary") or "").strip() or None,
+            "recommendations": json.loads(json.dumps(list(payload.get("recommendations") or []))),
+            "evidence_refs": evidence_refs,
+            "created_at": timestamp,
+            "published_at": None,
+            "governance_target": {
+                "target_type": target.get("type"),
+                "target_id": target.get("id"),
+                "deployment_plan_id": target.get("id") if target.get("type") == "deployment_plan" else None,
+                "artifact_id": target.get("id") if target.get("type") == "artifact" else None,
+                "strategy_id": target.get("id") if target.get("type") == "strategy" else None,
+            },
+        }
+        self._ensure_local_overlay_records("consult_memos")[memo_id] = memo
+        self._save()
+        return self._project_consult_memo_detail(json.loads(json.dumps(memo)))
+
+    def list_committee_session_memos(self, session_id: str) -> List[Dict[str, Any]]:
+        """ASK-004: list memos linked to a committee session."""
+        all_memos = self._read_dataset_records("consult_memos")
+        memos = [
+            memo
+            for memo in all_memos
+            if isinstance(memo, dict) and str(memo.get("linked_session_id") or "") == str(session_id)
+        ]
+        memos.sort(key=self._recent_sort_value, reverse=True)
+        return [self._project_consult_memo_summary(memo) for memo in memos]
+
+    def get_committee_session_memo(self, session_id: str, memo_id: str) -> Optional[Dict[str, Any]]:
+        """ASK-004: get a memo linked to a committee session."""
+        record = self._agora_record_map("consult_memos", ["memo_id", "id"]).get(str(memo_id))
+        if record is None:
+            return None
+        if str(record.get("linked_session_id") or "") != str(session_id):
+            return None
+        return self._project_consult_memo_detail(record)
+
+    def publish_committee_session_memo(
+        self,
+        session_id: str,
+        memo_id: str,
+        *,
+        actor_id: str,
+        published_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """ASK-004: publish a committee session memo to the consult memo registry."""
+        record = self._agora_record_map("consult_memos", ["memo_id", "id"]).get(str(memo_id))
+        if record is None:
+            return None
+        if str(record.get("linked_session_id") or "") != str(session_id):
+            return None
+        timestamp = published_at or _utc_now_rfc3339()
+        memo = json.loads(json.dumps(record))
+        if str(memo.get("status") or memo.get("lifecycle_state") or "").strip().lower() == "published":
+            return self._project_consult_memo_detail(memo)
+        memo["status"] = "published"
+        memo["lifecycle_state"] = "published"
+        memo["published_at"] = timestamp
+        memo["published_by"] = actor_id
+        mapping = memo.get("session_to_memo_mapping")
+        if isinstance(mapping, dict):
+            mapping["mapping_status"] = "active"
+        self._ensure_local_overlay_records("consult_memos")[memo_id] = memo
+        self._save()
+        return self._project_consult_memo_detail(memo)
 
     def get_agora_message(self, message_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not message_id:
@@ -7830,16 +8306,27 @@ class ReadSurfaceStore:
     @staticmethod
     def _project_canonical_runtime_binding(raw: Dict[str, Any]) -> Dict[str, Any]:
         binding_id = raw.get("binding_id") or raw.get("id")
+        deployment_stage = raw.get("deployment_stage") or raw.get("deployment_mode")
+        deployment_mode = raw.get("deployment_mode") or deployment_stage
+        metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
         return {
             "id": binding_id,
+            "binding_id": binding_id,
+            "runtime_binding_id": raw.get("runtime_binding_id") or binding_id,
             "runtime_id": raw.get("runtime_id") or binding_id,
-            "deployment_stage": raw.get("deployment_mode") or raw.get("deployment_stage"),
+            "deployment_stage": deployment_stage,
+            "deployment_mode": deployment_mode,
             "status": raw.get("status"),
             "plan_id": raw.get("plan_id"),
             "capital_pool_id": raw.get("capital_pool_id"),
             "artifact_id": raw.get("artifact_id"),
             "artifact_version": raw.get("artifact_version"),
             "persona_capital_binding_id": raw.get("persona_capital_binding_id"),
+            "effective_at": raw.get("effective_at"),
+            "retired_at": raw.get("retired_at"),
+            "rollback_parent": raw.get("rollback_parent"),
+            "rollback_action_type": raw.get("rollback_action_type"),
+            "metadata": json.loads(json.dumps(metadata)),
         }
 
     @staticmethod
@@ -8618,6 +9105,274 @@ class ReadSurfaceStore:
             }
             for d in related
         ]
+
+    # ------------------------------------------------------------------ #
+    # OODA packet read surface (MGMT-OODA-004)
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _ooda_packet_id(packet: Dict[str, Any]) -> str:
+        return str(packet.get("packet_id") or packet.get("id") or "").strip()
+
+    @staticmethod
+    def _add_ooda_ref_value(target: set[str], value: Any) -> None:
+        if value in (None, ""):
+            return
+        if isinstance(value, (str, int, float)):
+            text = str(value).strip()
+            if text:
+                target.add(text)
+            return
+        if isinstance(value, list):
+            for item in value:
+                ReadSurfaceStore._add_ooda_ref_value(target, item)
+            return
+        if isinstance(value, dict):
+            for field in ("id", "ref_id", "object_id", "entity_id", "strategy_id", "runtime_id", "program_id"):
+                raw = value.get(field)
+                if raw not in (None, ""):
+                    target.add(str(raw).strip())
+
+    @classmethod
+    def _collect_ooda_ref_values(
+        cls,
+        value: Any,
+        *,
+        field_aliases: set[str],
+        type_tokens: set[str],
+    ) -> set[str]:
+        refs: set[str] = set()
+
+        def visit(node: Any) -> None:
+            if isinstance(node, dict):
+                raw_type = str(
+                    node.get("type")
+                    or node.get("object_type")
+                    or node.get("entity_type")
+                    or node.get("ref_type")
+                    or ""
+                ).lower()
+                if raw_type and any(token in raw_type for token in type_tokens):
+                    cls._add_ooda_ref_value(refs, node)
+                for key, child in node.items():
+                    normalized_key = str(key).replace("_", "").lower()
+                    if normalized_key in field_aliases:
+                        cls._add_ooda_ref_value(refs, child)
+                    visit(child)
+                return
+            if isinstance(node, list):
+                for child in node:
+                    visit(child)
+
+        visit(value)
+        return refs
+
+    @classmethod
+    def _ooda_packet_matches_ref(cls, packet: Dict[str, Any], ref_id: str, ref_type: str) -> bool:
+        clean_ref = str(ref_id or "").strip()
+        if not clean_ref:
+            return False
+        aliases_by_type = {
+            "strategy": {
+                "strategyid",
+                "strategyids",
+                "linkedstrategyid",
+                "linkedstrategyids",
+                "strategyspecid",
+                "strategyspecids",
+            },
+            "runtime": {
+                "runtimeid",
+                "runtimeids",
+                "runtimebindingid",
+                "runtimebindingids",
+                "bindingid",
+                "bindingids",
+            },
+            "evolution_program": {
+                "evolutionprogramid",
+                "evolutionprogramids",
+                "programid",
+                "programids",
+            },
+        }
+        type_tokens_by_type = {
+            "strategy": {"strategy"},
+            "runtime": {"runtime", "runtimebinding"},
+            "evolution_program": {"evolutionprogram"},
+        }
+        refs = cls._collect_ooda_ref_values(
+            packet,
+            field_aliases=aliases_by_type[ref_type],
+            type_tokens=type_tokens_by_type[ref_type],
+        )
+        return clean_ref in refs
+
+    def list_ooda_packets(
+        self,
+        *,
+        status: Optional[str] = None,
+        stage: Optional[str] = None,
+        strategy_id: Optional[str] = None,
+        runtime_id: Optional[str] = None,
+        evolution_program_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        items = [
+            json.loads(json.dumps(packet))
+            for packet in self._read_dataset_records("ooda_packets")
+            if self._ooda_packet_id(packet)
+        ]
+        if status:
+            requested = {item.strip().lower() for item in status.split(",") if item.strip()}
+            items = [
+                packet
+                for packet in items
+                if str(packet.get("status") or packet.get("state") or "").lower() in requested
+            ]
+        if stage:
+            requested_stages = {item.strip().lower() for item in stage.split(",") if item.strip()}
+            items = [
+                packet
+                for packet in items
+                if str(packet.get("stage") or packet.get("current_stage") or "").lower() in requested_stages
+            ]
+        if strategy_id:
+            items = [
+                packet
+                for packet in items
+                if self._ooda_packet_matches_ref(packet, strategy_id, "strategy")
+            ]
+        if runtime_id:
+            items = [
+                packet
+                for packet in items
+                if self._ooda_packet_matches_ref(packet, runtime_id, "runtime")
+            ]
+        if evolution_program_id:
+            items = [
+                packet
+                for packet in items
+                if self._ooda_packet_matches_ref(packet, evolution_program_id, "evolution_program")
+            ]
+        items.sort(
+            key=lambda packet: (
+                _parse_rfc3339(
+                    packet.get("updated_at")
+                    or packet.get("closed_at")
+                    or packet.get("created_at")
+                    or packet.get("started_at")
+                )
+                or datetime.min
+            ),
+            reverse=True,
+        )
+        return items
+
+    def get_ooda_packet(self, packet_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        clean_id = str(packet_id or "").strip()
+        if not clean_id:
+            return None
+        for packet in self.list_ooda_packets():
+            if self._ooda_packet_id(packet) == clean_id:
+                return json.loads(json.dumps(packet))
+        return None
+
+    def list_ooda_packets_for_strategy(self, strategy_id: str) -> List[Dict[str, Any]]:
+        return self.list_ooda_packets(strategy_id=strategy_id)
+
+    def list_ooda_packets_for_runtime(self, runtime_id: str) -> List[Dict[str, Any]]:
+        return self.list_ooda_packets(runtime_id=runtime_id)
+
+    def list_ooda_packets_for_evolution_program(self, program_id: str) -> List[Dict[str, Any]]:
+        return self.list_ooda_packets(evolution_program_id=program_id)
+
+    # ------------------------------------------------------------------ #
+    # Synthesis conflict log read surface (MGMT-SYN-006)
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _synthesis_conflict_log_id(log: Dict[str, Any]) -> str:
+        return str(log.get("log_id") or log.get("id") or log.get("conflict_resolution_log_id") or "").strip()
+
+    @staticmethod
+    def _synthesis_log_text_matches(value: Any, requested: set[str]) -> bool:
+        if value in (None, ""):
+            return False
+        if isinstance(value, list):
+            return any(ReadSurfaceStore._synthesis_log_text_matches(item, requested) for item in value)
+        return str(value).strip() in requested
+
+    @classmethod
+    def _synthesis_conflict_log_matches_proposal(cls, log: Dict[str, Any], proposal_id: str) -> bool:
+        clean_id = str(proposal_id or "").strip()
+        if not clean_id:
+            return True
+        requested = {clean_id}
+        if cls._synthesis_log_text_matches(log.get("proposal_ids"), requested):
+            return True
+        if clean_id in {str(key) for key in (log.get("weighting_inputs") or {}).keys()}:
+            return True
+        if clean_id in {str(key) for key in (log.get("weighting_outputs") or {}).keys()}:
+            return True
+        for veto in log.get("vetoed_proposals") or []:
+            if isinstance(veto, dict) and str(veto.get("proposal_id") or "").strip() == clean_id:
+                return True
+        return False
+
+    def list_synthesis_conflict_logs(
+        self,
+        *,
+        capital_pool_id: Optional[str] = None,
+        scope_ref: Optional[str] = None,
+        proposal_id: Optional[str] = None,
+        sponsor_persona_id: Optional[str] = None,
+        synthesis_method: Optional[str] = None,
+        committee_ref: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        items = [
+            json.loads(json.dumps(log))
+            for log in self._read_dataset_records("synthesis_conflict_logs")
+            if self._synthesis_conflict_log_id(log)
+        ]
+        if capital_pool_id:
+            requested = {item.strip() for item in capital_pool_id.split(",") if item.strip()}
+            items = [log for log in items if str(log.get("capital_pool_id") or "").strip() in requested]
+        if scope_ref:
+            requested = {item.strip() for item in scope_ref.split(",") if item.strip()}
+            items = [log for log in items if str(log.get("scope_ref") or "").strip() in requested]
+        if sponsor_persona_id:
+            requested = {item.strip() for item in sponsor_persona_id.split(",") if item.strip()}
+            items = [log for log in items if str(log.get("sponsor_persona_id") or "").strip() in requested]
+        if synthesis_method:
+            requested = {item.strip() for item in synthesis_method.split(",") if item.strip()}
+            items = [log for log in items if str(log.get("synthesis_method") or "").strip() in requested]
+        if committee_ref:
+            requested = {item.strip() for item in committee_ref.split(",") if item.strip()}
+            items = [log for log in items if str(log.get("committee_ref") or "").strip() in requested]
+        if proposal_id:
+            items = [log for log in items if self._synthesis_conflict_log_matches_proposal(log, proposal_id)]
+        items.sort(
+            key=lambda log: (
+                _parse_rfc3339(
+                    log.get("timestamp")
+                    or log.get("created_at")
+                    or log.get("recorded_at")
+                    or log.get("updated_at")
+                )
+                or datetime.min
+            ),
+            reverse=True,
+        )
+        return items
+
+    def get_synthesis_conflict_log(self, log_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        clean_id = str(log_id or "").strip()
+        if not clean_id:
+            return None
+        for log in self.list_synthesis_conflict_logs():
+            if self._synthesis_conflict_log_id(log) == clean_id:
+                return json.loads(json.dumps(log))
+        return None
 
     # ------------------------------------------------------------------ #
     # v5 intervention fixture read surface (BFF-CONSOL-009)
@@ -10814,6 +11569,7 @@ class ReadSurfaceStore:
             "created_at": artifact.get("created_at"),
             "metric_summary": self._rw05_metric_summary(artifact),
             "experiment_refs": self._rw05_experiment_refs(artifact),
+            "research_linkage": self._rw05_research_linkage(artifact),
             "is_current_version": self._rw05_is_current_version(artifact),
             "allowedActions": {
                 "canCompare": self._rw05_can_compare(artifact.get("status")),
@@ -10834,6 +11590,16 @@ class ReadSurfaceStore:
         if not isinstance(refs, list):
             return []
         return [json.loads(json.dumps(ref)) for ref in refs if isinstance(ref, dict)]
+
+    @staticmethod
+    def _rw05_research_linkage(artifact: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        metadata = artifact.get("metadata") if isinstance(artifact.get("metadata"), dict) else {}
+        provenance = artifact.get("provenance") if isinstance(artifact.get("provenance"), dict) else {}
+        for source in (artifact, metadata, provenance):
+            linkage = source.get("research_linkage")
+            if isinstance(linkage, dict):
+                return json.loads(json.dumps(linkage))
+        return None
 
     def _project_research_artifact_detail(self, artifact: Dict[str, Any]) -> Dict[str, Any]:
         lineage_chain = self._rw05_lineage_versions(artifact.get("lineage_id"))
@@ -10877,6 +11643,7 @@ class ReadSurfaceStore:
             "parameters": json.loads(json.dumps(artifact.get("parameters") or {})),
             "provenance": json.loads(json.dumps(artifact.get("provenance") or {})),
             "experiment_refs": self._rw05_experiment_refs(artifact),
+            "research_linkage": self._rw05_research_linkage(artifact),
             "allowedActions": {
                 "canCompare": self._rw05_can_compare(artifact.get("status")),
                 "canViewDetail": True,
@@ -11102,6 +11869,7 @@ class ReadSurfaceStore:
                     record,
                     [
                         "id",
+                        "memo_id",
                         "entry_id",
                         "note_id",
                         "insight_id",
@@ -11110,10 +11878,13 @@ class ReadSurfaceStore:
                         "sessionId",
                         "packId",
                         "handoffId",
+                        "packet_id",
                         "trainingExampleId",
                         "example_id",
                         "analysis_id",
                         "artifact_id",
+                        "log_id",
+                        "conflict_resolution_log_id",
                         "intervention_id",
                         "program_id",
                         "runtime_id",
@@ -11864,8 +12635,14 @@ class ReadSurfaceStore:
     def get_loop_run(self, loop_run_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
         return self._service.get_loop_run(loop_run_id)
 
-    def list_sentinel_findings(self) -> tuple[bool, List[Dict[str, Any]]]:
-        return self._service.list_sentinel_findings()
+    def list_sentinel_findings(
+        self,
+        *,
+        kind: Optional[str] = None,
+        status: Optional[str] = None,
+        severity: Optional[str] = None,
+    ) -> tuple[bool, List[Dict[str, Any]]]:
+        return self._service.list_sentinel_findings(kind=kind, status=status, severity=severity)
 
     def get_sentinel_finding(self, finding_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
         return self._service.get_sentinel_finding(finding_id)
@@ -15390,3 +16167,89 @@ class ReadSurfaceStore:
                 "surfaces": {"trainer_replay": surface_state},
             },
         }
+
+    # ------------------------------------------------------------------ #
+    # TRN-003: rapid-eval store
+    # ------------------------------------------------------------------ #
+
+    def _rapid_eval_store_path(self) -> Optional[Path]:
+        raw = os.getenv("PANTHEON_BFF_RAPID_EVAL_STORE", "").strip()
+        return Path(raw) if raw else None
+
+    def _load_rapid_evals(self) -> Dict[str, Any]:
+        path = self._rapid_eval_store_path()
+        if path is None or not path.exists():
+            return {}
+        text = path.read_text(encoding="utf-8").strip()
+        return json.loads(text) if text else {}
+
+    def _save_rapid_evals(self, records: Dict[str, Any]) -> None:
+        path = self._rapid_eval_store_path()
+        if path is None:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(records, indent=2, ensure_ascii=True))
+
+    def create_rapid_eval(
+        self,
+        session_id: str,
+        *,
+        persona_id: Optional[str] = None,
+        strategy_id: Optional[str] = None,
+        eval_scope: str,
+        patch_ref: Optional[str] = None,
+        dataset_version_id: str,
+        max_runtime_seconds: int,
+        requested_by: str,
+        requested_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if self._rapid_eval_store_path() is None:
+            return None
+        records = self._load_rapid_evals()
+        timestamp = requested_at or _utc_now_rfc3339()
+        existing_ids = set(records.keys())
+        date_prefix = timestamp[:10].replace("-", "")
+        index = len(existing_ids) + 1
+        eval_id = f"reval-{date_prefix}-{index:03d}"
+        while eval_id in existing_ids:
+            index += 1
+            eval_id = f"reval-{date_prefix}-{index:03d}"
+        record: Dict[str, Any] = {
+            "rapid_eval_id": eval_id,
+            "session_id": session_id,
+            "status": "queued",
+            "eval_scope": eval_scope,
+            "dataset_version_id": dataset_version_id,
+            "max_runtime_seconds": max_runtime_seconds,
+            "patch_ref": patch_ref,
+            "persona_id": persona_id,
+            "strategy_id": strategy_id,
+            "requested_by": requested_by,
+            "requested_at": timestamp,
+            "completed_at": None,
+            "advisory_note": (
+                "Rapid eval queued for bounded execution. "
+                "Results will be available once the eval completes."
+            ),
+            "meta": {
+                "snapshot_at": timestamp,
+                "surfaces": {"rapid_eval": "ok"},
+            },
+        }
+        records[eval_id] = record
+        self._save_rapid_evals(records)
+        return json.loads(json.dumps(record))
+
+    def get_rapid_eval(
+        self,
+        eval_id: Optional[str],
+        *,
+        snapshot_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not eval_id:
+            return None
+        records = self._load_rapid_evals()
+        record = records.get(str(eval_id))
+        if record is None:
+            return None
+        return json.loads(json.dumps(record))

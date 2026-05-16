@@ -28,6 +28,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+from .conflict_classifier import classify_allocation_conflicts
 from .models import (
     AllocationPolicyArtifact,
     CommitteeReferral,
@@ -119,48 +120,12 @@ def _needs_committee_escalation(
     if not proposals:
         return False, ""
 
-    # Condition: long vs short direction conflict with both high conviction
-    has_long = any("long" in p.directions for p in proposals)
-    has_short = any("short" in p.directions for p in proposals)
-    high_conviction_threshold = 0.7
-    if has_long and has_short:
-        long_max_conv = max(
-            (p.conviction for p in proposals if "long" in p.directions), default=0.0
-        )
-        short_max_conv = max(
-            (p.conviction for p in proposals if "short" in p.directions), default=0.0
-        )
-        if long_max_conv >= high_conviction_threshold and short_max_conv >= high_conviction_threshold:
-            return True, "long_vs_short_high_conviction_conflict"
-
-    # Condition: risk posture conflict — one wants to add leverage, another to reduce risk
-    leveraged = any(p.metadata.get("wants_leverage") for p in proposals)
-    de_risk = any(p.metadata.get("wants_de_risk") for p in proposals)
-    if leveraged and de_risk:
-        return True, "risk_posture_conflict"
-
-    # Condition: first canary/live deployment of a high-risk strategy family
-    high_risk_first_deployment = any(
-        p.scope_ref in {"canary", "live"}
-        and p.metadata.get("strategy_family_risk") == "high"
-        and p.metadata.get("first_deployment_in_scope")
-        for p in proposals
+    report = classify_allocation_conflicts(
+        proposals,
+        is_high_importance_pool=is_high_importance_pool,
     )
-    if high_risk_first_deployment:
-        return True, "high_risk_first_deployment"
-
-    # Condition: sponsor is ambiguous (no proposal clearly dominates)
-    weights = [p.effective_weight for p in proposals]
-    if len(weights) >= 2:
-        max_w = max(weights)
-        second_max = sorted(weights, reverse=True)[1]
-        # If top two effective weights are within 5% of each other, sponsor is ambiguous
-        if max_w > 0 and (max_w - second_max) / max_w < 0.05:
-            return True, "sponsor_ambiguous"
-
-    # Condition: high-importance pool
-    if is_high_importance_pool:
-        return True, "high_importance_pool"
+    if report.committee_triggers:
+        return True, report.committee_triggers[0]
 
     return False, ""
 

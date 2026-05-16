@@ -1,0 +1,89 @@
+{
+  "allowed_next_action": "offline_registry_review_only",
+  "candidate_registry_projection": {
+    "artifact_state": "candidate",
+    "artifact_type": "model_artifact",
+    "checksum": "sha256:da63b48ae98cd4a2978a9d0face6e252692c3223f6d0d5737b67a114c11af866",
+    "created_at": "2026-05-15T17:14:25Z",
+    "deployment_summary": {
+      "current_stage": "none"
+    },
+    "evaluation_summary": {
+      "ic": 0.0,
+      "mean_label": -2.102e-05,
+      "mse": 0.000133346,
+      "num_features": 4,
+      "num_instruments": 50,
+      "num_samples": 26700
+    },
+    "lineage": {
+      "source_dataset_refs": [
+        "dataset:tw-equity-ohlcv-top50-2024-daily"
+      ],
+      "source_run_ids": [
+        "qlib-stub-62f94503afa2"
+      ],
+      "source_strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1"
+    },
+    "metadata": {
+      "candidate_promotion_scope": "offline_alpha_model_review_only",
+      "data_frequency": "daily",
+      "entry_criteria_satisfied": {
+        "activation_ready_data_volume_met": true,
+        "governed_data_adapter_present": true,
+        "lightgbm_backend_present": true,
+        "source_strategy_spec_bound": true,
+        "version_pinned": true
+      },
+      "feature_names": [
+        "momentum_1d",
+        "momentum_2d",
+        "volume_change_1d",
+        "volatility_1d"
+      ],
+      "framework": "qlib",
+      "framework_version": "0.9.6",
+      "model_family": "lightgbm",
+      "num_instruments": 50,
+      "num_samples": 26700,
+      "training_backend": "stub_lgbm"
+    },
+    "producer_run_id": "qlib-stub-62f94503afa2",
+    "registry_id": "qlib-alpha-tw-cross-sectional-equity-alpha-1.0.0",
+    "storage_ref": {
+      "backend": "object_store",
+      "path": "research/qlib/tw-cross-sectional-equity-alpha/1.0.0/artifact.bin"
+    },
+    "strategy_id": "tw-cross-sectional-equity-alpha",
+    "version": "1.0.0"
+  },
+  "current_artifact_state": "draft",
+  "dataset_floor_summary": {
+    "data_frequency": "daily",
+    "history_years": 2.0507,
+    "min_instrument_history_years": 2.0507,
+    "min_periods_per_instrument": 536,
+    "num_instruments": 50
+  },
+  "deployment_stage": "none",
+  "evaluator_handoff": {
+    "candidate_use": "offline_review_only",
+    "consumer": "EV-001",
+    "minimum_artifact_state_for_scoring": "approved",
+    "model_family": "qlib_alpha"
+  },
+  "gate_state": "closed",
+  "packet_id": "qlib-candidate-tw-cross-sectional-equity-alpha",
+  "registry_write_authority": "registry_service_only",
+  "requested_artifact_state": "candidate",
+  "required_checks": [
+    "RS-003 candidate proof and StrategySpec binding must remain attached.",
+    "Governed data floors must remain satisfied before candidate admission.",
+    "Qlib alpha output is scoring-only and must not route to LEAN directly.",
+    "Registry admission must happen through the registry service, never this adapter."
+  ],
+  "source_dataset_refs": [
+    "dataset:tw-equity-ohlcv-top50-2024-daily"
+  ],
+  "source_run_id": "qlib-stub-62f94503afa2"
+}

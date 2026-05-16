@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from services.foundation.health import register_fastapi_health_routes
 
@@ -54,19 +54,21 @@ class ProposalIn(BaseModel):
     persona_id: str
     capital_pool_id: str
     scope_ref: str
-    target_type: str = "pool"
-    directions: List[str] = []
-    target_weights: Dict[str, float] = {}
-    conviction: float = 0.5
-    uncertainty: float = 0.0
+    target_type: str
+    directions: List[str]
+    target_weights: Dict[str, float]
+    conviction: float
+    uncertainty: float
     rationale_ref: Optional[str] = None
     regime_ref: Optional[str] = None
     valid_from: Optional[str] = None
     valid_to: Optional[str] = None
+    evidence_refs: List[str]
+    created_at: str
     reliability_score: float = 1.0
     regime_fit_score: float = 1.0
     governance_multiplier: float = 1.0
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class SynthesizeRequest(BaseModel):
@@ -96,7 +98,10 @@ async def synthesize(req: SynthesizeRequest):
     is required.  A ConflictResolutionLog is always recorded.
     """
     try:
-        proposals = [PersonaAllocationProposal(**p.model_dump()) for p in req.proposals]
+        proposals = [
+            PersonaAllocationProposal(**p.model_dump(exclude_none=True))
+            for p in req.proposals
+        ]
     except (SynthesisError, Exception) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
@@ -128,15 +133,21 @@ async def synthesize(req: SynthesizeRequest):
 
     if isinstance(result, CommitteeReferral):
         _policies[result.referral_id] = result
+        referral_payload = result.to_dict()
+        log_payload = log.to_dict()
         return {
             "outcome": "committee_referral",
             "referral_id": result.referral_id,
             "trigger_reason": result.trigger_reason,
             "proposal_ids": result.proposal_ids,
             "conflict_resolution_log_id": log.log_id,
+            "committee_referral": referral_payload,
+            "conflict_resolution_log": log_payload,
         }
 
     _policies[result.artifact_id] = result
+    artifact_payload = result.to_dict()
+    log_payload = log.to_dict()
     return {
         "outcome": "artifact",
         "artifact_id": result.artifact_id,
@@ -144,6 +155,8 @@ async def synthesize(req: SynthesizeRequest):
         "synthesis_method": result.synthesis_method,
         "target_weights": result.target_weights,
         "conflict_resolution_log_id": log.log_id,
+        "allocation_policy_artifact": artifact_payload,
+        "conflict_resolution_log": log_payload,
     }
 
 
@@ -153,10 +166,8 @@ async def get_policy(policy_id: str):
     if entry is None:
         raise HTTPException(status_code=404, detail="policy not found")
     if isinstance(entry, AllocationPolicyArtifact):
-        import dataclasses
-        return dataclasses.asdict(entry)
-    import dataclasses
-    return dataclasses.asdict(entry)
+        return entry.to_dict()
+    return entry.to_dict()
 
 
 @app.get("/api/optimizer/logs/{log_id}")
@@ -164,8 +175,7 @@ async def get_log(log_id: str):
     entry = _logs.get(log_id)
     if entry is None:
         raise HTTPException(status_code=404, detail="conflict resolution log not found")
-    import dataclasses
-    return dataclasses.asdict(entry)
+    return entry.to_dict()
 
 
 if __name__ == "__main__":

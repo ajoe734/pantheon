@@ -18,6 +18,9 @@ import unittest
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+_ADAPTER_DIR = Path(__file__).resolve().parent
+if str(_ADAPTER_DIR) not in sys.path:
+    sys.path.insert(0, str(_ADAPTER_DIR))
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
@@ -104,6 +107,25 @@ class FakeUpstream:
         if self.fail:
             raise FakeUpstreamError("UPSTREAM_UNAVAILABLE", "fake upstream failure", self.retryable)
         return [{"name": "search"}, {"name": "summarize"}]
+
+
+class FakeUpstreamWithBlockedTools(FakeUpstream):
+    """Reports broker/live/paper tools as available so policy filtering is exercised."""
+
+    def list_tools(self, *, agent_id):
+        if self.fail:
+            raise FakeUpstreamError("UPSTREAM_UNAVAILABLE", "fake upstream failure", self.retryable)
+        return [
+            {"name": "search"},
+            {"name": "broker.submit"},
+            {"name": "broker_order"},
+            {"name": "paper.execute"},
+            {"name": "live.order"},
+            {"name": "capital.bind"},
+        ]
+
+    def resolve_tools(self, *, agent_id, session_id):
+        return self.list_tools(agent_id=agent_id)
 
 
 class FakeUpstreamError(Exception):
@@ -569,8 +591,41 @@ class TestListEffectiveTools(unittest.TestCase):
         upstream = FakeUpstream(fail=True)
         result = bridge.list_effective_tools(agent_id="a1", operator_id="op1", upstream=upstream)
         self.assertEqual(result["upstream_status"], "degraded")
-        # falls back to full policy allowlist
+        # falls back to executable policy allowlist
         self.assertEqual(result["effective_tools"], ["search"])
+
+    def test_effective_tools_exclude_always_blocked_tool_refs(self):
+        bridge, _ = _make_bridge(
+            allowed_tools=[
+                "search",
+                "broker.submit",
+                "broker_order",
+                "paper.execute",
+                "live.order",
+                "capital.bind",
+            ]
+        )
+        result = bridge.list_effective_tools(
+            agent_id="a1",
+            session_id="s1",
+            operator_id="op1",
+            upstream=FakeUpstreamWithBlockedTools(),
+        )
+
+        self.assertEqual(result["upstream_status"], "ok")
+        self.assertEqual(result["effective_tools"], ["search"])
+        self.assertEqual(
+            result["policy_blocked_tools"],
+            ["broker.submit", "broker_order", "capital.bind", "live.order", "paper.execute"],
+        )
+
+    def test_degraded_effective_tools_exclude_always_blocked_allowlist_entries(self):
+        bridge, _ = _make_bridge(allowed_tools=["search", "broker.submit", "paper.execute"])
+        result = bridge.list_effective_tools(agent_id="a1", operator_id="op1", upstream=None)
+
+        self.assertEqual(result["upstream_status"], "not_configured")
+        self.assertEqual(result["effective_tools"], ["search"])
+        self.assertEqual(result["policy_blocked_tools"], ["broker.submit", "paper.execute"])
 
 
 class TestNoBrokerLivePaperExecution(unittest.TestCase):

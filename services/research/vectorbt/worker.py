@@ -23,11 +23,14 @@ def main() -> int:
         dataset_path = str(SERVICE_DIR / "examples" / "strategy_dataset_sample.json")
 
     dataset = json.loads(Path(dataset_path).read_text(encoding="utf-8"))
+    strategy_params = {
+        "short_window": int(os.environ.get("VECTORBT_SHORT_WINDOW", "5")),
+        "long_window": int(os.environ.get("VECTORBT_LONG_WINDOW", "20")),
+    }
     config = BacktestConfig(
         version=os.environ.get("VECTORBT_ARTIFACT_VERSION", "1.0.0"),
         requested_by=os.environ.get("VECTORBT_REQUESTED_BY", "worker"),
-        short_window=int(os.environ.get("VECTORBT_SHORT_WINDOW", "5")),
-        long_window=int(os.environ.get("VECTORBT_LONG_WINDOW", "20")),
+        strategy_params=strategy_params,
         init_cash=float(os.environ.get("VECTORBT_INIT_CASH", "100000.0")),
         fees=float(os.environ.get("VECTORBT_FEES", "0.001")),
     )

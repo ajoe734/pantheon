@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "task_id": "MGMT-BROKER-003",
+  "archived_at": "2026-05-15T16:24:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-BROKER-003",
+    "title": "Claiming MGMT-BROKER-003 to advance broker sandbox smoke",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-05 Shioaji Sandbox",
+    "owner": "Codex2",
+    "reviewer": "Gemini2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Finalized MGMT-BROKER-003 after Gemini2 review approval: committed ab4ea049 with task-scoped sandbox smoke task_id/--task-id support and support/evidence/MGMT-BROKER-003 mock_api_replay packet. Verification: pytest adapter+sandbox smoke 48 passed; py_compile passed; old task id absent from task-owned code/evidence; diff check passed. Proof boundary remains mock_api_replay only; production live broker and real capital remain disabled.",
+    "last_update": "2026-05-15T16:24:04Z",
+    "review_notes_zh": [
+      "審查通過：sandbox_smoke 已正確掛載 MGMT-BROKER-003 標記與測試參數，證據鏈完整，驗證通過。"
+    ],
+    "review_file": "support/evidence/MGMT-BROKER-003/summary.json",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T16:24:04Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "merge/backend-dev-into-master",
+      "git_clean_required": false,
+      "commit": "ab4ea049407c5d8848345a1a2e0c10ec16abd966",
+      "commit_subject": "MGMT-BROKER-003 stamp sandbox smoke evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-BROKER-003",
+        "Reviewer": "Gemini2",
+        "Proof boundary": "repo-safe mock_api_replay Shioaji sandbox smoke only; production live broker and real capital remain disabled."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 45,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-BROKER-003",
+      "from": "Gemini2",
+      "to": "Gemini",
+      "message": "Smoke test completed with mock-api (real credentials pending; readiness needs operator check).",
+      "status": "done",
+      "created_at": "2026-05-15T15:16:43Z",
+      "resolved_at": "2026-05-15T15:21:04Z"
+    },
+    {
+      "task_id": "MGMT-BROKER-003",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-05-15T15:21:04Z",
+      "resolved_at": "2026-05-15T15:38:15Z"
+    },
+    {
+      "task_id": "MGMT-BROKER-003",
+      "from": "Codex",
+      "to": "Gemini2",
+      "message": "Review blocked: support/evidence/MGMT-BROKER-003/summary.json and the sandbox_smoke regression still identify the packet as EP5-BROKER-TW-002-RERUN-REAL-FIX instead of MGMT-BROKER-003. Regenerate task-scoped evidence, ideally via explicit --task-id metadata, then return for review. Review file: support/reviews/MGMT-BROKER-003-review-codex.md",
+      "status": "done",
+      "created_at": "2026-05-15T15:38:15Z",
+      "resolved_at": "2026-05-15T15:38:15Z"
+    },
+    {
+      "task_id": "MGMT-BROKER-003",
+      "from": "Gemini2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Gemini2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T16:05:44Z",
+      "resolved_at": "2026-05-15T16:05:44Z"
+    },
+    {
+      "task_id": "MGMT-BROKER-003",
+      "from": "Codex2",
+      "to": "Gemini2",
+      "message": "Ready for review: sandbox_smoke now stamps MGMT-BROKER-003 by default and accepts --task-id for task-scoped evidence; regenerated support/evidence/MGMT-BROKER-003 with task_id=MGMT-BROKER-003. Task-owned files: services/broker/shioaji/sandbox_smoke.py, services/broker/shioaji/test_sandbox_smoke.py, support/evidence/MGMT-BROKER-003/. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/broker/shioaji/test_adapter.py services/broker/shioaji/test_sandbox_smoke.py -q => 48 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/broker/shioaji/sandbox_smoke.py services/broker/shioaji/test_sandbox_smoke.py => passed; rg old task id in code/evidence => no matches. Proof boundary remains mock_api_replay only, not real Shioaji simulation/live/capital proof.",
+      "status": "done",
+      "created_at": "2026-05-15T16:11:11Z",
+      "resolved_at": "2026-05-15T16:16:09Z"
+    },
+    {
+      "task_id": "MGMT-BROKER-003",
+      "from": "Gemini2",
+      "to": "Codex2",
+      "message": "Review approved and returned to the owner for finalization",
+      "status": "done",
+      "created_at": "2026-05-15T16:16:09Z",
+      "resolved_at": "2026-05-15T16:24:06Z"
+    }
+  ],
+  "blockers": []
+}

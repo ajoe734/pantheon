@@ -21,12 +21,15 @@ from approval_decision import (
     EvidenceRef,
     EvidenceRefType,
     OwnerMatrix,
+    OWNER_MATRIX,
+    REVOKE_ROLES,
     RiskLevel,
     TargetType,
     to_audit_event,
     validate_decision,
     validate_decision_json,
 )
+from services.governance.write_authority import REVOKE_AUTHORITY, WRITE_AUTHORITY_MATRIX
 
 GOVERNANCE_DIR = Path(__file__).resolve().parent
 
@@ -58,6 +61,17 @@ class TestOwnerMatrix(unittest.TestCase):
         self.assertIn(ActorRole.RISK_OWNER, roles)
         self.assertIn(ActorRole.GOVERNANCE_COMMITTEE, roles)
         self.assertEqual(len(roles), 2)
+
+    def test_service_write_authority_matches_platform_owner_matrix(self):
+        expected = {
+            risk.value: [role.value for role in roles]
+            for risk, roles in OWNER_MATRIX.items()
+        }
+        self.assertEqual(WRITE_AUTHORITY_MATRIX, expected)
+        self.assertEqual(
+            set(REVOKE_AUTHORITY),
+            {role.value for role in REVOKE_ROLES},
+        )
 
 
 class TestApprovalDecisionCreation(unittest.TestCase):
@@ -145,6 +159,26 @@ class TestApprovalDecisionCreation(unittest.TestCase):
         )
         self.assertEqual(d.actor_role, ActorRole.RISK_OWNER)
         self.assertEqual(d.actor_id, "risk-owner-01")
+
+    def test_decide_rejects_unauthorized_approver_identity(self):
+        d = ApprovalDecision.create_proposed(
+            decision_id="approval-001",
+            target_type=TargetType.REGISTRY_ENTRY,
+            target_id="reg-001",
+            target_version="1.0.0",
+            risk_level=RiskLevel.HIGH,
+        )
+        d.accept_review(ActorRole.RISK_OWNER, "risk-owner-01")
+        with self.assertRaises(ValueError):
+            d.decide(
+                DecisionOutcome.APPROVED,
+                "Unauthorized approval must fail",
+                actor_role=ActorRole.GOVERNANCE_REVIEWER,
+                actor_id="reviewer-01",
+            )
+        self.assertEqual(d.decision_state, DecisionState.UNDER_REVIEW)
+        self.assertIsNone(d.decision)
+        self.assertIsNone(d.decided_at)
 
     def test_decide_requires_under_review(self):
         d = ApprovalDecision.create_proposed(
@@ -532,6 +566,25 @@ class TestSchemaFile(unittest.TestCase):
         self.assertIn("title", data)
         self.assertIn("properties", data)
         self.assertIn("required", data)
+
+    def test_schema_accepts_service_version_strings(self):
+        try:
+            from jsonschema import Draft7Validator
+        except ImportError:
+            self.skipTest("jsonschema is not installed")
+
+        schema_path = GOVERNANCE_DIR / "approval_decision.schema.json"
+        schema = json.loads(schema_path.read_text())
+        payload = {
+            "decision_id": "approval-v-string",
+            "target_type": "registry_entry",
+            "target_id": "reg-001",
+            "target_version": "v1",
+            "decision_state": "proposed",
+            "created_at": "2026-04-10T00:00:00Z",
+        }
+        errors = list(Draft7Validator(schema).iter_errors(payload))
+        self.assertEqual(errors, [])
 
 
 if __name__ == "__main__":

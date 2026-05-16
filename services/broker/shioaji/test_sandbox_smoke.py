@@ -27,6 +27,7 @@ class ShioajiSandboxSmokeTest(unittest.TestCase):
             "cancel_delay_seconds": 0.0,
             "capital_pool_id": "pool-test",
             "strategy_id": "strategy-test",
+            "task_id": sandbox_smoke.TASK_ID,
             "mock_api": True,
             "output_dir": "/tmp/not-used",
             "output_file": None,
@@ -40,7 +41,7 @@ class ShioajiSandboxSmokeTest(unittest.TestCase):
 
         self.assertEqual(payload["status"], "passed")
         self.assertEqual(payload["provider"], "Shioaji")
-        self.assertEqual(payload["task_id"], "EP5-BROKER-TW-002-RERUN-REAL-FIX")
+        self.assertEqual(payload["task_id"], "MGMT-BROKER-003")
         self.assertEqual(payload["account_kind"], "stock")
         self.assertEqual(payload["run_mode"], "mock_api_replay")
         self.assertEqual(payload["place"]["response"]["status"], "submitted")
@@ -73,6 +74,35 @@ class ShioajiSandboxSmokeTest(unittest.TestCase):
         self.assertEqual(payload["status"], "failed")
         self.assertEqual(payload["error"]["error_code"], "SHIOAJI_SANDBOX_DISABLED")
         self.assertFalse(payload["environment"]["BROKER_SHIOAJI_SANDBOX_ENABLED"])
+        self.assertEqual(payload["live_gate"]["status"], "rejected")
+        self.assertEqual(payload["live_gate"]["response"]["error_code"], "SHIOAJI_LIVE_DISABLED")
+        self.assertEqual(payload["place"]["response"], {})
+        self.assertEqual(payload["cancel"]["response"], {})
+        self.assertFalse(payload["no_real_capital"]["real_capital_used"])
+        self.assertFalse(payload["no_real_capital"]["production_live_order_submitted"])
+
+    def test_gate_closed_bundle_still_writes_fail_closed_artifacts(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("BROKER_SHIOAJI_SANDBOX_ENABLED", None)
+            payload = sandbox_smoke.run_smoke(self.args())
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+            sandbox_smoke.write_bundle(output_dir, payload)
+
+            live_disabled = json.loads((output_dir / "live-disabled.json").read_text(encoding="utf-8"))
+            no_real_capital = json.loads(
+                (output_dir / "no-real-capital-evidence.json").read_text(encoding="utf-8")
+            )
+            place_response = json.loads((output_dir / "place.response.json").read_text(encoding="utf-8"))
+            cancel_response = json.loads((output_dir / "cancel.response.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(live_disabled["status"], "rejected")
+        self.assertEqual(live_disabled["response"]["error_code"], "SHIOAJI_LIVE_DISABLED")
+        self.assertEqual(place_response, {})
+        self.assertEqual(cancel_response, {})
+        self.assertFalse(no_real_capital["real_capital_used"])
+        self.assertFalse(no_real_capital["production_live_order_submitted"])
 
     def test_write_bundle_creates_readiness_artifacts(self) -> None:
         with patch.dict(os.environ, {"BROKER_SHIOAJI_SANDBOX_ENABLED": "true"}, clear=False):
@@ -95,8 +125,15 @@ class ShioajiSandboxSmokeTest(unittest.TestCase):
             }
             self.assertEqual({path.name for path in output_dir.iterdir()}, expected)
             summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
-            self.assertEqual(summary["task_id"], "EP5-BROKER-TW-002-RERUN-REAL-FIX")
+            self.assertEqual(summary["task_id"], "MGMT-BROKER-003")
             self.assertEqual(summary["status_transitions"][-1]["status"], "cancelled")
+
+    def test_task_id_can_be_overridden_for_task_scoped_evidence(self) -> None:
+        with patch.dict(os.environ, {"BROKER_SHIOAJI_SANDBOX_ENABLED": "true"}, clear=False):
+            payload = sandbox_smoke.run_smoke(self.args(task_id="MGMT-BROKER-003-review-rerun"))
+
+        self.assertEqual(payload["status"], "passed")
+        self.assertEqual(payload["task_id"], "MGMT-BROKER-003-review-rerun")
 
     def test_output_file_writes_single_payload(self) -> None:
         with patch.dict(os.environ, {"BROKER_SHIOAJI_SANDBOX_ENABLED": "true"}, clear=False):

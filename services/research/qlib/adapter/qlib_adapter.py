@@ -2,7 +2,7 @@
 
 Governance boundary:
 - Input: Pantheon-governed OHLCV dataset with lineage refs
-- Output: registry-ready model_artifact (artifact_state=draft) + registry_entry
+- Output: registry-ready model_artifact refs (artifact_state=draft) + registry_entry
 - Qlib or its dependencies never write directly to registry, runtime, or LEAN.
 """
 from __future__ import annotations
@@ -147,6 +147,7 @@ class QlibRunResult:
     artifact_bundle: dict[str, Any]
     registry_entry: dict[str, Any]
     candidate_packet: dict[str, Any]
+    artifact_refs: dict[str, Any]
 
 
 class LightGBMBackend(Protocol):
@@ -476,12 +477,20 @@ def run_qlib_workflow(
     artifact_bundle = _build_artifact_bundle(prepared, training_result, training_config)
     registry_entry = _build_registry_entry(prepared, training_result, artifact_bundle, training_config)
     candidate_packet = _build_candidate_packet(registry_entry, prepared, training_result)
+    artifact_refs = _build_model_eval_artifact_refs(
+        prepared,
+        training_result,
+        artifact_bundle,
+        registry_entry,
+        candidate_packet,
+    )
     return QlibRunResult(
         prepared_dataset=prepared,
         training_result=training_result,
         artifact_bundle=artifact_bundle,
         registry_entry=registry_entry,
         candidate_packet=candidate_packet,
+        artifact_refs=artifact_refs,
     )
 
 
@@ -522,11 +531,13 @@ def persist_qlib_run_artifacts(result: QlibRunResult, output_dir: str | Path) ->
         "artifact_bundle": base / "artifact_bundle.json",
         "registry_entry": base / "registry_entry.json",
         "candidate_packet": base / "candidate_packet.json",
+        "artifact_refs": base / "artifact_refs.json",
     }
     payloads = {
         "artifact_bundle": result.artifact_bundle,
         "registry_entry": result.registry_entry,
         "candidate_packet": result.candidate_packet,
+        "artifact_refs": result.artifact_refs,
     }
     for key, path in files.items():
         path.write_text(json.dumps(payloads[key], indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -536,10 +547,152 @@ def persist_qlib_run_artifacts(result: QlibRunResult, output_dir: str | Path) ->
         "checksum": result.registry_entry["checksum"],
         "backend": result.training_result.backend,
         "files": {key: str(path) for key, path in files.items()},
+        "artifact_refs": copy.deepcopy(result.artifact_refs["refs"]),
     }
     manifest_path = base / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return manifest
+
+
+def _build_model_eval_artifact_refs(
+    dataset: PreparedQlibDataset,
+    result: BackendTrainingResult,
+    artifact_bundle: Mapping[str, Any],
+    registry_entry: Mapping[str, Any],
+    candidate_packet: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Build stable refs for Qlib model and evaluation outputs without registering them."""
+    registry_id = str(registry_entry["registry_id"])
+    version = str(registry_entry["version"])
+    artifact_state = str(registry_entry["artifact_state"])
+    deployment_stage = str(registry_entry["deployment_summary"]["current_stage"])
+    model_artifact_ref = f"{registry_id}@{version}"
+    evaluation_report_id = f"eval-{registry_id}-{result.run_id}"
+    evaluation_summary = copy.deepcopy(result.metrics)
+
+    model_ref = {
+        "artifact_name": "model_artifact",
+        "artifact_type": registry_entry["artifact_type"],
+        "artifact_ref": model_artifact_ref,
+        "registry_id": registry_id,
+        "strategy_id": registry_entry["strategy_id"],
+        "version": version,
+        "artifact_state": artifact_state,
+        "deployment_stage": deployment_stage,
+        "storage_ref": copy.deepcopy(registry_entry["storage_ref"]),
+        "checksum": registry_entry["checksum"],
+        "source_run_id": result.run_id,
+        "source_dataset_refs": list(dataset.source_dataset_refs),
+        "source_strategy_spec_id": dataset.source_strategy_spec_id,
+        "source_field": "registry_entry",
+    }
+    evaluation_ref = {
+        "artifact_name": "evaluation_report",
+        "artifact_type": "evaluation_result",
+        "artifact_ref": f"{evaluation_report_id}@{version}",
+        "registry_id": evaluation_report_id,
+        "strategy_id": registry_entry["strategy_id"],
+        "version": version,
+        "artifact_state": "draft",
+        "deployment_stage": "none",
+        "target_artifact_ref": model_artifact_ref,
+        "target_artifact_id": registry_id,
+        "target_artifact_version": version,
+        "target_artifact_checksum": registry_entry["checksum"],
+        "storage_ref": {
+            "backend": "inline",
+            "path": "$.artifact_bundle.evaluation_summary",
+        },
+        "checksum": f"sha256:{_sha256_json(evaluation_summary)}",
+        "source_run_id": result.run_id,
+        "evaluation_summary": evaluation_summary,
+        "source_field": "artifact_bundle.evaluation_summary",
+    }
+    bundle_ref = {
+        "artifact_name": "artifact_bundle",
+        "artifact_type": "qlib_artifact_bundle",
+        "artifact_ref": f"artifact://qlib/{registry_id}/{version}/artifact_bundle",
+        "registry_id": registry_id,
+        "strategy_id": registry_entry["strategy_id"],
+        "version": version,
+        "artifact_state": artifact_state,
+        "deployment_stage": deployment_stage,
+        "storage_ref": {
+            "backend": "inline",
+            "path": "$.artifact_bundle",
+        },
+        "checksum": f"sha256:{_sha256_json(artifact_bundle)}",
+        "source_run_id": result.run_id,
+        "source_field": "artifact_bundle",
+    }
+    registry_entry_ref = {
+        "artifact_name": "registry_entry",
+        "artifact_type": "registry_entry_projection",
+        "artifact_ref": f"artifact://qlib/{registry_id}/{version}/registry_entry",
+        "registry_id": registry_id,
+        "strategy_id": registry_entry["strategy_id"],
+        "version": version,
+        "artifact_state": artifact_state,
+        "deployment_stage": deployment_stage,
+        "storage_ref": {
+            "backend": "inline",
+            "path": "$.registry_entry",
+        },
+        "checksum": f"sha256:{_sha256_json(registry_entry)}",
+        "source_run_id": result.run_id,
+        "source_field": "registry_entry",
+    }
+    candidate_packet_ref = {
+        "artifact_name": "candidate_packet",
+        "artifact_type": "registry_candidate_handoff",
+        "artifact_ref": f"artifact://qlib/{registry_id}/{version}/candidate_packet",
+        "registry_id": registry_id,
+        "strategy_id": registry_entry["strategy_id"],
+        "version": version,
+        "artifact_state": candidate_packet["requested_artifact_state"],
+        "deployment_stage": candidate_packet["deployment_stage"],
+        "storage_ref": {
+            "backend": "inline",
+            "path": "$.candidate_packet",
+        },
+        "checksum": f"sha256:{_sha256_json(candidate_packet)}",
+        "source_run_id": result.run_id,
+        "source_field": "candidate_packet",
+    }
+
+    refs = [
+        model_ref,
+        evaluation_ref,
+        bundle_ref,
+        registry_entry_ref,
+        candidate_packet_ref,
+    ]
+    return {
+        "schema_version": "1.0",
+        "created_at": registry_entry["created_at"],
+        "producer_run_id": result.run_id,
+        "backend": result.backend,
+        "registry_id": registry_id,
+        "strategy_id": registry_entry["strategy_id"],
+        "version": version,
+        "artifact_state": artifact_state,
+        "deployment_stage": deployment_stage,
+        "registry_write_authority": "registry_service_only",
+        "model_artifact_ref": model_ref,
+        "evaluation_report_ref": evaluation_ref,
+        "refs": refs,
+        "lineage": {
+            "source_run_ids": [result.run_id],
+            "source_dataset_refs": list(dataset.source_dataset_refs),
+            "source_strategy_spec_id": dataset.source_strategy_spec_id,
+        },
+        "safety_assertions": {
+            "no_registry_write": True,
+            "registry_write_authority": "registry_service_only",
+            "deployment_stage_remains_none": deployment_stage == "none",
+            "scoring_only_not_direct_action": True,
+        },
+    }
 
 
 def _build_artifact_bundle(
@@ -640,9 +793,6 @@ def _build_registry_entry(
                 "source_strategy_spec_bound": bool(dataset.source_strategy_spec_id),
             },
         },
-        "approved_at": None,
-        "approver": None,
-        "rollback_target": None,
     }
 
 

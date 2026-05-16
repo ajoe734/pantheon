@@ -173,6 +173,74 @@ class ShioajiBrokerAdapter:
 
         return self._api
 
+    def connect(self) -> Dict[str, Any]:
+        """Open the sandbox SDK/session path without placing or cancelling orders."""
+        self._gate_check()
+        self._get_api()
+        return {
+            "status": "connected",
+            "provider": "Shioaji",
+            "broker": "shioaji",
+            "environment": "sandbox",
+            "production_live_enabled": False,
+            "capital_binding_enabled": False,
+        }
+
+    @staticmethod
+    def _safe_account_attr(account: Any, name: str) -> str | bool | None:
+        value = getattr(account, name, None)
+        if isinstance(value, (str, bool)) or value is None:
+            return value
+        return str(value)
+
+    @classmethod
+    def _redacted_account_payload(cls, account: Any) -> Dict[str, Any]:
+        account_id = cls._safe_account_attr(account, "account_id")
+        person_id = cls._safe_account_attr(account, "person_id")
+        return {
+            "account_type": cls._safe_account_attr(account, "account_type"),
+            "broker_id": cls._safe_account_attr(account, "broker_id"),
+            "account_id_last4": account_id[-4:] if isinstance(account_id, str) and account_id else None,
+            "person_id_last4": person_id[-4:] if isinstance(person_id, str) and person_id else None,
+            "signed": bool(getattr(account, "signed", False)),
+        }
+
+    def account_status(self, account_kind: str = _ACCOUNT_STOCK) -> Dict[str, Any]:
+        """Return redacted sandbox account readiness without exposing secrets."""
+        self._gate_check()
+        if account_kind not in _VALID_ACCOUNT_KINDS:
+            raise ShioajiBrokerError(
+                _ERR_INVALID_ACCOUNT_KIND,
+                f"account_kind must be one of {sorted(_VALID_ACCOUNT_KINDS)!r}, got {account_kind!r}",
+            )
+
+        api = self._get_api()
+        if account_kind == _ACCOUNT_STOCK:
+            account = getattr(api, "stock_account", None)
+        else:
+            account = getattr(api, "futopt_account", None)
+
+        if account is None:
+            status = "missing"
+            redacted_account = None
+            signed = False
+        else:
+            signed = bool(getattr(account, "signed", False))
+            status = "ready" if signed else "unsigned"
+            redacted_account = self._redacted_account_payload(account)
+
+        return {
+            "status": "ok",
+            "provider": "Shioaji",
+            "broker": "shioaji",
+            "environment": "sandbox",
+            "account_kind": account_kind,
+            "account_status": status,
+            "signed": signed,
+            "account": redacted_account,
+            "raw_secret_material_persisted": False,
+        }
+
     def _resolve_account(self, api: Any, account_kind: str) -> Any:
         if account_kind == _ACCOUNT_STOCK:
             account = getattr(api, "stock_account", None)

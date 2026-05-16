@@ -501,6 +501,12 @@ class ToolWorkflowBridge:
             raise BridgeError("BRIDGE_OPERATOR_REQUIRED", "operator_id is required.", status_code=401)
 
         policy_tools = self._policy.allowed_tools
+        executable_policy_tools = [
+            tool_name
+            for tool_name in policy_tools
+            if self._policy.evaluate_tool(tool_name).allowed
+        ]
+        blocked_policy_tools = sorted(set(policy_tools) - set(executable_policy_tools))
         upstream_tools: Optional[List[Dict[str, Any]]] = None
         upstream_status = "not_configured"
 
@@ -524,12 +530,12 @@ class ToolWorkflowBridge:
                 for t in upstream_tools
                 if isinstance(t, dict)
             }
-            if policy_tools:
-                effective = sorted(frozenset(policy_tools) & upstream_names)
+            if executable_policy_tools:
+                effective = sorted(frozenset(executable_policy_tools) & upstream_names)
             else:
                 effective = []
         else:
-            effective = list(policy_tools)
+            effective = list(executable_policy_tools)
 
         return {
             "status": "ok" if upstream_status == "ok" else "degraded",
@@ -537,11 +543,13 @@ class ToolWorkflowBridge:
             "agent_id": agent_id,
             "session_id": session_id,
             "policy_allowed_tools": policy_tools,
+            "policy_blocked_tools": blocked_policy_tools,
             "effective_tools": effective,
             "note": (
-                "effective_tools is the intersection of the Pantheon policy allowlist "
-                "and upstream-reported tools. An empty list means no tools are available "
-                "to this operator/session."
+                "effective_tools is the intersection of the Pantheon executable policy allowlist "
+                "and upstream-reported tools. Always-blocked broker/live/paper/capital tools are "
+                "excluded even if configured in the allowlist. An empty list means no tools are "
+                "available to this operator/session."
             ),
         }
 

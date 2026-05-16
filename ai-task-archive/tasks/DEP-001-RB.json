@@ -1,0 +1,195 @@
+{
+  "version": 1,
+  "task_id": "DEP-001-RB",
+  "archived_at": "2026-05-16T06:27:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DEP-001-RB",
+    "title": "DeploymentPlan contract + service (rebaseline)",
+    "summary_zh": null,
+    "phase": "Sprint 2 / EPIC-GOV-DEPLOY",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Finalized DEP-001-RB after Claude review approval. Task-scoped commit da7a06d8 records the rebaseline test, evidence, and review artifact. Verification: DEP-001-RB pytest 6 passed; DEP-001-RB + test_service pytest 27 passed; governance deployment_plan unittest 26 OK.",
+    "last_update": "2026-05-16T06:27:01Z",
+    "review_notes_zh": [
+      "審查通過：DeploymentPlan 四個階段轉換（none→paper activate / paper→canary promote / canary→live promote / live→frozen freeze）均正確驗證 runtime_action、transition_type 及 scale 欄位；兩個 guard 測試（artifact_state=candidate → 422、approval_decision.decision_state=under_review → 422）行為正確；evidence 說明清楚且範圍限縮於新增測試檔與證據包；governance 26 個單元測試全過",
+      "跨任務附註：test_service.py 的測試數目從 evidence 的 24 combined 增加到 reviewer 環境的 27 combined，原因是 DEP-003 worktree 已預先在 test_service.py 加入 3 個 projection 測試；evidence 已明確說明此 worktree 污染情況，不影響本次審查"
+    ],
+    "review_file": "support/reviews/DEP-001-RB-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T06:27:01Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "da7a06d87bf40045d829d6728b5a5c065b758b35",
+      "commit_subject": "DEP-001-RB closeout: DeploymentPlan rebaseline",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "DEP-001-RB",
+        "Reviewer": "Claude",
+        "Verification": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/deployment/test_dep001_rebaseline_service.py -q (6 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/deployment/test_dep001_rebaseline_service.py services/deployment/test_service.py -q (27 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s services/control-plane/governance -p 'test_deployment_plan.py' (26 tests OK)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 66,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DEP-001-RB",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T02:03:29Z",
+      "resolved_at": "2026-05-16T02:04:32Z"
+    },
+    {
+      "task_id": "DEP-001-RB",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T02:21:28Z",
+      "resolved_at": "2026-05-16T02:22:31Z"
+    },
+    {
+      "task_id": "DEP-001-RB",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T02:39:23Z",
+      "resolved_at": "2026-05-16T02:40:27Z"
+    },
+    {
+      "task_id": "DEP-001-RB",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T02:57:13Z",
+      "resolved_at": "2026-05-16T02:58:13Z"
+    },
+    {
+      "task_id": "DEP-001-RB",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T03:15:03Z",
+      "resolved_at": "2026-05-16T03:16:03Z"
+    },
+    {
+      "task_id": "DEP-001-RB",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T03:32:48Z",
+      "resolved_at": "2026-05-16T03:33:54Z"
+    },
+    {
+      "task_id": "DEP-001-RB",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T03:50:41Z",
+      "resolved_at": "2026-05-16T03:51:44Z"
+    },
+    {
+      "task_id": "DEP-001-RB",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T04:08:30Z",
+      "resolved_at": "2026-05-16T04:09:35Z"
+    },
+    {
+      "task_id": "DEP-001-RB",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T04:26:30Z",
+      "resolved_at": "2026-05-16T04:27:32Z"
+    },
+    {
+      "task_id": "DEP-001-RB",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T04:44:22Z",
+      "resolved_at": "2026-05-16T04:45:28Z"
+    },
+    {
+      "task_id": "DEP-001-RB",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T05:02:28Z",
+      "resolved_at": "2026-05-16T05:03:55Z"
+    },
+    {
+      "task_id": "DEP-001-RB",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T05:21:16Z",
+      "resolved_at": "2026-05-16T05:21:54Z"
+    },
+    {
+      "task_id": "DEP-001-RB",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T05:40:19Z",
+      "resolved_at": "2026-05-16T05:41:35Z"
+    },
+    {
+      "task_id": "DEP-001-RB",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "DEP-001-RB ready for review. Added isolated service coverage in services/deployment/test_dep001_rebaseline_service.py and evidence in support/evidence/DEP-001-RB/deployment-plan-rebaseline.md. Verification: DEP-001-RB pytest 6 passed; deployment service pytest 24 passed; governance DeploymentPlan unittest 26 passed.",
+      "status": "done",
+      "created_at": "2026-05-16T05:54:38Z",
+      "resolved_at": "2026-05-16T06:13:42Z"
+    },
+    {
+      "task_id": "DEP-001-RB",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: DeploymentPlan rebaseline verified. All 4 stage transitions correct, both guard tests correct. 6 DEP-001-RB tests pass, 26 governance unittest pass. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T06:13:42Z",
+      "resolved_at": "2026-05-16T06:27:02Z"
+    }
+  ],
+  "blockers": []
+}

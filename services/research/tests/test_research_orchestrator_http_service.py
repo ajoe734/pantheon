@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 from fastapi.testclient import TestClient
+from services.registry.storage import reset_store
 
 
 SERVICE_DIR = Path(__file__).resolve().parents[1]
@@ -168,6 +169,148 @@ def test_research_orchestrator_lifecycle_handoff_is_idempotent() -> None:
     payload = status.json()
     assert payload["artifact_refs"] == [{"artifact_id": artifact["artifact_id"], "artifact_type": "strategy_spec"}]
     assert payload["proposal_refs"] == [{"proposal_id": proposal["proposal_id"], "proposal_type": "registry_candidate"}]
+
+
+def test_research_orchestrator_writeback_registers_completed_run_artifact() -> None:
+    reset_store()
+    module = _load_service_module()
+    client = TestClient(module.app)
+    task = client.post(
+        "/api/research-orchestrator/tasks",
+        json={
+            "title": "EXP-005 writeback",
+            "objective": "Register a completed experiment artifact.",
+            "created_at": "2026-05-16T09:10:00Z",
+        },
+    ).json()
+    run = client.post(
+        f"/api/research-orchestrator/tasks/{task['task_id']}/runs",
+        json={
+            "adapter": "stub",
+            "requested_mode": "stub",
+            "dispatch_mode": "stub",
+            "input_refs": [{"type": "dataset", "id": "dataset-exp005-v1"}],
+            "parameters": {
+                "strategy_id": "strat-exp005-alpha",
+                "strategy_spec_version": "1.2.0",
+                "dataset_version_id": "dataset-exp005-v1",
+                "code_version": "git:exp005",
+                "version": "1.2.1",
+            },
+            "requested_at": "2026-05-16T09:11:00Z",
+        },
+    ).json()
+    artifact = client.post(
+        f"/api/research-orchestrator/runs/{run['run_id']}/artifacts",
+        json={
+            "artifact_type": "model_artifact",
+            "artifact_family": "experiment_candidate",
+            "title": "EXP-005 candidate model",
+            "storage_ref": "object://experiments/exp005/model.pkl",
+            "checksum": "sha256:exp005",
+            "registry_hints": {
+                "artifact_type": "model_artifact",
+                "artifact_state": "candidate",
+                "version": "1.2.1",
+                "source_strategy_spec_id": "reg-strategy-spec-exp005",
+                "source_dataset_refs": ["dataset-exp005-v1"],
+            },
+            "idempotency_key": "artifact-exp005",
+            "created_at": "2026-05-16T09:12:00Z",
+        },
+    ).json()
+    completed = client.post(
+        f"/api/research-orchestrator/runs/{run['run_id']}/complete",
+        json={"completed_at": "2026-05-16T09:13:00Z"},
+    )
+    assert completed.status_code == 200
+
+    result = client.post(
+        f"/api/research-orchestrator/runs/{run['run_id']}/registry-writeback",
+        json={
+            "artifact_id": artifact["artifact_id"],
+            "registry_id": "reg-exp005-model",
+            "actor_id": "exp005-test",
+            "idempotency_key": "writeback-exp005",
+            "created_at": "2026-05-16T09:14:00Z",
+        },
+    )
+
+    assert result.status_code == 201, result.text
+    payload = result.json()
+    assert payload["registry_id"] == "reg-exp005-model"
+    assert payload["artifact_state"] == "candidate"
+    assert payload["deployment_stage"] == "none"
+    assert payload["producer_run_id"] == run["run_id"]
+    assert payload["lineage"]["source_run_ids"] == [run["run_id"]]
+    assert payload["lineage"]["source_strategy_spec_id"] == "reg-strategy-spec-exp005"
+    assert payload["lineage"]["source_dataset_refs"] == ["dataset-exp005-v1"]
+    assert payload["registry_view"]["entry"]["metadata"]["registry_write_authority"] == "research_orchestrator_controlled_writeback"
+
+    replay = client.post(
+        f"/api/research-orchestrator/runs/{run['run_id']}/registry-writeback",
+        json={
+            "artifact_id": artifact["artifact_id"],
+            "registry_id": "ignored-by-idempotency",
+            "actor_id": "exp005-test",
+            "idempotency_key": "writeback-exp005",
+        },
+    )
+    assert replay.status_code == 201
+    assert replay.json()["registry_id"] == "reg-exp005-model"
+
+    status = client.get(f"/api/research-orchestrator/runs/{run['run_id']}/status")
+    assert status.status_code == 200
+    assert status.json()["registry_writebacks"][0]["registry_id"] == "reg-exp005-model"
+    reset_store()
+
+
+def test_research_orchestrator_writeback_requires_completed_run() -> None:
+    reset_store()
+    module = _load_service_module()
+    client = TestClient(module.app)
+    task = client.post(
+        "/api/research-orchestrator/tasks",
+        json={
+            "title": "EXP-005 incomplete writeback",
+            "objective": "Reject writeback before completion.",
+            "created_at": "2026-05-16T09:20:00Z",
+        },
+    ).json()
+    run = client.post(
+        f"/api/research-orchestrator/tasks/{task['task_id']}/runs",
+        json={
+            "adapter": "stub",
+            "requested_mode": "stub",
+            "dispatch_mode": "stub",
+            "parameters": {
+                "strategy_id": "strat-exp005-alpha",
+                "strategy_spec_version": "1.2.0",
+                "dataset_version_id": "dataset-exp005-v1",
+                "code_version": "git:exp005",
+                "version": "1.2.1",
+            },
+            "requested_at": "2026-05-16T09:21:00Z",
+        },
+    ).json()
+    artifact = client.post(
+        f"/api/research-orchestrator/runs/{run['run_id']}/artifacts",
+        json={
+            "artifact_type": "model_artifact",
+            "title": "Incomplete run artifact",
+            "storage_ref": "object://experiments/exp005/incomplete.pkl",
+            "checksum": "sha256:incomplete",
+            "registry_hints": {"artifact_type": "model_artifact", "version": "1.2.1"},
+        },
+    ).json()
+
+    result = client.post(
+        f"/api/research-orchestrator/runs/{run['run_id']}/registry-writeback",
+        json={"artifact_id": artifact["artifact_id"]},
+    )
+
+    assert result.status_code == 409
+    reset_store()
 
 
 def test_research_orchestrator_blocks_production_adapters_and_bounds_dispatch() -> None:

@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "MGMT-SAFE-002",
+  "archived_at": "2026-05-15T16:38:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-SAFE-002",
+    "title": "capital binding disabled smoke",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-07 Safety / Fail-Closed Regression",
+    "owner": "Codex2",
+    "reviewer": "Gemini2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Finalized capital binding disabled smoke after Gemini2 approval. Commit f81bc512. Verification: python3 tests/run_capital_binding_smoke.py; python3 -m pytest tests/run_capital_binding_smoke.py -q; git diff --check -- tests/run_capital_binding_smoke.py support/reviews/MGMT-SAFE-002-review-gemini2.md.",
+    "last_update": "2026-05-15T16:38:30Z",
+    "review_notes_zh": [
+      "審查通過"
+    ],
+    "review_file": "support/reviews/MGMT-SAFE-002-review-gemini2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T16:38:30Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "merge/backend-dev-into-master",
+      "git_clean_required": false,
+      "commit": "f81bc512bfe7b77cfe65dfecea2ca71663f5b0b2",
+      "commit_subject": "MGMT-SAFE-002 make capital binding smoke pytest-targetable",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-SAFE-002",
+        "Reviewer": "Gemini2",
+        "Verification": "python3 tests/run_capital_binding_smoke.py; python3 -m pytest tests/run_capital_binding_smoke.py -q; git diff --check -- tests/run_capital_binding_smoke.py support/reviews/MGMT-SAFE-002-review-gemini2.md"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 43,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-SAFE-002",
+      "from": "Gemini2",
+      "to": "Codex",
+      "message": "Smoke test ready for review.",
+      "status": "done",
+      "created_at": "2026-05-15T15:35:43Z",
+      "resolved_at": "2026-05-15T15:48:00Z"
+    },
+    {
+      "task_id": "MGMT-SAFE-002",
+      "from": "Codex",
+      "to": "Gemini2",
+      "message": "Review blocked: direct smoke passes with python3 tests/run_capital_binding_smoke.py, but python3 -m pytest tests/run_capital_binding_smoke.py -q fails with SystemExit: 0 because test_capital_binding_disabled() calls sys.exit() inside a pytest-collected test. Convert the check to assertions/unittest or move CLI exit handling under __main__ so the smoke remains directly runnable and pytest-targetable; prefer a canonical non-active binding status such as suspended or revoked for the disabled-binding case.",
+      "status": "done",
+      "created_at": "2026-05-15T15:48:00Z",
+      "resolved_at": "2026-05-15T15:48:00Z"
+    },
+    {
+      "task_id": "MGMT-SAFE-002",
+      "from": "Gemini2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Gemini2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T16:06:01Z",
+      "resolved_at": "2026-05-15T16:06:02Z"
+    },
+    {
+      "task_id": "MGMT-SAFE-002",
+      "from": "Codex2",
+      "to": "Gemini2",
+      "message": "Fixed pytest-targetable capital binding disabled smoke; verified python3 tests/run_capital_binding_smoke.py and python3 -m pytest tests/run_capital_binding_smoke.py -q.",
+      "status": "done",
+      "created_at": "2026-05-15T16:09:42Z",
+      "resolved_at": "2026-05-15T16:23:00Z"
+    },
+    {
+      "task_id": "MGMT-SAFE-002",
+      "from": "Gemini2",
+      "to": "Codex2",
+      "message": "Review approved and returned to the owner for finalization",
+      "status": "done",
+      "created_at": "2026-05-15T16:23:00Z",
+      "resolved_at": "2026-05-15T16:38:31Z"
+    }
+  ],
+  "blockers": []
+}

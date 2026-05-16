@@ -1,0 +1,242 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/strategy-spec-seed/v1",
+  "title": "Pantheon SD-03 StrategySpecSeed",
+  "description": "Research-only strategy seed distilled from governed source evidence. A seed is not a StrategySpec, registry write, experiment launch, deployment plan, broker route, or execution authority.",
+  "type": "object",
+  "required": [
+    "seed_id",
+    "source_id",
+    "evidence_bundle_id",
+    "hypothesis",
+    "asset_class",
+    "market_scope",
+    "holding_period",
+    "required_data",
+    "backend_hint",
+    "feature_hints",
+    "label_hints",
+    "risk_notes",
+    "confidence",
+    "status",
+    "source_ids",
+    "evidence_item_ids",
+    "citation_refs",
+    "trace_refs",
+    "lineage",
+    "created_by",
+    "created_at",
+    "metadata"
+  ],
+  "properties": {
+    "seed_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Primary source id for compatibility with the SD-03 singular source_id field."
+    },
+    "evidence_bundle_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "hypothesis": {
+      "type": "string",
+      "minLength": 1
+    },
+    "asset_class": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "market_scope": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "holding_period": {
+      "type": ["string", "null"]
+    },
+    "required_data": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "backend_hint": {
+      "type": ["string", "null"]
+    },
+    "feature_hints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "label_hints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "risk_notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "promoted_to_strategy_spec", "rejected"]
+    },
+    "source_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "evidence_item_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "citation_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "trace_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "lineage": {
+      "type": "object",
+      "required": [
+        "created_from",
+        "evidence_bundle_id",
+        "source_ids",
+        "evidence_item_ids",
+        "citation_refs",
+        "promotion_requires",
+        "registry_write_performed",
+        "execution_route"
+      ],
+      "properties": {
+        "created_from": {
+          "type": "string",
+          "enum": ["evidence_bundle"]
+        },
+        "evidence_bundle_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "evidence_item_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "citation_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "trace_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source_record_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "promotion_requires": {
+          "type": "array",
+          "contains": {
+            "const": "evidence_bundle_id"
+          },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "registry_write_performed": {
+          "type": "boolean",
+          "const": false
+        },
+        "execution_route": {
+          "type": "string",
+          "enum": ["none"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "created_by": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "research_only": {
+          "type": "boolean",
+          "const": true
+        },
+        "registry_write_performed": {
+          "type": "boolean",
+          "const": false
+        },
+        "execution_route": {
+          "type": "string",
+          "enum": ["none"]
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

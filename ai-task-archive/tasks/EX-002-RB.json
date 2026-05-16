@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "task_id": "EX-002-RB",
+  "archived_at": "2026-05-16T08:23:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EX-002-RB",
+    "title": "Loader metadata migration promotion_state -> artifact_state + deployment_stage (rebaseline)",
+    "summary_zh": null,
+    "phase": "Sprint 3 / EPIC-RUNTIME",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/registry/promotion/gate.py",
+      "services/registry/lineage/promoted_artifact_metadata.schema.json",
+      "services/execution/artifact_loader.py",
+      "services/execution/test_artifact_loader.py",
+      "services/execution/smoke_test_artifact_loader.py",
+      "services/execution/artifact-loader/contract.md",
+      "support/evidence/EX-002-RB/README.md",
+      "support/evidence/EX-002-RB/review-response.md"
+    ],
+    "acceptance": [
+      "PromotionGate execution projection emits artifact_state and deployment_stage while preserving promotion_state compatibility",
+      "ArtifactLoader validates deployment_stage as canonical execution stage and requires artifact_state=approved for split metadata",
+      "Promotion_state-only legacy Object Store metadata remains loadable during compatibility window",
+      "Focused loader, smoke, promotion gate, and registry tests pass"
+    ],
+    "next": "Finalized review-approved EX-002-RB after task-scoped commit 840f0cc2. Verification rerun: pytest services/execution/test_artifact_loader.py -v (18 passed), artifact loader smoke passed, pytest services/registry/promotion/test_gate.py -v (4 passed), promotion gate smoke passed, pytest services/registry/ -q (69 passed), git diff --cached --check. Existing unrelated dirty worktree entries remain outside EX-002-RB scope.",
+    "last_update": "2026-05-16T08:23:01Z",
+    "review_notes_zh": [
+      "審查通過。artifact_state=approved 強制在 _validate_metadata() 正確閉合：candidate+paper 拒絕、missing artifact_state+paper 拒絕、legacy promotion_state-only 保持相容。gate.py lifecycle mapping 正確（candidate→none/candidate, paper→approved/paper, live→approved/live, retired→retired/frozen）。schema allOf 條件已從 promotion_state==live 遷移至 deployment_stage==live。18 個 loader tests 全通過；smoke test 通過；4 個 gate tests 通過；69 個 registry tests 通過。無 blocking findings。"
+    ],
+    "review_file": "support/reviews/EX-002-RB-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T08:23:01Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "840f0cc2d5e83f71126ea2a84888ce0664b913e2",
+      "commit_subject": "EX-002-RB migrate loader metadata fields",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "EX-002-RB",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 73,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 5,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EX-002-RB",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T05:59:46Z",
+      "resolved_at": "2026-05-16T06:01:46Z"
+    },
+    {
+      "task_id": "EX-002-RB",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T06:23:01Z",
+      "resolved_at": "2026-05-16T06:24:10Z"
+    },
+    {
+      "task_id": "EX-002-RB",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "EX-002-RB ready for review. Migration: PromotionGate.build_execution_projection() now emits artifact_state+deployment_stage (with promotion_state retained during transition). ArtifactLoader._validate_metadata() reads deployment_stage first (fallback promotion_state). Schema: artifact_state+deployment_stage added as optional properties; allOf condition migrated to deployment_stage==live. 6 new migration tests + original 9 pass (15 total). 65 registry tests pass. Evidence: support/evidence/EX-002-RB/README.md. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/execution/test_artifact_loader.py -v; PYTHONDONTWRITEBYTECODE=1 python3 services/execution/smoke_test_artifact_loader.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/registry/ -v",
+      "status": "done",
+      "created_at": "2026-05-16T06:46:03Z",
+      "resolved_at": "2026-05-16T07:03:49Z"
+    },
+    {
+      "task_id": "EX-002-RB",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review reopened: loader now reads deployment_stage but still accepts new split-envelope metadata unless artifact_state=approved; see support/reviews/EX-002-RB-review-codex.md.",
+      "status": "done",
+      "created_at": "2026-05-16T07:03:49Z",
+      "resolved_at": "2026-05-16T07:03:49Z"
+    },
+    {
+      "task_id": "EX-002-RB",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T07:12:02Z",
+      "resolved_at": "2026-05-16T07:12:02Z"
+    },
+    {
+      "task_id": "EX-002-RB",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: loader now requires artifact_state=approved for canonical split metadata, keeps promotion_state-only legacy fallback, and evidence is updated under support/evidence/EX-002-RB. Verification: execution loader tests 18 passed; artifact loader smoke passed; registry promotion tests 4 passed; registry suite 69 passed.",
+      "status": "done",
+      "created_at": "2026-05-16T07:39:58Z",
+      "resolved_at": "2026-05-16T07:42:10Z"
+    },
+    {
+      "task_id": "EX-002-RB",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: canonical execution metadata now requires artifact_state=approved plus matching deployment_stage, promotion_state-only legacy fallback remains intact, and evidence is updated under support/evidence/EX-002-RB. Verification: loader tests 18 passed; artifact loader smoke passed; promotion gate tests 4 passed; registry suite 69 passed.",
+      "status": "done",
+      "created_at": "2026-05-16T07:42:10Z",
+      "resolved_at": "2026-05-16T07:57:01Z"
+    },
+    {
+      "task_id": "EX-002-RB",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all acceptance criteria met. artifact_state=approved enforcement correct, legacy fallback intact, lifecycle mapping verified, 18+4+69 tests pass. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T07:57:01Z",
+      "resolved_at": "2026-05-16T08:23:02Z"
+    }
+  ],
+  "blockers": []
+}

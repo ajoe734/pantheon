@@ -186,7 +186,11 @@ def test_replay_unavailable_uses_final_error_envelope_with_resync_metadata() -> 
 def test_approval_and_ask_stream_routes_publish_replay_metadata_headers() -> None:
     for route, channel, resync in [
         (bff_main.stream_approval_events, "approval", "/bff/approvals,/bff/v5/interventions"),
-        (bff_main.stream_ask_events, "ask", "/bff/agora/ask/sessions/{id}"),
+        (
+            bff_main.stream_ask_events,
+            "ask",
+            "/bff/agora/ask/sessions/{id},/bff/agora/committee/sessions/{id}",
+        ),
     ]:
         response = asyncio.run(route(last_event_id=None, authorization=AUTH))
         assert response.media_type == "text/event-stream"

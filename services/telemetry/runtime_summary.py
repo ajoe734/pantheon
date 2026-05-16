@@ -105,7 +105,40 @@ class RuntimeSummaryProjectionStore:
 
             if event_type == "heartbeat":
                 current["last_heartbeat_at"] = event_time
+                current["last_heartbeat_event_id"] = event.get("event_id")
                 current["state"] = "active"
+                runtime_heartbeat = (
+                    metadata.get("runtime_heartbeat")
+                    if isinstance(metadata.get("runtime_heartbeat"), dict)
+                    else {}
+                )
+                connectivity_status = (
+                    runtime_heartbeat.get("connectivity_status")
+                    or metadata.get("connectivity_status")
+                )
+                broker_status = runtime_heartbeat.get("broker_status") or metadata.get("broker_status")
+                queue_lag_ms = runtime_heartbeat.get("queue_lag_ms", metadata.get("queue_lag_ms"))
+                event_delivery_lag_ms = runtime_heartbeat.get(
+                    "event_delivery_lag_ms",
+                    metadata.get("event_delivery_lag_ms"),
+                )
+                reported_health_summary = (
+                    runtime_heartbeat.get("health_summary")
+                    if isinstance(runtime_heartbeat.get("health_summary"), dict)
+                    else metadata.get("reported_health_summary")
+                )
+                if connectivity_status is not None:
+                    current["connectivity_status"] = connectivity_status
+                    if connectivity_status != "connected":
+                        current["state"] = "degraded"
+                if broker_status is not None:
+                    current["broker_status"] = broker_status
+                if queue_lag_ms is not None:
+                    current["queue_lag_ms"] = queue_lag_ms
+                if event_delivery_lag_ms is not None:
+                    current["event_delivery_lag_ms"] = event_delivery_lag_ms
+                if isinstance(reported_health_summary, dict):
+                    current["reported_health_summary"] = reported_health_summary
             elif event_type == "deploy_started":
                 current.setdefault("state", "active")
             elif event_type == "deploy_completed":
@@ -155,12 +188,20 @@ class RuntimeSummaryProjectionStore:
 
     def _health_summary(self, summary: dict[str, Any]) -> dict[str, str]:
         has_bridge_identity = bool(summary.get("engine_bridge_repo") and summary.get("engine_bridge_commit"))
+        connectivity_status = summary.get("connectivity_status")
         telemetry_state = "ok" if summary.get("last_heartbeat_at") else "degraded"
+        if connectivity_status in {"degraded", "disconnected"}:
+            telemetry_state = "degraded"
+        broker_status = summary.get("broker_status")
         return {
-            "paper_runtime": "ok" if summary.get("state") in {"active", "degraded"} else "degraded",
+            "paper_runtime": (
+                "ok"
+                if summary.get("state") == "active" and connectivity_status != "disconnected"
+                else "degraded"
+            ),
             "bridge": "ok" if has_bridge_identity else "degraded",
             "telemetry": telemetry_state,
-            "broker": "not_applicable",
+            "broker": broker_status if broker_status in {"ok", "degraded", "unavailable"} else "not_applicable",
         }
 
     def _apply_staleness(
@@ -178,8 +219,11 @@ class RuntimeSummaryProjectionStore:
         age_seconds = (reference - heartbeat_at).total_seconds()
         if age_seconds > self._heartbeat_stale_after_seconds:
             projected["state"] = "degraded"
+            if projected.get("connectivity_status") != "disconnected":
+                projected["connectivity_status"] = "degraded"
             health = dict(projected.get("health_summary") or {})
             health["telemetry"] = "degraded"
+            health["paper_runtime"] = "degraded"
             projected["health_summary"] = health
             projected["staleness"] = {
                 "last_known_at": projected.get("last_heartbeat_at"),

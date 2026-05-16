@@ -227,6 +227,7 @@ def build_production_activation_packet(
             "required_min_daily_periods": ACTIVATION_READY_MIN_DAILY_PERIODS,
         },
         "production_dataset_proof": normalized_proof,
+        "model_eval_artifact_refs": copy.deepcopy(result.artifact_refs),
         "candidate_handoff": candidate_packet,
         "safety_assertions": {
             "no_registry_write": True,

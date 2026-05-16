@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "LOOP-001-RB",
+  "archived_at": "2026-05-16T10:46:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-001-RB",
+    "title": "/bff/v5/loop-runs endpoint (rebaseline)",
+    "summary_zh": null,
+    "phase": "Sprint 6 / EPIC-EVOLUTION",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "LOOP-001-RB closeout complete. Implementation committed at 43a51a2f (read_store.py _backfill_local_contract_defaults fix + evidence). Final reviewer: Codex (reassigned from Codex2). Verification: pytest test_bff_v5_loop_sentinel_contract.py test_read_store_loop_sentinel.py -q — 33 passed. Evidence updated at support/evidence/LOOP-001-RB/README.md. Closeout commit: 7861ac31. No unrelated changes staged.",
+    "last_update": "2026-05-16T10:46:09Z",
+    "review_notes_zh": [
+      "審查通過：LOOP-001-RB 的 /bff/v5/loop-runs、loop detail、sentinel/control-room/persona-health/strategy-health rebaseline 行為在目前工作樹驗證通過；ReadSurfaceStore._backfill_local_contract_defaults 正確保留明確提供的空 incidents snapshot，避免 fixture-pack incidents 被注入。驗證：pytest services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py services/control-plane/bff/test_read_store_loop_sentinel.py -q（33 passed）；pytest services/control-plane/bff/test_ask_003_committee_lifecycle.py -q（29 passed）。Review file: support/reviews/LOOP-001-RB-review-codex.md。附註：commit 43a51a2f 另含兩行 committee-session mode guard，列為 closeout traceability note，非 LOOP 行為阻塞。"
+    ],
+    "review_file": "support/reviews/LOOP-001-RB-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T10:46:09Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "7861ac31b6c51587af2075b72b04d36cc3b3f8a8",
+      "commit_subject": "LOOP-001-RB closeout: update evidence reviewer attribution",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "LOOP-001-RB",
+        "Reviewer": "Codex",
+        "Verification": "pytest test_bff_v5_loop_sentinel_contract.py test_read_store_loop_sentinel.py -q (33 passed)",
+        "Co-Authored-By": "Claude Sonnet 4.6 <noreply@anthropic.com>"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 71,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-001-RB",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "LOOP-001-RB implementation complete. Routes GET /bff/v5/loop-runs, /loop-runs/{id}, /sentinel/findings, /sentinel/findings/{id}, /control-room, /execution/persona-health, /execution/strategy-health all verified in main.py. Fixed regression in ReadSurfaceStore._backfill_local_contract_defaults: explicitly-provided empty incidents snapshot was being overwritten by fixture_pack_c incidents; fix guards the merge when 'incidents' key already exists in self._data. Commit: 43a51a2f. Evidence: support/evidence/LOOP-001-RB/README.md. Verification: pytest test_bff_v5_loop_sentinel_contract.py -q (19 passed); pytest test_read_store_loop_sentinel.py -q (14 passed); combined 33 passed.",
+      "status": "done",
+      "created_at": "2026-05-16T10:09:07Z",
+      "resolved_at": "2026-05-16T10:35:06Z"
+    },
+    {
+      "task_id": "LOOP-001-RB",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Chair reassigned review from Codex2 to Codex: Codex2 is quota-terminal paused until 2026-05-18T23:40Z. Codex is already reviewing SENT-001 in the same /bff/v5/ endpoint module and is the natural reviewer once SENT-001 completes.",
+      "status": "done",
+      "created_at": "2026-05-16T10:35:06Z",
+      "resolved_at": "2026-05-16T10:42:10Z"
+    },
+    {
+      "task_id": "LOOP-001-RB",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Codex review approved LOOP-001-RB. Runtime contract tests pass; owner Claude2 should perform final closeout per task-closeout-finalization.md.",
+      "status": "done",
+      "created_at": "2026-05-16T10:42:10Z",
+      "resolved_at": "2026-05-16T10:46:10Z"
+    }
+  ],
+  "blockers": []
+}

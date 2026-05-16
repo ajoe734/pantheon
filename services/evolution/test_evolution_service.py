@@ -23,6 +23,7 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -805,29 +806,39 @@ def test_execute_invalid_freeze_mode_returns_400():
 # Evolution → incident store back-link
 # ---------------------------------------------------------------------------
 
-def _seed_incident_and_postmortem(postmortem_id: str) -> None:
+def _seed_incident_and_postmortem(
+    postmortem_id: str,
+    *,
+    incident_id: str | None = None,
+    incident_overrides: dict[str, Any] | None = None,
+    postmortem_overrides: dict[str, Any] | None = None,
+) -> str:
     """Seed a minimal IncidentCase + Postmortem into the incident store."""
     import datetime
     now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    inc_id = f"inc-seed-{postmortem_id}"
+    inc_id = incident_id or f"inc-seed-{postmortem_id}"
+    incident_payload = {
+        "incident_id": inc_id,
+        "title": "Seed incident for evolution link test",
+        "status": "open",
+        "severity": "medium",
+        "created_at": now,
+        "binding_id": "bind-seed-001",
+        "deployment_stage": "paper",
+        "deployment_plan_id": "plan-seed-001",
+        "capital_pool_id": "pool-seed-001",
+        "persona_capital_binding_id": "pcb-seed-001",
+        "artifact_id": "artifact-seed-001",
+        "artifact_version": "v1",
+        "runtime_id": "runtime-seed-001",
+        "trace_id": "trace-seed-001",
+    }
+    incident_payload.update(incident_overrides or {})
     inc = IncidentCase(
-        incident_id=inc_id,
-        title="Seed incident for evolution link test",
-        status="open",
-        severity="medium",
-        created_at=now,
-        binding_id="bind-seed-001",
-        deployment_stage="paper",
-        deployment_plan_id="plan-seed-001",
-        capital_pool_id="pool-seed-001",
-        persona_capital_binding_id="pcb-seed-001",
-        artifact_id="artifact-seed-001",
-        artifact_version="v1",
-        runtime_id="runtime-seed-001",
-        trace_id="trace-seed-001",
+        **incident_payload,
     )
     evo_main.incident_store.create_incident(inc)
-    pm = Postmortem(
+    postmortem_payload = dict(
         postmortem_id=postmortem_id,
         title="Seed postmortem for evolution link test",
         status="draft",
@@ -844,7 +855,10 @@ def _seed_incident_and_postmortem(postmortem_id: str) -> None:
         trace_id=inc.trace_id,
         root_cause="Seed root cause for test.",
     )
+    postmortem_payload.update(postmortem_overrides or {})
+    pm = Postmortem(**postmortem_payload)
     evo_main.incident_store.create_postmortem(pm)
+    return inc_id
 
 
 def test_propose_with_linked_postmortem_populates_back_link():
@@ -912,6 +926,116 @@ def test_propose_with_unknown_postmortem_returns_422():
 
 
 # ---------------------------------------------------------------------------
+# MGMT-EVO-002: proposal creation from incident / postmortem
+# ---------------------------------------------------------------------------
+
+def test_propose_from_incident_postmortem_derives_review_gated_freeze():
+    """
+    MGMT-EVO-002: critical IncidentCase + Postmortem evidence creates only a
+    proposed EvolutionDecision with incident/postmortem links and no execution.
+    """
+    pm_id = f"pm-derive-{uuid.uuid4().hex[:8]}"
+    inc_id = _seed_incident_and_postmortem(
+        pm_id,
+        incident_overrides={
+            "severity": "critical",
+            "deployment_stage": "live",
+            "artifact_id": "artifact-live-critical",
+            "artifact_version": "v9",
+            "runtime_id": "runtime-live-critical",
+            "trace_id": "trace-live-critical",
+        },
+        postmortem_overrides={
+            "root_cause": "Live runtime accepted a stale artifact binding.",
+        },
+    )
+
+    did = uid()
+    r = client.post("/api/evolution/proposals/from-incident", json={
+        "decision_id": did,
+        "incident_id": inc_id,
+        "postmortem_id": pm_id,
+        "has_active_runtime": True,
+    })
+
+    assert r.status_code == 201, r.text
+    d = r.json()
+    assert d["decision_id"] == did
+    assert d["decision_state"] == "proposed"
+    assert d["action_type"] == "freeze"
+    assert d["risk_level"] == "high"
+    assert d["target_type"] == "candidate_artifact"
+    assert d["target_id"] == "artifact-live-critical"
+    assert d["target_version"] == "v9"
+    assert d["target_stage"] == "live"
+    assert d["linked_incident_id"] == inc_id
+    assert d["linked_postmortem_id"] == pm_id
+    assert d["capital_pool_id"] == "pool-seed-001"
+    assert d["review_chain"] == []
+    assert d["execution_result"] is None
+    assert d["cooldown_ends_at"] is None
+    assert {ref["ref_id"] for ref in d["evidence_refs"]} == {inc_id, pm_id}
+    assert d["threshold_snapshots"][0]["metric_name"] == "severity1_incident_count"
+    assert d["metadata"]["task_id"] == "MGMT-EVO-002"
+    assert d["metadata"]["source"] == "incident_postmortem"
+    assert d["metadata"]["source_trace_id"] == "trace-live-critical"
+    assert d["metadata"]["proposal_only"] is True
+    assert d["metadata"]["runtime_binding_mutation_allowed"] is False
+    assert d["metadata"]["broker_order_allowed"] is False
+    assert d["metadata"]["capital_binding_mutation_allowed"] is False
+
+    pm = evo_main.incident_store.get_postmortem(pm_id)
+    assert pm is not None
+    assert pm.linked_evolution_decision_id == did
+
+
+def test_propose_from_incident_uses_existing_postmortem_when_not_explicit():
+    """When no postmortem_id is supplied, the incident's postmortem is linked if present."""
+    pm_id = f"pm-auto-{uuid.uuid4().hex[:8]}"
+    inc_id = _seed_incident_and_postmortem(pm_id)
+
+    r = client.post("/api/evolution/proposals/from-incident", json={
+        "decision_id": uid(),
+        "incident_id": inc_id,
+        "action_type": "revalidate",
+    })
+
+    assert r.status_code == 201, r.text
+    d = r.json()
+    assert d["action_type"] == "revalidate"
+    assert d["risk_level"] == "low"
+    assert d["linked_incident_id"] == inc_id
+    assert d["linked_postmortem_id"] == pm_id
+    assert d["metadata"]["proposal_only"] is True
+
+
+def test_propose_from_incident_missing_incident_returns_404():
+    r = client.post("/api/evolution/proposals/from-incident", json={
+        "decision_id": uid(),
+        "incident_id": "inc-does-not-exist",
+    })
+
+    assert r.status_code == 404
+    assert "incidentcase" in r.json()["detail"].lower()
+
+
+def test_propose_from_incident_rejects_postmortem_for_different_incident():
+    pm_a = f"pm-mismatch-a-{uuid.uuid4().hex[:8]}"
+    pm_b = f"pm-mismatch-b-{uuid.uuid4().hex[:8]}"
+    inc_a = _seed_incident_and_postmortem(pm_a, incident_id=f"inc-a-{uuid.uuid4().hex[:8]}")
+    _seed_incident_and_postmortem(pm_b, incident_id=f"inc-b-{uuid.uuid4().hex[:8]}")
+
+    r = client.post("/api/evolution/proposals/from-incident", json={
+        "decision_id": uid(),
+        "incident_id": inc_a,
+        "postmortem_id": pm_b,
+    })
+
+    assert r.status_code == 422
+    assert "belongs to incident" in r.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
 # EVO-004: Cooldown enforcement — repeated triggers blocked
 # ---------------------------------------------------------------------------
 
@@ -976,6 +1100,79 @@ def test_cooldown_blocks_high_risk_freeze_live_repeated_trigger():
     r2 = client.post("/api/evolution/proposals", json=body2)
     assert r2.status_code == 422
     assert "single-active-rule" in r2.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# MGMT-EVO-006: Observation window report
+# ---------------------------------------------------------------------------
+
+def test_observation_window_report_open_window_contains_evidence_refs():
+    """
+    MGMT-EVO-006: the service exposes a post-execution observation-window
+    report with window state, active blocking, execution refs, and evidence refs.
+    """
+    from datetime import datetime, timedelta
+
+    did = uid()
+    body = {**LOW_RISK_BODY, "decision_id": did, "target_id": f"strat-obs-{did}"}
+    client.post("/api/evolution/proposals", json=body).raise_for_status()
+    advance_to_reviewed(did)
+    advance_to_approved(did)
+    executed = advance_to_executed(did)
+
+    obs_start = datetime.fromisoformat(executed["observation_window_started_at"].replace("Z", "+00:00"))
+    as_of = (obs_start + timedelta(days=1)).isoformat().replace("+00:00", "Z")
+    r = client.get(f"/api/evolution/proposals/{did}/observation-report?as_of={as_of}")
+
+    assert r.status_code == 200, r.text
+    report = r.json()
+    assert report["decision_id"] == did
+    assert report["decision_state"] == "executed"
+    assert report["observation_state"] == "open"
+    assert report["cooldown_state"] == "open"
+    assert report["active_blocking"] is True
+    assert report["convergence_status"] == "collecting_observation_evidence"
+    assert report["active_until"] == executed["observation_window_ends_at"]
+    assert report["seconds_since_observation_start"] == 86400
+    assert report["seconds_until_observation_end"] > 0
+    assert report["execution"]["execution_ref_id"] == f"dispatch-{did}"
+    assert report["followthrough_refs"][0]["ref_type"] == "dispatch_command"
+    assert report["threshold_snapshots"][0]["metric_name"] == "sharpe_pct_of_baseline"
+    assert "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md §5.2-§5.4" in report["policy_refs"]
+
+
+def test_observation_window_report_after_active_window_allows_next_decision():
+    """Once observation and cooldown windows have elapsed, the report marks the target unblocked."""
+    from datetime import datetime, timedelta
+
+    did = uid()
+    body = {**LOW_RISK_BODY, "decision_id": did, "target_id": f"strat-obs-elapsed-{did}"}
+    client.post("/api/evolution/proposals", json=body).raise_for_status()
+    advance_to_reviewed(did)
+    advance_to_approved(did)
+    executed = advance_to_executed(did)
+
+    obs_end = datetime.fromisoformat(executed["observation_window_ends_at"].replace("Z", "+00:00"))
+    as_of = (obs_end + timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+    r = client.get(f"/api/evolution/proposals/{did}/observation-report?as_of={as_of}")
+
+    assert r.status_code == 200, r.text
+    report = r.json()
+    assert report["observation_state"] == "elapsed"
+    assert report["cooldown_state"] == "elapsed"
+    assert report["active_blocking"] is False
+    assert report["seconds_until_observation_end"] == 0
+    assert report["seconds_until_cooldown_end"] == 0
+    assert report["convergence_status"] == "eligible_for_next_decision"
+
+
+def test_observation_window_report_rejected_before_execute():
+    """Observation reports are only valid after the EvolutionDecision is executed."""
+    d = propose({"target_id": f"strat-obs-pre-{uuid.uuid4().hex[:6]}"})
+    r = client.get(f"/api/evolution/proposals/{d['decision_id']}/observation-report")
+
+    assert r.status_code == 422
+    assert "executed" in r.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------------------

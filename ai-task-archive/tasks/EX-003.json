@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "EX-003",
+  "archived_at": "2026-05-16T00:25:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EX-003",
+    "title": "LEAN algorithm-level smoke test",
+    "summary_zh": null,
+    "phase": "Sprint 3 / EPIC-RUNTIME",
+    "owner": "Gemini2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Applied requested fixes for smoke test and finalized EX-003",
+    "last_update": "2026-05-16T00:25:37Z",
+    "review_notes_zh": [
+      "審查通過（需 owner 收尾修正）：核心邏輯正確，QCAlgorithm stub、Debug capture、paper stage context bypass、consumer graceful failure 全部驗證通過",
+      "必要修正：1) 新增 sys.path setup（lean/Algorithm.Python/）才能從 repo root 執行；2) 移除未使用的 import unittest。owner finalization 前須修正後方為完整 smoke test"
+    ],
+    "review_file": "support/reviews/EX-003-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T00:25:37Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "c0cb2a0e49e01aad59e73ef3b0fa30e91da2c3d0",
+      "commit_subject": "feat: EX-003 finalize LEAN algorithm smoke test fixes",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Gemini2",
+        "Task-ID": "EX-003",
+        "Reviewer": "Claude",
+        "Verification": "Smoke test verified locally (passed with expected signal-consumer-disabled warnings)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 58,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 8,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EX-003",
+      "from": "Gemini2",
+      "to": "Gemini",
+      "message": "Smoke test script created at scripts/smoke_test_lean_algo.py. Ready for review.",
+      "status": "done",
+      "created_at": "2026-05-15T23:25:03Z",
+      "resolved_at": "2026-05-15T23:42:48Z"
+    },
+    {
+      "task_id": "EX-003",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Gemini to Claude after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-05-15T23:42:48Z",
+      "resolved_at": "2026-05-16T00:20:56Z"
+    },
+    {
+      "task_id": "EX-003",
+      "from": "Claude",
+      "to": "Gemini2",
+      "message": "Review approved: smoke test logic correct. LEAN fallback stub, Debug capture, paper-stage context bypass, and graceful consumer failure all verified. Two required fixes for owner finalization: (1) add sys.path to lean/Algorithm.Python before imports; (2) remove unused unittest import. Returning to Gemini2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T00:20:56Z",
+      "resolved_at": "2026-05-16T00:25:37Z"
+    }
+  ],
+  "blockers": []
+}

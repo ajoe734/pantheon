@@ -1,0 +1,344 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/research/imitation/trader-trajectory/v1",
+  "title": "TraderTrajectory",
+  "description": "Governed human trader trajectory used as source data for imitation dataset assembly. It records human decisions, no-order rationale, lineage, and durable storage references without granting registry, runtime, or live execution authority.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "trajectory_id",
+    "strategy_id",
+    "actor_id",
+    "actor_role",
+    "decision",
+    "target",
+    "steps",
+    "lineage",
+    "storage_ref",
+    "governance",
+    "observed_at",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "1.0"
+      ]
+    },
+    "trajectory_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "strategy_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "actor_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "actor_role": {
+      "type": "string",
+      "enum": [
+        "operator",
+        "approver"
+      ]
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "approve",
+        "edit",
+        "reject",
+        "no_order"
+      ]
+    },
+    "no_order_reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target": {
+      "$ref": "#/definitions/governedTrainingTarget"
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/traderTrajectoryStep"
+      }
+    },
+    "lineage": {
+      "$ref": "#/definitions/trajectoryLineage"
+    },
+    "storage_ref": {
+      "$ref": "#/definitions/storageRef"
+    },
+    "governance": {
+      "$ref": "#/definitions/trajectoryGovernance"
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "no_order"
+          }
+        },
+        "required": [
+          "decision"
+        ]
+      },
+      "then": {
+        "required": [
+          "no_order_reason"
+        ]
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "definitions": {
+    "traderTrajectoryStep": {
+      "type": "object",
+      "required": [
+        "observation",
+        "action"
+      ],
+      "properties": {
+        "step_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observation": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "number"
+          }
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reward": {
+          "type": "number"
+        },
+        "feedback_event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "no_order_reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "context": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "no_order"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "required": [
+              "no_order_reason"
+            ]
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "trajectoryLineage": {
+      "type": "object",
+      "required": [
+        "source_trace_refs"
+      ],
+      "properties": {
+        "source_trace_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "source_feedback_event_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "source_dataset_refs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "teaching_session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "decision_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task_ref": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "storageRef": {
+      "type": "object",
+      "required": [
+        "backend",
+        "path",
+        "checksum"
+      ],
+      "properties": {
+        "backend": {
+          "type": "string",
+          "enum": [
+            "object_store",
+            "postgres",
+            "local_fs",
+            "gcs"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "checksum": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "trajectoryGovernance": {
+      "type": "object",
+      "required": [
+        "research_only",
+        "direct_live_influence"
+      ],
+      "properties": {
+        "research_only": {
+          "const": true
+        },
+        "direct_live_influence": {
+          "const": false
+        },
+        "eligible_for_training": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "governedTrainingTarget": {
+      "type": "object",
+      "required": [
+        "strategy_id",
+        "promotion_state"
+      ],
+      "properties": {
+        "registry_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "strategy_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact_type": {
+          "type": "string",
+          "enum": [
+            "strategy_spec",
+            "model_artifact",
+            "feature_set",
+            "prompt_bundle",
+            "signal_snapshot",
+            "execution_bundle"
+          ]
+        },
+        "promotion_state": {
+          "type": "string",
+          "enum": [
+            "candidate",
+            "paper"
+          ]
+        },
+        "lineage_ref": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "registry_id"
+          ]
+        },
+        {
+          "required": [
+            "artifact_version",
+            "artifact_type"
+          ]
+        },
+        {
+          "required": [
+            "lineage_ref",
+            "artifact_type"
+          ]
+        }
+      ]
+    }
+  }
+}

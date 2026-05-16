@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OODA-007",
+  "archived_at": "2026-05-15T15:45:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OODA-007",
+    "title": "OODA packet unit / integration tests",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-01 OODA Packet Foundation",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout finalized after Claude review approval. Implementation is durable in commit 1a970896; closeout review artifact committed in 4713c543. Re-verified: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/ooda/test_mgmt_ooda_007_packet_integration.py -q -> 4 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/ooda -q -> 42 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py -q -> 6 passed. Worktree contains unrelated concurrent state/artifact changes from other tasks; only MGMT-OODA-007 review artifact was committed for this closeout.",
+    "last_update": "2026-05-15T15:45:34Z",
+    "review_notes_zh": [
+      "審查通過：4 個整合測試覆蓋完整 paper OODA packet JSONL round-trip、live_capital_side_effects guard（model + JSON Schema 雙層驗證）、legacy store 空 evidence 拒絕、transition packet_id mismatch 拒絕。",
+      "驗證命令：python3 -m pytest services/control-plane/ooda/test_mgmt_ooda_007_packet_integration.py -q -> 4 passed；python3 -m pytest services/control-plane/ooda -q -> 42 passed（較 handoff 多 4 筆為 MGMT-OODA-001 commit 25cd92a8 後續增加）；python3 -m pytest services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py -q -> 6 passed。",
+      "非阻塞追蹤：test_legacy_packet_store_rejects 跳過 EVOLVING 直接推至 CLOSED，可補充 EVOLVING stage 必要性測試；本 task acceptance 不依賴此邊界。"
+    ],
+    "review_file": "support/reviews/MGMT-OODA-007-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T15:45:34Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "merge/backend-dev-into-master",
+      "git_clean_required": false,
+      "commit": "4713c54352d9456ac3f23468935ffb0e082ea59d",
+      "commit_subject": "MGMT-OODA-007 closeout review artifact",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-OODA-007",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 11,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OODA-007",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: added MGMT-OODA-007 packet replay integration tests in commit 1a970896. Coverage: schema/model validation, full paper packet JSONL append/replay, complete stage replay path, query linkage filters, non-live live-capital guard, legacy store validation rejection, and transition packet_id mismatch rejection. Verification: python3 -m pytest services/control-plane/ooda/test_mgmt_ooda_007_packet_integration.py -q -> 4 passed; python3 -m pytest services/control-plane/ooda/test_stage_transition.py services/control-plane/ooda/test_jsonl_store.py -q -> 30 passed; python3 -m pytest services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py -q -> 6 passed; python3 -m pytest services/control-plane/ooda -q -> 38 passed. Note: other dirty/staged workspace files are unrelated to this task and were not committed.",
+      "status": "done",
+      "created_at": "2026-05-15T15:32:57Z",
+      "resolved_at": "2026-05-15T15:37:34Z"
+    },
+    {
+      "task_id": "MGMT-OODA-007",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: 4 integration tests pass covering full paper packet OODA round-trip, live-capital guard, legacy store validation rejection, and packet_id mismatch rejection. No source changes, no regressions. Returned to Codex2 for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-15T15:37:34Z",
+      "resolved_at": "2026-05-15T15:45:35Z"
+    }
+  ],
+  "blockers": []
+}

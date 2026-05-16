@@ -49,6 +49,50 @@ def test_bff_capital_pools_list_returns_200() -> None:
             bff_main.read_store = original
 
 
+def test_bff_capital_pools_list_returns_strict_items_envelope(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+        seed_pool = {
+            "pool_id": "pool-alpha",
+            "name": "Alpha Pool",
+            "status": "active",
+            "owner_id": "desk-alpha",
+            "owner_type": "desk",
+            "risk_policy_ref": "rp-001",
+            "currency": "USD",
+            "budget": 100000,
+            "created_at": "2026-05-15T00:00:00Z",
+        }
+        other_pool = {
+            "pool_id": "pool-beta",
+            "name": "Beta Pool",
+            "status": "suspended",
+            "risk_policy_ref": "rp-002",
+        }
+        store._canonical.list_records = lambda dataset, **kwargs: (
+            (True, [seed_pool, other_pool]) if dataset == "capital_pools" else (False, [])
+        )
+        monkeypatch.setattr(bff_main, "read_store", store)
+
+        client = TestClient(bff_main.app)
+        resp = client.get(
+            "/bff/capital-pools?status=active&risk_policy_ref=rp-001",
+            headers=HEADERS,
+        )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["data"] == body["items"]
+        assert body["page_info"] == {"next_page_token": None, "total": 1}
+        assert body["items"][0]["id"] == "pool-alpha"
+        assert body["items"][0]["pool_id"] == "pool-alpha"
+        assert body["items"][0]["budget"] == 100000
+        assert body["meta"]["surfaces"]["capital_pool_list"]["source"] == "canonical"
+
+
 def test_bff_capital_pools_create_requires_idempotency_key() -> None:
     with tempfile.TemporaryDirectory() as td:
         original = bff_main.read_store
@@ -167,6 +211,66 @@ def test_bff_capital_pool_detail_with_seed_data() -> None:
             assert "meta" in body
         finally:
             bff_main.read_store = original
+
+
+def test_bff_capital_pool_detail_reports_binding_surface_unavailable(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+        seed_pool = {
+            "pool_id": "pool-alpha",
+            "name": "Alpha Pool",
+            "status": "active",
+            "risk_policy_ref": "rp-001",
+        }
+        store._canonical.list_records = lambda dataset, **kwargs: (
+            (True, [seed_pool]) if dataset == "capital_pools" else (False, [])
+        )
+        store._canonical.capital_pool = lambda pool_id: (
+            (True, seed_pool) if pool_id == "pool-alpha" else (True, None)
+        )
+        store._canonical.bindings_for_pool = lambda pool_id: (False, [])
+        monkeypatch.setattr(bff_main, "read_store", store)
+
+        client = TestClient(bff_main.app)
+        resp = client.get("/bff/capital-pools/pool-alpha", headers=HEADERS)
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["data"]["id"] == "pool-alpha"
+        assert body["data"]["bindings"] == []
+        surfaces = body["meta"]["surfaces"]
+        assert surfaces["capital_pool_detail"]["status"] == "ok"
+        assert surfaces["persona_bindings"]["status"] == "unavailable"
+        assert body["meta"]["degradation"]["persona_bindings_reason"] == (
+            "persona bindings are currently unavailable."
+        )
+
+
+def test_bff_capital_pool_detail_503_when_pool_source_unavailable(monkeypatch) -> None:
+    for env_name in (
+        "PANTHEON_CAPITAL_API_URL",
+        "PANTHEON_CAPITAL_SERVICE_URL",
+        "PANTHEON_BFF_CAPITAL_POOL_STORE",
+        "PANTHEON_GOVERNANCE_DATA_DIR",
+    ):
+        monkeypatch.setenv(env_name, "")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+
+    with tempfile.TemporaryDirectory() as td:
+        store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+        monkeypatch.setattr(bff_main, "read_store", store)
+
+        client = TestClient(bff_main.app)
+        resp = client.get("/bff/capital-pools/pool-missing", headers=HEADERS)
+
+        assert resp.status_code == 503, resp.text
+        assert resp.json()["detail"]["error"]["code"] == "DOWNSTREAM_UNAVAILABLE"
 
 
 # ---------------------------------------------------------------------------

@@ -4,15 +4,15 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-15 20:16:17
+Last updated: 2026-05-16 22:25:27
 
 ## Objective
 
-並行 4 條 track：(A) Shioaji TW broker sandbox smoke — services/broker/shioaji/ adapter, place/cancel/readback/reconcile, 餵進 scripts/run_ep5_canary_readiness.py human-gate packet；(B) Qlib LightGBM alpha activation — 寫 RS-003 baseline StrategySpec，從 TWSE/TPEx 抓 ≥50 instruments × ≥2 years OHLCV，跑 production_activation_smoke.py --backend real，submit registry admission packet；(C) services/ namespace normalization — control_plane→control-plane/internal，registry-core/decision-domain→registry/decision_domain；(D) BFF Consolidation — 補完 BFF execute-plans live wiring 的剩餘 20–30% production gap (route manifest contract diff，command envelope unification，non-empty fixture & detail journey，SSE real stream replay，strict env cutover，seed-only surface elimination)。Track D 27 tasks (BFF-CONSOL-001..027) 分 4 wave，Wave 1–2 與 Track A/B/C 並行不衝突；Wave 3 的 command adapter rollout (019/020/021) gated on EP5 paper-canary closeout (Day 12)；strict cutover 走 isolated Lovable preview branch；receipt dual-write 驗證通過後即可 deprecate 舊 receipt，後續 regression 追蹤不再以固定天數阻塞派工。broker production live 與 capital binding 仍 fail-closed；canary 仍需 risk-owner + operator approval gate。Track A/B 共用 TW market dataset 不重做兩次。
+跨進開發團隊 GAP master rebaseline (docs/04/pantheon_sa_supplemental_2026-05-15/GAP_dev_team_master_rebaseline_2026-05-15.md)，以 pantheon@master + execute-plans@main 為基準。並行 6 條 EPIC，按 P0→P3 階梯推進：(I) EPIC-BFF-P0 (P0 10 task / Sprint 1) — session trio (/bff/me, auth/refresh, logout) + /openapi.json + canonical action endpoint + approval decide + registry reads (strategies/personas/capital-pools/audit)，讓 execute-plans@main 在 VITE_BFF_FALLBACK=strict 下可 bootstrap 核心 Management flow 不再 fallback mock；(II) EPIC-GOV-DEPLOY (P1 5 task / Sprint 2) — ApprovalDecision first-class + DeploymentPlan contract/service + stage planner + deployment projection + pool/runtime compatibility 檢查；(III) EPIC-RUNTIME (P1 6 task / Sprint 3) — RuntimeBinding schema + Runtime Manager skeleton + /bff/runtimes + deploy/pause/replace/rollback actions + loader metadata migration (promotion_state → artifact_state + deployment_stage) + LEAN algorithm-level smoke；(IV) EPIC-TELEMETRY (P2 7 task / Sprint 4) — TelemetryEvent canonical schema + RuntimeHeartbeat ingest + AuditAction backend + /bff/alerts + /bff/incidents + reconciliation record + Postmortem schema/endpoint；(V) EPIC-RESEARCH (P3 28 task / Sprint 5) — Source Ingest (SRC) + StrategySpec (STRAT) + Experiment orchestrator (EXP) + Qlib/vectorbt adapters + Persona/Trainer (PER/TRN) + Imitation dataset (IMT) + Consult/Committee (ASK)；(VI) EPIC-EVOLUTION (P3 3 task / Sprint 6) — EvolutionDecision service + /bff/v5/loop-runs + /bff/v5/sentinel/findings。GAP § 10 最大阻塞：BFF live endpoints 不足 → EPIC-BFF-P0 必須最先收斂；Registry/Promotion canonical 已 implemented，DeploymentPlan/RuntimeBinding 是 governance→execution 缺口；Artifact Loader 仍寫 legacy promotion_state，EX-002 metadata migration 是 execution-side 技術債。fail-closed 鐵律延續：broker production live、capital binding live 仍禁止；canary 需 risk-owner + operator 雙閘；evidence 走 support/evidence/<epic>-<task>/。Track E 收尾備註：46 個 MGMT-* task 中 45 個 done+archive，僅 MGMT-BROKER-002 仍 blocked 等 Shioaji credentials (commit 22e5ca3b 已備 sidecar acceptance packet)；M7 canary readiness 因此未閉合；Track E objective 不在本 sprint 推進範圍，僅 carry-over 記錄。
 
 ## Current Sprint
 
-- Sprint: `2026-05-13-ep5-qlib-bff-consolidation`
+- Sprint: `2026-05-16-pantheon-bff-p0-foundation`
 - Canonical files: `AI_COLLABORATION_GUIDE.md`, `ai-status.json`, `ai-activity-log.jsonl`, `current-work.md`, `TARGET_ARCHITECTURE.md`, `OPENCLAW_RUNTIME_CONTRACT.md`, `PERSONA_RUNTIME_MODEL.md`, `BINDING_AND_DEPLOYMENT_SEMANTICS.md`, `PAPER_CANARY_LIVE_POLICY.md`, `ROLLBACK_AND_POSITION_SEMANTICS.md`, `LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md`, `EVOLUTION_REVIEW_AND_THRESHOLDS.md`, `CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md`, `KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md`, `MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md`, `TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md`, `DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md`, `EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md`, `EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md`, `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md`, `LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md`, `CANONICAL_DOCUMENT_MAP.md`, `DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md`, `ROADMAP.md`, `DEVELOPMENT_WORKBREAKDOWN.md`, `OSS_INTEGRATION_CHECKLIST.md`, `WORKBENCH_DELIVERY_BACKLOG.md`, `DELIVERY_CLOSURE_AND_LOOP_STATES.md`, `EXECUTION_PROOF_AND_MATURITY_LEVELS.md`, `CANONICAL_CONTRACT_MIGRATION_DECISION.md`, `WORK_REBASELINE.md`, `Pantheon_總索引版系統分析文件.md`, `Pantheon_資料表_Schema_設計版.md`, `Pantheon_API_Service_Contract_設計版.md`
 - Canonical tiers: `L0 Collaboration & State`, `L0.5 Derived Narrative`, `L1 Platform Architecture & Policy`, `L2 Planning & Execution`, `L3 Supporting Design & Migration`
 - Planning mode: `docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/README.md`
@@ -43,7 +43,7 @@ Last updated: 2026-05-15 20:16:17
 - `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
 - `Claude2`: execution, control-plane, governance-review; next: No active assignment
-- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
+- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check.
 
 ## Delivery Layers
 
@@ -51,7 +51,7 @@ Last updated: 2026-05-15 20:16:17
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - | - |
+| `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | Gemini2 | blocked | - | - |
 
 ### External / Upstream Integration Work
 
@@ -61,36 +61,37 @@ Last updated: 2026-05-15 20:16:17
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-15 20:16:17
-- Terminal tasks archived: `1051` total, `1033` completed, `18` superseded
+- Archive updated: 2026-05-16 22:25:26
+- Terminal tasks archived: `1157` total, `1137` completed, `20` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
-| `BFF-CONSOL-027` | BFF Consolidation 2026-05-13 | Final BFF consolidation acceptance packet | Copilot | completed | 2026-05-15 20:16:17 | `ai-task-archive/tasks/BFF-CONSOL-027.json` |
-| `BFF-CONSOL-023` | BFF Consolidation 2026-05-13 | Lovable prod strict cutover (preview-soak verification gate) | Codex | completed | 2026-05-15 20:13:13 | `ai-task-archive/tasks/BFF-CONSOL-023.json` |
-| `FE-INT-GATE-OIDC-DEV-LOGIN` | Pantheon FE Integration Gate 2026-05-13 | Dev BFF OIDC short-lived JWT for CI + hosted Lovable | Codex | completed | 2026-05-15 16:02:18 | `ai-task-archive/tasks/FE-INT-GATE-OIDC-DEV-LOGIN.json` |
-| `BFF-CONSOL-023-SIDECAR-BFF-HANDOFF` | BFF Consolidation 2026-05-13 | Prepare BFF-CONSOL-023 BFF and frontend handoff packet | Codex2 | completed | 2026-05-15 16:00:07 | `ai-task-archive/tasks/BFF-CONSOL-023-SIDECAR-BFF-HANDOFF.json` |
-| `FE-INT-GATE-OIDC-DEV-LOGIN-SIDECAR-BFF-HANDOFF` | Pantheon FE Integration Gate 2026-05-13 | Prepare FE-INT-GATE-OIDC-DEV-LOGIN BFF and frontend handoff packet | Claude | completed | 2026-05-15 15:52:46 | `ai-task-archive/tasks/FE-INT-GATE-OIDC-DEV-LOGIN-SIDECAR-BFF-HANDOFF.json` |
-| `OPS-GEM-REDEPLOY-001` | Unassigned | Gemini Lovable redeploy and dev BFF credential unblock | Codex | completed | 2026-05-15 15:25:10 | `ai-task-archive/tasks/OPS-GEM-REDEPLOY-001.json` |
-| `BFF-CONSOL-022` | BFF Consolidation 2026-05-13 | Lovable dev BFF strict cutover (isolated preview branch) | Codex | completed | 2026-05-15 15:21:30 | `ai-task-archive/tasks/BFF-CONSOL-022.json` |
-| `FE-INT-GATE-ALIGN-F15` | Pantheon FE Integration Gate 2026-05-13 | Align 09-strict-vs-hybrid.spec.ts to hosted Lovable DOM | Codex2 | completed | 2026-05-15 15:17:26 | `ai-task-archive/tasks/FE-INT-GATE-ALIGN-F15.json` |
-| `FE-INT-GATE-ALIGN-F01` | Pantheon FE Integration Gate 2026-05-13 | Align 01-startup-session.spec.ts to hosted Lovable DOM | Codex | completed | 2026-05-15 15:15:41 | `ai-task-archive/tasks/FE-INT-GATE-ALIGN-F01.json` |
-| `FE-INT-GATE-FOLLOWUP-ME-STARTUP` | Pantheon FE Integration Gate 2026-05-13 | Wire hosted startup session to /bff/me before local role fallback | Codex2 | completed | 2026-05-15 15:11:28 | `ai-task-archive/tasks/FE-INT-GATE-FOLLOWUP-ME-STARTUP.json` |
-| `FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE` | Pantheon FE Integration Gate 2026-05-13 | Restore hosted Lovable dev real-write gate for F05 | Codex | completed | 2026-05-15 13:26:13 | `ai-task-archive/tasks/FE-INT-GATE-ALIGN-F05-DEPLOY-WRITE-GATE.json` |
-| `FE-INT-GATE-ALIGN-F05` | Pantheon FE Integration Gate 2026-05-13 | Align 04-sentinel-remediation.spec.ts to hosted Lovable DOM | Codex | completed | 2026-05-15 13:21:40 | `ai-task-archive/tasks/FE-INT-GATE-ALIGN-F05.json` |
-| `FE-INT-GATE-FOLLOWUP-F15-STRICT-LOVABLE` | Pantheon FE Integration Gate 2026-05-13 | Enable strict fallback selection on hosted Lovable dev build | Codex | completed | 2026-05-15 13:20:39 | `ai-task-archive/tasks/FE-INT-GATE-FOLLOWUP-F15-STRICT-LOVABLE.json` |
-| `OPS-GEM-REDEPLOY-001-SIDECAR-BFF-HANDOFF` | Unassigned | Prepare OPS-GEM-REDEPLOY-001 BFF and frontend handoff packet | Claude | completed | 2026-05-15 13:15:49 | `ai-task-archive/tasks/OPS-GEM-REDEPLOY-001-SIDECAR-BFF-HANDOFF.json` |
-| `FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE` | Pantheon FE Integration Gate 2026-05-13 | Prepare FE-INT-GATE-A11Y-CONTRAST acceptance packet and dependency map | Gemini2 | completed | 2026-05-15 09:42:19 | `ai-task-archive/tasks/FE-INT-GATE-A11Y-CONTRAST-SIDECAR-ACCEPTANCE.json` |
-| `FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE` | Pantheon FE Integration Gate 2026-05-13 | Prepare FE-INT-GATE-A11Y-BREADCRUMB acceptance packet and dependency map | Codex | completed | 2026-05-15 09:37:59 | `ai-task-archive/tasks/FE-INT-GATE-A11Y-BREADCRUMB-SIDECAR-ACCEPTANCE.json` |
-| `FE-INT-GATE-A11Y-CONTRAST` | Pantheon FE Integration Gate 2026-05-13 | Fix v5 design token color-contrast to 4.5:1 | Codex | completed | 2026-05-15 09:30:30 | `ai-task-archive/tasks/FE-INT-GATE-A11Y-CONTRAST.json` |
-| `FE-INT-GATE-A11Y-BREADCRUMB` | Pantheon FE Integration Gate 2026-05-13 | Fix Breadcrumb list semantic violation | Claude | completed | 2026-05-15 09:20:43 | `ai-task-archive/tasks/FE-INT-GATE-A11Y-BREADCRUMB.json` |
-| `FE-INT-GATE-A11Y-OVERLAY` | Pantheon FE Integration Gate 2026-05-13 | Fix drawer focus return and overlay stack ESC handling | Claude2 | completed | 2026-05-15 09:07:45 | `ai-task-archive/tasks/FE-INT-GATE-A11Y-OVERLAY.json` |
-| `FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF` | Pantheon FE Integration Gate 2026-05-13 | Prepare FE-INT-GATE-ALIGN-F04-FOLLOWUP BFF and frontend handoff packet | Codex | completed | 2026-05-14 23:00:04 | `ai-task-archive/tasks/FE-INT-GATE-ALIGN-F04-FOLLOWUP-SIDECAR-BFF-HANDOFF.json` |
+| `ASK-005` | Sprint 5 / EPIC-RESEARCH | approval / ask SSE event publishing | Claude | completed | 2026-05-16 22:25:26 | `ai-task-archive/tasks/ASK-005.json` |
+| `ASK-005-SIDECAR-REVIEW` | Sprint 5 / EPIC-RESEARCH | Prepare ASK-005 review packet and evidence summary | Codex | completed | 2026-05-16 22:13:36 | `ai-task-archive/tasks/ASK-005-SIDECAR-REVIEW.json` |
+| `EVO-001` | Sprint 6 / EPIC-EVOLUTION | EvolutionDecision service | Claude | completed | 2026-05-16 20:05:30 | `ai-task-archive/tasks/EVO-001.json` |
+| `EVO-001-SIDECAR-REVIEW` | Sprint 6 / EPIC-EVOLUTION | Prepare EVO-001 review packet and evidence summary | Codex | superseded | 2026-05-16 20:00:55 | `ai-task-archive/tasks/EVO-001-SIDECAR-REVIEW.json` |
+| `SENT-001` | Sprint 6 / EPIC-EVOLUTION | /bff/v5/sentinel/findings endpoint | Claude2 | completed | 2026-05-16 19:08:06 | `ai-task-archive/tasks/SENT-001.json` |
+| `ASK-004` | Sprint 5 / EPIC-RESEARCH | memo publish to registry / review | Codex | completed | 2026-05-16 19:07:24 | `ai-task-archive/tasks/ASK-004.json` |
+| `ASK-002` | Sprint 5 / EPIC-RESEARCH | ConsultRequest / ConsultMemo schema | Codex | completed | 2026-05-16 18:53:03 | `ai-task-archive/tasks/ASK-002.json` |
+| `IMT-004` | Sprint 5 / EPIC-RESEARCH | behavior policy artifact type registration | Codex | completed | 2026-05-16 18:48:08 | `ai-task-archive/tasks/IMT-004.json` |
+| `ASK-002-SIDECAR-REVIEW` | Sprint 5 / EPIC-RESEARCH | Prepare ASK-002 review packet and evidence summary | Claude | superseded | 2026-05-16 18:47:58 | `ai-task-archive/tasks/ASK-002-SIDECAR-REVIEW.json` |
+| `TRN-004` | Sprint 5 / EPIC-RESEARCH | trainer commit / discard / replay | Codex | completed | 2026-05-16 18:47:33 | `ai-task-archive/tasks/TRN-004.json` |
+| `LOOP-001-RB` | Sprint 6 / EPIC-EVOLUTION | /bff/v5/loop-runs endpoint (rebaseline) | Claude2 | completed | 2026-05-16 18:46:09 | `ai-task-archive/tasks/LOOP-001-RB.json` |
+| `IMT-001` | Sprint 5 / EPIC-RESEARCH | TraderTrajectory schema | Codex | completed | 2026-05-16 18:40:26 | `ai-task-archive/tasks/IMT-001.json` |
+| `TRN-002` | Sprint 5 / EPIC-RESEARCH | trainer session endpoints | Codex | completed | 2026-05-16 18:33:35 | `ai-task-archive/tasks/TRN-002.json` |
+| `ASK-003` | Sprint 5 / EPIC-RESEARCH | ask / committee session lifecycle | Claude2 | completed | 2026-05-16 18:19:53 | `ai-task-archive/tasks/ASK-003.json` |
+| `IMT-002` | Sprint 5 / EPIC-RESEARCH | PreferenceExample / CorrectionTrace schema | Codex | completed | 2026-05-16 18:07:48 | `ai-task-archive/tasks/IMT-002.json` |
+| `ASK-001` | Sprint 5 / EPIC-RESEARCH | /bff/agora/ask/sessions | Codex | completed | 2026-05-16 18:03:43 | `ai-task-archive/tasks/ASK-001.json` |
+| `TRN-001` | Sprint 5 / EPIC-RESEARCH | TeachingSession / TeachingEvent schema | Codex | completed | 2026-05-16 17:57:42 | `ai-task-archive/tasks/TRN-001.json` |
+| `EXP-001` | Sprint 5 / EPIC-RESEARCH | ExperimentTask / ExperimentRun schema | Codex | completed | 2026-05-16 17:53:55 | `ai-task-archive/tasks/EXP-001.json` |
+| `IMT-003` | Sprint 5 / EPIC-RESEARCH | imitation dataset builder skeleton | Claude2 | completed | 2026-05-16 17:40:02 | `ai-task-archive/tasks/IMT-003.json` |
+| `STRAT-004` | Sprint 5 / EPIC-RESEARCH | evidence / code refs lineage | Codex | completed | 2026-05-16 17:29:19 | `ai-task-archive/tasks/STRAT-004.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
+| `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | - | Gemini2 | Gemini | blocked | - | 2026-05-15 23:15:06 | Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check. |
 
 ## Handoff Queue
 
@@ -102,7 +103,7 @@ Last updated: 2026-05-15 20:16:17
 
 | Task | Owner | Waiting For | Message | Status |
 |---|---|---|---|---|
-| _(none)_ | - | - | - | - |
+| `MGMT-BROKER-002` | Gemini2 | Gemini | Waiting for broker credentials (API_KEY/SECRET_KEY) to proceed with account readiness check. | open |
 
 ## Review Notes
 
@@ -179,23 +180,23 @@ Last updated: 2026-05-15 20:16:17
 
 ## Latest Checkpoints
 
-- 2026-05-15 19:48:19 Orchestrator: PreToolUse: Write
-- 2026-05-15 19:48:19 Orchestrator: PostToolUse: Write
-- 2026-05-15 19:48:25 Orchestrator: PreToolUse: Write
-- 2026-05-15 19:48:25 Orchestrator: PostToolUse: Write
-- 2026-05-15 19:48:37 Orchestrator: Stop: Stop
-- 2026-05-15 19:48:38 Orchestrator: SessionEnd: SessionEnd
-- 2026-05-15 19:51:07 Orchestrator: Chair review worker exited; supervisor will validate the review artifacts.
-- 2026-05-15 19:51:07 Orchestrator: `OPS-CHAIR-REVIEW` Five idle workers available; only external blocker (Lovable main env rebuild) prevents main execution; sidecar window open for any safe parallelizable support work excluding BFF-CONSOL-023
-- 2026-05-15 19:51:07 Orchestrator: `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` Failed to create sidecar for BFF-CONSOL-027: Task BFF-CONSOL-027-SIDECAR-BFF-HANDOFF is archived. Create a new follow-up task instead of reusing the archived task id.
-- 2026-05-15 19:51:07 Orchestrator: underutilized but no sidecar candidate could be assigned safely
-- 2026-05-15 20:06:38 Orchestrator: `BFF-CONSOL-027-SIDECAR-BFF-HANDOFF` Failed to create sidecar for BFF-CONSOL-027: Task BFF-CONSOL-027-SIDECAR-BFF-HANDOFF is archived. Create a new follow-up task instead of reusing the archived task id.
-- 2026-05-15 20:06:38 Orchestrator: underutilized but no sidecar candidate could be assigned safely
-- 2026-05-15 20:12:26 Codex: `BFF-CONSOL-023` Runtime strict cutover evidence complete; hosted asset contains runtime strict hook, read/SSE/browser/F15/F01 strict checks passed; build-time Lovable env publish is non-blocking follow-up.
-- 2026-05-15 20:12:39 Codex: `BFF-CONSOL-023` Handoff to Gemini2: Ready for review: BFF-CONSOL-023 runtime strict main cutover evidence complete; authenticated read smoke 32/32, hosted browser probe pass with SSE, F15 strict and focused F01 strict checks passed. Evidence updated in support/evidence/BFF-CONSOL-023-prod-strict-soak.md.
-- 2026-05-15 20:12:52 Gemini2: `BFF-CONSOL-023` Approved: runtime strict main cutover evidence complete; build-time env publish is non-blocking follow-up.
-- 2026-05-15 20:13:13 Codex: `BFF-CONSOL-023` Done: runtime strict main cutover verified; BFF/read/SSE/browser/F15/F01 strict evidence complete; build-time Lovable env publish tracked as non-blocking follow-up.
-- 2026-05-15 20:14:20 Copilot: `BFF-CONSOL-027` Starting final BFF consolidation acceptance packet now that BFF-CONSOL-023 is done; will include archive-gap notes for 016/017/019/020/025/026 evidence.
-- 2026-05-15 20:15:48 Copilot: `BFF-CONSOL-027` Handoff to Claude: Ready for final review: acceptance packet created at support/sidecars/BFF-CONSOL-FINAL/ACCEPTANCE.md, covering contract diff baseline, live smoke, SSE evidence, command receipts, cutover log, regression follow-ups, and seed post-state.
-- 2026-05-15 20:16:00 Claude: `BFF-CONSOL-027` Approved: final BFF consolidation acceptance packet complete and reviewable evidence is present.
-- 2026-05-15 20:16:17 Copilot: `BFF-CONSOL-027` Done: final BFF consolidation acceptance packet is approved; all 001..026 evidence is summarized and remaining build-time Lovable env publish is non-blocking follow-up.
+- 2026-05-16 22:23:38 Orchestrator: PreToolUse: Bash
+- 2026-05-16 22:23:48 Orchestrator: PostToolUse: Bash
+- 2026-05-16 22:23:48 Orchestrator: PreToolUse: Read
+- 2026-05-16 22:23:49 Orchestrator: PostToolUse: Read
+- 2026-05-16 22:23:55 Orchestrator: PreToolUse: Bash
+- 2026-05-16 22:23:56 Orchestrator: PreToolUse: Bash
+- 2026-05-16 22:23:56 Orchestrator: PostToolUse: Bash
+- 2026-05-16 22:23:57 Orchestrator: PostToolUse: Bash
+- 2026-05-16 22:24:00 Orchestrator: PreToolUse: Bash
+- 2026-05-16 22:24:01 Orchestrator: PostToolUse: Bash
+- 2026-05-16 22:24:46 Orchestrator: PreToolUse: Bash
+- 2026-05-16 22:24:54 Orchestrator: PreToolUse: Bash
+- 2026-05-16 22:24:57 Orchestrator: PostToolUse: Bash
+- 2026-05-16 22:25:03 Orchestrator: PreToolUse: Bash
+- 2026-05-16 22:25:11 Orchestrator: PreToolUse: Bash
+- 2026-05-16 22:25:12 Orchestrator: PostToolUse: Bash
+- 2026-05-16 22:25:17 Orchestrator: PreToolUse: Bash
+- 2026-05-16 22:25:18 Orchestrator: PostToolUse: Bash
+- 2026-05-16 22:25:25 Orchestrator: PreToolUse: Bash
+- 2026-05-16 22:25:26 Claude: `ASK-005` ASK-005 closeout: approval/ask SSE event publishing fully implemented and reviewed. Commits: 6c7484c1 initial SSE implementation; 73304fe0 escalate/freeze semantics + replay de-dup; f5400502 body idempotency before publish; 632d72a8 durable command_store replay; 106b0cca idempotency-conflict no-double-publish (R4). Final verification: 12 ASK-005 contract tests, 66 adjacent approval/ask/SSE tests, 33 governance/idempotency tests — all passed (0 regressions). Reviewer Codex approved R4 fix.

@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "task_id": "MGMT-BROKER-005",
+  "archived_at": "2026-05-15T16:01:31Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-BROKER-005",
+    "title": "Shioaji fail-closed tests",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-05 Shioaji Sandbox",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Owner closeout complete for Shioaji fail-closed regressions. Reviewed implementation commit ddcb0d76 and closeout commit fe6b6c80 record the evidence and Codex review artifact. Final verification passed: adapter 40, sandbox smoke 7, EP5 canary readiness 8, broker sandbox order smoke 8, and py_compile.",
+    "last_update": "2026-05-15T16:01:31Z",
+    "review_notes_zh": [
+      "審查通過：commit ddcb0d76 的 Shioaji fail-closed regressions 覆蓋 closed sandbox gate submit/cancel/readback 無 SDK/API side effects、live disabled 無 SDK/order-book side effects，以及 closed-gate smoke artifact 邊界。Reviewer verification passed: adapter 40 tests, sandbox smoke 7 tests, EP5 canary readiness 6 tests, broker sandbox order smoke 8 tests, py_compile passed。"
+    ],
+    "review_file": "support/reviews/MGMT-BROKER-005-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T16:01:31Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "merge/backend-dev-into-master",
+      "git_clean_required": false,
+      "commit": "fe6b6c80f88b16cfed706220101c5f3f79517fca",
+      "commit_subject": "MGMT-BROKER-005 closeout: record review evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-BROKER-005",
+        "Reviewer": "Codex",
+        "Verification": "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.broker.shioaji.test_adapter -q (40 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m unittest services.broker.shioaji.test_sandbox_smoke -q (7 passed); PYTHONPATH=scripts PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts/test_run_ep5_canary_readiness.py -q (8 passed); PYTHONPATH=scripts PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts/test_run_broker_sandbox_order_smoke.py -q (8 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/broker/shioaji/test_adapter.py services/broker/shioaji/test_sandbox_smoke.py services/broker/shioaji/adapter.py services/broker/shioaji/sandbox_smoke.py scripts/run_ep5_canary_readiness.py scripts/run_broker_sandbox_order_smoke.py (passed)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 32,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-BROKER-005",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review. Commit ddcb0d76 adds Shioaji fail-closed regressions for closed sandbox gate no-SDK side effects, unconditional live-disabled no side effects, and closed-gate smoke artifact boundaries. Evidence note: support/evidence/MGMT-BROKER-005/README.md. Verification passed: shioaji adapter tests, shioaji sandbox smoke tests, ep5 canary readiness tests with PYTHONPATH=scripts, broker sandbox order smoke tests with PYTHONPATH=scripts, and py_compile.",
+      "status": "done",
+      "created_at": "2026-05-15T15:47:57Z",
+      "resolved_at": "2026-05-15T15:53:30Z"
+    },
+    {
+      "task_id": "MGMT-BROKER-005",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. Fail-closed regression coverage verified; owner Codex2 should finalize MGMT-BROKER-005 through the closeout checklist.",
+      "status": "done",
+      "created_at": "2026-05-15T15:53:30Z",
+      "resolved_at": "2026-05-15T16:01:32Z"
+    }
+  ],
+  "blockers": []
+}

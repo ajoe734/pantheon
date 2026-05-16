@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from .models import (
+    ArtifactType,
     ArtifactState,
     DeploymentStage,
     DeploymentSummary,
@@ -42,9 +43,10 @@ def _make_create_payload(
     strategy_id: str = "test-alpha",
     version: str = "1.0.0",
     artifact_state: ArtifactState = ArtifactState.DRAFT,
+    artifact_type: ArtifactType | str = ArtifactType.MODEL_ARTIFACT,
 ) -> RegistryEntryCreate:
     return RegistryEntryCreate(
-        artifact_type="model_artifact",
+        artifact_type=artifact_type,
         strategy_id=strategy_id,
         version=version,
         artifact_state=artifact_state,
@@ -52,6 +54,31 @@ def _make_create_payload(
         storage_ref=StorageRef(backend=StorageBackend.OBJECT_STORE, path="s3://bucket/artifact.bin"),
         checksum="sha256:abc123",
     )
+
+
+def _minimal_strategy_spec(strategy_id: str = "strat-distilled") -> dict:
+    return {
+        "spec_version": "1.0",
+        "strategy_id": strategy_id,
+        "title": "Distilled momentum hypothesis",
+        "hypothesis": "A bounded source seed suggests a momentum continuation effect.",
+        "objective": "Create a governed StrategySpec artifact for research orchestration.",
+        "market_scope": {"symbols": ["SPY"], "frequency": "1d"},
+        "data_dependencies": [{"ref": "source-seed-001", "kind": "note"}],
+        "execution_profile": {
+            "signal_schema_version": "research-signal-v1",
+            "quantity_type": "PERCENT_PORTFOLIO",
+            "execution_mode_hint": "research",
+        },
+        "evaluation_plan": {"metrics": ["sharpe_ratio"], "candidate_gate": "schema-valid"},
+        "governance": {"approval_required": True, "risk_profile": "research"},
+        "provenance": {
+            "source_kind": "workflow",
+            "created_at": "2026-05-16T07:00:00Z",
+            "source_refs": ["source-seed-001"],
+            "created_by": "test",
+        },
+    }
 
 
 # -- Model unit tests -----------------------------------------------------
@@ -307,6 +334,147 @@ class TestFastAPIEndpoints:
         assert data["entry"]["artifact_state"] == "draft"
         assert data["deployment_stage"] == "none"
         assert data["entry"]["strategy_id"] == "api-test"
+
+    def test_register_behavior_policy_artifact_type(self):
+        payload = {
+            "artifact_type": "behavior_policy",
+            "strategy_id": "imitation-alpha",
+            "version": "0.1.0",
+            "storage_ref": {
+                "backend": "object_store",
+                "path": "learning/imitation/imitation-alpha/0.1.0/artifact_bundle.json",
+            },
+            "checksum": "sha256:behavior-policy",
+            "lineage": {
+                "source_run_ids": ["imit-run-001"],
+                "source_dataset_refs": ["dataset://imitation/imitation-alpha/0.1.0"],
+            },
+            "metadata": {
+                "model_family": "imitation_policy",
+                "algorithm": "behavior_cloning",
+                "direct_live_influence": False,
+            },
+        }
+
+        create_resp = self.client.post("/api/registry/entries", json=payload)
+
+        assert create_resp.status_code == 200, create_resp.text
+        registry_id = create_resp.json()["entry"]["registry_id"]
+        assert create_resp.json()["entry"]["artifact_type"] == "behavior_policy"
+        assert create_resp.json()["entry"]["artifact_state"] == "draft"
+        assert create_resp.json()["deployment_stage"] == "none"
+
+        candidate_resp = self.client.post(
+            f"/api/registry/entries/{registry_id}/advance",
+            json={"target_state": "candidate"},
+        )
+        assert candidate_resp.status_code == 200, candidate_resp.text
+
+        approved_resp = self.client.post(
+            f"/api/registry/entries/{registry_id}/advance",
+            json={"target_state": "approved", "approver": "offline-eval-gate"},
+        )
+        assert approved_resp.status_code == 200, approved_resp.text
+        assert approved_resp.json()["entry"]["artifact_type"] == "behavior_policy"
+        assert approved_resp.json()["entry"]["artifact_state"] == "approved"
+        assert approved_resp.json()["deployment_stage"] == "none"
+
+    def test_register_strategy_spec_from_source_seed_inline_payload(self):
+        payload = {
+            "strategy_id": "strat-distilled",
+            "version": "1.0.0",
+            "source_seed_id": "source-seed-001",
+            "strategy_spec": _minimal_strategy_spec("strat-distilled"),
+        }
+
+        resp = self.client.post("/api/registry/strategy-specs", json=payload)
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        entry = data["entry"]
+        assert entry["artifact_type"] == "strategy_spec"
+        assert entry["artifact_state"] == "draft"
+        assert data["deployment_stage"] == "none"
+        assert entry["lineage"]["source_run_ids"] == ["source-seed-001"]
+        assert entry["storage_ref"] == {
+            "backend": "inline",
+            "path": "$.entry.metadata.strategy_spec",
+        }
+        assert entry["checksum"].startswith("sha256:")
+        assert entry["metadata"]["source_seed_id"] == "source-seed-001"
+        assert entry["metadata"]["strategy_spec"]["title"] == "Distilled momentum hypothesis"
+
+    def test_strategy_spec_facade_lists_gets_and_advances_only_strategy_specs(self):
+        strategy_id = "strat-distilled"
+        create_resp = self.client.post(
+            "/api/registry/strategy-specs",
+            json={
+                "strategy_id": strategy_id,
+                "version": "1.0.0",
+                "source_seed_id": "source-seed-001",
+                "strategy_spec": _minimal_strategy_spec(strategy_id),
+            },
+        )
+        assert create_resp.status_code == 200, create_resp.text
+        registry_id = create_resp.json()["entry"]["registry_id"]
+
+        self.client.post("/api/registry/entries", json={
+            "artifact_type": "model_artifact",
+            "strategy_id": strategy_id,
+            "version": "2.0.0",
+            "storage_ref": {"backend": "object_store", "path": "s3://bucket/model.bin"},
+            "checksum": "sha256:model",
+            "lineage": {"source_run_ids": ["run-model"]},
+        })
+
+        list_resp = self.client.get(f"/api/registry/strategies/{strategy_id}/strategy-specs")
+        assert list_resp.status_code == 200, list_resp.text
+        assert [item["entry"]["registry_id"] for item in list_resp.json()] == [registry_id]
+
+        get_resp = self.client.get(f"/api/registry/strategy-specs/{registry_id}")
+        assert get_resp.status_code == 200, get_resp.text
+        assert get_resp.json()["entry"]["artifact_type"] == "strategy_spec"
+
+        advance_resp = self.client.post(
+            f"/api/registry/strategy-specs/{registry_id}/advance",
+            json={"target_state": "candidate"},
+        )
+        assert advance_resp.status_code == 200, advance_resp.text
+        assert advance_resp.json()["entry"]["artifact_state"] == "candidate"
+
+        filtered = self.client.get(
+            f"/api/registry/strategies/{strategy_id}/strategy-specs?artifact_state=candidate"
+        )
+        assert filtered.status_code == 200, filtered.text
+        assert [item["entry"]["registry_id"] for item in filtered.json()] == [registry_id]
+
+    def test_strategy_spec_facade_rejects_missing_lineage(self):
+        resp = self.client.post(
+            "/api/registry/strategy-specs",
+            json={
+                "strategy_id": "strat-no-lineage",
+                "version": "1.0.0",
+                "storage_ref": {"backend": "object_store", "path": "s3://bucket/spec.json"},
+                "checksum": "sha256:spec",
+            },
+        )
+
+        assert resp.status_code == 400, resp.text
+        assert "require lineage" in resp.json()["detail"]
+
+    def test_strategy_spec_facade_rejects_mismatched_inline_strategy_id(self):
+        resp = self.client.post(
+            "/api/registry/strategy-specs",
+            json={
+                "strategy_id": "strat-request",
+                "version": "1.0.0",
+                "source_seed_id": "source-seed-001",
+                "strategy_spec": _minimal_strategy_spec("strat-inline"),
+            },
+        )
+
+        assert resp.status_code == 400, resp.text
+        assert "must match" in resp.json()["detail"]
 
     def test_register_rejects_deployment_stage_as_artifact_state(self):
         for deployment_stage in ["paper", "canary", "live"]:

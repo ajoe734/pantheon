@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "task_id": "MGMT-BROKER-006",
+  "archived_at": "2026-05-15T18:05:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-BROKER-006",
+    "title": "Shioaji canary readiness packet integration",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-05 Shioaji Sandbox",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Finalized after review_approved. Task commit 56ec0a88 integrates MGMT-BROKER-004 Shioaji sandbox evidence into EP5 canary readiness, rejects open OODA/non-list-empty-missing/non-pass acceptance checks, records MGMT-BROKER-006 evidence packet artifacts, and focused verification passed: readiness/smoke pytest 14 passed, Shioaji evidence pytest 4 passed, py_compile passed, jq evidence validation passed, git diff --check passed.",
+    "last_update": "2026-05-15T18:05:39Z",
+    "review_notes_zh": [
+      "核准：readiness packet 現在必須消耗 MGMT-BROKER-004 Shioaji sandbox evidence packet，且驗證 schema/status/provider/sandbox/fail-closed 欄位、canary readiness refs、空 OODA validation errors、ooda_packet.status=closed。",
+      "核准：acceptance_checks 必須是非空 list，必須包含 MGMT-BROKER-004 Shioaji required check names，且所有 Shioaji evidence checks 都必須 status=pass；額外 mutation sanity 覆蓋 non-list、missing、non-pass 皆拒絕。",
+      "證據確認：support/evidence/MGMT-BROKER-006/human-gate/human-gate-packet.json 為 status=ready_for_review，broker_sandbox_smoke_status=passed，shioaji_sandbox_evidence_packet_status=passed，ooda_packet_status=closed；review 中同步修正 evidence README 的 pytest count 與 generated artifact 清單。",
+      "Verification: PYTHONPATH=scripts PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_run_ep5_canary_readiness.py scripts/test_run_canary_human_gate_smoke.py -q -> 14 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/run_ep5_canary_readiness.py scripts/run_canary_human_gate_smoke.py scripts/test_run_ep5_canary_readiness.py scripts/test_run_canary_human_gate_smoke.py -> passed; PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/broker/shioaji/test_evidence_packet.py -q -> 4 passed; git diff --check task files -> passed; jq empty MGMT-BROKER-006 evidence JSON -> passed."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T18:05:39Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "56ec0a88434b76fa7312d5fca8f51f0090867588",
+      "commit_subject": "MGMT-BROKER-006 integrate Shioaji canary readiness packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-BROKER-006",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 46,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-BROKER-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:17:57Z",
+      "resolved_at": "2026-05-15T17:18:57Z"
+    },
+    {
+      "task_id": "MGMT-BROKER-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:27:31Z",
+      "resolved_at": "2026-05-15T17:28:23Z"
+    },
+    {
+      "task_id": "MGMT-BROKER-006",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: integrated MGMT-BROKER-004 Shioaji sandbox evidence into EP5 canary human-gate readiness. Readiness CLI now accepts --task-id and requires --shioaji-evidence-packet-json for ready packets; packet acceptance validates shioaji_sandbox_evidence_packet.v1, broker/evidence path consistency, passed acceptance checks, closed OODA packet, live-disabled gate, and no real-capital proof. Updated SAFE-004 human-gate smoke to cover missing Shioaji evidence. Generated support/evidence/MGMT-BROKER-006 with checklist, datasource smoke, canary plan, and human-gate packet; summary is ready_for_review with broker_sandbox_smoke_status=passed and shioaji_sandbox_evidence_packet_status=passed. Task-owned files: scripts/run_ep5_canary_readiness.py, scripts/test_run_ep5_canary_readiness.py, scripts/run_canary_human_gate_smoke.py, scripts/test_run_canary_human_gate_smoke.py, docs/deployment/ep5-canary-ready/README.md, docs/deployment/ep5-canary-ready/operator-approval-checklist.md, support/evidence/MGMT-BROKER-006/, refreshed support/evidence/MGMT-SAFE-004/. Verification: PYTHONPATH=scripts PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_run_ep5_canary_readiness.py scripts/test_run_canary_human_gate_smoke.py -q -> 11 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile readiness/smoke scripts and tests -> passed; PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/broker/shioaji/test_evidence_packet.py -q -> 4 passed; git diff --check task files -> passed; jq checks confirmed MGMT-BROKER-006 human-gate summary ready_for_review/passed/passed. No live broker, runtime rollback, deployment, or capital-binding side effects were executed.",
+      "status": "done",
+      "created_at": "2026-05-15T17:39:01Z",
+      "resolved_at": "2026-05-15T17:46:31Z"
+    },
+    {
+      "task_id": "MGMT-BROKER-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review changes requested: see support/reviews/MGMT-BROKER-006-review-codex.md. Validator must reject non-closed OODA packet status and empty/missing Shioaji acceptance checks before readiness packet can be approved. Focused tests pass, but negative gate coverage is missing.",
+      "status": "done",
+      "created_at": "2026-05-15T17:46:31Z",
+      "resolved_at": "2026-05-15T17:46:31Z"
+    },
+    {
+      "task_id": "MGMT-BROKER-006",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:48:32Z",
+      "resolved_at": "2026-05-15T17:48:32Z"
+    },
+    {
+      "task_id": "MGMT-BROKER-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review after rework: readiness validator now rejects non-closed Shioaji OODA packet status, non-list/empty/missing MGMT-BROKER-004 acceptance checks, and any non-pass Shioaji evidence check. Regenerated support/evidence/MGMT-BROKER-006/human-gate with ooda_packet_status=closed. Verification: PYTHONPATH=scripts PYTHONDONTWRITEBYTECODE=1 python3 -m pytest scripts/test_run_ep5_canary_readiness.py scripts/test_run_canary_human_gate_smoke.py -q (14 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/run_ep5_canary_readiness.py scripts/run_canary_human_gate_smoke.py scripts/test_run_ep5_canary_readiness.py scripts/test_run_canary_human_gate_smoke.py (passed); PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/broker/shioaji/test_evidence_packet.py -q (4 passed); git diff --check task files (passed); jq empty MGMT-BROKER-006 evidence JSON (passed).",
+      "status": "done",
+      "created_at": "2026-05-15T17:55:33Z",
+      "resolved_at": "2026-05-15T18:01:46Z"
+    },
+    {
+      "task_id": "MGMT-BROKER-006",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: Shioaji canary readiness packet consumes MGMT-BROKER-004 evidence, rejects open OODA/non-list-or-failing acceptance checks, and focused verification passed. Owner Codex can finalize.",
+      "status": "done",
+      "created_at": "2026-05-15T18:01:46Z",
+      "resolved_at": "2026-05-15T18:05:40Z"
+    }
+  ],
+  "blockers": []
+}

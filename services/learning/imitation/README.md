@@ -14,7 +14,7 @@ LP-002 now has a concrete local adapter path instead of only a spike:
 - governed trajectory filtering from FB-001-style linkage metadata
 - BC-first training abstraction with a deterministic stub backend for CI
 - optional upstream `imitation` backend for real worker execution
-- registry-ready `model_artifact` packaging with lineage and checksum metadata
+- registry-ready `behavior_policy` packaging with lineage and checksum metadata
 - smoke test and unit tests under the same service directory
 
 This service is intentionally BC-only in v1. `DAgger`, `GAIL`, and `AIRL` remain deferred.
@@ -73,11 +73,13 @@ Rejected, ambiguous, or malformed sessions are excluded and recorded in the arti
    - `algorithm=behavior_cloning`
    - dataset summary, governance filters, policy payload, evaluation summary
 2. `registry_entry`
-   - `artifact_type=model_artifact`
+   - `artifact_type=behavior_policy`
+   - `artifact_state=draft`
    - `metadata.model_family=imitation_policy`
    - lineage back to `source_dataset_refs` and the generated training run id
 
-The default lifecycle state is `draft`.
+The default artifact state is `draft`; `lifecycle_state=draft` is still emitted as a legacy
+compatibility hint during the registry migration window.
 
 That keeps LP-002 aligned with REG-001 and avoids bypassing promotion gates. A future worker can
 promote the artifact to `candidate` only after automated evaluation passes.

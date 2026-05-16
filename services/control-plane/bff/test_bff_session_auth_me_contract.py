@@ -160,6 +160,30 @@ def test_bff_auth_refresh_replays_by_idempotency_alias(monkeypatch) -> None:
     assert second_payload["data"]["operation"]["performed_at"] == first_payload["data"]["operation"]["performed_at"]
 
 
+def test_bff_auth_refresh_accepts_cookie_session_in_strict_mode(monkeypatch) -> None:
+    _strict_auth_env(monkeypatch)
+    token = _jwt_token(roles=["operator"], extra={"sid": "session-cookie-refresh"})
+
+    client = TestClient(bff_main.app)
+    client.cookies.set("pantheon_session", token)
+    response = client.post(
+        "/bff/auth/refresh",
+        json={},
+        headers={"Idempotency-Key": "refresh-cookie-op"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    data = payload["data"]
+    assert payload["meta"]["contract"] == "BFF-LUV-SEM-001"
+    assert data["operation"]["type"] == "refresh"
+    assert data["currentUser"]["id"] == "op-jwt"
+    assert data["session"]["authenticated"] is True
+    assert data["session"]["state"] == "active"
+    assert data["session"]["session_kind"] == "cookie"
+    assert data["session"]["id"] == "session-cookie-refresh"
+
+
 def test_bff_switch_tenant_persists_allowed_tenant_for_me(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
@@ -243,6 +267,31 @@ def test_bff_logout_is_idempotent_session_lifecycle(monkeypatch) -> None:
     assert second_payload["meta"]["idempotency"]["replayed"] is True
     assert second_payload["data"]["operation"]["operation_id"] == first_payload["data"]["operation"]["operation_id"]
     assert second_payload["data"]["session"]["logged_out_at"] == first_payload["data"]["session"]["logged_out_at"]
+
+
+def test_bff_logout_accepts_cookie_session_in_strict_mode(monkeypatch) -> None:
+    _strict_auth_env(monkeypatch)
+    token = _jwt_token(roles=["operator"], extra={"sid": "session-cookie-logout"})
+
+    client = TestClient(bff_main.app)
+    client.cookies.set("pantheon_session", token)
+    response = client.post(
+        "/bff/logout",
+        json={},
+        headers={"Idempotency-Key": "logout-cookie-op"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    data = payload["data"]
+    assert payload["meta"]["contract"] == "BFF-LUV-SEM-001"
+    assert data["operation"]["type"] == "logout"
+    assert data["currentUser"]["id"] == "op-jwt"
+    assert data["session"]["authenticated"] is False
+    assert data["session"]["state"] == "logged_out"
+    assert data["session"]["session_kind"] == "cookie"
+    assert data["session"]["id"] == "session-cookie-logout"
+    assert data["session"]["logged_out_at"]
 
 
 def test_bff_session_lifecycle_routes_are_visible_in_openapi(monkeypatch) -> None:

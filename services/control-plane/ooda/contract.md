@@ -77,16 +77,32 @@ This is a hard contract constraint, not a soft check. Environments:
 
 ## Storage
 
-v1: JSONL append-only store via `OodaLoopStore`.
+v1 model-local helper: JSONL snapshot persistence via `OodaLoopStore`.
 
 - Each call to `add()` or `update()` appends a snapshot line to the store file.
 - The in-memory index holds the latest snapshot per `packet_id`.
-- v2 migration target: `ooda.loop_packet` Postgres table.
+
+v1 durable append/replay store: `OodaJsonlAppendStore` in `jsonl_store.py`.
+
+- Every durable write is an envelope with `schema_version`, `record_type`,
+  `record_id`, `packet_id`, `recorded_at`, and `payload`.
+- Supported record types:
+  - `packet_snapshot`: complete OODA packet snapshot.
+  - `stage_transition`: append-only status transition, optionally carrying the
+    resulting packet snapshot.
+- Replay fails fast on malformed JSONL or unsupported record envelopes.
+- Query supports Management/BFF linkage fields: `loop_type`, `status`,
+  `environment`, `capital_pool_id`, `strategy_id`, `persona_id`,
+  `runtime_binding_id`, `deployment_plan_id`, and `evolution_decision_id`.
+- The in-memory projection holds the latest packet snapshot per `packet_id`,
+  while preserving all raw envelopes for replay/audit.
+- v2 migration target: `ooda.loop_packet` Postgres table plus an event/audit
+  table for packet stage-transition envelopes.
 
 Default store path:
 
 ```text
-services/control-plane/ooda/store/ooda_packets.jsonl
+.orchestrator/ooda/ooda_loop_packets.jsonl
 ```
 
 ---
@@ -157,9 +173,22 @@ store.add(packet)
 | `Unknown loop_type` | Not in `LoopType` enum |
 | `Unknown status` | Not in `LoopStatus` enum |
 | `Unknown environment` | Not in `LoopEnvironment` enum |
-| `live_capital_side_effects must be False in environment ...` | Non-live env with live side effects |
+| `act.live_capital_side_effects must be false in dev, paper, sandbox, and canary environments` | Non-live env with live side effects; enforced by Python validator AND JSON Schema top-level `allOf` |
+| `closed OODA packets must include closed_at` | Closed/failed packet missing timestamp |
+| `closed OODA packets must include <bundle> bundle` | Missing stage bundle on closed packet |
+| `closed OODA packets must include at least one evidence ref in the <bundle> bundle` | All-empty bundle on closed packet |
 | `created_at is required` | Empty timestamp |
 | `updated_at is required` | Empty timestamp |
+
+### Closed-Packet Evidence Rule
+
+A packet in `closed` status must satisfy all of the following:
+
+1. `closed_at` must be set.
+2. `observe`, `orient`, `decide`, and `act` bundles must be present.
+3. Each of those four bundles must have at least one non-null, non-empty evidence field.
+
+This prevents OODA-complete loops from being recorded without evidence at each stage.
 
 ---
 

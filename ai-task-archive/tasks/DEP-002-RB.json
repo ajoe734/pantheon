@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "DEP-002-RB",
+  "archived_at": "2026-05-16T06:38:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DEP-002-RB",
+    "title": "DeploymentPlan stage planner (rebaseline)",
+    "summary_zh": null,
+    "phase": "Sprint 2 / EPIC-GOV-DEPLOY",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Finalized DEP-002-RB after Claude2 review approval. Task commit c339d235 includes read-only stage planner check, contract/docs, focused tests, evidence, and review note. Closeout verification re-ran py_compile, DEP-002 focused pytest, combined deployment pytest, and governance deployment_plan pytest; all passed.",
+    "last_update": "2026-05-16T06:38:02Z",
+    "review_notes_zh": [
+      "審查通過：POST /api/deployment/stage-planner/check 為讀取唯讀路由，無任何 store 寫入；check_stage_transition() 正確委派給 canonical StagePlanner（derive_transition_type / default_runtime_action / default_scale）；rollback_required 欄位對 paper/canary/live 均為 True，frozen 為 False；sentinel RollbackRef 的 target_artifact_id/version 與 plan sentinel 不同故通過 rollback identity 驗證；missing rollback linkage（rollback=None for active target）和 canary scale cap 超界均正確觸發錯誤；ruleset=DEP-002-RB-stage-planner-v1 在每個 test case 均通過驗證；9 個 DEP-002-RB tests 全過，combined 36 tests 全過"
+    ],
+    "review_file": "support/reviews/DEP-002-RB-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T06:38:02Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "c339d235140248894150c046e40cfbc779b1049a",
+      "commit_subject": "DEP-002-RB add deployment stage planner check",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "DEP-002-RB",
+        "Reviewer": "Claude2",
+        "Verification": "python3 -m py_compile services/deployment/models.py services/deployment/service.py services/deployment/test_dep002_rebaseline_stage_planner.py; python3 -m pytest -q services/deployment/test_dep002_rebaseline_stage_planner.py; python3 -m pytest -q services/deployment/test_dep002_rebaseline_stage_planner.py services/deployment/test_dep001_rebaseline_service.py services/deployment/test_service.py; python3 -m pytest -q services/control-plane/governance/test_deployment_plan.py"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 59,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DEP-002-RB",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T05:59:31Z",
+      "resolved_at": "2026-05-16T06:00:48Z"
+    },
+    {
+      "task_id": "DEP-002-RB",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "DEP-002-RB ready for review. Added read-only POST /api/deployment/stage-planner/check plus models, docs, focused tests, and support/evidence/DEP-002-RB/README.md. Verification: py_compile for deployment models/service/test passed; pytest services/deployment/test_dep002_rebaseline_stage_planner.py passed 9; combined deployment suites test_dep002_rebaseline_stage_planner.py test_dep001_rebaseline_service.py test_service.py passed 36; governance StagePlanner unit test passed 26 + 3 subtests.",
+      "status": "done",
+      "created_at": "2026-05-16T06:18:26Z",
+      "resolved_at": "2026-05-16T06:29:18Z"
+    },
+    {
+      "task_id": "DEP-002-RB",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: stage planner check is correctly read-only; all 6 allowed transitions, forbidden skip, missing rollback linkage, and canary scale cap tests pass. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T06:29:18Z",
+      "resolved_at": "2026-05-16T06:38:03Z"
+    }
+  ],
+  "blockers": []
+}

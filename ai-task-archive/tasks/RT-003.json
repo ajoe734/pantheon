@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "task_id": "RT-003",
+  "archived_at": "2026-05-16T06:19:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "RT-003",
+    "title": "/bff/runtimes list/detail",
+    "summary_zh": null,
+    "phase": "Sprint 3 / EPIC-RUNTIME",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Owner finalized approved RT-003 with task-scoped commit adca4d4c. Verified: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q services/control-plane/bff/test_bff_runtimes_contract.py => 3 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py::test_bff_deployment_runtime_and_risk_action_routes_return_final_envelopes => 1 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py => 2 passed.",
+    "last_update": "2026-05-16T06:19:33Z",
+    "review_notes_zh": [
+      "審查通過：GET /bff/runtimes list 正確過濾 status/deployment_stage 並輸出 surface metadata；GET /bff/runtimes/{runtime_id} detail 正確雙路徑查找（runtime_id→binding_id fallback）並在 store unavailable 時返回 503 DOWNSTREAM_UNAVAILABLE；_project_canonical_runtime_binding 欄位映射正確，純讀取無寫入操作；6 個測試全部通過（runtimes contract 3個 + governance runtime envelope 1個 + consol-016 smoke 2個)",
+      "跨任務附註：execute-plans/governance 套件中 incident fixture ordering 和 capital-pool missing-store 的既有失敗為本任務前既存問題，不影響本次審查通過"
+    ],
+    "review_file": "support/reviews/RT-003-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T06:19:33Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "adca4d4c12e1371808ad66a85ba20319810f85a7",
+      "commit_subject": "RT-003 finalize runtime BFF read surface",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "RT-003",
+        "Reviewer": "Claude",
+        "Verification": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q services/control-plane/bff/test_bff_runtimes_contract.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py::test_bff_deployment_runtime_and_risk_action_routes_return_final_envelopes; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 66,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 8,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "RT-003",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T00:52:17Z",
+      "resolved_at": "2026-05-16T00:53:02Z"
+    },
+    {
+      "task_id": "RT-003",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T01:27:55Z",
+      "resolved_at": "2026-05-16T01:28:49Z"
+    },
+    {
+      "task_id": "RT-003",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T01:45:28Z",
+      "resolved_at": "2026-05-16T01:46:03Z"
+    },
+    {
+      "task_id": "RT-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T05:27:52Z",
+      "resolved_at": "2026-05-16T05:28:23Z"
+    },
+    {
+      "task_id": "RT-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T05:40:03Z",
+      "resolved_at": "2026-05-16T05:40:35Z"
+    },
+    {
+      "task_id": "RT-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T05:47:51Z",
+      "resolved_at": "2026-05-16T05:48:40Z"
+    },
+    {
+      "task_id": "RT-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented /bff/runtimes list/detail canonical RuntimeBinding read surface: list filters status/deployment_stage with unavailable surface metadata; detail resolves runtime_id or binding_id and returns 503 when the runtime store is missing. Evidence: pytest -q services/control-plane/bff/test_bff_runtimes_contract.py; pytest -q services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py::test_bff_deployment_runtime_and_risk_action_routes_return_final_envelopes; pytest -q services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py -q. Broader execute-plans/governance run still has unrelated failures in incident fixture ordering and capital-pool missing-store behavior.",
+      "status": "done",
+      "created_at": "2026-05-16T05:54:37Z",
+      "resolved_at": "2026-05-16T06:05:17Z"
+    },
+    {
+      "task_id": "RT-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: /bff/runtimes list/detail canonical read surface verified. Dual ID lookup, filter semantics, surface metadata, and 503 unavailable behavior all correct. 6 tests pass. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T06:05:17Z",
+      "resolved_at": "2026-05-16T06:19:36Z"
+    }
+  ],
+  "blockers": []
+}

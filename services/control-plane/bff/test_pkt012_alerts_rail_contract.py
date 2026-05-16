@@ -188,3 +188,77 @@ def test_pkt012_alerts_rail_returns_unavailable_when_all_sources_are_missing() -
             assert payload["meta"]["surfaces"]["telemetry_summary"]["status"] == "unavailable"
         finally:
             bff_main.read_store = original_store
+
+
+def test_alt001_bff_alerts_endpoint_returns_operator_alert_projection_and_detail() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+        store.list_incidents = lambda **kwargs: [
+            {
+                "incident_id": "inc-alt-001",
+                "title": "Management alert live data",
+                "severity": "high",
+                "status": "open",
+                "created_at": "2026-05-16T05:30:00Z",
+            }
+        ]
+        store.list_governance_review_queue_items = lambda **kwargs: []
+        store.list_approval_queue_items = lambda **kwargs: []
+        store.get_kill_switch_status = lambda: {
+            "active": False,
+            "status": "released",
+            "safe_mode_status": "off",
+        }
+        store.list_runtime_bindings = lambda: []
+        store.get_telemetry_summary = lambda runtime_id: None
+        store.dataset_source = lambda dataset: {
+            "incidents": "service_store",
+            "governance_review_queue_items": "service_store",
+            "approval_queue_items": "service_store",
+            "kill_switch": "service_store",
+            "runtime_bindings": "canonical",
+            "telemetry_summaries": "canonical",
+        }.get(dataset, "missing")
+        bff_main.read_store = store
+        client = TestClient(bff_main.app)
+
+        try:
+            response = client.get(
+                "/bff/alerts",
+                headers={"Authorization": OPERATOR_TOKEN},
+            )
+            assert response.status_code == 200, response.text
+            payload = response.json()
+
+            assert payload["summary"]["total_active"] == 1
+            assert payload["summary"]["highest_severity"] == "critical"
+            assert payload["meta"]["surfaces"]["alerts"]["status"] == "ok"
+            alert = payload["alerts"][0]
+            assert alert == {
+                "alert_id": "alert-incident-inc-alt-001",
+                "severity": "critical",
+                "category": "incident",
+                "raised_at": "2026-05-16T05:30:00Z",
+                "summary": "Active incident: Management alert live data.",
+                "target_ref": {
+                    "surface_id": "PKT-002",
+                    "label": "Open incident response",
+                    "href": "/operator/incidents/inc-alt-001",
+                    "target_id": "inc-alt-001",
+                },
+            }
+
+            detail = client.get(
+                "/bff/alerts/alert-incident-inc-alt-001",
+                headers={"Authorization": OPERATOR_TOKEN},
+            )
+            assert detail.status_code == 200, detail.text
+            detail_payload = detail.json()
+            assert detail_payload["data"] == alert
+            assert detail_payload["meta"]["surfaces"]["alerts"]["status"] == "ok"
+        finally:
+            bff_main.read_store = original_store

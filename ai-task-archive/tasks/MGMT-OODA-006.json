@@ -1,0 +1,166 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OODA-006",
+  "archived_at": "2026-05-15T18:19:23Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OODA-006",
+    "title": "OODA packet drawer component",
+    "summary_zh": "完成 execute-plans OODA packet drawer、OODA packet DTO/derivation helpers，以及 Management BFF OODA read adapter。",
+    "phase": "Track E / EPIC-01 OODA Packet Foundation",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "execute-plans/src/lib/ooda/packets.ts",
+      "execute-plans/src/management/components/ooda/OodaPacketDrawer.tsx",
+      "execute-plans/src/management/components/ooda/OodaPacketDrawer.test.tsx",
+      "execute-plans/src/management/components/ooda/index.ts",
+      "execute-plans/src/lib/bff/client.ts",
+      "execute-plans/src/lib/bff-v1/paths.ts",
+      "execute-plans/src/lib/bff/__tests__/client.test.ts"
+    ],
+    "acceptance": [
+      "Drawer renders packet header, source state, OODA replay stages, linked objects, audit/evidence refs, and non-live capital side-effect safety badge.",
+      "Drawer can fetch packet detail through managementClient.oodaPackets.get when opened with packetId only.",
+      "Management client exposes OODA list/detail/related route adapters without inventing seed packets in mock mode.",
+      "Focused Vitest, frontend contract test, lint, and production build pass with only existing repo warnings/build warnings."
+    ],
+    "next": "Closeout complete: execute-plans primary repo committed MGMT-OODA-006 at 9bddaac and Pantheon mirror closeout commit at 9c1bc9a5. Verification rerun in /home/lupin/code/execute-plans: focused Vitest 25 passed, contract 5 passed, lint 0 errors with existing 52 warnings, build passed with existing warnings; diff checks clean. The approved three-state capital safety model and OODA drawer/BFF artifacts are durable.",
+    "last_update": "2026-05-15T18:19:23Z",
+    "review_notes_zh": [
+      "審查通過：三態 capital safety 正確實作 — no_side_effects/live_asserted/non_live_unsafe，邏輯清晰無誤。",
+      "審查通過：OodaPacketDrawer badge tones、labels、icons 三態均正確對應；data-safety 屬性可供測試識別；evolution review / approval links 使用 encodeURIComponent 正確。",
+      "審查通過：三個 safety-state 測試均含正向斷言與負向排除（queryByText）確保狀態互斥；packet fetch by ID、missing evidence、linked objects、BFF adapter 測試完整。",
+      "審查通過：oodaPackets mock 模式返回空 list（不捏造 seed）；forStrategy/forRuntime/forEvolutionProgram 路由正確；evolutionReviews.get 型別守衛完整。",
+      "審查通過：paths.ts 新增 OODA 路由均使用 enc() 編碼；evolutionMutationReview 指向 /api/v1/operator/mutation-review/{id} 正確。",
+      "Verification: owner reported 25 Vitest passed, 5 contract tests passed, 0 lint errors, build passed with existing warnings; acceptance criteria all met."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T18:19:23Z",
+      "repository_id": "execute_plans",
+      "repository_path": "/home/lupin/code/execute-plans",
+      "repository_slug": "ajoe734/execute-plans",
+      "branch": "main",
+      "git_clean_required": false,
+      "commit": "9bddaac87396f755c11105f5cdf987be77706dfc",
+      "commit_subject": "MGMT-OODA-006 add OODA packet drawer artifacts",
+      "commit_author": {
+        "name": "Codex2",
+        "email": "codex2@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-OODA-006",
+        "Reviewer": "Claude2",
+        "- npm run test": "contract => 5 passed"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 5,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/main",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OODA-006",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T16:27:48Z",
+      "resolved_at": "2026-05-15T16:28:36Z"
+    },
+    {
+      "task_id": "MGMT-OODA-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T16:42:47Z",
+      "resolved_at": "2026-05-15T16:43:15Z"
+    },
+    {
+      "task_id": "MGMT-OODA-006",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: added execute-plans OODA packet DTO/derivation helpers, reusable OodaPacketDrawer component, drawer tests, and managementClient.oodaPackets adapters for /bff/ooda/packets plus strategy/runtime/evolution related routes. Task-owned files: execute-plans/src/lib/ooda/packets.ts; execute-plans/src/management/components/ooda/OodaPacketDrawer.tsx; execute-plans/src/management/components/ooda/OodaPacketDrawer.test.tsx; execute-plans/src/management/components/ooda/index.ts; execute-plans/src/lib/bff/client.ts; execute-plans/src/lib/bff-v1/paths.ts; execute-plans/src/lib/bff/__tests__/client.test.ts. Verification: npm test -- --run src/management/components/ooda/OodaPacketDrawer.test.tsx src/lib/bff/__tests__/client.test.ts -> 22 passed; npm run test:contract -> 5 passed; npm run lint -- task files -> 0 errors, existing 52 warnings; npm run build -> passed with existing Browserslist/chunk warnings.",
+      "status": "done",
+      "created_at": "2026-05-15T16:59:04Z",
+      "resolved_at": "2026-05-15T17:06:17Z"
+    },
+    {
+      "task_id": "MGMT-OODA-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review cannot proceed in this checkout: after git fetch origin, expected task artifacts are absent (execute-plans/src/lib/ooda/packets.ts; execute-plans/src/management/components/ooda/OodaPacketDrawer.tsx; execute-plans/src/management/components/ooda/OodaPacketDrawer.test.tsx; execute-plans/src/management/components/ooda/index.ts; execute-plans/src/lib/bff/client.ts; execute-plans/src/lib/bff-v1/paths.ts; execute-plans/src/lib/bff/__tests__/client.test.ts). execute-plans/src currently contains only lib/bff/runAction.ts, and branch bff-luv-fe-006-dev-deploy is not present locally or on origin after fetch. Please publish/apply the task-owned files on a reviewable branch or update the task artifacts/branch, then hand off back for review.",
+      "status": "done",
+      "created_at": "2026-05-15T17:06:17Z",
+      "resolved_at": "2026-05-15T17:06:17Z"
+    },
+    {
+      "task_id": "MGMT-OODA-006",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: restored and published MGMT-OODA-006 task-owned execute-plans artifacts on branch bff-luv-fe-006-dev-deploy at commit 73ecfe46. Copied only the 7 expected files from the frontend worktree into pantheon/execute-plans despite execute-plans/ being gitignored, force-staged them narrowly, and pushed origin/bff-luv-fe-006-dev-deploy. Verification run in /home/lupin/code/execute-plans: npm test -- --run src/management/components/ooda/OodaPacketDrawer.test.tsx src/lib/bff/__tests__/client.test.ts -> 22 passed; npm run test:contract -> 5 passed; npm run lint -- task files -> 0 errors, existing 52 warnings; npm run build -> passed with existing Browserslist/chunk warnings. Note: pantheon/execute-plans still does not contain the full npm package scaffold, so executable frontend verification lives in sibling /home/lupin/code/execute-plans.",
+      "status": "done",
+      "created_at": "2026-05-15T17:19:40Z",
+      "resolved_at": "2026-05-15T17:35:32Z"
+    },
+    {
+      "task_id": "MGMT-OODA-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review changes requested by Codex; see support/reviews/MGMT-OODA-006-review-codex.md. Blocking safety-display issue: live packets with act.live_capital_side_effects=true currently render the green 'no live capital side effects' badge because isOodaNonLiveCapitalSafe returns true for environment=live. Please make the badge factually distinguish no side effects, live-environment side effects asserted, and non-live side effects asserted as unsafe, then add focused tests for live/asserted and non-live/asserted cases. Reviewer verification before reopen: focused Vitest 22 passed; contract Vitest 5 passed; lint 0 errors with 52 existing warnings; build passed with existing warnings.",
+      "status": "done",
+      "created_at": "2026-05-15T17:35:32Z",
+      "resolved_at": "2026-05-15T17:35:32Z"
+    },
+    {
+      "task_id": "MGMT-OODA-006",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Helper-claimed by idle Claude2; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:40:56Z",
+      "resolved_at": "2026-05-15T17:40:56Z"
+    },
+    {
+      "task_id": "MGMT-OODA-006",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:48:46Z",
+      "resolved_at": "2026-05-15T17:50:06Z"
+    },
+    {
+      "task_id": "MGMT-OODA-006",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Ready for review: completed MGMT-OODA-006 OODA drawer safety-display rework. Pantheon mirror and /home/lupin/code/execute-plans now agree on the three-state capital safety helper oodaCapitalSafetyState: no_side_effects, live_asserted, and non_live_unsafe. OodaPacketDrawer now renders distinct badge tone/label/data-safety for each state, so live packets with live_capital_side_effects=true no longer show the green no-side-effects badge, while non-live packets asserting live side effects render unsafe. Added focused drawer regression coverage for live/asserted and non-live/asserted cases while preserving packet fetch, stage replay, evidence refs, linked objects, and BFF OODA adapters. Task-owned files touched: execute-plans/src/lib/ooda/packets.ts, execute-plans/src/management/components/ooda/OodaPacketDrawer.tsx, execute-plans/src/management/components/ooda/OodaPacketDrawer.test.tsx, plus existing MGMT-OODA-006 BFF adapter artifacts. Verification in /home/lupin/code/execute-plans: npm test -- --run src/management/components/ooda/OodaPacketDrawer.test.tsx src/lib/bff/__tests__/client.test.ts -> 25 passed; npm run test:contract -> 5 passed; npm run lint -- task files -> 0 errors, existing 52 warnings; npm run build -> passed with existing Browserslist/chunk warnings; pantheon task files git diff --check passed.",
+      "status": "done",
+      "created_at": "2026-05-15T17:57:28Z",
+      "resolved_at": "2026-05-15T18:04:22Z"
+    },
+    {
+      "task_id": "MGMT-OODA-006",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: three-state capital safety model (no_side_effects/live_asserted/non_live_unsafe) is correctly implemented and tested. Badge rendering, evolution links, OODA BFF adapter, and mock-mode safety all pass review. Returning to owner Codex for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-15T18:04:22Z",
+      "resolved_at": "2026-05-15T18:19:23Z"
+    }
+  ],
+  "blockers": []
+}

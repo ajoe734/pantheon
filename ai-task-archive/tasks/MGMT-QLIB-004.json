@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "task_id": "MGMT-QLIB-004",
+  "archived_at": "2026-05-15T16:09:21Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-QLIB-004",
+    "title": "Qlib model / eval artifact refs",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-04 Qlib Admission",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout commit 5094f089 recorded Codex2 review artifact. Verified Qlib model/eval artifact refs remain review-only and persisted: AI_NAME=Codex python3 -m pytest services/research/qlib/test_adapter.py services/research/qlib/test_production_activation.py -q -> 28 passed; AI_NAME=Codex python3 services/research/qlib/smoke_test.py -> assertions OK; AI_NAME=Codex python3 direct artifact_refs assertion -> OK. Existing unrelated dirty worktree changes were left untouched.",
+    "last_update": "2026-05-15T16:09:21Z",
+    "review_notes_zh": [
+      "Qlib artifact refs approved: workflow emits model_artifact_ref and evaluation_report_ref, production packet carries model_eval_artifact_refs, persisted manifest includes 5 refs, registry_write_authority stays registry_service_only, deployment_stage remains none, and no_registry_write assertion holds.",
+      "Verification: AI_NAME=Codex2 python3 -m pytest services/research/qlib/test_adapter.py services/research/qlib/test_production_activation.py -q -> 28 passed; python3 services/research/qlib/smoke_test.py -> assertions OK; direct artifact_refs assertion command -> OK."
+    ],
+    "review_file": "support/reviews/MGMT-QLIB-004-review-codex2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T16:09:21Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "merge/backend-dev-into-master",
+      "git_clean_required": false,
+      "commit": "5094f089138db6c48f1eae9b87992e2bc2a0662d",
+      "commit_subject": "MGMT-QLIB-004 record review approval",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-QLIB-004",
+        "Reviewer": "Codex2",
+        "Verification": "AI_NAME=Codex python3 -m pytest services/research/qlib/test_adapter.py services/research/qlib/test_production_activation.py -q (28 passed); AI_NAME=Codex python3 services/research/qlib/smoke_test.py (assertions OK); AI_NAME=Codex python3 direct artifact_refs assertion (OK)."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 37,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-QLIB-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review. Verified Qlib run result emits model_artifact_ref and evaluation_report_ref plus 5 persisted refs, registry_write_authority=registry_service_only, deployment_stage=none, no_registry_write safety assertion. Verification: python3 -m pytest services/research/qlib/test_adapter.py services/research/qlib/test_production_activation.py -q -> 28 passed; python3 services/research/qlib/smoke_test.py -> assertions OK; direct artifact_refs assertion command passed.",
+      "status": "done",
+      "created_at": "2026-05-15T15:55:20Z",
+      "resolved_at": "2026-05-15T16:01:12Z"
+    },
+    {
+      "task_id": "MGMT-QLIB-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved. Verified Qlib model/eval artifact refs are review-only, persisted, registry-service-owned, deployment_stage=none, and covered by focused tests/smoke. Owner Codex should finalize through closeout.",
+      "status": "done",
+      "created_at": "2026-05-15T16:01:12Z",
+      "resolved_at": "2026-05-15T16:09:23Z"
+    }
+  ],
+  "blockers": []
+}

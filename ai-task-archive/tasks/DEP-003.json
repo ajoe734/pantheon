@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "DEP-003",
+  "archived_at": "2026-05-16T06:03:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DEP-003",
+    "title": "deployment projection read model",
+    "summary_zh": null,
+    "phase": "Sprint 2 / EPIC-GOV-DEPLOY",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "DEP-003 closeout: derived-only projection read model verified. Three projection routes correct, no write authority in service, source_status/lifecycle_state/actual_stage semantics confirmed, RuntimeBinding multi-path lookup correct. 18/18 tests pass (commit 4ddad480).",
+    "last_update": "2026-05-16T06:03:32Z",
+    "review_notes_zh": [
+      "審查通過：GET /api/deployment/projections、/projections/{plan_id}、/plans/{plan_id}/projection 三條路由正確實作；DeploymentProjectionReadModelService 為純衍生讀取，無任何寫入操作；source_status、lifecycle_state、actual_stage/projected_stage 語義全部正確；RuntimeBinding 多路徑查找與 graceful missing 正確；18 個測試全過；contract.md 與 README.md 已更新",
+      "跨任務附註：evidence 檔案仍標示 Reviewer: Codex2 為原始分配前的痕跡，不影響本次審查通過"
+    ],
+    "review_file": "support/reviews/DEP-003-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T06:03:32Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "4ddad480e89711c2b47c253fbfa3af9d5a649d82",
+      "commit_subject": "DEP-003 closeout: deployment projection read model",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verification": "python3 -m pytest services/deployment/test_service.py -q",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "DEP-003",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 61,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 4,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DEP-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review. Added DEP-003 derived-only deployment projection read model in services/deployment with GET /api/deployment/projections, /api/deployment/projections/{plan_id}, and /api/deployment/plans/{plan_id}/projection. Projection composes DeploymentPlan, ApprovalDecision, registry execution projection, RuntimeBinding, and DeploymentSaga source_status without write authority. Evidence: support/evidence/DEP-003/verification.md. Verified: py_compile service/models/tests; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/deployment/test_service.py -q => 18 passed.",
+      "status": "done",
+      "created_at": "2026-05-15T23:28:41Z",
+      "resolved_at": "2026-05-15T23:33:19Z"
+    },
+    {
+      "task_id": "DEP-003",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-05-15T23:33:19Z",
+      "resolved_at": "2026-05-16T00:14:07Z"
+    },
+    {
+      "task_id": "DEP-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: derived-only projection read model correct. Three projection routes verified. No write authority in service. source_status, lifecycle_state, actual_stage/projected_stage all correct. RuntimeBinding multi-path lookup correct. 18 tests pass. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T00:14:07Z",
+      "resolved_at": "2026-05-16T00:18:36Z"
+    },
+    {
+      "task_id": "DEP-003",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned ownership from Codex to Claude2 after repeated Codex terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-05-16T00:18:36Z",
+      "resolved_at": "2026-05-16T06:03:34Z"
+    }
+  ],
+  "blockers": []
+}

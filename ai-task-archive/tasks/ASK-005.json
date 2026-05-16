@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "task_id": "ASK-005",
+  "archived_at": "2026-05-16T14:25:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASK-005",
+    "title": "approval / ask SSE event publishing",
+    "summary_zh": null,
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "ASK-005 closeout: approval/ask SSE event publishing fully implemented and reviewed. Commits: 6c7484c1 initial SSE implementation; 73304fe0 escalate/freeze semantics + replay de-dup; f5400502 body idempotency before publish; 632d72a8 durable command_store replay; 106b0cca idempotency-conflict no-double-publish (R4). Final verification: 12 ASK-005 contract tests, 66 adjacent approval/ask/SSE tests, 33 governance/idempotency tests — all passed (0 regressions). Reviewer Codex approved R4 fix.",
+    "last_update": "2026-05-16T14:25:26Z",
+    "review_notes_zh": [
+      "未發現 blocking findings；R4 修正讓 approval decide 在 _FINAL_CONTRACT_IDEMPOTENCY 或 durable command_store 偵測到同 key 不同 hash 時，於 _sem_command_response 回傳 409 前跳過 SSE publish。",
+      "已重跑 focused verification：ASK-005 contract 12 passed；approval/ask/SSE adjacent 66 passed；final contract/governance/idempotency 33 passed。",
+      "狀態已由 reviewer approve；owner Claude 需依 closeout checklist 建立 task-scoped closeout 並執行 done。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T14:25:26Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "HEAD",
+      "git_clean_required": false,
+      "commit": "2bf9662c62096ac7aba9bb6da1bc40f0927e83f7",
+      "commit_subject": "ASK-005: record review approval state and closeout preparation",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "State files updated to reflect Codex review approval at 2026-05-16T14": "21:49Z.",
+        "LLM-Agent": "Claude",
+        "Task-ID": "ASK-005",
+        "Reviewer": "Codex",
+        "Verification": "python3 -m pytest services/control-plane/bff/test_ask005_sse_event_publishing_contract.py -q → 12 passed in 7.98s"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 68,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASK-005",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "ASK-005 implementation complete. Commit 6c7484c1. Changes: (1) sem_agora_ask_create_session now publishes ask.session.started to the ask channel; (2) bff_approvals_decide publishes approval.decided (approve/reject) or approval.stage.changed (request_revision/escalate/freeze); role-gate failures do not publish. New test file: test_ask005_sse_event_publishing_contract.py (6 tests). Verification: pytest test_ask005_sse_event_publishing_contract.py → 6 passed; test_pkt005_sse_substrate_contract → 14 passed; test_bff_approvals_decide_contract + test_ask_001-003-004 → 113 passed.",
+      "status": "done",
+      "created_at": "2026-05-16T11:01:26Z",
+      "resolved_at": "2026-05-16T11:25:02Z"
+    },
+    {
+      "task_id": "ASK-005",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Chair reassigned review from Codex2 to Codex: Codex2 is quota-terminal paused until 2026-05-18T23:40:00Z; Codex is a non-owner with matching integration/status/schema review capability for ASK-005.",
+      "status": "done",
+      "created_at": "2026-05-16T11:25:02Z",
+      "resolved_at": "2026-05-16T11:29:59Z"
+    },
+    {
+      "task_id": "ASK-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested by Codex in support/reviews/ASK-005-review-codex.md (commit afaca235): fix escalate/freeze approval SSE event semantics and make approval idempotency replay avoid duplicate SSE publish, then rerun ASK-005 focused/adjacent tests.",
+      "status": "done",
+      "created_at": "2026-05-16T11:29:59Z",
+      "resolved_at": "2026-05-16T11:29:59Z"
+    },
+    {
+      "task_id": "ASK-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Codex review fixes applied in commit 73304fe0. (1) escalate/freeze now publish approval.stage.changed via _APPROVAL_STAGE_CHANGE_DECISIONS frozenset + raw_decision branch; (2) approval replay SSE de-dup via idempotency pre-check against _FINAL_CONTRACT_IDEMPOTENCY before publish. New tests: escalate→stage.changed, freeze→stage.changed, replay→no double publish. Verification: 9 ASK-005 tests passed, 113 adjacent tests passed (0 regressions).",
+      "status": "done",
+      "created_at": "2026-05-16T11:39:50Z",
+      "resolved_at": "2026-05-16T11:51:40Z"
+    },
+    {
+      "task_id": "ASK-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested by Codex in support/reviews/ASK-005-review-codex-r2.md (commit c548bdb2): invalid body idempotency currently returns 400 but still publishes approval.decided. Move final-contract body validation before approval SSE publish, add no-publish regression coverage, and rerun ASK-005 focused/adjacent tests.",
+      "status": "done",
+      "created_at": "2026-05-16T11:51:40Z",
+      "resolved_at": "2026-05-16T11:51:40Z"
+    },
+    {
+      "task_id": "ASK-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Codex R2 fix applied in commit f5400502. Body idempotency validation (_reject_body_idempotency_key) now runs before the SSE publish block in bff_approvals_decide — invalid body with idempotencyKey returns 400 with zero SSE events. New test: test_bff_approvals_decide_body_idempotency_key_rejected_does_not_publish. Verification: 10 ASK-005 tests passed, 113 adjacent tests passed (0 regressions).",
+      "status": "done",
+      "created_at": "2026-05-16T12:01:12Z",
+      "resolved_at": "2026-05-16T12:01:48Z"
+    },
+    {
+      "task_id": "ASK-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Codex R2 fix applied in commit f5400502. Body idempotency validation (_reject_body_idempotency_key) now runs before the SSE publish block in bff_approvals_decide — invalid body with idempotencyKey returns 400 with zero SSE events. New test: test_bff_approvals_decide_body_idempotency_key_rejected_does_not_publish. Verification: 10 ASK-005 tests passed, 113 adjacent tests passed (0 regressions).",
+      "status": "done",
+      "created_at": "2026-05-16T12:01:48Z",
+      "resolved_at": "2026-05-16T12:02:20Z"
+    },
+    {
+      "task_id": "ASK-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Codex R2 fix applied in commit f5400502. Body idempotency validation (_reject_body_idempotency_key) now runs before the SSE publish block in bff_approvals_decide — invalid body with idempotencyKey returns 400 with zero SSE events. New test: test_bff_approvals_decide_body_idempotency_key_rejected_does_not_publish. Verification: 10 ASK-005 tests passed, 113 adjacent tests passed (0 regressions).",
+      "status": "done",
+      "created_at": "2026-05-16T12:02:20Z",
+      "resolved_at": "2026-05-16T14:03:03Z"
+    },
+    {
+      "task_id": "ASK-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested in support/reviews/ASK-005-review-codex-r4.md (commit 09d1a022): idempotency conflict path returns 409 but still double-publishes approval SSE. Mirror _sem_command_response conflict pre-check before publish; add regression coverage; rerun ASK-005 focused/adjacent tests.",
+      "status": "done",
+      "created_at": "2026-05-16T14:03:03Z",
+      "resolved_at": "2026-05-16T14:03:03Z"
+    },
+    {
+      "task_id": "ASK-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Codex R4 fix applied in commit 106b0cca. Introduced _is_idem_conflict flag to mirror _sem_command_response conflict path: when _FINAL_CONTRACT_IDEMPOTENCY or durable command_store holds a different hash for the same key, SSE publish is skipped before the 409 is raised. New test: test_bff_approvals_decide_idempotency_conflict_does_not_double_publish. Verification: 12 ASK-005 tests passed, 66 approval/ask adjacent tests passed, 33 contract/governance tests passed (0 regressions).",
+      "status": "done",
+      "created_at": "2026-05-16T14:11:37Z",
+      "resolved_at": "2026-05-16T14:21:49Z"
+    },
+    {
+      "task_id": "ASK-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Codex review approved: R4 idempotency-conflict no-double-publish fix verified; 12 ASK-005 tests, 66 adjacent approval/ask/SSE tests, and 33 governance/idempotency tests passed. Owner Claude should finalize closeout.",
+      "status": "done",
+      "created_at": "2026-05-16T14:21:49Z",
+      "resolved_at": "2026-05-16T14:25:27Z"
+    }
+  ],
+  "blockers": []
+}

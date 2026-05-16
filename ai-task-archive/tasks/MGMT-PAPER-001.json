@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PAPER-001",
+  "archived_at": "2026-05-15T15:39:03Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PAPER-001",
+    "title": "paper candidate StrategySpec",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-02 Management Paper Loop Proof",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Closeout finalized after review approval. Implementation is durable in commit 53af79c3fec399b1f6dbc6ece68cd56593102df9; closeout HEAD commit 16dc5fedcef30f5ba2c27c7a082386e637e5e222 records MGMT-PAPER-001 finalization without touching unrelated staged/unstaged worktree files. Re-verified on 2026-05-15: PYTHONDONTWRITEBYTECODE=1 python3 services/registry/test_paper_strategy_spec.py (27 PASS); PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/registry/test_paper_strategy_spec.py -q (5 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/registry/test_service.py -q (40 passed); PYTHONDONTWRITEBYTECODE=1 python3 services/control-plane/governance/test_paper_approval_decision.py (30 PASS); PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/governance/test_paper_approval_decision.py -q (7 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/registry/paper_strategy_spec.py services/registry/test_paper_strategy_spec.py; jq paper invariant check true; evidence-vs-builder consistency ok. No additional task artifact/doc update was required.",
+    "last_update": "2026-05-15T15:39:03Z",
+    "review_notes_zh": [
+      "審查通過：MGMT-PAPER-001 paper StrategySpec candidate、candidate registry entry、paper evaluator ref 與 support/evidence/MGMT-PAPER-001-paper-strategy-spec.json 均已驗證；artifact_state=candidate、deployment stage=none、live_capital_side_effects=false。",
+      "驗證命令：PYTHONDONTWRITEBYTECODE=1 python3 services/registry/test_paper_strategy_spec.py；PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/registry/test_paper_strategy_spec.py -q；PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/registry/test_service.py -q；PYTHONDONTWRITEBYTECODE=1 python3 services/control-plane/governance/test_paper_approval_decision.py；PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/governance/test_paper_approval_decision.py -q；PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/registry/paper_strategy_spec.py services/registry/test_paper_strategy_spec.py；jq invariant check；evidence-vs-builder consistency check。",
+      "非阻塞追蹤：services/registry/test_paper_strategy_spec.py 目前同時支援 custom script runner；pytest 測試函式依賴 check() 列印/計數而非 assert，建議後續測試整理時轉為 pytest assert。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T15:39:03Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "merge/backend-dev-into-master",
+      "git_clean_required": false,
+      "commit": "16dc5fedcef30f5ba2c27c7a082386e637e5e222",
+      "commit_subject": "MGMT-PAPER-001 closeout finalization",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-PAPER-001",
+        "Reviewer": "Codex",
+        "Implementation-Commit": "53af79c3fec399b1f6dbc6ece68cd56593102df9",
+        "Verification": "PYTHONDONTWRITEBYTECODE=1 python3 services/registry/test_paper_strategy_spec.py (27 PASS); PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/registry/test_paper_strategy_spec.py -q (5 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/registry/test_service.py -q (40 passed); PYTHONDONTWRITEBYTECODE=1 python3 services/control-plane/governance/test_paper_approval_decision.py (30 PASS); PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/governance/test_paper_approval_decision.py -q (7 passed); py_compile ok; jq invariant check true; evidence-vs-builder consistency ok.",
+        "Note": "empty closeout commit intentionally preserves unrelated staged and unstaged worktree changes while satisfying owner-finalization HEAD policy."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 16,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/master",
+      "ahead": 20,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PAPER-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: paper StrategySpec candidate implemented in services/registry/paper_strategy_spec.py with schema-valid StrategySpec, candidate registry entry strategy-spec-paper-qlib-lgbm-001@1.0.0, paper evaluator ref eval-strategy-spec-paper-qlib-lgbm-001-paper, and evidence support/evidence/MGMT-PAPER-001-paper-strategy-spec.json. Commit 53af79c3. Verification: custom unit test 27 PASS; pytest services/registry/test_paper_strategy_spec.py 5 passed; pytest services/registry/test_service.py 40 passed; governance paper approval custom test 30 PASS; pytest services/control-plane/governance/test_paper_approval_decision.py 7 passed; py_compile ok; jq invariant check true. Live capital side effects remain false and deployment stage remains none.",
+      "status": "done",
+      "created_at": "2026-05-15T15:23:22Z",
+      "resolved_at": "2026-05-15T15:31:33Z"
+    },
+    {
+      "task_id": "MGMT-PAPER-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: paper StrategySpec candidate and evidence validated; returned to Codex2 for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-15T15:31:33Z",
+      "resolved_at": "2026-05-15T15:39:04Z"
+    }
+  ],
+  "blockers": []
+}

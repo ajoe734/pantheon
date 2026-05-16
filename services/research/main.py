@@ -11,6 +11,14 @@ from pydantic import BaseModel, Field
 
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
+from services.registry.split_api import RegistryService
+from services.registry.storage import get_store as get_registry_store
+from services.research.experiments import (
+    ExperimentRegistryWritebackError,
+    ExperimentRun,
+    registry_entry_view_to_dict,
+    write_experiment_run_artifact_to_registry,
+)
 from store import ResearchOrchestratorStore, build_research_orchestrator_store
 
 
@@ -224,6 +232,32 @@ class ProposalBody(BaseModel):
     proposed_at: Optional[str] = None
 
 
+class RegistryWritebackBody(BaseModel):
+    artifact_id: Optional[str] = None
+    registry_id: Optional[str] = None
+    artifact_type: Optional[str] = None
+    strategy_id: Optional[str] = None
+    strategy_spec_version: Optional[str] = None
+    version: Optional[str] = None
+    requested_artifact_state: str = "candidate"
+    storage_ref: Optional[Any] = None
+    checksum: Optional[str] = None
+    source_strategy_spec_id: Optional[str] = None
+    source_dataset_refs: List[str] = Field(default_factory=list)
+    parent_registry_ids: List[str] = Field(default_factory=list)
+    dataset_version_id: Optional[str] = None
+    code_version: Optional[str] = None
+    input_manifest_ref: Optional[str] = None
+    output_manifest_ref: Optional[str] = None
+    metric_bundle_id: Optional[str] = None
+    runtime_env: str = "research"
+    evaluation_summary: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    actor_id: str = "operator"
+    idempotency_key: Optional[str] = None
+    created_at: Optional[str] = None
+
+
 app = FastAPI(title="Pantheon Research Orchestrator Service", version="0.1.0")
 store = build_research_orchestrator_store(DATA_DIR)
 register_fastapi_health_routes(
@@ -242,6 +276,130 @@ register_fastapi_health_routes(
         "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
     },
 )
+
+
+def _as_mapping(value: Any) -> Dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _first_value(*values: Any) -> Any:
+    for value in values:
+        if value not in (None, "", [], {}):
+            return value
+    return None
+
+
+def _first_text(*values: Any) -> Optional[str]:
+    value = _first_value(*values)
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _required_writeback_text(value: Optional[str], field_name: str) -> str:
+    if not value:
+        raise HTTPException(status_code=400, detail=f"{field_name} is required for registry writeback")
+    return value
+
+
+def _registry_hints(artifact: Dict[str, Any]) -> Dict[str, Any]:
+    hints = artifact.get("registry_hints")
+    if isinstance(hints, dict):
+        return dict(hints)
+    projection = artifact.get("registry_projection")
+    return dict(projection) if isinstance(projection, dict) else {}
+
+
+def _input_ref_id(run: Dict[str, Any], *types: str) -> Optional[str]:
+    requested = {item.lower() for item in types}
+    for ref in run.get("input_refs") or []:
+        if not isinstance(ref, dict):
+            continue
+        ref_type = str(ref.get("type") or "").lower()
+        if ref_type in requested:
+            return _first_text(ref.get("id"), ref.get("ref"), ref.get("uri"))
+    return None
+
+
+def _resolve_writeback_artifact(run: Dict[str, Any], artifact_id: Optional[str]) -> Dict[str, Any]:
+    target_id = artifact_id
+    refs = [ref for ref in run.get("artifact_refs") or [] if isinstance(ref, dict)]
+    if not target_id and len(refs) == 1:
+        target_id = _first_text(refs[0].get("artifact_id"), refs[0].get("id"))
+    if not target_id:
+        raise HTTPException(status_code=400, detail="artifact_id is required when a run has zero or multiple artifacts")
+    artifact = store.get_artifact(target_id)
+    if not artifact or artifact.get("run_id") != run.get("run_id"):
+        raise HTTPException(status_code=404, detail="research artifact not found for run")
+    return artifact
+
+
+def _experiment_run_for_writeback(
+    run: Dict[str, Any],
+    artifact: Dict[str, Any],
+    body: RegistryWritebackBody,
+    timestamp: str,
+) -> ExperimentRun:
+    hints = _registry_hints(artifact)
+    params = _as_mapping(run.get("parameters"))
+    artifact_metadata = _as_mapping(artifact.get("metadata"))
+    strategy_id = _required_writeback_text(
+        _first_text(body.strategy_id, hints.get("strategy_id"), artifact.get("strategy_id"), run.get("strategy_id"), params.get("strategy_id")),
+        "strategy_id",
+    )
+    version = _required_writeback_text(
+        _first_text(body.version, hints.get("version"), artifact.get("version"), params.get("version"), params.get("strategy_spec_version")),
+        "version",
+    )
+    dataset_version_id = _required_writeback_text(
+        _first_text(
+            body.dataset_version_id,
+            params.get("dataset_version_id"),
+            params.get("dataset_ref"),
+            artifact_metadata.get("dataset_version_id"),
+            _input_ref_id(run, "dataset", "dataset_version"),
+            body.source_dataset_refs[0] if body.source_dataset_refs else None,
+        ),
+        "dataset_version_id",
+    )
+    code_version = _required_writeback_text(
+        _first_text(body.code_version, params.get("code_version"), artifact_metadata.get("code_version"), run.get("code_version")),
+        "code_version",
+    )
+    output_manifest_ref = _required_writeback_text(
+        _first_text(body.output_manifest_ref, run.get("output_manifest_ref"), artifact.get("storage_ref")),
+        "output_manifest_ref",
+    )
+    strategy_spec_version = _required_writeback_text(
+        _first_text(body.strategy_spec_version, hints.get("strategy_spec_version"), params.get("strategy_spec_version"), version),
+        "strategy_spec_version",
+    )
+    return ExperimentRun(
+        run_id=str(run["run_id"]),
+        task_id=str(run["task_id"]),
+        strategy_id=strategy_id,
+        strategy_spec_version=strategy_spec_version,
+        backend_id=str(_first_text(run.get("adapter"), params.get("backend_id"), "research-orchestrator")),
+        runtime_env=body.runtime_env,
+        status=str(run.get("status") or ""),
+        started_at=str(_first_text(run.get("started_at"), run.get("created_at"), timestamp)),
+        finished_at=str(_first_text(run.get("finished_at"), run.get("updated_at"), timestamp)),
+        dataset_version_id=dataset_version_id,
+        code_version=code_version,
+        input_manifest_ref=str(_first_text(body.input_manifest_ref, run.get("input_manifest_ref"), f"research-run://{run['run_id']}/input")),
+        output_manifest_ref=output_manifest_ref,
+        metric_bundle_id=_first_text(body.metric_bundle_id, artifact_metadata.get("metric_bundle_id")),
+        artifact_refs=[str(artifact["artifact_id"])],
+        logs_ref=_first_text(run.get("logs_ref")),
+        trace_id=str(_first_text(run.get("trace_id"), run.get("run_id"))),
+        created_at=str(_first_text(run.get("created_at"), timestamp)),
+        updated_at=str(_first_text(run.get("updated_at"), timestamp)),
+        metadata={
+            "source_strategy_spec_id": body.source_strategy_spec_id,
+            "research_orchestrator_run_record": True,
+        },
+    )
 
 
 @app.get("/health")
@@ -278,7 +436,7 @@ def capabilities() -> Dict[str, Any]:
         "bounded_dispatch": {"max_active_runs": MAX_ACTIVE_RUNS},
         "safety_boundary": {
             "training_dispatch": "disabled",
-            "registry_writes": "disabled",
+            "registry_writes": "completed_run_draft_candidate_writeback_only",
             "governance_writes": "disabled",
             "paper_canary_live": "disabled",
         },
@@ -458,6 +616,7 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         "events": events,
         "artifact_refs": [],
         "proposal_refs": [],
+        "registry_writebacks": [],
     }
     if gateway_ref is not None:
         run["gateway_ref"] = gateway_ref
@@ -503,6 +662,7 @@ def get_run_status(run_id: str) -> Dict[str, Any]:
         "gateway_ref": run.get("gateway_ref"),
         "artifact_refs": run.get("artifact_refs", []),
         "proposal_refs": run.get("proposal_refs", []),
+        "registry_writebacks": run.get("registry_writebacks", []),
         "events": run.get("events", []),
         "updated_at": run.get("updated_at"),
     }
@@ -562,6 +722,7 @@ def handoff_artifact(run_id: str, body: ArtifactBody) -> Dict[str, Any]:
             "lean_consumption": "research_only_not_direct_action",
             "write_boundary": "research_plane_only",
         },
+        "registry_hints": body.registry_hints,
         "registry_projection": registry_projection,
         "metadata": body.metadata,
         "created_by": body.actor_id,
@@ -580,6 +741,92 @@ def handoff_artifact(run_id: str, body: ArtifactBody) -> Dict[str, Any]:
 def list_run_artifacts(run_id: str) -> List[Dict[str, Any]]:
     get_run(run_id)
     return [artifact for artifact in store.list_artifacts() if artifact.get("run_id") == run_id]
+
+
+@app.post("/api/research-orchestrator/runs/{run_id}/registry-writeback", status_code=201)
+def writeback_run_artifact(run_id: str, body: RegistryWritebackBody) -> Dict[str, Any]:
+    run = get_run(run_id)
+    if str(run.get("status") or "").lower() != "completed":
+        raise HTTPException(status_code=409, detail="only completed research runs can write artifacts to the registry")
+
+    existing = _idempotent_match(list(run.get("registry_writebacks") or []), body.idempotency_key)
+    if existing:
+        return existing
+
+    timestamp = body.created_at or utc_now()
+    artifact = _resolve_writeback_artifact(run, body.artifact_id)
+    registry_service = RegistryService(get_registry_store())
+    try:
+        experiment_run = _experiment_run_for_writeback(run, artifact, body, timestamp)
+        view = write_experiment_run_artifact_to_registry(
+            experiment_run,
+            artifact,
+            registry_service=registry_service,
+            registry_id=body.registry_id,
+            artifact_type=body.artifact_type,
+            strategy_id=body.strategy_id,
+            version=body.version,
+            requested_artifact_state=body.requested_artifact_state,
+            storage_ref=body.storage_ref,
+            checksum=body.checksum,
+            source_strategy_spec_id=body.source_strategy_spec_id,
+            source_dataset_refs=body.source_dataset_refs,
+            parent_registry_ids=body.parent_registry_ids,
+            evaluation_summary=body.evaluation_summary,
+            metadata={
+                **body.metadata,
+                "writeback_actor": body.actor_id,
+                "writeback_created_at": timestamp,
+            },
+        )
+    except (ExperimentRegistryWritebackError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    registry_view = registry_entry_view_to_dict(view)
+    entry = registry_view["entry"]
+    writeback = {
+        "id": entry["registry_id"],
+        "registry_id": entry["registry_id"],
+        "run_id": run_id,
+        "task_id": run["task_id"],
+        "artifact_id": artifact["artifact_id"],
+        "artifact_type": entry["artifact_type"],
+        "artifact_state": entry["artifact_state"],
+        "deployment_stage": registry_view["deployment_stage"],
+        "producer_run_id": entry.get("producer_run_id"),
+        "lineage": entry.get("lineage", {}),
+        "registry_view": registry_view,
+        "created_by": body.actor_id,
+        "created_at": timestamp,
+        "idempotency_key": body.idempotency_key,
+    }
+
+    refs = list(run.get("registry_writebacks") or [])
+    refs.append(writeback)
+    events = list(run.get("events") or [])
+    events.append(
+        _event(
+            timestamp,
+            "registry_writeback_created",
+            f"Registered run artifact {artifact['artifact_id']} as registry entry {entry['registry_id']}.",
+            body.actor_id,
+            run_id,
+            events,
+        )
+    )
+    run["registry_writebacks"] = refs
+    run["events"] = events
+    run["updated_at"] = timestamp
+    artifact["registry_writeback"] = {
+        "registry_id": entry["registry_id"],
+        "artifact_state": entry["artifact_state"],
+        "deployment_stage": registry_view["deployment_stage"],
+        "created_at": timestamp,
+    }
+    store.put_run(run)
+    store.put_artifact(artifact)
+    store.append_event(events[-1])
+    return writeback
 
 
 @app.post("/api/research-orchestrator/runs/{run_id}/proposals", status_code=201)

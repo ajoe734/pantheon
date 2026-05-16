@@ -1,0 +1,153 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/training-session/teaching-session/v1",
+  "title": "TeachingSession",
+  "description": "Canonical trainer teaching session contract. The session records persona-scoped teaching intent, lifecycle state, trace identity, optional control-state refs, and the append-only events used by preview, commit/discard, replay, and later imitation dataset stages.",
+  "type": "object",
+  "required": [
+    "session_id",
+    "persona_id",
+    "opened_by",
+    "mode",
+    "status",
+    "started_at",
+    "trace_id"
+  ],
+  "properties": {
+    "id": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "persona_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "opened_by": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "coaching",
+        "patch_preview",
+        "evaluation",
+        "correction"
+      ]
+    },
+    "session_type": {
+      "type": "string",
+      "enum": [
+        "trainer"
+      ]
+    },
+    "objective": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "topic": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "paused",
+        "completed",
+        "abandoned",
+        "committed",
+        "discarded",
+        "expired"
+      ]
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "minLength": 1
+    },
+    "ended_at": {
+      "$ref": "#/definitions/nullableDateTime"
+    },
+    "current_control_state_ref": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "context_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "actor_context": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "outcomes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "replay_resolution": {
+      "$ref": "#/definitions/nullableObject"
+    },
+    "artifacts": {
+      "$ref": "#/definitions/nullableObject"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "nullableString": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "nullableDateTime": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "nullableObject": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": true
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

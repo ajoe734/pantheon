@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "EXP-001",
+  "archived_at": "2026-05-16T09:53:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "EXP-001",
+    "title": "ExperimentTask / ExperimentRun schema",
+    "summary_zh": null,
+    "phase": "Sprint 5 / EPIC-RESEARCH",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Finalized EXP-001 after Claude approval. Implementation commit 1dc686c6; review artifact closeout commit 8090e0c9. Verification: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/research/experiments/models.py services/research/experiments/test_models.py services/research/experiments/__init__.py passed; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/research/experiments/test_models.py -q passed (12 passed); git diff --check -- services/research/experiments support/evidence/EXP-001/README.md support/reviews/EXP-001-review-claude.md passed. Existing non-EXP-001 dirty files remain uncommitted and were not included in the task closeout commit.",
+    "last_update": "2026-05-16T09:53:55Z",
+    "review_notes_zh": [
+      "審查通過：JSON schema Draft-7 驗證、Python frozen dataclass 雙重驗證、lineage cross-validation、scope boundary 均無問題。12 個 pytest 測試全部通過。"
+    ],
+    "review_file": "support/reviews/EXP-001-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-16T09:53:55Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "8090e0c9deecd242f2ae41e49f70295f32056ee2",
+      "commit_subject": "EXP-001 record review approval",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "EXP-001",
+        "Reviewer": "Claude",
+        "Verification": "PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/research/experiments/models.py services/research/experiments/test_models.py services/research/experiments/__init__.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/research/experiments/test_models.py -q (12 passed); git diff --check -- services/research/experiments support/evidence/EXP-001/README.md support/reviews/EXP-001-review-claude.md."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 62,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 5,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "EXP-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T07:39:56Z",
+      "resolved_at": "2026-05-16T07:42:58Z"
+    },
+    {
+      "task_id": "EXP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T08:48:05Z",
+      "resolved_at": "2026-05-16T08:50:31Z"
+    },
+    {
+      "task_id": "EXP-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-16T09:10:34Z",
+      "resolved_at": "2026-05-16T09:13:37Z"
+    },
+    {
+      "task_id": "EXP-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "EXP-001 implementation is already committed as 1dc686c6 and remains valid. Verified py_compile, pytest services/research/experiments/test_models.py -q (12 passed), and git diff --check for task paths. Review artifact is present at support/reviews/EXP-001-review-claude.md; please publish approval through the canonical approve flow.",
+      "status": "done",
+      "created_at": "2026-05-16T09:28:30Z",
+      "resolved_at": "2026-05-16T09:38:22Z"
+    },
+    {
+      "task_id": "EXP-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: ExperimentTask/ExperimentRun schema verified. JSON schemas well-formed, Python models frozen with dual validation, lineage cross-check present, research-plane scope boundary correct. 12/12 tests pass. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-16T09:38:22Z",
+      "resolved_at": "2026-05-16T09:53:56Z"
+    }
+  ],
+  "blockers": []
+}

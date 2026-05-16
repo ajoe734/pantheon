@@ -1,7 +1,8 @@
 # Qlib Integration — Smoke Test
 
-Last updated: 2026-05-01
-Owner: P2-QLIB-PROD-DATA-ACTIVATION-001 (Codex2)
+Last updated: 2026-05-16
+Task: QLIB-001
+Owner: Gemini
 Reviewer: Claude
 Status: smoke, activation-ready offline path, and production packet path revalidated
 Primary entrypoint: `python3 services/research/qlib/smoke_test.py`
@@ -82,7 +83,7 @@ The smoke script loads `examples/equity_dataset_sample.json` and proves that:
 
 ## 5. Verified Result
 
-Revalidated on 2026-04-24 with the default stub backend:
+Revalidated on 2026-05-16 with the default stub backend:
 
 - backend: `stub_lgbm`
 - instruments: `3`
@@ -99,10 +100,10 @@ Revalidated on 2026-04-24 with the default stub backend:
 - `mse = 3.5745e-05`
 - assertions: OK
 
-Unit coverage result on 2026-05-01:
+Unit coverage result on 2026-05-16:
 
 - `python3 -m unittest discover -s services/research/qlib -p 'test_*.py'`
-- `Ran 32 tests`
+- `Ran 33 tests`
 - `OK`
 
 Production packet result on 2026-05-01:
@@ -137,5 +138,5 @@ Treat the Qlib row as smoke-proven when:
 - candidate packet and artifact manifest are emitted without registry writes
 - production activation packet is emitted only with governed data proof and
   without registry/order writes
-- unit coverage still passes (32 tests)
+- unit coverage still passes (33 tests)
 - gateway Qlib activation test still proves closed-gate rejection and explicit-gate offline success

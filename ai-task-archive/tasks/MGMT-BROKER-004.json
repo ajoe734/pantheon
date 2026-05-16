@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "MGMT-BROKER-004",
+  "archived_at": "2026-05-15T17:46:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-BROKER-004",
+    "title": "Shioaji evidence packet",
+    "summary_zh": null,
+    "phase": "Track E / EPIC-05 Shioaji Sandbox",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [],
+    "next": "Finalized MGMT-BROKER-004 after Claude approval. Task commit e95c370f adds the Shioaji sandbox evidence packet, OODA M3 packet, closeout note, and review artifact. Verification: PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python3 -m pytest services/broker/shioaji -q => 59 passed; evidence_packet.py temp-output generation => status passed. Safety boundary remains sandbox only: no live broker, no real capital, no deployment; canary remains risk-owner/operator gated.",
+    "last_update": "2026-05-15T17:46:19Z",
+    "review_notes_zh": [
+      "無阻塞發現：9 項 acceptance check 全部通過，live_broker_fail_closed 以 SHIOAJI_LIVE_DISABLED 拒絕，production_live_enabled=false，capital_binding_enabled=false，human_gate_required=true，OODA packet live_capital_side_effects=false，ooda_packet_validation_errors 空。",
+      "查核重點：portable_ref 正確將絕對路徑正規化為 repo-relative ref；account_status=ready 在 mock_api_replay 模式下透明標註於 account_status_detail.basis；safety assertions 全 true；59 tests pass。",
+      "安全邊界確認：無 registry write、無 live broker session、無 real capital、無 deployment，canary 仍需 risk-owner + operator approval gate。"
+    ],
+    "review_file": "support/reviews/MGMT-BROKER-004-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-15T17:46:19Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "bff-luv-fe-006-dev-deploy",
+      "git_clean_required": false,
+      "commit": "e95c370fe1c36c1dcd0ef8ff63601a9cc137d35c",
+      "commit_subject": "MGMT-BROKER-004 add Shioaji evidence packet",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-BROKER-004",
+        "Reviewer": "Claude",
+        "- PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python3 services/broker/shioaji/evidence_packet.py --smoke-summary-json support/evidence/MGMT-BROKER-003/summary.json --output-dir /tmp/mgmt-broker-004-closeout/MGMT-BROKER-004 --milestone-output /tmp/mgmt-broker-004-closeout/MGMT-OODA-M3-shioaji-sandbox.json --generated-at 2026-05-15T17": "08:10Z -> status passed"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 57,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/bff-luv-fe-006-dev-deploy",
+      "ahead": 3,
+      "behind": 0,
+      "push_status": "ahead"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-BROKER-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-05-15T17:03:51Z",
+      "resolved_at": "2026-05-15T17:05:08Z"
+    },
+    {
+      "task_id": "MGMT-BROKER-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: added Shioaji evidence packet builder/tests and generated support/evidence/MGMT-BROKER-004 plus MGMT-OODA-M3 packet. Verification: PYTHONPATH=. python3 -m pytest services/broker/shioaji -q (59 passed).",
+      "status": "done",
+      "created_at": "2026-05-15T17:10:13Z",
+      "resolved_at": "2026-05-15T17:30:17Z"
+    },
+    {
+      "task_id": "MGMT-BROKER-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved and returned to owner Codex for finalization. Evidence packet passes all 9 acceptance checks. Safety boundary confirmed: no live broker, no real capital, no deployment. 59 tests pass.",
+      "status": "done",
+      "created_at": "2026-05-15T17:30:17Z",
+      "resolved_at": "2026-05-15T17:46:22Z"
+    }
+  ],
+  "blockers": []
+}
