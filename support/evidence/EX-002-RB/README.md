@@ -66,3 +66,28 @@ PYTHONDONTWRITEBYTECODE=1 python3 services/registry/promotion/smoke_test_gate.py
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/registry/ -q
 # → 69 passed
 ```
+
+## Reviewer Approval
+
+Claude's approval packet is recorded at `support/evidence/EX-002-RB/review-claude.md`.
+
+## Owner Finalization Verification
+
+Re-run by Codex on 2026-05-16 before owner closeout:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/execution/test_artifact_loader.py -v
+# 18 passed in 8.79s
+
+PYTHONDONTWRITEBYTECODE=1 python3 services/execution/smoke_test_artifact_loader.py
+# EX-001 smoke test passed: promotion metadata projected through the LEAN Object Store helper and loaded safely.
+
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/registry/promotion/test_gate.py -v
+# 4 passed in 3.98s
+
+PYTHONDONTWRITEBYTECODE=1 python3 services/registry/promotion/smoke_test_gate.py
+# Execution projection smoke passed.
+
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/registry/ -q
+# 69 passed in 71.19s
+```
