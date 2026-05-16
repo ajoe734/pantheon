@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-05-16T01:53:42Z",
+  "updated_at": "2026-05-16T05:17:28Z",
   "counts": {
-    "total": 1111,
-    "completed": 1093,
+    "total": 1112,
+    "completed": 1094,
     "superseded": 18
   },
   "recent_terminal_ids": [
+    "REC-001",
     "RT-001",
     "P0-APP-001",
     "VBT-001",
@@ -25,7 +26,6 @@
     "MGMT-SAFE-005-SIDECAR-REVIEW",
     "MGMT-SAFE-003",
     "MGMT-EVO-003",
-    "MGMT-OODA-006",
-    "MGMT-EVO-005"
+    "MGMT-OODA-006"
   ]
 }
